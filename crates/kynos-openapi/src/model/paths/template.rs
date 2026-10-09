@@ -66,10 +66,8 @@ pub enum InvalidPathTemplate {
 
 /// A parsed path template such as `/users/{id}/posts/{postId}`.
 ///
-/// Two templates that differ only in variable name are *the same path* as far
-/// as OpenAPI is concerned, so declaring both is invalid.
-/// [`normalized`](PathTemplate::normalized) exists to make that comparison
-/// cheap.
+/// Two templates that differ only in variable name are *the same path* to
+/// OpenAPI; compare them with [`normalized`](PathTemplate::normalized).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct PathTemplate {
@@ -107,16 +105,13 @@ const fn is_path_character(character: char) -> bool {
 
 /// Checks one literal run of a template, between `{}` expressions.
 ///
-/// `/` is the segment separator rather than `pchar`, so it is allowed here and
-/// segmentation is left to callers that care about it.
+/// `/` is allowed; segmentation is checked separately.
 fn check_literal(literal: &str, raw: &str) -> Result<(), InvalidPathTemplate> {
     let mut characters = literal.chars();
     while let Some(character) = characters.next() {
         match character {
             '/' => {}
-            // Not `pchar` either, but a closing brace outside an expression is
-            // a brace mistake wherever it appears, and reporting it as a stray
-            // character would name the wrong problem.
+            // Reported as a brace mistake rather than a stray character.
             '}' => return Err(InvalidPathTemplate::UnbalancedBraces(raw.to_owned())),
             '%' => {
                 let high = characters.next();
@@ -145,12 +140,7 @@ fn check_literal(literal: &str, raw: &str) -> Result<(), InvalidPathTemplate> {
 ///
 /// `path-template = "/" *( path-segment "/" ) [ path-segment ]` and
 /// `path-segment = 1*( path-literal / template-expression )`, so two `/` never
-/// meet. A *trailing* `/` is legal, because the final segment is optional --
-/// and `/users` and `/users/` are different paths, which is what makes the
-/// trailing-slash policy an application-level decision rather than a parse
-/// question.
-///
-/// A variable name may itself contain a `/`, so this cannot be a split.
+/// meet; a trailing `/` is legal. Not a split, since a variable may contain `/`.
 fn check_segments(raw: &str) -> Result<(), InvalidPathTemplate> {
     let mut in_expression = false;
     let mut segment_is_empty = true;
@@ -180,11 +170,8 @@ impl PathTemplate {
     /// Parses a path template.
     ///
     /// Literal segments are checked against the path grammar; variable names
-    /// are not, because the grammar admits every character except a brace
-    /// there. A name that Kynos's router cannot match — a catch-all, say — is
-    /// still a legal OpenAPI template, and this type has to be able to hold one
-    /// so that an externally authored description round-trips. That narrower
-    /// contract is enforced where routes are registered.
+    /// admit every character except a brace. Kynos's narrower routing rules are
+    /// enforced where routes are registered.
     ///
     /// # Errors
     ///
@@ -198,9 +185,7 @@ impl PathTemplate {
         if !raw.starts_with('/') {
             return Err(InvalidPathTemplate::MissingLeadingSlash(raw));
         }
-        // `?` and `#` are not `pchar` either, but a template carrying one is
-        // more likely a URL pasted whole than a stray character, so it keeps
-        // the error that says so.
+        // Likely a URL pasted whole, so it gets its own error.
         if raw.contains('?') || raw.contains('#') {
             return Err(InvalidPathTemplate::NotAPath(raw));
         }

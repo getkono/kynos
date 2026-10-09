@@ -88,10 +88,8 @@ impl OAuthFlows {
 /// The configuration of one OAuth 2.0 flow.
 ///
 /// Which URL fields are required depends on the flow this is attached to. That
-/// pairing is *not* checked here, and the model is deliberately the permissive
-/// half: a flow read back from someone else's description has to round-trip
-/// whatever it said. `#[derive(SecurityScheme)]` enforces the pairing where the
-/// flow is written, which is the layer that knows which flow it is naming.
+/// pairing is *not* checked here, so any description round-trips;
+/// `#[derive(SecurityScheme)]` enforces it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OAuthFlow {
     /// The authorization URL. Required for the implicit and authorization code

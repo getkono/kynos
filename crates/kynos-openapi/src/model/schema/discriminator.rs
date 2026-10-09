@@ -23,8 +23,7 @@ pub struct Discriminator {
     /// value with no mapping.
     ///
     /// Introduced in OpenAPI 3.2. Required whenever the discriminating property
-    /// is optional — which is why a Rust enum with a `#[serde(other)]`
-    /// catch-all variant cannot be described under 3.1 alone.
+    /// is optional.
     #[cfg(feature = "openapi32")]
     #[serde(
         rename = "defaultMapping",

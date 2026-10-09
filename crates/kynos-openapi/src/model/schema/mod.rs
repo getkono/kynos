@@ -16,13 +16,10 @@ use crate::model::schema::{
 /// A JSON Schema.
 ///
 /// A boolean is a valid schema in JSON Schema 2020-12: `true` accepts every
-/// instance and `false` accepts none. That is why this is an enum rather than a
-/// struct.
+/// instance and `false` accepts none.
 ///
-/// [`Schema::Bool(true)`](Schema::Bool) is how a genuinely unconstrained
-/// payload is represented. Kynos never produces it by accident — a Rust type
-/// that cannot describe itself has no `Schema` implementation at all, and the
-/// permissive schema is reachable only by naming it in the handler signature.
+/// [`Schema::Bool(true)`](Schema::Bool) represents a genuinely unconstrained
+/// payload; Kynos produces it only when a handler signature names it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Schema {

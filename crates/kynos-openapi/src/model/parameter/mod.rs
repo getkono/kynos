@@ -23,27 +23,23 @@ use crate::{
 };
 
 /// Where a parameter is carried.
-/// `#[non_exhaustive]` because OpenAPI 3.2 adds to this and the addition is
-/// `#[cfg]`-gated. Cargo unifies features across a dependency graph, so any
-/// crate enabling `openapi32` enables it for every crate in the build -- and
-/// without this attribute that would turn a downstream exhaustive `match` into
-/// a compile error, which is not what "purely additive" is supposed to mean.
+///
+/// `#[non_exhaustive]` because `openapi32` adds a variant and Cargo unifies
+/// features across a build.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ParameterIn {
     /// A named query string parameter.
     ///
-    /// The default only because a location has to be one of these; a parameter
-    /// built through the constructors always has its location set explicitly.
+    /// The default only nominally; the constructors always set a location.
     #[default]
     Query,
     /// A request header.
     ///
-    /// Note that `Accept`, `Content-Type` and `Authorization` must **not** be
-    /// declared this way: the specification says such a definition shall be
-    /// ignored. Content negotiation belongs in the `content` map, and
-    /// credentials belong in a [`SecurityScheme`](crate::SecurityScheme).
+    /// `Accept`, `Content-Type` and `Authorization` must **not** be declared
+    /// this way; the specification ignores such a definition. Use the `content`
+    /// map and a [`SecurityScheme`](crate::SecurityScheme) instead.
     Header,
     /// A variable in the path template. Always required.
     Path,
@@ -51,9 +47,8 @@ pub enum ParameterIn {
     Cookie,
     /// The entire query string, described by media type.
     ///
-    /// Introduced in OpenAPI 3.2. This is the sanctioned way to describe query
-    /// strings that a sequence of named parameters cannot express — nested
-    /// filters, JSON in the query, RFC 9535 JSONPath. It must be the only
+    /// Introduced in OpenAPI 3.2, for query strings named parameters cannot
+    /// express — nested filters, JSON, RFC 9535 JSONPath. It must be the only
     /// query-related parameter on its operation.
     #[cfg(feature = "openapi32")]
     Querystring,
@@ -130,10 +125,8 @@ pub struct Parameter {
 /// How a parameter's value is described.
 ///
 /// A parameter carries `schema` or `content`, never both and never neither.
-/// `style`, `explode` and `allowReserved` only mean anything alongside a
-/// schema, so they live in that variant rather than beside it — setting a style
-/// on a content-described parameter is not a mistake to report, it is a
-/// sentence with nowhere to be written.
+/// `style`, `explode` and `allowReserved` only apply alongside a schema, so they
+/// live in that variant.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ParameterShape {
     /// The simple case: a schema, plus how its value is serialized.
@@ -153,10 +146,7 @@ pub enum ParameterShape {
 
     /// The complex case: one media type describing the value.
     ///
-    /// The specification allows exactly one entry, so this holds one pair
-    /// rather than a map that has to be counted. Boxed because a `MediaType`
-    /// dwarfs the schema-side fields, and every parameter would otherwise pay
-    /// for the larger of the two.
+    /// The specification allows exactly one entry, so this holds one pair.
     Content {
         /// The media type the value is carried as.
         media_type: String,
@@ -206,8 +196,7 @@ impl Parameter {
             name: name.into(),
             location,
             description: None,
-            // A path parameter is required by definition, so filling this in is
-            // a correctness measure rather than a convenience.
+            // A path parameter is required by definition.
             required: (location == ParameterIn::Path).then_some(true),
             deprecated: None,
             allow_empty_value: None,
@@ -270,8 +259,7 @@ impl Parameter {
 
     /// Shows the value with one inline example.
     ///
-    /// Replaces any named examples: the two forms exclude each other, so there
-    /// is no state that holds both.
+    /// Replaces any named examples; the two forms exclude each other.
     #[must_use]
     pub fn with_example(mut self, value: impl Into<Value>) -> Self {
         self.examples = Some(Examples::Inline(value.into()));
@@ -307,11 +295,7 @@ impl Parameter {
         &self.shape
     }
 
-    /// The same, mutably.
-    ///
-    /// Handing out `&mut` costs nothing here: every [`ParameterShape`] is a
-    /// valid description, so there is no combination a caller could reach by
-    /// editing one that it could not reach by building one.
+    /// The same, mutably; every [`ParameterShape`] is a valid description.
     pub fn shape_mut(&mut self) -> &mut ParameterShape {
         &mut self.shape
     }
@@ -379,8 +363,7 @@ impl Parameter {
 
     /// Returns the effective style, falling back to the location's default.
     ///
-    /// `None` for a content-described parameter: `style` does not apply to one,
-    /// so there is no default to fall back to either.
+    /// `None` for a content-described parameter, to which `style` does not apply.
     #[must_use]
     pub fn effective_style(&self) -> Option<Style> {
         match self.shape {
@@ -462,9 +445,6 @@ struct RawParameter {
 }
 
 /// A Parameter or Header Object whose fields do not hold together.
-///
-/// Two independent ways to be ill-formed, kept apart so that each reads as the
-/// sentence the specification writes.
 #[derive(Debug)]
 pub(crate) enum ParameterConflict {
     /// The value is described by neither `schema` nor `content`, or by both.

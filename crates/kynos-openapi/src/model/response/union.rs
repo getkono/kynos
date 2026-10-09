@@ -1,10 +1,6 @@
 //! The rule [`Responses::union_from`] applies to two problem responses meeting
 //! on one status.
 //!
-//! Here rather than beside the method, because the method is one paragraph of
-//! dispatch and this is the shape analysis it dispatches to. What the two have
-//! in common is the contract, which the method states.
-//!
 //! [`Responses::union_from`]: crate::model::response::Responses::union_from
 
 use serde_json::Value;
@@ -50,15 +46,9 @@ enum Admits<'a> {
     These(Vec<(&'a str, &'a Schema)>),
     /// Every problem document, so the side is a superset of any other.
     Everything,
-    /// A shape this rule cannot show to cover the other side.
-    ///
-    /// Two cases land here and the decision is the same for both: a shape it
-    /// does not parse at all, and one it parses as admitting strictly *less*
-    /// than a narrowed side -- `false`, an empty `oneOf`, and a `oneOf` whose
-    /// branches overlap. Keeping this apart from
-    /// [`Everything`](Admits::Everything) is the whole of `union_of`'s
-    /// soundness: reading "not narrowed" as "admits everything" is what let a
-    /// schema satisfied by nothing be adopted as a status's declaration.
+    /// A shape not shown to cover the other side: unparsed, or admitting less
+    /// than a narrowed side (`false`, an empty or overlapping `oneOf`). Must not
+    /// be read as [`Everything`](Admits::Everything).
     Unread,
 }
 
@@ -67,25 +57,19 @@ enum Admits<'a> {
 fn union_of(declared: &Schema, incoming: &Schema) -> Option<Schema> {
     match (admits(declared), admits(incoming)) {
         (Admits::These(left), Admits::These(right)) => Some(rebuilt(left, right)),
-        // A side admitting everything already admits every document the other
-        // describes, so it is the union whichever side carries it.
+        // A side admitting everything is the union.
         (Admits::Everything, _) => Some(declared.clone()),
         (_, Admits::Everything) => Some(incoming.clone()),
-        // Nothing here covers the other, so the entry already declared stands
-        // -- which is `merge_from`'s rule, and is sound because a status the
-        // operation already declares is one it already described.
+        // Neither covers the other: the declared entry stands, as in `merge_from`.
         (Admits::Unread, _) | (_, Admits::Unread) => None,
     }
 }
 
 /// What a side admits, as far as this rule can tell.
 ///
-/// `true` admits every instance outright. A bare `$ref` admits every problem
-/// document because of where this runs: the caller has already established
-/// that both sides are `application/problem+json`, so the component being
-/// referred to is the one every problem document satisfies. A `$ref` carrying
-/// *siblings* is not that -- the siblings constrain, and JSON Schema 2020-12
-/// applies them alongside the reference -- so it is unread rather than widest.
+/// A bare `$ref` admits every problem document, since the caller has already
+/// established both sides are `application/problem+json`. A `$ref` with
+/// siblings is unread: JSON Schema 2020-12 applies them alongside it.
 fn admits(schema: &Schema) -> Admits<'_> {
     let object = match schema {
         Schema::Bool(true) => return Admits::Everything,
@@ -93,9 +77,8 @@ fn admits(schema: &Schema) -> Admits<'_> {
         Schema::Object(object) => object,
     };
 
-    // The reference and nothing else, compared against a schema built to be
-    // exactly that -- rather than against a list of keywords this would have to
-    // keep in step with `SchemaObject`.
+    // Compared against a reference-only schema, so no keyword list must track
+    // `SchemaObject`.
     let bare = SchemaObject {
         reference: object.reference.clone(),
         ..SchemaObject::default()
@@ -108,13 +91,10 @@ fn admits(schema: &Schema) -> Admits<'_> {
     match object.one_of.as_deref() {
         // No choice to read, so the schema is one branch.
         None => published(schema).map_or(Admits::Unread, |uri| Admits::These(vec![(uri, schema)])),
-        // A choice between nothing is satisfied by nothing, which is `false`
-        // written another way rather than a narrowing of anything.
+        // An empty choice is satisfied by nothing, like `false`.
         Some([]) => Admits::Unread,
-        // Every branch, or none of them. A `oneOf` where one branch narrows and
-        // another does not is *narrower* than either: a document the narrowed
-        // branch describes matches the unnarrowed one too, and two matches is
-        // what `oneOf` forbids.
+        // Every branch narrows, or the side is unread: a mixed `oneOf` admits
+        // less than either branch, since a document matching both fails it.
         Some(branches) => branches
             .iter()
             .map(|branch| Some((published(branch)?, branch)))
@@ -171,9 +151,7 @@ fn rebuilt(declared: Vec<(&str, &Schema)>, incoming: Vec<(&str, &Schema)>) -> Sc
 
 /// Both descriptions, joined and without repeats.
 ///
-/// Split before joining, because either side may already be a join: a status
-/// several failures answer with describes itself that way, and a sentence
-/// arriving twice tells a reader nothing the once did not.
+/// Split first, since either side may already be a join.
 fn joined(declared: Option<&str>, incoming: Option<&str>) -> Option<String> {
     let mut sentences: Vec<&str> = Vec::new();
     for sentence in declared

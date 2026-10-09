@@ -9,11 +9,9 @@ use crate::model::parameter::ParameterIn;
 /// Not every combination of style and location is legal; OpenAPI 3.2 states
 /// that the table of valid combinations is closed. [`crate::validate`] checks
 /// the pairing.
-/// `#[non_exhaustive]` because OpenAPI 3.2 adds to this and the addition is
-/// `#[cfg]`-gated. Cargo unifies features across a dependency graph, so any
-/// crate enabling `openapi32` enables it for every crate in the build -- and
-/// without this attribute that would turn a downstream exhaustive `match` into
-/// a compile error, which is not what "purely additive" is supposed to mean.
+///
+/// `#[non_exhaustive]` because `openapi32` adds a variant and Cargo unifies
+/// features across a build.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,10 +42,8 @@ pub enum Style {
 
 /// The one style a header may declare.
 ///
-/// A [`Style`] narrowed to the value the specification leaves legal. A header
-/// has no `in` field for a style to disagree with, so the restriction is not a
-/// pairing between two fields but a domain: one variant, and a description
-/// naming any other style does not parse.
+/// A [`Style`] narrowed to the value the specification leaves legal; a
+/// description naming any other style does not parse.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum HeaderStyle {
@@ -63,9 +59,8 @@ impl From<HeaderStyle> for Style {
 
 /// The styles an encoded property may declare.
 ///
-/// A [`Style`] narrowed the way [`HeaderStyle`] is. The specification gives an
-/// encoded property the query parameter styles and no others, and an encoding
-/// has no `in` field either, so this is a domain rather than a pairing.
+/// A [`Style`] narrowed to the query parameter styles, the only ones the
+/// specification gives an encoded property.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum EncodingStyle {

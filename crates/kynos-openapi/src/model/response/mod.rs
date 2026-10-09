@@ -2,9 +2,7 @@
 
 pub mod status;
 
-// Private, because it declares no item of its own that a path could point at:
-// [`Responses::union_from`]'s rule is what it holds, and that rule is reachable
-// only through the method stating it.
+// Private: it holds only the rule behind [`Responses::union_from`].
 mod union;
 
 use std::fmt;
@@ -77,12 +75,9 @@ impl Responses {
 
     /// Returns `true` when nothing at all is declared.
     ///
-    /// Extensions count. `Operation.responses` is skipped when this is true,
-    /// so ignoring them would silently drop a `Responses` that carries only
-    /// `x-` fields — which is exactly the drop a round trip must not make.
-    ///
-    /// This is therefore *not* the question the specification's "MUST contain
-    /// at least one response code" asks. [`declares_a_response`] is.
+    /// Extensions count, so an `x-`-only `Responses` survives a round trip.
+    /// For the specification's "MUST contain at least one response code", use
+    /// [`declares_a_response`].
     ///
     /// [`declares_a_response`]: Responses::declares_a_response
     #[must_use]
@@ -92,9 +87,7 @@ impl Responses {
 
     /// Returns `true` when a status code or `default` is declared.
     ///
-    /// The distinction from [`is_empty`](Responses::is_empty) is the whole
-    /// point: an extension is not a response, so a Responses Object carrying
-    /// only `x-` fields is *not* empty and still declares nothing.
+    /// Unlike [`is_empty`](Responses::is_empty), extensions do not count.
     #[must_use]
     pub fn declares_a_response(&self) -> bool {
         self.default_response.is_some() || !self.responses.is_empty()
@@ -126,64 +119,38 @@ impl Responses {
     /// Merges another set into this one, unioning two problem responses that
     /// meet on one status.
     ///
-    /// [`merge_from`](Responses::merge_from) with one exception, and the
-    /// exception is the only reason this exists. A status is one key and a
-    /// response is what a client is told about it, so where two contributors
-    /// both name a status — an extractor's rejection and the handler's error
-    /// type is the case that motivates this — keeping whichever arrived first
-    /// publishes half of what the operation can send.
-    ///
-    /// The exception is deliberately narrow. It applies where both entries
-    /// declare an `application/problem+json` schema, because two problem
-    /// documents under one status are two branches of a choice over the same
-    /// component — which merging two arbitrary responses is not. Anything else
-    /// keeps the entry already declared, exactly as `merge_from` would.
+    /// [`merge_from`](Responses::merge_from), except where both entries for a
+    /// status declare an `application/problem+json` schema — an extractor's
+    /// rejection and the handler's error type, say. Anything else keeps the
+    /// entry already declared.
     ///
     /// # What the union is
     ///
-    /// The entry already declared, with two of its fields replaced, so
-    /// everything else it carries — a `WWW-Authenticate` header, a link, an
-    /// extension — survives a contributor arriving after it.
+    /// The entry already declared, with two fields replaced; its headers,
+    /// links and extensions survive.
     ///
-    /// * **The schema.** A *narrowed* problem schema constrains `type` to a
-    ///   `const` on every branch, which is the shape `#[derive(ApiError)]`
-    ///   emits: one `allOf` for a single type, a `oneOf` of them for several.
-    ///   Where both sides are narrowed the branches are flattened, deduplicated
-    ///   by the URI they publish and rebuilt — a single `allOf` where one
-    ///   survives, a `oneOf` where several do. The dedup is what keeps `oneOf`
-    ///   sound: two branches repeating a `const` are satisfied at once, which
-    ///   is exactly what the keyword forbids.
-    ///
-    ///   Where one side instead admits *everything* — `true`, or a bare `$ref`
-    ///   to the shared component, which every problem document satisfies — that
-    ///   side is the union: it already admits every document the other
-    ///   describes, and narrowing to the other would declare less than the
-    ///   operation sends.
-    ///
-    ///   A side that is neither is not read as either. A schema satisfied by
-    ///   nothing, an empty `oneOf`, and a `oneOf` whose branches overlap all
-    ///   fail the narrowing read while admitting strictly *less* than a
-    ///   narrowed side, so adopting one would declare a schema the operation's
-    ///   own bodies fail. Those keep the entry already declared, as
-    ///   `merge_from` would.
+    /// * **The schema.** Where both sides are *narrowed* (every branch
+    ///   constrains `type` to a `const`, as `#[derive(ApiError)]` emits), the
+    ///   branches are flattened, deduplicated by URI so `oneOf` stays sound, and
+    ///   rebuilt as one `allOf` or a `oneOf` of several. Where one side admits
+    ///   every problem document — `true`, or a bare `$ref` to the shared
+    ///   component — that side is the union. Any other schema keeps the entry
+    ///   already declared.
     ///
     /// * **The description.** Both, joined with `"; "`, dropping a sentence
-    ///   already written word for word. Prose is under no exactly-one rule, so
-    ///   a status two contributors reach says what each of them means.
+    ///   already written word for word.
     pub fn union_from(&mut self, other: &Self) {
         if self.default_response.is_none() {
             self.default_response.clone_from(&other.default_response);
         }
         for (key, incoming) in &other.responses {
-            // Resolved to an owned entry before anything is inserted, so the
-            // read of the declared response ends where the write begins.
+            // Resolved to an owned entry so the read ends before the write.
             let replacement = match (self.responses.get(key), incoming) {
                 (None, incoming) => Some(incoming.clone()),
                 (Some(RefOr::Item(declared)), RefOr::Item(incoming)) => {
                     unioned(declared, incoming).map(RefOr::Item)
                 }
-                // A response held as a `$ref` is not reached into, on either
-                // side: what it refers to is not this document's to read.
+                // A `$ref` response on either side is not reached into.
                 (Some(_), _) => None,
             };
 
@@ -232,8 +199,7 @@ impl<'de> Deserialize<'de> for Responses {
                     } else if key.starts_with(crate::model::extensions::EXTENSION_PREFIX) {
                         responses.extensions.0.insert(key, access.next_value()?);
                     } else {
-                        // Reject a malformed key here rather than carrying it
-                        // forward: an unparseable status is never meaningful.
+                        // An unparseable status is never meaningful.
                         key.parse::<StatusPattern>().map_err(A::Error::custom)?;
                         responses.responses.insert(key, access.next_value()?);
                     }
@@ -259,16 +225,9 @@ pub struct Response {
 
     /// A description of the response. [CommonMark] syntax may be used.
     ///
-    /// **Required by 3.1, optional in 3.2.** 3.1 marks it `REQUIRED`; 3.2
-    /// drops the marker, so a response stating only a
-    /// [`summary`](Response::summary) is a legal 3.2 document. Modelling it as
-    /// a `String` enforced 3.1's rule on both versions and made such a
-    /// document unparseable, so the requirement lives in
-    /// [`validate`](crate::validate) instead, where it is checked against the
-    /// version the document claims.
-    ///
-    /// [`new`](Response::new) sets it, which is the common case and the only
-    /// one 3.1 admits.
+    /// **Required by 3.1, optional in 3.2**, so [`validate`](crate::validate)
+    /// checks it against the version the document claims. [`new`](Response::new)
+    /// sets it.
     ///
     /// [CommonMark]: https://spec.commonmark.org/
     #[serde(default, skip_serializing_if = "Option::is_none")]

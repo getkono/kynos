@@ -23,11 +23,8 @@ use crate::{
 
 /// The available paths and the operations on each.
 ///
-/// The specification lets this object carry extensions alongside its path
-/// keys, so it is not a bare map: a `#[serde(transparent)]` newtype made an
-/// `x-` member whose value was not a Path Item fail to parse outright. The
-/// shape is [`Responses`](crate::Responses)' — patterned keys, extensions, and
-/// a hand-written (de)serializer to tell them apart.
+/// Not a bare map: the specification lets it carry extensions alongside its
+/// path keys, as [`Responses`](crate::Responses) does.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Paths {
     /// The Path Items, keyed by path template.
@@ -58,9 +55,7 @@ impl Paths {
     /// Returns `true` when the object holds neither a path item nor an
     /// extension.
     ///
-    /// Extensions count, for the reason
-    /// [`Responses::is_empty`](crate::Responses::is_empty)'s do: a Paths
-    /// Object carrying only `x-` fields still has something to write down.
+    /// Extensions count, as for [`Responses::is_empty`](crate::Responses::is_empty).
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.items.is_empty() && self.extensions.is_empty()
