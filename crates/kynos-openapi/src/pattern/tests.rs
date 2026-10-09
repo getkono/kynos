@@ -1,4 +1,7 @@
-use super::translate;
+/// [`super::translate`], with the refusal as the sentence it renders.
+fn translate(pattern: &str) -> Result<String, String> {
+    super::translate(pattern).map_err(|refusal| refusal.to_string())
+}
 
 /// Whether the translation of `pattern` matches `text`.
 fn matches(pattern: &str, text: &str) -> bool {

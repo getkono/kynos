@@ -29,7 +29,7 @@ openapi32 = ["openapi31", "kynos-openapi/openapi32"]
 # `#[schema(pattern = "...")]`. Gated because enforcing it takes a regular
 # expression engine on the request path, which `kynos` gates the same way: the
 # derive refuses the key without it rather than describe a bound nothing checks.
-pattern = ["dep:regex", "dep:regex-syntax"]
+pattern = ["kynos-openapi/pattern"]
 
 [dependencies]
 # The path-template parser is shared with the document model rather than
@@ -38,8 +38,6 @@ pattern = ["dep:regex", "dep:regex-syntax"]
 kynos-openapi = { workspace = true }
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
-regex = { workspace = true, optional = true }
-regex-syntax = { workspace = true, optional = true }
 syn = { workspace = true, features = ["full", "extra-traits", "parsing"] }
 
 [lints]

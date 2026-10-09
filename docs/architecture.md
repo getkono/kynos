@@ -197,7 +197,7 @@ by naming the row X displaces rather than by arguing that X is good.
 | TLS | `rustls`, via `tokio-rustls`, on the `aws-lc-rs` provider it names | [`server/tls/`](../crates/kynos/src/server/tls/) | built |
 | Route matching | `matchit` | [`router/`](../crates/kynos/src/router/) | built |
 | JSON Schema instance validation | `jsonschema` | [`test/conformance.rs`](../crates/kynos/src/test/conformance.rs), gated on `test-util` | built |
-| Regular expressions, for `pattern` | `regex`, `regex-syntax` | [`__private/constraints/pattern.rs`](../crates/kynos/src/__private/constraints/pattern.rs) and the derive's [`derive/schema/pattern.rs`](../crates/kynos-macros/src/derive/schema/pattern.rs), gated on `pattern` | built |
+| Regular expressions, for `pattern` | `regex`, `regex-syntax` | [`__private/constraints/pattern.rs`](../crates/kynos/src/__private/constraints/pattern.rs) and `kynos-openapi`'s [`pattern.rs`](../crates/kynos-openapi/src/pattern.rs), gated on `pattern` | built |
 | Percent-encoding | `percent-encoding` | [`__private/uri.rs`](../crates/kynos/src/__private/uri.rs) | built |
 | Errors | `thiserror` | ambient | built |
 | Observability facade | `tracing` | [`server/`](../crates/kynos/src/server/), [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) | built |

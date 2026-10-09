@@ -348,7 +348,7 @@ macros = ["dep:kynos-macros"]
 # Enforces `#[schema(pattern = "...")]`, which the derive refuses without it:
 # the check runs a regular expression engine on the request path, and a
 # dependency arrives off by default rather than widening the default build.
-pattern = ["macros", "kynos-macros/pattern", "dep:regex"]
+pattern = ["macros", "kynos-macros/pattern", "kynos-openapi/pattern", "dep:regex"]
 
 # --- Runtime ---------------------------------------------------------------
 server = [
