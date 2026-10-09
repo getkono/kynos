@@ -106,8 +106,10 @@ impl Registry {
             .iter_mut()
             .find(|reservation| reservation.name == key)
         {
+            // Rivals file on the outermost reservation of a name, so one with
+            // a holder beneath it never collected any.
+            debug_assert!(reservation.rivals.is_empty());
             holder.rivals.push(schema);
-            holder.rivals.extend(reservation.rivals);
             return reference;
         }
 
