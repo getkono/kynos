@@ -1,8 +1,7 @@
 //! What `#[derive(Reply)]` writes a variant with.
 //!
-//! Emitted code cannot name `serde_json`: the crate deriving `Reply` need not
-//! depend on it, and Kynos already does. So the two shapes a variant takes are
-//! functions here rather than tokens there.
+//! Functions rather than emitted tokens, since the deriving crate need not
+//! depend on `serde_json`.
 
 use kynos_openapi::model::body::mime_names;
 
@@ -28,11 +27,8 @@ pub fn empty(status: u16) -> Response {
 /// A variant carrying a body, as the `application/json` the derive described it
 /// as.
 ///
-/// Serialized in full before anything is written, for the reason
-/// [`Json`](crate::extract::body::json::Json) is: a body written as it
-/// serializes has already committed the status it would then have to retract.
-/// A failure is therefore the documented RFC 9457 500 rather than a truncated
-/// success.
+/// Serialized in full before anything is written, so a failure is the
+/// documented RFC 9457 500 rather than a truncated success.
 #[must_use]
 pub fn json<T: serde::Serialize>(status: u16, body: &T) -> Response {
     let Ok(bytes) = serde_json::to_vec(body) else {

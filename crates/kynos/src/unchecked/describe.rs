@@ -1,14 +1,8 @@
 //! Where a waiver meets the document, and nowhere a request runs.
 //!
-//! Split out of [`super`] so that the two members holding a
-//! [`Document`](kynos_openapi::Document) sit in a different file from
-//! [`through_layers`](super::through_layers), which every unchecked operation
-//! awaits. `docs/testing.md`'s off-path table allows a `Document` per file, so
-//! a file serving requests and a file describing them cannot be the same one
-//! without the allowance covering both.
-//!
-//! Both members belong to types [`super`] declares, so this module has no item
-//! of its own for a path to point at and is private.
+//! Separate from [`super`] because `docs/testing.md`'s off-path table allows a
+//! [`Document`](kynos_openapi::Document) per file, and that file serves
+//! requests.
 
 use kynos_openapi::Document;
 
@@ -18,13 +12,10 @@ impl<C> Unchecked<C> {
     /// Records every unexpressible route on the document, and restamps it.
     pub(crate) fn annotate(&self, document: &mut Document) {
         for route in &self.routes {
-            // The only reachable failure is a list already present in a shape
-            // Kynos never emits, which a document Kynos just built cannot carry.
+            // Fails only on a list shape Kynos never emits.
             let _ = route.record.append_to(document);
         }
 
-        // Derived rather than set: the stamp summarizes what the document now
-        // says, in both directions.
         document.restamp_authority();
     }
 }

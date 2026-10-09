@@ -1,17 +1,13 @@
 //! Errors, and the one recommended way to represent them on the wire.
 //!
 //! Kynos uses [RFC 9457 problem details] for every error it produces, and
-//! `#[derive(ApiError)]` produces them for yours. One shape across the whole
-//! description means a client can handle failures generically instead of
-//! learning a different envelope per endpoint.
+//! `#[derive(ApiError)]` produces them for yours, so a client can handle
+//! failures generically.
 //!
-//! Crucially, this covers the framework's *own* rejections. When a body fails
-//! to parse, or a path parameter will not deserialize, the resulting 400 is a
-//! problem document and it appears in the operation's `responses` — because
+//! This covers the framework's *own* rejections: a body that fails to parse is
+//! a problem document in the operation's `responses`, because
 //! [`FromRequestParts::Rejection`](crate::extract::FromRequestParts::Rejection)
-//! is required to describe itself. A rejection type that does not implement
-//! [`Responses`](crate::response::Responses) does not compile, so no
-//! extractor's failure can be left out of the description.
+//! must implement [`Responses`](crate::response::Responses).
 //!
 //! [RFC 9457 problem details]: https://www.rfc-editor.org/rfc/rfc9457
 //!
@@ -40,10 +36,8 @@ pub enum Error {
     /// The router describes an API that OpenAPI cannot express, or expresses
     /// incorrectly.
     ///
-    /// Every violation is named in the message rather than offered as a cause:
-    /// `source()` carries one error and a validation run produces a set, so a
-    /// chain cannot hold them. This variant has no cause for that reason, which
-    /// also keeps a reporter from printing the first violation twice.
+    /// Every violation is named in the message, so this variant has no
+    /// `source()`: a chain holds one error and validation produces a set.
     #[error(
         "the router does not describe a valid API:\n{}",
         violations.iter().map(|violation| format!("  {violation}")).collect::<Vec<_>>().join("\n")
@@ -64,36 +58,24 @@ pub enum Error {
     /// Two interceptors covering one operation disagreed about what they
     /// contribute to it.
     ///
-    /// Raised while the router is built, which is the whole point: two layers
-    /// that disagree about what a 429 means are caught before the service
-    /// starts rather than in production.
+    /// Raised while the router is built, so the conflict is caught before the
+    /// service starts.
     #[error(transparent)]
     Contribution(#[from] crate::middleware::contribution::ContributionConflict),
 
     /// An interceptor was configured with a combination it cannot honour.
     ///
-    /// Distinct from [`Contribution`](Error::Contribution), which is two
-    /// interceptors disagreeing with each other. This is one interceptor
-    /// disagreeing with the protocol it implements, and it is a *value* rather
-    /// than a type — which is why it is caught while the router is built rather
-    /// than by the compiler.
+    /// Unlike [`Contribution`](Error::Contribution), this is one interceptor
+    /// disagreeing with the protocol it implements, caught while the router is
+    /// built.
     #[error(transparent)]
     Middleware(#[from] crate::middleware::MiddlewareError),
 
     /// The description could not be emitted as JSON.
-    ///
-    /// Named after the emitter rather than after serialization in general: the
-    /// conversion is what records which one failed, so a caller reading the
-    /// message does not have to work out which of a document's two encodings
-    /// was in play.
     #[error("the description could not be emitted as JSON")]
     Json(#[from] serde_json::Error),
 
     /// The description could not be emitted as YAML.
-    ///
-    /// Transparent, unlike [`Json`](Error::Json): the YAML emitter's failure
-    /// already says which encoding failed, so the conversion has nothing to
-    /// add.
     #[cfg(feature = "yaml")]
     #[error(transparent)]
     Yaml(#[from] kynos_openapi::emit::YamlError),
@@ -104,12 +86,8 @@ pub enum Error {
     Server(#[from] crate::server::error::ServerError),
 }
 
-/// `From` is not transitive, so the `TlsError` to `ServerError` link does not on
-/// its own let `?` carry a TLS failure out of a `kynos::Result` function.
-///
-/// It is written out because the source qualifies for one: every `TlsError`
-/// variant names both what was being configured and what was wrong with it, so
-/// the conversion loses nothing and has nothing to add.
+/// Lets `?` carry a TLS failure out of a `kynos::Result` function, through
+/// [`Error::Server`].
 #[cfg(feature = "tls")]
 impl From<crate::server::tls::error::TlsError> for Error {
     fn from(error: crate::server::tls::error::TlsError) -> Self {

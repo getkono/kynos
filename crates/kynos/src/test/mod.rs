@@ -1,13 +1,9 @@
 //! Driving a router in-process, without a socket.
 //!
-//! Beyond the usual convenience, this module offers something the description
-//! makes possible and nothing else provides: it can check that the responses a
-//! test actually observed match what the description promises. A test suite
-//! that exercises every operation therefore also proves the document is
-//! truthful — see [`TestClient::assert_conformance`].
+//! The client also checks that the responses a test observed match what the
+//! description promises, so a suite exercising every operation proves the
+//! document truthful — see [`TestClient::assert_conformance`].
 
-// Private: it declares no item a canonical path could point at, only the
-// checks the two assertions below are written in terms of.
 mod conformance;
 
 use std::{collections::BTreeSet, sync::Mutex};
@@ -26,11 +22,8 @@ use crate::{
     test::conformance::{conformance, declared_keys, declared_response, matched_template},
 };
 
-/// One response, as it was received.
-///
-/// The recorded request is the *concrete* path rather than the template that
-/// matched it: the description is the only authority on templates, so the match
-/// is redone against it when an assertion runs rather than being cached here.
+/// One response, as it was received, with the concrete path; the template is
+/// matched against the description when an assertion runs.
 #[derive(Debug)]
 struct Observed {
     method: HttpMethod,
@@ -44,8 +37,7 @@ struct Observed {
 #[derive(Debug)]
 pub struct TestClient<C> {
     service: Service<C>,
-    /// Interior mutability because [`TestRequest::send`] borrows the client
-    /// shared: a test holds one client and chains requests off it.
+    /// Behind a lock because [`TestRequest::send`] borrows the client shared.
     observed: Mutex<Vec<Observed>>,
 }
 
@@ -90,10 +82,6 @@ impl<C> TestClient<C> {
     }
 
     /// Begins a `HEAD` request.
-    ///
-    /// Routable through `#[kynos::head]` and, until now, untestable — which is
-    /// the shape of every method below: the router accepts them and nothing
-    /// here could send one.
     #[must_use]
     pub fn head(&self, path: &str) -> TestRequest<'_, C> {
         self.request(HttpMethod::HEAD, path)
@@ -113,8 +101,7 @@ impl<C> TestClient<C> {
 
     /// Begins a `QUERY` request.
     ///
-    /// Registered by `#[kynos::query]`, and not one `http::Method` names, so it
-    /// is built from the token.
+    /// The method `#[kynos::query]` registers.
     #[must_use]
     pub fn query(&self, path: &str) -> TestRequest<'_, C> {
         self.request(
@@ -125,8 +112,7 @@ impl<C> TestClient<C> {
 
     /// Begins a request with any method.
     ///
-    /// The escape hatch for a method Kynos routes but does not name, so a test
-    /// is never blocked on this type growing a verb.
+    /// For a method Kynos routes that this type has no shortcut for.
     #[must_use]
     pub fn method(&self, method: HttpMethod, path: &str) -> TestRequest<'_, C> {
         self.request(method, path)
@@ -159,9 +145,8 @@ impl<C> TestClient<C> {
     /// validates against the declared schema, and that every declared required
     /// header was sent.
     ///
-    /// A response declaring *no* representation is checked too. Declaring
-    /// nothing is a claim about the exchange rather than the absence of one, so
-    /// a body or a `Content-Type` arriving under it is reported.
+    /// A body or a `Content-Type` arriving under a response that declares no
+    /// representation is reported too.
     ///
     /// A `HEAD` is checked against the operation that answered it: its own
     /// `head`, or the `get` of a path declaring none. It carries no content,
@@ -196,11 +181,8 @@ impl<C> TestClient<C> {
     /// Asserts that every declared response was exercised at least once.
     ///
     /// Coverage over the *contract* rather than over the code: it finds the 409
-    /// that the description promises and no test has ever produced.
-    ///
-    /// A `HEAD` answered by a path's `get` never counts toward that operation's
-    /// responses: its content is never observed, so it cannot stand in for the
-    /// `GET` exchange a declared response describes.
+    /// that the description promises and no test has ever produced. A `HEAD`
+    /// answered by a path's `get` does not count toward that operation.
     ///
     /// # Panics
     ///
@@ -259,9 +241,7 @@ impl<C> TestRequest<'_, C> {
     ///
     /// # Panics
     ///
-    /// Panics when `name` or `value` is not one HTTP can carry. A test writes
-    /// both as literals, so a malformed one is a mistake in the test rather
-    /// than a condition to handle.
+    /// Panics when `name` or `value` is not one HTTP can carry.
     #[must_use]
     pub fn header(mut self, name: &str, value: &str) -> Self {
         let name = HeaderName::from_bytes(name.as_bytes())
@@ -277,13 +257,9 @@ impl<C> TestRequest<'_, C> {
     /// # Panics
     ///
     /// Panics when `body` cannot be serialized to JSON: a `Serialize`
-    /// implementation that fails itself, or a map with a key JSON cannot
-    /// spell as a string. `serde_json` writes string, integer, `bool`, `char`
-    /// and finite float keys, a unit enum variant as its name, and a newtype
-    /// struct or `Some` key as the key it wraps, so a `HashMap<MyEnum, _>`
-    /// serializes. It refuses the rest, such as a tuple, struct, `None` or unit
-    /// key, or a NaN or infinite float, so plain data such as a
-    /// `HashMap<(u8, u8), _>` panics here.
+    /// implementation that fails itself, or a map with a key JSON cannot spell
+    /// as a string, such as a tuple, struct, `None` or unit key, or a NaN or
+    /// infinite float (so a `HashMap<(u8, u8), _>` panics here).
     #[cfg(feature = "json")]
     #[must_use]
     pub fn json<T: serde::Serialize>(mut self, body: &T) -> Self {
@@ -297,12 +273,8 @@ impl<C> TestRequest<'_, C> {
 
     /// Adds a query string to the target, encoded from a serializable value.
     ///
-    /// Named for the part of the target it writes, because [`TestClient::query`]
-    /// one link up the chain begins a `QUERY` request: two `query` methods on
-    /// one expression would read as the same call.
-    ///
-    /// Appends to whatever the path already carries, so a test can name the
-    /// stable part of a target once and vary the rest.
+    /// Not `query`, which [`TestClient::query`] uses for the `QUERY` method.
+    /// Appends to whatever query the path already carries.
     ///
     /// # Panics
     ///
@@ -322,9 +294,8 @@ impl<C> TestRequest<'_, C> {
 
     /// Sends a cookie.
     ///
-    /// Accumulated rather than set, because RFC 6265 section 5.4 puts every
-    /// cookie in *one* `Cookie` field separated by `; ` — a client that sent
-    /// two fields would be testing a shape no browser produces.
+    /// Accumulated rather than set: RFC 6265 section 5.4 puts every cookie in
+    /// one `Cookie` field separated by `; `.
     #[must_use]
     pub fn cookie(mut self, name: &str, value: &str) -> Self {
         self.cookies.push((name.to_owned(), value.to_owned()));
@@ -334,8 +305,8 @@ impl<C> TestRequest<'_, C> {
     /// Says who the request came from.
     ///
     /// Without one, a service reading a peer address sees the in-process
-    /// default — which is right for most tests and wrong for exactly the ones
-    /// that care: a rate limiter keyed by client, or a trusted-proxy policy.
+    /// default; set it to test a rate limiter keyed by client, or a
+    /// trusted-proxy policy.
     #[must_use]
     pub fn peer(mut self, address: std::net::SocketAddr) -> Self {
         self.peer = Some(address);
@@ -346,9 +317,7 @@ impl<C> TestRequest<'_, C> {
     ///
     /// # Panics
     ///
-    /// Panics when `media_type` is not a header value. A test writes it as a
-    /// literal, so a malformed one is a mistake in the test rather than a
-    /// condition to handle.
+    /// Panics when `media_type` is not a header value.
     #[must_use]
     pub fn body(mut self, media_type: &str, bytes: impl Into<Bytes>) -> Self {
         self.body = bytes.into();
@@ -386,8 +355,7 @@ impl<C> TestRequest<'_, C> {
     /// # Panics
     ///
     /// Panics when the path is not a request target, or when the response body
-    /// fails part-way through — neither of which a service driven in-process
-    /// can do to a test that spelled its path correctly.
+    /// fails part-way through.
     pub async fn send(mut self) -> TestResponse {
         let mut request = Request::new(Body::from_bytes(self.body));
         *request.method_mut() = self.method.clone();
@@ -411,8 +379,7 @@ impl<C> TestRequest<'_, C> {
         *request.headers_mut() = std::mem::take(&mut self.headers);
 
         if let Some(peer) = self.peer {
-            // The same extension the server inserts per connection, so a
-            // service reading one cannot tell a test from a socket.
+            // The same extension the server inserts per connection.
             request
                 .extensions_mut()
                 .insert(crate::extract::connection::Connection::from_peer(
@@ -449,10 +416,7 @@ impl<C> TestRequest<'_, C> {
 #[derive(Debug)]
 pub struct TestResponse {
     response: Response,
-    /// Kept beside the response because the body was already drained to record
-    /// it: a `TestResponse` stays readable after every assertion, and
-    /// [`into_inner`](TestResponse::into_inner) still hands back a whole
-    /// response.
+    /// The drained body, kept so the response stays readable after assertions.
     body: Bytes,
 }
 
@@ -490,8 +454,7 @@ impl TestResponse {
     ///
     /// # Panics
     ///
-    /// Panics with the body included, since a failing assertion is nearly
-    /// always explained by it.
+    /// Panics, with the body included, when the status differs.
     pub fn assert_status(&self, expected: StatusCode) -> &Self {
         let actual = self.status();
         assert!(
@@ -540,8 +503,7 @@ impl TestResponse {
     ///
     /// # Panics
     ///
-    /// Panics when the body is not UTF-8, which a test asserting text has
-    /// already decided it is.
+    /// Panics when the body is not UTF-8.
     #[must_use]
     pub fn text(&self) -> &str {
         std::str::from_utf8(&self.body).unwrap_or_else(|_| {
@@ -640,10 +602,8 @@ impl TestResponse {
 
     /// Asserts this is a 206 enclosing exactly `range` of `complete_length`.
     ///
-    /// Checks the field *and* the body, because the pair is what a range
-    /// response is: a `Content-Range` naming octets the body does not carry
-    /// produces a field RFC 9110 section 14.4 tells a recipient never to
-    /// recombine, and either half alone passes while the response is wrong.
+    /// Checks the field *and* that the body length matches it (RFC 9110
+    /// section 14.4).
     ///
     /// # Panics
     ///
@@ -670,15 +630,8 @@ impl TestResponse {
 
     /// The Server-Sent Events this response carries, parsed.
     ///
-    /// The body is already drained, so this parses what arrived rather than
-    /// waiting for more — which is what makes asserting a *finite* number of
-    /// events possible without the stream closing first. A handler under test
-    /// sends a bounded feed and this reads it; an endless one is driven over a
-    /// real socket instead, where `tests/sse.rs` reads for a deadline.
-    ///
-    /// Comment lines are dropped: the protocol requires a client to ignore
-    /// them, which is exactly what makes them usable as a keep-alive, so a test
-    /// counting events must not count heartbeats.
+    /// The body is already drained, so the feed under test must be bounded.
+    /// Comment lines (keep-alives) are dropped, as a client ignores them.
     #[must_use]
     pub fn events(&self) -> Vec<TestEvent> {
         self.text()
@@ -690,17 +643,13 @@ impl TestResponse {
                 let mut carried = false;
 
                 for line in record.lines() {
-                    // `: comment` -- ignored by every client, and by this.
                     let Some((name, value)) = line.split_once(':') else {
                         continue;
                     };
                     let value = value.strip_prefix(' ').unwrap_or(value);
 
                     match name {
-                        // An empty name is the comment form, `: text`, which a
-                        // client ignores and so does this -- along with any
-                        // field the protocol grows that a test cannot assert
-                        // on yet.
+                        // Comments (empty name) and unknown fields fall to `_`.
                         "data" => {
                             data.push(value);
                             carried = true;
@@ -723,8 +672,6 @@ impl TestResponse {
 
                 // A record that was only comments is a keep-alive, not an event.
                 carried.then(|| {
-                    // A value spanning several `data` lines is rejoined with the
-                    // newlines the encoder split it on.
                     event.data = data.join("\n");
                     event
                 })
@@ -756,10 +703,7 @@ fn responses(count: usize) -> String {
     }
 }
 
-/// One Server-Sent Event, as a test reads it.
-///
-/// The parsed form rather than the wire form: a test asserting what a client
-/// receives should not be re-implementing the framing to do it.
+/// One Server-Sent Event, parsed, as a test reads it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TestEvent {
     /// The `data` value, with a multi-line one rejoined.
@@ -777,8 +721,7 @@ impl TestEvent {
     ///
     /// # Panics
     ///
-    /// Panics when `data` is not the JSON `T`, which is the assertion a test
-    /// wanted to make anyway.
+    /// Panics when `data` is not the JSON `T`.
     #[cfg(feature = "json")]
     #[must_use]
     pub fn json<T: serde::de::DeserializeOwned>(&self) -> T {

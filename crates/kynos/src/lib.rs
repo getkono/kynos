@@ -12,13 +12,11 @@
 //! [`Unchecked<T>`](schema::unchecked::Unchecked), which declares a payload
 //! deliberately unconstrained and is annotated as such in the document, the
 //! `unchecked` feature's escape hatches, named below, and `assets-fs`, which
-//! implies it. Two README anti-patterns —
-//! request-derived dependencies and header-based versioning — are advice the
-//! compiler does not keep.
+//! implies it. Two README anti-patterns — request-derived dependencies and
+//! header-based versioning — are advice the compiler does not keep.
 //!
-//! The emitted document is therefore not documentation that drifts from the
-//! code — it is a checked contract derived from the same types the server runs
-//! on.
+//! The emitted document is therefore a checked contract derived from the same
+//! types the server runs on.
 //!
 //! # What this costs you
 //!
@@ -27,13 +25,12 @@
 //! runtime-chosen status codes, WebSockets. The `unchecked` feature provides
 //! named escape hatches — `layer_unchecked`, `into_tower_unchecked`,
 //! `route_unchecked` and `upgrade_unchecked` — at the price of a description
-//! that is no longer authoritative for the route that took one. See the README for the full list and the reasoning.
+//! that is no longer authoritative for the route that took one. See the README
+//! for the full list.
 //!
 //! # The guarantees, as compile-fail tests
 //!
-//! These are the claims above, stated as code that must not compile. They run
-//! as part of the doc test suite, so a regression in any of them is a test
-//! failure rather than a documentation inaccuracy.
+//! These are the claims above, stated as code that must not compile.
 //!
 //! A path template that is not a legal Paths key — no leading slash:
 //!
@@ -68,10 +65,9 @@
 //!
 //! `openapi31` is the baseline; `openapi32` is a strict superset that unlocks
 //! Server-Sent Events, streaming bodies and whole-query-string parameters,
-//! none of which OpenAPI 3.1 can describe. Enabling it is additive: Cargo
-//! unifies features across a dependency graph, so the model types it extends
-//! are [`non_exhaustive`](openapi::SpecVersion) and a `match` over one keeps
-//! compiling either way. The default-on `json` feature adds
+//! none of which OpenAPI 3.1 can describe. Enabling it is additive: the model
+//! types it extends are [`non_exhaustive`](openapi::SpecVersion). The
+//! default-on `json` feature adds
 //! application JSON request and response codecs; it does not control OpenAPI
 //! document serialization or the framework's problem-details responses.
 //!
@@ -79,14 +75,9 @@
 //! tokio, which is the only supported runtime: Kynos does not abstract over the
 //! runtime and offers no flag selecting another one.
 
-// docs.rs builds on nightly with `--cfg docsrs`, so every feature-gated item
-// there carries its "available on crate feature X only" badge. Stable builds
-// never see the attribute.
+// Feature badges on docs.rs, which builds on nightly with `--cfg docsrs`.
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-// `openapi31` is the baseline object model rather than an optional extra.
-// `openapi32` implies it, so this fires only when a caller disables default
-// features and asks for neither.
 #[cfg(not(feature = "openapi31"))]
 compile_error!(
     "kynos requires the `openapi31` feature. OpenAPI 3.1 is the baseline; enable \
@@ -96,9 +87,6 @@ compile_error!(
 #[cfg(all(feature = "server", not(any(feature = "http1", feature = "http2"))))]
 compile_error!("the `server` feature requires at least one of `http1` or `http2`");
 
-// `time` carries the shapes the date and time backends map onto and names no
-// library of its own, so on its own it describes nothing. Saying so is better
-// than compiling to a feature that silently does nothing.
 #[cfg(all(
     feature = "time",
     not(any(feature = "time-chrono", feature = "time-jiff"))
@@ -140,10 +128,8 @@ pub mod test;
 #[cfg(feature = "unchecked")]
 pub mod unchecked;
 
-/// The OpenAPI document model Kynos emits into.
-///
-/// Re-exported so that a program depending on `kynos` never needs to name
-/// `kynos-openapi` directly.
+/// The OpenAPI document model Kynos emits into, so a program never needs to
+/// name `kynos-openapi` directly.
 pub use kynos_openapi as openapi;
 
 pub use crate::{
@@ -157,10 +143,8 @@ pub use kynos_macros::{
     delete, get, head, operation, options, patch, path, post, put, routes, trace,
 };
 
-// Each of these derives a trait that its feature gates, so exporting it more
-// widely would only trade one diagnostic for a worse one: "no derive macro
-// named `CookieParams`" says which feature to enable, where an unresolved trait
-// in the expansion points at code the user did not write.
+// Gated with the trait each derives, so a missing feature reports a missing
+// macro rather than an unresolved trait inside the expansion.
 #[cfg(all(feature = "macros", feature = "cookie"))]
 pub use kynos_macros::CookieParams;
 #[cfg(all(feature = "macros", feature = "multipart"))]
@@ -175,25 +159,15 @@ pub mod prelude {
     pub use crate::{
         di::inject::Inject,
         error::{Error, Result, problem::Problem},
-        // `Headers` beside `HeaderParams`, and the rest of the pairs. The
-        // derives were all exported here and half the types they are used with
-        // were not, so `Path`/`PathParams` and `Query`/`QueryParams` arrived
-        // together while `Auth`, `Headers` and `Cookies` had to be reached by
-        // their canonical paths. `Auth` was the sharpest: `docs/security.md`
-        // calls it the only door.
+        // Each extractor beside the derive it is used with.
         extract::params::{header::Headers, path::Path, query::Query},
         response::{
             headers::WithHeaders,
             status::{Accepted, Created, NoContent, Redirect},
         },
         router::{Router, group::Group},
-        // Not `as SchemaTrait`. rustc renders a trait by its shortest *visible*
-        // path, so an alias here became the name in every user's compiler
-        // output — a name with no canonical path and no mention in the
-        // documentation, contradicting the `on_unimplemented` message printed
-        // directly above it. A derive lives in the macro namespace and a trait
-        // in the type namespace, which is how `serde` exports both as
-        // `Serialize`, so the two can share this name too.
+        // Unaliased: rustc names a trait by its shortest visible path in
+        // diagnostics. The derive shares the name from the macro namespace.
         schema::Schema,
         security::auth::Auth,
     };

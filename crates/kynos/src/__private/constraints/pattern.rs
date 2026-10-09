@@ -1,10 +1,7 @@
 //! The `pattern` check, behind the `pattern` feature.
 //!
 //! The derive translates each pattern from ECMA-262 to the `regex` dialect and
-//! compiles it when it expands, so a pattern reaching here is one the engine
-//! compiles. Each field's pattern is a `static` the expansion declares, and is
-//! compiled the first time a value is checked against it rather than per
-//! request.
+//! compiles it when it expands. Each is a `static`, compiled on first check.
 
 use std::sync::OnceLock;
 
@@ -39,8 +36,7 @@ impl Pattern {
     fn is_match(&self, text: &str) -> bool {
         self.compiled
             .get_or_init(|| {
-                // The derive compiled this same string with this same engine
-                // version and configuration, so this cannot fail.
+                // The derive already compiled this string with this engine.
                 Regex::new(self.translated).expect("the derive compiled this pattern")
             })
             .is_match(text)

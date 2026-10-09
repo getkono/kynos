@@ -11,16 +11,13 @@ use crate::{
 /// Builds an endpoint from a route attribute's compile-time facts.
 ///
 /// `M` is the marker type the attribute emitted, carrying [`EndpointMeta`];
-/// `handler` is the function of the same name. The attribute emits a *braced*
-/// struct, so one identifier names the marker in type position and the function
-/// in value position — which is what lets `routes![get_user]` pass both without
-/// naming the function's unnameable type.
+/// `handler` is the function of the same name. The marker is a *braced* struct,
+/// so one identifier names both, letting `routes![get_user]` pass both.
 ///
 /// # Panics
 ///
 /// Panics if the marker's method or path is not one the attribute could have
-/// emitted. Reaching that means `EndpointMeta` was implemented by hand with
-/// values the attribute's own compile-time checks would have rejected.
+/// emitted, i.e. `EndpointMeta` was implemented by hand.
 pub fn from_meta<C, M, H, A>(handler: H) -> EndpointBuilder<C, H, A, M::PanicPolicy>
 where
     C: Send + Sync + 'static,

@@ -96,8 +96,8 @@ impl AcceptBackoff {
 /// lifecycle reaches `Forced`.
 ///
 /// A listener that gives up reports [`ServerError::Accept`] on `failures`
-/// before it drains, not by returning, so the server starts its shutdown
-/// deadline while these connections are still in flight rather than after.
+/// before it drains, so the shutdown deadline starts while its connections are
+/// still in flight.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::server) async fn accept_loop<C: 'static>(
     listener: TcpListener,

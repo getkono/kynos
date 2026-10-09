@@ -25,10 +25,6 @@ const PATH_SEGMENT_ENCODE_SET: &percent_encoding::AsciiSet = &percent_encoding::
     .add(b'}');
 
 /// RFC 8187 `attr-char`: `token` minus `*`, `'` and `%`.
-///
-/// Written as a subtraction from `NON_ALPHANUMERIC` because the ABNF is itself
-/// a subtraction: everything alphanumeric, plus the twelve marks the production
-/// lists, and nothing else.
 const EXT_VALUE_ENCODE_SET: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
     .remove(b'!')
     .remove(b'#')
@@ -47,12 +43,7 @@ const EXT_VALUE_ENCODE_SET: &percent_encoding::AsciiSet = &percent_encoding::NON
 /// `ext-value`, which is what a `filename*` parameter carries after
 /// `UTF-8''`.
 ///
-/// Total: every input has an encoding, since anything outside `attr-char`
-/// becomes UTF-8 octets and then percent triplets. The caller supplies the
-/// `charset` and `language` halves, because those are constants at every call
-/// site Kynos has.
-///
-/// Lives here for the same reason the decoder below does.
+/// Total. The caller supplies the `charset` and `language` halves.
 #[must_use]
 pub(crate) fn encode_ext_value(value: &str) -> String {
     percent_encoding::utf8_percent_encode(value, EXT_VALUE_ENCODE_SET).to_string()
@@ -61,10 +52,8 @@ pub(crate) fn encode_ext_value(value: &str) -> String {
 /// Percent-decodes one captured value, the inverse of what this module writes
 /// into a rendered path.
 ///
-/// Lives here because this file is where the dependency table puts
-/// `percent-encoding`: an extractor performs the decode, and a response header
-/// group performs the encode above, but naming the crate at either would put it
-/// under a second path.
+/// Lives here because the dependency table confines `percent-encoding` to this
+/// file.
 ///
 /// # Errors
 ///
@@ -78,17 +67,13 @@ pub(crate) fn decode_path_value(
 /// The pairs a raw query string carries, each half decoded to octets, in the
 /// order the target wrote them.
 ///
-/// The one reading of form-encoded pairs that a derived `QueryParams` group, a
-/// query API key and the `Form<T>` body extractor share, so a parameter, a key
-/// and a form field named alike cannot disagree about what the client sent. The
-/// halves are octets rather than text so a name is compared as octets and each
-/// reader decides what a value that is not UTF-8 means to it: a query reader
-/// judges only the pairs it asks for, while `Form<T>` checks every pair.
+/// Shared by `QueryParams`, query API keys and `Form<T>`, so they cannot
+/// disagree about what the client sent; octets, so each reader decides what
+/// non-UTF-8 means to it.
 ///
-/// Form rules, because OpenAPI requires them of every `in: query` parameter:
-/// `+` is a space and `%2B` a plus sign. An empty pair is skipped, a pair with
-/// no `=` has an empty value, and a malformed escape is kept as the literal `%`
-/// rather than rejected, so whether a pair is acceptable is left to its reader.
+/// Form rules, as OpenAPI requires of `in: query`: `+` is a space and `%2B` a
+/// plus sign. An empty pair is skipped, a pair with no `=` has an empty value,
+/// and a malformed escape is kept as the literal `%`.
 pub fn query_pairs(
     query: Option<&str>,
 ) -> impl Iterator<Item = (std::borrow::Cow<'_, [u8]>, std::borrow::Cow<'_, [u8]>)> {

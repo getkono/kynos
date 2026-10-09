@@ -83,10 +83,8 @@ impl Message {
         let mut end = text.len();
         if end > CAPACITY - self.len {
             end = CAPACITY - self.len;
-            // Back off any continuation byte, so the cut falls between
-            // characters and the buffer stays valid UTF-8. `end` is below
-            // `text.len()` here, and `text[0]` starts a character, so the
-            // loop stays in bounds and stops by index 0.
+            // Back off continuation bytes so the cut stays valid UTF-8; stops
+            // by index 0, since `text[0]` starts a character.
             while text[end] & 0b1100_0000 == 0b1000_0000 {
                 end -= 1;
             }

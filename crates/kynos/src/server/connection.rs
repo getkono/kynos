@@ -41,8 +41,7 @@ pub(in crate::server) async fn serve_connection<C: 'static>(
     config: TransportConfig,
     lifecycle: watch::Receiver<Lifecycle>,
 ) {
-    // A build without HTTP/1 has no header-read timeout to hold the head to,
-    // so an HTTP/2-only one holds it to the idle timeout instead.
+    // Without HTTP/1's header-read timeout, the idle timeout bounds the head.
     #[cfg(feature = "http1")]
     let deadline = (config.http1).first_head_deadline(std::time::Instant::now());
     #[cfg(not(feature = "http1"))]
@@ -62,9 +61,7 @@ pub(in crate::server) async fn serve_connection<C: 'static>(
         match handshake {
             Ok(Ok(stream)) => {
                 let (_, session) = stream.get_ref();
-                // Built once, here, and reference-counted onto every request the
-                // connection carries: a chain copied per request would copy a
-                // client certificate on every call of a busy mutual-TLS session.
+                // Built once and reference-counted onto every request.
                 let mut identity = TlsIdentity::default().with_peer_certificates(
                     session
                         .peer_certificates()
@@ -173,17 +170,8 @@ where
 {
     let mut builder = builder(&config);
 
-    // The handshake already settled which protocol this connection speaks, so
-    // the driver is told rather than left to derive it a second time from the
-    // first bytes of the stream. Sniffing costs no read syscall under TLS --
-    // `tokio-rustls` has already decrypted and buffered the record the head
-    // arrived in -- but it copies that head onto the heap, and it reads the
-    // connection's protocol off the wire when rustls has the answer, which
-    // makes the bytes a second source of truth for it.
-    //
-    // Any other identifier, and every connection with no ALPN at all -- which
-    // is every plaintext one -- is served by the sniffing driver as before,
-    // since there the wire is the only source there is.
+    // Pin the protocol ALPN settled rather than sniffing it again from the
+    // wire; a connection without ALPN (every plaintext one) is sniffed.
     let pinned = match connection_info.alpn_protocol() {
         #[cfg(feature = "http2")]
         Some(alpn) if alpn == crate::server::protocol::ALPN_HTTP2 => Some(Protocol::Http2),
@@ -192,9 +180,8 @@ where
         _ => None,
     };
 
-    // Set by the first request head the codec hands over, which ends the
-    // deadline's hold; loaded before it is stored, so a busy connection does
-    // not write a shared line on every request.
+    // Set by the first request head; loaded before stored, so a busy
+    // connection does not write a shared line on every request.
     let head_seen = deadline.map(|_| Arc::new(AtomicBool::new(false)));
     let handler_head_seen = head_seen.clone();
     #[cfg(feature = "http2")]
@@ -233,13 +220,9 @@ where
         }
     });
 
-    // The pin waits for the client to say something first. A codec built before
-    // the client has spoken cannot be shut down gracefully -- hyper's HTTP/2
-    // server holds `close_pending` until the preface arrives -- so a pinned
-    // connection that fell silent would hold a drain open for the whole
-    // shutdown timeout. Until the first byte lands the connection is ours to
-    // drop, which is the property the driver's own sniff had for free: it owned
-    // the wait, and cancelled its own read.
+    // Wait for the first byte before building a pinned codec: hyper's HTTP/2
+    // server cannot shut down gracefully before the preface, so a silent
+    // connection would hold a drain open for the whole shutdown timeout.
     let io = match pinned {
         Some(protocol) => {
             let Some(io) = first_byte(io, &mut lifecycle, deadline).await else {
@@ -279,14 +262,12 @@ where
                 }
                 connection.as_mut().graceful_shutdown();
                 draining = true;
-                // A drain gets a whole idle period of its own, not the rest
-                // of one already under way.
+                // A drain gets a whole idle period of its own.
                 quiet.set(idle());
             }
             result = &mut connection => return result,
             () = &mut unheard => return Err(NO_REQUEST_HEAD.into()),
-            // GOAWAY first, so the peer learns not to open another stream;
-            // a stream it opened before reading it is still served. A whole
+            // GOAWAY first, still serving streams opened before it was read; a
             // further idle period in the drain means the close never came.
             () = &mut quiet => {
                 if draining {
@@ -338,11 +319,8 @@ impl hyper::body::Body for Counted {
     }
 }
 
-/// The protocol a handshake settled on, held between the decision and the pin.
-///
-/// Between them the connection waits for the client's first byte, so the two
-/// cannot be one expression -- and reading the ALPN identifier twice would let
-/// the two readings disagree about which protocol was negotiated.
+/// The protocol a handshake settled on, held across the wait for the first
+/// byte so ALPN is read only once.
 #[derive(Clone, Copy, Debug)]
 enum Protocol {
     #[cfg(feature = "http1")]
@@ -354,10 +332,8 @@ enum Protocol {
 /// Waits for the client to send one byte, or for shutdown to start or
 /// `deadline` to pass first.
 ///
-/// `None` when shutdown started, when the deadline passed, when the peer
-/// closed, and when the read failed: all four mean a connection with nothing
-/// in flight, which is a socket to drop rather than a codec to build and shut
-/// down.
+/// `None` when shutdown started, the deadline passed, the peer closed, or the
+/// read failed: a socket to drop rather than a codec to build.
 async fn first_byte<I>(
     mut io: I,
     lifecycle: &mut watch::Receiver<Lifecycle>,
@@ -368,13 +344,9 @@ where
 {
     let mut byte = [0_u8; 1];
     let mut buf = ReadBuf::new(&mut byte);
-    // `AsyncRead::poll_read` rather than `AsyncReadExt::read`: the extension
-    // trait lives behind tokio's `io-util`, which the server does not enable
-    // and only some feature combinations pull in behind its back.
-    //
-    // Losing the race loses no byte. The buffer is this future's, not the
-    // stream's, and a poll that has not filled it has read nothing -- so the
-    // branch that wins reads a whole byte or none at all.
+    // `poll_read`, since `AsyncReadExt` needs tokio's `io-util`, which the
+    // server does not enable. Losing the race loses no byte: an unfilled poll
+    // has read nothing.
     let read = tokio::select! {
         biased;
         _ = wait_until_stopping(lifecycle) => return None,
@@ -393,19 +365,15 @@ where
                 io,
             })
         }
-        // A read that filled nothing is the peer closing, and an error is the
-        // connection failing: neither leaves anything in flight.
+        // The peer closed, or the read failed.
         _ => None,
     }
 }
 
 /// A stream whose first byte has already been read, handed back before the rest.
 ///
-/// One byte rather than a buffer, and inline rather than on the heap: it is
-/// only the signal that the client has begun, and the codec reads the head
-/// itself. A connection that is not pinned carries one of these with nothing
-/// held back, so the two paths differ in when the codec is built rather than in
-/// what it is built on.
+/// An unpinned connection carries one with nothing held back, so both paths
+/// build the codec on the same type.
 struct FirstByte<I> {
     first: Option<u8>,
     io: I,

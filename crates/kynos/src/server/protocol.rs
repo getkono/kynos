@@ -14,12 +14,7 @@ use crate::server::protocol::http1::{Http1Config, MIN_HTTP1_BUFFER_SIZE};
 use crate::server::protocol::http2::{Http2Config, Http2FlowControl};
 
 /// The ALPN protocol identifier for HTTP/2, as the IANA registry assigns it.
-///
-/// Named here rather than at either site that needs it, because both sides of
-/// one negotiation read it: `tls` offers it to the client, and `connection`
-/// compares what the handshake settled against it to pin the driver. Two
-/// spellings of the same identifier would let a connection be offered a
-/// protocol the driver then declines to recognise.
+/// Shared by `tls`, which offers it, and `connection`, which pins on it.
 #[cfg(feature = "http2")]
 pub(in crate::server) const ALPN_HTTP2: &[u8] = b"h2";
 
@@ -30,8 +25,7 @@ pub(in crate::server) const ALPN_HTTP1_1: &[u8] = b"http/1.1";
 /// The largest flow-control window RFC 9113 §6.9.1 allows, 2^31-1.
 ///
 /// `h2` asserts it while handshaking, so a larger window panics the connection
-/// rather than failing `prepare`. Spelled out because the refusal below names
-/// it as a literal.
+/// rather than failing `prepare`.
 #[cfg(feature = "http2")]
 const MAX_HTTP2_WINDOW_SIZE: u32 = 2_147_483_647;
 
@@ -47,9 +41,7 @@ pub(in crate::server) fn validate_protocol_config(
             ));
         }
         if http1.max_buffer_size < MIN_HTTP1_BUFFER_SIZE {
-            // `InvalidConfiguration` carries a `&'static str`, so the operator
-            // is told the floor as a literal. This is what stops the two from
-            // parting company when the constant moves.
+            // Keeps the literal in the message in step with the constant.
             const _: () = assert!(
                 MIN_HTTP1_BUFFER_SIZE == 8_192,
                 "MIN_HTTP1_BUFFER_SIZE moved; the message below still says 8192"

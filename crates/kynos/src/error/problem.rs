@@ -52,10 +52,9 @@ const RESERVED: [&str; 5] = ["type", "title", "status", "detail", "instance"];
 /// returns::<Result<NoContent, Problem>>();
 /// ```
 ///
-/// This is [anti-pattern 4] applied to errors, and the same reasoning that
-/// keeps `IntoResponse` off `StatusCode`. Name an error type instead and let
+/// This is [anti-pattern 4] applied to errors. Name an error type instead and let
 /// `#[derive(ApiError)]` produce the problem, so the statuses the operation
-/// advertises are a `const` rather than whatever the handler happened to build.
+/// advertises are a `const`.
 ///
 /// [anti-pattern 4]: https://github.com/getkono/kynos#anti-patterns
 #[derive(Clone, Debug, PartialEq)]
@@ -134,9 +133,8 @@ impl Problem {
 
     /// Attaches an additional member.
     ///
-    /// A key naming one of the five registered members never reaches the wire:
-    /// an extension that shadowed `type`, `title`, `status`, `detail` or
-    /// `instance` would put two entries under one name.
+    /// A key naming one of the five registered members (`type`, `title`,
+    /// `status`, `detail`, `instance`) never reaches the wire.
     #[must_use]
     pub fn with_extension(mut self, key: impl Into<String>, value: impl Into<Value>) -> Self {
         self.extensions.insert(key.into(), value.into());
@@ -148,8 +146,7 @@ impl Problem {
 ///
 /// **Derive it with `#[derive(ApiError)]`, which is the only supported way to
 /// implement it.** The derive maps each variant to a status and a problem type,
-/// and — this is the part that matters — emits the
-/// [`IntoResponse`] and [`Responses`](crate::response::Responses)
+/// and emits the [`IntoResponse`] and [`Responses`](crate::response::Responses)
 /// implementations at the same time, so the statuses an error can produce and
 /// the statuses the description advertises cannot disagree.
 ///
@@ -175,11 +172,8 @@ impl Problem {
 /// ```
 ///
 /// Implementing this by hand compiles and is not useful: `IntoResponse` and
-/// `Responses` do not follow from it, and a blanket implementation over every
-/// `IntoProblem` would overlap the concrete ones for `Json<T>`, `Created<T>`
-/// and the rest, which Rust rejects rather than resolving. The trait stays
-/// public so the derive's output can be named and read, not so it can be
-/// reimplemented.
+/// `Responses` do not follow from it. The trait is public so the derive's
+/// output can be named and read.
 pub trait IntoProblem {
     /// Converts this error into its wire representation.
     fn into_problem(self) -> Problem;
@@ -188,20 +182,13 @@ pub trait IntoProblem {
     ///
     /// The [`Responses`](crate::response::Responses) implementation is derived
     /// from this, so a status returned at runtime but missing here is a bug the
-    /// description would hide. The derive computes it from the `status` given
-    /// on each variant, which is why the two cannot drift.
+    /// description would hide.
     fn statuses() -> &'static [StatusCode];
 }
 
-/// Serialized by hand rather than derived: [`StatusCode`] is not
-/// [`serde::Serialize`], `type_uri` is written as RFC 9457's `type`, and the
-/// extension members are flattened alongside the registered ones rather than
-/// nested under a field of their own.
-///
-/// `type` and `status` are always written, which is what the schema declares as
-/// required. `title` is omitted when empty, and `detail` and `instance` when
-/// absent. An extension whose key names a registered member is dropped, since
-/// one name cannot hold two values.
+/// Writes `type` and `status` always (the schema's required members), `title`
+/// unless empty, `detail` and `instance` when present, and the extensions
+/// flattened alongside, minus any whose key names a registered member.
 impl serde::Serialize for Problem {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let extensions = || {
@@ -237,21 +224,12 @@ impl serde::Serialize for Problem {
     }
 }
 
-/// A problem can be *written*, which is how every error reaches the wire: an
-/// `ApiError` converts itself with [`IntoProblem`] and the result is rendered
-/// here.
-///
-/// What it deliberately cannot do is [`Responses`](crate::response::Responses).
-/// A handler's return type needs both halves, so the missing one is what stops
-/// `Result<T, Problem>` from compiling — see the type documentation for why
-/// that matters.
+/// Renders the problem as `application/problem+json`. It deliberately does not
+/// implement [`Responses`](crate::response::Responses); see the type docs.
 impl IntoResponse for Problem {
     fn into_response(self) -> crate::http::Response {
         let status = self.status;
-        // A problem holds strings, a status and JSON values, none of which can
-        // fail to serialize. The fallback is there so that a response path
-        // never panics: a document naming the status is still a problem
-        // document, and the status line stays the one the problem chose.
+        // Cannot fail in practice; the fallback keeps the response path panic-free.
         let body = serde_json::to_vec(&self).unwrap_or_else(|_| {
             format!(r#"{{"type":"{ABOUT_BLANK}","status":{}}}"#, status.as_u16()).into_bytes()
         });
@@ -267,11 +245,8 @@ impl IntoResponse for Problem {
     }
 }
 
-/// The schema every error response references.
-///
-/// Registered as a named component rather than inlined, because a document
-/// where each of a hundred operations repeats the same five-property object is
-/// one no reader will check.
+/// The schema every error response references, registered as the named
+/// component `Problem`.
 impl Schema for Problem {
     fn schema(registry: &mut Registry) -> OpenApiSchema {
         let string = registry.resolve::<String>();
@@ -294,9 +269,7 @@ impl Schema for Problem {
         .into_iter()
         .collect();
 
-        // Extension members are the point of the format, so the schema has to
-        // admit them. Constraining them further would be a lie: what a given
-        // problem type carries is decided by that type, not by this schema.
+        // Admit extension members; each problem type decides its own.
         object.additional_properties = Some(Box::new(OpenApiSchema::Bool(true)));
         object.required = Some(vec!["type".to_owned(), "status".to_owned()]);
 
@@ -309,31 +282,14 @@ impl Schema for Problem {
 }
 
 /// Flattenable, so a problem type can carry its extension members as fields of
-/// its own.
-///
-/// The schema names the five registered members and admits every other one, so
-/// from inside the carrying object's `allOf` it marks every member evaluated and
-/// constrains none it does not name. The five it names it does constrain, so a
-/// member of the carrying object may not reuse `type`, `title`, `status`,
-/// `detail` or `instance`.
+/// its own. Those fields may not reuse `type`, `title`, `status`, `detail` or
+/// `instance`.
 impl Flatten for Problem {}
 
-/// The description of one response carrying a problem document.
+/// The description of one response carrying a problem document: the problem
+/// media type and the shared component, unnarrowed.
 ///
-/// Every error Kynos puts a *body* on the wire for is an RFC 9457 problem
-/// detail, so every description of one names the same media type and the same
-/// component. One writer, because eight interceptor short circuits each
-/// spelling it by hand is how eight of them came to spell it as nothing at all.
-///
-/// The qualification is [`FallbackPolicy::Empty`], under which a 404, 405 or 501
-/// answers with the status and no body at all. Such a response is described by
-/// declaring no content rather than by this function, and it is the one error
-/// Kynos emits that no problem document covers.
-///
-/// [`FallbackPolicy::Empty`]: crate::router::policy::FallbackPolicy::Empty
-///
-/// Returns the response rather than a `Responses`, so a caller that also owes a
-/// `Retry-After` or an `Accept-Encoding` chains `with_header` onto it.
+/// Returns the response so a caller can chain `with_header` onto it.
 pub(crate) fn problem_response(
     registry: &mut Registry,
     description: impl Into<String>,
@@ -349,10 +305,8 @@ pub(crate) fn problem_response(
 
 /// The RFC 9457 problem type a refusal names.
 ///
-/// `type` is what a client branches on, and `about:blank` says "the status code
-/// is the whole story" — true of a generic refusal and false of a service that
-/// distinguishes a burst limit from a spent monthly allowance, or a 503 from a
-/// concurrency cap from a 503 from a shed queue. Implement this on a marker
+/// `type` is what a client branches on, so a service distinguishing, say, a
+/// burst limit from a spent allowance names each. Implement this on a marker
 /// type and select it on the interceptor that owns the refusal.
 ///
 /// ```
@@ -365,21 +319,9 @@ pub(crate) fn problem_response(
 /// }
 /// ```
 ///
-/// # Why a type rather than a value
-///
-/// What an interceptor declares is read from its associated types and never
-/// from an instance — see [`Interceptor`](crate::middleware::Interceptor),
-/// which has no `contribution` method for exactly this reason. A URI supplied
-/// at run time could therefore reach the wire and nothing else, leaving the
-/// document saying `about:blank` about a response that says otherwise. Stated
-/// as a type, the same `const` reaches both halves: one function builds the
-/// body and one narrows the declaration, both reading this constant.
-///
-/// The const has no default. It is the one thing this trait carries, and a
-/// marker that left it unwritten would compile, ship `about:blank`, declare
-/// `about:blank`, and produce no diagnostic saying the feature had silently
-/// done nothing.
-///
+/// A type rather than a value because an
+/// [`Interceptor`](crate::middleware::Interceptor)'s declaration is read from
+/// its types, so the same `const` reaches both the body and the description.
 pub trait ProblemType: 'static {
     /// The URI identifying the problem type, or `None` for `about:blank`.
     const TYPE_URI: Option<&'static str>;
@@ -392,12 +334,8 @@ impl ProblemType for () {
 
 /// The problem a refusal puts on the wire, carrying the type `T` names.
 ///
-/// One function for every short circuit, because the document is a claim about
-/// what the wire carries and two constructions of "the same" problem are how
-/// the two came to disagree. The `title` stays the status code's reason phrase
-/// whether or not a type was named: RFC 9457 section 3.1.3 makes it a summary
-/// of the problem *type*, and a refusal's reason phrase summarises every
-/// refusal of that kind there is.
+/// The single constructor for every short circuit. The `title` stays the
+/// status code's reason phrase either way (RFC 9457 section 3.1.3).
 pub(crate) fn refusal_problem<T: ProblemType>(status: StatusCode) -> Problem {
     let mut problem = Problem::new(status);
 
@@ -412,18 +350,8 @@ pub(crate) fn refusal_problem<T: ProblemType>(status: StatusCode) -> Problem {
 /// names.
 ///
 /// The other half of [`refusal_problem`], reading the same `const`. Narrowed
-/// rather than exemplified: [`assert_conformance`] validates a body against the
-/// declared `schema` and never reads an `example`, so a refusal whose body
-/// disagreed with an exemplified declaration passed.
-///
-/// A refusal naming no type narrows to `about:blank`, which is what
-/// [`Problem::new`] sets and what [`refusal_problem`] leaves alone — the same
-/// rule [`rejection`](crate::error::rejection) follows, and for the reason
-/// [`narrowed_response`] gives: a bare `$ref` admits every problem document the
-/// service can produce, so a status an extractor also claims would lose its own
-/// narrowing to this one.
-///
-/// [`assert_conformance`]: crate::test::TestClient::assert_conformance
+/// rather than exemplified, since conformance checks validate the schema and
+/// never read an `example`; naming no type narrows to `about:blank`.
 pub(crate) fn refusal_response<T: ProblemType>(
     registry: &mut Registry,
     status: u16,
@@ -436,11 +364,8 @@ pub(crate) fn refusal_response<T: ProblemType>(
 
 // --- What one status declares --------------------------------------------
 //
-// Emitted code cannot spell `about:blank`: the URI a problem carrying no
-// semantics of its own uses belongs to `Problem` above, and a second spelling
-// in `kynos-macros` would be a constant nothing holds to the first. So the
-// shape a status's response takes is a function here rather than tokens there,
-// and `__private::problem` is the name the expansion reaches it by.
+// A function here rather than macro tokens, so `about:blank` has one spelling;
+// the derive reaches it through `__private::problem`.
 
 /// One failure answering with a status: the type URI it publishes, and the
 /// summary its declaration gave it.
@@ -448,49 +373,29 @@ pub(crate) type Branch = (Option<&'static str>, Option<&'static str>);
 
 /// The response one status declares, narrowed to the types it publishes.
 ///
-/// `problem` is the shared component every branch refers to, and `branches` are
-/// the failures answering with `status`, in declaration order. The result
-/// narrows that component to the type URIs those failures can publish, so a
-/// consumer reading the description learns which `type` a body may carry rather
-/// than only that it is a problem detail.
+/// `problem` is the shared component and `branches` the failures answering with
+/// `status`, in declaration order. A branch naming no URI narrows to
+/// `about:blank`, since a bare `$ref` would break a `oneOf`'s exactly-one rule.
 ///
-/// A branch naming no URI narrows to `about:blank`, which is what
-/// [`Problem::new`] sets and what the serializer writes. The alternative — a
-/// bare `$ref` — would match every problem document and cost a `oneOf` its
-/// exactly-one rule.
+/// # Panics
 ///
-/// `branches` is never empty: a status no failure answers with is not a
-/// narrowing of anything, and passing one panics.
-///
-/// Two callers, and they narrow for the same reason. `#[derive(ApiError)]`
-/// passes the failures a status is declared for, through
-/// [`__private::problem::response`](crate::__private::problem::response);
-/// [`rejection`](crate::error::rejection) passes one branch naming no URI,
-/// because every rejection but one publishes `about:blank` and a description
-/// that said only "a problem document" would lose to an extractor what the
-/// derive just gained.
+/// If `branches` is empty.
 #[must_use]
 pub(crate) fn narrowed_response(
     problem: &OpenApiSchema,
     status: u16,
     branches: &[Branch],
 ) -> Response {
-    // Composed from every branch, not from what survives the URI dedup: the
-    // dedup exists to keep a `oneOf` sound, and prose has no such rule.
+    // From every branch, not the deduplicated ones: prose has no exactly-one rule.
     let description = description(status, branches);
     let distinct = distinct(status, branches);
 
     let schema = match distinct.as_slice() {
-        // Both callers build this list from failures that named the status, so
-        // it is never empty. A future caller that passes nothing is told so,
-        // rather than handed the unnarrowed component back and left to believe
-        // it narrowed something.
         [] => unreachable!(
             "a status narrows to the failures answering with it: no caller passes an \
              empty branch list"
         ),
-        // One branch, so a `title` would repeat what the description already
-        // says about the only type this status publishes.
+        // A lone branch's title would repeat the description.
         [(uri, _)] => narrowed_branch(problem, uri, None),
         several => object(SchemaObject {
             one_of: Some(
@@ -513,12 +418,8 @@ pub(crate) fn narrowed_response(
 /// The schema's branches: resolved and deduplicated by URI in declaration
 /// order.
 ///
-/// Two failures may publish one type — the same 404 raised from two call sites
-/// — and a `oneOf` repeating a `const` would be satisfied by two branches at
-/// once. Where that happens the first summary is the one the surviving branch
-/// carries, and [`response`] titles the branch with it only when two or more
-/// survive; a single branch is written without a `title`. Either way the
-/// description is composed before this and keeps both.
+/// A `oneOf` repeating a `const` would match twice, so a repeated URI keeps
+/// only its first summary.
 fn distinct(status: u16, branches: &[Branch]) -> Vec<(String, Option<&'static str>)> {
     let mut distinct: Vec<(String, Option<&'static str>)> = Vec::with_capacity(branches.len());
 
@@ -553,9 +454,7 @@ fn narrowed_branch(problem: &OpenApiSchema, uri: &str, summary: Option<&str>) ->
     );
 
     object(SchemaObject {
-        // The summary of the problem *type*, which is what RFC 9457 section
-        // 3.1.2 makes `title`. Carried per branch because a `oneOf` is where
-        // several of them meet.
+        // The problem type's summary (RFC 9457 section 3.1.2), per branch.
         title: summary.map(ToOwned::to_owned),
         all_of: Some(vec![
             problem.clone(),
@@ -571,13 +470,6 @@ fn narrowed_branch(problem: &OpenApiSchema, uri: &str, summary: Option<&str>) ->
 /// The response's description: every summary the status's failures gave, in
 /// declaration order and without repeats, falling back to the code's own
 /// reason phrase.
-///
-/// A join rather than the first summary, because a status several failures
-/// share has several things to say and a response carries one description.
-/// Composed from the branches as declared: two failures publishing one URI are
-/// one schema branch but remain two failures, and a reader of the description
-/// is owed the name of each. Only an identical summary is dropped, since
-/// repeating a sentence tells no one anything.
 fn description(status: u16, branches: &[Branch]) -> String {
     let mut summaries: Vec<&str> = Vec::with_capacity(branches.len());
     for (_, summary) in branches {

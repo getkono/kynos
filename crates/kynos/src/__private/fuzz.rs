@@ -1,11 +1,7 @@
 //! Entry points for the `fuzz/` targets into parsers that have no public path.
 //!
-//! Compiled only under `cfg(fuzzing)`, which `cargo fuzz` sets, so no build an
-//! application makes carries it. Each function hands its arguments to the
-//! crate-private parser it is named after and returns what that parser
-//! returned; what a target asserts about the result is the target's. A parser
-//! with a public path is fuzzed through that path instead, and has no entry
-//! here.
+//! Compiled only under `cfg(fuzzing)`, which `cargo fuzz` sets. Each function
+//! forwards to the crate-private parser it is named after.
 
 use std::time::SystemTime;
 
