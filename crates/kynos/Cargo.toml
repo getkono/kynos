@@ -607,12 +607,14 @@ workspace = true
 # `mise run docs:check` already builds with warnings denied: what docs.rs
 # publishes is what CI proved.
 #
-# Deliberately no `rustdoc-args` and no `#![cfg_attr(docsrs, ...)]` in
-# `src/lib.rs`. The "available on crate feature X only" badges need rustdoc's
-# unstable `doc_cfg` gate, which is a nightly-only commitment across all three
-# crates and a separate decision. What must not come back is the older
-# `feature(doc_auto_cfg)` incantation: rustc removed that gate in 1.92.0, merged
-# into `doc_cfg` (rust-lang/rust#138907), so writing it would fail the docs.rs
-# build outright with E0557 rather than degrade.
+# `--cfg docsrs` turns on `#![cfg_attr(docsrs, feature(doc_cfg))]` in each
+# crate root, which badges every feature-gated item "available on crate
+# feature X only". docs.rs always builds on nightly, and stable builds -- this
+# crate's MSRV and `docs:check` -- never set the cfg, so nothing here depends
+# on nightly. Cargo already declares `docsrs` to the `unexpected_cfgs` lint.
+# Use `doc_cfg` alone: the older `feature(doc_auto_cfg)` was removed in rustc
+# 1.92.0, merged into `doc_cfg` (rust-lang/rust#138907), so writing it would
+# fail the docs.rs build outright with E0557.
 [package.metadata.docs.rs]
 all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
