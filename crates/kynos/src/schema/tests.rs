@@ -840,3 +840,175 @@ mod unchecked_is_transparent {
         assert_eq!(read.into_inner(), serde_json::json!({ "supplier": "acme" }));
     }
 }
+
+/// How a container locates a violation inside its members, where
+/// `tests/constraints.rs` cannot reach it through a derived type: a member the
+/// document cannot address, a container no fixture there holds, and the first
+/// of two reports at one location.
+mod checking {
+    use std::{
+        collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
+        sync::Arc,
+    };
+
+    use crate::{
+        __private::constraints::{aliased, is_multiple, max_length, minimum, unique_items},
+        schema::{
+            MapKey, Schema,
+            constraints::{Items, Pointer, Textual, UniqueItems, Violations},
+            registry::Registry,
+        },
+    };
+
+    /// A value whose only bound is that it is never `0`, reported at `at`.
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    struct NonZero(u8);
+
+    impl Schema for NonZero {
+        fn schema(registry: &mut Registry) -> kynos_openapi::Schema {
+            u8::schema(registry)
+        }
+
+        fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
+            minimum(&self.0, 1.0, at.member("inner"), violations);
+        }
+    }
+
+    /// A key that cannot say what member name it is written under.
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+    struct Opaque;
+
+    impl Schema for Opaque {
+        fn schema(registry: &mut Registry) -> kynos_openapi::Schema {
+            String::schema(registry)
+        }
+    }
+
+    impl MapKey for Opaque {}
+
+    fn failures<T: Schema + ?Sized>(value: &T) -> BTreeMap<String, String> {
+        let mut violations = Violations::new();
+        value.check_constraints(Pointer::root().member("v"), &mut violations);
+        violations.into_failures()
+    }
+
+    /// Where `value` breaks a bound, without what it broke.
+    fn located<T: Schema + ?Sized>(value: &T) -> Vec<String> {
+        failures(value).into_keys().collect()
+    }
+
+    #[test]
+    fn every_container_descends_into_what_it_holds() {
+        assert_eq!(located(&Some(NonZero(0))), ["/v/inner"]);
+        assert_eq!(
+            located(&VecDeque::from([NonZero(1), NonZero(0)])),
+            ["/v/1/inner"]
+        );
+        assert_eq!(located::<[NonZero]>(&[NonZero(0)]), ["/v/0/inner"]);
+        assert_eq!(located(&[NonZero(1), NonZero(0)]), ["/v/1/inner"]);
+        assert_eq!(located(&HashSet::from([NonZero(0)])), ["/v"]);
+        assert_eq!(
+            located(&HashMap::from([("k".to_owned(), NonZero(0))])),
+            ["/v/k/inner"]
+        );
+    }
+
+    #[test]
+    fn each_kind_reads_the_value_it_holds() {
+        assert_eq!([1, 2].item_count(), Some(2));
+        assert_eq!(HashSet::from([1, 2]).item_count(), Some(2));
+        assert_eq!(BTreeSet::from([1, 2]).item_count(), Some(2));
+
+        assert_eq!([1, 2].has_unique_items(), Some(true));
+        assert_eq!([1, 1].has_unique_items(), Some(false));
+        assert_eq!(HashSet::from([1]).has_unique_items(), Some(true));
+        assert_eq!(BTreeSet::from([1]).has_unique_items(), Some(true));
+
+        assert_eq!(Box::new("ab".to_owned()).text(), Some("ab"));
+        assert_eq!(Arc::new("ab".to_owned()).text(), Some("ab"));
+    }
+
+    #[test]
+    fn an_aliased_member_is_named_by_every_name_it_is_read_under() {
+        for (names, member) in [
+            (&["a"][..], "`a`"),
+            (&["a", "b"], "`a` or `b`"),
+            (&["a", "b", "c"], "`a`, `b` or `c`"),
+        ] {
+            let mut violations = Violations::new();
+            aliased(Pointer::root(), names, &mut violations, |at, violations| {
+                minimum(&0, 1.0, at, violations);
+            });
+            assert_eq!(
+                violations.into_failures(),
+                BTreeMap::from([(
+                    String::new(),
+                    format!("the member read as {member} must be at least 1")
+                )])
+            );
+        }
+    }
+
+    #[test]
+    fn a_set_member_is_reported_at_the_set_naming_where_inside_it() {
+        let failures = failures(&BTreeSet::from([NonZero(0), NonZero(1)]));
+        assert_eq!(
+            failures,
+            BTreeMap::from([(
+                "/v".to_owned(),
+                "a member breaks a bound at `/inner`: must be at least 1".to_owned()
+            )])
+        );
+    }
+
+    #[test]
+    fn a_map_value_is_reported_under_its_key_or_at_the_map_without_one() {
+        let named = failures(&BTreeMap::from([("k".to_owned(), NonZero(0))]));
+        assert_eq!(named.keys().collect::<Vec<_>>(), ["/v/k/inner"]);
+
+        let opaque = failures(&BTreeMap::from([(Opaque, NonZero(0))]));
+        assert_eq!(opaque.keys().collect::<Vec<_>>(), ["/v"]);
+    }
+
+    #[test]
+    fn an_absent_option_breaks_no_bound() {
+        assert!(failures(&None::<NonZero>).is_empty());
+        let mut violations = Violations::new();
+        max_length(&None::<String>, 0, Pointer::root(), &mut violations);
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn the_first_report_at_a_location_is_the_one_kept() {
+        let mut violations = Violations::new();
+        violations.report(Pointer::root(), "first");
+        violations.report(Pointer::root(), "second");
+        assert_eq!(
+            violations.into_failures(),
+            BTreeMap::from([(String::new(), "first".to_owned())])
+        );
+    }
+
+    #[test]
+    fn uniqueness_finds_a_repeat_wherever_it_sits() {
+        for (items, unique) in [
+            (vec![3, 1, 2], true),
+            (vec![3, 1, 3], false),
+            (vec![1, 2, 3, 4, 1], false),
+            (vec![], true),
+        ] {
+            let mut violations = Violations::new();
+            unique_items(&items, Pointer::root(), &mut violations);
+            assert_eq!(violations.is_empty(), unique, "{items:?}");
+        }
+    }
+
+    #[test]
+    fn a_multiple_is_an_integral_quotient() {
+        assert!(is_multiple(-15.0, 5.0));
+        assert!(is_multiple(0.0, 5.0));
+        assert!(is_multiple(7.5, 2.5));
+        assert!(!is_multiple(12.0, 5.0));
+        assert!(!is_multiple(1.0, 3.0));
+    }
+}

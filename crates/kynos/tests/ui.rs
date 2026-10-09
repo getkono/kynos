@@ -124,8 +124,10 @@ fn every_guided_diagnostic_has_a_snapshot() {
         ("Handler", "traits/handler.stderr"),
         ("IntoEndpoints", "traits/into_endpoints.stderr"),
         ("IntoResponse", "antipattern/bare_status_code.stderr"),
+        ("Items", "macros/schema_item_bound_on_a_string.stderr"),
         ("Languages", "traits/languages.stderr"),
         ("MapKey", "traits/map_key.stderr"),
+        ("Numeric", "macros/schema_numeric_bound_on_a_string.stderr"),
         ("OpenMap", "traits/open_map.stderr"),
         ("ParamValue", "macros/query_params_object_field.stderr"),
         ("Provides", "antipattern/inject_without_provider.stderr"),
@@ -134,6 +136,11 @@ fn every_guided_diagnostic_has_a_snapshot() {
         ("Responses", "antipattern/problem_as_return_type.stderr"),
         ("Schema", "schema/serde_json_value.stderr"),
         ("ShortCircuit", "traits/short_circuit.stderr"),
+        ("Textual", "macros/schema_length_bound_on_a_number.stderr"),
+        (
+            "UniqueItems",
+            "macros/schema_unique_items_on_a_string.stderr",
+        ),
     ];
 
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));

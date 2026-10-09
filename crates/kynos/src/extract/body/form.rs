@@ -17,6 +17,11 @@ use crate::{
 
 /// An `application/x-www-form-urlencoded` request body.
 ///
+/// Requires the `form` feature. A body that is not UTF-8 rejects with 400,
+/// and pairs that cannot deserialize into `T` or break a bound `T`'s schema
+/// declares reject with 422, as [`Json`](super::json::Json)'s do. Extracting
+/// one therefore requires `T: Schema` as well as `T: DeserializeOwned`.
+///
 /// The body is described with no Encoding Object, so every property takes the
 /// default `form` style with `explode`, and both directions follow it:
 ///
@@ -39,7 +44,9 @@ pub struct Form<T>(pub T);
 /// One spelling, read by both halves: what is decoded and what is described.
 const MEDIA_TYPE: &str = mime_names::APPLICATION_FORM_URLENCODED;
 
-impl<C: Sync, T: serde::de::DeserializeOwned + Send> FromRequest<C> for Form<T> {
+/// `T: Schema` for the reason [`Json`](super::json::Json)'s is: the bounds a
+/// derived field declares are checked once `T` is deserialized.
+impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send> FromRequest<C> for Form<T> {
     type Rejection = BodyRejection;
 
     async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
@@ -68,11 +75,10 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Send> FromRequest<C> for Form<T> 
         // those: the description gives it one pair. The failure is keyed by
         // the root JSON Pointer because serde reports which field only inside
         // its message.
-        serde_html_form::from_str(text)
-            .map(Self)
-            .map_err(|error| BodyRejection::Schema {
-                failures: BTreeMap::from([(String::new(), error.to_string())]),
-            })
+        let value = serde_html_form::from_str(text).map_err(|error| BodyRejection::Schema {
+            failures: BTreeMap::from([(String::new(), error.to_string())]),
+        })?;
+        super::checked(value).map(Self)
     }
 }
 

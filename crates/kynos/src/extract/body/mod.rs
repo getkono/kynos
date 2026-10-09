@@ -29,6 +29,11 @@ pub mod protobuf;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Collected};
 
+#[cfg(any(feature = "json", feature = "form"))]
+use crate::schema::{
+    Schema,
+    constraints::{Pointer, Violations},
+};
 use crate::{
     error::rejection::BodyRejection,
     extract::{
@@ -158,6 +163,25 @@ async fn read_body(request: Request, media_type: &str) -> Result<Bytes, BodyReje
         .map_err(|error| BodyRejection::Syntax {
             detail: error.to_string(),
         })
+}
+
+/// Holds a deserialized body to the bounds its schema declares, which is the
+/// second half of every codec here that deserializes a [`Schema`] type.
+///
+/// A broken bound is a 422 keyed by where it was broken, the same rejection
+/// serde's own type mismatches are, since both are well-formed input that
+/// does not fit the declared schema.
+#[cfg(any(feature = "json", feature = "form"))]
+fn checked<T: Schema>(value: T) -> Result<T, BodyRejection> {
+    let mut violations = Violations::new();
+    value.check_constraints(Pointer::root(), &mut violations);
+    if violations.is_empty() {
+        Ok(value)
+    } else {
+        Err(BodyRejection::Schema {
+            failures: violations.into_failures(),
+        })
+    }
 }
 
 /// One of two request body representations, selected by `Content-Type`.

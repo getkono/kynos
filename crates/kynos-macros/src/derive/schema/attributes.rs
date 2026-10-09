@@ -406,13 +406,53 @@ pub(super) fn serde_flag(attrs: &[syn::Attribute], keys: &[&str]) -> bool {
     found
 }
 
-/// A field's `#[schema(...)]` constraints, as a `Constraints` expression.
+/// Where serde takes the value it fills a missing member with.
+pub(super) enum DefaultFrom {
+    /// A bare `default`: the type's `Default`.
+    Default,
+    /// `default = "path"`: what the function at `path` returns.
+    Path(syn::ExprPath),
+}
+
+/// The `default` in a `#[serde(...)]` list, and where it takes its value.
 ///
-/// `Constraints` is `#[non_exhaustive]`, so the value is built from `default`
-/// and assigned into: it grows without breaking an expansion that predates the
-/// growth.
-pub(super) fn constraints(field: &Field) -> Option<TokenStream2> {
-    let mut assignments: Vec<TokenStream2> = Vec::new();
+/// Shape errors in the list are serde's to report, so this raises none.
+pub(super) fn serde_default(attrs: &[syn::Attribute]) -> Option<DefaultFrom> {
+    let mut found = None;
+    for attr in attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+        let _ = attr.parse_nested_meta(|meta| {
+            if !meta.path.is_ident("default") {
+                return skip_value(&meta);
+            }
+            found = Some(match string_value(&meta)? {
+                Some(path) => DefaultFrom::Path(syn::parse_str(&path)?),
+                None => DefaultFrom::Default,
+            });
+            Ok(())
+        });
+    }
+    found
+}
+
+/// One constraint a field's `#[schema(...)]` declares.
+pub(super) struct Bound {
+    /// The `Constraints` field it fills, which is the attribute's own key.
+    pub(super) key: syn::Ident,
+    /// Its value as a typed literal: an `f64` for a number, a `u64` for a
+    /// count, a string for `pattern`, and nothing for the `unique_items` flag.
+    pub(super) value: Option<TokenStream2>,
+}
+
+/// A field's `#[schema(...)]` constraints, in the order written.
+///
+/// Read by both projections of the declaration — [`constraints`], which
+/// describes them, and `check::member`, which enforces them — so the two
+/// cannot read the attribute differently.
+pub(super) fn bounds(field: &Field) -> Vec<Bound> {
+    let mut bounds = Vec::new();
 
     for attr in &field.attrs {
         if !attr.path().is_ident("schema") {
@@ -434,41 +474,69 @@ pub(super) fn constraints(field: &Field) -> Option<TokenStream2> {
             }
 
             if name == "unique_items" {
-                assignments.push(quote! {
-                    constraints.unique_items = ::core::option::Option::Some(true);
+                bounds.push(Bound {
+                    key: key.clone(),
+                    value: None,
                 });
                 return Ok(());
             }
 
-            let field = syn::Ident::new(&name, key.span());
             let literal: Lit = meta.value()?.parse()?;
-
-            if NUMERIC.contains(&name.as_str()) {
-                if let Some(number) = as_float(&literal) {
-                    assignments.push(quote! {
-                        constraints.#field = ::core::option::Option::Some(#number);
-                    });
-                }
+            let value = if NUMERIC.contains(&name.as_str()) {
+                as_float(&literal).map(|number| quote!(#number))
             } else if COUNTS.contains(&name.as_str()) {
-                if let Lit::Int(count) = &literal {
-                    let count = LitInt::new(&format!("{}u64", count.base10_digits()), count.span());
-                    assignments.push(quote! {
-                        constraints.#field = ::core::option::Option::Some(#count);
-                    });
+                match &literal {
+                    Lit::Int(count) => {
+                        let count =
+                            LitInt::new(&format!("{}u64", count.base10_digits()), count.span());
+                        Some(quote!(#count))
+                    }
+                    _ => None,
                 }
             } else if name == "pattern" {
-                if let Lit::Str(pattern) = &literal {
-                    assignments.push(quote! {
-                        constraints.pattern = ::core::option::Option::Some(
-                            ::std::string::String::from(#pattern),
-                        );
-                    });
+                match &literal {
+                    Lit::Str(pattern) => Some(quote!(#pattern)),
+                    _ => None,
                 }
-            }
+            } else {
+                None
+            };
 
+            if let Some(value) = value {
+                bounds.push(Bound {
+                    key: key.clone(),
+                    value: Some(value),
+                });
+            }
             Ok(())
         });
     }
+
+    bounds
+}
+
+/// A field's `#[schema(...)]` constraints, as a `Constraints` expression.
+///
+/// `Constraints` is `#[non_exhaustive]`, so the value is built from `default`
+/// and assigned into: it grows without breaking an expansion that predates the
+/// growth.
+pub(super) fn constraints(field: &Field) -> Option<TokenStream2> {
+    let assignments: Vec<TokenStream2> = bounds(field)
+        .into_iter()
+        .map(|Bound { key, value }| match value {
+            None => quote! {
+                constraints.#key = ::core::option::Option::Some(true);
+            },
+            Some(value) if key == "pattern" => quote! {
+                constraints.#key = ::core::option::Option::Some(
+                    ::std::string::String::from(#value),
+                );
+            },
+            Some(value) => quote! {
+                constraints.#key = ::core::option::Option::Some(#value);
+            },
+        })
+        .collect();
 
     if assignments.is_empty() {
         return None;

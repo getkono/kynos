@@ -132,7 +132,10 @@ mod impls;
 
 use kynos_openapi::{ComponentName, Schema as OpenApiSchema};
 
-use crate::schema::registry::Registry;
+use crate::schema::{
+    constraints::{Pointer, Violations},
+    registry::Registry,
+};
 
 /// A type that can describe itself as a JSON Schema.
 ///
@@ -176,6 +179,28 @@ pub trait Schema {
     fn name() -> Option<ComponentName> {
         None
     }
+
+    /// Reports each bound this value breaks, locating it under `at`.
+    ///
+    /// The runtime half of the `#[schema(...)]` constraints a derived field
+    /// carries: `#[derive(Schema)]` generates it to check each field against
+    /// its own bounds and to descend into each field's value, and a body
+    /// extractor runs it on the value it deserialized, refusing with a 422 when
+    /// anything was reported. [`constraints`] says which bounds are enforced.
+    ///
+    /// The default reports nothing, which is right for a type with no bounds
+    /// of its own and no members to descend into. A container implements it to
+    /// descend, so that a bound on a derived type is enforced wherever that
+    /// type is nested; a hand implementation for a newtype delegates to its
+    /// member.
+    // An empty body rather than `let _ = (at, violations);`: cargo-mutants
+    // would replace that with `()`, which is the same function and survives
+    // every test.
+    #[expect(
+        unused_variables,
+        reason = "the names are what rustdoc shows an implementor"
+    )]
+    fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {}
 }
 
 /// A type usable as a JSON object key.
@@ -221,9 +246,23 @@ pub trait MapKey: Schema {
     fn key_constraints() -> constraints::Constraints {
         constraints::Constraints::default()
     }
+
+    /// This key as the member name it is written under, where it is one
+    /// without being formatted.
+    ///
+    /// Read only to locate a violation inside the map's value, so `None`, the
+    /// default, costs a precise location and nothing else: the violation is
+    /// then reported at the map itself, naming where inside the value it was.
+    fn as_member(&self) -> Option<&str> {
+        None
+    }
 }
 
-impl MapKey for String {}
+impl MapKey for String {
+    fn as_member(&self) -> Option<&str> {
+        Some(self)
+    }
+}
 
 /// A value one parameter carries: a path variable, a query parameter, a header
 /// or a cookie.

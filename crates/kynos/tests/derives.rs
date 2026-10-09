@@ -2507,7 +2507,7 @@ fn a_skipped_member_needs_no_schema_of_its_own() {
 // the reason `Labels` gives.
 
 #[derive(Schema, serde::Serialize, serde::Deserialize)]
-struct Slug(#[schema(min_length = 1, max_length = 10)] String);
+struct Slug(#[schema(min_length = 1, max_length = 10, pattern = "^[a-z]+$")] String);
 
 #[derive(Schema, serde::Serialize, serde::Deserialize)]
 struct Label(String);
@@ -2543,7 +2543,12 @@ struct Motto(
 fn a_newtype_member_keeps_its_constraints() {
     assert_eq!(
         emitted::<Slug>(),
-        serde_json::json!({"type": "string", "minLength": 1, "maxLength": 10})
+        serde_json::json!({
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 10,
+            "pattern": "^[a-z]+$",
+        })
     );
     let written = serde_json::to_value(Slug("ada".to_owned())).expect("a newtype serializes");
     assert_eq!(written, serde_json::json!("ada"));

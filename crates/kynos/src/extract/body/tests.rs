@@ -100,10 +100,24 @@ mod a_form_body_decodes_what_it_describes {
         error::rejection::BodyRejection,
         extract::{FromRequest, body::form::Form},
         http::{HeaderValue, Request, StatusCode, body::Body, header},
+        schema::{Schema, registry::Registry},
     };
 
+    /// Gives each type an open schema declaring no bound: these tests read
+    /// the decoding, which no bound takes part in.
+    macro_rules! unbounded {
+        ($($ty:ty),+ $(,)?) => {$(
+            impl Schema for $ty {
+                fn schema(registry: &mut Registry) -> kynos_openapi::Schema {
+                    let _ = registry;
+                    kynos_openapi::Schema::any()
+                }
+            }
+        )+};
+    }
+
     /// Reads `T` from a form body holding `body`.
-    async fn read<T: serde::de::DeserializeOwned + Send>(
+    async fn read<T: serde::de::DeserializeOwned + Schema + Send>(
         body: &'static [u8],
     ) -> Result<T, BodyRejection> {
         let mut request = Request::new(Body::from_bytes(bytes::Bytes::from_static(body)));
@@ -120,6 +134,7 @@ mod a_form_body_decodes_what_it_describes {
     struct Tags {
         tag: Vec<String>,
     }
+    unbounded!(Tags);
 
     #[tokio::test]
     async fn a_repeated_key_is_one_item_per_pair_in_order() {
@@ -142,6 +157,7 @@ mod a_form_body_decodes_what_it_describes {
         struct Ids {
             id: Vec<u32>,
         }
+        unbounded!(Ids);
 
         let ids = read::<Ids>(b"id=3&other=x&id=5").await.expect("an array");
 
@@ -158,6 +174,7 @@ mod a_form_body_decodes_what_it_describes {
         struct Page {
             page: u32,
         }
+        unbounded!(Page);
 
         let rejection = read::<Page>(b"page=1&page=2")
             .await
@@ -188,6 +205,7 @@ mod a_form_body_decodes_what_it_describes {
         struct Filter {
             limit: Option<u32>,
         }
+        unbounded!(Filter);
 
         let filter = read::<Filter>(b"limit=").await.expect("an absent number");
 
@@ -214,6 +232,7 @@ mod a_form_body_decodes_what_it_describes {
             #[serde(flatten)]
             inner: Inner,
         }
+        unbounded!(Nested, Flattened);
 
         let nested = read::<Nested>(b"n=1").await.expect_err("not decoded");
         let flattened = read::<Flattened>(b"n=1").await.expect_err("not decoded");
