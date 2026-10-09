@@ -696,7 +696,7 @@ fn a_configured_network_list_is_parsed_or_refused_by_entry() {
     assert_eq!(refused.reason(), InvalidNetwork::EveryAddress);
     assert_eq!(
         refused.to_string(),
-        "\"::/0\" is not a network to trust: a `/0` network holds every address there is; \
+        "\"::/0\" is not a network to trust: a `/0` network holds every address of its family; \
          `TrustedProxies::everyone` trusts every peer explicitly"
     );
 }

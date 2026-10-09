@@ -417,8 +417,8 @@ pub enum InvalidNetwork {
     },
     /// The prefix is `0`, so the block holds every address of its family.
     #[error(
-        "a `/0` network holds every address there is; `TrustedProxies::everyone` trusts every \
-         peer explicitly"
+        "a `/0` network holds every address of its family; `TrustedProxies::everyone` trusts \
+         every peer explicitly"
     )]
     EveryAddress,
 }
