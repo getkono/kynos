@@ -745,6 +745,13 @@ mod query_string {
             .await
             .expect_err("a broken bound is refused");
         assert_eq!(rejection.status(), StatusCode::BAD_REQUEST);
+        match rejection {
+            QueryRejection::Schema { name, failures } => {
+                assert_eq!(name, "querystring");
+                assert_eq!(failures.into_keys().collect::<Vec<_>>(), ["/quantity"]);
+            }
+            other => panic!("a broken bound was refused as something else: {other:?}"),
+        }
     }
 }
 

@@ -5,7 +5,11 @@ use crate::{
     extract::{FromRequestParts, describe::Describe},
     http::{Parts, media::MediaType},
     router::operation::OperationCx,
-    schema::{Schema, type_admits_null},
+    schema::{
+        Schema,
+        constraints::{Pointer, Violations},
+        type_admits_null,
+    },
 };
 
 /// The whole query string, described by media type.
@@ -70,11 +74,12 @@ fn is_json(media_type: &str) -> bool {
 
 /// The whole query string is decoded as the document `M` names.
 ///
-/// `T: DeserializeOwned` is what every sibling codec asks for — `Json<T>` and
-/// `Form<T>` both do — and it is the bound this needs for the same reason: the
-/// parameter *is* a document, so decoding it is deserialization rather than the
-/// field-by-field walk a
-/// [`QueryParams`](crate::extract::params::query::QueryParams) group gets.
+/// `T: DeserializeOwned + Schema` is what every sibling codec asks for —
+/// `Json<T>` and `Form<T>` both do — and it is the bound this needs for the
+/// same reason: the parameter *is* a document, so decoding it is
+/// deserialization rather than the field-by-field walk a
+/// [`QueryParams`](crate::extract::params::query::QueryParams) group gets, and
+/// the decoded document is held to the bounds `T`'s schema declares.
 ///
 /// # Absence
 ///
@@ -92,8 +97,12 @@ fn is_json(media_type: &str) -> bool {
 /// query, RFC 9535 JSONPath — is carried as JSON, so JSON is what is decoded;
 /// a marker naming anything else describes a query string this extractor
 /// cannot read, and answering 400 says so rather than silently mis-parsing it.
-impl<C: Sync, T: serde::de::DeserializeOwned + Send, M: MediaType + Send> FromRequestParts<C>
-    for QueryString<T, M>
+///
+/// A document that decodes and breaks a bound is
+/// [`QueryRejection::Schema`], a 400 keyed by JSON Pointer into the decoded
+/// document, as a body's is into the body.
+impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send, M: MediaType + Send>
+    FromRequestParts<C> for QueryString<T, M>
 {
     type Rejection = QueryRejection;
 
@@ -120,9 +129,19 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Send, M: MediaType + Send> FromRe
             ))
         })?;
 
-        serde_json::from_str(&decoded)
-            .map(Self::new)
-            .map_err(|error| invalid(error.to_string()))
+        let value: T =
+            serde_json::from_str(&decoded).map_err(|error| invalid(error.to_string()))?;
+
+        let mut violations = Violations::new();
+        value.check_constraints(Pointer::root(), &mut violations);
+        if violations.is_empty() {
+            Ok(Self::new(value))
+        } else {
+            Err(QueryRejection::Schema {
+                name: QUERYSTRING_NAME.to_owned(),
+                failures: violations.into_failures(),
+            })
+        }
     }
 }
 
