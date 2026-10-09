@@ -1,27 +1,15 @@
-//! The private machinery the builder methods call.
-//!
-//! Installing a route no path template expresses, installing the preflight
-//! handler, and the small functions that shape an emitted document: which spec
-//! version to emit, what a missing `info` is filled with, how a tag list is
-//! deduplicated, where a violation is located.
-//!
-//! Nothing here is public, so the split moves no path.
+//! The private machinery the builder methods call: installing unchecked routes
+//! and preflights, and the small functions that shape an emitted document.
 
 use super::{
     Arc, Catch, Document, ErasedInterceptor, Error, FallbackPolicy, Info, PanicPolicy, PathEntry,
     Result, Severity, SpecError, SpecVersion, Violation, dispatch,
 };
 
-// Named only by `install_unchecked`.
 #[cfg(feature = "unchecked")]
 use super::{HashMap, describe::match_table_refusal};
 
 /// Adds the routes no path template expresses to the match table.
-///
-/// They reach the same table as every described route — they have to, or they
-/// would not serve — and differ from one only in having no `paths` key to have
-/// been derived from, and no variables to capture: an unchecked handler takes
-/// the whole request and no extractor.
 ///
 /// # Errors
 ///
@@ -48,12 +36,7 @@ pub(super) fn install_unchecked<C>(
             paths.push(PathEntry {
                 template: key.clone(),
                 matched: crate::extract::connection::MatchedPath(dispatch::intern(&key)),
-                // Read from the matching pattern rather than from a
-                // `PathTemplate`, which a catch-all is not one of. Leaving this
-                // empty made `Dispatch`'s capture branch unreachable, so an
-                // unchecked handler had to re-derive what the matcher had
-                // already taken apart — including the decoding and the `..`
-                // rejection `extract/params/path.rs` keeps private.
+                // From the pattern, since a catch-all is no `PathTemplate`.
                 variables: matcher_variables(&key),
                 allow: dispatch::allow_header(&[]),
                 operations: Vec::new(),
@@ -67,19 +50,15 @@ pub(super) fn install_unchecked<C>(
 
         for method in &route.methods {
             paths[index].operations.push(dispatch::Served {
-                // Distinct per route and per method, because `Next::route` hands
-                // this to every interceptor: an empty string collided every
-                // unchecked route into one rate-limit bucket and one metric
-                // label. `unchecked:` marks it as synthesized rather than
-                // something a document declares, since no document declares it.
+                // Distinct per route and method, since interceptors key on it;
+                // `unchecked:` marks it as synthesized.
                 operation_id: format!("unchecked:{} {}", method.as_wire_str(), route.pattern),
                 method: *method,
                 terminal: Arc::clone(&route.terminal),
                 interceptors: interceptors.to_vec(),
                 catch_panics,
-                // Nothing describes an unchecked route, so it declares no
-                // requirement; a credential it checks itself in `Authorization`
-                // still keeps its response out of a cache.
+                // Undescribed; an `Authorization` it checks itself still keeps
+                // its response out of a cache.
                 secured: false,
                 unchecked_layers: unchecked_layers.clone(),
             });
@@ -89,11 +68,8 @@ pub(super) fn install_unchecked<C>(
     Ok(())
 }
 
-/// The variable names a matching pattern captures.
-///
-/// The router's own syntax rather than a path template: `{name}` captures
-/// `name` and `{*name}` captures `name` too, since matchit reports a catch-all
-/// under the bare name. A segment that is not a variable captures nothing.
+/// The variable names a matching pattern captures; `{*name}` captures `name`,
+/// as matchit reports it.
 #[cfg(feature = "unchecked")]
 pub(super) fn matcher_variables(pattern: &str) -> Vec<&'static str> {
     pattern
@@ -106,10 +82,7 @@ pub(super) fn matcher_variables(pattern: &str) -> Vec<&'static str> {
         .collect()
 }
 
-/// Whether `P` selected recovery.
-///
-/// [`PanicPolicy`] is a marker with no members to read, so the policy is
-/// resolved by identity — which is exactly as static as the type it comes from.
+/// Whether `P` selected recovery, by type identity.
 pub(super) fn catches<P: PanicPolicy>() -> bool {
     std::any::TypeId::of::<P>() == std::any::TypeId::of::<Catch>()
 }
@@ -129,13 +102,8 @@ pub(super) fn highest_version() -> SpecVersion {
 
 /// The document at the lowest version expressing it without loss.
 ///
-/// [`Document::emit`] already knows which constructs block a downgrade, so this
-/// asks it rather than repeating the analysis.
-///
-/// A field the model does not recognise is refused in every build. Without
-/// `openapi32` it is among what blocks 3.1. With it, 3.2 would not carry it
-/// either, so only the 3.2 constructs the model types move the description to
-/// 3.2, and the refusal names the unrecognised fields alone.
+/// A field the model does not recognise is refused in every build; it never
+/// moves the description to 3.2.
 pub(super) fn lowest_expressing(document: &Document) -> Result<Document> {
     match document.emit(SpecVersion::V3_1) {
         Ok(emitted) => Ok(emitted),
@@ -155,10 +123,7 @@ pub(super) fn lowest_expressing(document: &Document) -> Result<Document> {
     }
 }
 
-/// The `info` block a router that declared none still has to emit.
-///
-/// OpenAPI requires a title and a version, so there is no honest way to omit
-/// them; a visible placeholder is better than a plausible invention.
+/// The visibly placeholder `info` block a router that declared none emits.
 pub(super) fn placeholder_info() -> Info {
     Info::new("API", "0.0.0")
 }
@@ -174,43 +139,24 @@ pub(super) fn unique_tags(declared: &[kynos_openapi::Tag]) -> Vec<kynos_openapi:
     tags
 }
 
-/// Why Kynos will not route a path its model can nonetheless hold.
-///
-/// Registers a preflight answer on every path a `Cors` covers.
-///
-/// One `Served` per path rather than a branch in `Dispatch::serve`: a preflight
-/// then flows through the machinery that already exists — the matcher finds the
-/// path, `position` finds the method — and `Dispatch` needs to hold no CORS
-/// configuration of its own.
-///
-/// Skipped where the path already declares `OPTIONS`. A hand-written operation
-/// wins, and it wins by construction rather than by a race in `position`'s
-/// linear scan.
-///
-/// The interceptor list on the synthesized entry is deliberately empty. A
-/// browser sends a preflight with no credentials and no `Authorization`, so an
-/// auth interceptor short-circuiting it would break CORS for every operation on
-/// the path — and `docs/middleware.md` says an interceptor covers the
-/// *operations* in its subtree, which a preflight is not. Observers still see
-/// it, because they sit outside the chain.
 /// One `Cors` mounted over a path, and the methods on that path it covers.
-///
-/// Borrowed rather than cloned: the identity of the `Arc` is what tells two
-/// mounted configurations apart, and a clone of the configuration cannot be
-/// compared once one of them can hold a predicate.
+/// Borrowed, since `Arc` identity is what tells two configurations apart.
 type CoveringCors<'a, C> = (
     &'a Arc<dyn ErasedInterceptor<C>>,
     Vec<kynos_openapi::Method>,
 );
 
+/// Registers a preflight answer on every path a `Cors` covers, unless the path
+/// declares `OPTIONS` itself.
+///
+/// The entry has no interceptors: a browser's preflight carries no
+/// credentials, so an auth interceptor would break CORS on the whole path.
 pub(super) fn install_preflight<C: Send + Sync + 'static>(
     paths: &mut [PathEntry<C>],
     method_not_allowed: &FallbackPolicy,
     implemented: &[kynos_openapi::Method],
 ) {
-    // A plain `OPTIONS` keeps the answer the dispatcher would give it: a 405
-    // with the path's `Allow` where the service implements `OPTIONS`
-    // elsewhere, and a 501 where it does not.
+    // A plain `OPTIONS` keeps the dispatcher's 405 or 501.
     let options_implemented = implemented.contains(&kynos_openapi::Method::Options);
 
     for entry in paths {
@@ -222,16 +168,8 @@ pub(super) fn install_preflight<C: Send + Sync + 'static>(
             continue;
         }
 
-        // Every configuration covering this path, and the methods each one
-        // covers. An interceptor mounted on a group owning `GET /x` while the
-        // router owns `POST /x` advertises `GET` only, which is what keeps
-        // preflight and the description agreeing about what exists.
-        //
-        // More than one is reachable: a group's stack is checked against the
-        // router's and never against a sibling's, so two groups may cover one
-        // path with a `Cors` each. Grouped by the interceptor's identity, since
-        // that is what "the same `Cors`" means once a configuration can hold a
-        // predicate no comparison could see through.
+        // Each `Cors` covering this path (sibling groups may each mount one),
+        // by identity, with only the methods it actually covers.
         let mut scopes: Vec<CoveringCors<'_, C>> = Vec::new();
 
         for operation in &entry.operations {
@@ -257,10 +195,7 @@ pub(super) fn install_preflight<C: Send + Sync + 'static>(
             continue;
         }
 
-        // A HEAD on a path declaring none runs under the GET's chain, so the
-        // scope covering GET covers it too -- the Fetch standard preflights a
-        // HEAD carrying an unsafelisted header -- and names it after GET, as
-        // `Allow` does.
+        // An undeclared HEAD runs under the GET's chain, so its scope covers it.
         if !entry
             .operations
             .iter()
@@ -331,25 +266,16 @@ pub(super) fn cors_config<C: 'static>(
         .or_else(|| value.downcast_ref::<Cors<Documented>>().map(Cors::config))
 }
 
-/// The configuration conflict an interceptor carries, if it is one the router
-/// recognises and it has one.
-///
-/// The only place Kynos reads an interceptor as a *value* rather than through
-/// its types, and it is deliberately not a capability: the match below is a
-/// closed list of two, `Cors`'s state parameter is sealed so there cannot be a
-/// third, and a third-party interceptor is never asked. Nothing read here
-/// reaches the description.
+/// The configuration conflict a `Cors` interceptor carries, if any; the one
+/// place an interceptor is read as a value.
 pub(super) fn cors_conflict<C: 'static>(
     interceptor: &Arc<dyn ErasedInterceptor<C>>,
 ) -> Option<crate::middleware::MiddlewareError> {
     cors_config(interceptor).and_then(crate::middleware::cors::CorsConfig::conflict)
 }
 
-/// The routing contract is narrower than the document model on purpose: a
-/// catch-all matches a set of paths no single template describes, and a segment
-/// carrying two variables is a shape the matcher cannot take apart. Both checks
-/// belong here rather than in `PathTemplate`, which has to round-trip a
-/// description it did not produce.
+/// Why Kynos will not route a path its model can nonetheless hold: a catch-all,
+/// or a segment with two variables (see docs/routing.md).
 pub(super) fn unroutable(path: &kynos_openapi::PathTemplate) -> Option<SpecError> {
     let catch_all = path.variables().iter().any(|name| name.starts_with('*'));
     let crowded = path
@@ -379,9 +305,6 @@ pub(super) fn invalid(error: SpecError) -> Error {
 }
 
 /// Escapes one `paths` key for use as a JSON Pointer token, per RFC 6901.
-///
-/// Every key contains a `/`, so a location embedding one unescaped reads as
-/// several tokens and resolves against nothing.
 pub(super) fn pointer_token(key: &str) -> String {
     key.replace('~', "~0").replace('/', "~1")
 }

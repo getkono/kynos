@@ -24,10 +24,9 @@ use crate::{
 /// a zero-sized type implementing this trait. The type shadows the function
 /// name, so `routes![get_user]` refers to the operation rather than the `fn`.
 ///
-/// The builder form is public and supported for routes composed at runtime, but
-/// the attribute is the recommended way: it takes the doc comment as the
-/// operation's summary and description, and it can check the path template
-/// against the handler's parameters at compile time, which the builder cannot.
+/// Prefer the attribute over the builder: it takes the doc comment as the
+/// operation's summary and description, and checks the path template against
+/// the handler's parameters at compile time.
 pub trait Endpoint<C>: Send + Sync + 'static {
     /// The HTTP method.
     fn method(&self) -> Method;
@@ -44,9 +43,6 @@ pub trait Endpoint<C>: Send + Sync + 'static {
 
 /// The object-safe form of [`Endpoint`], so a router can hold a heterogeneous
 /// set of them.
-///
-/// Private: boxing the future is how erasure is paid for, and no public
-/// signature names a boxed future.
 pub(crate) trait DynEndpoint<C>: Send + Sync + 'static {
     fn method(&self) -> Method;
 
@@ -83,15 +79,9 @@ impl<C: Send + Sync + 'static, E: Endpoint<C>> DynEndpoint<C> for E {
     }
 }
 
-/// A stable, readable identifier for one served path.
-///
-/// Derived from the path rather than counted, so two sets mounted in one router
-/// collide only where they genuinely serve the same path -- and so the id does
-/// not move when a sibling is added beside it.
-///
-/// Shared by the modules that register operations no handler function named,
-/// and so have no identifier to take from one. Gated on exactly those, because
-/// a build with neither reaches it from nowhere.
+/// A stable, readable identifier for one served path, for operations no
+/// handler function names. Derived from the path, so it does not move when a
+/// sibling is added.
 #[cfg(any(feature = "assets", feature = "docs"))]
 pub(crate) fn operation_id(prefix: &str, path: &str) -> String {
     let mut id = String::with_capacity(prefix.len() + path.len() + 1);
@@ -105,8 +95,7 @@ pub(crate) fn operation_id(prefix: &str, path: &str) -> String {
 
     id.push('_');
     for character in trimmed.chars() {
-        // An `operationId` is a token a generator turns into a function name,
-        // so anything that is not one becomes `_`.
+        // Generators turn an `operationId` into a function name.
         if character.is_ascii_alphanumeric() {
             id.push(character);
         } else {

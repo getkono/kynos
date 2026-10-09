@@ -25,31 +25,26 @@ use crate::{
 /// prefix becomes part of each path, the tag is applied to each operation, and
 /// each interceptor's contribution is merged into each operation's description
 /// — so attaching authentication to a group documents it on every operation
-/// underneath, correctly, without anyone maintaining that by hand.
+/// underneath.
 pub struct Group<C, P = Propagate, I = (), S = ()> {
     prefix: String,
     endpoints: Vec<Arc<dyn DynEndpoint<C>>>,
     interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
     short_circuit_checks: Vec<ShortCircuitCheck>,
     tags: Vec<DeclaredTag>,
-    /// Kept beside `tags` for the reason `Router::tag_metadata` gives.
+    /// Kept beside `tags`, as on `Router`, so a tag covering nothing is still
+    /// documented.
     tag_metadata: Vec<kynos_openapi::Tag>,
     /// Problems found while the group was assembled, which the fluent methods
-    /// cannot return. A router takes them over when it mounts the group.
+    /// cannot return.
     violations: Vec<Violation>,
     /// Layers of undeclared effect covering this group's operations, outermost
     /// first. `pub(crate)` because `unchecked` mounts them.
     #[cfg(feature = "unchecked")]
     pub(crate) unchecked_layers: Vec<Arc<dyn crate::unchecked::ErasedLayer>>,
 
-    // See `Router`: the parameters name a shape, not this value's auto traits.
-    // `I` is the interceptors mounted here as a type-level list, and `S` is
-    // what the endpoints mounted here brought with them — kept apart, because
-    // `I` covers every operation in the group and so must be checked against
-    // an incoming stack, while `S` covers subtrees and must not.
-    // The lint is measuring the four parameters the type genuinely
-    // has; factoring them into an alias would hide the shape rather
-    // than simplify it.
+    // As on `Router`: `I` is this group's interceptor list, `S` what its
+    // endpoints brought.
     #[allow(clippy::type_complexity)]
     _private: PhantomData<fn() -> (C, P, I, S)>,
 }
@@ -82,10 +77,7 @@ impl<C> Group<C, Propagate, ()> {
     /// Creates a group mounted at `prefix`.
     #[must_use]
     pub fn new(prefix: &str) -> Self {
-        // `PathTemplate` is the only parser for a path in the workspace, so the
-        // prefix is checked by the same rules the paths beneath it are. A
-        // malformed one is recorded rather than returned, because a builder
-        // method that returned a `Result` would make every group two lines.
+        // A malformed prefix is recorded as a violation rather than returned.
         let (prefix, violations) = match PathTemplate::parse(prefix) {
             Ok(template) => (template.as_str().to_owned(), Vec::new()),
             Err(reason) => (
@@ -156,9 +148,6 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
     /// endpoints are mounted. No recovery branch is installed when this method
     /// is not called.
     ///
-    /// Only the policy changes; `I` is carried across for the reason
-    /// [`Router::catch_panics`](crate::Router::catch_panics) gives.
-    ///
     /// # Compile-time requirement
     ///
     /// The final binary must use `panic = "unwind"`. Selecting this policy in
@@ -204,9 +193,7 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
         S: CompatibleWith<N, C>,
     {
         let () = <I as CompatibleWith<N, C>>::CHECK;
-        // The endpoints mounted before this call are covered by it too, so
-        // mounting first and intercepting second has to be checked exactly as
-        // the other order is.
+        // Endpoints mounted earlier are covered too.
         let () = <S as CompatibleWith<N, C>>::CHECK;
 
         let mut group: Group<C, P, Cons<N, I>, S> = self.retype();
@@ -221,12 +208,11 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
     ///
     /// What the endpoints carry is checked against the group's own
     /// interceptors and then remembered, so a later [`intercept`] sees it. It
-    /// is *not* checked against what an earlier `mount` left behind: two
-    /// operations never collide with each other, since no request reaches
-    /// both.
+    /// is *not* checked against an earlier `mount`, since no request reaches
+    /// two operations.
     ///
     /// Mounting operations that carry no interceptor leaves this type
-    /// unchanged, because [`Flatten`] erases an empty stack.
+    /// unchanged.
     ///
     /// # Panics
     ///

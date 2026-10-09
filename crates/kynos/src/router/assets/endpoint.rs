@@ -13,43 +13,22 @@ use crate::{
     },
 };
 
-/// The `ETag` an asset response carries.
-///
-/// A group rather than a bare insert, so the field is *declared* and the
-/// conflict check sees it — an interceptor also setting `ETag` over an asset
-/// mount is then a compile error rather than a response with two.
+/// The fields an asset response carries, declared so the conflict check sees
+/// them.
 #[derive(Clone, Copy, Debug)]
 struct AssetHeaders {
     etag: &'static str,
     cache_control: Option<&'static str>,
     /// The coding the selected representation is in, if it is not identity.
     coding: Option<&'static str>,
-    /// Whether this set has anything to negotiate over.
-    ///
-    /// `Vary` is sent by a resource that *could* answer differently, not only
-    /// by a response that did: a cache storing the identity form of a file with
-    /// stored codings must not serve it to a client that asked for `br`. A file
-    /// with no stored coding answers the same way whatever is accepted, and
-    /// sending `Vary` for it would partition a cache key for nothing.
+    /// Whether this file has stored codings, and so sends `Vary` on every
+    /// response; a file without would partition cache keys for nothing.
     negotiable: bool,
 }
 
 impl AssetHeaders {
-    /// The same group, as a 304 is allowed to carry it.
-    ///
-    /// RFC 9110 section 15.4.5 lists what a 304 *must* repeat from the 200 --
-    /// `Content-Location`, `Date`, `ETag`, `Vary`, `Cache-Control` and
-    /// `Expires` -- and then bounds the rest: "a sender SHOULD NOT generate
-    /// representation metadata other than the above listed fields unless said
-    /// metadata exists for the purpose of guiding cache updates".
-    ///
-    /// `Content-Encoding` is representation metadata and is not on that list.
-    /// Nor does it guide a cache update: RFC 9111 section 4.3.4 identifies the
-    /// stored response to update by its validator, and the `ETag` that goes
-    /// with the 304 already names the coding, since each stored form carries
-    /// its own. So the field is dropped rather than repeated -- which is also
-    /// why `declare_response_headers` declares `Content-Encoding` for 200 and
-    /// 206 only.
+    /// The same group, as a 304 is allowed to carry it: without
+    /// `Content-Encoding`, which RFC 9110 section 15.4.5 does not list.
     fn not_modified(mut self) -> Self {
         self.coding = None;
         self
@@ -58,17 +37,7 @@ impl AssetHeaders {
 
 impl HeaderParams for AssetHeaders {
     const NAMES: &'static [&'static str] = &["etag", "cache-control", "content-encoding", "vary"];
-    // `VARIES` is deliberately not set. It is a constant on the group, so it
-    // would put `Vary: Accept-Encoding` on *every* asset -- including the files
-    // with one stored form, which answer the same way whatever is accepted and
-    // would have their cache key partitioned for nothing. Whether this resource
-    // negotiates is a property of the file, not of the type, so the field is
-    // written per instance below.
-    //
-    // Merging is not lost by writing it here: an interceptor above this one
-    // contributes its own `Vary` through `vary_on`, which merges into whatever
-    // the response already carries -- and this endpoint is the innermost
-    // writer, so there is never an inner value for it to clobber.
+    // No `VARIES`: it is per type, and only files with stored codings vary.
 }
 
 impl EncodeHeaders for AssetHeaders {
@@ -98,10 +67,8 @@ impl EncodeHeaders for AssetHeaders {
 
 /// One file, served at one path.
 ///
-/// A path Kynos owns rather than one a request supplied: the set is enumerated
-/// before the router is built, so nothing here joins request input onto
-/// anything. That is what makes traversal unrepresentable rather than defended
-/// against — there is no path to traverse.
+/// The path is fixed before the router is built and never joined with request
+/// input, so there is no traversal to defend against.
 #[derive(Clone, Debug)]
 pub struct AssetEndpoint {
     asset: Asset,
@@ -115,10 +82,8 @@ impl AssetEndpoint {
     ///
     /// # Panics
     ///
-    /// If `path` is not a legal path template. `assets!` refuses such a name at
-    /// compile time and the filesystem walk refuses it while enumerating, so
-    /// reaching this means a caller built an `Asset` by hand with a name Kynos
-    /// cannot describe.
+    /// If `path` is not a legal path template, which only a hand-built `Asset`
+    /// can carry.
     #[must_use]
     pub(super) fn new(
         asset: Asset,
@@ -148,14 +113,8 @@ impl AssetEndpoint {
         }
     }
 
-    /// The representation this request gets.
-    ///
-    /// Selected before anything else is evaluated, because every answer below
-    /// is *about* a representation: the tag `If-None-Match` is compared
-    /// against, the tag `If-Range` is compared against, and the octets a byte
-    /// range is calculated over all belong to the form actually being sent.
-    /// Choosing afterwards is the mistake this whole feature exists to make
-    /// impossible.
+    /// The representation this request gets; chosen first, since every
+    /// condition and range is evaluated against it.
     fn choose(&self, headers: &crate::http::HeaderMap) -> Representation {
         let identity = Representation {
             bytes: self.asset.bytes(),
@@ -171,9 +130,7 @@ impl AssetEndpoint {
             .get(header::ACCEPT_ENCODING)
             .and_then(|value| value.to_str().ok())
         else {
-            // RFC 9110 section 12.5.3 rule 1: with no field, any coding is
-            // acceptable -- but "acceptable" is not "wanted". A client that
-            // said nothing gets the form every client can read.
+            // No field (RFC 9110 section 12.5.3): identity, which every client reads.
             return identity;
         };
 
@@ -199,12 +156,8 @@ impl AssetEndpoint {
             })
     }
 
-    /// The response fields each status carries, declared only where they exist.
-    ///
-    /// Split from `describe` because the list outgrew one function, and because
-    /// the two conditions are the part worth seeing: a field this set can never
-    /// send must not be declared, or `assert_declared_responses_covered`
-    /// reports a promise nothing keeps.
+    /// The response fields each status carries, declared only where they can
+    /// be sent.
     fn declare_response_headers(&self, operation: &mut OperationCx<'_>) {
         for (status, name, description) in [
             (200, "ETag", "The entity tag of this representation"),
@@ -249,14 +202,8 @@ impl AssetEndpoint {
             if name == "Cache-Control" && self.cache_control.is_none() {
                 continue;
             }
-            // Both only exist where a coding was stored. A file with one form
-            // never sends either, and declaring them would put a field in the
-            // description no response can carry -- the exact gap
-            // `assert_declared_responses_covered` exists to catch.
-            //
-            // Which is also why the two part company at 304: section 15.4.5
-            // requires `Vary` there and bounds the representation metadata that
-            // may join it, so `Content-Encoding` is neither sent nor declared.
+            // Both are sent only where a coding was stored; at 304 only `Vary`
+            // is (RFC 9110 section 15.4.5).
             if (name == "Content-Encoding" || name == "Vary") && self.asset.encodings().is_empty() {
                 continue;
             }
@@ -291,23 +238,18 @@ impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
             kynos_openapi::Response::with_content(
                 "the file",
                 self.asset.media_type(),
-                // The same unconstrained object every binary codec describes: a
-                // file's bytes have no JSON Schema, and one claiming otherwise
-                // would be claiming more than it can check.
+                // Unconstrained, as every binary codec describes its bytes.
                 kynos_openapi::MediaType::new(kynos_openapi::Schema::Object(Box::default())),
             ),
         );
 
-        // 304 is reachable exactly because the 200 carries an `ETag`: a client
-        // that received one can send it back. Declaring it without the
-        // validator would be a status nothing could provoke.
+        // Reachable because the 200 carries an `ETag`.
         responses = responses.with(
             304,
             kynos_openapi::Response::new("the client's copy is current"),
         );
 
-        // Reachable for the same reason: an `If-Match` naming a tag the file no
-        // longer carries.
+        // An `If-Match` naming a tag the file no longer carries.
         responses = responses.with(
             412,
             kynos_openapi::Response::new("the file is not the one the client's copy came from"),
@@ -315,10 +257,7 @@ impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
 
         operation.add_responses(&responses);
 
-        // `If-Match` and `If-None-Match` are read, so they are declared. The
-        // group is not used for extraction -- an asset endpoint reads them
-        // directly -- but a consumer is entitled to know the request fields
-        // exist.
+        // Read directly rather than extracted, but still declared.
         operation.add_parameter(
             kynos_openapi::Parameter::header(
                 "If-Match",
@@ -342,9 +281,7 @@ impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
             ),
         );
 
-        // Read only where there is something to choose between. Declaring it on
-        // a file with one stored form would describe a negotiation that cannot
-        // change the answer.
+        // Declared only where there is something to choose between.
         if !self.asset.encodings().is_empty() {
             let offered = self
                 .asset
@@ -368,10 +305,7 @@ impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
             );
         }
 
-        // A 206 carries what a 200 would have, which section 15.3.7 requires of
-        // it outright: *a sender MUST generate all of the representation header
-        // fields that would have been sent in a 200 (OK) response to the same
-        // request.*
+        // A 206 carries the 200's representation fields (RFC 9110 section 15.3.7).
         range::describe(operation, self.asset.media_type());
 
         self.declare_response_headers(operation);
@@ -380,52 +314,29 @@ impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
     async fn call(&self, request: Request, context: &C) -> Response {
         let _ = context;
 
-        // Which representation, first. Every condition below is about one.
         let chosen = self.choose(request.headers());
 
-        // Section 13.2.2 step 1, against the same chosen form: a client whose
-        // copy is the identity octets has not seen the brotli ones.
+        // Section 13.2.2 step 1, against the chosen form's tag.
         if let Some(refused) = range::precondition_failed(request.headers(), Some(chosen.etag)) {
             return refused;
         }
 
-        // RFC 9110 section 13.1.2: `If-None-Match` on a GET is a cache
-        // validation, and a match means the client's copy is current.
-        //
-        // Compared against the tag of the representation *this* request would
-        // receive. A client holding the brotli form and now sending
-        // `Accept-Encoding: identity` has a current copy of something it is no
-        // longer being offered, and answering 304 would leave it with octets it
-        // just said it cannot decode.
+        // RFC 9110 section 13.1.2, against the tag of the representation this
+        // request would receive, not one the client may no longer decode.
         if let Some(field) = request.headers().get(header::IF_NONE_MATCH) {
             if etag::matches(field, chosen.etag) {
                 let mut response = Response::new(crate::http::body::Body::empty());
                 *response.status_mut() = StatusCode::NOT_MODIFIED;
                 crate::extract::params::header::write(
                     response.headers_mut(),
-                    // Without the `Content-Encoding`: section 15.4.5 bounds a
-                    // 304 to the fields it lists, and the `ETag` below already
-                    // names which stored form the client's copy is.
                     &self.headers(&chosen).not_modified(),
                 );
                 return response;
             }
         }
 
-        // Section 14.2: the `Range` field *is evaluated after evaluating the
-        // precondition header fields defined in Section 13.1, and only if the
-        // result in absence of the Range header field would be a 200* — so the
-        // 304 above wins, and this is reached only where a 200 was owed.
-        //
-        // The entity tag goes with it: `assets!` mints a strong one from the
-        // file's contents, which is what lets section 13.1.5's `If-Range`
-        // condition be evaluated rather than assumed false.
-        //
-        // The entity tag goes with it, and it is the *chosen* representation's:
-        // section 14.1.2 calculates a range against the encoded octets when a
-        // coding is applied, so a range and the tag guarding it have to name the
-        // same form. That is the property one tag over two representations
-        // cannot have, and the reason each stored coding carries its own.
+        // Section 14.2: `Range` only once a 200 is owed, guarded by the chosen
+        // form's strong tag, since section 14.1.2 ranges over encoded octets.
         let requested = spec::read(request.method(), request.headers(), Some(chosen.etag));
 
         range::respond(

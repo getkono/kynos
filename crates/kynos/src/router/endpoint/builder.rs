@@ -55,14 +55,8 @@ pub struct EndpointBuilder<C, H, A, P = Propagate, I = ()> {
     deprecated: bool,
     interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
 
-    // `fn() -> _` rather than the bare tuple: the parameters exist to name a
-    // shape, and letting them decide whether this builder is `Send` would make
-    // `Endpoints::push` reject handlers that are perfectly sound. The lint is
-    // measuring the parameters the type genuinely has.
-    //
-    // `I` is the interceptors mounted on this one operation, which `mount`
-    // checks against the router's own -- the reason `routes!` expands to a
-    // tuple rather than to an already-erased collection.
+    // `fn() -> _` keeps the parameters out of this builder's auto traits. `I`
+    // is this operation's interceptor list, which `mount` checks.
     #[allow(clippy::type_complexity)]
     _private: PhantomData<fn() -> (C, H, A, P, I)>,
 }
@@ -88,11 +82,8 @@ impl<C, H: Handler<C, A>, A> EndpointBuilder<C, H, A, Propagate, ()> {
 }
 
 impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
-    /// Begins an endpoint whose panic policy is already decided.
-    ///
-    /// What a route attribute expands into: the attribute knows the policy at
-    /// compile time from `catch_panics` in its arguments, so it names it rather
-    /// than starting at [`Propagate`] and transitioning.
+    /// Begins an endpoint whose panic policy is already decided, as a route
+    /// attribute knows it.
     pub(crate) fn with_policy(method: Method, path: PathTemplate, handler: H) -> Self {
         Self {
             method,
@@ -197,11 +188,8 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
         self
     }
 
-    /// Tags the operation with a tag already resolved to a value.
-    ///
-    /// What `from_meta` calls: a route attribute's `tag = T` is a
-    /// [`DeclaredTag`] in an associated constant by the time it reaches here,
-    /// and the type it came from is no longer nameable.
+    /// Tags the operation with a tag already resolved to a value, as
+    /// `from_meta` holds it.
     pub(crate) fn with_tag(mut self, tag: DeclaredTag) -> Self {
         self.tags.push(tag);
         self
@@ -217,10 +205,7 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
     /// Applies an interceptor to this operation only.
     ///
     /// The interceptor's contribution is merged into this endpoint's
-    /// description. Interceptors accumulate in a list rather than in the
-    /// builder's type, so that a router, a group and an endpoint compose them
-    /// the same way — and so that `routes![a, b]` still typechecks when only
-    /// one of them carries an interceptor.
+    /// description.
     ///
     /// The first call is the outermost of this endpoint's own, and every one of
     /// them is innermost of all: a router's and a group's both wrap them. See
@@ -246,11 +231,7 @@ impl<C, H, A, P, I> IntoEndpoints<C> for EndpointBuilder<C, H, A, P, I>
 where
     C: Send + Sync + 'static,
     H: Handler<C, A>,
-    // `'static` and no more. `A` names the argument shape and never exists as
-    // a value, so requiring it to be `Send + Sync` refuses handlers whose
-    // *arguments* are not — a property of values the handler's own future
-    // holds, never of this builder, which keeps `A` behind `PhantomData<fn()
-    // -> _>` precisely so its auto traits do not leak.
+    // Only `'static`: `A` is a phantom argument shape, never a value.
     A: 'static,
     P: PanicPolicy,
     I: 'static,
@@ -267,11 +248,7 @@ impl<C, H, A, P, I: 'static> Endpoint<C> for EndpointBuilder<C, H, A, P, I>
 where
     C: Send + Sync + 'static,
     H: Handler<C, A>,
-    // `'static` and no more. `A` names the argument shape and never exists as
-    // a value, so requiring it to be `Send + Sync` refuses handlers whose
-    // *arguments* are not — a property of values the handler's own future
-    // holds, never of this builder, which keeps `A` behind `PhantomData<fn()
-    // -> _>` precisely so its auto traits do not leak.
+    // Only `'static`, as above.
     A: 'static,
     P: PanicPolicy,
 {
@@ -284,8 +261,7 @@ where
     }
 
     fn describe(&self, operation: &mut OperationCx<'_>) {
-        // The handler goes first, so that what it says about a status wins over
-        // what an interceptor covering it contributes for the same one.
+        // First, so the handler's responses win over an interceptor's.
         <H as Handler<C, A>>::describe(operation);
 
         let route = Route::new(
@@ -318,17 +294,11 @@ where
     }
 
     async fn call(&self, request: Request, context: &C) -> Response {
-        // A route with no interceptors pays nothing: no chain is assembled and
-        // the handler's future is awaited in place, inside the box
-        // `DynEndpoint` already put this one in, rather than behind the
-        // terminal's box of its own.
+        // Without interceptors, no chain and no second box.
         let served = async {
             if self.interceptors.is_empty() {
                 Handler::call(self.handler.clone(), request, context).await
             } else {
-                // The terminal owns its handler because `ErasedTerminal` is
-                // `'static`, and `Handler::call` consumes one regardless -- so
-                // the clone is the same one a direct call would have made.
                 let terminal = HandlerTerminal::<C, H, A> {
                     handler: self.handler.clone(),
                     _private: PhantomData,
@@ -377,11 +347,7 @@ where
     }
 }
 
-/// Whether `P` selected recovery.
-///
-/// [`PanicPolicy`] is a marker with no members to read, so the policy is
-/// resolved by identity -- which is exactly as static as the type it comes
-/// from.
+/// Whether `P` selected recovery, by type identity.
 fn recovers<P: PanicPolicy>() -> bool {
     std::any::TypeId::of::<P>() == std::any::TypeId::of::<Catch>()
 }

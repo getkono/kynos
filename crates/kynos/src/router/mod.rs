@@ -20,9 +20,8 @@ pub mod operation;
 pub mod policy;
 pub mod service;
 
-// The runtime match table and what one request does to it. Private because it
-// declares no item a user could name: everything in it is machinery `build`
-// assembles and `Service` drives.
+// The runtime match table and what one request does to it; nothing in it is
+// user-nameable.
 pub(crate) mod dispatch;
 
 use std::{collections::HashMap, marker::PhantomData, sync::Arc};
@@ -54,10 +53,6 @@ use crate::{
 };
 
 /// A `ShortCircuit`'s two halves, compared once the registry exists.
-///
-/// A function pointer rather than a trait object: the comparison is a fact
-/// about a type, and the type is known where the interceptor is mounted but
-/// erased everywhere after.
 pub(crate) type ShortCircuitCheck = fn(&mut Registry) -> Option<SpecError>;
 
 /// One endpoint, plus what the scopes it passed through contributed to it.
@@ -74,12 +69,8 @@ pub(crate) struct Mounted<C> {
     /// outermost first. `pub(crate)` because `unchecked` reads it back.
     #[cfg(feature = "unchecked")]
     pub(crate) unchecked_layers: Vec<Arc<dyn crate::unchecked::ErasedLayer>>,
-    /// Which half of a reference this is, when it is one.
-    ///
-    /// Here rather than in a list of its own because `absorb_router` has
-    /// already applied every enclosing prefix to `path` by the time this is
-    /// read, and because an entry dropped for a violation takes its half of the
-    /// mount with it rather than leaving a page pointed at nothing.
+    /// Which half of a reference this is, when it is one. Kept per entry so a
+    /// violation that drops the entry drops its half with it.
     #[cfg(feature = "docs")]
     pub(crate) docs: Option<docs::Role>,
 }
@@ -99,12 +90,8 @@ pub struct Router<C, P = Propagate, I = (), S = ()> {
     pub(crate) info: Option<Info>,
     pub(crate) servers: Vec<kynos_openapi::Server>,
     pub(crate) tags: Vec<DeclaredTag>,
-    /// Tag metadata declared at this router's own scope.
-    ///
-    /// Kept beside `tags` rather than derived from it, because a router that
-    /// calls `tag::<T>()` and mounts no operation still documents `T`. Both
-    /// pushes come from the same `T` in adjacent statements, so they cannot
-    /// drift.
+    /// Tag metadata declared at this router's own scope; separate from `tags`
+    /// because a router that mounts nothing still documents its tags.
     pub(crate) tag_metadata: Vec<kynos_openapi::Tag>,
     pub(crate) security_schemes: Vec<(&'static str, kynos_openapi::SecurityScheme)>,
     /// Problems found while mounting, which the fluent methods cannot return.
@@ -119,25 +106,8 @@ pub struct Router<C, P = Propagate, I = (), S = ()> {
     #[cfg(feature = "unchecked")]
     pub(crate) unchecked: crate::unchecked::Unchecked<C>,
 
-    // `fn() -> _` so that the parameters name a shape without deciding this
-    // builder's auto traits: a router is `Send` because what it holds is, not
-    // because `C` happens to be.
-    //
-    // `I` is the interceptors mounted here, as a type-level list. Nothing reads
-    // it at run time -- the chain itself is erased -- but `intercept` and the
-    // composition methods bound on it, which is what makes two colliding
-    // interceptors a compile error rather than a build-time one.
-    //
-    // `S` is what the scopes mounted here brought with them: a group's own
-    // interceptors, a nested router's, an endpoint's. Two parameters rather
-    // than one, because the two are checked in opposite directions. `I` covers
-    // every operation, so an incoming sub-stack must clear it. `S` covers
-    // subtrees, so an incoming sub-stack must *not* be compared against it --
-    // two sibling groups may hold one interceptor, since no request reaches
-    // both. Only `intercept`, which covers everything, reads `S`.
-    // The lint is measuring the four parameters the type genuinely
-    // has; factoring them into an alias would hide the shape rather
-    // than simplify it.
+    // `fn() -> _` keeps auto traits independent of `C`. `I` and `S`: see
+    // docs/middleware.md, "Two lists, not one".
     #[allow(clippy::type_complexity)]
     _private: PhantomData<fn() -> (C, P, I, S)>,
 }
@@ -297,9 +267,8 @@ impl<C, P, I, S> Router<C, P, I, S> {
                 continue;
             }
 
-            // The absorbed router's own interceptors and tags covered exactly
-            // these operations, so they become part of what each carries rather
-            // than of what this router applies to everything.
+            // The absorbed router's interceptors and tags covered only these
+            // operations, so each carries them.
             let mut interceptors = other.interceptors.clone();
             interceptors.append(&mut mounted.interceptors);
             mounted.interceptors = interceptors;
@@ -343,14 +312,6 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// is built. No recovery branch is installed when this method is not
     /// called.
     ///
-    /// Only the policy changes. Both lists are carried across, because what
-    /// they describe covers the operations mounted after this call just as it
-    /// did before — so dropping either here would let a later `intercept` be
-    /// checked against an empty one. `I` is the interceptors mounted on this
-    /// router; `S` is what the scopes mounted into it brought with them, and
-    /// naming three parameters rather than four silently emptied it, since the
-    /// fourth then falls back to its default of `()`.
-    ///
     /// # Compile-time requirement
     ///
     /// The final binary must use `panic = "unwind"`. Selecting this policy in
@@ -392,9 +353,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     ///
     /// What the endpoints carry is checked against this router's own
     /// interceptors and then remembered, so a later [`intercept`] sees it.
-    /// Mounting operations that carry none leaves this type unchanged, because
-    /// [`Flatten`] erases an empty stack — which is what keeps re-assignment
-    /// and a conditional mount compiling.
+    /// Mounting operations that carry none leaves this type unchanged, so
+    /// re-assignment and a conditional mount compile.
     ///
     /// # Panics
     ///
@@ -424,16 +384,13 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// fetches.
     ///
     /// Both are ordinary described operations, so the document gains two
-    /// `paths` keys and says so. See [`router::docs`](docs) for what that costs
-    /// and why it is not hidden.
+    /// `paths` keys and says so. See [`router::docs`](docs) for what that costs.
     ///
-    /// The description is serialized while this router is built, because it has
-    /// to describe these two routes -- and the page is pointed at the path the
-    /// description actually got, so nesting moves both halves together.
+    /// The description is serialized while this router is built, and the page
+    /// points at the path the description actually got, so nesting moves both
+    /// halves together.
     ///
-    /// Whether a deployment exposes its reference stays the deployment's
-    /// decision. This returns `Self` rather than changing the router's type, so
-    /// both arms of a conditional agree:
+    /// This returns `Self`, so both arms of a conditional agree:
     ///
     /// ```no_run
     /// use kynos::{Router, router::docs::Docs};
@@ -452,14 +409,11 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     where
         C: Send + Sync + 'static,
     {
-        // A path literal `Docs` could not parse is recorded there and drained
-        // here, so it reaches `validate` alongside every other malformed path
-        // rather than panicking at the mount site.
+        // Unparsable `Docs` paths surface through `validate`, not a panic here.
         self.violations.extend(docs.take_violations());
 
-        // Through `absorb` one half at a time, so a docs path meets the same two
-        // rules every other path does and the role stays unambiguous when a
-        // violation drops the entry.
+        // One half at a time, so the role stays unambiguous when a violation
+        // drops the entry.
         for (endpoint, role) in docs.into_halves() {
             let first = self.mounted.len();
             self.absorb(vec![endpoint], "", &[], &[], false);
@@ -474,14 +428,11 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// Mounts a group.
     ///
     /// Both of the group's stacks are checked against this router's own: its
-    /// interceptors, and whatever the endpoints mounted inside it carried. The
-    /// second is what makes a group's endpoint-scoped interceptor visible here
-    /// at all. Both are then remembered, so a later [`intercept`] — which
-    /// covers this group too — is checked against them.
+    /// interceptors, and whatever the endpoints mounted inside it carried. Both
+    /// are then remembered, so a later [`intercept`] is checked against them.
     ///
-    /// Neither is checked against what an *earlier* `group` left behind. Two
-    /// groups cover different operations, so two of them holding one
-    /// interceptor is not a collision.
+    /// Neither is checked against an earlier sibling `group`: no request
+    /// reaches both, so sharing an interceptor is not a collision.
     ///
     /// [`intercept`]: Router::intercept
     #[must_use]
@@ -513,8 +464,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             catches::<GP>(),
         );
 
-        // A group's layers cover the group's operations and nothing else, which
-        // is why they land on each absorbed endpoint rather than on the router.
+        // A group's layers cover only its operations, so they land per endpoint.
         #[cfg(feature = "unchecked")]
         for mounted in &mut self.mounted[first..] {
             mounted.unchecked_layers.clone_from(&group.unchecked_layers);
@@ -525,11 +475,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
     /// Mounts another router beneath a path prefix.
     ///
-    /// Both of the nested router's stacks are checked and remembered, for the
-    /// reason [`group`](Router::group) gives. `NS` is the load-bearing half:
-    /// without it, a group mounted inside the nested router appears in no type
-    /// this one can see, and its interceptors are compared against nothing in
-    /// either order.
+    /// Both of the nested router's stacks are checked and remembered, as for
+    /// [`group`](Router::group).
     #[must_use]
     pub fn nest<NP: PanicPolicy, NI, NS>(
         mut self,
@@ -570,8 +517,6 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     }
 
     /// Declares a security scheme the API can use.
-    // `Scheme` rather than `S`, which the router's own sub-stack parameter now
-    // takes. Turbofish is positional, so no caller spells this name.
     #[must_use]
     pub fn security_scheme<Scheme: SecurityScheme>(mut self) -> Self {
         self.security_schemes
@@ -598,15 +543,9 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         I: CompatibleWith<N, C>,
         S: CompatibleWith<N, C>,
     {
-        // Forcing the const is what puts the error on this call rather than in
-        // `middleware::stack`. Two interceptors adding one header, or
-        // answering with one status, stop here.
+        // Forcing the consts puts a collision error on this call; `S` because
+        // this also covers every scope already mounted.
         let () = <I as CompatibleWith<N, C>>::CHECK;
-        // And against the scopes already mounted, which this covers as surely
-        // as it covers what was intercepted here. Without it the check was an
-        // ordering accident: `intercept` before `group` was refused and
-        // `group` before `intercept` was not, though the chain that runs is
-        // the same either way.
         let () = <S as CompatibleWith<N, C>>::CHECK;
 
         let mut router: Router<C, P, Cons<N, I>, S> = self.retype();
@@ -669,16 +608,12 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
     /// Names the proxies whose forwarding fields may be believed.
     ///
-    /// One application-level policy, or none — the rule
-    /// [`trailing_slashes`](Self::trailing_slashes) follows, and for a sharper
-    /// reason: two limiters disagreeing about which hop to trust would be two
-    /// answers to one security question.
+    /// One application-level policy, like
+    /// [`trailing_slashes`](Self::trailing_slashes).
     ///
-    /// Unset, nothing is believed. RFC 7239 section 8.1 says the field "cannot
-    /// be relied upon to be correct, as it may be modified, whether mistakenly
-    /// or for malicious reasons, by every node on the way to the server,
-    /// including the client making the request" — so a default that read it
-    /// would let any client choose the address its rate limit counts against.
+    /// Unset, nothing is believed: RFC 7239 section 8.1 notes the field may be
+    /// modified by every node on the way, including the client, so trusting it
+    /// by default would let any client choose the address it is limited by.
     ///
     /// ```no_run
     /// use kynos::{
@@ -698,9 +633,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
     /// Turns unconstrained-schema warnings into build errors.
     ///
-    /// [`Unchecked`](crate::schema::unchecked::Unchecked) is honest but weak. A team that
-    /// wants no weak schemas at all can say so here.
-    ///
+    /// [`Unchecked`](crate::schema::unchecked::Unchecked) is honest but weak.
     /// The setting reaches an `Unchecked` wherever the description nests it: a
     /// body's own schema, a field of a derived type whether inlined or
     /// registered as a component, the items of a `Vec`, or the value of an

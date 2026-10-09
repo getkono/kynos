@@ -38,10 +38,8 @@ impl Asset {
     ///
     /// For an `Asset` built by hand rather than by [`assets!`](crate::assets):
     /// what [`embedded`](Self::embedded) leaves to a panic at mount, or to the
-    /// wire, is refused here instead. Not `const`, because the path is checked
-    /// by the same parser mounting uses, so an asset this accepts mounts at
-    /// its own path. Hold a hand-built set in a `LazyLock` to get the
-    /// `&'static [Asset]` that
+    /// wire, is refused here instead. Not `const`; hold a hand-built set in a
+    /// `LazyLock` to get the `&'static [Asset]` that
     /// [`AssetSet::embedded`](crate::router::assets::AssetSet::embedded) takes.
     ///
     /// ```
@@ -67,10 +65,9 @@ impl Asset {
     /// variable matching paths that are not this file.
     ///
     /// [`InvalidAsset::ETag`] unless `etag` is a strong, quoted `entity-tag`
-    /// (RFC 9110 section 8.8.3): a byte range is resumed against it, and only
-    /// a strong validator may be (section 13.1.5). The grammar's `obs-text`
-    /// is refused too, because a precondition field is compared as visible
-    /// ASCII and a tag holding anything else would never match.
+    /// (RFC 9110 section 8.8.3), since only a strong validator may guard a
+    /// range (section 13.1.5). `obs-text` is refused too, as it would never
+    /// match a precondition field.
     pub fn try_embedded(
         path: &'static str,
         bytes: &'static [u8],
@@ -129,8 +126,7 @@ fn is_asset_path(path: &str) -> bool {
         && PathTemplate::parse(format!("/{path}")).is_ok()
 }
 
-/// `.` or `..`, in either spelling: a client removes `%2e` dot segments as it
-/// removes literal ones, so either kind names a path no request arrives at.
+/// `.` or `..`, literal or `%2e`: a client removes both before sending.
 fn is_dot_segment(segment: &str) -> bool {
     let mut rest = segment;
     let mut dots = 0;

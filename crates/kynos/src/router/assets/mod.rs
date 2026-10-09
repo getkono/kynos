@@ -15,27 +15,17 @@
 //! feature, recorded at the document root where no client generator can act on
 //! it.
 //!
-//! Compile-time embedding is not a limitation of the first case. It is what
-//! *makes* the set knowable, which is what makes it describable.
-//!
 //! # What is described
 //!
 //! An embedded file is one `paths` key: a 200 with its media type, a 304, a
 //! 206, a 416, and the `ETag`, `Cache-Control`, `Accept-Ranges` and
 //! `Content-Range` each of those carries. There is no `Last-Modified` and no
-//! `If-Modified-Since`, which is a decision rather than an omission — a strong
-//! entity tag is the stronger validator, and sending a date obliges honouring a
-//! request that carries one back. Sending neither half is consistent; sending
-//! one is not.
+//! `If-Modified-Since`: the strong entity tag is the validator.
 //!
-//! # A file is where a byte range has everything it needs
+//! # Byte ranges
 //!
-//! RFC 9110 section 14.1.2 defines a byte range over octets of a known length,
-//! and both modes have exactly that. So both serve one, through the reader and
-//! the satisfiability rule in
-//! [`response::range`](crate::response::range) rather than through anything of
-//! their own — `router::assets::range` holds what the two modes share and
-//! where they part.
+//! Both modes serve byte ranges (RFC 9110 section 14.1.2), through
+//! [`response::range`](crate::response::range).
 
 mod media;
 
@@ -71,22 +61,12 @@ pub struct Asset {
 ///
 /// A *stored* coding: a build pipeline writes `app.js.br` beside `app.js`, and
 /// [`assets!`](crate::assets) folds the two into one resource. Kynos compresses
-/// nothing here, which is what makes the tag trustworthy — these octets exist
-/// on disk at compile time and are hashed like any other file.
+/// nothing here; these octets are hashed at compile time like any other file.
 ///
-/// # Why each coding carries its own tag
-///
-/// RFC 9110 section 8.8.1: a strong entity tag names one representation, and
-/// "different representations of the same resource" must not share one. Section
-/// 14.1.2 then calculates a byte range against "the encoded sequence of bytes"
-/// when a content coding is applied. One tag over both forms makes section
-/// 13.1.5's `If-Range` succeed on a resume it exists to refuse, and the client
-/// splices encoded octets onto an identity prefix — nothing errors and the file
-/// is wrong.
-///
-/// A tag per stored coding is what makes both properties hold at once, which
-/// [`Compression`](crate::middleware::compression) cannot do: it is handed a
-/// response whose tag and range were already decided.
+/// Each coding carries its own strong tag, since a tag names one
+/// representation (RFC 9110 section 8.8.1) and a range is calculated over the
+/// encoded octets (section 14.1.2); a shared tag would let `If-Range` splice
+/// encoded octets onto an identity prefix.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Encoded {
     coding: &'static str,
@@ -232,10 +212,9 @@ impl Asset {
 
 /// A set of files, ready to mount.
 ///
-/// Mounted the way anything else is. There is no `Router::assets`, because a
-/// [`Group`](crate::router::group::Group) already supplies the prefix, the tag
-/// and the interceptors — and an asset set that needed its own mounting verb
-/// would be one the router did not really accept.
+/// Mounted the way anything else is; a
+/// [`Group`](crate::router::group::Group) supplies the prefix, the tag and the
+/// interceptors.
 ///
 /// ```no_run
 /// # use kynos::{Router, router::group::Group};
@@ -251,11 +230,8 @@ pub struct AssetSet {
     operation_id_prefix: Cow<'static, str>,
 }
 
-/// What a set carrying no `Cache-Control` of its own sends.
-///
-/// An hour: long enough to be worth a cache, short enough that a deployment
-/// which forgot to fingerprint its files is not stuck for a year.
-/// [`immutable`](AssetSet::immutable) is the fingerprinted answer.
+/// What a set carrying no `Cache-Control` of its own sends: an hour, short
+/// enough that unfingerprinted files are not stuck in caches.
 pub(crate) const DEFAULT_CACHE_CONTROL: &str = "public, max-age=3600";
 
 impl AssetSet {
@@ -299,9 +275,8 @@ impl AssetSet {
 
     /// `public, max-age=31536000, immutable`, for a fingerprinted set.
     ///
-    /// Say this deliberately rather than having Kynos guess from the file
-    /// names: a set that is *not* fingerprinted and claims to be is cached for
-    /// a year by every client that saw it, and there is no way to take it back.
+    /// A set that is *not* fingerprinted and claims to be is cached for a year
+    /// by every client that saw it, with no way to take it back.
     #[must_use]
     pub fn immutable(mut self) -> Self {
         self.cache_control = Some("public, max-age=31536000, immutable");
@@ -342,22 +317,18 @@ impl AssetSet {
         self.assets.iter().filter_map(move |asset| {
             let index = self.index?;
             let directory = asset.path.strip_suffix(index)?;
-            // The index is a whole file name: `xindex.html` indexes nothing,
-            // and a cut inside `a%default.htm` would leave the unservable `a%`.
+            // The index is a whole file name: `xindex.html` indexes nothing.
             if !(directory.is_empty() || directory.ends_with('/')) {
                 return None;
             }
-            // `index.html` at the root serves `/`; `docs/index.html` serves
-            // `docs/`. Both keep the trailing slash, which is what a browser
-            // resolving a relative link against them expects.
+            // Keep the trailing slash a browser resolves relative links against.
             Some((asset, directory.to_owned()))
         })
     }
 }
 
 impl<C: Send + Sync + 'static> IntoEndpoints<C> for AssetSet {
-    /// An asset carries no interceptors of its own, so there is no stack to
-    /// check at the mount site.
+    /// An asset carries no interceptors of its own.
     type Stacks = ();
 
     fn into_endpoints(self, sink: &mut Endpoints<C>) {

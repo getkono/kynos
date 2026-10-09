@@ -1,24 +1,9 @@
 //! Answering a byte range against a file, and describing that it can be.
 //!
-//! Both asset modes end here. An embedded file is a `&'static [u8]` and a
-//! served one has just been read, so by this point the representation is octets
-//! of a known length whichever way it arrived — which is exactly what RFC 9110
-//! section 14.1.2 defines a byte range over.
-//!
-//! Nothing here decides what a range *means*. The reader, the satisfiability
-//! rule and both response fields come from
-//! [`response::range`](crate::response::range); this module chooses only how
-//! the answer is written and what the operation says about it.
-//!
-//! # An asset is where `If-Range` becomes real
-//!
-//! Section 13.1.5 makes `If-Range` a precondition on applying the field, and
-//! evaluating it needs a validator. A handler's `Ranged<T>` has none, so
-//! `response::range` ignores the condition and sends the whole representation.
-//! An asset has one: [`assets!`](crate::assets) mints a strong entity tag from
-//! the file's contents. So the tag goes to the reader, the strong comparison
-//! decides, and a client resuming a download it started before a deployment
-//! gets the new file whole rather than a part spliced into a stale copy.
+//! Range semantics come from [`response::range`](crate::response::range); this
+//! module only writes the answer and describes it. Unlike a handler's
+//! `Ranged<T>`, an asset has an entity tag, so `If-Range` (RFC 9110 section
+//! 13.1.5) is evaluated rather than ignored.
 
 use bytes::Bytes;
 
@@ -41,16 +26,8 @@ use crate::{
 /// Section 13.1.1's 412, if the request's `If-Match` fails for a file tagged
 /// `current`.
 ///
-/// Both asset modes call this before anything else, because section 13.2.2
-/// evaluates `If-Match` ahead of `If-None-Match` and the `Range` field: a
-/// resume against a file that has since changed is refused outright rather
-/// than answered with a part of the new one. The comparison is the strong one,
-/// so a served directory's weak tag holds for nothing but `*`. The evaluation
-/// is [`etag::if_match`](crate::http::etag::if_match), the one a ranged
-/// `Served` response makes too.
-///
-/// `If-Unmodified-Since` is not read: neither mode sends `Last-Modified`, so
-/// section 13.1.4 says to ignore it.
+/// Called first, as section 13.2.2 orders. `If-Unmodified-Since` is ignored,
+/// since no `Last-Modified` is sent (section 13.1.4).
 pub(super) fn precondition_failed(
     fields: &crate::http::HeaderMap,
     current: Option<&str>,
@@ -66,9 +43,8 @@ pub(super) fn precondition_failed(
 
 /// The whole representation, the part a `Range` asked for, or a 416.
 ///
-/// For octets already in hand. A sender that knows the length without holding
-/// the bytes — a file on disk — calls [`range::select`] itself and reaches
-/// [`assembled`] with only the part it read.
+/// For octets already in hand; a file on disk calls [`range::select`] and
+/// [`assembled`] itself.
 pub(super) fn respond<H: EncodeHeaders>(
     octets: Bytes,
     media_type: &str,
@@ -104,9 +80,7 @@ pub(super) fn assembled<H: EncodeHeaders>(
     }
     crate::extract::params::header::write(response.headers_mut(), headers);
 
-    // Section 14.3: the advertisement rides on every representation this
-    // operation serves, which is what tells a client a resumable download
-    // exists at all.
+    // Section 14.3: advertised on every representation served.
     crate::extract::params::header::write(response.headers_mut(), &AcceptRanges);
 
     if let Selection::Part {
@@ -130,32 +104,23 @@ pub(super) fn assembled<H: EncodeHeaders>(
 }
 
 /// Section 15.5.17's 416, with the `Content-Range` it owes.
-///
-/// The rejection writes both halves, so the `unsatisfied-range` grammar is
-/// stated in one place and the asset server restates none of it.
 pub(super) fn unsatisfiable(rejection: RangeRejection) -> Response {
     rejection.into_response()
 }
 
 /// Declares the two statuses, two parameters and one field a ranged file adds.
 ///
-/// Called with the 200 and the 304 already declared, because the `Content-Range`
-/// on a 206 and the `Accept-Ranges` on both successes are attached per status —
-/// section 14.4 gives the first no meaning anywhere else, and a 304 is not a
-/// representation to advertise a range of.
+/// Called with the 200 and the 304 already declared; fields are attached to
+/// the 200 and 206 only.
 pub(super) fn describe(operation: &mut OperationCx<'_>, media_type: &str) {
     let partial = kynos_openapi::Response::with_content(
         "the requested part of the file",
         media_type,
-        // The same unconstrained object the 200 carries: a part of a file has
-        // no more of a JSON Schema than the file does.
         kynos_openapi::MediaType::new(kynos_openapi::Schema::Object(Box::default())),
     );
     operation.add_responses(&kynos_openapi::Responses::new().with(206, partial));
 
-    // The 416 comes from the rejection that produces it, so the problem shape
-    // and the `unsatisfied-range` grammar are declared once for the whole
-    // framework rather than restated here.
+    // Declared by the rejection that produces it.
     let unsatisfiable =
         <RangeRejection as crate::response::Responses>::responses(operation.registry());
     operation.add_responses(&unsatisfiable);

@@ -39,8 +39,7 @@ impl<C> Service<C> {
     /// result.
     ///
     /// The only way to change a built service's document, so a reference never
-    /// serves a description the service no longer reports. A closure rather
-    /// than a `&mut Document`, so the render cannot be left to the caller.
+    /// serves a stale description.
     ///
     /// # Errors
     ///
@@ -72,8 +71,7 @@ impl<C> Service<C> {
     #[cfg(feature = "unchecked")]
     pub(crate) fn mark_opaque(&mut self, reason: kynos_openapi::OpaqueReason) {
         self.openapi_mut(|document| Self::flag_opaque(document, reason))
-            // Markers and a restamp add only string-keyed members to a
-            // document that already serialized when the router was built.
+            // Adds only string-keyed members to a document that serialized.
             .expect("a document that serialized at build still serializes once flagged");
     }
 
@@ -98,9 +96,7 @@ impl<C> Service<C> {
 
             for slot in slots {
                 if let Some(operation) = slot.as_deref_mut() {
-                    // The only reachable failure is a marker already present in
-                    // a shape Kynos never emits, which a document Kynos just
-                    // built cannot carry.
+                    // Fails only on a pre-existing marker, which this cannot carry.
                     let _ = marker.apply_to(operation);
                 }
             }
@@ -111,8 +107,7 @@ impl<C> Service<C> {
             }
         }
 
-        // Derived rather than set: the stamp is a summary of what the document
-        // now says, in both directions.
+        // Derived from what the document now says, rather than set.
         document.restamp_authority();
     }
 
@@ -126,10 +121,8 @@ impl<C> Service<C> {
 
     /// Wraps an erased dispatcher and the description it implements.
     ///
-    /// Called by [`Router::build`](crate::Router::build). The closure owns the
-    /// context and the matcher, which is why a `Service<C>` is `Send + Sync`
-    /// whatever `C` is — the context is captured here once rather than being
-    /// threaded through every request.
+    /// Called by [`Router::build`](crate::Router::build); the closure owns the
+    /// context and the matcher.
     pub(crate) fn new<F, Fut>(document: Document, handler: F) -> Self
     where
         F: Fn(crate::http::Request) -> Fut + Send + Sync + 'static,

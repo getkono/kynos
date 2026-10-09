@@ -4,9 +4,6 @@
 //! router together, and everything here reads the result. `validate` and
 //! `openapi` describe it, `build` turns it into something that serves, and
 //! `describe` is the one walk both go through.
-//!
-//! Private, and the split moves no path -- `Router` is still declared in
-//! `mod.rs`, and an inherent `impl` may sit in any module of the crate.
 
 use std::collections::HashSet;
 
@@ -20,7 +17,6 @@ use super::{
     SpecError, SpecVersion, TrailingSlashPolicy, Violation, dispatch,
 };
 
-// Each behind the feature that provides it, as `mod.rs` had them.
 #[cfg(feature = "docs")]
 use super::docs;
 #[cfg(feature = "unchecked")]
@@ -50,23 +46,15 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     ///
     /// 3.1 for an API using no 3.2-only construct, and 3.2 for one that does —
     /// a `QUERY` operation, a streamed response, an `in: querystring`
-    /// parameter. Lowest rather than highest, because a description a consumer
-    /// can read is worth more than one that advertises a version number, and
-    /// nothing is lost by saying 3.1 when 3.1 is enough.
-    ///
-    /// Note that this is *not* decided by the `openapi32` feature. Cargo
-    /// unifies features across a dependency graph, so a crate elsewhere in the
-    /// build enabling it would otherwise bump the version of a document whose
-    /// own API never changed.
+    /// parameter. The `openapi32` feature does not decide it, since Cargo
+    /// unifies features across the dependency graph.
     ///
     /// # Errors
     ///
     /// Returns [`Error::Invalid`] when validation finds an error-level
     /// violation, so a misleading description is never emitted. Also returns
     /// it, in every build, for a key without the `x-` prefix in any object's
-    /// `extensions`, such as the `Info` given to [`info`](Router::info): the
-    /// model types no such field at either version, so it is refused rather
-    /// than raising the version the description claims.
+    /// `extensions`, such as the `Info` given to [`info`](Router::info).
     pub fn openapi(&self) -> Result<Document>
     where
         C: 'static,
@@ -77,11 +65,9 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
     /// Produces the description targeting a specific specification version.
     ///
-    /// Targets, never downgrades: asking for a version that cannot express
-    /// this API is an error listing what blocks it, not a document with the
-    /// offending operations quietly missing. Reach for this when a consumer's
-    /// toolchain pins a version, and let [`openapi`](Router::openapi) decide
-    /// otherwise.
+    /// Targets, never downgrades: a version that cannot express this API is an
+    /// error listing what blocks it. Reach for this when a consumer's toolchain
+    /// pins a version, and let [`openapi`](Router::openapi) decide otherwise.
     ///
     /// # Errors
     ///
@@ -112,13 +98,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         let described = self.describe()?;
         let document = described.into_document()?;
 
-        // After the document exists, and after every violation has been raised.
-        // Both orderings are load-bearing: a reference describes the two routes
-        // that serve it, so its bytes cannot predate the document -- and an
-        // entry `absorb` or `absorb_router` dropped has already failed the
-        // build above, so no half of a mount reaches this unpaired.
-        // The service keeps what this returns, because `Server::prepare` and
-        // the tower conversion still edit the document after this point.
+        // After the document and every violation: the reference describes its
+        // own routes, and a dropped half has already failed the build.
         #[cfg(feature = "docs")]
         let published = docs::render::render(&self.mounted, &document)?;
 
@@ -132,8 +113,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 *index
             } else {
                 let index = paths.len();
-                // `describe` tried the same inserts in a `TrialTable`, so a
-                // pattern refused here already failed the build above.
+                // `TrialTable` already reported any refusal, failing the build.
                 matcher
                     .insert(key.clone(), index)
                     .map_err(|error| invalid(match_table_refusal(&key, error)))?;
@@ -209,10 +189,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             entry.allow = dispatch::allow_header(&methods);
         }
 
-        // After the `Allow` loop and the implemented set, so the synthesized
-        // `OPTIONS` is in neither, and after `describe` has already run, so it
-        // is in no `paths` key either. All three are properties of *when* this
-        // happens rather than of a filter someone has to maintain.
+        // Last, so the synthesized `OPTIONS` is in no `Allow`, implemented set
+        // or `paths` key.
         let implemented = dispatch::implemented(&paths);
         install_preflight(&mut paths, &self.method_not_allowed, &implemented);
 
@@ -237,13 +215,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         Ok(service)
     }
 
-    /// Assembles the description, and everything found on the way that a
-    /// `Describe` implementation had no way to return.
-    /// Registers every declared security scheme under `components`.
-    ///
-    /// A name the specification cannot hold as a component key is a violation
-    /// rather than a failure: the rest of the description is still worth
-    /// emitting, and `validate` is what decides whether it is usable.
+    /// Registers every declared security scheme under `components`; an illegal
+    /// name is a violation rather than a failure.
     fn declare_security_schemes(&self, registry: &mut Registry, violations: &mut Vec<Violation>) {
         for (name, scheme) in &self.security_schemes {
             match kynos_openapi::ComponentName::new(*name) {
@@ -258,10 +231,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         }
     }
 
-    /// Reports every pattern the match table would refuse.
-    ///
-    /// Called from `describe` rather than left to `build`'s inserts, so that
-    /// `validate` reports what `build` would be refused.
+    /// Reports every pattern the match table would refuse, so `validate` sees
+    /// what `build` would be refused.
     fn try_match_table(&self, violations: &mut Vec<Violation>) {
         let mut table = TrialTable::default();
         for mounted in &self.mounted {
@@ -282,16 +253,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         }
     }
 
-    /// Refuses an interceptor configured with a combination it cannot honour.
-    ///
-    /// Everything else an interceptor says is read from its types, so the
-    /// compiler has already checked it. This is the one question about a
-    /// *value*, and the only interceptor that has one is `Cors` — see
-    /// [`cors_conflict`].
-    ///
-    /// Called from `describe` rather than `build` so that `validate`,
-    /// `openapi`, `openapi_as` and `build` all report it, which is the same
-    /// reason `Error::Contribution` is raised there.
+    /// Refuses an interceptor configured with a combination it cannot honour;
+    /// today only `Cors` (see [`cors_conflict`]).
     fn refuse_unhonourable_interceptors(&self) -> Result<()>
     where
         C: 'static,
@@ -309,6 +272,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         Ok(())
     }
 
+    /// Assembles the description, plus every violation found on the way.
     fn describe(&self) -> Result<Described>
     where
         C: 'static,
@@ -316,18 +280,12 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         let mut registry = Registry::new();
         let mut violations = self.violations.clone();
 
-        // Read before anything is described: a configuration that cannot be
-        // honoured should not produce a document at all.
         self.refuse_unhonourable_interceptors()?;
 
         self.declare_security_schemes(&mut registry, &mut violations);
 
-        // Seeded with what this router and everything it absorbed declared at
-        // their own scope, so a `tag()` call that covers no operation is still
-        // documented; each operation then appends the metadata for the tags
-        // that actually landed on it. `unique_tags` keeps the first claim on a
-        // name, so an enclosing scope's metadata wins over an operation's --
-        // the same rule as before this walk harvested anything.
+        // Scope-declared metadata first, so it wins over an operation's under
+        // `unique_tags` and a tag covering no operation is still documented.
         let mut tag_metadata = self.tag_metadata.clone();
 
         let mut paths = Paths::new();
@@ -336,10 +294,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             let location = format!("#/paths/{}", pointer_token(&key));
             let method = mounted.endpoint.method();
 
-            // The identifier is needed before the operation exists, because it
-            // is half of the `Route` an interceptor is described against. A
-            // throwaway registry keeps the probe from recording a conflict the
-            // real pass is about to record again.
+            // The `Route` needs the id before the operation exists; a throwaway
+            // registry keeps the probe from recording conflicts twice.
             let operation_id = {
                 let mut probe = Registry::new();
                 let mut cx = OperationCx::new(&mut probe);
@@ -351,9 +307,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             let mut cx = OperationCx::new(&mut registry);
             mounted.endpoint.describe(&mut cx);
 
-            // The router's own interceptors are outermost, then whatever the
-            // group or nested router contributed. The endpoint described itself
-            // first, so its own responses win where the two overlap.
+            // Router's interceptors outermost, then the enclosing scopes'; the
+            // endpoint described itself first, so its responses win.
             for interceptor in self.interceptors.iter().chain(&mounted.interceptors) {
                 interceptor.describe(route, &mut cx);
             }
@@ -367,23 +322,18 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 cx.add_responses(&responses);
             }
 
-            // Every scope contributes through `add_tag`, so this is the one
-            // place that sees what all four of them left on the operation --
-            // and the endpoint's own tags are reachable nowhere else, since
-            // `Endpoints::push` erased the endpoint before this router saw it.
+            // The one place that sees every scope's tags, the endpoint's own
+            // included.
             tag_metadata.extend(cx.declared_tags().iter().map(DeclaredTag::metadata));
 
             let operation = cx.finish();
 
-            // A layer of undeclared effect covers this operation, so it stays
-            // in `paths` and says it is no longer verified.
+            // Under an undeclared-effect layer, the operation is marked opaque.
             #[cfg(feature = "unchecked")]
             let operation = {
                 let mut operation = operation;
                 if !self.unchecked.layers.is_empty() || !mounted.unchecked_layers.is_empty() {
-                    // The only reachable failure is a marker already present in
-                    // a shape Kynos never emits, which an operation Kynos just
-                    // described cannot carry.
+                    // Fails only on a pre-existing marker, which this cannot carry.
                     let _ = kynos_openapi::Opaque::new(kynos_openapi::OpaqueReason::UntypedLayer)
                         .apply_to(&mut operation);
                 }
@@ -426,13 +376,10 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         document.tags = unique_tags(&tag_metadata);
         document.components = registry.into_components();
 
-        // The version the description claims follows from what it uses, never
-        // from a cargo feature: Cargo unifies features across a dependency
-        // graph, so a flag some other crate turned on must not move it.
+        // From what the document uses, never from a (unified) cargo feature.
         let document = lowest_expressing(&document)?;
 
-        // Before validation, because an opaque document that is not stamped is
-        // an error the validator is entitled to raise.
+        // Before validation, which rejects an unstamped opaque document.
         #[cfg(feature = "unchecked")]
         let document = {
             let mut document = document;
@@ -492,23 +439,8 @@ impl Described {
 /// Registers the other spelling of every declared path against the entry that
 /// declared it, for [`TrailingSlashPolicy::Lenient`].
 ///
-/// Registering the flipped spelling in the match table, rather than answering
-/// for it at request time, is what keeps the description exact. It enters the
-/// table and nothing else: `paths` still carries one key per declared route,
-/// and because both spellings share a [`PathEntry`], `MatchedPath` still
-/// reports the declared template, `Allow` is still the one computed from the
-/// declared operations, and the synthesized `OPTIONS` still covers both.
-///
-/// A second pass rather than an insert in the loop above, for two reasons. A
-/// flipped spelling added early would occupy the slot a later declared route
-/// needs, and a declared spelling has to win over a flipped one -- an
-/// application that declares both `/users` and `/users/` keeps two distinct
-/// entries. `insert` failing *is* that collision, so discarding the error is
-/// the whole of the rule rather than a swallowed failure.
-///
-/// Catch-alls are skipped. Only `route_unchecked` can put one in the table, and
-/// `/assets/{*path}` already matches everything below `/assets/`, so a flipped
-/// spelling of it would be redundant at best.
+/// A pass after every declared path, so a declared spelling always wins.
+/// Catch-alls (only `route_unchecked` makes one) are skipped as redundant.
 fn register_flipped_spellings<C>(matcher: &mut matchit::Router<usize>, paths: &[PathEntry<C>]) {
     let flipped: Vec<(String, usize)> = paths
         .iter()
@@ -526,12 +458,8 @@ fn register_flipped_spellings<C>(matcher: &mut matchit::Router<usize>, paths: &[
     }
 }
 
-/// A dry run of the match table `build` fills, so that `describe` — and with
-/// it `validate` — reports every pattern `build` would be refused.
-///
-/// Patterns go in in `build`'s order: every described key in mount order, then
-/// every unchecked pattern. That order decides which of two conflicting routes
-/// is reported, so it has to be the same.
+/// A dry run of the match table `build` fills, in `build`'s insertion order,
+/// which decides which of two conflicting routes is reported.
 #[derive(Default)]
 struct TrialTable {
     table: matchit::Router<()>,
@@ -540,10 +468,8 @@ struct TrialTable {
 }
 
 impl TrialTable {
-    /// Tries a described key.
-    ///
-    /// A key whose shape an earlier key already holds under other variable
-    /// names is skipped: the validator reports it as `DuplicatePathTemplate`.
+    /// Tries a described key, skipping a shape already held (the validator
+    /// reports that as `DuplicatePathTemplate`).
     fn insert_template(&mut self, template: &kynos_openapi::PathTemplate) -> Option<SpecError> {
         if self.held.contains(template.as_str()) || !self.shapes.insert(template.normalized()) {
             return None;
@@ -551,10 +477,8 @@ impl TrialTable {
         self.insert(template.as_str())
     }
 
-    /// Tries a matching pattern, as `build` inserts it.
-    ///
-    /// A pattern already held is one entry serving another method, as it is in
-    /// `build`, and is not tried again — refused or not.
+    /// Tries a matching pattern, as `build` inserts it; a pattern already held
+    /// is not tried again.
     fn insert(&mut self, pattern: &str) -> Option<SpecError> {
         if !self.held.insert(pattern.to_owned()) {
             return None;
@@ -579,11 +503,8 @@ pub(super) fn match_table_refusal(pattern: &str, error: matchit::InsertError) ->
     }
 }
 
-/// Whether `operation` declares a security requirement.
-///
-/// An absent `security` and an empty list both declare none. A list holding the
-/// empty requirement beside a scheme declares one, since a request presenting
-/// the credential is answered as its holder.
+/// Whether `operation` declares a security requirement: a non-empty list does,
+/// even one holding the empty (anonymous) requirement beside a scheme.
 fn declares_security(operation: &kynos_openapi::Operation) -> bool {
     operation
         .security
