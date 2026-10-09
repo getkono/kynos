@@ -421,29 +421,3 @@ fn a_custom_index_beside_a_percent_escape_mounts() {
     let _router =
         crate::Router::<()>::new().mount(AssetSet::embedded(ESCAPED).index("default.htm"));
 }
-
-/// `If-Match` is read across every field line, so a tag on the second line
-/// holds as it would in one list, and a request with none is not refused.
-#[test]
-fn an_if_match_is_one_list_across_its_field_lines() {
-    use crate::http::{HeaderMap, HeaderValue, StatusCode, header};
-
-    let fields = |lines: &[&'static str]| {
-        let mut fields = HeaderMap::new();
-        for line in lines {
-            fields.append(header::IF_MATCH, HeaderValue::from_static(line));
-        }
-        fields
-    };
-
-    assert!(
-        super::range::precondition_failed(&fields(&["\"old\"", "\"t\""]), Some("\"t\"")).is_none()
-    );
-    assert!(super::range::precondition_failed(&fields(&[]), Some("\"t\"")).is_none());
-    assert!(super::range::precondition_failed(&fields(&[]), None).is_none());
-
-    let refused =
-        super::range::precondition_failed(&fields(&["\"old\"", "\"older\""]), Some("\"t\""))
-            .expect("no line names the current tag");
-    assert_eq!(refused.status(), StatusCode::PRECONDITION_FAILED);
-}

@@ -45,8 +45,9 @@ use crate::{
 /// evaluates `If-Match` ahead of `If-None-Match` and the `Range` field: a
 /// resume against a file that has since changed is refused outright rather
 /// than answered with a part of the new one. The comparison is the strong one,
-/// so a served directory's weak tag holds for nothing but `*`. Every field
-/// line is read, since a list split over two lines is still one list.
+/// so a served directory's weak tag holds for nothing but `*`. The evaluation
+/// is [`etag::if_match`](crate::http::etag::if_match), the one a ranged
+/// `Served` response makes too.
 ///
 /// `If-Unmodified-Since` is not read: neither mode sends `Last-Modified`, so
 /// section 13.1.4 says to ignore it.
@@ -54,10 +55,7 @@ pub(super) fn precondition_failed(
     fields: &crate::http::HeaderMap,
     current: Option<&str>,
 ) -> Option<Response> {
-    let mut if_match = fields.get_all(header::IF_MATCH).iter().peekable();
-    if_match.peek()?;
-
-    if if_match.any(|field| crate::http::etag::matches_strongly(field, current)) {
+    if crate::http::etag::if_match(fields, || current)? {
         return None;
     }
 
