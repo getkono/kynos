@@ -128,6 +128,59 @@ fn an_operation_outside_paths_is_validated_too() {
     );
 }
 
+/// An operation's own `callbacks` describe operations too.
+///
+/// The case above reaches a callback only through `components.callbacks`; one
+/// written inline on an operation hangs off that operation instead, and is
+/// just as much one of "all operations described in the API". Each case
+/// carries a different operation-level rule, and the nested one shows the walk
+/// descends through a callback's own operations as well.
+#[test]
+fn an_operation_inside_an_inline_callback_is_validated() {
+    use crate::model::{callback::Callback, reference::RefOr};
+
+    let with_callback = |operation: Operation| {
+        let mut owner = Operation::new("subscribe").with_responses(ok_responses());
+        owner.callbacks.insert(
+            "onData".to_owned(),
+            RefOr::Item(Callback::new().with(
+                "{$request.body#/url}",
+                PathItem::new().with_operation(Method::Post, operation),
+            )),
+        );
+        owner
+    };
+    let validate = |owner: Operation| {
+        Validator::new(SpecVersion::V3_1).validate(&document_with(&[(
+            "/subscriptions",
+            PathItem::new().with_operation(Method::Post, owner),
+        )]))
+    };
+
+    let duplicate = validate(with_callback(
+        Operation::new("subscribe").with_responses(ok_responses()),
+    ));
+    assert!(
+        duplicate.iter().any(|violation| matches!(
+            &violation.error,
+            SpecError::DuplicateOperationId { operation_id, .. } if operation_id == "subscribe"
+        ) && violation.location
+            == "#/paths/~1subscriptions/post/callbacks/onData/{$request.body#~1url}/post"),
+        "an inline callback describes an operation; got {duplicate:?}"
+    );
+
+    let responseless = validate(with_callback(with_callback(Operation::new("notify"))));
+    assert!(
+        responseless.iter().any(
+            |violation| matches!(violation.error, SpecError::NoResponses)
+                && violation.location
+                    == "#/paths/~1subscriptions/post/callbacks/onData/{$request.body#~1url}/post\
+                /callbacks/onData/{$request.body#~1url}/post"
+        ),
+        "a callback's own callbacks describe operations; got {responseless:?}"
+    );
+}
+
 /// An operation with no responses is reported wherever it is written.
 ///
 /// The companion to the case above, and a different rule on purpose: it shows
