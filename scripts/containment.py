@@ -1641,9 +1641,9 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
          "`jsonschema` is named only in `test/conformance.rs`"),
         (("regex", "regex_syntax"), ONLY_IN,
          {"crates/kynos/src/__private/constraints/pattern.rs",
-          "crates/kynos-macros/src/derive/schema/pattern.rs"},
+          "crates/kynos-openapi/src/pattern.rs"},
          "`regex` and `regex-syntax` are named only in `__private/constraints/pattern.rs` and "
-         "`kynos-macros`' `derive/schema/pattern.rs`"),
+         "`kynos-openapi`'s `pattern.rs`"),
         (("serde_yaml_ng",), ONLY_IN,
          {"crates/kynos-openapi/src/emit/", "crates/kynos/src/error/mod.rs"},
          "`serde_yaml_ng` is named only under `kynos-openapi/emit/` and in `error/mod.rs`"),

@@ -22,15 +22,13 @@ assets = []
 openapi31 = ["kynos-openapi/openapi31"]
 openapi32 = ["openapi31", "kynos-openapi/openapi32"]
 # `#[schema(pattern = "...")]`, refused without it rather than left unchecked.
-pattern = ["dep:regex", "dep:regex-syntax"]
+pattern = ["kynos-openapi/pattern"]
 
 [dependencies]
 # Shares the document model's path-template parser, so the two cannot disagree.
 kynos-openapi = { workspace = true }
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
-regex = { workspace = true, optional = true }
-regex-syntax = { workspace = true, optional = true }
 syn = { workspace = true, features = ["full", "extra-traits", "parsing"] }
 
 [lints]

@@ -363,6 +363,9 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         if let Some(conflict) = registry.schema_conflicts().first() {
             return Err(Error::Schema(conflict.clone()));
         }
+        if let Some(refused) = registry.key_pattern_refusals().first() {
+            return Err(Error::KeyPattern(Box::new(refused.clone())));
+        }
         if let Some(conflict) = registry.scheme_conflicts().first() {
             return Err(Error::Contribution(conflict.clone()));
         }

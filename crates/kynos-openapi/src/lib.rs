@@ -49,6 +49,8 @@ compile_error!(
 pub mod annotation;
 pub mod emit;
 pub mod model;
+#[cfg(feature = "pattern")]
+pub mod pattern;
 pub mod validate;
 
 // The curated crate-root facade. Every item below has exactly one canonical

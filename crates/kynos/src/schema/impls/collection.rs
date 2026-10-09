@@ -31,9 +31,15 @@ fn array<T: Schema>(registry: &mut Registry, unique: bool) -> OpenApiSchema {
 ///
 /// `propertyNames` is a string schema plus `K`'s constraints, not `K`'s own
 /// schema, and is omitted when `K` constrains nothing.
+///
+/// A key `pattern` that no check could enforce is recorded on the registry,
+/// which the router refuses while it is built.
 fn map<K: MapKey, V: Schema>(registry: &mut Registry) -> OpenApiSchema {
     let values = registry.resolve::<V>();
     let constraints = K::key_constraints();
+    if let Some(pattern) = &constraints.pattern {
+        registry.admit_key_pattern::<K>(pattern);
+    }
 
     with_object(OpenApiSchema::of_type(SchemaType::Object), |object| {
         object.additional_properties = Some(Box::new(values));
@@ -73,20 +79,21 @@ fn check_members<'a, T: Schema + 'a>(
 /// Checks each entry of a map: its key against the `propertyNames` that `K`
 /// declares, then its value under the key.
 ///
-/// A pointer to a key names its value, so a key is reported at the map. Only
-/// length bounds are checked. A key with no `as_member` is not checked, and
-/// its value is reported at the map. `K::key_constraints` is built lazily.
+/// A pointer to a key names its value, so a key is reported at the map. Its
+/// length bounds are checked, and its `pattern` under the `pattern` feature. A
+/// key with no `as_member` is not checked, and its value is reported at the
+/// map. `K::key_constraints` is built lazily.
 fn check_entries<'a, K: MapKey + 'a, V: Schema + 'a>(
     entries: impl Iterator<Item = (&'a K, &'a V)>,
     at: Pointer<'_>,
     violations: &mut Violations,
 ) {
-    let mut lengths = None;
+    let mut bounds = None;
     for (key, value) in entries {
         match key.as_member() {
             Some(name) => {
-                let lengths = *lengths.get_or_insert_with(|| KeyLengths::of::<K>());
-                check_key(name, lengths, at, violations);
+                let bounds = bounds.get_or_insert_with(KeyBounds::of::<K>);
+                check_key(name, bounds, at, violations);
                 value.check_constraints(at.member(name), violations);
             }
             None => violations.within(at, |inner| {
@@ -97,34 +104,43 @@ fn check_entries<'a, K: MapKey + 'a, V: Schema + 'a>(
 }
 
 /// The bounds of a map key that a check enforces.
-#[derive(Clone, Copy)]
-struct KeyLengths {
+struct KeyBounds {
     min: Option<u64>,
     max: Option<u64>,
+    #[cfg(feature = "pattern")]
+    pattern: Option<keyword::pattern::KeyPattern>,
 }
 
-impl KeyLengths {
+impl KeyBounds {
     fn of<K: MapKey>() -> Self {
         let Constraints {
             min_length,
             max_length,
+            #[cfg(feature = "pattern")]
+            pattern,
             ..
         } = K::key_constraints();
         Self {
             min: min_length,
             max: max_length,
+            #[cfg(feature = "pattern")]
+            pattern: pattern.map(keyword::pattern::KeyPattern::new),
         }
     }
 }
 
-/// Checks one key against its `lengths`, reporting at `at`, the map.
-fn check_key(name: &str, lengths: KeyLengths, at: Pointer<'_>, violations: &mut Violations) {
+/// Checks one key against its `bounds`, reporting at `at`, the map.
+fn check_key(name: &str, bounds: &KeyBounds, at: Pointer<'_>, violations: &mut Violations) {
     let mut broken = Violations::new();
-    if let Some(bound) = lengths.min {
+    if let Some(bound) = bounds.min {
         keyword::text_min_length(name, bound, Pointer::root(), &mut broken);
     }
-    if let Some(bound) = lengths.max {
+    if let Some(bound) = bounds.max {
         keyword::text_max_length(name, bound, Pointer::root(), &mut broken);
+    }
+    #[cfg(feature = "pattern")]
+    if let Some(pattern) = &bounds.pattern {
+        pattern.check(name, Pointer::root(), &mut broken);
     }
     for (_, detail) in broken.into_each() {
         violations.report(at, format!("the key `{name}` {detail}"));

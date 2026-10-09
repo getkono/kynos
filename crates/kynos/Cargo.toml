@@ -280,7 +280,7 @@ openapi32 = [
 # --- Core ------------------------------------------------------------------
 macros = ["dep:kynos-macros"]
 # Enforces `#[schema(pattern = "...")]`, which the derive refuses without it.
-pattern = ["macros", "kynos-macros/pattern", "dep:regex"]
+pattern = ["macros", "kynos-macros/pattern", "kynos-openapi/pattern", "dep:regex"]
 
 # --- Runtime ---------------------------------------------------------------
 server = [
