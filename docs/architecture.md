@@ -584,13 +584,16 @@ authoring slot.
 [`router::docs`](../crates/kynos/src/router/docs/) ships two routes and the two
 pages that boot Scalar and Redoc from a CDN, and ships neither renderer. A page
 is a string with a script tag in it, so the whole integration is bytes and a
-media type — no dependency, no bundled asset, and no version of anyone's UI in
-this tree, which is why the graph above gains no row. `Docs::custom` is the
-seam: a deployment wanting a third renderer, or a vendored bundle under a strict
-CSP, supplies the page. What Kynos owns is the part only Kynos can — that the
-description the page fetches is the description the router emits, mounted where
-the router actually mounted it, which needs the document after mounting and
-before serving and is a window no layer above has.
+media type — no dependency and no bundled asset, which is why the graph above
+gains no row. The tree names one exact version of each bundle and its
+integrity hash, not its bytes, and serves each built-in page under a
+`Content-Security-Policy` admitting that bundle and its boot script alone.
+`Docs::custom` is the seam: a deployment wanting a third renderer, or one that
+must not trust a CDN at all and vendors its bundle, supplies the page. What
+Kynos owns is the part only Kynos can — that the description the page fetches
+is the description the router emits, mounted where the router actually mounted
+it, which needs the document after mounting and before serving and is a window
+no layer above has.
 
 ## Rationale
 

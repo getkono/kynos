@@ -9,7 +9,7 @@ use std::sync::Arc;
 use kynos_openapi::{Method, PathTemplate, model::body::mime_names};
 
 use crate::{
-    http::{HeaderValue, Request, Response, body::Body, header},
+    http::{HeaderMap, HeaderValue, Request, Response, body::Body, header},
     router::{docs::State, endpoint::Endpoint, operation::OperationCx},
 };
 
@@ -94,7 +94,13 @@ impl<C: Send + Sync + 'static> Endpoint<C> for DocsPage {
         // The page is the same for every caller: nothing here reads the
         // request, which is why the operation declares no parameter.
         let _ = (request, context);
-        answer(self.state.page(), HTML)
+        let mut response = answer(self.state.page(), HTML);
+
+        if let Some(policy) = self.state.policy() {
+            secure(response.headers_mut(), policy);
+        }
+
+        response
     }
 }
 
@@ -148,4 +154,22 @@ fn answer(bytes: bytes::Bytes, media_type: &'static str) -> Response {
         .headers_mut()
         .insert(header::CONTENT_TYPE, HeaderValue::from_static(media_type));
     response
+}
+
+/// The headers a shipped page is served with.
+///
+/// The policy confines script to the pinned bundle and its boot script, and
+/// `nosniff` keeps the browser from reading the page as anything but the HTML
+/// it is declared as. A custom page gets neither: see [`Docs::custom`].
+///
+/// [`Docs::custom`]: crate::router::docs::Docs::custom
+fn secure(headers: &mut HeaderMap, policy: &'static str) {
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(policy),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
 }
