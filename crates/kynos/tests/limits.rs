@@ -435,6 +435,29 @@ mod multipart {
         assert_eq!(at.status, StatusCode::NO_CONTENT, "{}", at.text());
     }
 
+    /// A declared length past the default is refused from the head: the body
+    /// sent is a short, well-formed form the parser alone would accept.
+    #[tokio::test]
+    async fn a_declared_multipart_length_past_the_default_is_refused_without_reading_the_body() {
+        let service = Router::<()>::new()
+            .mount(kynos::routes![upload])
+            .build(())
+            .expect("a describable router");
+
+        let reply = support::post(&service, "/uploads")
+            .header("content-type", "multipart/form-data; boundary=x")
+            .header("content-length", &(DEFAULT_LIMIT + 1).to_string())
+            .body(body_of_length(128))
+            .call()
+            .await;
+        assert_eq!(
+            reply.status,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "{}",
+            reply.text()
+        );
+    }
+
     #[tokio::test]
     async fn a_body_limit_raises_the_multipart_default() {
         let service = Router::<()>::new()
