@@ -13,7 +13,9 @@ use kynos::{
     Router,
     http::{Method, Request, Response, StatusCode, body::Body},
     middleware::request_id::RequestId,
-    openapi::OpaqueRoute,
+    openapi::{Opaque, OpaqueReason, OpaqueRoute},
+    response::status::NoContent,
+    router::group::Group,
 };
 
 #[path = "support/mod.rs"]
@@ -230,6 +232,74 @@ fn one_reason_is_reported_once_however_many_routes_took_it() {
         router.unchecked_reasons(),
         [kynos::openapi::OpaqueReason::UntypedRoute]
     );
+}
+
+// --- What a layer leaves on an operation -----------------------------------
+
+/// Outside every unchecked layer.
+#[kynos::get("/outside")]
+async fn outside() -> NoContent {
+    NoContent
+}
+
+/// Inside the group's unchecked layer.
+#[kynos::get("/inside")]
+async fn inside() -> NoContent {
+    NoContent
+}
+
+/// The reasons the operation at `path` is marked opaque for, empty when it is
+/// not marked.
+fn opaque_reasons(router: Router<()>, path: &str) -> Vec<OpaqueReason> {
+    let document = router.openapi().expect("a describable router");
+    let item = document.paths.items.get(path).expect("a described path");
+    let (_, operation) = item.operations().next().expect("one operation");
+
+    Opaque::of(operation)
+        .expect("a readable marker")
+        .map(|marker| marker.reasons)
+        .unwrap_or_default()
+}
+
+/// A router with `outside` mounted directly and `inside` in a group, with an
+/// unchecked layer on the group alone when `on_group`, and on the router alone
+/// when `on_router`.
+fn layered(on_router: bool, on_group: bool) -> Router<()> {
+    let mut group = Group::new("/").mount(kynos::routes![inside]);
+    if on_group {
+        group = group.layer_unchecked(tower::layer::util::Identity::new());
+    }
+    let mut router = Router::<()>::new()
+        .mount(kynos::routes![outside])
+        .group(group);
+    if on_router {
+        router = router.layer_unchecked(tower::layer::util::Identity::new());
+    }
+    router
+}
+
+/// A group's layer marks the group's operations without any layer on the
+/// router, and leaves the router's own operations unmarked.
+#[test]
+fn a_group_layer_alone_marks_exactly_the_groups_operations() {
+    assert_eq!(
+        opaque_reasons(layered(false, true), "/inside"),
+        [OpaqueReason::UntypedLayer]
+    );
+    assert_eq!(opaque_reasons(layered(false, true), "/outside"), []);
+}
+
+/// A router's layer marks every operation beneath it without any layer on the
+/// group, including the group's.
+#[test]
+fn a_router_layer_alone_marks_every_operation() {
+    for path in ["/inside", "/outside"] {
+        assert_eq!(
+            opaque_reasons(layered(true, false), path),
+            [OpaqueReason::UntypedLayer],
+            "{path}"
+        );
+    }
 }
 
 // --- What the match table refuses ------------------------------------------
