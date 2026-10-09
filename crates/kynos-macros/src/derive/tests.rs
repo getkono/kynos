@@ -4398,6 +4398,45 @@ mod security_scheme {
         Vec::new()
     }
 
+    /// The two OAuth 2.0 refusals a 3.1 build raises, word for word.
+    ///
+    /// The UI suite records an `--all-features` build, where neither fires, so
+    /// this is the only place their wording is held. Both once carried the
+    /// indentation of a lost line continuation as a run of spaces mid-sentence.
+    #[cfg(not(feature = "openapi32"))]
+    #[test]
+    fn version_gated_oauth2_diagnostics_read_as_one_sentence() {
+        let cases: [(syn::DeriveInput, &str); 2] = [
+            (
+                syn::parse_quote!(
+                    #[security(oauth2(device_authorization(
+                        device_authorization_url = "https://auth.example.com/device",
+                        token_url = "https://auth.example.com/token"
+                    )))]
+                    struct Delegated;
+                ),
+                "the `device_authorization` flow was introduced in OpenAPI 3.2, and this build \
+                 describes 3.1; enable the `openapi32` feature, or declare a flow 3.1 can express",
+            ),
+            (
+                syn::parse_quote!(
+                    #[security(oauth2(
+                        client_credentials(token_url = "https://auth.example.com/token"),
+                        metadata_url = "https://auth.example.com/meta",
+                    ))]
+                    struct Delegated;
+                ),
+                "`metadata_url` writes `oauth2MetadataUrl`, which OpenAPI 3.2 introduced, and \
+                 this build describes 3.1; enable the `openapi32` feature, or drop it",
+            ),
+        ];
+
+        for (input, expected) in cases {
+            let error = expand_inner(&input).expect_err("a 3.1 build refuses it");
+            assert_eq!(error.to_string(), expected);
+        }
+    }
+
     /// How many diagnostics this build cannot provoke.
     ///
     /// Three, under `openapi32`: the constructs they refuse are legal there.
