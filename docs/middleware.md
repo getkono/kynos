@@ -991,13 +991,15 @@ and script cannot forge it, so an unsafe request that says it came from another
 site can be refused on that alone. Four header comparisons, no dependency.
 
 The fallback for a browser too old to send it compares `Origin` against the
-request's own authority, and that authority is read from `Host` *or* from the
-request target. RFC 9113 §8.3.1 replaces `Host` with the `:authority`
+request's own authority, and that authority is read from the request target
+*or* from `Host`. RFC 9113 §8.3.1 replaces `Host` with the `:authority`
 pseudo-header, which `http` puts on the URI rather than in the map, so reading
 `Host` alone found no authority on any HTTP/2 request — and refused every
 same-origin unsafe request from exactly the browsers the fallback exists for.
-`Host` wins where both are present: §8.3.1 requires them to agree, so the
-choice is a tie-break rather than a policy.
+The target wins where both are present: an HTTP/1.1 request carries an
+authority there only in absolute form, and RFC 9112 §3.2.2 has an origin server
+ignore `Host` beside one. `Cache` keys on the same reading, so the two cannot
+disagree about which host a request was for.
 
 ## Vary is declared apart from the names
 
@@ -1108,6 +1110,29 @@ one, which can never produce it. Closing it properly needs a precondition guard
 whose declaration varies with the method, which the contribution model states
 once per interceptor rather than once per operation. Until then, a service
 relying on create-only semantics must enforce them in the handler.
+
+### What a stored response is filed under
+
+RFC 9111 §2 keys a stored response on the request method and the whole target
+URI. `PrimaryKey` holds the method, the target's path and query, and its
+authority — lowercased, as RFC 3986 §3.2.2 compares a host — so a handler that
+picks a tenant from the host is never answered from another tenant's copy, and
+a write to one host drops only that host's entry. The authority is the one
+`Csrf` reads: the target's, else `Host`.
+
+**The scheme is left out**, which departs from §2. Behind a TLS-terminating
+proxy the service cannot see the scheme the client used, and a key holding a
+guessed one would change with the deployment rather than the request. The cost
+is that `http` and `https` share an entry. A default port is not stripped
+either, for the same reason: which port is default depends on that scheme. Two
+spellings of one origin cost a miss, never a wrong hit.
+
+**A request saying `no-cache` is answered by the handler.** §5.2.1.4 forbids
+reusing a stored response for it without validation, and `Cache` does not
+validate, so the lookup is skipped. What the handler produces is stored as any
+other response is, since the directive limits reuse rather than storage.
+`Pragma: no-cache` is not read: §5.4 deprecates the field and places no
+requirement on a cache receiving it.
 
 ### What is never stored
 
