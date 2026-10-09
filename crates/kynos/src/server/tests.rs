@@ -1063,6 +1063,67 @@ fn the_first_head_deadline_counts_the_idle_timeout_from_accept_without_http1() {
     assert_eq!(deadline(Some(Duration::MAX)), None);
 }
 
+/// The idle timeout the `Streams::idle` cases wait out, on a paused clock.
+#[cfg(feature = "http2")]
+const IDLE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Streams that have opened and closed one stream, and the instant the idle
+/// wait over them started, which is when that stream closed.
+#[cfg(feature = "http2")]
+fn quiet_streams() -> (
+    std::sync::Arc<crate::server::protocol::http2::Streams>,
+    tokio::task::JoinHandle<tokio::time::Instant>,
+    tokio::time::Instant,
+) {
+    let streams = std::sync::Arc::new(crate::server::protocol::http2::Streams::default());
+    drop(streams.open());
+    let started = tokio::time::Instant::now();
+    let waiting = std::sync::Arc::clone(&streams);
+    let idle = tokio::spawn(async move {
+        waiting.idle(Some(IDLE)).await;
+        tokio::time::Instant::now()
+    });
+    (streams, idle, started)
+}
+
+/// A stream that opens and finishes inside the idle wait restarts the idle
+/// period from its close, so the connection idles a whole timeout after its
+/// last stream and no longer.
+#[cfg(feature = "http2")]
+#[tokio::test(start_paused = true)]
+async fn a_stream_finished_during_the_idle_wait_restarts_it_from_its_close() {
+    let (streams, idle, started) = quiet_streams();
+
+    tokio::time::sleep(IDLE * 2 / 5).await;
+    drop(streams.open());
+    let closed = tokio::time::Instant::now();
+
+    let idled = idle.await.expect("the idle wait does not panic");
+    assert_eq!(idled - started, closed - started + IDLE);
+}
+
+/// A stream that opens inside the idle wait and is still in flight when the
+/// wait's timer ends holds the connection until a whole timeout after it
+/// closes.
+#[cfg(feature = "http2")]
+#[tokio::test(start_paused = true)]
+async fn a_stream_opened_during_the_idle_wait_holds_it_until_the_stream_closes() {
+    let (streams, idle, started) = quiet_streams();
+
+    tokio::time::sleep(IDLE * 2 / 5).await;
+    let in_flight = streams.open();
+    tokio::time::sleep(IDLE * 3).await;
+    assert!(
+        !idle.is_finished(),
+        "a connection with a stream in flight is not idle"
+    );
+    drop(in_flight);
+    let closed = tokio::time::Instant::now();
+
+    let idled = idle.await.expect("the idle wait does not panic");
+    assert_eq!(idled - started, closed - started + IDLE);
+}
+
 /// A plaintext server whose header-read timeout is [`HEAD_TIMEOUT`].
 #[cfg(feature = "http1")]
 async fn head_timed_server() -> (
