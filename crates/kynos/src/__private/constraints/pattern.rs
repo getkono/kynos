@@ -7,7 +7,7 @@
 //! rather than per request.
 //!
 //! A map key's pattern is a run-time value of `MapKey::key_constraints`, and
-//! Rust has no generic statics to hold one per key type, so [`key`] translates
+//! Rust has no generic statics to hold one per key type, so `key` translates
 //! and compiles each distinct pattern once per process and keeps it under its
 //! source. The router calls it while it is built, which refuses a pattern that
 //! does not translate and leaves the compiled one in place for the first
