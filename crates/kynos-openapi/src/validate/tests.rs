@@ -128,6 +128,112 @@ fn an_operation_outside_paths_is_validated_too() {
     );
 }
 
+/// An operation's own `callbacks` describe operations too.
+///
+/// The case above reaches a callback only through `components.callbacks`; one
+/// written inline on an operation hangs off that operation instead, and is
+/// just as much one of "all operations described in the API". Each case
+/// carries a different operation-level rule, and the nested one shows the walk
+/// descends through a callback's own operations as well.
+#[test]
+fn an_operation_inside_an_inline_callback_is_validated() {
+    use crate::model::{callback::Callback, reference::RefOr};
+
+    let with_callback = |operation: Operation| {
+        let mut owner = Operation::new("subscribe").with_responses(ok_responses());
+        owner.callbacks.insert(
+            "onData".to_owned(),
+            RefOr::Item(Callback::new().with(
+                "{$request.body#/url}",
+                PathItem::new().with_operation(Method::Post, operation),
+            )),
+        );
+        owner
+    };
+    let validate = |owner: Operation| {
+        Validator::new(SpecVersion::V3_1).validate(&document_with(&[(
+            "/subscriptions",
+            PathItem::new().with_operation(Method::Post, owner),
+        )]))
+    };
+
+    let duplicate = validate(with_callback(
+        Operation::new("subscribe").with_responses(ok_responses()),
+    ));
+    assert!(
+        duplicate.iter().any(|violation| matches!(
+            &violation.error,
+            SpecError::DuplicateOperationId { operation_id, .. } if operation_id == "subscribe"
+        ) && violation.location
+            == "#/paths/~1subscriptions/post/callbacks/onData/{$request.body#~1url}/post"),
+        "an inline callback describes an operation; got {duplicate:?}"
+    );
+
+    let responseless = validate(with_callback(with_callback(Operation::new("notify"))));
+    assert!(
+        responseless.iter().any(
+            |violation| matches!(violation.error, SpecError::NoResponses)
+                && violation.location
+                    == "#/paths/~1subscriptions/post/callbacks/onData/{$request.body#~1url}/post\
+                /callbacks/onData/{$request.body#~1url}/post"
+        ),
+        "a callback's own callbacks describe operations; got {responseless:?}"
+    );
+}
+
+/// A referenced callback is validated once, at the component it names.
+///
+/// The walk above follows inline items only: following a `$ref` would visit
+/// the component once per reference and report a duplicate `operationId`
+/// against the component itself. Both reference positions are covered — the
+/// callback itself, and a Path Item inside an inline callback.
+#[test]
+fn a_referenced_callback_is_not_walked_again_from_its_operation() {
+    use crate::model::{
+        callback::Callback,
+        reference::{Ref, RefOr},
+    };
+
+    let notify = |operation_id: &str| {
+        PathItem::new().with_operation(
+            Method::Post,
+            Operation::new(operation_id).with_responses(ok_responses()),
+        )
+    };
+    let mut owner = Operation::new("subscribe").with_responses(ok_responses());
+    owner.callbacks.insert(
+        "onData".to_owned(),
+        RefOr::Ref(Ref::new("#/components/callbacks/OnData")),
+    );
+    let mut item_ref = Callback::new();
+    item_ref.items.insert(
+        "{$request.body#/url}".to_owned(),
+        RefOr::Ref(Ref::new("#/components/pathItems/Notify")),
+    );
+    owner
+        .callbacks
+        .insert("onItem".to_owned(), RefOr::Item(item_ref));
+
+    let mut document = document_with(&[(
+        "/subscriptions",
+        PathItem::new().with_operation(Method::Post, owner),
+    )]);
+    document.components.callbacks.insert(
+        "OnData".to_owned(),
+        RefOr::Item(Callback::new().with("{$request.body#/url}", notify("onData"))),
+    );
+    document
+        .components
+        .path_items
+        .insert("Notify".to_owned(), notify("onItem"));
+
+    let found = errors(&document);
+    assert!(
+        found.is_empty(),
+        "a referenced callback is validated at its component alone; got {found:?}"
+    );
+}
+
 /// An operation with no responses is reported wherever it is written.
 ///
 /// The companion to the case above, and a different rule on purpose: it shows
