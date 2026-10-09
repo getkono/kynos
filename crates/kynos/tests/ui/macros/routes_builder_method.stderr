@@ -1,0 +1,5 @@
+error: `routes!` accepts only `.intercept(..)` after an operation; name its other facts on the route attribute
+ --> tests/ui/macros/routes_builder_method.rs:5:33
+  |
+5 |     let _ = kynos::routes![list.operation_id("listAll")];
+  |                                 ^^^^^^^^^^^^

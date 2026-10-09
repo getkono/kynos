@@ -738,3 +738,83 @@ mod arguments {
         orders
     }
 }
+
+/// What `routes!` accepts after an operation, and what it says otherwise.
+///
+/// The same closed-grammar obligation as `arguments`: one case per diagnostic,
+/// counted against the source, and the expansion fixed where its order is the
+/// decision.
+mod routes {
+    use proc_macro2::TokenStream as TokenStream2;
+    use quote::quote;
+
+    use crate::route::routes::expand;
+
+    /// One row per `syn::Error::new` site in `routes.rs`.
+    fn cases() -> Vec<(&'static str, TokenStream2, &'static str)> {
+        vec![
+            (
+                "no operation at all",
+                quote!(),
+                "needs at least one operation",
+            ),
+            (
+                "a member that names no handler",
+                quote!(list, (create)),
+                "expected the name of a route-attributed handler",
+            ),
+            (
+                "a builder method the attribute owns",
+                quote!(list.operation_id("listAll")),
+                "accepts only `.intercept(..)`",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_case_raises_the_diagnostic_it_names() {
+        for (description, tokens, expected) in cases() {
+            let Err(error) = expand(tokens) else {
+                panic!("{description} must be rejected");
+            };
+            let reported = error.to_string();
+            assert!(
+                reported.contains(expected),
+                "{description}: expected a diagnostic containing {expected:?}, got {reported:?}"
+            );
+        }
+    }
+
+    /// A count, not a mapping, as for the route arguments.
+    #[test]
+    fn every_routes_diagnostic_has_a_case() {
+        const SOURCE: &str = include_str!("routes.rs");
+
+        let sites = SOURCE.matches("syn::Error::new(").count();
+        assert_eq!(
+            cases().len(),
+            sites,
+            "`routes.rs` raises {sites} diagnostic(s) and {} have a case",
+            cases().len()
+        );
+    }
+
+    /// Interceptors land on their own member, in the order written, so the
+    /// first is the outermost as on `EndpointBuilder::intercept`.
+    #[test]
+    fn interceptors_apply_to_their_own_member_in_the_order_written() {
+        let expanded = expand(quote!(
+            list,
+            users::create.intercept(outer).intercept(inner)
+        ))
+        .expect("a well-formed member list");
+
+        let expected = quote! {(
+            ::kynos::__private::endpoint::from_meta::<_, list, _, _>(list),
+            ::kynos::__private::endpoint::from_meta::<_, users::create, _, _>(users::create)
+                .intercept(outer)
+                .intercept(inner),
+        )};
+        assert_eq!(expanded.to_string(), expected.to_string());
+    }
+}

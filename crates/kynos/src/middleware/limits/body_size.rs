@@ -75,7 +75,7 @@ impl<T: ProblemType> Responses for BodySizeExceeded<T> {
 /// [`DEFAULT_LIMIT`](crate::extract::body::limit::DEFAULT_LIMIT). This limit
 /// replaces that one for every operation it covers, in either direction, so
 /// mounting it on a single endpoint is how one large upload is let through:
-/// `kynos::routes![upload].0.intercept(BodySize::new(..))` for an attribute
+/// `kynos::routes![upload.intercept(BodySize::new(..))]` for an attribute
 /// route. It also covers operations that read no body, which then declare a
 /// 413 too; mount it where bodies are read.
 ///
