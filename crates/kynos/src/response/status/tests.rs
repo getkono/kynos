@@ -131,10 +131,11 @@ mod a_wrapper_produces_and_declares_one_status {
     /// A closed enumeration, so all five rather than a sample: the ones a
     /// sample would skip are 301 and 308, which differ from the other three
     /// in whether a client may rewrite the method — the one thing a caller
-    /// picks a redirect code for.
+    /// picks a redirect code for. The description is asserted exactly for the
+    /// same reason: it is where a consumer reads that difference.
     #[test]
     fn every_witnessed_redirect_code_is_the_one_it_sends() {
-        fn case<const CODE: u16>()
+        fn case<const CODE: u16>(description: &str)
         where
             (): crate::response::status::ValidRedirectCode<CODE>,
         {
@@ -149,13 +150,28 @@ mod a_wrapper_produces_and_declares_one_status {
                 Some("/elsewhere")
             );
             assert_eq!(declared::<Redirect<CODE>>(), [CODE.to_string()]);
+
+            let mut registry = Registry::new();
+            let responses = <Redirect<CODE> as Responses>::responses(&mut registry);
+            assert_eq!(
+                responses
+                    .get(CODE)
+                    .and_then(kynos_openapi::RefOr::as_item)
+                    .and_then(|response| response.description.as_deref()),
+                Some(description),
+                "{CODE}"
+            );
         }
 
-        case::<301>();
-        case::<302>();
-        case::<303>();
-        case::<307>();
-        case::<308>();
+        case::<301>("the resource has a new permanent URI, given by `Location`");
+        case::<302>("the resource is temporarily at the URI given by `Location`");
+        case::<303>(
+            "the response to this request is at the URI given by `Location`, retrieved with GET",
+        );
+        case::<307>("the resource is temporarily at `Location`; the method is preserved on replay");
+        case::<308>(
+            "the resource has a new permanent URI in `Location`; the method survives replay",
+        );
     }
 
     /// The witness, counted against the cases above.
