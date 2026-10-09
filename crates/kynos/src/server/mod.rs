@@ -217,7 +217,7 @@ impl<C: 'static> Server<C> {
         #[cfg(feature = "tls")]
         let tls = if let Some(config) = self.tls {
             if config.client_authentication.is_some() {
-                apply_mutual_tls(service.openapi_mut())?;
+                service.openapi_mut(apply_mutual_tls)??;
             }
             Some(config.build().map_err(ServerError::from)?)
         } else {
