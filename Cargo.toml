@@ -64,7 +64,7 @@ rustix = { version = "1.1.4", default-features = false }
 # A test-only dependency that unifies `ring` beside `aws-lc-rs`, the graph
 # `server/tls/` must survive.
 rustls = { version = "0.23.43", default-features = false }
-serde = "1.0.219"
+serde = "1.0.221"
 # Reads a repeated key as a sequence, as `form` with `explode` describes.
 serde_html_form = "0.4.1"
 serde_json = "1.0.145"
@@ -85,8 +85,8 @@ tokio-rustls = { version = "0.26.4", default-features = false, features = [
 tower = "0.5.2"
 tower-layer = "0.3.3"
 tower-service = "0.3.3"
-tracing = "0.1.41"
-tracing-subscriber = "0.3.20"
+tracing = "0.1.43"
+tracing-subscriber = "0.3.22"
 # `examples/opentelemetry.rs` only; Kynos exposes the seams.
 opentelemetry = "0.32.0"
 opentelemetry_sdk = "0.32.1"
