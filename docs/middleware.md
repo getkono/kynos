@@ -617,8 +617,9 @@ Router::<()>::new()
 Order is not part of the type. `CompatibleWith` checks that two interceptors do
 not add one header or answer with one status, and a set has no positions. So
 every ordering rule this document states is one a reader has to follow, and the
-two places it matters are the slow-body row below and
-[where a cache sits](#where-a-cache-sits).
+places it matters are the slow-body row below,
+[where a cache sits](#where-a-cache-sits), and where
+[security headers](#security-headers) sit around one.
 
 ## What bounds a request before an interceptor runs
 
@@ -1196,6 +1197,37 @@ MAY and are absent. Honouring them means comparing origins, since the section
 forbids invalidating across one, and a URI parsed out of a response header is
 not something the router can map back to a `paths` key — so the entry to drop
 could not be named even after the check passed.
+
+## Security headers
+
+`SecurityHeaders` sets `Cache-Control: no-store`, `Referrer-Policy: no-referrer`
+and `X-Content-Type-Options: nosniff`; `strict_transport_security` and
+`deny_framing` add `Strict-Transport-Security` and `X-Frame-Options: DENY`.
+Each opt-in is a const generic, because each adds a declared name and a name
+`CompatibleWith` compares has to be in a `const`.
+
+**Each field replaces what the chain set.** That is what lets the document
+state every fixed field as a `const`: a handler's own `Cache-Control` surviving
+beside a described `no-store` is a description the wire contradicts. An
+operation that wants its clients to store it does not belong under this
+interceptor. The values are deliberately not configurable — one that is a
+runtime choice cannot be a `const`, and `Referrer-Policy` and `Cache-Control`
+values that loosen the default are each a decision an operation's own headers
+state better.
+
+**HSTS is withheld over plain transport.** RFC 6797 §7.2 forbids sending it
+otherwise, so it is sent only where a trusted hop's
+`Forwarded` scheme says `https`, or, where no hop stated one, where the socket
+the client itself connected on completed a TLS handshake. Behind a proxy that
+terminates TLS, `Router::trusted_proxies` is what makes it reach the wire at
+all. It is described as optional for the same reason, and as an unconstrained
+string, since its `max-age` is configured at run time.
+
+**Where it sits.** Outermost: before `Conditional`, so a 304 carries the
+fields too, and before `Cache`, so the cache reads the handler's own lifetime
+and stores while the client is told `no-store`. Inside a `Cache` it is not
+wrong, merely useless to the cache — every response it sees says `no-store`, and
+RFC 9111 §3 forbids storing one. `tests/cache.rs` holds both orders.
 
 ## Opaque
 
