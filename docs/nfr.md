@@ -472,7 +472,7 @@ where someone mounting a cap will meet it.
 
 AGENTS.md: *"A module becomes a directory once it holds two
 independently-changing concerns … Passing ~400 lines excluding tests is when to
-ask that question, not an answer to it."* Thirty-three files under `crates/*/src` are
+ask that question, not an answer to it."* Thirty-four files under `crates/*/src` are
 past that line and asked it, and `containment:check` holds that number so it can
 only move on purpose.
 
@@ -483,7 +483,7 @@ public types lengthens every one of their paths, because no re-export may
 preserve the old one. `error/rejection.rs` is the clearest case: it is one of
 them, it declares every rejection type, and splitting it would turn
 `error::rejection::PathRejection` into
-`error::rejection::path::PathRejection`. Seventeen of the thirty-three are that
+`error::rejection::path::PathRejection`. Seventeen of the thirty-four are that
 shape, worth roughly a hundred public paths between them — and each is one
 cohesive family, which is precisely what the concern test says may stay a file.
 So they stay: a longer path is a worse name, and the rule's first clause already
@@ -506,7 +506,7 @@ own reason to change. The concern test answers yes there, so
 The budget is the honest record of what stayed. It falls when a module is split,
 and raising it means saying in the same commit why a new module needs the room.
 
-Six of them crossed the line after v0.1.0, and each was argued for as it did.
+Seven of them crossed the line after v0.1.0, and each was argued for as it did.
 `response/status.rs` is the shape above rather than a new argument. It declares
 six public types — `Location`, `NoContent`, `Created`, `Accepted`, `Redirect`
 and `ValidRedirectCode` — so splitting it would turn `response::status::Created` into
