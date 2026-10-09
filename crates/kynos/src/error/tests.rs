@@ -159,11 +159,11 @@ mod variants {
                 "`Order` is claimed by two structurally different schemas",
             ),
             (
-                Error::KeyPattern(crate::schema::registry::UnenforceableKeyPattern {
+                Error::KeyPattern(Box::new(crate::schema::registry::UnenforceableKeyPattern {
                     key: "app::Sku".to_owned(),
                     pattern: "a(?=b)".to_owned(),
                     reason: "lookaround".to_owned(),
-                }),
+                })),
                 "`app::Sku` declares the pattern `a(?=b)`, which cannot be enforced: lookaround",
             ),
             (
@@ -227,6 +227,7 @@ mod variants {
             "Invalid",
             "Path",
             "Schema",
+            "KeyPattern",
             "Contribution",
             "Middleware",
             "Json",

@@ -67,8 +67,11 @@ pub enum Error {
     ///
     /// A field's pattern is refused by the derive at compile time; a key's is
     /// a run-time value, so this is the earliest it can be.
+    ///
+    /// Boxed, so a refusal that names three strings does not widen every
+    /// `kynos::Result`.
     #[error(transparent)]
-    KeyPattern(#[from] crate::schema::registry::UnenforceableKeyPattern),
+    KeyPattern(#[from] Box<crate::schema::registry::UnenforceableKeyPattern>),
 
     /// Two interceptors covering one operation disagreed about what they
     /// contribute to it.
