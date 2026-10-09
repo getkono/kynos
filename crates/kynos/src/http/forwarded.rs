@@ -412,8 +412,10 @@ fn forwarded_elements(headers: &HeaderMap) -> Vec<Hop<'_>> {
 /// `X-Forwarded-Proto` is one list across its lines, like any list field (RFC
 /// 9110 section 5.3), and its rightmost value is the one the immediate sender
 /// wrote: a proxy that appends rather than replaces leaves a client's own value
-/// to its left. A rightmost line that is not text yields no scheme rather than
-/// handing the answer to an earlier, further-out line.
+/// to its left. A blank value or line is an empty list element, which adds
+/// nothing to the list (RFC 9110 section 5.6.1), so the value before it is
+/// still the rightmost. A rightmost line that is not text yields no scheme
+/// rather than handing the answer to an earlier, further-out line.
 fn x_forwarded_elements(headers: &HeaderMap) -> (Vec<Hop<'_>>, Option<&str>) {
     let mut hops = Vec::new();
     for value in headers.get_all(X_FORWARDED_FOR) {

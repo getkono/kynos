@@ -482,6 +482,29 @@ fn the_rightmost_x_forwarded_proto_is_the_trusted_hops() {
     }
 }
 
+/// A blank `X-Forwarded-Proto` value adds no element to the list, so the
+/// value before it is still the rightmost -- whether the blank is a trailing
+/// piece of a line, or a whole line that is empty or only commas.
+#[test]
+fn a_blank_x_forwarded_proto_value_adds_nothing_to_the_list() {
+    let trailing = [("x-forwarded-proto", "http, ")];
+    let empty_line = [("x-forwarded-proto", "http"), ("x-forwarded-proto", "")];
+    let commas_line = [("x-forwarded-proto", "http"), ("x-forwarded-proto", " , ,")];
+
+    for fields in [&trailing[..], &empty_line[..], &commas_line[..]] {
+        let mut headers = map(fields);
+        headers.append("x-forwarded-for", HeaderValue::from_static("203.0.113.7"));
+
+        let resolved = Forwarded::resolve(
+            &headers,
+            Some(peer("10.0.0.1")),
+            &TrustedProxies::hops(ProxyHeader::XForwarded, 1),
+        );
+
+        assert_eq!(resolved.proto(), Some("http"), "{fields:?}");
+    }
+}
+
 /// A rightmost `X-Forwarded-Proto` line that is not text, and so cannot be
 /// read, does not hand the scheme to the line before it, which may be the
 /// client's.
