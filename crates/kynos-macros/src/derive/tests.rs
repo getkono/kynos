@@ -483,10 +483,13 @@ mod schema {
         );
     }
 
-    /// A self-reference inside a delimited group, a tuple or an array, is
-    /// found as surely as one between angle brackets, which are not a group.
+    /// A self-reference is found inside every type the walk descends, not only
+    /// between angle brackets: a tuple, an array, a slice, parentheses, a
+    /// reference, a raw pointer, an associated-type binding, and the invisible
+    /// group a `macro_rules!` `$ty` fragment arrives in.
     #[test]
-    fn a_generic_type_naming_itself_inside_a_tuple_or_array_is_refused() {
+    fn a_generic_type_naming_itself_inside_a_nested_type_is_refused() {
+        let grouped = proc_macro2::Group::new(proc_macro2::Delimiter::None, quote::quote!(Node<T>));
         for declaration in [
             quote::quote!(
                 struct Node<T> {
@@ -500,11 +503,47 @@ mod schema {
                     children: Box<[Self; 2]>,
                 }
             ),
+            quote::quote!(
+                struct Node<T> {
+                    value: T,
+                    children: Box<[Node<T>]>,
+                }
+            ),
+            quote::quote!(
+                struct Node<T> {
+                    value: T,
+                    next: Option<Box<(Self)>>,
+                }
+            ),
+            quote::quote!(
+                struct Node<T> {
+                    value: T,
+                    next: Option<&'static Self>,
+                }
+            ),
+            quote::quote!(
+                struct Node<T> {
+                    value: T,
+                    next: Option<*const Node<T>>,
+                }
+            ),
+            quote::quote!(
+                struct Node<T> {
+                    value: T,
+                    next: Wrapper<Item = Self>,
+                }
+            ),
+            quote::quote!(
+                struct Node<T> {
+                    value: T,
+                    next: Option<Box<#grouped>>,
+                }
+            ),
         ] {
             let input: syn::DeriveInput =
                 syn::parse2(declaration).expect("the case itself must parse");
             let Err(error) = expand_inner(&input) else {
-                panic!("a generic type naming itself inside a group must be refused");
+                panic!("a generic type naming itself inside a nested type must be refused");
             };
             assert!(
                 error.to_string().contains("refers to itself"),
