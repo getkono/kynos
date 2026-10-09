@@ -14,7 +14,7 @@
 // check against an oracle rather than an assertion written from the derive.
 #![cfg(all(feature = "macros", feature = "json", feature = "test-util"))]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use kynos::{
     Schema,
@@ -353,12 +353,37 @@ struct Profile {
     /// `minimum` alone.
     #[serde(default)]
     stride: Stride,
+    /// The same through an alias, whose failures are all moved to the
+    /// object holding it.
+    #[serde(default)]
+    tally: Tally,
+    /// The same through a set, whose members' failures are all moved to the
+    /// set: the filled set's one member breaks `minimum` alone.
+    #[serde(default = "evens")]
+    evens: BTreeSet<Even>,
 }
 
 #[derive(Debug, Default, Schema, Deserialize)]
 struct Stride {
     #[schema(minimum = 1, multiple_of = 2)]
     step: i32,
+}
+
+#[derive(Debug, Default, Schema, Deserialize)]
+struct Tally {
+    #[serde(alias = "n")]
+    #[schema(minimum = 1, multiple_of = 2)]
+    count: i32,
+}
+
+#[derive(Debug, Schema, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+struct Even {
+    #[schema(minimum = 1, multiple_of = 2)]
+    value: i32,
+}
+
+fn evens() -> BTreeSet<Even> {
+    BTreeSet::from([Even { value: 0 }])
 }
 
 /// A container default whose filled value breaks a member's bound.
@@ -410,6 +435,8 @@ async fn a_defaulted_member_is_held_to_its_bounds_where_its_filled_value_meets_t
     refuses::<Profile>(json!({ "label": "abcdef" }), &["/label"]).await;
     refuses::<Profile>(json!({ "parity": -1 }), &["/parity"]).await;
     refuses::<Profile>(json!({ "stride": { "step": -1 } }), &["/stride/step"]).await;
+    refuses::<Profile>(json!({ "tally": { "n": -1 } }), &["/tally"]).await;
+    refuses::<Profile>(json!({ "evens": [{ "value": -1 }] }), &["/evens"]).await;
     refuses::<Window>(json!({ "size": 0 }), &["/size"]).await;
 }
 
