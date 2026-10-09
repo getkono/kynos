@@ -1,0 +1,65 @@
+# What `mise run deny:check` holds the dependency graph to. Each field set
+# here differs from cargo-deny's default or is load-bearing enough to state;
+# anything absent is the default, which the tool documents at
+# https://embarkstudios.github.io/cargo-deny/checks/cfg.html.
+
+[graph]
+# `--all-features` for the reason `lint` and `semver:check` have it: some thirty
+# flags gate optional dependencies, and a default-features graph would never
+# see `rustls`, `async-compression` or a codec's crate. No `targets`: an
+# application builds Kynos on whatever platform it runs on, so a dependency
+# reached only on Windows is still one somebody ships.
+all-features = true
+
+[advisories]
+# Defaults: a vulnerability, an unsound or unmaintained crate anywhere in the
+# graph fails the check. An entry here silences one advisory, and each needs a
+# `reason` naming why the advisory does not reach Kynos and what clears it.
+ignore = [
+  { id = "RUSTSEC-2026-0009", reason = "time's RFC 2822 parser; reached only through rcgen, a dev-dependency minting the TLS example's certificates, which parses no RFC 2822 input. The fix, time 0.3.47, needs Rust 1.88 and the lockfile resolves at the 1.85 MSRV. Remove when the MSRV reaches 1.88 or rcgen leaves the graph." },
+]
+# A yanked version in `Cargo.lock` is one the author withdrew. The default only
+# warns, and a warning nothing reads is how one stays locked for a year.
+yanked = "deny"
+
+[licenses]
+# Kynos is MIT, and everything it links must be redistributable under terms an
+# MIT application can meet: permissive licences only. A copyleft licence is
+# absent on purpose, and a crate offering one only as an alternative (`r-efi`'s
+# `LGPL-2.1-or-later`) is accepted under the permissive half. Adding a licence
+# here is a policy change, reviewed as one.
+allow = [
+  "0BSD",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "CC0-1.0",
+  "ISC",
+  "MIT",
+  "MIT-0",
+  "Unicode-3.0",
+  "Unlicense",
+  "Zlib",
+]
+confidence-threshold = 0.8
+
+[bans]
+# Duplicate versions warn rather than fail. Nearly every duplicate today is two
+# upstream crates disagreeing on a transitive version (`getrandom`, `syn`,
+# `windows-sys`), which no change here can resolve; failing on them would make
+# the check about other projects' release schedules.
+multiple-versions = "warn"
+# A `*` requirement accepts any future major, which is the breakage a version
+# requirement exists to rule out. Path dependencies between unpublished members
+# carry no version and are exempt, since no registry will ever see them.
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+# crates.io only. A git or alternative-registry dependency cannot be published
+# to crates.io anyway, so `publish:check` would refuse it later; this refuses it
+# at the pull request that adds it, with the reason in the message.
+unknown-registry = "deny"
+unknown-git = "deny"
