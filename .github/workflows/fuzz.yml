@@ -1,0 +1,92 @@
+name: Fuzz
+
+# The `fuzz/` targets, apart from `ci.yml` because neither half is a task in
+# `mise run check`: both build on the dated nightly `cargo fuzz` needs, in a
+# workspace of their own. What each target asserts, and why the search runs
+# nightly rather than on a pull request, is `docs/testing.md#fuzzing`.
+#
+# Two halves. A pull request is held to the committed corpus: every target
+# builds against the change and replays every seed, which is how a crash once
+# promoted into `fuzz/corpus/` stays fixed. Each night, every target searches
+# for new inputs for a bounded time, and a crash fails that target's job with
+# the input that caused it uploaded beside it.
+on:
+  pull_request:
+  schedule:
+    # 04:41 UTC, off the hour and clear of the mutants run at 03:17.
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: How long each target searches.
+        type: string
+        default: "1200"
+
+permissions:
+  contents: read
+
+# `mutants.yml`'s rule: a pull request's superseded run is cancelled, and a
+# night's run queues behind the next rather than being cancelled by it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  corpus:
+    name: Fuzz corpus replay
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      # No `cargo-cache-key`: the targets build under `fuzz/target/`, which the
+      # cache this action restores does not hold.
+      - name: Set up
+        uses: ./.github/actions/setup
+      - name: Build every target and replay its corpus
+        run: mise run fuzz:check
+
+  search:
+    name: Fuzz, nightly search
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      # One job per target, so a crash in one leaves the others searching.
+      # The `[[bin]]` list in `fuzz/Cargo.toml`, which a new target joins too:
+      # `fuzz:check` replays every target it lists, and this searches only
+      # those named here.
+      matrix:
+        target:
+          - accept
+          - basic
+          - cookie
+          - date
+          - etag
+          - forwarded
+          - media_type
+          - query
+          - range
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Set up
+        uses: ./.github/actions/setup
+      - name: Search for a failing input
+        env:
+          SECONDS_PER_TARGET: ${{ inputs.seconds || '1200' }}
+          TARGET: ${{ matrix.target }}
+        run: mise run fuzz "$TARGET" --seconds "$SECONDS_PER_TARGET"
+      - name: Upload the failing input
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts
+          if-no-files-found: ignore

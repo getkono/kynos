@@ -99,9 +99,9 @@ fn imf_fixdate(value: &str) -> Option<u64> {
     let (year, rest) = (rest.get(..4)?, rest.get(4..)?);
 
     zoned(
-        year.parse().ok()?,
+        digits(year, 4)?,
         month_number(month)?,
-        day.parse().ok()?,
+        u8::try_from(digits(day, 2)?).ok()?,
         rest.strip_prefix(' ')?,
     )
 }
@@ -122,13 +122,13 @@ fn rfc850(value: &str) -> Option<u64> {
     // the format's own era rather than on today's clock, so the same input
     // always parses to the same instant -- a sliding window would make this
     // function's result depend on when it ran.
-    let year: u16 = year.parse().ok()?;
+    let year = digits(year, 2)?;
     let year = if year >= 70 { 1900 + year } else { 2000 + year };
 
     zoned(
         year,
         month_number(month)?,
-        day.parse().ok()?,
+        u8::try_from(digits(day, 2)?).ok()?,
         rest.strip_prefix(' ')?,
     )
 }
@@ -140,15 +140,35 @@ fn asctime(value: &str) -> Option<u64> {
         .strip_prefix(' ')?;
     let (month, rest) = (rest.get(..3)?, rest.get(3..)?);
     let rest = rest.strip_prefix(' ')?;
-    // The day is space-padded rather than zero-padded in this form alone.
-    let (day, rest) = (rest.get(..2)?.trim(), rest.get(2..)?);
+    // The day is `( 2DIGIT / ( SP DIGIT ) )`: space-padded rather than
+    // zero-padded in this form alone, and only ever padded on the left.
+    let (day, rest) = (rest.get(..2)?, rest.get(2..)?);
+    let day = match day.strip_prefix(' ') {
+        Some(digit) => digits(digit, 1)?,
+        None => digits(day, 2)?,
+    };
     let rest = rest.strip_prefix(' ')?;
     let (time, year) = (rest.get(..8)?, rest.get(8..)?.strip_prefix(' ')?);
 
     // The one form with no zone: section 5.6.7's asctime "is assumed to be
     // UTC", which is what the other two say outright.
-    let midnight = midnight(year.parse().ok()?, month_number(month)?, day.parse().ok()?)?;
+    let midnight = midnight(
+        digits(year, 4)?,
+        month_number(month)?,
+        u8::try_from(day).ok()?,
+    )?;
     Some(midnight + time_of_day(time)?)
+}
+
+/// The value of `text` where it is exactly `width` ASCII digits.
+///
+/// Every numeral in section 5.6.7 is a fixed count of `DIGIT`, and
+/// [`str::parse`] bounds neither the count nor the sign: it reads `+6` as a
+/// day and the whole of `19944` as a year IMF-fixdate cannot spell.
+fn digits(text: &str, width: usize) -> Option<u16> {
+    (text.len() == width && text.bytes().all(|byte| byte.is_ascii_digit()))
+        .then(|| text.parse().ok())
+        .flatten()
 }
 
 /// The name at the start of `value`, if it is one of `names`.
@@ -183,9 +203,9 @@ fn midnight(year: u16, month: u8, day: u8) -> Option<u64> {
 /// Seconds into the day that `HH:MM:SS` names.
 fn time_of_day(time: &str) -> Option<u64> {
     let mut parts = time.split(':');
-    let hours: u64 = parts.next()?.parse().ok()?;
-    let minutes: u64 = parts.next()?.parse().ok()?;
-    let seconds: u64 = parts.next()?.parse().ok()?;
+    let hours = u64::from(digits(parts.next()?, 2)?);
+    let minutes = u64::from(digits(parts.next()?, 2)?);
+    let seconds = u64::from(digits(parts.next()?, 2)?);
 
     // A leap second is 60, which the grammar permits and which collapses onto
     // the following minute rather than being refused.

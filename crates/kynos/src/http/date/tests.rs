@@ -91,6 +91,32 @@ fn every_way_of_not_being_a_date_reads_as_none() {
     }
 }
 
+/// Every numeral is exactly as many digits as section 5.6.7 gives it.
+///
+/// The first case is the `date` fuzz target's: an asctime year read from the
+/// rest of the value rather than from four digits of it parsed to an instant
+/// IMF-fixdate cannot spell, so the reader accepted what the writer could not
+/// render back. A sign is no digit either, and an hour of one digit or three
+/// is not `2DIGIT`.
+#[test]
+fn a_numeral_is_read_only_at_the_width_its_grammar_gives() {
+    for value in [
+        "Sun Nov  6 08:49:37 19944",
+        "Sun Nov  6 08:49:37 994",
+        "Sun Nov +6 08:49:37 1994",
+        "Sun Nov 6  08:49:37 1994",
+        "Sun, +6 Nov 1994 08:49:37 GMT",
+        "Sun, 06 Nov +994 08:49:37 GMT",
+        "Sun, 06 Nov 1994 8:49:37 GMT",
+        "Sun, 06 Nov 1994 008:49:37 GMT",
+        "Sun, 06 Nov 1994 08:+9:37 GMT",
+        "Sunday, 06-Nov-+4 08:49:37 GMT",
+        "Sunday, 06-Nov-94 08:49:7 GMT",
+    ] {
+        assert_eq!(parse(value), None, "{value:?} parsed as a date");
+    }
+}
+
 /// 29 February exists in a leap year and not otherwise.
 #[test]
 fn the_leap_day_is_admitted_only_where_it_exists() {

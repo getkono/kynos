@@ -1,0 +1,96 @@
+# The `cargo fuzz` targets over Kynos's hand-written parsers of untrusted
+# input. What each one asserts, and where they run, is `docs/testing.md`'s
+# (Fuzzing).
+#
+# A workspace of its own rather than a member of the root one: every target
+# links libFuzzer and builds only on the nightly toolchain `cargo fuzz` needs,
+# so as a member it would break every stable `--workspace` gate. Its lockfile
+# is committed for the reason an application's is: a nightly run that fails
+# should fail on Kynos, not on a dependency that moved overnight.
+[package]
+name = "kynos-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+members = ["."]
+
+[dependencies]
+# The base64 oracle the `basic` target holds Kynos's own decoder to.
+base64 = "0.23.1"
+libfuzzer-sys = "0.4.13"
+
+# Baseline features only: every parser fuzzed here is in the default build, and
+# a smaller graph is a faster instrumented build.
+[dependencies.kynos]
+path = "../crates/kynos"
+default-features = false
+features = ["openapi31"]
+
+[[bin]]
+name = "accept"
+path = "fuzz_targets/accept.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "basic"
+path = "fuzz_targets/basic.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cookie"
+path = "fuzz_targets/cookie.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "date"
+path = "fuzz_targets/date.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "etag"
+path = "fuzz_targets/etag.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "forwarded"
+path = "fuzz_targets/forwarded.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "media_type"
+path = "fuzz_targets/media_type.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "query"
+path = "fuzz_targets/query.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "range"
+path = "fuzz_targets/range.rs"
+test = false
+doc = false
+bench = false
