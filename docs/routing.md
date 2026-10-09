@@ -336,6 +336,15 @@ router's job is to be true of what Kynos can serve. Where those differ, the
 narrower rule goes in the narrower layer. A parser that enforces a consumer's
 policy is a parser that cannot be reused by a second consumer.
 
+### Why route attributes do not restate the signature
+
+An attribute DSL such as utoipa's `#[utoipa::path(responses(...))]` is written
+by hand beside the code it describes, and nothing keeps the two in step — the
+most common way a generated document ends up wrong. So `#[get]` and its siblings
+carry only what the types cannot: the method, the path and prose. What they add
+over the builder form is compile-time checking, chiefly that a path template's
+variables match the handler's path parameters.
+
 ### Why fallbacks are not routes
 
 Modelling a 404 handler as a route would put an entry in `paths` for a path that

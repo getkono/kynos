@@ -3,29 +3,16 @@
 //! Nothing here is meant to be used directly: every macro is re-exported from
 //! `kynos`, and the documentation lives next to the trait each one implements.
 //!
-//! # Why the route attributes exist
+//! The route attributes carry only what the types cannot: the method, the
+//! path, and prose. Parameters come from the handler's arguments and responses
+//! from its return type; the attribute checks at compile time that a path
+//! template's variables match the handler's path parameters.
 //!
-//! Kynos deliberately has no attribute DSL restating a handler's signature.
-//! utoipa's `#[utoipa::path(responses(...))]` is written by hand beside the
-//! code it describes, and nothing keeps the two in step — which is the single
-//! most common way a generated OpenAPI document ends up wrong.
-//!
-//! The route attributes therefore carry only what the types cannot: the method,
-//! the path, and prose. Parameters come from the handler's arguments, responses
-//! from its return type, and neither is restated anywhere.
-//!
-//! What the attribute *does* add is compile-time checking the builder form
-//! cannot do — chiefly that a path template's variables match the handler's
-//! path parameters.
-//!
-//! # Why the examples here are `ignore`d
-//!
-//! Every expansion names `::kynos::…`, which this crate cannot depend on, so a
-//! doctest here would not compile whatever the derive emitted. The compiled
-//! demonstrations live in `crates/kynos/tests/derives.rs` and the framework's
-//! examples; `AGENTS.md` records the rule.
+//! The examples here are `ignore`d because every expansion names `::kynos`,
+//! which this crate cannot depend on; `crates/kynos/tests/derives.rs` and the
+//! framework's examples compile them.
 
-// docs.rs badges each feature-gated item; see `crates/kynos/src/lib.rs`.
+// docs.rs badges each feature-gated item.
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[cfg(feature = "assets")]
@@ -52,9 +39,8 @@ use proc_macro::TokenStream;
 /// use it when the final binary is built with `panic = "abort"`.
 ///
 /// Accepts `operation_id = "..."` and `tag = SomeTag` after the path. The tag
-/// becomes `EndpointMeta::TAGS`, which is what puts it in the description; it
-/// may be named once, since `Router::tag`, `Group::tag` and
-/// `EndpointBuilder::tag` are how an operation acquires the rest.
+/// becomes `EndpointMeta::TAGS` and may be named once; `Router::tag`,
+/// `Group::tag` and `EndpointBuilder::tag` add the rest.
 #[proc_macro_attribute]
 pub fn get(attribute: TokenStream, item: TokenStream) -> TokenStream {
     route::expand("GET", attribute, item)
@@ -96,13 +82,10 @@ pub fn head(attribute: TokenStream, item: TokenStream) -> TokenStream {
 
 /// Declares an `OPTIONS` operation. See [`macro@get`] for the syntax.
 ///
-/// CORS preflight is handled without one: where a `Cors` interceptor covers a
-/// path, the router registers a preflight answer on it while the service is
-/// built. Declare this only for an `OPTIONS` that is part of the API's own
-/// contract.
-///
-/// Declaring one *suppresses* the synthesized preflight on that path — a
-/// hand-written operation wins, and it then owns answering preflights there too.
+/// CORS preflight needs none: where a `Cors` interceptor covers a path, the
+/// router answers preflights itself. Declare this only for an `OPTIONS` that is
+/// part of the API's own contract; it then *suppresses* the synthesized
+/// preflight on that path and owns answering preflights there.
 #[proc_macro_attribute]
 pub fn options(attribute: TokenStream, item: TokenStream) -> TokenStream {
     route::expand("OPTIONS", attribute, item)
@@ -183,15 +166,13 @@ pub fn path(input: TokenStream) -> TokenStream {
 /// `include_bytes!`, so changing one rebuilds the crate; *adding* or *removing*
 /// one does not, which a `cargo::rerun-if-changed` line in `build.rs` closes.
 ///
-/// A file whose name no path template can express is a compile error naming it,
-/// because a static asset Kynos cannot describe is one it will not serve.
-/// Dotfiles and symlinks are skipped: the first keeps `.git` out of a binary,
-/// the second keeps a set inside its own directory.
+/// A file whose name no path template can express is a compile error naming it.
+/// Dotfiles and symlinks are skipped, keeping `.git` out of the binary and the
+/// set inside its own directory.
 ///
-/// An embedded set past 2 MiB emits a compiler warning at the `dir` literal.
-/// Raise the threshold with `warn_over = "8MiB"`, or turn it off with
-/// `warn_over = "none"`. Under `-D warnings` it becomes an error, which is
-/// arguably right and is exactly why the override exists.
+/// An embedded set past 2 MiB emits a compiler warning at the `dir` literal
+/// (an error under `-D warnings`). Raise the threshold with
+/// `warn_over = "8MiB"`, or turn it off with `warn_over = "none"`.
 #[cfg(feature = "assets")]
 #[proc_macro]
 pub fn assets(item: TokenStream) -> TokenStream {
@@ -217,8 +198,7 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// unit variant then is in place of a `const`, and as a property of an
 /// externally tagged object branch, present under exactly one. A name two
 /// variants claim is named under the first alone, the one serde reads it as.
-/// Under
-/// `deny_unknown_fields`, every object serde then refuses unknown keys in is
+/// Under `deny_unknown_fields`, every object serde then refuses unknown keys in is
 /// closed: a struct, each struct variant's fields, and an adjacently tagged
 /// branch. The derive uses `additionalProperties: false`, or
 /// `unevaluatedProperties: false` where the object carries an `allOf`, which a
@@ -246,9 +226,10 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// `const` is the struct's serde name: its container `rename`, the serialize
 /// side where the rename is split, otherwise its identifier, which `rename_all`
 /// does not reach. It carries no `discriminator`, a struct having no branches
-/// to tell apart, and a `transparent` struct writes no tag. A tuple is the array of the members serde does not skip both
-/// ways, and a newtype variant whose member serde skips is the unit variant
-/// serde writes, provided serde also reads it back. A newtype, and each
+/// to tell apart, and a `transparent` struct writes no tag. A tuple is the
+/// array of the members serde does not skip both ways, and a newtype variant
+/// whose member serde skips is the unit variant serde writes, provided serde
+/// also reads it back. A newtype, and each
 /// described member of a tuple, tuple variant or newtype variant, carries its
 /// constraints, prose and `#[deprecated]` as a named field does. A variant
 /// serde skips both ways is described nowhere, and one serde reads and never
@@ -256,29 +237,25 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///
 /// Constraints go on fields, named or unnamed, and the grammar is exactly the
 /// keys of
-/// [`Constraints`](https://docs.rs/kynos/latest/kynos/schema/constraints/struct.Constraints.html)
-/// so that
-/// the attribute and the type it fills cannot drift: `minimum`, `maximum`,
-/// `exclusive_minimum`, `exclusive_maximum`, `multiple_of`, `min_length`,
-/// `max_length`, `pattern`, `min_items`, `max_items` and the `unique_items`
-/// flag. They become JSON Schema assertions *and* the parser's checks, which is
-/// what keeps the description honest without a JSON Schema interpreter on the
-/// hot path: the derive generates `Schema::check_constraints`, which every
-/// input decoding a `Schema` type runs on the value it decoded, refusing a
-/// broken bound by naming the member by JSON Pointer — `docs/schema.md` lists
-/// the inputs and their statuses. A member serde also reads under an
-/// `alias` is named by the object holding it, and a member serde fills from a
-/// `default` is admitted with a broken bound only where the value it would be
-/// filled with breaks the same bounds. A bound on a type of another kind —
-/// `max_length` on a number — is a compile error, and a derived newtype takes
-/// its member's kinds, so `#[schema(max_length = 8)] label: Label` bounds the
-/// string `Label` wraps.
+/// [`Constraints`](https://docs.rs/kynos/latest/kynos/schema/constraints/struct.Constraints.html):
+/// `minimum`, `maximum`, `exclusive_minimum`, `exclusive_maximum`,
+/// `multiple_of`, `min_length`, `max_length`, `pattern`, `min_items`,
+/// `max_items` and the `unique_items` flag. They become JSON Schema assertions
+/// *and* the parser's checks: the derive generates
+/// `Schema::check_constraints`, which every input decoding a `Schema` type
+/// runs on the value it decoded, refusing a broken bound by naming the member
+/// by JSON Pointer — `docs/schema.md` lists the inputs and their statuses. A
+/// member serde also reads under an `alias` is named by the object holding
+/// it, and a member serde fills from a `default` is admitted with a broken
+/// bound only where the value it would be filled with breaks the same bounds.
+/// A bound on a type of another kind — `max_length` on a number — is a compile
+/// error, and a derived newtype takes its member's kinds, so
+/// `#[schema(max_length = 8)] label: Label` bounds the string `Label` wraps.
 ///
-/// `format` is **not** among them. It states what a value *is*, which follows
-/// from the type or from nothing, so a `String` annotated as a UUID is a
-/// compile error naming the remedy — `uuid::Uuid`, one of the date, time or
-/// decimal types behind their features, or a newtype with its own `Schema`.
-/// A constraint on one field is `pattern`; a claim about a type is the type's.
+/// `format` is **not** among them: it follows from the type, so a `String`
+/// annotated as a UUID is a compile error naming the remedy — `uuid::Uuid`,
+/// one of the date, time or decimal types behind their features, or a newtype
+/// with its own `Schema`.
 ///
 /// `pattern` needs `kynos`'s `pattern` feature, which compiles in the regular
 /// expression engine that enforces it, and is refused without it. It is an
@@ -289,8 +266,8 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// the two dialects read apart, such as `(?i)` or `\A`.
 ///
 /// `open` is the one member of `#[schema(...)]` that is not a constraint. It
-/// goes on a `#[serde(flatten)]` field to say that the object really does admit
-/// members nothing names, which is the only thing a flattened map can mean. The
+/// goes on a `#[serde(flatten)]` field to say that the object admits members
+/// nothing names. The
 /// field's type must implement
 /// [`OpenMap`](https://docs.rs/kynos/latest/kynos/schema/flatten/trait.OpenMap.html)
 /// — a `HashMap`, a `BTreeMap` or an `Unchecked` over a map, not a type that
@@ -308,8 +285,8 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// # Rejected, because serde and the schema would disagree
 ///
 /// - `#[serde(with = ...)]`, `serialize_with`, `deserialize_with` on a field or
-///   a variant the schema describes. The wire form no longer follows from the
-///   Rust type, so a schema derived from the Rust type would be a lie. Give the
+///   a variant the schema describes, whose wire form then no longer follows
+///   from the Rust type. Give the
 ///   value a newtype whose own `Serialize`, `Deserialize` and `Schema` agree on
 ///   that form instead. Exempt, being in no schema, are a named field serde
 ///   never reads, a variant serde skips both ways and its fields, and a member
@@ -332,15 +309,13 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   payload, tried only after every tagged variant fails. On a variant serde
 ///   skips both ways it is in no schema, and is accepted.
 /// - `#[serde(flatten)]` onto a field whose schema names none of its members,
-///   which a map's does not. Its `additionalProperties` is defined against the
-///   `properties` of its own schema object, and composing it into the parent's
-///   `allOf` leaves it none — so the map's *value* schema would apply to the
-///   properties the parent declared itself. Refused by a
+///   which a map's does not: composed into the parent's `allOf`, the map's
+///   *value* schema would apply to the properties the parent declared itself.
+///   Refused by a
 ///   [`Flatten`](https://docs.rs/kynos/latest/kynos/schema/flatten/trait.Flatten.html)
 ///   bound the expansion asserts per flattened field. `#[schema(open)]` on that
-///   field is the opt-in that keeps the map: it says the object really is open,
-///   and the map's values become the parent's `unevaluatedProperties`, the one
-///   keyword that sees annotations across an `allOf`. The same bound holds the
+///   field keeps the map, whose values become the parent's
+///   `unevaluatedProperties`. The same bound holds the
 ///   payload of an internally tagged enum's newtype variant, which is composed
 ///   beside the tag in an `allOf` the same way.
 /// - A `#[serde(other)]` catch-all on a variant serde reads, which only 3.2's
@@ -408,11 +383,9 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   read back. Drop one of the two.
 /// - A flattened internally tagged enum, or a flattened struct holding a
 ///   flattened field serde reads or carrying a container `#[serde(tag)]`, in
-///   an object `deny_unknown_fields` closes. serde takes a flattened key only
-///   for a type it reads by name, through `deserialize_struct`. It lends an
-///   internally tagged enum, and a struct holding a flattened field, every key
-///   without taking any, and never takes a struct's own tag, so the object
-///   refuses every document the type writes. Refused by a
+///   an object `deny_unknown_fields` closes. serde never marks such a type's
+///   keys as taken, so the object refuses every document the type writes.
+///   Refused by a
 ///   [`ClosedFlatten`](https://docs.rs/kynos/latest/kynos/schema/flatten/trait.ClosedFlatten.html)
 ///   bound the expansion asserts per flattened field of a closed object beside
 ///   `Flatten`, which the derive implements for a struct with no flattened
@@ -435,9 +408,8 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   tag, or skip the field both ways; one serde skips in the direction it
 ///   would collide in is accepted. A flattened field's own name is never
 ///   written, so it is accepted too, but the keys its type writes are not
-///   checked: the derive cannot see them, as serde's own check of an enum's
-///   internal tag cannot, and one named as the tag gets a schema serde's
-///   document does not meet.
+///   checked: one named as the tag gets a schema serde's document does not
+///   meet.
 /// - A split `rename(serialize = ..., deserialize = ...)` whose two sides differ
 ///   on a named field or a variant serde both writes and reads, unless serde
 ///   also reads the written side as an `alias` of that member. Otherwise serde
@@ -485,19 +457,16 @@ pub fn derive_schema(item: TokenStream) -> TokenStream {
 /// struct declares its one status on the type instead; `base` always belongs on
 /// the type, since it is the prefix every variant's type URI shares.
 ///
-/// The error's `Display` supplies each problem's `detail`, which is why
-/// `thiserror` is the expected companion — the `#[error("...")]` a Rust reader
-/// sees is the sentence an API consumer receives. A type without a `Display`
-/// is rejected at the derive rather than at the handler returning it.
+/// The error's `Display` supplies each problem's `detail`, so `thiserror`'s `#[error("...")]` is the sentence an API consumer receives.
+/// A type without a `Display` is rejected at the derive.
 ///
 /// A field is published as an extension member only when it says
-/// `#[problem(extension)]`, because a variant carries whatever the error site
-/// had to hand and the default must not be to put that on the wire.
+/// `#[problem(extension)]`, so error-site context stays off the wire by
+/// default.
 ///
 /// Also emits the `IntoResponse` and `Responses` implementations, so the
-/// statuses the error can produce and the statuses the description advertises
-/// cannot diverge. It is the only supported way to implement
-/// `IntoProblem`.
+/// statuses the error produces and the description advertises cannot diverge.
+/// It is the only supported way to implement `IntoProblem`.
 #[proc_macro_derive(ApiError, attributes(problem))]
 pub fn derive_api_error(item: TokenStream) -> TokenStream {
     derive::api_error::expand(item)
@@ -516,19 +485,16 @@ pub fn derive_api_error(item: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
-/// For an operation with more than one success shape. Modelled on
-/// poem-openapi's `ApiResponse`, which is the best existing treatment of this.
+/// For an operation with more than one success shape.
 ///
 /// `status` is required on every variant and must be between 200 and 599: a 1xx
 /// is an interim response, and a handler returns the final one. No two variants
 /// may declare the same status, since the description keys a reply's variants
-/// by status alone — that is what "one variant per status" means, and it is the
-/// one place this derive is stricter than [`ApiError`](macro@ApiError), whose
-/// variants carry a `detail` that tells two occurrences of a status apart.
+/// by status alone; [`ApiError`](macro@ApiError) allows it, its `detail`
+/// telling two occurrences apart.
 ///
 /// A variant's fields are its response body, so a variant holds either nothing,
-/// for the empty body, or exactly one type describing the body. An anonymous
-/// record has no name to register a component under.
+/// for the empty body, or exactly one type describing the body.
 #[proc_macro_derive(Reply, attributes(reply))]
 pub fn derive_reply(item: TokenStream) -> TokenStream {
     derive::reply::expand(item)
@@ -545,9 +511,8 @@ pub fn derive_reply(item: TokenStream) -> TokenStream {
 /// Each field's type, or an `Option`'s inner type, is a
 /// `kynos::schema::ParamValue`.
 ///
-/// The helper attribute is `#[param]` rather than `#[path]` because `path` is a
-/// built-in attribute, and rustc refuses a `#[path]` on a field as ambiguous
-/// between the two.
+/// The helper attribute is `#[param]` because `#[path]` is a built-in
+/// attribute.
 ///
 /// # Rejected, because a parameter has one name
 ///
@@ -580,9 +545,8 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// another.
 ///
 /// The helper attribute is `#[param]`, shared with
-/// [`PathParams`](macro@PathParams), rather than `#[query]` because `query` is
-/// already the `QUERY` route attribute under `openapi32`: a helper of that name
-/// would shadow it inside the struct, and a field would read as an operation.
+/// [`PathParams`](macro@PathParams), because `query` is already the `QUERY`
+/// route attribute under `openapi32`.
 ///
 /// A declared parameter whose percent-decoded value is not UTF-8 is refused
 /// with the group's `QueryRejection`, naming it, as a value that fails to parse
@@ -616,11 +580,8 @@ pub fn derive_query_params(item: TokenStream) -> TokenStream {
 /// "kebab-case"` names `x_request_id` as `x-request-id`. The reserved names
 /// are checked against that final name.
 ///
-/// The helper attribute is named for the location, `#[header]`, because
-/// nothing else claims that name. `#[param]` is the fallback for
-/// [`PathParams`](macro@PathParams) and [`QueryParams`](macro@QueryParams),
-/// whose location names are already a built-in attribute and a route
-/// attribute.
+/// The helper attribute is `#[header]`; [`PathParams`](macro@PathParams) and
+/// [`QueryParams`](macro@QueryParams) use `#[param]`.
 ///
 /// # Rejected, because a parameter has one name
 ///
@@ -642,9 +603,8 @@ pub fn derive_headers(item: TokenStream) -> TokenStream {
 /// struct's `rename_all`, cased as the [`Schema`](macro@Schema) derive cases a
 /// property.
 ///
-/// The helper attribute is named for the location, `#[cookie]`, as
-/// [`HeaderParams`](macro@HeaderParams)'s is `#[header]`: nothing else claims
-/// either name.
+/// The helper attribute is `#[cookie]`, as
+/// [`HeaderParams`](macro@HeaderParams)'s is `#[header]`.
 ///
 /// # Values are read as sent
 ///
@@ -688,13 +648,11 @@ pub fn derive_cookies(item: TokenStream) -> TokenStream {
 /// ignored. The element type converts through `FromPart` and `IntoPart`, which
 /// Kynos implements for `FilePart`, `String` and `Bytes`.
 ///
-/// A part naming no declared field is ignored, since a form may carry what the
-/// agent rendering it added.
+/// A part naming no declared field is ignored.
 ///
-/// There is no attribute of its own. Derive [`Schema`](macro@Schema) alongside:
-/// this derive says how the parts travel and `Schema` is what puts them in the
-/// description, and both read the part names from the same place — the field's
-/// identifier, or serde's `rename` and `rename_all` when the type carries them.
+/// There is no attribute of its own. Derive [`Schema`](macro@Schema) alongside
+/// to put the parts in the description; both read the part names from the
+/// field's identifier, or serde's `rename` and `rename_all` when present.
 /// A split `rename(serialize = ..., deserialize = ...)` whose sides differ is
 /// refused on any field, even one serde uses one way, and so is a split
 /// container `rename_all(serialize = ..., deserialize = ...)` whose sides
@@ -749,11 +707,9 @@ pub fn derive_security_scheme(item: TokenStream) -> TokenStream {
 ///
 /// Each provided field's type must be `Clone`, since a value is handed out per
 /// request; a handle is the intended shape. A handler asking for something no
-/// field supplies fails to typecheck, rather than panicking at runtime the way
-/// an erased state map does.
+/// field supplies fails to typecheck.
 ///
-/// Two provided fields of the same type are rejected here, naming both, rather
-/// than being left to produce a coherence error about the derive's own output.
+/// Two provided fields of the same type are rejected, naming both.
 #[proc_macro_derive(Provider, attributes(provide))]
 pub fn derive_provider(item: TokenStream) -> TokenStream {
     derive::provider::expand(item)
