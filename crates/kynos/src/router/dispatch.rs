@@ -94,6 +94,10 @@ pub(crate) struct Served<C> {
     /// ones stay inside the endpoint, which is what runs them.
     pub(crate) interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
     pub(crate) catch_panics: bool,
+    /// Whether the described operation declares a security requirement, which
+    /// [`Route::is_secured`] hands to every interceptor. False for what no
+    /// description covers: an unchecked route and a synthesized preflight.
+    pub(crate) secured: bool,
     /// Layers of undeclared effect covering this operation, outermost first.
     /// Empty for every operation no waiver reached, which is the usual case.
     #[cfg(feature = "unchecked")]
@@ -269,7 +273,12 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
             path: index,
             position,
         };
-        let route = Route::new(&entry.template, &operation.operation_id, operation.method);
+        let route = Route::new(
+            &entry.template,
+            &operation.operation_id,
+            operation.method,
+            operation.secured,
+        );
 
         let forwarded = self.forwarded(&request);
         request.extensions_mut().insert(Routed {
@@ -378,7 +387,12 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         Box::pin(async move {
             let entry = &self.paths[path];
             let operation = &entry.operations[position];
-            let route = Route::new(&entry.template, &operation.operation_id, operation.method);
+            let route = Route::new(
+                &entry.template,
+                &operation.operation_id,
+                operation.method,
+                operation.secured,
+            );
             self.run(operation, route, request).await
         })
     }
@@ -388,7 +402,12 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         let entry = &self.paths[at.path];
         let operation = &entry.operations[at.position];
 
-        Route::new(&entry.template, &operation.operation_id, operation.method)
+        Route::new(
+            &entry.template,
+            &operation.operation_id,
+            operation.method,
+            operation.secured,
+        )
     }
 
     /// Notifies every observer and hands the response on.

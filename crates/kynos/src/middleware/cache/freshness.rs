@@ -56,8 +56,8 @@ pub(super) enum Unstorable {
     VaryWildcard,
     /// The response sets a cookie.
     SetCookie,
-    /// The request carried credentials and the response did not say it was
-    /// shareable.
+    /// The request carried `Authorization`, or the operation declares a
+    /// security requirement, and the response did not say it was shareable.
     Authorized,
     /// The response said nothing about how long it may be reused, and no
     /// default was configured.
@@ -71,11 +71,16 @@ pub(super) enum Unstorable {
 }
 
 /// Whether a response may be stored, and for how long.
+///
+/// `secured` is whether the operation declares a security requirement, as
+/// [`Route::is_secured`](crate::router::operation::Route::is_secured) reports
+/// it.
 pub(super) fn storable(
     method: &crate::http::Method,
     status: StatusCode,
     request: &HeaderMap,
     response: &HeaderMap,
+    secured: bool,
     default_freshness: Option<Duration>,
 ) -> Result<Duration, Unstorable> {
     // RFC 9111 section 3 permits `POST` only with an explicit
@@ -128,16 +133,39 @@ pub(super) fn storable(
     }
 
     // RFC 9111 section 3.5: a response to an authenticated request is shared
-    // only where it says so.
-    if request.contains_key(header::AUTHORIZATION)
-        && !response_control
-            .iter()
-            .any(|value| value == "public" || value.starts_with("s-maxage="))
-    {
+    // only where it says so. `Authorization` is the one credential the section
+    // names; an API key in a field or cookie of its own, or a client
+    // certificate, is seen only through the operation's declared requirement.
+    // A requirement that also admits anonymous access counts as well: which
+    // of the two a request was is decided by the guard, after any cache hit.
+    if (secured || request.contains_key(header::AUTHORIZATION)) && !shared(&response_control) {
         return Err(Unstorable::Authorized);
     }
 
     freshness(&response_control, default_freshness).ok_or(Unstorable::NoFreshness)
+}
+
+/// Whether a stored response may be served for an operation declaring a
+/// security requirement.
+///
+/// Only one that said it may be shared, the condition [`storable`] stores one
+/// under. Checked again where it is read because the store outlives the rule:
+/// a response stored while the operation was unguarded is otherwise served past
+/// the guard added since.
+pub(super) fn servable_when_secured(stored: &HeaderMap) -> bool {
+    shared(&directives(stored))
+}
+
+/// Whether the directives say a shared cache may reuse the response for any
+/// requester, as RFC 9111 section 3.5 lists them for an authenticated request.
+///
+/// `must-revalidate` is the third directive the section lists, and it is not
+/// read: it permits storage only where the cache revalidates, and this one
+/// does not.
+fn shared(control: &[String]) -> bool {
+    control
+        .iter()
+        .any(|value| value == "public" || value.starts_with("s-maxage="))
 }
 
 /// Whether the request forbids answering it from the store.

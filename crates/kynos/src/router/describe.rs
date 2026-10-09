@@ -19,6 +19,7 @@ use super::{
     PanicPolicy, PathEntry, PathItem, Paths, Registry, Result, Route, Router, Service, Severity,
     SpecError, SpecVersion, TrailingSlashPolicy, Violation, dispatch,
 };
+use crate::router::operation::declares_security;
 
 // Each behind the feature that provides it, as `mod.rs` had them.
 #[cfg(feature = "docs")]
@@ -154,13 +155,15 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             };
 
             let method = mounted.endpoint.method();
-            let operation_id = document
+            let described = document
                 .paths
                 .items
                 .get(&key)
-                .and_then(|item| item.operation(method))
+                .and_then(|item| item.operation(method));
+            let operation_id = described
                 .and_then(|operation| operation.operation_id.clone())
                 .unwrap_or_default();
+            let secured = described.is_some_and(declares_security);
 
             let mut interceptors = self.interceptors.clone();
             interceptors.extend(mounted.interceptors);
@@ -178,6 +181,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 terminal: Arc::new(EndpointTerminal::new(mounted.endpoint)),
                 interceptors,
                 catch_panics: mounted.catch_panics || catches::<P>(),
+                secured,
                 #[cfg(feature = "unchecked")]
                 unchecked_layers,
             });
@@ -333,17 +337,19 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             let location = format!("#/paths/{}", pointer_token(&key));
             let method = mounted.endpoint.method();
 
-            // The identifier is needed before the operation exists, because it
-            // is half of the `Route` an interceptor is described against. A
-            // throwaway registry keeps the probe from recording a conflict the
-            // real pass is about to record again.
-            let operation_id = {
+            // The identifier and the security are needed before the operation
+            // exists, because they are part of the `Route` an interceptor is
+            // described against. A throwaway registry keeps the probe from
+            // recording a conflict the real pass is about to record again.
+            let (operation_id, secured) = {
                 let mut probe = Registry::new();
                 let mut cx = OperationCx::new(&mut probe);
                 mounted.endpoint.describe(&mut cx);
-                cx.finish().operation_id.unwrap_or_default()
+                let probed = cx.finish();
+                let secured = declares_security(&probed);
+                (probed.operation_id.unwrap_or_default(), secured)
             };
-            let route = Route::new(&key, &operation_id, method);
+            let route = Route::new(&key, &operation_id, method, secured);
 
             let mut cx = OperationCx::new(&mut registry);
             mounted.endpoint.describe(&mut cx);
