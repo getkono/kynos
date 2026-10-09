@@ -1,0 +1,5 @@
+error: `Node` refers to itself, but a generic type has no component name and is inlined, so its schema would never end. Make the recursive type concrete, or implement `Schema` for it by hand returning a `name()`
+ --> tests/ui/macros/schema_recursive_generic.rs:8:22
+  |
+8 |     next: Option<Box<Node<T>>>,
+  |                      ^^^^

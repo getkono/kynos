@@ -596,6 +596,12 @@ opentelemetry-semantic-conventions = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 uuid = { workspace = true, features = ["serde"] }
 
+# `connection_adversarial.rs` lowers its own `RLIMIT_NOFILE` to run a listener
+# out of descriptors, and `unsafe_code` is forbidden, so the call needs a safe
+# wrapper. `process` is the feature that carries `setrlimit`.
+[target.'cfg(unix)'.dev-dependencies]
+rustix = { workspace = true, features = ["process"] }
+
 [lints]
 workspace = true
 
