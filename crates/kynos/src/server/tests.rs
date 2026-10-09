@@ -1044,6 +1044,25 @@ fn the_first_head_deadline_counts_the_header_read_timeout_from_accept() {
     assert_eq!(deadline(Some(Duration::MAX)), None);
 }
 
+/// Without HTTP/1 the first-head deadline is the HTTP/2 idle timeout counted
+/// from accept, with the same two cases of none.
+#[cfg(all(feature = "http2", not(feature = "http1")))]
+#[test]
+fn the_first_head_deadline_counts_the_idle_timeout_from_accept_without_http1() {
+    use std::time::{Duration, Instant};
+
+    let accepted = Instant::now();
+    let deadline = |timeout| {
+        Http2Config::default()
+            .idle_timeout(timeout)
+            .first_head_deadline(accepted)
+    };
+
+    assert_eq!(deadline(Some(HEAD_TIMEOUT)), Some(accepted + HEAD_TIMEOUT));
+    assert_eq!(deadline(None), None);
+    assert_eq!(deadline(Some(Duration::MAX)), None);
+}
+
 /// A plaintext server whose header-read timeout is [`HEAD_TIMEOUT`].
 #[cfg(feature = "http1")]
 async fn head_timed_server() -> (
@@ -1177,9 +1196,10 @@ async fn an_http2_connection_that_opens_no_stream_is_closed() {
 /// in time is not closed when the timeout passes.
 ///
 /// HTTP/2 rather than HTTP/1, since an idle HTTP/1 connection is held to the
-/// header-read timeout between requests by hyper itself; an HTTP/2 one has no
-/// such timer, so a second request long after the first still finds the
-/// connection open only if the bound stopped at the first head.
+/// header-read timeout between requests by hyper itself; an HTTP/2 one is held
+/// only to its idle timeout, 30 s by default, so a second request long after
+/// the first still finds the connection open only if the bound stopped at the
+/// first head.
 #[cfg(all(feature = "http1", feature = "http2"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_connection_that_sent_a_request_outlives_the_header_read_timeout() {

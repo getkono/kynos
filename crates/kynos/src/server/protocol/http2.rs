@@ -1,6 +1,15 @@
-//! HTTP/2 tuning.
+//! HTTP/2 tuning, and the in-flight stream count its idle timeout is read
+//! against.
 
-use std::time::Duration;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
+
+use tokio::sync::Notify;
 
 /// HTTP/2 flow-control policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -204,5 +213,89 @@ impl Http2Config {
     pub fn max_local_error_reset_streams(mut self, streams: usize) -> Self {
         self.max_local_error_reset_streams = streams;
         self
+    }
+}
+
+impl Http2Config {
+    /// When a connection accepted at `accepted` must have produced its first
+    /// request head, in a build with no HTTP/1 header-read timeout to count.
+    ///
+    /// `None` when the idle timeout is disabled or would overflow the clock.
+    #[cfg(not(feature = "http1"))]
+    pub(in crate::server) fn first_head_deadline(
+        &self,
+        accepted: std::time::Instant,
+    ) -> Option<std::time::Instant> {
+        self.idle_timeout
+            .and_then(|timeout| accepted.checked_add(timeout))
+    }
+}
+
+/// The HTTP/2 streams one connection has in flight.
+///
+/// Two monotonic counters rather than one that rises and falls, so the idle
+/// wait can tell a connection that stayed quiet from one that opened and
+/// finished a stream while it slept: both end with nothing in flight, and only
+/// the first is idle.
+#[derive(Debug, Default)]
+pub(in crate::server) struct Streams {
+    opened: AtomicUsize,
+    closed: AtomicUsize,
+    /// Woken by the first stream, and by each close that leaves none in flight.
+    quiet: Notify,
+}
+
+impl Streams {
+    /// Counts one stream in flight until the returned guard drops.
+    pub(in crate::server) fn open(self: &Arc<Self>) -> InFlight {
+        if self.opened.fetch_add(1, Ordering::SeqCst) == 0 {
+            self.quiet.notify_one();
+        }
+        InFlight(Arc::clone(self))
+    }
+
+    /// Resolves once no stream has been in flight for `timeout`, and never
+    /// before the first stream opens: until then the first-head deadline is
+    /// what bounds the connection.
+    pub(in crate::server) async fn idle(&self, timeout: Option<Duration>) {
+        let Some(timeout) = timeout else {
+            return std::future::pending().await;
+        };
+        loop {
+            let quiet = self.quiet.notified();
+            tokio::pin!(quiet);
+            // Registered before the counters are read, so a close between the
+            // reads and the wait is not missed.
+            quiet.as_mut().enable();
+            // `closed` first: it never passes `opened`, so equal readings mean
+            // nothing was in flight when `closed` was read.
+            let closed = self.closed.load(Ordering::SeqCst);
+            let opened = self.opened.load(Ordering::SeqCst);
+            if opened == 0 || closed != opened {
+                quiet.await;
+                continue;
+            }
+            tokio::time::sleep(timeout).await;
+            if self.opened.load(Ordering::SeqCst) == opened {
+                return;
+            }
+        }
+    }
+}
+
+/// One stream counted in flight by [`Streams`].
+#[derive(Debug)]
+pub(in crate::server) struct InFlight(Arc<Streams>);
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        let streams = &self.0;
+        let closed = streams
+            .closed
+            .fetch_add(1, Ordering::SeqCst)
+            .wrapping_add(1);
+        if closed == streams.opened.load(Ordering::SeqCst) {
+            streams.quiet.notify_one();
+        }
     }
 }
