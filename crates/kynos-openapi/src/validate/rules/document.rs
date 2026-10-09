@@ -1,5 +1,5 @@
 //! Rules that apply to the document as a whole: servers, tags, component
-//! names, the root security requirements.
+//! names, reusable parameters, the root security requirements.
 
 use std::collections::HashSet;
 
@@ -10,7 +10,8 @@ use crate::{
     model::{components::ComponentName, document::Document},
     validate::{
         Validator,
-        violation::{SpecError, Violation},
+        rules::parameters::check_parameter,
+        violation::{SpecError, Violation, pointer_token},
     },
 };
 
@@ -166,6 +167,26 @@ pub(in crate::validate) fn check_component_names(
                     SpecError::InvalidComponentName { name: name.clone() },
                 ));
             }
+        }
+    }
+}
+
+/// Checks each reusable parameter once, where it is defined.
+///
+/// A list that references one checks only its uniqueness, so a component is
+/// reported here and not once per reference. One that is itself a `$ref` is
+/// checked where it leads.
+pub(in crate::validate) fn check_component_parameters(
+    document: &Document,
+    violations: &mut Vec<Violation>,
+) {
+    for (name, parameter) in &document.components.parameters {
+        if let Some(parameter) = parameter.as_item() {
+            check_parameter(
+                &format!("#/components/parameters/{}", pointer_token(name)),
+                parameter,
+                violations,
+            );
         }
     }
 }
