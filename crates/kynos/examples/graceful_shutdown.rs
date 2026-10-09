@@ -12,7 +12,7 @@
 //! finishes, and the process exits after it. Interrupt a second time and the
 //! drain stops where it stands.
 //!
-//! Four things are worth noticing:
+//! Five things are worth noticing:
 //!
 //! * **A trigger is a value, not a callback.** `Shutdown` is constructed and
 //!   handed over, so which one a process uses is a deployment decision made in
@@ -32,8 +32,12 @@
 //!   before any is served, so an address already in use fails before traffic
 //!   arrives rather than after half the sockets are live. It is also the only
 //!   way to learn which port the operating system chose when you asked for zero.
+//! * **An incomplete drain is an error, but not a failure.** `serve` reports a
+//!   drain cut short as an `Err`, so nothing it abandoned goes unnoticed;
+//!   [`ServerError::is_requested_shutdown`] is how `main` exits cleanly anyway.
 //!
 //! [`ServerError::ShutdownTimeout`]: kynos::server::error::ServerError::ShutdownTimeout
+//! [`ServerError::is_requested_shutdown`]: kynos::server::error::ServerError::is_requested_shutdown
 
 use std::{env, net::Ipv4Addr, num::NonZeroUsize, time::Duration};
 
@@ -103,5 +107,14 @@ async fn main() -> kynos::Result<()> {
         println!("listening on http://{address}");
     }
 
-    bound.serve().await
+    match bound.serve().await {
+        // A drain cut short by its deadline or a second signal is still the
+        // stop this process asked for. Exiting non-zero for it would have a
+        // supervisor that restarts on failure restart a service told to stop.
+        Err(kynos::Error::Server(error)) if error.is_requested_shutdown() => {
+            eprintln!("{error}");
+            Ok(())
+        }
+        outcome => outcome,
+    }
 }
