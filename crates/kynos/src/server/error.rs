@@ -77,3 +77,19 @@ pub enum ServerError {
     #[error(transparent)]
     Tls(#[from] TlsError),
 }
+
+impl ServerError {
+    /// Whether serving ended because shutdown was requested and the drain then
+    /// cut in-flight work short: [`ShutdownTimeout`](Self::ShutdownTimeout) or
+    /// [`ShutdownForced`](Self::ShutdownForced).
+    ///
+    /// Such an error is the end a process asked for, not a server failure, so a
+    /// caller that maps errors to a failing exit status should exempt it; a
+    /// supervisor restarting on failure would otherwise restart a service that
+    /// was told to stop. Every other variant means the server stopped on its
+    /// own or never started.
+    #[must_use]
+    pub const fn is_requested_shutdown(&self) -> bool {
+        matches!(self, Self::ShutdownTimeout { .. } | Self::ShutdownForced)
+    }
+}
