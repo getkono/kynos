@@ -143,6 +143,43 @@ fn every_refusal_has_a_case() {
     assert_eq!(cases.len(), variants.len(), "a refusal has no case");
 }
 
+/// A wildcard on any `Vary` line refuses the response.
+///
+/// RFC 9110 section 5.3 lets a list field be split across lines, so `*` on a
+/// later line is the same `Vary: *` -- and a first line that is not UTF-8 must
+/// not hide it.
+#[test]
+fn a_wildcard_on_any_vary_line_is_refused() {
+    assert_eq!(
+        storable(
+            &[],
+            &[
+                ("cache-control", "max-age=60"),
+                ("vary", "accept"),
+                ("vary", "*"),
+            ],
+        ),
+        Err(Unstorable::VaryWildcard)
+    );
+
+    let mut response = map(&[("cache-control", "max-age=60")]);
+    response.append(
+        header::VARY,
+        HeaderValue::from_bytes(b"\xff").expect("an opaque field"),
+    );
+    response.append(header::VARY, HeaderValue::from_static("*"));
+    assert_eq!(
+        freshness::storable(
+            &Method::GET,
+            StatusCode::OK,
+            &HeaderMap::new(),
+            &response,
+            None,
+        ),
+        Err(Unstorable::VaryWildcard)
+    );
+}
+
 /// A narrowed directive is read as the whole one.
 ///
 /// `private="set-cookie"` narrows what must not be shared. Storing part of a
