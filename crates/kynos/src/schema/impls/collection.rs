@@ -34,9 +34,15 @@ fn array<T: Schema>(registry: &mut Registry, unique: bool) -> OpenApiSchema {
 /// itself as something a JSON object key could never be. It is omitted when
 /// `K` constrains nothing, since `{"type": "string"}` says no more than
 /// `type: object` already does.
+///
+/// A key `pattern` that no check could enforce is recorded on the registry,
+/// which the router refuses while it is built.
 fn map<K: MapKey, V: Schema>(registry: &mut Registry) -> OpenApiSchema {
     let values = registry.resolve::<V>();
     let constraints = K::key_constraints();
+    if let Some(pattern) = &constraints.pattern {
+        registry.admit_key_pattern::<K>(pattern);
+    }
 
     with_object(OpenApiSchema::of_type(SchemaType::Object), |object| {
         object.additional_properties = Some(Box::new(values));
@@ -77,25 +83,26 @@ fn check_members<'a, T: Schema + 'a>(
 /// declares, then its value under the key.
 ///
 /// A key has no location of its own, since a pointer to it names its value,
-/// so a key is reported at the map, the key in the detail. Only the length
-/// bounds can fail: a key is a string, and a key's `pattern` is described and
-/// not checked. A key that cannot say what member name it is is
-/// not checked, and its value is reported at the map.
+/// so a key is reported at the map, the key in the detail. A key is a string,
+/// so its length bounds and its `pattern` are what can fail; `pattern` only
+/// under the `pattern` feature, without which the router refuses a key type
+/// declaring one. A key that cannot say what member name it is is not checked,
+/// and its value is reported at the map.
 ///
 /// `K::key_constraints` is built once the first key to check needs it, and
-/// only its length bounds are kept, so an empty map, or one whose keys cannot
-/// be checked, builds nothing.
+/// only its enforced bounds are kept, so an empty map, or one whose keys
+/// cannot be checked, builds nothing.
 fn check_entries<'a, K: MapKey + 'a, V: Schema + 'a>(
     entries: impl Iterator<Item = (&'a K, &'a V)>,
     at: Pointer<'_>,
     violations: &mut Violations,
 ) {
-    let mut lengths = None;
+    let mut bounds = None;
     for (key, value) in entries {
         match key.as_member() {
             Some(name) => {
-                let lengths = *lengths.get_or_insert_with(|| KeyLengths::of::<K>());
-                check_key(name, lengths, at, violations);
+                let bounds = bounds.get_or_insert_with(KeyBounds::of::<K>);
+                check_key(name, bounds, at, violations);
                 value.check_constraints(at.member(name), violations);
             }
             None => violations.within(at, |inner| {
@@ -106,34 +113,43 @@ fn check_entries<'a, K: MapKey + 'a, V: Schema + 'a>(
 }
 
 /// The bounds of a map key that a check enforces.
-#[derive(Clone, Copy)]
-struct KeyLengths {
+struct KeyBounds {
     min: Option<u64>,
     max: Option<u64>,
+    #[cfg(feature = "pattern")]
+    pattern: Option<keyword::pattern::KeyPattern>,
 }
 
-impl KeyLengths {
+impl KeyBounds {
     fn of<K: MapKey>() -> Self {
         let Constraints {
             min_length,
             max_length,
+            #[cfg(feature = "pattern")]
+            pattern,
             ..
         } = K::key_constraints();
         Self {
             min: min_length,
             max: max_length,
+            #[cfg(feature = "pattern")]
+            pattern: pattern.map(keyword::pattern::KeyPattern::new),
         }
     }
 }
 
-/// Checks one key against its `lengths`, reporting at `at`, the map.
-fn check_key(name: &str, lengths: KeyLengths, at: Pointer<'_>, violations: &mut Violations) {
+/// Checks one key against its `bounds`, reporting at `at`, the map.
+fn check_key(name: &str, bounds: &KeyBounds, at: Pointer<'_>, violations: &mut Violations) {
     let mut broken = Violations::new();
-    if let Some(bound) = lengths.min {
+    if let Some(bound) = bounds.min {
         keyword::text_min_length(name, bound, Pointer::root(), &mut broken);
     }
-    if let Some(bound) = lengths.max {
+    if let Some(bound) = bounds.max {
         keyword::text_max_length(name, bound, Pointer::root(), &mut broken);
+    }
+    #[cfg(feature = "pattern")]
+    if let Some(pattern) = &bounds.pattern {
+        pattern.check(name, Pointer::root(), &mut broken);
     }
     for (_, detail) in broken.into_each() {
         violations.report(at, format!("the key `{name}` {detail}"));

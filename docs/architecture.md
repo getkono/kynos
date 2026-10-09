@@ -197,7 +197,7 @@ by naming the row X displaces rather than by arguing that X is good.
 | TLS | `rustls`, via `tokio-rustls`, on the `aws-lc-rs` provider it names | [`server/tls/`](../crates/kynos/src/server/tls/) | built |
 | Route matching | `matchit` | [`router/`](../crates/kynos/src/router/) | built |
 | JSON Schema instance validation | `jsonschema` | [`test/conformance.rs`](../crates/kynos/src/test/conformance.rs), gated on `test-util` | built |
-| Regular expressions, for `pattern` | `regex`, `regex-syntax` | [`__private/constraints/pattern.rs`](../crates/kynos/src/__private/constraints/pattern.rs) and `kynos-openapi`'s [`pattern.rs`](../crates/kynos-openapi/src/pattern.rs), gated on `pattern` | built |
+| Regular expressions, for `pattern` | `regex`, `regex-syntax` | [`__private/constraints/pattern.rs`](../crates/kynos/src/__private/constraints/pattern.rs) and `kynos-openapi`'s [`pattern.rs`](../crates/kynos-openapi/src/pattern.rs), the one translator the derive and the router both call, gated on `pattern` | built |
 | Percent-encoding | `percent-encoding` | [`__private/uri.rs`](../crates/kynos/src/__private/uri.rs) | built |
 | Errors | `thiserror` | ambient | built |
 | Observability facade | `tracing` | [`server/`](../crates/kynos/src/server/), [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) | built |
@@ -500,7 +500,7 @@ module column is also where the `#[cfg]` lives.
 | `openapi31` | the 3.1 object model; the baseline every other flag builds on | [`standards.md`](standards.md) |
 | `openapi32` | the 3.2 superset, `#[cfg]`-gated rather than runtime-optional | [`standards.md`](standards.md), [`routing.md`](routing.md) |
 | `macros` | `kynos-macros`: the route attributes and the derives | [`handlers.md`](handlers.md) |
-| `pattern` | `__private::constraints::pattern`, and `#[schema(pattern)]` in the derive, which refuses the key without it | [`schema.md`](schema.md#enforcing-field-constraints) |
+| `pattern` | `__private::constraints::pattern`, `kynos_openapi::pattern`, and `#[schema(pattern)]` in the derive, which refuses the key without it; the router refuses a map key's `pattern` without it | [`schema.md`](schema.md#enforcing-field-constraints) |
 | `server` | `server/`, and with it the entire runtime coupling surface | [Runtime policy](#runtime-policy) |
 | `http1`, `http2` | the protocol versions hyper drives; `server` alone is a `compile_error!` | [Runtime policy](#runtime-policy) |
 | `tls` | `server/tls/`, the only place `rustls` may be named | [Runtime policy](#runtime-policy) |

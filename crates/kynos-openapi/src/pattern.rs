@@ -21,7 +21,9 @@
 //! The translation is then compiled, as a check enforcing it will compile it,
 //! so a pattern [`translate`] returns is one the engine runs.
 //!
-//! Kynos holds a derived field's pattern to this when the derive expands.
+//! Kynos holds a derived field's pattern to this when the derive expands, and
+//! a map key's when the router is built, so neither reaches a request
+//! untranslated.
 
 use regex_syntax::ast::{
     self, Assertion, AssertionKind, Ast, ClassPerl, ClassPerlKind, ClassSetBinaryOp, ClassSetItem,

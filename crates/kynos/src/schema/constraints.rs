@@ -22,7 +22,10 @@
 //! derive translates it to the engine's dialect, keeping `\d`, `\w` and `\b`
 //! ASCII as ECMA-262 does, and refuses one the engine cannot run, such as a
 //! lookaround. The engine matches in time linear in the string, and compiles
-//! each field's pattern once per process.
+//! each field's pattern once per process. A map key's pattern, from
+//! [`MapKey::key_constraints`](crate::schema::MapKey::key_constraints), is
+//! translated the same way when the router is built, which refuses one that
+//! does not translate, and compiled once per process too.
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet, VecDeque},
