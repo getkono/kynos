@@ -68,22 +68,26 @@ pub(super) fn check_constraints(input: &DeriveInput) -> syn::Result<()> {
     Ok(())
 }
 
-/// Why the check cannot enforce `pattern`, if it cannot.
-#[cfg(feature = "pattern")]
+/// Why the check cannot enforce `pattern`, if it cannot: without the feature,
+/// it has no engine to.
+///
+/// One function with gated arms rather than two gated functions, so that the
+/// function-level mutant is compiled under `all_features` and tested.
 fn enforceable(pattern: &LitStr) -> Result<(), String> {
-    crate::derive::schema::pattern::translate(&pattern.value()).map(drop)
-}
-
-/// Why the check cannot enforce `pattern`: without the feature, it has no
-/// engine to.
-#[cfg(not(feature = "pattern"))]
-fn enforceable(_: &LitStr) -> Result<(), String> {
-    Err(
-        "`pattern` is enforced by a regular expression engine, which `kynos` compiles in only \
-         under its `pattern` feature. Enable it, or drop the key: a bound nothing checks would \
-         be described as though something did"
-            .to_owned(),
-    )
+    #[cfg(feature = "pattern")]
+    {
+        crate::derive::schema::pattern::translate(&pattern.value()).map(drop)
+    }
+    #[cfg(not(feature = "pattern"))]
+    {
+        let _ = pattern;
+        Err(
+            "`pattern` is enforced by a regular expression engine, which `kynos` compiles in \
+             only under its `pattern` feature. Enable it, or drop the key: a bound nothing \
+             checks would be described as though something did"
+                .to_owned(),
+        )
+    }
 }
 
 /// One `key` or `key = value` inside a field's `#[schema(...)]`.
