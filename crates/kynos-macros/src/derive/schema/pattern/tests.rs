@@ -102,6 +102,17 @@ fn a_pattern_the_dialects_read_apart_is_refused() {
     }
 }
 
+/// ECMA-262 admits `\-` only inside a class, where the engine agrees.
+#[test]
+fn an_escaped_hyphen_is_refused_outside_a_class() {
+    let reason = translate(r"a\-b").expect_err(r"`\-` outside a class");
+    assert!(
+        reason.contains(r"`\-`, an escape ECMA-262 refuses"),
+        "{reason}"
+    );
+    assert!(translate(r"[a\-b]").is_ok());
+}
+
 #[test]
 fn every_dialect_refusal_has_a_case() {
     // The definition of `not_ecma` is the one mention that is not a site.
