@@ -1,0 +1,5 @@
+error: the header `X Api Key` contains ' ', and an RFC 9110 field name is a token: letters, digits and !#$%&'*+-.^_`|~
+ --> tests/ui/macros/security_scheme_api_key_non_token_name.rs:2:42
+  |
+2 | #[security(api_key(in = "header", name = "X Api Key"))]
+  |                                          ^^^^^^^^^^^

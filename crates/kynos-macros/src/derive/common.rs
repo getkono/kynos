@@ -283,6 +283,24 @@ pub(crate) fn names_const(names: &[String]) -> TokenStream2 {
     }
 }
 
+/// How two wire names of one location are compared.
+#[derive(Clone, Copy)]
+pub(crate) enum NameCase {
+    /// Byte for byte: query, path and cookie names, and multipart parts.
+    Sensitive,
+    /// Under ASCII case folding: header field names (RFC 9110 §5.1).
+    Insensitive,
+}
+
+impl NameCase {
+    fn same(self, left: &str, right: &str) -> bool {
+        match self {
+            Self::Sensitive => left == right,
+            Self::Insensitive => left.eq_ignore_ascii_case(right),
+        }
+    }
+}
+
 /// Rejects two fields that would occupy the same wire name.
 ///
 /// Left to the derive rather than to validation because the span is here: a
@@ -291,18 +309,26 @@ pub(crate) fn reject_duplicate_names(
     fields: &FieldsNamed,
     names: &[String],
     kind: &str,
+    case: NameCase,
 ) -> syn::Result<()> {
     for (index, name) in names.iter().enumerate() {
-        if let Some(earlier) = names[..index].iter().position(|seen| seen == name) {
+        if let Some(earlier) = names[..index].iter().position(|seen| case.same(seen, name)) {
             let field = fields
                 .named
                 .iter()
                 .nth(index)
                 .expect("index came from the same list");
+            // A clash through case folding names both spellings, since the
+            // reader sees two names that do not look alike.
+            let spelled = if names[earlier] == *name {
+                String::new()
+            } else {
+                format!(", which spells it `{}`", names[earlier])
+            };
             return Err(syn::Error::new(
                 field.span(),
                 format!(
-                    "two fields declare the {kind} `{name}`; the first is `{}`",
+                    "two fields declare the {kind} `{name}`; the first is `{}`{spelled}",
                     fields
                         .named
                         .iter()
@@ -314,6 +340,48 @@ pub(crate) fn reject_duplicate_names(
         }
     }
     Ok(())
+}
+
+/// Rejects a wire name that is not a token.
+///
+/// A header field name (RFC 9110 §5.1) and a cookie name (RFC 6265 §4.1.1)
+/// share one grammar: one or more `tchar`s. A name outside it can never be
+/// sent, so a field declared under one is a field no request reaches, and a
+/// header one makes `HeaderName::from_static` panic the first time it is
+/// encoded. `grammar` names what the name must be, for the diagnostic.
+pub(crate) fn reject_non_token_names(
+    fields: &FieldsNamed,
+    names: &[String],
+    kind: &str,
+    grammar: &str,
+) -> syn::Result<()> {
+    for (field, name) in fields.named.iter().zip(names) {
+        if let Some(message) = non_token_message(name, kind, grammar) {
+            return Err(syn::Error::new(field.span(), message));
+        }
+    }
+    Ok(())
+}
+
+/// Says why `name` is not a token, or `None` where it is one.
+///
+/// The rule behind [`reject_non_token_names`], for a site whose name is not a
+/// field's: the diagnostic it words is that function's, so the two never
+/// disagree about what a token is.
+pub(crate) fn non_token_message(name: &str, kind: &str, grammar: &str) -> Option<String> {
+    let problem = match name.chars().find(|&character| !is_tchar(character)) {
+        Some(character) => format!("the {kind} `{name}` contains {character:?}"),
+        None if name.is_empty() => format!("the {kind} name is empty"),
+        None => return None,
+    };
+    Some(format!(
+        "{problem}, and {grammar} is a token: letters, digits and !#$%&'*+-.^_`|~"
+    ))
+}
+
+/// RFC 9110 §5.6.2's `tchar`.
+fn is_tchar(character: char) -> bool {
+    character.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(character)
 }
 
 #[cfg(test)]

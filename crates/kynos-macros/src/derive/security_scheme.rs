@@ -45,7 +45,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, Ident, LitStr, Token, Type, parse_macro_input, parse_quote};
 
-use crate::derive::common::{doc_string, skip_value, unit_struct};
+use crate::derive::common::{doc_string, non_token_message, skip_value, unit_struct};
 
 /// Locations an API key may travel in.
 ///
@@ -666,6 +666,19 @@ fn check_kind(
             "an API key must say which field carries it: `name = \"X-Api-Key\"`",
         ));
     };
+    // A header field name and a cookie name are tokens, and `carrier::api_key`
+    // can never find one outside that grammar. A query parameter name is any
+    // string its percent-encoding carries, so it is left alone.
+    let grammar = match location.value().as_str() {
+        "header" => Some("an RFC 9110 field name"),
+        "cookie" => Some("an RFC 6265 cookie name"),
+        _ => None,
+    };
+    if let Some(message) =
+        grammar.and_then(|grammar| non_token_message(&field.value(), &location.value(), grammar))
+    {
+        return Err(syn::Error::new(field.span(), message));
+    }
     // HTTP field names are case-insensitive, so the check must be too.
     if location.value() == "header"
         && RESERVED_HEADERS.contains(&field.value().to_ascii_lowercase().as_str())
