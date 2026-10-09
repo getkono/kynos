@@ -304,3 +304,282 @@ fn a_group_removing_a_declared_field_removes_it() {
         None
     );
 }
+
+mod security_headers {
+    use std::{
+        net::{IpAddr, SocketAddr},
+        time::Duration,
+    };
+
+    use kynos_openapi::RefOr;
+
+    use crate::{
+        extract::{
+            connection::{Connection, TlsIdentity},
+            params::header::{EncodeHeaders, HeaderParams},
+        },
+        http::{
+            HeaderMap, HeaderValue, Response,
+            forwarded::{Forwarded, ProxyHeader, TrustedProxies},
+            header,
+        },
+        middleware::{
+            Continued,
+            security_headers::{SecurityFields, StrictTransportSecurity, conveyed_securely},
+        },
+        schema::registry::Registry,
+    };
+
+    const PEER: &str = "192.0.2.1:50000";
+    const LOCAL: &str = "192.0.2.2:443";
+    const PROXY: &str = "10.0.0.1";
+
+    fn plain() -> Connection {
+        Connection::from_peer(PEER.parse().unwrap(), LOCAL.parse().unwrap())
+    }
+
+    fn tls() -> Connection {
+        Connection::from_tls_peer(
+            PEER.parse().unwrap(),
+            LOCAL.parse().unwrap(),
+            TlsIdentity::default(),
+        )
+    }
+
+    /// What the router resolves for a request from `peer`, believing a proxy
+    /// at `PROXY` that writes the `X-Forwarded` pair.
+    fn behind_proxy(peer: SocketAddr, fields: &[(&'static str, &'static str)]) -> Forwarded {
+        let mut headers = HeaderMap::new();
+        for (name, value) in fields {
+            headers.insert(*name, HeaderValue::from_static(value));
+        }
+
+        let trusted =
+            TrustedProxies::addresses(ProxyHeader::XForwarded, [PROXY.parse::<IpAddr>().unwrap()]);
+
+        Forwarded::resolve(&headers, Some(peer), &trusted)
+    }
+
+    fn group<const H: bool, const F: bool>(
+        transport: Option<&'static str>,
+    ) -> SecurityFields<H, F> {
+        SecurityFields {
+            transport: transport.map(HeaderValue::from_static),
+        }
+    }
+
+    /// The fields a group leaves on a response that already said
+    /// `Cache-Control: max-age=60`.
+    fn written<const H: bool, const F: bool>(group: SecurityFields<H, F>) -> HeaderMap {
+        let mut response = Response::new(crate::http::body::Body::empty());
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("max-age=60"),
+        );
+
+        Continued::new(response)
+            .with_headers(group)
+            .into_response()
+            .headers()
+            .clone()
+    }
+
+    /// The `const` documented is the value sent only because the field is
+    /// replaced: a handler's own `max-age` surviving beside the description's
+    /// `no-store` would be a description the wire contradicts.
+    #[test]
+    fn the_baseline_replaces_what_the_chain_set_and_opts_into_nothing() {
+        let sent = written(group::<false, false>(None));
+
+        assert_eq!(
+            sent.get_all(header::CACHE_CONTROL)
+                .iter()
+                .collect::<Vec<_>>(),
+            ["no-store"]
+        );
+        assert_eq!(sent[header::REFERRER_POLICY], "no-referrer");
+        assert_eq!(sent[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+        assert!(!sent.contains_key(header::STRICT_TRANSPORT_SECURITY));
+        assert!(!sent.contains_key(header::X_FRAME_OPTIONS));
+    }
+
+    /// Every opt-in combination writes exactly the names it declares, so the
+    /// conflict check compares what reaches the wire.
+    #[test]
+    fn each_combination_writes_exactly_what_it_declares() {
+        fn written<G: EncodeHeaders>(group: &G) -> Vec<String> {
+            let mut names: Vec<_> = group
+                .encode()
+                .into_iter()
+                .map(|(name, _)| name.as_str().to_owned())
+                .collect();
+            names.sort();
+            names
+        }
+
+        fn declared<G: HeaderParams>() -> Vec<String> {
+            let mut names: Vec<_> = G::NAMES.iter().map(|&name| name.to_owned()).collect();
+            names.sort();
+            names
+        }
+
+        let hsts = Some("max-age=1");
+
+        assert_eq!(
+            written(&group::<false, false>(None)),
+            declared::<SecurityFields<false, false>>()
+        );
+        assert_eq!(
+            written(&group::<true, false>(hsts)),
+            declared::<SecurityFields<true, false>>()
+        );
+        assert_eq!(
+            written(&group::<false, true>(None)),
+            declared::<SecurityFields<false, true>>()
+        );
+        assert_eq!(
+            written(&group::<true, true>(hsts)),
+            declared::<SecurityFields<true, true>>()
+        );
+    }
+
+    /// RFC 6797 section 7.2: the declared field is withheld where the
+    /// transport was not secure, a subset of what is declared.
+    #[test]
+    fn hsts_is_left_off_where_the_transport_was_not_secure() {
+        let sent = written(group::<true, true>(None));
+
+        assert!(!sent.contains_key(header::STRICT_TRANSPORT_SECURITY));
+        assert_eq!(sent[header::X_FRAME_OPTIONS], "DENY");
+    }
+
+    #[test]
+    fn an_hsts_policy_renders_whole_seconds_and_its_directive() {
+        assert_eq!(
+            StrictTransportSecurity::max_age(Duration::from_secs(31_536_000)).value(),
+            "max-age=31536000"
+        );
+        assert_eq!(
+            StrictTransportSecurity::max_age(Duration::from_millis(1_999))
+                .include_subdomains()
+                .value(),
+            "max-age=1; includeSubDomains"
+        );
+        assert_eq!(
+            StrictTransportSecurity::max_age(Duration::ZERO).value(),
+            "max-age=0"
+        );
+    }
+
+    /// The decision RFC 6797 section 7.2 turns on: a trusted hop's scheme
+    /// first, the socket's TLS only where the socket peer is the client, and
+    /// nothing for a request no socket carried.
+    #[test]
+    fn a_secure_transport_is_the_clients_own() {
+        let peer: SocketAddr = PEER.parse().unwrap();
+        let from_proxy: SocketAddr = format!("{PROXY}:50000").parse().unwrap();
+        let direct = Forwarded::resolve(&HeaderMap::new(), Some(peer), &TrustedProxies::none());
+
+        let cases = [
+            ("no socket", None, None, false),
+            ("plain socket", None, Some(plain()), false),
+            ("TLS socket", None, Some(tls()), true),
+            (
+                "TLS socket, nobody trusted",
+                Some(direct.clone()),
+                Some(tls()),
+                true,
+            ),
+            (
+                "plain socket, nobody trusted",
+                Some(direct),
+                Some(plain()),
+                false,
+            ),
+            (
+                "a trusted hop says https over a plain socket",
+                Some(behind_proxy(
+                    from_proxy,
+                    &[
+                        ("x-forwarded-for", "203.0.113.9"),
+                        ("x-forwarded-proto", "https"),
+                    ],
+                )),
+                Some(plain()),
+                true,
+            ),
+            (
+                "a trusted hop says http over a TLS socket",
+                Some(behind_proxy(
+                    from_proxy,
+                    &[
+                        ("x-forwarded-for", "203.0.113.9"),
+                        ("x-forwarded-proto", "http"),
+                    ],
+                )),
+                Some(tls()),
+                false,
+            ),
+            (
+                "a trusted hop names a client and no scheme over a TLS socket",
+                Some(behind_proxy(
+                    from_proxy,
+                    &[("x-forwarded-for", "203.0.113.9")],
+                )),
+                Some(tls()),
+                false,
+            ),
+        ];
+
+        for (case, forwarded, connection, secure) in cases {
+            assert_eq!(
+                conveyed_securely(forwarded.as_ref(), connection.as_ref()),
+                secure,
+                "{case}"
+            );
+        }
+    }
+
+    /// Each fixed field is described as the one value it carries, and as
+    /// always present; HSTS, withheld over plain transport, is not required.
+    #[test]
+    fn each_fixed_field_is_described_as_its_constant() {
+        let headers = SecurityFields::<true, true>::response_headers(&mut Registry::new());
+
+        let described = |name: &str| match headers.get(name) {
+            Some(RefOr::Item(header)) => serde_json::to_value(header).unwrap(),
+            other => panic!("{name} is not an inline header: {other:?}"),
+        };
+
+        for (name, value) in [
+            ("Cache-Control", "no-store"),
+            ("Referrer-Policy", "no-referrer"),
+            ("X-Content-Type-Options", "nosniff"),
+            ("X-Frame-Options", "DENY"),
+        ] {
+            let header = described(name);
+            assert_eq!(header["required"], true, "{name}");
+            assert_eq!(
+                header["content"]["text/plain"]["schema"]["const"], value,
+                "{name}"
+            );
+        }
+
+        let hsts = described("Strict-Transport-Security");
+        assert_eq!(hsts.get("required"), None);
+        assert_eq!(hsts["content"]["text/plain"]["schema"]["type"], "string");
+        assert_eq!(headers.len(), 5);
+    }
+
+    #[test]
+    fn the_baseline_describes_no_opt_in() {
+        let headers = SecurityFields::<false, false>::response_headers(&mut Registry::new());
+
+        let mut names: Vec<_> = headers.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            ["Cache-Control", "Referrer-Policy", "X-Content-Type-Options"]
+        );
+    }
+}
