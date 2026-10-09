@@ -8,8 +8,11 @@
 //! describes itself as a Responses Object; every interceptor declares what it
 //! contributes to the description. Anything that cannot be described is
 //! refused: by the compiler wherever the types can see it, otherwise by
-//! [`Router::build`]. The only ways past are the `unchecked` feature's escape
-//! hatches, named below, and `assets-fs`, which implies it. Two README anti-patterns —
+//! [`Router::build`]. The only ways past are
+//! [`Unchecked<T>`](schema::unchecked::Unchecked), which declares a payload
+//! deliberately unconstrained and is annotated as such in the document, the
+//! `unchecked` feature's escape hatches, named below, and `assets-fs`, which
+//! implies it. Two README anti-patterns —
 //! request-derived dependencies and header-based versioning — are advice the
 //! compiler does not keep.
 //!
