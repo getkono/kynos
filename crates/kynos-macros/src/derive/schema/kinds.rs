@@ -8,17 +8,12 @@ use super::{
 
 use syn::Data;
 
-/// The constraint kinds a newtype takes from its member.
+/// The constraint kinds a newtype takes from its member, so
+/// `#[schema(max_length = 8)] label: Label` bounds the string `Label` wraps.
 ///
-/// A newtype is its member on the wire, so a bound a field of the newtype's
-/// type declares applies to that member: `#[schema(max_length = 8)] label:
-/// Label` bounds the string `Label` wraps. Each kind is implemented under a
-/// bound on the member's type, written under a `for<'__kynos>` binder so that
-/// a member of another kind leaves the implementation inapplicable rather than
-/// failing the derive: the bound then names no parameter, which rustc would
-/// otherwise refuse as trivially false.
-///
-/// Nothing for any other shape, which is not one value on the wire.
+/// The `for<'__kynos>` binder keeps a bound naming no parameter from being
+/// refused as trivially false; a member of another kind just leaves the impl
+/// inapplicable.
 pub(super) fn newtype(
     input: &DeriveInput,
     container: &Container,

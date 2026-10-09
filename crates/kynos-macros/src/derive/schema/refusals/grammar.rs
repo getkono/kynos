@@ -13,12 +13,8 @@ use crate::derive::schema::{
 /// Keys written alone, with no value.
 const FLAGS: &[&str] = &["unique_items", "open"];
 
-/// Validates every `#[schema(...)]` in the input.
-///
-/// Run before any code is emitted, so that
-/// [`constraints`](crate::derive::schema::attributes::constraints) can read the
-/// same lists back without checking them again — a key that reached the emitter
-/// had its shape settled here, and one that did not never gets there.
+/// Validates every `#[schema(...)]` in the input, before any code is emitted,
+/// so [`constraints`](crate::derive::schema::attributes::constraints) need not.
 pub(super) fn check_constraints(input: &DeriveInput) -> syn::Result<()> {
     for group in field_groups(input) {
         let named = match group {
@@ -27,8 +23,7 @@ pub(super) fn check_constraints(input: &DeriveInput) -> syn::Result<()> {
             Fields::Unit => continue,
         };
 
-        // One `unevaluatedProperties` per emitted object, so one `open` field
-        // per group of fields that becomes one.
+        // One `unevaluatedProperties` per object, so one `open` field per group.
         let mut opened: Option<Span> = None;
 
         for field in named {
@@ -68,11 +63,8 @@ pub(super) fn check_constraints(input: &DeriveInput) -> syn::Result<()> {
     Ok(())
 }
 
-/// Why the check cannot enforce `pattern`, if it cannot: without the feature,
-/// it has no engine to.
-///
-/// One function with gated arms rather than two gated functions, so that the
-/// function-level mutant is compiled under `all_features` and tested.
+/// Why the check cannot enforce `pattern`, if it cannot. Gated arms in one
+/// function so its mutant is compiled and tested under `all_features`.
 fn enforceable(pattern: &LitStr) -> Result<(), String> {
     #[cfg(feature = "pattern")]
     {
@@ -110,8 +102,7 @@ fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
     }
 
     if FLAGS.contains(&name.as_str()) {
-        // A flag: `unique_items = true` would let `= false` mean something the
-        // absence of the key already means.
+        // A flag: `= false` would only restate the key's absence.
         return if meta.input.peek(syn::Token![=]) {
             Err(syn::Error::new(
                 key.span(),

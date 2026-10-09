@@ -8,22 +8,10 @@ use super::{
 
 /// A struct's schema, which its fields decide.
 ///
-/// A `#[serde(transparent)]` struct is the schema of its transparent field,
-/// whichever shape declares it: the field serde both writes and reads through,
-/// or the single field of the one direction serde can derive, because that
-/// field's value is all the wire carries. `reject_transparent_without_one_field`
-/// refuses the struct where the two directions pick different fields, and reads
-/// the same picks, so no field described here is one that refusal refused.
-///
-/// A newtype is transparent, because serde makes it so: `Sku(String)` is a
-/// string on the wire, under what its member declares, and describing it as
-/// anything else would be a claim the serializer contradicts. A longer tuple is
-/// the array serde writes, and a unit struct is `null`.
-///
-/// A named struct's `#[serde(tag = "...")]` is one more required property,
-/// whose `const` is `name`, the struct's serde name: serde writes it before
-/// the fields and ignores it on read, so the schema is narrower than what serde
-/// reads and true of all it writes. A transparent struct writes no tag.
+/// A transparent struct or newtype is its member's schema, a longer tuple an
+/// array, a unit struct `null`. A named struct's `#[serde(tag = "...")]` is a
+/// required property whose `const` is `name`: serde writes it and ignores it
+/// on read.
 pub(super) fn struct_body(fields: &Fields, container: &Container, name: &str) -> TokenStream2 {
     if let (true, Some(field)) = (container.transparent, transparent_member(fields)) {
         return member_schema(field);
@@ -86,10 +74,8 @@ pub(super) fn tuple_body(fields: &Punctuated<Field, Comma>, defaulted: bool) -> 
 
 /// An object schema over named fields, optionally carrying a tag property.
 ///
-/// `tag` is `(property, names)` for an internally tagged enum variant, which is
-/// an object whose fields are the variant's plus the one that says which
-/// variant it is, under any name serde reads it by, and for a tagged struct,
-/// under the one name serde writes. Closed as [`closed`](super::closed) says.
+/// `tag` is `(property, names)`: every read name for an internally tagged
+/// variant, the written one for a tagged struct. Closed per [`closed`](super::closed).
 pub(super) fn object_body(
     fields: &Punctuated<Field, Comma>,
     container: &Container,
@@ -111,29 +97,17 @@ pub(super) fn object_body(
 
             if is_flattened(field) {
                 if is_open(field) {
-                    // `#[schema(open)]` is the declaration that this object
-                    // really is open, which is the only thing a flattened map
-                    // can be: it names no member, so its value schema has to
-                    // reach every member nothing else described.
-                    //
-                    // `additionalProperties` cannot say that from inside an
-                    // `allOf` branch -- it is defined against the `properties`
-                    // of its own schema object, and there are none there, so it
-                    // would apply to the members this object declared itself.
-                    // `unevaluatedProperties` is the one keyword that sees
-                    // annotations across `allOf`, so it lands on the parent.
+                    // Hoisted to `unevaluatedProperties` on the parent: inside an
+                    // `allOf` branch `additionalProperties` would also reach the
+                    // members this object declares itself.
                     return quote! {
                         {
                             let mut flattened = registry.resolve::<#ty>();
                             if let ::kynos::openapi::Schema::Object(open) = &mut flattened {
                                 keywords.unevaluated_properties =
                                     open.additional_properties.take();
-                                // A key constraint has nowhere to go. Inside the
-                                // branch `propertyNames` names this object's own
-                                // properties too, and `patternProperties` is not
-                                // emitted -- so it is dropped, leaving a schema
-                                // weaker than the type rather than one that
-                                // contradicts it. `docs/schema.md` records it.
+                                // Dropped: in the branch `propertyNames` would
+                                // reach this object's own keys (`docs/schema.md`).
                                 open.property_names = ::core::option::Option::None;
                             }
                             keywords
@@ -144,15 +118,8 @@ pub(super) fn object_body(
                     };
                 }
 
-                // A flattened field's properties belong to this object, and which
-                // ones they are is only known once its own schema is built. `allOf`
-                // is the composition that says so without naming them.
-                //
-                // Which is sound only because the field's type is
-                // `kynos::schema::flatten::Flatten`, asserted by the witness
-                // `flatten_witnesses` emits: a schema constraining members it
-                // does not name would reach this object's own properties from
-                // inside the branch.
+                // Composed by `allOf`; sound only because `flatten_witnesses`
+                // asserts the type is `Flatten`.
                 return quote! {
                     keywords
                         .all_of
@@ -188,12 +155,8 @@ pub(super) fn object_body(
 /// One described field's schema: its type's, under the field's constraints,
 /// prose and deprecation.
 ///
-/// The prose sits beside the schema, which for a named field type is a `$ref`
-/// -- legal from 3.1 onward, where a schema `$ref` applies its siblings. A
-/// boolean schema has nowhere to put it and keeps none.
-///
-/// A `PhantomData` is resolved as `()`, the `null` serde writes and reads for
-/// both, since `PhantomData<T>: Schema` is a bound nothing satisfies.
+/// Prose beside a `$ref` is legal from 3.1, which applies its siblings. A
+/// `PhantomData` is resolved as `()`, the `null` serde uses for it.
 pub(super) fn member_schema(field: &Field) -> TokenStream2 {
     let ty = &field.ty;
     let constrained =
@@ -216,22 +179,13 @@ pub(super) fn member_schema(field: &Field) -> TokenStream2 {
     )
 }
 
-/// An enum's schema, which its tagging decides.
-///
-/// Four shapes, and which applies is read from the serde attributes rather than
-/// chosen here: an enumeration of names where every variant is a unit, and
-/// otherwise the `oneOf` that matches how the payload is tagged. A variant serde
-/// reads and never writes is described as serde reads it.
+/// An enum's schema: an `enum` of names where every variant is a unit,
+/// otherwise a `oneOf` shaped by the serde tagging.
 pub(super) fn enum_body(data: &DataEnum, container: &Container) -> TokenStream2 {
     let variants = described_variants(data);
 
-    // An `enum` array of names is the compact shape, and it has nowhere to put
-    // a keyword about one member: JSON Schema deprecates a *schema*, and every
-    // name in that array shares one. So a deprecated unit variant drops the
-    // compact shape for the `oneOf` of `const` branches, which says the same
-    // thing about the wire and gives each name a schema of its own to mark.
-    // The alternative was emitting nothing, which is a description silently
-    // disagreeing with the type it came from.
+    // A deprecated unit variant needs its own schema to mark, so it forces the
+    // `oneOf` of `const` branches over the compact `enum`.
     let any_deprecated = variants.iter().any(|variant| is_deprecated(&variant.attrs));
 
     if container.tag.is_none()
@@ -264,13 +218,8 @@ pub(super) fn enum_body(data: &DataEnum, container: &Container) -> TokenStream2 
         .map(|(variant, read)| branch(variant, &read, container))
         .collect::<Vec<_>>();
 
-    // A discriminator makes the choice cheap to determine rather than
-    // guessable, which is the whole reason an untagged enum is refused: it
-    // needs a property every branch carries, and only a tagged enum has one.
-    // It maps no value: every branch is inline, which implicit mapping does not
-    // consider and no mapping value names, so each tag value, an alias
-    // included, reaches its branch through the tag property's own `const` or
-    // `enum`.
+    // No `mapping`: every branch is inline, so each tag value reaches its
+    // branch through the tag property's own `const` or `enum`.
     let discriminator = container.tag.as_ref().map(|tag| {
         quote! {
             keywords.discriminator = ::core::option::Option::Some(
@@ -290,10 +239,8 @@ pub(super) fn enum_body(data: &DataEnum, container: &Container) -> TokenStream2 
 }
 
 /// One `oneOf` branch: the variant, shaped by how the enum is tagged, under
-/// `read`, every name serde reads as it, so no two branches share one.
-///
-/// The variant's fields are named under [`Container::fields_of`], not the
-/// enum's `rename_all`.
+/// `read`, every name serde reads as it. Fields are named under
+/// [`Container::fields_of`].
 pub(super) fn branch(variant: &Variant, read: &[String], container: &Container) -> TokenStream2 {
     let fields = container.fields_of(variant);
     let deprecated = is_deprecated(&variant.attrs);
@@ -335,9 +282,8 @@ pub(super) fn branch(variant: &Variant, read: &[String], container: &Container) 
             described(closed(object, container))
         }
 
-        // Internally tagged: the tag is one more property of the variant's own
-        // object. A newtype variant has no properties of its own to add it to,
-        // so the two are composed instead, unless serde writes it as a unit.
+        // Internally tagged: the tag joins the variant's object; a newtype's
+        // payload is composed with a tag-only object instead.
         (Some(tag), None) => match &variant.fields {
             Fields::Named(named) => {
                 described(object_body(&named.named, &fields, Some((tag, read))))
@@ -361,9 +307,8 @@ pub(super) fn branch(variant: &Variant, read: &[String], container: &Container) 
             }
         },
 
-        // Externally tagged: a name of the variant's is the one entry serde
-        // reads, so nothing beside it, and a unit variant is that name as a
-        // bare string.
+        // Externally tagged: one entry keyed by the variant's name, or a unit
+        // variant's bare name.
         (None, _) => match payload(&variant.fields, &fields) {
             None => described(named_string(read)),
             Some(payload) => described(keyed(read, &payload)),
@@ -371,9 +316,7 @@ pub(super) fn branch(variant: &Variant, read: &[String], container: &Container) 
     }
 }
 
-/// The schema of what a variant carries, a newtype variant's under what its
-/// member declares, or nothing for a unit variant, which a newtype variant
-/// whose member serde skips is on the wire.
+/// The schema of what a variant carries, or nothing for a unit-like variant.
 pub(super) fn payload(fields: &Fields, container: &Container) -> Option<TokenStream2> {
     match fields {
         Fields::Unit => None,

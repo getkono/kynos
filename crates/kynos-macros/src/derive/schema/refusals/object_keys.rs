@@ -13,15 +13,8 @@ use crate::derive::schema::{
 };
 
 /// An object `#[serde(deny_unknown_fields)]` closes has no schema true of a
-/// flattened open map.
-///
-/// serde refuses every key no field it reads names before a flattened map sees
-/// it, so the map reads empty while serde writes its members. Checked on every
-/// named field the schema describes, including inside a variant serde never
-/// writes, since the object is closed on read alone. A `#[serde(transparent)]`
-/// struct is its one field's value, with no object to close. An `alias` needs
-/// no refusal: the object names every name serde reads a field under
-/// ([`aliases`]).
+/// flattened open map: serde refuses unnamed keys before the map sees them, so
+/// it reads empty while serde writes its members.
 pub(super) fn reject_contradicted_closure(input: &DeriveInput) -> syn::Result<()> {
     let container = Container::read(input);
     if !container.deny_unknown_fields || container.transparent {
@@ -34,8 +27,7 @@ pub(super) fn reject_contradicted_closure(input: &DeriveInput) -> syn::Result<()
         .flat_map(described_members);
 
     for field in named {
-        // `open` on a field that is not flattened is `check_constraints`'
-        // diagnostic, which names the actual mistake.
+        // An unflattened `open` is `check_constraints`' diagnostic.
         if let Some(span) = open_span(field).filter(|_| is_flattened(field)) {
             return Err(syn::Error::new(
                 span,
@@ -50,9 +42,7 @@ pub(super) fn reject_contradicted_closure(input: &DeriveInput) -> syn::Result<()
     Ok(())
 }
 
-/// Whether serde writes a named struct's `#[serde(tag = "...")]`, and which:
-/// every tagged named struct but a `#[serde(transparent)]` one, which serde
-/// writes as its one field's value.
+/// The `#[serde(tag = "...")]` serde writes for a named, non-transparent struct.
 fn struct_tag<'a>(input: &DeriveInput, container: &'a Container) -> Option<&'a str> {
     let Data::Struct(data) = &input.data else {
         return None;
@@ -64,12 +54,7 @@ fn struct_tag<'a>(input: &DeriveInput, container: &'a Container) -> Option<&'a s
 }
 
 /// A tagged struct `#[serde(deny_unknown_fields)]` closes has no true schema.
-///
-/// serde writes the tag beside the fields and never reads it back as one of
-/// them, so the closed struct refuses the tag in every document it writes: a
-/// schema naming the tag accepts what serde refuses, and one leaving it out
-/// refuses what serde writes. A tuple or unit struct is left to serde, which
-/// refuses the tag there itself.
+/// The closed struct refuses the tag it writes.
 pub(super) fn reject_closed_tagged_struct(input: &DeriveInput) -> syn::Result<()> {
     let container = Container::read(input);
     if struct_tag(input, &container).is_none() || !container.deny_unknown_fields {
@@ -87,15 +72,8 @@ pub(super) fn reject_closed_tagged_struct(input: &DeriveInput) -> syn::Result<()
 }
 
 /// A named field serde writes or reads under its struct's own tag is refused.
-///
-/// serde checks an enum's variant fields against its tag and skips a struct's,
-/// so it writes the key twice, once as the tag and once as the field, and reads
-/// the tag's value back as the field. The schema would require the name twice
-/// and hold it to the tag's `const`. A field serde skips in the direction it
-/// would collide in is no conflict there. A flattened field's own name is never
-/// written, so it is exempt; the keys its type writes are not checked, since
-/// they are not visible at expansion time, the limit serde's own check of an
-/// enum's internal tag has too.
+/// serde does not check this for a struct, so it writes the key twice. A
+/// flattened field's keys are invisible here, as they are to serde's own check.
 pub(super) fn reject_field_named_as_tag(input: &DeriveInput) -> syn::Result<()> {
     let container = Container::read(input);
     let (Some(tag), Data::Struct(data)) = (struct_tag(input, &container), &input.data) else {
@@ -131,21 +109,9 @@ pub(super) fn reject_field_named_as_tag(input: &DeriveInput) -> syn::Result<()> 
 /// A named field serde writes and never reads is refused in an object
 /// `#[serde(deny_unknown_fields)]` closes.
 ///
-/// `skip_deserializing` alone keeps the field out of the object serde reads,
-/// which is all [`is_described`](crate::derive::schema::attributes::is_described)
-/// names, and an object constraining no member it does not name still admits
-/// what serde writes of it. A closed object
-/// ([`closed`](crate::derive::schema::closed)) constrains every such member, so
-/// it refuses what serde writes of the field. Checked in every object serde
-/// writes, a struct and each struct variant it writes. A
-/// `#[serde(transparent)]` struct is its one field's value, with no object to
-/// check.
-///
-/// An open flattened field constrains such members only when its type hoists an
-/// `additionalProperties`, which is its type's answer rather than its syntax's,
-/// so that case is a bound
-/// ([`open_fields_beside_unread_fields`](crate::derive::schema::open_fields_beside_unread_fields))
-/// rather than a refusal here.
+/// The schema omits the field, and the closed object then refuses what serde
+/// writes of it. The open-map case is a bound instead
+/// ([`open_fields_beside_unread_fields`](crate::derive::schema::open_fields_beside_unread_fields)).
 pub(super) fn reject_unread_field_in_closed_object(input: &DeriveInput) -> syn::Result<()> {
     let container = Container::read(input);
     if container.transparent || !container.deny_unknown_fields {

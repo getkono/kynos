@@ -1,21 +1,9 @@
 //! The `check_constraints` body: the runtime projection of a type's
 //! `#[schema(...)]` bounds.
 //!
-//! Each described member is checked against its own bounds and then descended
-//! into, under the JSON Pointer serde reads it at: a named field under the name
-//! serde reads it by, a tuple member under its position on the wire, and a
-//! flattened field, a newtype's member or an internally tagged payload where
-//! its parent is, since their members are the parent's own. A variant's
-//! payload sits under its name when externally tagged, under the content
-//! member when adjacently tagged, and beside the tag when internally tagged.
-//!
-//! A member serde reads under an `alias` as well is reported at the object
-//! holding it instead, since which name the document used is gone once it is
-//! read. A member serde fills from a `default` when the document leaves it
-//! out is reported only where the value it would be filled with meets its
-//! bounds: where that value breaks them, a value breaking them may be one the
-//! document never sent, which the emitted schema, not listing the member in
-//! `required`, admits.
+//! Each described member is checked, then descended into, at the JSON Pointer
+//! serde reads it at. An aliased member is reported at its parent, since the
+//! name the document used is gone once read.
 
 use super::{
     Container, DataEnum, DeriveInput, Field, Fields, TokenStream2, Variant,
@@ -94,10 +82,8 @@ fn filled(
     })
 }
 
-/// A struct's members, read through `self`.
-///
-/// A transparent struct and a newtype are their member on the wire, which a
-/// document therefore cannot leave out, so serde fills nothing there.
+/// A struct's members, read through `self`. A transparent struct's or
+/// newtype's member cannot be left out, so nothing is filled there.
 fn struct_check(
     fields: &Fields,
     container: &Container,
@@ -250,10 +236,8 @@ fn arm(variant: &Variant, read_as: &[String], container: &Container) -> TokenStr
     }
 }
 
-/// Whether a member is on the wire serde reads and has a schema to check.
-///
-/// A `PhantomData` is `null` on the wire and has no `Schema`, so there is
-/// nothing to descend into.
+/// Whether a member is on the wire serde reads and has a schema to check
+/// (a `PhantomData` has none).
 pub(super) fn is_checked(field: &Field) -> bool {
     is_described(field) && !is_phantom(&field.ty)
 }
@@ -288,10 +272,7 @@ pub(super) fn member_access(fields: &Fields, field: &Field) -> TokenStream2 {
 }
 
 /// `checks`, a block reading `at` and `violations`, run with `at` moved by
-/// `step`.
-///
-/// A member under several names is checked from the member itself and
-/// reported at its parent, which is where `at` already is.
+/// `step`. A member under several names is reported at its parent.
 fn located(step: &Step, checks: &TokenStream2) -> TokenStream2 {
     match step {
         Step::Here => checks.clone(),
@@ -323,11 +304,9 @@ fn located(step: &Step, checks: &TokenStream2) -> TokenStream2 {
 
 /// One member's checks: each of its own bounds, then its value's.
 ///
-/// A member serde fills when the document leaves it out is checked a second
-/// time, on the value it would be filled with, only where its own value broke
-/// something; what its own value broke is reported unless the filled value
-/// breaks exactly the same bounds, since only then can the two not be told
-/// apart. The success path pays for neither.
+/// A defaulted member that fails is rechecked on its filled value, and its
+/// violations are reported unless the filled value breaks exactly the same
+/// bounds, since the document may then have omitted it.
 fn member(
     value: &TokenStream2,
     field: &Field,

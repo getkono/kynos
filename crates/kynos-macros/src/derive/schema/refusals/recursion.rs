@@ -10,16 +10,9 @@ use crate::derive::schema::{
 
 /// A generic type naming itself in a member its schema describes is refused.
 ///
-/// A generic type has no component name, so the registry inlines it, and an
-/// inlined body cannot be stood in for while it is being built: the
-/// description would recurse without end. A concrete type is named, and
-/// `$ref`s itself. Only the direct case is visible here; generic types
-/// reaching each other are refused by `Registry::resolve` when the document is
-/// built.
-///
-/// The type is named by its bare identifier or by `Self`. A path qualified to
-/// it, `crate::Node`, is left alone, since it may name another type of the
-/// same identifier.
+/// A generic type is inlined, so it would recurse without end. Only the direct
+/// case (bare identifier or `Self`) is visible here; indirect cycles are
+/// refused by `Registry::resolve`.
 pub(super) fn reject_recursive_generic(input: &DeriveInput) -> syn::Result<()> {
     if input.generics.type_params().next().is_none() {
         return Ok(());
@@ -45,11 +38,7 @@ pub(super) fn reject_recursive_generic(input: &DeriveInput) -> syn::Result<()> {
 }
 
 /// Where `ty` names `name`: by its identifier at the head of a path, or as
-/// `Self`.
-///
-/// A qualified path, `<Self as Tr>::Out`, is skipped whole: it is described
-/// by the associated type's schema, which this derive cannot see, so any
-/// cycle through it is left to `Registry::resolve`.
+/// `Self`. A qualified path, `<Self as Tr>::Out`, is left to `Registry::resolve`.
 fn self_reference(ty: &Type, name: &Ident) -> Option<Span> {
     match ty {
         Type::Array(array) => self_reference(&array.elem, name),

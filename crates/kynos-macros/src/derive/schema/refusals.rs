@@ -1,10 +1,7 @@
 //! What the `Schema` derive refuses before it emits anything.
 //!
-//! Each rule names a form whose declaration predicts no schema true of the
-//! wire in both directions, a `#[schema(...)]` outside the grammar, or a
-//! generic type whose schema would never end, and the expansion reads only
-//! inputs every rule here has passed. The rules are grouped by the serde form
-//! they read, the last by none; [`check`] holds the order across the groups.
+//! Each rule refuses a form with no schema true of the wire in both
+//! directions; the expansion reads only inputs every rule has passed.
 
 mod grammar;
 mod naming;
@@ -15,10 +12,8 @@ mod wire_form;
 
 use syn::DeriveInput;
 
-/// Runs every refusal, in the order the later ones rely on.
-///
-/// Several rules say a form is refused "before this runs" by another; the
-/// order here is what makes that true.
+/// Runs every refusal, in the order the later ones rely on ("refused before
+/// this runs").
 pub(super) fn check(input: &DeriveInput) -> syn::Result<()> {
     wire_form::reject_container_conversions(input)?;
     wire_form::reject_untagged(input)?;
