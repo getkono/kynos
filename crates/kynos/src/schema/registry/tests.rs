@@ -160,3 +160,64 @@ fn a_type_reaching_itself_through_a_wrapper_is_no_conflict() {
         "`Node` is registered with its own body"
     );
 }
+
+/// A type with no component name that refers to itself, as a generic derive
+/// does: every instantiation is inlined, so nothing can stand in for the body
+/// while it is being built.
+struct Chain;
+
+impl Schema for Chain {
+    fn schema(registry: &mut Registry) -> OpenApiSchema {
+        object_with("next", registry.resolve::<Option<Box<Self>>>())
+    }
+}
+
+/// Anonymous, and reaches itself only through [`Holder`], which is named.
+struct Pair;
+
+impl Schema for Pair {
+    fn schema(registry: &mut Registry) -> OpenApiSchema {
+        object_with("holder", registry.resolve::<Holder>())
+    }
+}
+
+struct Holder;
+
+impl Schema for Holder {
+    fn schema(registry: &mut Registry) -> OpenApiSchema {
+        object_with("pair", registry.resolve::<Pair>())
+    }
+
+    fn name() -> Option<ComponentName> {
+        ComponentName::new("Holder").ok()
+    }
+}
+
+/// An inlined type reaching itself with no named type between has no finite
+/// description, and saying so beats overflowing the stack.
+#[test]
+#[should_panic(expected = "refers to itself through no type with a component name")]
+fn an_anonymous_type_reaching_itself_is_refused() {
+    Registry::new().resolve::<Chain>();
+}
+
+/// A named type between two inlinings of one anonymous type is a `$ref` the
+/// second one stops at, so the cycle has an end.
+#[test]
+fn an_anonymous_type_reaching_itself_through_a_named_one_terminates() {
+    let mut registry = Registry::new();
+
+    let pair = registry.resolve::<Pair>();
+
+    assert_eq!(
+        pair,
+        object_with("holder", OpenApiSchema::component("Holder"))
+    );
+    assert_eq!(
+        registry.into_components().schemas.get("Holder"),
+        Some(&object_with(
+            "pair",
+            object_with("holder", OpenApiSchema::component("Holder"))
+        ))
+    );
+}
