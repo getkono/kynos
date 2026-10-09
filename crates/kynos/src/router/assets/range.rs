@@ -38,6 +38,34 @@ use crate::{
     router::operation::OperationCx,
 };
 
+/// Section 13.1.1's 412, if the request's `If-Match` fails for a file tagged
+/// `current`.
+///
+/// Both asset modes call this before anything else, because section 13.2.2
+/// evaluates `If-Match` ahead of `If-None-Match` and the `Range` field: a
+/// resume against a file that has since changed is refused outright rather
+/// than answered with a part of the new one. The comparison is the strong one,
+/// so a served directory's weak tag holds for nothing but `*`. Every field
+/// line is read, since a list split over two lines is still one list.
+///
+/// `If-Unmodified-Since` is not read: neither mode sends `Last-Modified`, so
+/// section 13.1.4 says to ignore it.
+pub(super) fn precondition_failed(
+    fields: &crate::http::HeaderMap,
+    current: Option<&str>,
+) -> Option<Response> {
+    let mut if_match = fields.get_all(header::IF_MATCH).iter().peekable();
+    if_match.peek()?;
+
+    if if_match.any(|field| crate::http::etag::matches_strongly(field, current)) {
+        return None;
+    }
+
+    let mut response = Response::new(crate::http::body::Body::empty());
+    *response.status_mut() = StatusCode::PRECONDITION_FAILED;
+    Some(response)
+}
+
 /// The whole representation, the part a `Range` asked for, or a 416.
 ///
 /// For octets already in hand. A sender that knows the length without holding
