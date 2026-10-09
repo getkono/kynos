@@ -76,6 +76,15 @@ rcgen = "0.14.9"
 proc-macro2 = "1.0.101"
 proptest = "1.11.0"
 quote = "1.0.40"
+# The `pattern` feature's engine: a finite automaton, so a pattern costs a
+# request time linear in the string rather than a backtracking search. Named by
+# both sides of one declaration -- the derive compiles each pattern when it
+# expands, and `__private::constraints::pattern` compiles it again at run time
+# -- so both take the same features from here, and a pattern the expansion
+# accepted is one the run-time build accepts. `regex-syntax` is its parser,
+# which the derive walks to hold a pattern to the ECMA-262 dialect.
+regex = "1.13.1"
+regex-syntax = "0.8.11"
 rust_decimal = { version = "1.42.1", default-features = false }
 # `setrlimit` behind a safe signature, for the test that runs a listener out of
 # file descriptors: `unsafe_code` is forbidden workspace-wide, so `libc` is not

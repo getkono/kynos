@@ -78,8 +78,8 @@ fn check_members<'a, T: Schema + 'a>(
 ///
 /// A key has no location of its own, since a pointer to it names its value,
 /// so a key is reported at the map, the key in the detail. Only the length
-/// bounds can fail: a key is a string, and `pattern` is described and not
-/// checked, as everywhere. A key that cannot say what member name it is is
+/// bounds can fail: a key is a string, and a key's `pattern` is described and
+/// not checked. A key that cannot say what member name it is is
 /// not checked, and its value is reported at the map.
 ///
 /// `K::key_constraints` is built once the first key to check needs it, and

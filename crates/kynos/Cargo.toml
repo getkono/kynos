@@ -105,7 +105,7 @@ required-features = [
 
 [[example]]
 name = "schema"
-required-features = ["openapi31", "macros", "server", "http1", "json"]
+required-features = ["openapi31", "macros", "pattern", "server", "http1", "json"]
 
 [[example]]
 name = "parameters"
@@ -345,6 +345,10 @@ openapi32 = [
 
 # --- Core ------------------------------------------------------------------
 macros = ["dep:kynos-macros"]
+# Enforces `#[schema(pattern = "...")]`, which the derive refuses without it:
+# the check runs a regular expression engine on the request path, and a
+# dependency arrives off by default rather than widening the default build.
+pattern = ["macros", "kynos-macros/pattern", "dep:regex"]
 
 # --- Runtime ---------------------------------------------------------------
 server = [
@@ -456,6 +460,7 @@ full = [
   "docs",
   "openapi32",
   "macros",
+  "pattern",
   "server",
   "http1",
   "http2",
@@ -504,6 +509,7 @@ matchit = { workspace = true }
 multer = { workspace = true, optional = true }
 percent-encoding = { workspace = true }
 prost = { workspace = true, optional = true }
+regex = { workspace = true, optional = true }
 rust_decimal = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 serde_html_form = { workspace = true, optional = true }

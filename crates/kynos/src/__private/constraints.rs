@@ -3,6 +3,9 @@
 //! Each applies only to a value of its kind, as its JSON Schema keyword does,
 //! so a `None` behind any of the kind traits satisfies it.
 
+#[cfg(feature = "pattern")]
+pub mod pattern;
+
 use std::marker::PhantomData;
 
 use crate::schema::constraints::{Items, Numeric, Pointer, Textual, UniqueItems, Violations};

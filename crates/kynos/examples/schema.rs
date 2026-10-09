@@ -2,8 +2,12 @@
 //! hatch.
 //!
 //! ```text
-//! cargo run -p kynos --example schema
+//! cargo run -p kynos --example schema --features pattern
 //! ```
+//!
+//! `pattern` is the feature that enforces `#[schema(pattern = "...")]`: it
+//! compiles in the regular expression engine the check runs, and without it
+//! the derive refuses the key rather than describe a bound nothing checks.
 //!
 //! Four things are worth noticing:
 //!

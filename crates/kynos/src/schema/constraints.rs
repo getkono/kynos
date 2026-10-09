@@ -7,7 +7,8 @@
 //! which a body extractor runs on the value it deserialized and refuses with a
 //! 422 naming each member that broke its bound. The check is generated code
 //! over the typed value, so there is no JSON Schema interpreter on the hot
-//! path, and a value inside every bound costs no allocation.
+//! path, and a value inside every bound costs no allocation once each
+//! `pattern` it meets has compiled and warmed its engine's cache.
 //!
 //! A keyword reaches a field's value through the trait for its kind —
 //! [`Numeric`], [`Textual`], [`Items`] or [`UniqueItems`] — so a bound on a type
@@ -15,9 +16,13 @@
 //! fires. Like the keyword, each one applies only to a value of its kind: an
 //! absent `Option` is `null` and satisfies every bound.
 //!
-//! `pattern` is the exception. It is described and not yet enforced, because
-//! enforcing it needs an ECMA-262 regular expression engine Kynos does not yet
-//! depend on.
+//! `pattern` takes a regular expression engine on the request path, so the
+//! derive accepts it only under the `pattern` feature, which compiles one in.
+//! The pattern is an ECMA-262 regular expression, as JSON Schema reads it; the
+//! derive translates it to the engine's dialect, keeping `\d`, `\w` and `\b`
+//! ASCII as ECMA-262 does, and refuses one the engine cannot run, such as a
+//! lookaround. The engine matches in time linear in the string, and compiles
+//! each field's pattern once per process.
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet, VecDeque},
@@ -311,16 +316,16 @@ pub trait Numeric {
     fn number(&self) -> Option<f64>;
 }
 
-/// A value `min_length` and `max_length` apply to.
+/// A value `min_length`, `max_length` and `pattern` apply to.
 ///
 /// A length is counted in Unicode code points, as JSON Schema counts it, not
 /// in bytes.
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` is not a string, so a length bound cannot apply to it",
+    message = "`{Self}` is not a string, so a string bound cannot apply to it",
     label = "not a string",
-    note = "`min_length` and `max_length` apply to `String`, and to an `Option`, `Box` or `Arc` \
-            of one; implement `kynos::schema::constraints::Textual` for a newtype that is a string \
-            on the wire"
+    note = "`min_length`, `max_length` and `pattern` apply to `String`, and to an `Option`, `Box` \
+            or `Arc` of one; implement `kynos::schema::constraints::Textual` for a newtype that is \
+            a string on the wire"
 )]
 pub trait Textual {
     /// This value as a JSON string, or `None` where it is `null`.

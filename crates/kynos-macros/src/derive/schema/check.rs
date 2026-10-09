@@ -16,9 +16,6 @@
 //! bounds: where that value breaks them, a value breaking them may be one the
 //! document never sent, which the emitted schema, not listing the member in
 //! `required`, admits.
-//!
-//! `pattern` is described and not checked; `kynos::schema::constraints` says
-//! why.
 
 use super::{
     Container, DataEnum, DeriveInput, Field, Fields, TokenStream2, Variant,
@@ -340,11 +337,17 @@ fn member(
     let ty = &field.ty;
     let keywords = bounds(field)
         .into_iter()
-        .filter(|bound| bound.key != "pattern")
-        .map(|Bound { key, value: bound }| {
-            let bound = bound.map(|bound| quote!(#bound,));
-            quote! {
-                ::kynos::__private::constraints::#key::<#ty>(value, #bound at, violations);
+        .map(|Bound { key, value: bound }| match bound {
+            // Without the feature, `refusals` refuses every `pattern`.
+            #[cfg(feature = "pattern")]
+            Some(super::attributes::BoundValue::Pattern(pattern)) => {
+                super::pattern::check(ty, &pattern)
+            }
+            bound => {
+                let bound = bound.map(|bound| quote!(#bound,));
+                quote! {
+                    ::kynos::__private::constraints::#key::<#ty>(value, #bound at, violations);
+                }
             }
         });
     let check = quote! {

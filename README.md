@@ -148,6 +148,7 @@ Each of these is something another Rust framework offers and Kynos does not, and
 | `openapi31` | yes | The OpenAPI 3.1 object model. Baseline. |
 | `openapi32` | no | The 3.2 superset: `itemSchema`, `in: querystring`, `QUERY`, hierarchical tags, `$self`, device authorization |
 | `macros` | yes | Route attributes and derives |
+| `pattern` | no | Enforces `#[schema(pattern = "...")]`, an ECMA-262 regular expression, with the `regex` engine; the derive refuses the key without it |
 | `server` | yes | The `tokio`/`hyper` server. tokio is the only supported runtime |
 | `http1`, `http2` | yes | Protocol versions |
 | `json` | yes | Application JSON request and response codecs |
@@ -192,7 +193,7 @@ The core is what every operation passes through, so it freezes at 1.0: a change 
 | --- | --- | --- |
 | Document model and validation | `openapi31`, `openapi32` | frozen |
 | Schema, and the scalar formats | `uuid`, `time-*`, `decimal-*` | frozen |
-| Route attributes and derives | `macros` | frozen |
+| Route attributes and derives | `macros`, `pattern` | frozen |
 | Handlers, extraction, responses | `json` | frozen |
 | Routing, groups, path templates | — | frozen |
 | Errors and RFC 9457 problems | — | frozen |
@@ -237,7 +238,7 @@ No, it is minimal but strict and opinionated where correctness is in question.
 
 **Is kynos really faster than the competition?**
 A better way to frame it is we are as fast if not faster in most ways (open an issue if not) and spend effort on optimizations possible due to our API strictness since day-one.
-The concrete claim: there is no JSON Schema interpreter on the hot path. Constraints are declared once on the type, and the emitted document and the request parser are two projections of that one declaration: the derive generates the check a body extractor runs, so a value past a bound is a 422 naming the field. `pattern` is the one bound still described but not enforced ([`docs/schema.md`](docs/schema.md#enforcing-field-constraints)).
+The concrete claim: there is no JSON Schema interpreter on the hot path. Constraints are declared once on the type, and the emitted document and the request parser are two projections of that one declaration: the derive generates the check a body extractor runs, so a value past a bound is a 422 naming the field ([`docs/schema.md`](docs/schema.md#enforcing-field-constraints)). A `pattern` runs on a finite-automaton engine behind the `pattern` feature, so no request can make it backtrack.
 We plan to release our benchmarks in this repo: <https://github.com/getkono/kynos-bench>, which also defines the measurement methodology — what is measured, how, and why each number is worth tracking. Until those numbers are published, treat the comparative half of this answer as unestablished; the structural claim above it is checked by `mise run containment:check`, and [`docs/testing.md`](docs/testing.md#the-off-path-proof) says what that check does and does not carry.
 
 **Why code-first and not contract-first?**

@@ -68,6 +68,24 @@ pub(super) fn check_constraints(input: &DeriveInput) -> syn::Result<()> {
     Ok(())
 }
 
+/// Why the check cannot enforce `pattern`, if it cannot.
+#[cfg(feature = "pattern")]
+fn enforceable(pattern: &LitStr) -> Result<(), String> {
+    crate::derive::schema::pattern::translate(&pattern.value()).map(drop)
+}
+
+/// Why the check cannot enforce `pattern`: without the feature, it has no
+/// engine to.
+#[cfg(not(feature = "pattern"))]
+fn enforceable(_: &LitStr) -> Result<(), String> {
+    Err(
+        "`pattern` is enforced by a regular expression engine, which `kynos` compiles in only \
+         under its `pattern` feature. Enable it, or drop the key: a bound nothing checks would \
+         be described as though something did"
+            .to_owned(),
+    )
+}
+
 /// One `key` or `key = value` inside a field's `#[schema(...)]`.
 fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
     let Some(key) = meta.path.get_ident() else {
@@ -122,7 +140,8 @@ fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
     }
 
     if name == "pattern" {
-        return meta.value()?.parse::<LitStr>().map(|_| ());
+        let pattern: LitStr = meta.value()?.parse()?;
+        return enforceable(&pattern).map_err(|reason| syn::Error::new(pattern.span(), reason));
     }
 
     Err(syn::Error::new(

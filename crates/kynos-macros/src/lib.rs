@@ -269,15 +269,24 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// the inputs and their statuses. A member serde also reads under an
 /// `alias` is named by the object holding it, and a member serde fills from a
 /// `default` is admitted with a broken bound only where the value it would be
-/// filled with breaks the same bounds. `pattern` alone is described and not yet enforced. A bound on a type of another kind — `max_length` on a number —
-/// is a compile error, and a derived newtype takes its member's kinds, so
-/// `#[schema(max_length = 8)] label: Label` bounds the string `Label` wraps.
+/// filled with breaks the same bounds. A bound on a type of another kind —
+/// `max_length` on a number — is a compile error, and a derived newtype takes
+/// its member's kinds, so `#[schema(max_length = 8)] label: Label` bounds the
+/// string `Label` wraps.
 ///
 /// `format` is **not** among them. It states what a value *is*, which follows
 /// from the type or from nothing, so a `String` annotated as a UUID is a
 /// compile error naming the remedy — `uuid::Uuid`, one of the date, time or
 /// decimal types behind their features, or a newtype with its own `Schema`.
 /// A constraint on one field is `pattern`; a claim about a type is the type's.
+///
+/// `pattern` needs `kynos`'s `pattern` feature, which compiles in the regular
+/// expression engine that enforces it, and is refused without it. It is an
+/// ECMA-262 regular expression, as JSON Schema reads it, unanchored unless it
+/// says otherwise. The derive translates it to the engine's dialect, keeping
+/// `\d`, `\w` and `\b` ASCII as ECMA-262 does, and refuses at compile time a
+/// pattern the engine cannot run — a lookaround or a backreference — or one
+/// the two dialects read apart, such as `(?i)` or `\A`.
 ///
 /// `open` is the one member of `#[schema(...)]` that is not a constraint. It
 /// goes on a `#[serde(flatten)]` field to say that the object really does admit
