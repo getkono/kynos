@@ -173,6 +173,17 @@ differ only in variable name, a security requirement naming a scheme nobody
 declared. `build` runs the same structural checks, so an API that cannot be
 described correctly fails at startup rather than at documentation time.
 
+### One router value, described and built
+
+The three readers borrow and `build` consumes, so a context that needs the
+document — to serve a post-processed copy of it, say — is built between
+`openapi` and `build` on the same value. A function returning that value
+leaves the type parameters `intercept` keeps changing opaque:
+`-> Router<C, impl PanicPolicy, impl Sized, impl Sized>`. No type-erased router
+and no describe-then-finish split ships, because the language already expresses
+this; an opaque stack cannot be checked against another interceptor, so a
+router returned that way is finished, which is what such a function means.
+
 ### Which version `openapi` emits
 
 The lowest one that expresses the API without loss: 3.1 for an API using no
