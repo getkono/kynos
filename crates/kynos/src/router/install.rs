@@ -127,11 +127,25 @@ pub(super) fn highest_version() -> SpecVersion {
 ///
 /// [`Document::emit`] already knows which constructs block a downgrade, so this
 /// asks it rather than repeating the analysis.
+///
+/// A field the model does not recognise is refused in every build. Without
+/// `openapi32` it is among what blocks 3.1. With it, 3.2 would not carry it
+/// either, so only the 3.2 constructs the model types move the description to
+/// 3.2, and the refusal names the unrecognised fields alone.
 pub(super) fn lowest_expressing(document: &Document) -> Result<Document> {
     match document.emit(SpecVersion::V3_1) {
         Ok(emitted) => Ok(emitted),
         #[cfg(feature = "openapi32")]
-        Err(_) => document.emit(SpecVersion::V3_2).map_err(invalid),
+        Err(_) => {
+            let unrecognised = kynos_openapi::emit::downgrade::unrecognised_fields(document);
+            if unrecognised.is_empty() {
+                document.emit(SpecVersion::V3_2).map_err(invalid)
+            } else {
+                Err(invalid(SpecError::RequiresV3_2 {
+                    blockers: unrecognised,
+                }))
+            }
+        }
         #[cfg(not(feature = "openapi32"))]
         Err(blocked) => Err(invalid(blocked)),
     }

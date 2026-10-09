@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: `MemberPath` declares path parameter `id` where the route `/tenants/{tenant}/members/{id}` has variable `tenant`; PathParams names must match the route's variables one for one, in order
+  --> tests/ui/macros/route_path_params_order_mismatch.rs:13:1
+   |
+13 | #[kynos::get("/tenants/{tenant}/members/{id}")]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `_` failed here

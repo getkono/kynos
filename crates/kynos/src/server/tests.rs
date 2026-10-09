@@ -775,6 +775,108 @@ async fn repeated_shutdown_trigger_forces_an_incomplete_drain() {
     client.await.expect("client task joins");
 }
 
+/// Makes every later `accept` on `listener` fail the way an exhausted backoff
+/// needs: on Linux, shutting a listening socket down for reading leaves it
+/// refusing `accept` with `EINVAL`, an error the loop counts. `listener` is a
+/// duplicate of the one the server holds, so it reaches the same socket.
+#[cfg(all(target_os = "linux", feature = "http1"))]
+fn break_listener(listener: &std::net::TcpListener) {
+    socket2::SockRef::from(listener)
+        .shutdown(std::net::Shutdown::Read)
+        .expect("a listening socket shuts down");
+}
+
+/// A server whose listener `break_listener` can reach, serving `service`.
+#[cfg(all(target_os = "linux", feature = "http1"))]
+async fn breakable_server(
+    service: crate::router::service::Service<()>,
+    shutdown_timeout: std::time::Duration,
+) -> (
+    std::net::SocketAddr,
+    std::net::TcpListener,
+    tokio::task::JoinHandle<crate::Result<()>>,
+) {
+    let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .expect("loopback listener binds");
+    let handle = listener.try_clone().expect("listener duplicates");
+    let bound = crate::server::Server::new(service)
+        .listener(listener)
+        .shutdown_timeout(shutdown_timeout)
+        .prepare()
+        .await
+        .expect("standard listener converts to Tokio ownership");
+    let address = bound.local_addrs()[0];
+    (address, handle, tokio::spawn(bound.serve()))
+}
+
+#[cfg(all(target_os = "linux", feature = "http1"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_listener_that_stops_accepting_drains_what_it_accepted() {
+    let (service, started, release) = blocking_service();
+    let (address, listener, server) =
+        breakable_server(service, std::time::Duration::from_secs(25)).await;
+    let client = tokio::task::spawn_blocking(move || request_http1(address));
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), started.notified())
+        .await
+        .expect("the request reaches the handler");
+    break_listener(&listener);
+    // The backoff gives up after 150 ms; this outlasts it with margin, so the
+    // listener has certainly failed before the request is let go.
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    assert!(
+        !server.is_finished(),
+        "the accepted request must keep draining"
+    );
+
+    release.notify_one();
+    let response = client.await.expect("client task joins");
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    assert!(response.ends_with("ok"), "{response}");
+    let error = tokio::time::timeout(std::time::Duration::from_secs(1), server)
+        .await
+        .expect("the server exits once its connections drain")
+        .expect("server task joins")
+        .expect_err("the failed listener is reported");
+    assert!(
+        matches!(
+            error,
+            crate::Error::Server(crate::server::error::ServerError::Accept { address: failed, .. })
+                if failed == address
+        ),
+        "{error:?}"
+    );
+}
+
+#[cfg(all(target_os = "linux", feature = "http1"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_listener_that_stops_accepting_drains_under_the_shutdown_timeout() {
+    let (service, started, _release) = blocking_service();
+    let (address, listener, server) =
+        breakable_server(service, std::time::Duration::from_millis(200)).await;
+    let client = tokio::task::spawn_blocking(move || request_http1(address));
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), started.notified())
+        .await
+        .expect("the request reaches the handler");
+    break_listener(&listener);
+
+    let error = tokio::time::timeout(std::time::Duration::from_secs(2), server)
+        .await
+        .expect("a request that never finishes is cut at the shutdown timeout")
+        .expect("server task joins")
+        .expect_err("the failed listener is reported");
+    assert!(
+        matches!(
+            error,
+            crate::Error::Server(crate::server::error::ServerError::Accept { address: failed, .. })
+                if failed == address
+        ),
+        "{error:?}"
+    );
+    client.await.expect("client task joins");
+}
+
 #[cfg(feature = "http2")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn http2_prior_knowledge_serves_over_a_real_socket() {
@@ -1355,6 +1457,59 @@ fn mutual_tls_rejects_an_existing_incompatible_component() {
         Err(crate::server::error::ServerError::MutualTlsConflict)
     ));
     assert!(document.security.is_empty());
+}
+
+/// A mounted reference serves the description the bound server reports,
+/// mutual TLS included.
+///
+/// `prepare` adds the scheme after `Router::build` rendered the reference, so
+/// this is the one edit a reference can only carry if the served bytes follow
+/// the document. Here rather than in `tests/docs.rs` because the bound server
+/// hands its service to nothing public short of a mutual-TLS handshake.
+#[cfg(all(feature = "tls", feature = "docs"))]
+#[tokio::test]
+async fn a_mounted_reference_serves_the_mutual_tls_the_bound_server_reports() {
+    use http_body_util::BodyExt as _;
+
+    let issued = authority();
+    let client_authentication =
+        crate::server::tls::ClientCertificateConfig::from_pem_roots(issued.certificate.as_bytes())
+            .expect("CA parses");
+    let tls = crate::server::tls::TlsConfig::from_pem(
+        issued.server.certificate.as_bytes(),
+        issued.server.key.as_bytes(),
+    )
+    .expect("server identity parses")
+    .require_client_certificate(client_authentication);
+    let service = crate::Router::<()>::new()
+        .docs(crate::router::docs::Docs::scalar())
+        .build(())
+        .expect("a describable router");
+
+    let bound = crate::server::Server::new(service)
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .tls(tls)
+        .prepare()
+        .await
+        .expect("TLS listener prepares");
+    let expected = bound.openapi().to_json().expect("a serializable document");
+    assert!(
+        expected.contains(crate::server::tls::document::MUTUAL_TLS_NAME),
+        "the premise of this case is that the bound document declares mutual TLS"
+    );
+
+    let request = hyper::Request::get("/openapi.json")
+        .body(crate::http::body::Body::empty())
+        .expect("request builds");
+    let reply = bound.service.call(request).await;
+    let served = reply
+        .into_body()
+        .collect()
+        .await
+        .expect("a buffered description")
+        .to_bytes();
+
+    assert_eq!(String::from_utf8_lossy(&served), expected);
 }
 
 #[cfg(all(feature = "tls", feature = "http1"))]

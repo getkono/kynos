@@ -29,12 +29,23 @@ pub(crate) fn endpoint_uri_impl(
     // Read from `EndpointMeta::PATH_VARIABLES` rather than rebuilt here, so
     // that what the description will say and what the handler destructures are
     // checked against one source rather than two that could drift.
+    //
+    // A const panic renders a single `&str`, so the message naming both sides
+    // is composed by the comparison itself; the group's type and the template
+    // are passed in only to be rendered.
     let path_assertion = path_type.as_ref().map(|path_type| {
+        let group = quote!(#path_type).to_string().replace(' ', "");
         quote! {
-            const _: () = assert!(::kynos::__private::path::path_parameter_names_match(
-                <#path_type as ::kynos::extract::params::path::PathParams>::NAMES,
-                <#endpoint as ::kynos::router::endpoint::meta::EndpointMeta>::PATH_VARIABLES,
-            ), "PathParams names must exactly match route variables in declaration order");
+            const _: () = if let ::core::option::Option::Some(message) =
+                ::kynos::__private::path::path_parameter_mismatch(
+                    #group,
+                    #path,
+                    <#path_type as ::kynos::extract::params::path::PathParams>::NAMES,
+                    <#endpoint as ::kynos::router::endpoint::meta::EndpointMeta>::PATH_VARIABLES,
+                )
+            {
+                ::core::panic!("{}", message.as_str())
+            };
         }
     });
 
