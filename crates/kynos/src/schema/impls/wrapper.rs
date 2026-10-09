@@ -18,15 +18,11 @@ use crate::schema::{
 
 /// Widens `schema` to admit `null`.
 ///
-/// A schema that already says `type: <one thing>` and nothing referential just
-/// gains `null` to its type union, which is how JSON Schema has expressed
-/// nullability since 2020-12. Anything else — a `$ref`, a union, a composed
-/// schema — goes under an `anyOf`, because widening a `$ref` in place would
-/// mean editing the type it points at.
+/// A single `type` with no `$ref` gains `null` in its type union; anything
+/// else goes under an `anyOf`, since widening a `$ref` in place would edit its
+/// target.
 pub(crate) fn nullable(schema: OpenApiSchema) -> OpenApiSchema {
-    // A schema that already admits `null` is as nullable as it can be, and a
-    // type union's members must be unique — so `Option<()>` and
-    // `Option<Option<T>>` widen to themselves rather than to a repeat.
+    // Type union members must be unique, so `Option<Option<T>>` widens to itself.
     if type_admits_null(&schema) {
         return schema;
     }
@@ -85,34 +81,23 @@ macro_rules! transparent {
     };
 }
 
-// `name` delegates too: a `Box<User>` and a `User` are the same component, and
-// registering them separately would put the same schema in the document twice.
+// `name` delegates too, so a `Box<User>` and a `User` are one component.
 transparent!(Box, Arc);
 
-// The schema is `T`'s, so whether it names its members is `T`'s answer too — a
-// wrapper that delegates the description cannot change what the description
-// says. Written out rather than folded into `transparent!`, because rustc
-// prints the implementations of an unsatisfied trait at their source: inside
-// the macro they arrive as one `$ty<T>` line plus a note naming `transparent`,
-// which puts an internal macro in a message a reader has no way to act on.
+// The flatten markers carry across as `T`'s answer. Written out rather than in
+// `transparent!`, so rustc's unsatisfied-trait notes do not name the macro.
 impl<T: Flatten> Flatten for Box<T> {}
 
 impl<T: Flatten> Flatten for Arc<T> {}
 
-// And whether serde reads it by name, since serde reads a `Box<T>` or an
-// `Arc<T>` as the `T` inside it.
 impl<T: ClosedFlatten> ClosedFlatten for Box<T> {}
 
 impl<T: ClosedFlatten> ClosedFlatten for Arc<T> {}
 
-// And whether it is a map described in place, for the same reason and written
-// out for the same one: `name` delegates, so a `Box<BTreeMap<..>>` resolves to
-// the map's own object exactly as the map does.
 impl<T: OpenMap> OpenMap for Box<T> {}
 
 impl<T: OpenMap> OpenMap for Arc<T> {}
 
-// And whether it hoists nothing, which is the map's answer for the same reason.
 impl<T: AdmitsAny> AdmitsAny for Box<T> {}
 
 impl<T: AdmitsAny> AdmitsAny for Arc<T> {}

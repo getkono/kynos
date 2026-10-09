@@ -73,31 +73,15 @@
 //! | `rust_decimal::Decimal` | `string`/`decimal` | `decimal-rust` |
 //! | `bigdecimal::BigDecimal` | `string`/`decimal` | `decimal-big` |
 //!
-//! `time` is an umbrella carrying the shapes a backend maps onto, so a concept
-//! is defined once rather than once per library; it names no crate and does not
-//! compile alone.
+//! `time` is an umbrella carrying the shapes a backend maps onto; it names no
+//! crate and does not compile alone.
 //!
-//! The offset-less types take `date-time-local` and `time-local` rather than
-//! `date-time` and `time`, because the latter two are RFC 3339 productions that
-//! *require* an offset. A `NaiveDateTime` serializes without one and its
-//! deserializer rejects one, so claiming `date-time` would advertise a request
-//! body the service answers 400 for. `DateTime<Local>` has no implementation at
-//! all: its offset comes from the process environment, which is the same
-//! objection that removes `usize`.
-//!
-//! The backends are not symmetric, and cannot be. `jiff::Span` writes an ISO
-//! 8601 duration and so takes `duration`; chrono's `TimeDelta` writes a
-//! `[seconds, nanos]` array and gets no implementation at all, for the same
-//! reason `std::time::Duration` has none. `jiff::Zoned` is the one type here
-//! with no registered format to take: it writes RFC 9557, whose bracketed zone
-//! is what stops it being a valid `date-time`, so it carries a pattern and a
-//! format name that is Kynos's until one is registered.
-//!
-//! A decimal is a *string* carrying the registered `decimal` format, not a
-//! number. The registry permits either, but a JSON number round-trips through
-//! an `f64` in most consumers, which loses exactly the precision a decimal
-//! exists to keep. Both backends serialize to a string by default and the
-//! description follows them.
+//! The offset-less types take `date-time-local` and `time-local` because RFC
+//! 3339's `date-time` and `time` require an offset. `jiff::Zoned` writes RFC
+//! 9557, which no registered format covers, so it carries a pattern and a
+//! Kynos-named format. A decimal is a *string* carrying `decimal`, since a JSON
+//! number round-trips through an `f64` in most consumers. `docs/schema.md`
+//! gives the reasoning for each.
 //!
 //! # Types deliberately left without an implementation
 //!
@@ -126,8 +110,7 @@ pub mod flatten;
 pub mod registry;
 pub mod unchecked;
 
-// Implementations only, so there is no item here for a canonical path to point
-// at. Which types are implemented is documented above, beside the rejections.
+// Implementations only, so nothing here for a canonical path to point at.
 mod impls;
 
 use kynos_openapi::{ComponentName, Schema as OpenApiSchema};
@@ -146,16 +129,12 @@ use crate::schema::{
 /// # What an implementation returns
 ///
 /// The schema *body*, never a `$ref` to itself. Naming, deduplication and
-/// cycle-breaking belong to [`Registry::resolve`], which is the only thing that
-/// can do them: a type cannot register a placeholder for itself before
-/// descending into its own fields. So an implementation reaches its field types
-/// through `registry.resolve::<T>()` rather than through `T::schema`, and lets
-/// the registry decide whether each one inlines or is referenced.
+/// cycle-breaking belong to [`Registry::resolve`], so an implementation reaches
+/// its field types through `registry.resolve::<T>()` rather than `T::schema`.
 ///
 /// The one exception is a wrapper with no wire form of its own — `Box<T>`,
-/// `Arc<T>` — which *is* `T` and delegates to `T::schema` directly. Going
-/// through `resolve` there would hand back a `$ref` to the component currently
-/// being defined.
+/// `Arc<T>` — which *is* `T` and delegates to `T::schema` directly; `resolve`
+/// there would return a `$ref` to the component being defined.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot describe itself as a schema",
     label = "not describable",
@@ -189,13 +168,10 @@ pub trait Schema {
     /// anything was reported. [`constraints`] says which bounds are enforced.
     ///
     /// The default reports nothing, which is right for a type with no bounds
-    /// of its own and no members to descend into. A container implements it to
-    /// descend, so that a bound on a derived type is enforced wherever that
-    /// type is nested; a hand implementation for a newtype delegates to its
-    /// member.
-    // An empty body rather than `let _ = (at, violations);`: cargo-mutants
-    // would replace that with `()`, which is the same function and survives
-    // every test.
+    /// and no members. A container implements it to descend into its members;
+    /// a hand implementation for a newtype delegates to its member.
+    // An empty body, since cargo-mutants' `()` replacement of a `let _` body
+    // would be an equivalent mutant.
     #[expect(
         unused_variables,
         reason = "the names are what rustdoc shows an implementor"
@@ -206,11 +182,8 @@ pub trait Schema {
 /// A type usable as a JSON object key.
 ///
 /// JSON object keys are strings, so a map's `propertyNames` is built as a
-/// *string* schema plus whatever this returns. That is the point of the method
-/// rather than reusing [`Schema`]: string-ness is then true by construction,
-/// where a trait that merely asked implementations to produce a string schema
-/// would be a promise nothing checks — and a map keyed by an integer describes
-/// no object that can exist.
+/// *string* schema plus whatever [`key_constraints`](Self::key_constraints)
+/// returns; string-ness holds by construction.
 ///
 /// ```no_run
 /// # use kynos::schema::{MapKey, Schema, constraints::Constraints};
@@ -239,17 +212,15 @@ pub trait Schema {
 pub trait MapKey: Schema {
     /// What a key must satisfy beyond being a string.
     ///
-    /// Nothing, by default — which is what makes the resulting
-    /// `propertyNames` vacuous for a plain [`String`] key, and why a map keyed
-    /// by one emits none at all.
+    /// Nothing, by default, so a map keyed by a plain [`String`] emits no
+    /// `propertyNames`.
     ///
     /// A map's [`check_constraints`](Schema::check_constraints) holds each key
     /// to the `min_length` and `max_length` set here, reporting a key that
     /// breaks one at the map. It reads the key through
     /// [`as_member`](Self::as_member), so a key type returning `None` there has
-    /// these described and not checked. The other string bounds are described
-    /// and not checked: `pattern`, which a field's check enforces only because
-    /// the derive compiles it, and `format`, which is an annotation.
+    /// these described and not checked. `pattern` and `format` are described
+    /// and not checked.
     #[must_use]
     fn key_constraints() -> constraints::Constraints {
         constraints::Constraints::default()
@@ -282,10 +253,8 @@ impl MapKey for String {
 /// [`FromStr`](std::str::FromStr), write it with [`Display`](std::fmt::Display),
 /// and describe it by its [`Schema`], so implementing this promises that the
 /// three agree on one value: `Display` writes what the schema describes,
-/// `FromStr` reads it back, and the schema is not an object or an array. That
-/// last part is what the compiler cannot check, and why this is a marker rather
-/// than a blanket implementation — a parameter's `style` spreads an object or
-/// an array over several values, which one `FromStr` never reads.
+/// `FromStr` reads it back, and the schema is not an object or an array, which
+/// the compiler cannot check.
 ///
 /// Implemented for the scalars Kynos describes whose `Display` writes the form
 /// their schema names, with accepted exceptions where `Display` writes text the
@@ -303,11 +272,10 @@ impl MapKey for String {
 ///   seconds (`PT0.5S`), a skipped unit (`PT1H30S`) and weeks with days
 ///   (`P1W2D`) fall outside it.
 ///
-/// The dates and durations write the text serde writes for a body, so a
-/// parameter of one makes no claim the body's description does not already
-/// make. A newtype whose `FromStr` refuses them is the remedy where that
-/// matters. An `Option<T>` field is a derive's business, not this trait's: the
-/// derive makes it optional and bounds `T`.
+/// The dates and durations write the text serde writes for a body; a newtype
+/// whose `FromStr` refuses them is the remedy where that matters. An
+/// `Option<T>` field is the derive's business: it makes the parameter optional
+/// and bounds `T`.
 ///
 /// ```compile_fail
 /// # use std::{fmt, str::FromStr};

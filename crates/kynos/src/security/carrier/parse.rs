@@ -16,10 +16,8 @@ pub(super) struct Authorization<'r> {
 
 /// Reads the request's `Authorization` field.
 ///
-/// `Ok(None)` when there is none, which is anonymity rather than a failure —
-/// the caller decides whether that is acceptable. `Err` when there is one and
-/// it is not a credential: two fields, bytes no `&str` can hold, or a value
-/// with no scheme token.
+/// `Ok(None)` when there is none. `Err` when there is one and it is not a
+/// credential: two fields, bytes no `&str` can hold, or no scheme token.
 pub(super) fn authorization(parts: &Parts) -> Result<Option<Authorization<'_>>, AuthRejection> {
     let mut fields = parts.headers.get_all(AUTHORIZATION).into_iter();
 
@@ -27,9 +25,8 @@ pub(super) fn authorization(parts: &Parts) -> Result<Option<Authorization<'_>>, 
         return Ok(None);
     };
 
-    // RFC 9110 section 5.3 makes `Authorization` a singleton field. Two of them
-    // is not a credential to choose between: picking either would mean a proxy
-    // that appended one could decide which credential a service honours.
+    // RFC 9110 section 5.3: `Authorization` is a singleton field; choosing
+    // between two would let an appending proxy pick the credential.
     if fields.next().is_some() {
         return Err(AuthRejection::unauthenticated());
     }
@@ -56,10 +53,7 @@ pub(super) fn authorization(parts: &Parts) -> Result<Option<Authorization<'_>>, 
 
 /// Whether `presented` names `expected`.
 ///
-/// RFC 9110 section 11.1 makes an authentication scheme name case-insensitive,
-/// so `bearer`, `Bearer` and `BEARER` are one scheme. Getting this wrong is not
-/// pedantry: a client that spells it in lower case is one whose credential a
-/// case-sensitive comparison silently ignores.
+/// Case-insensitively, per RFC 9110 section 11.1.
 pub(super) fn scheme_is(presented: &str, expected: &str) -> bool {
     presented.eq_ignore_ascii_case(expected)
 }

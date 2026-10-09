@@ -6,15 +6,14 @@
 //! [`Schema::check_constraints`](crate::schema::Schema::check_constraints),
 //! which a body extractor runs on the value it deserialized and refuses with a
 //! 422 naming each member that broke its bound. The check is generated code
-//! over the typed value, so there is no JSON Schema interpreter on the hot
-//! path, and a value inside every bound costs no allocation once each
-//! `pattern` it meets has compiled and warmed its engine's cache.
+//! over the typed value, and a value inside every bound costs no allocation
+//! once each `pattern` it meets has compiled and warmed its engine's cache.
 //!
 //! A keyword reaches a field's value through the trait for its kind —
 //! [`Numeric`], [`Textual`], [`Items`] or [`UniqueItems`] — so a bound on a type
-//! that cannot hold it is a compile error rather than a check that never
-//! fires. Like the keyword, each one applies only to a value of its kind: an
-//! absent `Option` is `null` and satisfies every bound.
+//! that cannot hold it is a compile error. Like the keyword, each one applies
+//! only to a value of its kind: an absent `Option` is `null` and satisfies
+//! every bound.
 //!
 //! `pattern` takes a regular expression engine on the request path, so the
 //! derive accepts it only under the `pattern` feature, which compiles one in.
@@ -34,10 +33,8 @@ use kynos_openapi::Schema as OpenApiSchema;
 
 /// Constraints attached to a field by `#[derive(Schema)]`.
 ///
-/// These become JSON Schema assertions, and the same declaration becomes the
-/// check the derive generates, so the emitted description and the request
-/// parser are two projections of one declaration. The module documentation
-/// says which bounds are enforced.
+/// These become JSON Schema assertions and the check the derive generates. The
+/// module documentation says which bounds are enforced.
 #[derive(Clone, Debug, Default, PartialEq)]
 #[non_exhaustive]
 pub struct Constraints {
@@ -79,25 +76,20 @@ impl Constraints {
 
     /// Applies these constraints to a schema.
     ///
-    /// A set constraint replaces the keyword the type itself emitted, which is
-    /// what makes a field declaration the narrower statement it reads as. An
-    /// unset one leaves that keyword alone, so an empty set — and every field
-    /// of one — is a no-op.
+    /// A set constraint replaces the keyword the type itself emitted; an unset
+    /// one leaves it alone, so an empty set is a no-op.
     ///
     /// The keywords land beside a `$ref` rather than under an `allOf`: from
     /// OpenAPI 3.1 onward a schema `$ref` applies its siblings, so a
     /// constrained field of a named type is the intersection it looks like.
     #[must_use]
     pub fn apply(&self, schema: OpenApiSchema) -> OpenApiSchema {
-        // Nothing to say, and nothing a schema that admits no instance could
-        // be narrowed by.
+        // `false` admits no instance, so there is nothing to narrow.
         if self.is_empty() || matches!(schema, OpenApiSchema::Bool(false)) {
             return schema;
         }
 
-        // `true` and the empty keyword set are the same schema, so promoting
-        // one to the other loses nothing and gives the keywords somewhere to
-        // go.
+        // `true` is the empty keyword set, so promoting it loses nothing.
         let mut object = match schema {
             OpenApiSchema::Object(object) => object,
             OpenApiSchema::Bool(_) => Box::default(),
@@ -233,10 +225,9 @@ impl Violations {
 
     /// Records that the value at `at` broke a bound, described by `detail`.
     ///
-    /// One failure is named per location, the first reported: a value too
-    /// short and off its pattern is refused for one reason, which is enough
-    /// for a client to correct it. The rest are still recorded, so two values
-    /// breaking different bounds at one location are told apart.
+    /// One failure is named per location, the first reported. The rest are
+    /// still recorded, so two values breaking different bounds at one location
+    /// are told apart.
     pub fn report(&mut self, at: Pointer<'_>, detail: impl Into<String>) {
         self.failures
             .entry(at.to_string())
@@ -347,11 +338,10 @@ pub trait Items {
 /// A value `unique_items` applies to.
 ///
 /// A sequence's items are compared through their `PartialOrd`, by sorting
-/// references to them, so the check is `O(n log n)` rather than the pairwise
-/// `O(n²)` an equality alone allows — which is an amplification a request body
-/// must not be able to reach. That relies on the order being total over the
-/// values compared, which a derived `PartialOrd` is for every value JSON can
-/// carry.
+/// references to them, so a request body cannot force the pairwise `O(n²)`
+/// check an equality alone allows. That relies on the order being total over
+/// the values compared, which a derived `PartialOrd` is for every value JSON
+/// can carry.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot say whether its items are unique",
     label = "no uniqueness check",
@@ -369,9 +359,8 @@ macro_rules! numeric {
     ($($ty:ty),+ $(,)?) => {
         $(
             impl Numeric for $ty {
-                // A bound is an `f64`, so comparing at `f64` is comparing at
-                // the bound's own precision; the module docs record the loss
-                // past 2^53 for the 64-bit widths.
+                // A bound is an `f64`, so this compares at its precision; see
+                // `Numeric` for the loss past 2^53.
                 #[allow(clippy::cast_precision_loss, clippy::cast_lossless)]
                 fn number(&self) -> Option<f64> {
                     Some(*self as f64)

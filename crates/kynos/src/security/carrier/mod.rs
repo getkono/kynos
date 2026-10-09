@@ -3,31 +3,17 @@
 //! A [`SecurityScheme`] already says how a credential is *carried* — `bearer`
 //! puts it in `Authorization`, `api_key(in = "cookie", name = "session")` names
 //! a cookie. [`Carries`] is that same statement made executable, so the field an
-//! authenticator reads and the field the description advertises are one string
-//! rather than two that agree today.
-//!
-//! # Why this is a trait and not a helper
-//!
-//! Handing an [`Authenticator`](crate::security::Authenticator) a `&Parts` and
-//! a shelf of parsing functions would leave the drift exactly where it was: the
-//! description would say `X-Api-Key` and the verifier would be free to read
-//! `X-API-Token`, and nothing would notice. Taking
-//! [`Presented`](Carries::Presented) instead means an authenticator *cannot*
-//! read anything the scheme did not declare, because it is never given the
-//! request.
-//!
-//! That is the difference from every framework that configures a "finder"
-//! beside the documentation. There is nothing to keep in step here, because
-//! there is only one statement.
+//! authenticator reads and the field the description advertises are one string.
+//! An [`Authenticator`](crate::security::Authenticator) receives
+//! [`Presented`](Carries::Presented), never the request, so it cannot read
+//! anything the scheme did not declare.
 //!
 //! # What is deliberately not read
 //!
-//! RFC 6750 defines three ways to present a bearer token and Kynos reads one.
-//! The form-encoded body (section 2.2) is not reachable from a request *head*,
-//! and making a credential a body field would put it in the operation's schema.
-//! The URI query parameter (section 2.3) is `SHOULD NOT` in the RFC itself, and
-//! for good reason: a token in a query string reaches access logs, `Referer`
-//! headers and browser history. Neither is a gap to close later.
+//! Of RFC 6750's three ways to present a bearer token, Kynos reads the header
+//! one. The form-encoded body (section 2.2) is not reachable from a request
+//! *head*, and the URI query parameter (section 2.3) is `SHOULD NOT` in the RFC
+//! itself.
 
 pub(super) mod base64;
 mod parse;
@@ -57,31 +43,24 @@ use crate::{
 pub trait Carries: SecurityScheme {
     /// The credential as the request presented it, before anything verified it.
     ///
-    /// Owned rather than borrowed from the request head. A borrowing form would
-    /// put a lifetime parameter into every application's `impl Authenticator`,
-    /// which `docs/architecture.md` rules out for the public surface: generics
-    /// that exist for performance stay private. The cost is one allocation per
-    /// authenticated request, against a verifier that is about to check a
-    /// signature or read a session store.
+    /// Owned rather than borrowed from the request head, so an
+    /// `impl Authenticator` carries no lifetime parameter.
     type Presented: Send;
 
     /// Reads the presented credential out of the request head.
     ///
     /// Three answers, not two. `Ok(None)` is *absent*, which is anonymity and
     /// which [`MaybeAuth`](crate::security::auth::MaybeAuth) treats as such.
-    /// `Err` is *present and malformed*, which is a 401 even there: a client
-    /// that sent a broken credential is not an anonymous client.
+    /// `Err` is *present and malformed*, which is a 401 even there.
     ///
     /// The challenge is left unset. [`Auth`](crate::security::auth::Auth)
-    /// attaches the scheme's own on the way out, so the string on the wire and
-    /// the string the operation declares cannot be different ones.
+    /// attaches the scheme's own on the way out.
     fn present(parts: &Parts) -> Result<Option<Self::Presented>, AuthRejection>;
 }
 
 /// A bearer token, as RFC 6750 section 2.1 presented it.
 ///
-/// Opaque by definition: the token's meaning is the issuer's business, and a
-/// type that claimed to know it would be claiming more than it can check.
+/// Opaque: the token's meaning is the issuer's business.
 #[derive(Clone, PartialEq, Eq)]
 pub struct BearerToken(String);
 
@@ -170,10 +149,8 @@ pub enum KeyLocation {
     Query,
     /// A cookie.
     ///
-    /// Not gated on the `cookie` feature. That feature names a *dependency* and
-    /// the parameter extractor built on it; reading one field out of a jar
-    /// needs neither, and a scheme that describes a credential in a cookie has
-    /// to be able to read one wherever it is described.
+    /// Not gated on the `cookie` feature, which names a dependency this reader
+    /// does not need.
     Cookie,
 }
 
@@ -214,10 +191,8 @@ pub fn bearer(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
         return Ok(None);
     };
 
-    // A different scheme is not this scheme's credential. Refusing rather than
-    // reporting absence is deliberate: the client did present something, and
-    // calling that anonymous would let `MaybeAuth` wave through a request
-    // carrying a credential nobody checked.
+    // Another scheme's credential is refused, not absent, so `MaybeAuth` does
+    // not wave through a credential nobody checked.
     if !parse::scheme_is(authorization.scheme, "bearer") {
         return Err(AuthRejection::unauthenticated());
     }
@@ -251,12 +226,9 @@ pub fn basic(parts: &Parts) -> Result<Option<Credentials>, AuthRejection> {
     let decoded =
         base64::decode(authorization.credentials).ok_or_else(AuthRejection::unauthenticated)?;
 
-    // RFC 7617 section 2.1 says the charset is whatever the challenge named, and
-    // `charset="UTF-8"` is the only value the registry defines. Anything else is
-    // a credential this service did not ask for.
+    // RFC 7617 section 2.1: `charset="UTF-8"` is the only charset defined.
     let text = String::from_utf8(decoded).map_err(|_| AuthRejection::unauthenticated())?;
 
-    // The *first* colon: a password may contain one, a user-id may not.
     let (username, password) = text
         .split_once(':')
         .ok_or_else(AuthRejection::unauthenticated)?;
@@ -331,8 +303,7 @@ pub fn api_key(
 
 /// The certificate chain the peer presented during the TLS handshake.
 ///
-/// The one credential no request field carries, which is exactly why the scheme
-/// has to be declared: nothing else about the request reveals it.
+/// The one credential no request field carries.
 #[derive(Clone, Debug)]
 pub struct PeerCertificates(crate::extract::connection::Connection);
 
@@ -365,17 +336,9 @@ impl PeerCertificates {
 /// TLS, the listener does not verify client certificates, the peer sent none,
 /// or this build has no `tls` feature and no embedding recorded a chain through
 /// [`Connection::from_tls_peer`](crate::extract::connection::Connection::from_tls_peer).
-/// None of the four is distinguishable to a client, so none is distinguished
-/// here.
 ///
-/// # Why this is not gated on `tls`
-///
-/// A guard would key on the wrong thing. A service behind a TLS-terminating
-/// proxy sees no certificates *with* the feature on, so the feature does not
-/// answer "can this deployment authenticate a client certificate" — the
-/// deployment does. Making `Auth<MutualTls>` a compile error without `tls`
-/// would be a precision Kynos cannot actually offer, and it would stop
-/// `examples/security_schemes.rs` showing the scheme at all.
+/// Not gated on `tls`: a service behind a TLS-terminating proxy sees no
+/// certificates even with it on, so the deployment, not the feature, decides.
 ///
 /// # Errors
 ///

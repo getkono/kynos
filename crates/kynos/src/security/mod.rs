@@ -2,20 +2,15 @@
 //!
 //! The single rule here: **[`Auth`](auth::Auth) is the only way to guard an operation**.
 //!
-//! That is what stops enforcement and documentation from drifting apart. In
-//! utoipa or aide, the `security` block is written by hand next to the code
-//! that checks the credential, and nothing keeps the two in step — an endpoint
-//! can be guarded and undocumented, or documented and unguarded, and the
-//! description looks equally plausible either way. Here, requiring a credential
-//! and declaring it are the same act.
+//! Requiring a credential and declaring it are the same act, so enforcement and
+//! the description cannot drift apart.
 //!
 //! # One guard per operation
 //!
-//! A guard is a handler's first argument, and a handler takes at most one. Two
-//! guards would both run, so the server would demand both, while each declared
-//! its own security requirement, which OpenAPI reads as "either". Schemes
-//! combine inside the guard's type parameter instead — see [`requirement`] —
-//! so what compiles, what runs and what the description says are one type.
+//! A guard is a handler's first argument, and a handler takes at most one: two
+//! would both be enforced while OpenAPI read their requirements as "either".
+//! Schemes combine inside the guard's type parameter instead — see
+//! [`requirement`].
 //!
 //! # How this module is laid out
 //!
@@ -39,7 +34,7 @@ use crate::{
 
 /// What closes the set of guards.
 mod sealed {
-    /// The private supertrait. Deliberately empty.
+    /// The private supertrait.
     pub trait Sealed {}
 }
 
@@ -51,8 +46,7 @@ mod sealed {
 /// its own, the first, the way a body has the last. A
 /// [`Handler`](crate::handler::Handler) is implemented for functions with that
 /// slot and for functions without it, and for nothing with two, so a second
-/// guard is a compile error rather than a requirement the description gets
-/// wrong.
+/// guard is a compile error.
 ///
 /// ```no_run
 /// # use kynos::{
@@ -156,26 +150,20 @@ pub trait Guard<C>: sealed::Sealed + Describe + Sized + Send {
 
 /// Compares two secrets without returning on the first byte that differs.
 ///
-/// An ordinary `==` on a shared secret returns as soon as it finds a
-/// difference, so how long it took says how much of the secret was right. That
-/// turns guessing a key into guessing it one byte at a time. Reach for this
-/// wherever an [`Authenticator`] compares a credential against a value it holds
-/// -- an API key against a table, a password against a stored one.
+/// An ordinary `==` on a shared secret returns at the first difference, so its
+/// timing says how much of a guess was right. Reach for this wherever an
+/// [`Authenticator`] compares a credential against a value it holds -- an API
+/// key against a table, a password against a stored one.
 ///
 /// # What this does not promise
 ///
 /// **The lengths are compared first, and a difference returns immediately.** A
-/// secret's length is not secret in any of the cases here: it is fixed by the
-/// scheme that issued it, and padding to hide it would compare a secret against
-/// something that is not one.
+/// secret's length is fixed by the scheme that issued it, so it is not secret.
 ///
-/// **The guarantee is best-effort.** A hard one needs a barrier the compiler
-/// cannot see through, and `unsafe_code = "forbid"` puts inline assembly out of
-/// reach. What is here folds every byte into one accumulator and hides the
-/// result behind [`black_box`](core::hint::black_box), which is what stops the
-/// loop being rewritten into an early return. That is the strongest statement
-/// safe Rust supports, and it is stated rather than implied because the
-/// difference matters to anyone deciding whether it is enough.
+/// **The guarantee is best-effort.** Every byte is folded into one accumulator
+/// hidden behind [`black_box`](core::hint::black_box), which stops the loop
+/// becoming an early return; a hard guarantee would need inline assembly, which
+/// `unsafe_code = "forbid"` rules out.
 ///
 /// ```
 /// use kynos::security::constant_time_eq;
@@ -238,10 +226,8 @@ pub trait SecurityScheme: Send + Sync + 'static {
     /// The `WWW-Authenticate` challenge sent with a 401, if this scheme has
     /// one.
     ///
-    /// Declared here rather than in the authenticator so that the challenge in
-    /// the description and the challenge on the wire are one string. A client
-    /// has to handle it, which makes it part of what the 401 response *is*
-    /// rather than an implementation detail of enforcing the scheme.
+    /// Declared on the scheme so the challenge in the description and the one
+    /// on the wire are one string.
     #[must_use]
     fn challenge() -> Option<&'static str> {
         None
@@ -250,23 +236,13 @@ pub trait SecurityScheme: Send + Sync + 'static {
 
 /// Verifies a credential.
 ///
-/// Kept separate from [`SecurityScheme`] because the two answer different
-/// questions: the scheme says how a credential is *carried*, this says how it
-/// is *checked*. Kynos deliberately does not ship a JWT verifier or a session
-/// store — that is application policy, and prescribing it would be exactly the
-/// kind of scope creep the project avoids.
-///
-/// # Why this is not handed the request
+/// The scheme says how a credential is *carried*; this says how it is
+/// *checked*. Kynos ships no JWT verifier or session store: that is
+/// application policy.
 ///
 /// [`authenticate`](Authenticator::authenticate) receives the credential the
-/// scheme's own carrier already extracted, not a `&Parts`. That is what makes
-/// the field a verifier reads and the field the description advertises one
-/// string: an authenticator *cannot* reach for a header the scheme did not
-/// declare, because it is never given anywhere to reach.
-///
-/// Every framework that configures a credential "finder" beside its
-/// documentation has two statements that agree until someone edits one. There
-/// is one here.
+/// scheme's own carrier already extracted, not a `&Parts`, so an authenticator
+/// cannot read a field the scheme did not declare.
 pub trait Authenticator<S: carrier::Carries, C: Sync>: Send + Sync + 'static {
     /// Checks the credential this request presented.
     ///
@@ -294,9 +270,7 @@ pub trait Authenticator<S: carrier::Carries, C: Sync>: Send + Sync + 'static {
     ///
     /// A refusal is [`AuthRejection::forbidden`], or
     /// [`AuthRejection::forbidden_as`] where the application has a problem type
-    /// for the rule that refused. The 403 is the one status here whose meaning
-    /// is the application's, which is why it is the one Kynos lets an
-    /// authenticator name — from either method.
+    /// for the rule that refused.
     fn authorize(
         &self,
         credential: &S::Credential,
@@ -307,9 +281,8 @@ pub trait Authenticator<S: carrier::Carries, C: Sync>: Send + Sync + 'static {
 
 /// An application context that supplies an authenticator for scheme `S`.
 ///
-/// This typed association replaces an erased authentication extension map: a
-/// router using `Auth<S>` cannot be mounted with a context that does not prove
-/// it can authenticate `S`.
+/// A router using `Auth<S>` cannot be mounted with a context that does not
+/// prove it can authenticate `S`.
 pub trait Authenticates<S: carrier::Carries>: Sync + Sized {
     /// The concrete authenticator owned by this context.
     type Authenticator: Authenticator<S, Self>;

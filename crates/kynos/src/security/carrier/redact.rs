@@ -1,8 +1,7 @@
 //! `Debug` for the presented credentials, with every secret left out.
 //!
-//! Each is formatted wherever a request is logged, and a token, password or
-//! key read from a log can be presented again. What identifies rather than
-//! authenticates — a user-id, a scheme token — still prints.
+//! A secret read from a log can be presented again. What identifies rather
+//! than authenticates — a user-id, a scheme token — still prints.
 
 use std::fmt;
 

@@ -1,13 +1,12 @@
 //! How a type composes when `#[serde(flatten)]` makes its members another
 //! object's.
 //!
-//! A flattened field's schema is composed into its parent's `allOf` rather than
-//! named, so whether that is sound is a property of the field's type, which the
-//! `Schema` derive can only ask the compiler about. Each trait here is one such
-//! answer, asserted by the derive per flattened field: [`Flatten`] for a type
-//! that names its members, [`ClosedFlatten`] for one serde also reads by name
-//! out of a closed object, [`OpenMap`] for a map `#[schema(open)]` hoists, and
-//! [`AdmitsAny`] for an open map that constrains no member.
+//! A flattened field's schema is composed into its parent's `allOf`, so whether
+//! that is sound is a property of the field's type. The `Schema` derive asserts
+//! one of these per flattened field: [`Flatten`] for a type that names its
+//! members, [`ClosedFlatten`] for one serde also reads by name out of a closed
+//! object, [`OpenMap`] for a map `#[schema(open)]` hoists, and [`AdmitsAny`]
+//! for an open map that constrains no member.
 
 use crate::schema::Schema;
 
@@ -15,19 +14,11 @@ use crate::schema::Schema;
 /// another object.
 ///
 /// `#[serde(flatten)]` makes a field's members the *parent's* members, so the
-/// parent composes the field's schema rather than naming it. A schema that
-/// constrains every member it does not name — `additionalProperties` on a map —
-/// then reaches the members the parent declared itself, and the object ends up
-/// refusing the JSON its own type writes. The permissive schema reaches nothing,
-/// but names nothing either: the members it contributes stay unevaluated, so an
-/// open map beside it refuses them instead.
-///
-/// The marker is Kynos's own because serde has no type-level surface to read:
-/// `Serialize` is one method, `flatten` is an internal flag that never leaves
-/// `serde_derive`, and what enforces it is a runtime serializer. Bounding a
-/// flattened field by this trait is what turns that into a compile error at the
-/// field that wrote it. In an object `#[serde(deny_unknown_fields)]` closes the
-/// bound is the narrower [`ClosedFlatten`] as well.
+/// parent composes the field's schema into its `allOf`. A schema constraining
+/// members it does not name — `additionalProperties` on a map — would then
+/// reach the parent's own members and refuse the JSON the type writes. In an
+/// object `#[serde(deny_unknown_fields)]` closes, the bound is the narrower
+/// [`ClosedFlatten`] as well.
 ///
 /// Derived beside [`Schema`] for the shapes whose description is an object
 /// naming its members: a struct with named fields, and an enum whose every
@@ -36,9 +27,8 @@ use crate::schema::Schema;
 /// branches admit only their variant key, or an internally tagged enum with a
 /// newtype variant.
 /// Implemented for [`Problem`](crate::Problem), whose schema names the
-/// registered members and admits every other one. Unsealed, for the reason
-/// [`MapKey`](super::MapKey) is — a hand-written [`Schema`] that does the same
-/// thing has to be able to say so.
+/// registered members and admits every other one. Unsealed, so a hand-written
+/// [`Schema`] that does the same can say so.
 ///
 /// ```no_run
 /// # use kynos::schema::{Schema, flatten::Flatten};
@@ -70,26 +60,20 @@ pub trait Flatten: Schema {}
 /// A [`Flatten`] type serde reads by name, so it can be flattened into an object
 /// `#[serde(deny_unknown_fields)]` closes.
 ///
-/// A parent with a flattened field buffers every entry of the object it reads
-/// and hands each flattened field the lot. Under `deny_unknown_fields` it then
-/// refuses the first entry no field took, and only a type serde reads through
-/// `deserialize_struct` takes one: that reader claims each key it names. An
-/// internally tagged enum reads through `deserialize_any`, and a struct holding
-/// a flattened field serde reads, or a map, through `deserialize_map`, both of
-/// which borrow the entries and leave them all in place. Flattened into a closed
-/// object, such a type makes serde refuse any document in which it writes a
-/// member, while the closed schema accepts it. The derive bounds each flattened
-/// field of a closed object by this trait as well as by `Flatten`, so that case
-/// is a compile error at the field.
+/// Under `deny_unknown_fields` serde refuses the first entry no field took, and
+/// only a type read through `deserialize_struct` takes the keys it names; one
+/// read through `deserialize_any` or `deserialize_map` leaves them in place, so
+/// serde would refuse documents the closed schema accepts. The derive bounds
+/// each flattened field of a closed object by this trait as well as `Flatten`.
 ///
 /// Derived beside `Flatten` for the two shapes serde reads by name: a struct
 /// whose fields include no `#[serde(flatten)]` serde reads and which carries no
 /// container `#[serde(tag = "...")]`, a key serde writes and never takes, and
 /// an adjacently tagged enum, whose tag and content keys serde names. Carried
 /// across `Box<T>` and `Arc<T>`. Not implemented for
-/// [`Problem`](crate::Problem): serde never reads one, having no `Deserialize`
-/// for it, and its `additionalProperties: true` marks every member evaluated,
-/// so the closing keyword of an object flattening it would refuse nothing:
+/// [`Problem`](crate::Problem), which serde never reads and whose
+/// `additionalProperties: true` would leave the closing keyword nothing to
+/// refuse:
 ///
 /// ```compile_fail
 /// fn closed_flattenable<T: kynos::schema::flatten::ClosedFlatten>() {}
@@ -97,9 +81,8 @@ pub trait Flatten: Schema {}
 /// closed_flattenable::<kynos::Problem>();
 /// ```
 ///
-/// Unsealed, for the reason `Flatten` is — a hand-written `Flatten` whose
-/// `Deserialize` reads through `deserialize_struct` has to be able to say so,
-/// and has to before it can be flattened into a closed object.
+/// Unsealed, so a hand-written `Flatten` whose `Deserialize` reads through
+/// `deserialize_struct` can say so.
 ///
 /// ```no_run
 /// # use kynos::schema::{
@@ -139,10 +122,7 @@ pub trait ClosedFlatten: Flatten {}
 ///
 /// `#[schema(open)]` moves a flattened map's `additionalProperties` to the
 /// parent's `unevaluatedProperties`, which needs the map's own schema object in
-/// hand. A type described through a `$ref` leaves nothing to move, and the
-/// `additionalProperties` of the schema it refers to would reach the properties
-/// the parent declared itself. The derive bounds every open field by this
-/// trait, so that case is a compile error at the field.
+/// hand rather than a `$ref`. The derive bounds every open field by this trait.
 ///
 /// Implemented for [`HashMap`](std::collections::HashMap) and
 /// [`BTreeMap`](std::collections::BTreeMap), and carried across `Box<T>` and
@@ -150,15 +130,14 @@ pub trait ClosedFlatten: Flatten {}
 /// that implements `OpenMap` itself, or over a `serde_json::Map`, which has no
 /// `additionalProperties` to hoist and so leaves the object open — the route
 /// for arbitrary JSON beside an object's own members, and an [`AdmitsAny`].
-/// Unsealed, for the reason [`MapKey`](super::MapKey) is — a hand-written
-/// [`Schema`] that claims no component name and describes an object by
-/// `additionalProperties` alone has to be able to say so.
+/// Unsealed, so a hand-written [`Schema`] that claims no component name and
+/// describes an object by `additionalProperties` alone can say so.
 ///
-/// A key constraint does not survive the hoist. Inside the `allOf` branch
-/// `propertyNames` would name the parent's own properties too, so it is
-/// dropped: a map keyed by a [`MapKey`](super::MapKey) with
+/// A key constraint does not survive the hoist: `propertyNames` inside the
+/// `allOf` branch would name the parent's own properties too, so a map keyed by
+/// a [`MapKey`](super::MapKey) with
 /// [`key_constraints`](super::MapKey::key_constraints) is described more weakly
-/// than its type, rather than contradicting it.
+/// than its type.
 ///
 /// ```no_run
 /// # use kynos::schema::{Schema, flatten::OpenMap};
@@ -187,15 +166,10 @@ pub trait OpenMap: Schema {}
 /// An [`OpenMap`] whose schema constrains no member, so flattening it leaves the
 /// object it is flattened into open to every member.
 ///
-/// `#[schema(open)]` hoists an open map's `additionalProperties` onto the object
-/// as `unevaluatedProperties`, which constrains every member the object's
-/// schema does not name. A named field serde writes and never reads,
-/// `#[serde(skip_deserializing)]` alone, is such a member: the schema describes
-/// what serde reads, so it leaves the field out, and the hoisted keyword then
-/// refuses what serde writes of it. The derive bounds an open field by this
-/// trait wherever such a field sits beside it, so that case is a compile error
-/// at the open field, and an open field whose hoisted schema refuses nothing is
-/// accepted there.
+/// A field serde writes and never reads, `#[serde(skip_deserializing)]` alone,
+/// is left out of the schema, so a hoisted `unevaluatedProperties` would refuse
+/// what serde writes of it. The derive bounds an open field by this trait
+/// wherever such a field sits beside it.
 ///
 /// Implemented for [`Unchecked`](super::unchecked::Unchecked) wherever it is an
 /// `OpenMap`, since its schema carries no `additionalProperties`, for a
@@ -224,8 +198,8 @@ pub trait OpenMap: Schema {}
 /// admits_any::<std::collections::BTreeMap<String, u64>>();
 /// ```
 ///
-/// Unsealed, for the reason [`MapKey`](super::MapKey) is — a hand-written open
-/// map whose schema has no `additionalProperties` has to be able to say so.
+/// Unsealed, so a hand-written open map whose schema has no
+/// `additionalProperties` can say so.
 ///
 /// ```no_run
 /// # use kynos::schema::{

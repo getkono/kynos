@@ -20,9 +20,7 @@ impl Schema for String {
     }
 }
 
-// The length bounds stay beside the format rather than being replaced by it.
-// Registry support is optional, so a tool that does not know `char` still has
-// to receive the constraint that makes the schema constraining.
+// Length bounds beside the format, since registry format support is optional.
 impl Schema for char {
     fn schema(_registry: &mut Registry) -> OpenApiSchema {
         with_object(formatted(SchemaType::String, "char"), |object| {
@@ -62,18 +60,13 @@ macro_rules! unsigned {
     };
 }
 
-// OAS defines only `int32` and `int64`, and both are signed. The OAI Format
-// Registry names every width in both signednesses, so each type gets the format
-// it actually is rather than the nearest one that can hold it — no `u32` widened
-// to `int64` for want of a `uint32`.
+// The OAI Format Registry names every width and signedness, so each type gets
+// its exact format.
 signed!(i8 => "int8", i16 => "int16", i32 => "int32");
 unsigned!(u8 => "uint8", u16 => "uint16", u32 => "uint32");
 
-// `i64::MAX` and `u64::MAX` are not representable in an `f64`, and JSON Schema
-// bounds are numbers. Emitting a rounded bound would forbid values the type
-// accepts, or accept values it does not, so at this width the format carries
-// what the bounds cannot. `u64` keeps `minimum: 0` because that one bound *is*
-// exactly representable.
+// `i64::MAX` and `u64::MAX` round in an `f64`, so the format carries what the
+// bounds cannot; `u64` keeps `minimum: 0`, which is exact.
 impl Schema for i64 {
     fn schema(_registry: &mut Registry) -> OpenApiSchema {
         formatted(SchemaType::Integer, "int64")
@@ -100,10 +93,8 @@ impl Schema for f64 {
     }
 }
 
-// Each one's `Display` writes the single value its schema describes, and its
-// `FromStr` reads that back, except a non-finite float, one of the accepted
-// exceptions `ParamValue` lists: `NaN`, `inf` and `-inf` are what `Display`
-// writes and `FromStr` reads, and no `number` admits them.
+// `Display` writes what the schema describes, but for the non-finite floats
+// `ParamValue` lists as an accepted exception.
 impl ParamValue for bool {}
 impl ParamValue for char {}
 impl ParamValue for String {}

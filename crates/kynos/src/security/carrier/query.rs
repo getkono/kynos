@@ -4,13 +4,9 @@ use crate::{error::rejection::AuthRejection, http::Parts};
 
 /// The first value of `name` in the request target's query string.
 ///
-/// An API key `in: query` is a query parameter, so it is read exactly as a
-/// derived [`Query`](crate::extract::params::query::Query) parameter of the same
-/// name is: through the same decoder, which applies the form rules OpenAPI
-/// requires of every `in: query` parameter (`+` is a space, `%2B` a plus sign),
-/// and from the first pair that names it. A later pair never stands in for one
-/// that could not be read, since two readers of one request would then pick
-/// different credentials.
+/// Read exactly as a derived [`Query`](crate::extract::params::query::Query)
+/// parameter of the same name: form-decoded, from the first pair naming it. A
+/// later pair never stands in for one that could not be read.
 ///
 /// # Errors
 ///

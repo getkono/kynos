@@ -24,8 +24,7 @@ impl Schema for Ipv6Addr {
 
 /// Either address family.
 ///
-/// `format` names one family or the other, so a type that admits both is a
-/// union rather than a third format.
+/// A union, since `format` names one family or the other.
 impl Schema for IpAddr {
     fn schema(registry: &mut Registry) -> OpenApiSchema {
         let branches = vec![Ipv4Addr::schema(registry), Ipv6Addr::schema(registry)];

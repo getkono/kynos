@@ -1,13 +1,8 @@
 //! Dates and times, whichever library an application brings.
 //!
-//! The shapes live here and the backends below map their types onto them, so
-//! that `date-time-local` is defined once. Two backends emitting the same
-//! concept differently would be a contract that changes with a feature flag.
-//!
-//! Every format named here is registered. `date`, `date-time` and `duration`
-//! are in the JSON Schema Validation vocabulary; `date-time-local` and
-//! `time-local` are OAI Format Registry entries for "RFC 3339 ... without the
-//! timezone component", which is exactly what the offset-less types are.
+//! The shapes live here and the backends below map onto them, so a concept's
+//! contract does not change with a feature flag. Every format here is
+//! registered.
 
 use kynos_openapi::{Schema as OpenApiSchema, model::schema::types::SchemaType};
 
@@ -33,9 +28,7 @@ pub(super) fn instant() -> OpenApiSchema {
 
 /// Wall-clock date and time, carrying no offset.
 ///
-/// Not `date-time`. The offset-less types serialize without one and their
-/// deserializers reject one, so claiming `date-time` would advertise an input
-/// the service answers 400 for.
+/// Not `date-time`, which requires the offset these types refuse.
 pub(super) fn local_date_time() -> OpenApiSchema {
     formatted(SchemaType::String, "date-time-local")
 }
@@ -47,10 +40,7 @@ pub(super) fn local_time() -> OpenApiSchema {
 
 /// An ISO 8601 duration.
 ///
-/// Only a backend that writes one may claim this, which is why the two are not
-/// symmetric: chrono's `TimeDelta` serializes as a `[seconds, nanos]` array,
-/// the shape `std::time::Duration` is already refused for, so chrono
-/// contributes no duration at all.
+/// Only jiff writes one; chrono's `TimeDelta` serializes as an array.
 #[cfg(feature = "time-jiff")]
 pub(super) fn duration() -> OpenApiSchema {
     formatted(SchemaType::String, "duration")
