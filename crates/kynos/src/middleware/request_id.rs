@@ -42,6 +42,58 @@ impl RequestIdSource for Counter {
     }
 }
 
+/// A dependency-free source of 128-bit identifiers, written as 32 lowercase
+/// hex digits.
+///
+/// Each identifier is a per-process counter passed through a keyed hash whose
+/// key the process draws at random when the source is built. An identifier
+/// therefore names one request across restarts and across a fleet, and reveals
+/// neither how many requests came before it nor which process minted it.
+///
+/// Unpredictable only as far as the standard library's keyed hasher is, so it
+/// is a correlation handle and never a secret: do not authorize anything by it.
+///
+/// ```
+/// use kynos::middleware::request_id::{Random, RequestId};
+///
+/// let request_id = RequestId::new().source(Random::new());
+/// # let _ = request_id;
+/// ```
+#[derive(Debug, Default)]
+pub struct Random {
+    key: std::hash::RandomState,
+    next: AtomicU64,
+}
+
+impl Random {
+    /// A source keyed afresh from the operating system's randomness.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The 128 bits identifier `n` maps to.
+    fn bits(&self, n: u64) -> u128 {
+        use std::hash::BuildHasher;
+
+        // Two halves of one keyed hash, told apart by the second tuple member.
+        let high = self.key.hash_one((n, 0_u8));
+        let low = self.key.hash_one((n, 1_u8));
+
+        (u128::from(high) << 64) | u128::from(low)
+    }
+}
+
+impl RequestIdSource for Random {
+    fn next_id(&self) -> http::HeaderValue {
+        // Only uniqueness matters; nothing is ordered against this.
+        let n = self.next.fetch_add(1, Ordering::Relaxed);
+
+        http::HeaderValue::from_str(&format!("{:032x}", self.bits(n)))
+            .expect("hex digits are a field value")
+    }
+}
+
 /// A header group that can carry a correlation identifier.
 ///
 /// [`RequestId`] builds the group it declares from an identifier through
@@ -283,3 +335,6 @@ where
         Ok(next.run(request).await.with_headers(headers))
     }
 }
+
+#[cfg(test)]
+mod tests;
