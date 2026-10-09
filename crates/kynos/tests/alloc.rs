@@ -663,7 +663,10 @@ fn a_capture_is_what_a_path_parameter_costs() {
 #[test]
 fn a_forwarded_element_costs_no_allocation_of_its_own() {
     let service = router()
-        .trusted_proxies(kynos::http::forwarded::TrustedProxies::hops(1))
+        .trusted_proxies(kynos::http::forwarded::TrustedProxies::hops(
+            kynos::http::forwarded::ProxyHeader::Forwarded,
+            1,
+        ))
         .build(())
         .expect("a describable router");
 

@@ -763,6 +763,13 @@ request." A limiter reading it unasked would let a client choose the bucket it
 counts against — a limit that looks like one and is not, which is worse than
 none.
 
+Trust also names the one field the trusted hops write: `ProxyHeader::Forwarded`
+or `ProxyHeader::XForwarded`, and only that one is read. A proxy appends to one
+and passes the other through as the client sent it, so the request cannot be
+what chooses between them. Neither is a default, because guessing wrong is the
+same spoof: an AWS ALB appends to `X-Forwarded-For`, and a service reading
+`Forwarded` behind it lets the client write its own address.
+
 ### A response no type predicts
 
 The soundness invariant is *emitted ⊇ observable responses* for the responses

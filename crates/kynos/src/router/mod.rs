@@ -681,9 +681,13 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// would let any client choose the address its rate limit counts against.
     ///
     /// ```no_run
-    /// use kynos::{Router, http::forwarded::TrustedProxies};
+    /// use kynos::{
+    ///     Router,
+    ///     http::forwarded::{ProxyHeader, TrustedProxies},
+    /// };
     ///
-    /// let router = Router::<()>::new().trusted_proxies(TrustedProxies::hops(1));
+    /// let router =
+    ///     Router::<()>::new().trusted_proxies(TrustedProxies::hops(ProxyHeader::XForwarded, 1));
     /// # let _ = router;
     /// ```
     #[must_use]
