@@ -287,6 +287,15 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// — a `HashMap`, a `BTreeMap` or an `Unchecked` over a map, not a type that
 /// refers to one — and a key type's `propertyNames` does not survive it.
 ///
+/// A concrete type takes its identifier as its component name, and a field
+/// referring back to it is a `$ref`. A generic type takes none, since every
+/// instantiation would share it, and is inlined, so one naming itself — by its
+/// identifier or as `Self` — in a member its schema describes is a compile
+/// error: its description would never end. Make the recursive type concrete,
+/// or implement `Schema` by hand returning a `name()`. Generic types reaching
+/// each other are past what the derive sees, and building the document panics
+/// naming the type rather than overflowing the stack.
+///
 /// # Rejected, because serde and the schema would disagree
 ///
 /// - `#[serde(with = ...)]`, `serialize_with`, `deserialize_with` on a field or
