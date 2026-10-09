@@ -2,8 +2,6 @@
 
 mod unrecognised;
 
-// The whole module is 3.2-only, so the gate sits here rather than on each of
-// its eighteen walkers.
 #[cfg(feature = "openapi32")]
 mod walk;
 
@@ -14,8 +12,7 @@ use crate::model::document::Document;
 #[cfg(feature = "openapi32")]
 use crate::validate::violation::pointer_token;
 
-// Everything below the document itself is reached only while collecting 3.2
-// blockers, which a build without `openapi32` cannot have any of.
+// Reached only while collecting 3.2 blockers.
 #[cfg(feature = "openapi32")]
 use crate::model::{
     body::{encoding::Encoding, media_type::MediaType},
@@ -34,16 +31,14 @@ use crate::model::{
 
 /// Lists the constructs in a document that OpenAPI 3.1 cannot express.
 ///
-/// Each entry is a location, suitable for telling the caller what stands in the
-/// way of emitting the document as 3.1. Two kinds are listed:
+/// Each entry is a location. Two kinds are listed:
 ///
 /// - each 3.2-only field the model types, which only a build with the
 ///   `openapi32` feature can hold;
 /// - in every build, each field the model does not recognise, kept in an
 ///   object's [`Extensions`](crate::model::extensions::Extensions) because its
-///   name lacks the `x-` prefix. A build without `openapi32` parses every 3.2
-///   field there, and any build parses a `$ref` written as a `content` entry
-///   there, so neither is relabelled as 3.1.
+///   name lacks the `x-` prefix (where a build without `openapi32` keeps every
+///   3.2 field).
 #[must_use]
 pub fn three_two_only_constructs(document: &Document) -> Vec<String> {
     let mut blockers = Vec::new();
@@ -57,10 +52,9 @@ pub fn three_two_only_constructs(document: &Document) -> Vec<String> {
 ///
 /// Each is a key without the `x-` prefix kept in an object's
 /// [`Extensions`](crate::model::extensions::Extensions), at the location it was
-/// written. These are the blockers [`three_two_only_constructs`] lists in every
-/// build. A build with `openapi32` types every 3.2 field, so there each one is
-/// a field the model holds at neither version, such as a misspelling or an
-/// extension missing its prefix, and emitting at 3.2 instead does not type it.
+/// written: the blockers [`three_two_only_constructs`] lists in every build.
+/// With `openapi32`, each is a field neither version holds, such as a
+/// misspelling or an extension missing its prefix.
 #[must_use]
 pub fn unrecognised_fields(document: &Document) -> Vec<String> {
     let mut found = Vec::new();
@@ -106,9 +100,7 @@ fn collect_three_two_fields(document: &Document, blockers: &mut Vec<String>) {
 
 /// Visits each present item of a `RefOr` map, at the pointer it lives at.
 ///
-/// A `RefOr::Ref` is skipped rather than followed: it names an object defined
-/// elsewhere in the document, and that definition is walked where it is
-/// written. Following it here would report one construct once per reference.
+/// A `RefOr::Ref` is skipped: its target is walked where it is defined.
 #[cfg(feature = "openapi32")]
 fn for_each_item<'a, T: 'a>(
     section: &str,

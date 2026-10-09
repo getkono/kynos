@@ -1,13 +1,9 @@
 //! The `x-kynos-*` annotations: what a waiver leaves on a description.
 //!
-//! Kynos only lets an application build an API it can describe. Where an
-//! escape hatch is taken anyway, the description does not quietly lose the
-//! affected part of the service — it records that the part exists and that
-//! Kynos did not verify it. These are the field names and shapes that record
-//! carries, so that a producer and a checker agree on it by construction
-//! rather than by convention.
+//! Where an escape hatch is taken, the description records that the affected
+//! part exists and that Kynos did not verify it, rather than dropping it. These
+//! are the field names and shapes of that record.
 //!
-//! Two records, because there are two situations:
 //!
 //! | Situation | Record | Why |
 //! | --- | --- | --- |
@@ -27,16 +23,13 @@ use crate::model::{
 
 /// The annotation marking a schema as deliberately unconstrained.
 ///
-/// Kynos attaches this wherever a handler used the explicit permissive type, so
-/// that "this payload is unchecked" is visible in the published description
-/// rather than only in the Rust source.
+/// Kynos attaches this wherever a handler used the explicit permissive type.
 pub const UNCHECKED_SCHEMA_ANNOTATION: &str = "x-kynos-unchecked";
 
 /// The annotation marking one operation as emitted but unverified.
 ///
-/// Carries an [`Opaque`]. The operation stays in `paths`: an omission is
-/// invisible to the consumer that trusts the description, which is strictly
-/// worse than a flag it can act on.
+/// Carries an [`Opaque`]. The operation stays in `paths`, since an omission is
+/// invisible to a consumer.
 pub const OPAQUE_OPERATION_ANNOTATION: &str = "x-kynos-opaque";
 
 /// The annotation listing routes no path template can express.
@@ -53,10 +46,8 @@ pub const NOT_AUTHORITATIVE_ANNOTATION: &str = "x-kynos-document-not-authoritati
 
 /// Why part of a service is not verifiably described.
 ///
-/// Deliberately not `Copy`: the wire form has to survive a description written
-/// by a newer Kynos, which means carrying a reason this build does not know as
-/// [`Unrecognized`](OpaqueReason::Unrecognized) rather than failing to read the
-/// record at all.
+/// Not `Copy`: a reason written by a newer Kynos is carried as
+/// [`Unrecognized`](OpaqueReason::Unrecognized).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[non_exhaustive]
@@ -78,27 +69,19 @@ pub enum OpaqueReason {
 
     /// The route leaves HTTP, so no version of the specification covers it.
     ///
-    /// OpenAPI describes request/response semantics. A connection that has
-    /// upgraded away from HTTP has no vocabulary here, and inventing one would
-    /// produce an entry no consumer could act on.
+    /// A connection that has upgraded away from HTTP has no OpenAPI vocabulary.
     ProtocolUpgrade,
 
     /// The route serves a tree of files whose membership is not fixed.
     ///
-    /// A catch-all like every other, so [`UntypedRoute`](Self::UntypedRoute)
-    /// would be true of it — but it reads identically to a business API someone
-    /// wildcarded, and the two deserve different amounts of alarm. A consumer
-    /// meeting this knows the undescribed part of the service is a directory of
-    /// files rather than an operation nobody wrote down, and a CI gate can
-    /// tolerate exactly this one.
+    /// A specific [`UntypedRoute`](Self::UntypedRoute), distinguished so a
+    /// consumer or CI gate can tolerate a directory of files alone.
     StaticAssets,
 
     /// A reason recorded by a version of Kynos that knows more than this one.
     ///
-    /// Preserved verbatim so the record round-trips. An older reader must not
-    /// turn a description it merely does not fully understand into one it
-    /// reports as malformed -- and must not drop the reason when it writes the
-    /// document back out.
+    /// Preserved verbatim so the record round-trips rather than reading as
+    /// malformed.
     #[serde(untagged)]
     Unrecognized(String),
 }
@@ -181,8 +164,7 @@ impl Opaque {
 
     /// Whether `operation` carries the annotation at all.
     ///
-    /// True even when the value is malformed, so that a description Kynos
-    /// cannot read is still treated as unverified rather than as clean.
+    /// True even when the value is malformed, so it still reads as unverified.
     #[must_use]
     pub fn is_annotated(operation: &Operation) -> bool {
         operation
@@ -193,10 +175,8 @@ impl Opaque {
 
     /// Reads the marker from an operation.
     ///
-    /// `Ok(None)` means the operation carries no marker. A reason this build
-    /// does not know is *not* an error — it round-trips as
-    /// [`OpaqueReason::Unrecognized`] — so an error here means the value was
-    /// hand-written into a shape Kynos never emits.
+    /// `Ok(None)` means the operation carries no marker. An unknown reason is
+    /// not an error; it reads as [`OpaqueReason::Unrecognized`].
     ///
     /// # Errors
     ///
@@ -216,9 +196,7 @@ impl Opaque {
     /// # Errors
     ///
     /// Returns [`MalformedAnnotation`] when the operation already carries an
-    /// unreadable marker, rather than replacing it. Overwriting would delete a
-    /// waiver someone recorded, which is the one thing this whole mechanism
-    /// exists to prevent.
+    /// unreadable marker, rather than overwriting a recorded waiver.
     ///
     /// # Panics
     ///
@@ -237,12 +215,9 @@ impl Opaque {
 
 /// A route the description cannot express, recorded rather than dropped.
 ///
-/// `pattern` is the router's own matching syntax, verbatim. It is deliberately
-/// not a [`PathTemplate`](crate::PathTemplate): minting a template for a
-/// catch-all would put a claim in `paths` that the service does not honour —
-/// either about the path, or about a parameter whose value always contains an
-/// unescaped `/`. A consumer gets something visible, greppable and diffable
-/// instead of a plausible lie.
+/// `pattern` is the router's own matching syntax, verbatim, not a
+/// [`PathTemplate`](crate::PathTemplate): any template minted for a catch-all
+/// would claim something in `paths` the service does not honour.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct OpaqueRoute {
@@ -250,9 +225,6 @@ pub struct OpaqueRoute {
     pub pattern: String,
 
     /// The literal prefix the pattern is anchored at, if any.
-    ///
-    /// Recorded so that a reader can tell which part of the URL space the
-    /// route claims without parsing the router's matching syntax.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix: Option<String>,
 
@@ -317,14 +289,12 @@ impl OpaqueRoute {
 
     /// Reads every recorded route from a document.
     ///
-    /// An absent annotation reads as an empty list, since recording nothing is
-    /// the same claim as recording an empty list.
+    /// An absent annotation reads as an empty list.
     ///
     /// # Errors
     ///
     /// Returns [`MalformedAnnotation`] when the annotation is present but
-    /// unreadable. A reason this build does not know is not that case — it
-    /// round-trips as [`OpaqueReason::Unrecognized`].
+    /// unreadable. An unknown reason reads as [`OpaqueReason::Unrecognized`].
     pub fn all(document: &Document) -> Result<Vec<Self>, MalformedAnnotation> {
         let Some(value) = document.extensions.get(OPAQUE_ROUTES_ANNOTATION) else {
             return Ok(Vec::new());
@@ -338,9 +308,7 @@ impl OpaqueRoute {
     /// # Errors
     ///
     /// Returns [`MalformedAnnotation`] when the document already carries an
-    /// unreadable list, rather than replacing it. Appending by overwriting
-    /// would delete every route someone else recorded — silent loss of exactly
-    /// the record this mechanism exists to keep.
+    /// unreadable list, rather than overwriting routes already recorded.
     ///
     /// # Panics
     ///
@@ -376,9 +344,7 @@ impl MalformedAnnotation {
 
 /// Every operation reachable from one path item.
 ///
-/// Callbacks are path items in their own right, and an operation inside one is
-/// as much part of the service as any other — so a waiver taken there has to be
-/// as visible. Boxed because the recursion is not otherwise expressible.
+/// Recurses into callbacks; boxed because the recursion needs it.
 fn item_operations(item: &PathItem) -> Box<dyn Iterator<Item = &Operation> + '_> {
     let declared = item.operations().map(|(_, operation)| operation);
     #[cfg(feature = "openapi32")]
@@ -422,11 +388,8 @@ impl Document {
     /// Whether every operation and route in this document is verifiably
     /// described.
     ///
-    /// This is the property [`NOT_AUTHORITATIVE_ANNOTATION`] negates. Computing
-    /// it rather than reading the stamp is deliberate: the stamp is a summary a
-    /// consumer reads, not the fact itself. An annotation this build cannot
-    /// read counts as unclean, because the alternative is calling a description
-    /// authoritative on the strength of not understanding it.
+    /// The property [`NOT_AUTHORITATIVE_ANNOTATION`] negates, computed rather
+    /// than read from the stamp. An unreadable annotation counts as unclean.
     #[must_use]
     pub fn is_authoritative(&self) -> bool {
         let no_opaque_routes = OpaqueRoute::all(self).is_ok_and(|routes| routes.is_empty());
@@ -435,9 +398,7 @@ impl Document {
 
     /// Brings [`NOT_AUTHORITATIVE_ANNOTATION`] into line with this document.
     ///
-    /// Adds the stamp when something is opaque and removes it when nothing is,
-    /// so that a document edited after the fact cannot keep a stamp it no
-    /// longer earns — or lose one it does.
+    /// Adds the stamp when something is opaque and removes it when nothing is.
     pub fn restamp_authority(&mut self) {
         if self.is_authoritative() {
             self.extensions.remove(NOT_AUTHORITATIVE_ANNOTATION);
