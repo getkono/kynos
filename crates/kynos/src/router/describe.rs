@@ -117,8 +117,10 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         // that serve it, so its bytes cannot predate the document -- and an
         // entry `absorb` or `absorb_router` dropped has already failed the
         // build above, so no half of a mount reaches this unpaired.
+        // The service keeps what this returns, because `Server::prepare` and
+        // the tower conversion still edit the document after this point.
         #[cfg(feature = "docs")]
-        docs::render::render(&self.mounted, &document)?;
+        let published = docs::render::render(&self.mounted, &document)?;
 
         let mut matcher = matchit::Router::new();
         let mut paths: Vec<PathEntry<C>> = Vec::new();
@@ -223,10 +225,13 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             implemented,
         });
 
-        Ok(Service::new(document, move |request| {
+        let service = Service::new(document, move |request| {
             let dispatch = Arc::clone(&dispatch);
             async move { dispatch.serve(request).await }
-        }))
+        });
+        #[cfg(feature = "docs")]
+        let service = service.with_published(published);
+        Ok(service)
     }
 
     /// Assembles the description, and everything found on the way that a
