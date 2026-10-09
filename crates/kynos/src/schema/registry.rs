@@ -4,7 +4,10 @@ use std::collections::HashMap;
 
 use kynos_openapi::{ComponentName, Components, Schema as OpenApiSchema};
 
-use crate::{middleware::contribution::ContributionConflict, schema::Schema};
+use crate::{
+    middleware::contribution::ContributionConflict,
+    schema::{MapKey, Schema},
+};
 
 /// Collects the schemas a description refers to.
 ///
@@ -42,6 +45,9 @@ pub struct Registry {
 
     /// Conflicts [`Registry::resolve`] found, which it cannot return.
     conflicts: Vec<SchemaConflict>,
+
+    /// Map key patterns [`Registry::admit_key_pattern`] refused, deduplicated.
+    key_patterns: Vec<UnenforceableKeyPattern>,
 
     /// Conflicts [`Registry::declare_security_scheme`] found, deduplicated.
     ///
@@ -219,6 +225,44 @@ impl Registry {
         }
     }
 
+    /// Records `K`'s key `pattern` if no check could enforce it: one that does
+    /// not translate from ECMA-262, or any pattern without the `pattern`
+    /// feature.
+    ///
+    /// Recorded rather than returned for [`resolve`](Registry::resolve)'s
+    /// reason, and refused when the router is built rather than at a request,
+    /// where a pattern that does not translate could only be a failure of the
+    /// server. Translating it here also compiles it for the first request.
+    pub(crate) fn admit_key_pattern<K: MapKey>(&mut self, pattern: &str) {
+        #[cfg(feature = "pattern")]
+        let refusal = crate::__private::constraints::pattern::key(pattern).err();
+        #[cfg(not(feature = "pattern"))]
+        let refusal = Some(
+            "`kynos` enforces a pattern with a regular expression engine, which it compiles \
+             in only under its `pattern` feature. Enable it, or drop the pattern: a bound \
+             nothing checks would be described as though something did"
+                .to_owned(),
+        );
+
+        let Some(reason) = refusal else {
+            return;
+        };
+        let refused = UnenforceableKeyPattern {
+            key: std::any::type_name::<K>().to_owned(),
+            pattern: pattern.to_owned(),
+            reason,
+        };
+        if !self.key_patterns.contains(&refused) {
+            self.key_patterns.push(refused);
+        }
+    }
+
+    /// Every key pattern [`admit_key_pattern`](Registry::admit_key_pattern)
+    /// refused, in the order it found them.
+    pub(crate) fn key_pattern_refusals(&self) -> &[UnenforceableKeyPattern] {
+        &self.key_patterns
+    }
+
     /// Every conflict [`resolve`](Registry::resolve) discovered, in the order
     /// it found them.
     pub(crate) fn schema_conflicts(&self) -> &[SchemaConflict] {
@@ -266,6 +310,21 @@ struct Reservation {
 pub struct SchemaConflict {
     /// The contested component name.
     pub name: String,
+}
+
+/// A map key type declared a `pattern` in
+/// [`MapKey::key_constraints`] that no check could enforce.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("the map key `{key}` declares the pattern `{pattern}`, which cannot be enforced: {reason}")]
+pub struct UnenforceableKeyPattern {
+    /// The key type, as [`std::any::type_name`] spells it.
+    pub key: String,
+
+    /// The pattern as declared.
+    pub pattern: String,
+
+    /// Why no check could enforce it.
+    pub reason: String,
 }
 
 #[cfg(test)]

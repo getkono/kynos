@@ -806,7 +806,9 @@ mod multipart {
 /// held in `kynos-macros`, against what the specification says of them.
 #[cfg(feature = "pattern")]
 mod pattern {
-    use super::{BTreeMap, Deserialize, Schema, Value, admits, json, read, refuses};
+    use super::{
+        BTreeMap, Deserialize, Json, Line, Schema, SchemaTrait, Value, admits, json, read, refuses,
+    };
 
     #[derive(Debug, Schema, Deserialize)]
     struct Handle {
@@ -877,5 +879,105 @@ mod pattern {
     async fn a_generic_container_checks_its_pattern_in_every_instantiation() {
         admits::<Labelled<u32>>(json!({ "label": "A", "value": 1 })).await;
         refuses::<Labelled<String>>(json!({ "label": "a", "value": "x" }), &["/label"]).await;
+    }
+
+    /// A map key whose `MapKey::key_constraints` declares `$pattern`, which
+    /// the description emits as `propertyNames.pattern`.
+    macro_rules! patterned_key {
+        ($name:ident, $pattern:literal) => {
+            #[derive(Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+            struct $name(String);
+
+            impl SchemaTrait for $name {
+                fn schema(
+                    registry: &mut kynos::schema::registry::Registry,
+                ) -> kynos::openapi::Schema {
+                    String::schema(registry)
+                }
+            }
+
+            impl kynos::schema::MapKey for $name {
+                fn key_constraints() -> kynos::schema::constraints::Constraints {
+                    let mut constraints = kynos::schema::constraints::Constraints::default();
+                    constraints.pattern = Some($pattern.to_owned());
+                    constraints
+                }
+
+                fn as_member(&self) -> Option<&str> {
+                    Some(&self.0)
+                }
+            }
+        };
+    }
+
+    patterned_key!(Sku, "^[A-Z]{3}-\\d{4}$");
+    patterned_key!(Lookahead, "a(?=b)");
+
+    #[derive(Debug, Schema, Deserialize)]
+    struct Stock {
+        by_sku: BTreeMap<Sku, Line>,
+    }
+
+    #[tokio::test]
+    async fn a_map_key_is_held_to_its_pattern_at_the_map() {
+        admits::<Stock>(json!({ "by_sku": { "ABC-1234": { "quantity": 1 } } })).await;
+        admits::<Stock>(json!({ "by_sku": {} })).await;
+        refuses::<Stock>(
+            json!({ "by_sku": { "abc-1234": { "quantity": 1 } } }),
+            &["/by_sku"],
+        )
+        .await;
+        // ECMA-262's `\d` is ASCII, so ARABIC-INDIC DIGIT THREE is no digit.
+        refuses::<Stock>(
+            json!({ "by_sku": { "ABC-123\u{663}": { "quantity": 1 } } }),
+            &["/by_sku"],
+        )
+        .await;
+        refuses::<Stock>(
+            json!({ "by_sku": { "abc": { "quantity": 0 } } }),
+            &["/by_sku", "/by_sku/abc/quantity"],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn a_key_violation_names_the_key_and_the_pattern_as_declared() {
+        let failures = read::<Stock>(&json!({ "by_sku": { "abc": { "quantity": 1 } } }))
+            .await
+            .expect("refused");
+        assert_eq!(
+            failures,
+            BTreeMap::from([(
+                "/by_sku".to_owned(),
+                "the key `abc` must match the pattern `^[A-Z]{3}-\\d{4}$`".to_owned()
+            )])
+        );
+    }
+
+    #[derive(Debug, Schema, Deserialize)]
+    struct Ledger {
+        by_entry: BTreeMap<Lookahead, Line>,
+    }
+
+    #[kynos::post("/ledgers")]
+    async fn post_ledger(Json(ledger): Json<Ledger>) -> kynos::response::status::NoContent {
+        let _ = ledger;
+        kynos::response::status::NoContent
+    }
+
+    /// A key's pattern is a run-time value, so one no check could enforce is
+    /// refused when the router is built rather than when a request meets it.
+    #[test]
+    fn a_router_refuses_a_key_pattern_no_check_could_enforce() {
+        let router = kynos::Router::<()>::new().mount(kynos::routes![post_ledger]);
+
+        let Err(kynos::Error::KeyPattern(refused)) = router.openapi() else {
+            panic!("a router keying a map by an untranslatable pattern was described");
+        };
+        assert_eq!(refused.pattern, "a(?=b)");
+        assert!(
+            refused.reason.contains("lookaround and backreferences"),
+            "{refused}"
+        );
     }
 }

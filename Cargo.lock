@@ -1295,8 +1295,6 @@ dependencies = [
  "kynos-openapi",
  "proc-macro2",
  "quote",
- "regex",
- "regex-syntax",
  "syn 2.0.119",
 ]
 
@@ -1308,6 +1306,8 @@ dependencies = [
  "http",
  "indexmap",
  "proptest",
+ "regex",
+ "regex-syntax",
  "serde",
  "serde_json",
  "serde_yaml_ng",

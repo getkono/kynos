@@ -37,10 +37,17 @@ yaml = ["dep:serde_yaml_ng"]
 # The impls live here because the orphan rule puts them here: both types are
 # foreign to `kynos`, so `kynos` cannot write them however much it wants to.
 http = ["dep:http"]
+# `pattern`: an ECMA-262 `pattern` translated to the `regex` engine's dialect.
+# Here rather than in `kynos-macros` because both sides of a declaration need
+# it: the derive translates a field's pattern when it expands, and `kynos` a
+# map key's when the router is built, and two translators could disagree.
+pattern = ["dep:regex", "dep:regex-syntax"]
 
 [dependencies]
 http = { workspace = true, optional = true }
 indexmap = { workspace = true, features = ["serde"] }
+regex = { workspace = true, optional = true }
+regex-syntax = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_yaml_ng = { workspace = true, optional = true }

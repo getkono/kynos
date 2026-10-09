@@ -221,3 +221,81 @@ fn an_anonymous_type_reaching_itself_through_a_named_one_terminates() {
         ))
     );
 }
+
+/// A map key whose `key_constraints` declares `$pattern`.
+macro_rules! patterned_key {
+    ($name:ident, $pattern:literal) => {
+        struct $name;
+
+        impl Schema for $name {
+            fn schema(_registry: &mut Registry) -> OpenApiSchema {
+                OpenApiSchema::of_type(SchemaType::String)
+            }
+        }
+
+        impl crate::schema::MapKey for $name {
+            fn key_constraints() -> crate::schema::constraints::Constraints {
+                let mut constraints = crate::schema::constraints::Constraints::default();
+                constraints.pattern = Some($pattern.to_owned());
+                constraints
+            }
+        }
+    };
+}
+
+patterned_key!(Sku, "^[A-Z]{3}$");
+#[cfg(feature = "pattern")]
+patterned_key!(Lookahead, "a(?=b)");
+
+/// A key pattern the engine runs is admitted.
+#[cfg(feature = "pattern")]
+#[test]
+fn a_key_pattern_that_translates_is_admitted() {
+    let mut registry = Registry::new();
+
+    registry.resolve::<std::collections::BTreeMap<Sku, u32>>();
+
+    assert!(registry.key_pattern_refusals().is_empty());
+}
+
+/// A key pattern no check could run is refused once, however many maps key
+/// by its type, and says why.
+#[cfg(feature = "pattern")]
+#[test]
+fn a_key_pattern_that_does_not_translate_is_refused_once() {
+    let mut registry = Registry::new();
+
+    registry.resolve::<std::collections::BTreeMap<Lookahead, u32>>();
+    registry.resolve::<std::collections::HashMap<Lookahead, String>>();
+
+    let [refused] = registry.key_pattern_refusals() else {
+        panic!("one refusal: {:?}", registry.key_pattern_refusals());
+    };
+    assert_eq!(refused.key, std::any::type_name::<Lookahead>());
+    assert_eq!(refused.pattern, "a(?=b)");
+    assert!(
+        refused.reason.contains("lookaround and backreferences"),
+        "{}",
+        refused.reason
+    );
+}
+
+/// Without the engine no key pattern can be checked, so every one is refused
+/// rather than described as though it were.
+#[cfg(not(feature = "pattern"))]
+#[test]
+fn a_key_pattern_is_refused_without_the_pattern_feature() {
+    let mut registry = Registry::new();
+
+    registry.resolve::<std::collections::BTreeMap<Sku, u32>>();
+
+    let [refused] = registry.key_pattern_refusals() else {
+        panic!("one refusal: {:?}", registry.key_pattern_refusals());
+    };
+    assert_eq!(refused.pattern, "^[A-Z]{3}$");
+    assert!(
+        refused.reason.contains("`pattern` feature"),
+        "{}",
+        refused.reason
+    );
+}

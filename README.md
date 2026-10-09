@@ -148,7 +148,7 @@ Each of these is something another Rust framework offers and Kynos does not, and
 | `openapi31` | yes | The OpenAPI 3.1 object model. Baseline. |
 | `openapi32` | no | The 3.2 superset: `itemSchema`, `in: querystring`, `QUERY`, hierarchical tags, `$self`, device authorization |
 | `macros` | yes | Route attributes and derives |
-| `pattern` | no | Enforces `#[schema(pattern = "...")]`, an ECMA-262 regular expression, with the `regex` engine; the derive refuses the key without it |
+| `pattern` | no | Enforces `#[schema(pattern = "...")]`, an ECMA-262 regular expression, with the `regex` engine, and a map key's `MapKey::key_constraints` pattern; the derive refuses the key without it, and the router a key pattern |
 | `server` | yes | The `tokio`/`hyper` server. tokio is the only supported runtime |
 | `http1`, `http2` | yes | Protocol versions |
 | `json` | yes | Application JSON request and response codecs |
