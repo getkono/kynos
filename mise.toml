@@ -684,6 +684,38 @@ rustup toolchain install 1.85 --profile minimal --no-self-update
 cargo +1.85 check --workspace --all-features --exclude kynos-profile
 '''
 
+[tasks."minimal-versions:check"]
+description = "Build the workspace with every direct dependency at its declared lower bound"
+# A requirement in `[workspace.dependencies]` is a promise that its minimum
+# builds, and nothing else tests it: Cargo.lock holds whatever Dependabot last
+# moved it to, so a bound left behind stays green everywhere until an
+# application whose graph holds an older copy fails to resolve or build Kynos.
+#
+# Direct minimums only. A transitive dependency's minimum is its parent's
+# promise, which this tree can neither keep nor fix.
+#
+# The library targets only, not `--all-targets`: a dev-dependency's bound
+# reaches no application, and the resolution still holds them to resolving
+# beside the rest, since Cargo resolves dev-dependencies either way.
+# `kynos-profile` is excluded for `msrv:check`'s reason: it is published
+# nowhere, so its bounds are nobody's promise.
+#
+# `-Z` needs nightly, and a dated one for `fuzz`'s reason: an undated nightly
+# moves under the job between two nights. The resolution rewrites Cargo.lock,
+# so the committed one is put back however the task exits.
+env = { MINIMAL_VERSIONS_TOOLCHAIN = "nightly-2026-06-10" }
+run = '''
+set -eu
+rustup toolchain install "$MINIMAL_VERSIONS_TOOLCHAIN" --profile minimal --no-self-update
+
+lock="$(mktemp)"
+cp Cargo.lock "$lock"
+trap 'cp "$lock" Cargo.lock; rm -f "$lock"' EXIT
+
+cargo +"$MINIMAL_VERSIONS_TOOLCHAIN" update -Z direct-minimal-versions
+cargo +"$MINIMAL_VERSIONS_TOOLCHAIN" check --workspace --all-features --exclude kynos-profile
+'''
+
 [tasks."publish:check"]
 description = "Package every crate exactly as crates.io will receive it"
 # Every other task here builds the working tree, so a file the code needs but
