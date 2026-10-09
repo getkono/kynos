@@ -673,6 +673,34 @@ fn a_network_refuses_what_could_only_be_a_mistake() {
     assert_eq!(Network::new(ip("10.9.9.9"), 8), Ok(net("10.0.0.0/8")));
 }
 
+/// A configured list is read entry by entry, and the first refusal names its
+/// entry, so a startup failure says which line of the configuration is wrong.
+#[test]
+fn a_configured_network_list_is_parsed_or_refused_by_entry() {
+    let entries = vec![String::from("10.1.2.3/8"), String::from("2001:db8::/32")];
+    let trusted =
+        TrustedProxies::parse_networks(ProxyHeader::Forwarded, &entries).expect("two networks");
+    let headers = map(&[("forwarded", "for=203.0.113.7")]);
+
+    let resolved = Forwarded::resolve(&headers, Some(peer("10.4.5.6")), &trusted);
+    assert_eq!(resolved.client(), Some(ip("203.0.113.7")));
+    let resolved = Forwarded::resolve(&headers, Some(peer("2001:db8::9")), &trusted);
+    assert_eq!(resolved.client(), Some(ip("203.0.113.7")));
+
+    let refused = TrustedProxies::parse_networks(
+        ProxyHeader::Forwarded,
+        ["10.0.0.0/8", "::/0", "10.0.0.0/33"],
+    )
+    .expect_err("a /0 entry");
+    assert_eq!(refused.entry(), "::/0");
+    assert_eq!(refused.reason(), InvalidNetwork::EveryAddress);
+    assert_eq!(
+        refused.to_string(),
+        "\"::/0\" is not a network to trust: a `/0` network holds every address there is; \
+         `TrustedProxies::everyone` trusts every peer explicitly"
+    );
+}
+
 /// Trusting everyone is said outright, and it believes the leftmost element of
 /// either family's chain.
 #[test]

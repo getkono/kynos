@@ -515,7 +515,7 @@ So they stay: a longer path is a worse name, and the rule's first clause already
 permits the shorter one. That was settled before v0.1.0, while the surface could
 still have moved for free. `http/forwarded.rs` joined them when its trust policy
 had to name the field its proxies write: `ProxyHeader`, `TrustedProxies`,
-`Network` and `InvalidNetwork` are one policy and the blocks it names, `Forwarded`
+`Network` and its two refusals are one policy and the blocks it names, `Forwarded`
 is what it resolves, and the parsing beneath them is private.
 
 Splitting a module that declares *one* type and a pile of `impl` blocks costs

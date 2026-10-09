@@ -123,6 +123,46 @@ impl TrustedProxies {
         }
     }
 
+    /// Trusts every address in the networks `entries` write as
+    /// `address/prefix`, which write `header`.
+    ///
+    /// For a list read from configuration. Each entry is read as [`Network`]
+    /// reads it, so `/0` is refused here too: say
+    /// [`everyone`](Self::everyone) instead.
+    ///
+    /// ```
+    /// use kynos::http::forwarded::{ProxyHeader, TrustedProxies};
+    ///
+    /// let configured = ["10.0.0.0/8", "2001:db8::/32"];
+    /// let trusted = TrustedProxies::parse_networks(ProxyHeader::XForwarded, configured)?;
+    /// # let _ = trusted;
+    ///
+    /// let refused = TrustedProxies::parse_networks(ProxyHeader::XForwarded, ["0.0.0.0/0"]);
+    /// assert_eq!(refused.unwrap_err().entry(), "0.0.0.0/0");
+    /// # Ok::<(), kynos::http::forwarded::InvalidNetworkEntry>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// The first entry that is not a [`Network`], and why.
+    pub fn parse_networks<I>(header: ProxyHeader, entries: I) -> Result<Self, InvalidNetworkEntry>
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        let networks = entries
+            .into_iter()
+            .map(|entry| {
+                let entry = entry.as_ref();
+                entry.parse().map_err(|reason| InvalidNetworkEntry {
+                    entry: entry.to_owned(),
+                    reason,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self::networks(header, networks))
+    }
+
     /// Trusts every peer, IPv4 and IPv6, which writes `header`.
     ///
     /// Every element of the field is then believed, the leftmost one included,
@@ -325,6 +365,30 @@ pub enum InvalidNetwork {
          peer explicitly"
     )]
     EveryAddress,
+}
+
+/// An entry [`TrustedProxies::parse_networks`] refused, and why.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{entry:?} is not a network to trust: {reason}")]
+pub struct InvalidNetworkEntry {
+    /// The entry as given.
+    entry: String,
+    /// Why it is not a [`Network`].
+    reason: InvalidNetwork,
+}
+
+impl InvalidNetworkEntry {
+    /// The entry as given.
+    #[must_use]
+    pub fn entry(&self) -> &str {
+        &self.entry
+    }
+
+    /// Why it is not a [`Network`].
+    #[must_use]
+    pub fn reason(&self) -> InvalidNetwork {
+        self.reason
+    }
 }
 
 /// What a request's forwarding fields say, once the trust policy has been

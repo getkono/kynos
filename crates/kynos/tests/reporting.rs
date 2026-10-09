@@ -55,6 +55,7 @@ fn a_tls_failure_is_reportable() {
 #[test]
 fn a_network_refusal_is_reportable() {
     reportable::<kynos::http::forwarded::InvalidNetwork>();
+    reportable::<kynos::http::forwarded::InvalidNetworkEntry>();
 }
 
 /// `InvalidAsset` is returned at startup, where a hand-built asset set is
