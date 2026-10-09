@@ -732,7 +732,8 @@ fn read_flow(
         return Err(syn::Error::new(
             key.span(),
             format!(
-                "the `{name}` flow was introduced in OpenAPI 3.2, and this build describes 3.1;                  enable the `openapi32` feature, or declare a flow 3.1 can express"
+                "the `{name}` flow was introduced in OpenAPI 3.2, and this build describes 3.1; \
+                 enable the `openapi32` feature, or declare a flow 3.1 can express"
             ),
         ));
     }
@@ -804,7 +805,8 @@ fn check_oauth2(kind: &Ident, nested: &Nested) -> syn::Result<()> {
     if nested.metadata_url.is_some() && !cfg!(feature = "openapi32") {
         return Err(syn::Error::new(
             kind.span(),
-            "`metadata_url` writes `oauth2MetadataUrl`, which OpenAPI 3.2 introduced, and this              build describes 3.1; enable the `openapi32` feature, or drop it",
+            "`metadata_url` writes `oauth2MetadataUrl`, which OpenAPI 3.2 introduced, and this \
+             build describes 3.1; enable the `openapi32` feature, or drop it",
         ));
     }
 
