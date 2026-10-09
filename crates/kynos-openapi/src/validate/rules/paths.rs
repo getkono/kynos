@@ -158,7 +158,13 @@ impl Validator {
     ) {
         check_parameter_list(location, &item.parameters, components, violations);
         #[cfg(feature = "openapi32")]
-        super::parameters::check_querystring(location, &[], &item.parameters, violations);
+        super::parameters::check_querystring(
+            location,
+            &[],
+            &item.parameters,
+            components,
+            violations,
+        );
 
         let named = item
             .operations()

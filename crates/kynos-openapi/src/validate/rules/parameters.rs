@@ -174,16 +174,24 @@ pub(in crate::validate) fn check_parameter_list(
 /// does not override, then its own. A pair drawn wholly from `inherited` is
 /// skipped, because the path item's own check already reported it once, at
 /// the path item.
+///
+/// Like uniqueness in [`check_parameter_list`], the two rules that compare
+/// entries read what each entry resolves to, overrides included; the
+/// `content` rule reads only the entries written inline.
 #[cfg(feature = "openapi32")]
 pub(in crate::validate) fn check_querystring(
     location: &str,
     inherited: &[RefOr<Parameter>],
     own: &[RefOr<Parameter>],
+    components: &Components,
     violations: &mut Vec<Violation>,
 ) {
-    let own: Vec<&Parameter> = own.iter().filter_map(RefOr::as_item).collect();
+    let resolved = |entry| match resolve_parameter(entry, components) {
+        Resolved::Found(parameter) => Some(parameter),
+        Resolved::Missing | Resolved::Elsewhere => None,
+    };
 
-    for parameter in &own {
+    for parameter in own.iter().filter_map(RefOr::as_item) {
         if parameter.location == ParameterIn::Querystring && parameter.content().is_none() {
             violations.push(Violation::error(
                 location,
@@ -194,6 +202,7 @@ pub(in crate::validate) fn check_querystring(
         }
     }
 
+    let own: Vec<&Parameter> = own.iter().filter_map(resolved).collect();
     let overridden = |parameter: &Parameter| {
         own.iter().any(|mine| {
             mine.location == parameter.location
@@ -203,7 +212,7 @@ pub(in crate::validate) fn check_querystring(
     // Each applying parameter, and whether it is one this location declares.
     let applying: Vec<(&Parameter, bool)> = inherited
         .iter()
-        .filter_map(RefOr::as_item)
+        .filter_map(resolved)
         .filter(|parameter| !overridden(parameter))
         .map(|parameter| (parameter, false))
         .chain(own.iter().map(|parameter| (*parameter, true)))

@@ -1583,6 +1583,28 @@ fn querystring_rules_resolve_a_ref_d_parameter() {
     );
 }
 
+/// An operation's `$ref`'d parameter overrides its path item's of the same
+/// name and location, as an inline one does.
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_ref_d_operation_parameter_overrides_the_path_items_querystring() {
+    use crate::model::reference::{Ref, RefOr};
+
+    let mut operation = Operation::new("listUsers").with_responses(ok_responses());
+    operation
+        .parameters
+        .push(RefOr::Ref(Ref::parameter("Filter")));
+    let mut item = PathItem::new().with_operation(Method::Get, operation);
+    item.parameters.push(RefOr::Item(querystring("filter")));
+    let document = document_with_component_parameter(
+        &[("/users", item)],
+        "Filter",
+        RefOr::Item(querystring("filter")),
+    );
+
+    assert_eq!(querystring_violations(&document), vec![]);
+}
+
 // --- The variant ledger ---------------------------------------------------
 
 /// A variant's name, as an exhaustive match.

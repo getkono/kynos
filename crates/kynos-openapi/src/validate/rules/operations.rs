@@ -122,6 +122,7 @@ impl Validator {
             location,
             &item.parameters,
             &operation.parameters,
+            components,
             violations,
         );
         if let Some(template) = template {
