@@ -78,17 +78,17 @@ pub(crate) fn decode_path_value(
 /// The pairs a raw query string carries, each half decoded to octets, in the
 /// order the target wrote them.
 ///
-/// The one reading of a query string that a derived `QueryParams` group and a
-/// query API key share, so a parameter and a key named alike cannot disagree
-/// about what the client sent. The halves are octets rather than text so a name
-/// is compared as octets and each reader decides what a value that is not UTF-8
-/// means to it.
+/// The one reading of form-encoded pairs that a derived `QueryParams` group, a
+/// query API key and the `Form<T>` body extractor share, so a parameter, a key
+/// and a form field named alike cannot disagree about what the client sent. The
+/// halves are octets rather than text so a name is compared as octets and each
+/// reader decides what a value that is not UTF-8 means to it: a query reader
+/// judges only the pairs it asks for, while `Form<T>` checks every pair.
 ///
 /// Form rules, because OpenAPI requires them of every `in: query` parameter:
 /// `+` is a space and `%2B` a plus sign. An empty pair is skipped, a pair with
 /// no `=` has an empty value, and a malformed escape is kept as the literal `%`
-/// rather than rejected, since a pair its reader never asks for is none of its
-/// business.
+/// rather than rejected, so whether a pair is acceptable is left to its reader.
 pub fn query_pairs(
     query: Option<&str>,
 ) -> impl Iterator<Item = (std::borrow::Cow<'_, [u8]>, std::borrow::Cow<'_, [u8]>)> {

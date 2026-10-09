@@ -128,6 +128,14 @@ struct DigestLogin;
 #[security(mutual_tls)]
 struct PartnerCertificate;
 
+#[derive(SecurityScheme)]
+#[security(oauth2(client_credentials(token_url = "https://auth.example.com/token")))]
+struct Delegated;
+
+#[derive(SecurityScheme)]
+#[security(openid_connect(url = "https://auth.example.com/.well-known/openid-configuration"))]
+struct Federated;
+
 /// The whole `#[problem(...)]` grammar, so the expansion is exercised by a
 /// compiled use rather than only by compile-fail cases.
 ///
@@ -280,6 +288,21 @@ fn an_http_scheme_supplies_its_challenge() {
         Some("Bearer")
     );
     assert_eq!(<SessionCookie as SecuritySchemeTrait>::challenge(), None);
+}
+
+/// An OAuth 2.0 access token and an OpenID Connect one are bearer tokens read
+/// from `Authorization`, so a 401 refusing either names `Bearer`, as RFC 6750
+/// section 3 says.
+#[test]
+fn a_delegated_scheme_challenges_for_a_bearer_token() {
+    assert_eq!(
+        <Delegated as SecuritySchemeTrait>::challenge(),
+        Some("Bearer")
+    );
+    assert_eq!(
+        <Federated as SecuritySchemeTrait>::challenge(),
+        Some("Bearer")
+    );
 }
 
 // The count that ties the witnesses above to the macros `kynos-macros`
@@ -1362,6 +1385,45 @@ fn a_cookie_value_that_is_not_ascii_is_refused_naming_its_cookie() {
     let decoded = Session::decode(&jar(&[b"other=\xff; session_id=s-42"]))
         .expect("an unreadable undeclared cookie is ignored");
     assert_eq!(decoded.session, "s-42");
+}
+
+/// A derived cookie is read as it was sent, percent-encoding and all, and a
+/// 3.2 build says so with `style: cookie`, which applies and removes no
+/// encoding. The `form` style an unstated one defaults to would tell a client
+/// to percent-encode a value the handler then receives still encoded. A 3.1
+/// build has no style that says this, and states none.
+#[cfg(feature = "cookie")]
+#[test]
+fn a_derived_cookie_is_read_raw_and_described_as_read() {
+    use kynos::{
+        extract::params::cookie::CookieParams,
+        http::{HeaderMap, HeaderValue, header::COOKIE},
+    };
+
+    let mut headers = HeaderMap::new();
+    headers.append(
+        COOKIE,
+        HeaderValue::from_static("session_id=Hello%2C%20world%21"),
+    );
+    let decoded = Session::decode(&headers).expect("a declared cookie is read");
+    assert_eq!(decoded.session, "Hello%2C%20world%21");
+
+    let mut registry = kynos::schema::registry::Registry::new();
+    let described =
+        serde_json::to_value(Session::parameters(&mut registry)).expect("parameters serialize");
+    #[cfg_attr(not(feature = "openapi32"), allow(unused_mut))]
+    let mut expected = serde_json::json!({
+        "name": "session_id",
+        "in": "cookie",
+        "required": true,
+        "schema": emitted::<String>(),
+    });
+    #[cfg(feature = "openapi32")]
+    {
+        expected["style"] = serde_json::json!("cookie");
+        expected["explode"] = serde_json::json!(true);
+    }
+    assert_eq!(described, serde_json::json!([expected]));
 }
 
 // --- The derived header decoder reads only a header that is text -----------

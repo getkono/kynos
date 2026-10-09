@@ -31,7 +31,7 @@ use syn::{
 };
 
 use crate::derive::{
-    common::{named_fields, reject_duplicate_names},
+    common::{NameCase, named_fields, reject_duplicate_names},
     schema::{property_names, split_renamed_field, split_rule},
 };
 
@@ -60,7 +60,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
         ));
     }
     let names = property_names(input, fields);
-    reject_duplicate_names(fields, &names, "part")?;
+    reject_duplicate_names(fields, &names, "part", NameCase::Sensitive)?;
 
     let declared: Vec<Declared<'_>> = fields
         .named

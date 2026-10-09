@@ -1,6 +1,6 @@
 //! Collecting the schemas a description refers to.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use kynos_openapi::{ComponentName, Components, Schema as OpenApiSchema};
 
@@ -25,11 +25,12 @@ pub struct Registry {
     /// describe itself so the two bodies can be compared.
     origins: HashMap<String, &'static str>,
 
-    /// Names claimed by a descent that has not finished.
+    /// The descents that have not finished, outermost first.
     ///
-    /// A reserved name resolves to a `$ref` whose target does not exist yet,
-    /// which is what breaks a cycle.
-    reserved: HashSet<String>,
+    /// A name reserved by the same type resolves to a `$ref` whose target does
+    /// not exist yet, which is what breaks a cycle. Identity is the
+    /// [`std::any::type_name`] [`origins`](Registry::origins) uses.
+    reserved: Vec<Reservation>,
 
     /// Conflicts [`Registry::resolve`] found, which it cannot return.
     conflicts: Vec<SchemaConflict>,
@@ -69,12 +70,14 @@ impl Registry {
         let reference = OpenApiSchema::component(&key);
         let origin = std::any::type_name::<T>();
 
-        // Mid-descent: the body under this name is still being built, so the
-        // reference stands in for it. Short-circuiting here is what terminates
-        // a cycle, and it is also why a *different* type reaching a name while
-        // that name is being defined is aliased rather than compared -- there
-        // is nothing to compare it against yet.
-        if self.reserved.contains(&key) {
+        // Mid-descent into this very type: the body under this name is still
+        // being built, so the reference stands in for it. Short-circuiting
+        // here is what terminates a cycle.
+        if self
+            .reserved
+            .iter()
+            .any(|reservation| reservation.name == key && reservation.origin == origin)
+        {
             return reference;
         }
 
@@ -83,22 +86,45 @@ impl Registry {
             return reference;
         }
 
-        self.reserved.insert(key.clone());
+        self.reserved.push(Reservation {
+            name: key.clone(),
+            origin,
+            rivals: Vec::new(),
+        });
         let schema = T::schema(self);
-        self.reserved.remove(&key);
+        let Some(reservation) = self.reserved.pop() else {
+            unreachable!("the reservation pushed above is the innermost one");
+        };
+
+        // A different type reached a name another descent still holds -- a
+        // second `Item` from another module, or `Box<T>` inside `T`, which
+        // shares the name and not the `type_name`. Neither can be told apart
+        // until the holder's body exists, so the body is kept for it to be
+        // compared against then.
+        if let Some(holder) = self
+            .reserved
+            .iter_mut()
+            .find(|reservation| reservation.name == key)
+        {
+            // Rivals file on the outermost reservation of a name, so one with
+            // a holder beneath it never collected any.
+            debug_assert!(reservation.rivals.is_empty());
+            holder.rivals.push(schema);
+            return reference;
+        }
 
         match self.register(&name, schema) {
-            Ok(reference) => {
-                // First claimant keeps the name, so a second type that agrees
-                // structurally does not take ownership of it.
-                self.origins.entry(key).or_insert(origin);
-                reference
-            }
-            Err(conflict) => {
+            // First claimant keeps the name, so a second type that agrees
+            // structurally does not take ownership of it.
+            Ok(_) => _ = self.origins.entry(key).or_insert(origin),
+            Err(conflict) => self.conflicts.push(conflict),
+        }
+        for rival in reservation.rivals {
+            if let Err(conflict) = self.register(&name, rival) {
                 self.conflicts.push(conflict);
-                reference
             }
         }
+        reference
     }
 
     /// Registers a schema under an explicit name and returns a `$ref` to it.
@@ -173,6 +199,20 @@ impl Registry {
     }
 }
 
+/// A component name held by a descent that has not finished.
+#[derive(Debug)]
+struct Reservation {
+    /// The component name.
+    name: String,
+
+    /// The [`std::any::type_name`] of the type being described under it.
+    origin: &'static str,
+
+    /// Bodies other types described under the same name meanwhile, compared
+    /// against this one once it is registered.
+    rivals: Vec<OpenApiSchema>,
+}
+
 /// Two different types claimed the same component name.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 // The remedy has to name something that exists. `#[derive(Schema)]` takes a
@@ -188,3 +228,6 @@ pub struct SchemaConflict {
     /// The contested component name.
     pub name: String,
 }
+
+#[cfg(test)]
+mod tests;

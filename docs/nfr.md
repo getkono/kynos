@@ -38,7 +38,7 @@ Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`,
 `gungraun` over Valgrind, rustdoc with
 `missing_docs = "deny"`, and `cargo-semver-checks` — the last through both
 release-plz, at default features and fail-open, and `mise run semver:check`, at
-every feature. Not yet present: `cargo-public-api`, `cargo-fuzz`, `cargo-udeps`. `criterion` is
+every feature — and `cargo-deny`. Not yet present: `cargo-public-api`, `cargo-fuzz`, `cargo-udeps`. `criterion` is
 not on this list and will not be: benchmarks live in `kynos-bench`.
 
 ## Thresholds
@@ -286,7 +286,7 @@ decision rather than a deferral.** The figures are
 ceiling at a measured value, but a ceiling is only worth setting where the
 quantity it guards is one this repository controls, and this one is mostly not:
 each delta is the codec's code *and* its dependency's — `serde_json`,
-`serde_urlencoded`, `multer`, `prost`, `async-compression` — plus the payload
+`serde_html_form`, `multer`, `prost`, `async-compression` — plus the payload
 type's two derives. A ceiling over that would fail on an upstream release that
 grew `multer` and pass through a Kynos extractor that doubled, which is the
 gate-that-cannot-fail-honestly [`performance.md`](performance.md#the-boundary)
@@ -347,7 +347,7 @@ belongs with [`security.md`](security.md) rather than here.
 | correctness | An `If-None-Match` on an unsafe method answers 412 rather than being ignored | — | `absent`, and recorded in [`middleware.md`](middleware.md): 412 is a status `NotModified` does not declare, and widening `Short` would add it to every covered operation |
 | correctness | A non-error response to an unsafe method drops what was stored for that target | [`tests/cache.rs`](../crates/kynos/tests/cache.rs) over a live store-then-write-then-read sequence, with a control asserting a refused write drops nothing, plus a unit case over the status classes section 4.4 defines | `enforced` |
 | security | A forwarding field is believed only where the application named the hop that wrote it | [`http/forwarded/tests.rs`](../crates/kynos/src/http/forwarded/tests.rs) over the hop, address and network policies including a forged chain, plus [`tests/rate_limit.rs`](../crates/kynos/tests/rate_limit.rs) asserting an unconfigured service ignores a claimed address | `enforced` |
-| security | An unsafe request a browser says came from another site is refused | [`csrf/tests.rs`](../crates/kynos/src/middleware/csrf/tests.rs) over every rule in order, including `Sec-Fetch-Site` winning over a claimed trusted `Origin`, plus a live exchange in [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) | `enforced` |
+| security | An unsafe request a browser says came from another site is refused | [`csrf/tests.rs`](../crates/kynos/src/middleware/csrf/tests.rs) over every rule in order, including a trusted `Origin` admitted over `Sec-Fetch-Site: cross-site`, plus a live exchange in [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) | `enforced` |
 | correctness | Content-coding negotiation follows section 12.5.3, including the wildcard form of an identity refusal | [`middleware/compression/`](../crates/kynos/src/middleware/compression/) over a table of every rule the section states | `enforced` |
 | security | A response setting a cookie is never stored | `every_refusal_has_a_case` over the whole `Unstorable` set, counted against its variants | `enforced` |
 | correctness | A negotiated language is one the operation declares, and is stated on every response that negotiated one | [`response/language/tests.rs`](../crates/kynos/src/response/language/tests.rs) sweeping every range-and-tag pair over a closed alphabet against both RFC 4647 schemes transcribed independently, plus [`tests/description.rs`](../crates/kynos/tests/description.rs) for which statuses carry the field and [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) driving both arms against a live exchange | `enforced` |
@@ -359,7 +359,7 @@ belongs with [`security.md`](security.md) rather than here.
 | correctness | An encoded stream decodes to exactly what the handler produced | [`compression/streaming.rs`](../crates/kynos/src/middleware/compression/streaming.rs) round-tripping a multi-frame body through both latency modes, and asserting the two modes differ in frame count and in size | `enforced` |
 | correctness | A stored content coding carries a validator of its own, and a range is calculated over the octets that were sent | [`tests/assets.rs`](../crates/kynos/tests/assets.rs) over a fixture holding real `.br`, `.gz` and `.zst` siblings: two representations get two tags, a resume across them is refused, and a 304 answers per representation | `enforced` |
 | correctness | A ranged representation is never held whole: a source is asked for a span and returns that span | [`response/range/source/tests.rs`](../crates/kynos/src/response/range/source/tests.rs), over a fake that records the widest span anything asked for | `enforced` |
-| correctness | A ranged delivery answers 200, 206, 304 and 416 where RFC 9110 sections 13 and 14 say each belongs, and evaluates the conditions before the range | [`tests/ranged.rs`](../crates/kynos/tests/ranged.rs) over a source that is not a filesystem | `enforced` |
+| correctness | A ranged delivery answers 200, 206, 304, 412 and 416 where RFC 9110 sections 13 and 14 say each belongs, and evaluates the conditions in section 13.2.2's order before the range | [`tests/ranged.rs`](../crates/kynos/tests/ranged.rs) over a source that is not a filesystem | `enforced` |
 | correctness | A ranged body never ends shorter than the `Content-Length` its head already sent: a source that stops making progress fails the stream instead | [`response/range/source/tests.rs`](../crates/kynos/src/response/range/source/tests.rs), over a source that answers a span with nothing, and one that answers it short and is asked again | `enforced` |
 | correctness | A response that advertises `Accept-Ranges` is never content-coded | [`tests/middleware.rs`](../crates/kynos/tests/middleware.rs)'s `partial` for the rule and its control, and `ranged_assets` resuming an asset download against the tag it was served with | `enforced` |
 | security | A compressed request body cannot cost more memory than the route's declared limit | [`tests/middleware.rs`](../crates/kynos/tests/middleware.rs)'s `decompression`, refusing a body that passes a limit on its encoded size and expands past the decoded one, with a control inside both bounds | `enforced` |
@@ -472,7 +472,7 @@ where someone mounting a cap will meet it.
 
 AGENTS.md: *"A module becomes a directory once it holds two
 independently-changing concerns … Passing ~400 lines excluding tests is when to
-ask that question, not an answer to it."* Twenty-nine files under `crates/*/src` are
+ask that question, not an answer to it."* Thirty-two files under `crates/*/src` are
 past that line and asked it, and `containment:check` holds that number so it can
 only move on purpose.
 
@@ -483,12 +483,15 @@ public types lengthens every one of their paths, because no re-export may
 preserve the old one. `error/rejection.rs` is the clearest case: it is one of
 them, it declares every rejection type, and splitting it would turn
 `error::rejection::PathRejection` into
-`error::rejection::path::PathRejection`. Sixteen of the twenty-nine are that
+`error::rejection::path::PathRejection`. Seventeen of the thirty-two are that
 shape, worth roughly a hundred public paths between them — and each is one
 cohesive family, which is precisely what the concern test says may stay a file.
 So they stay: a longer path is a worse name, and the rule's first clause already
 permits the shorter one. That was settled before v0.1.0, while the surface could
-still have moved for free.
+still have moved for free. `http/forwarded.rs` joined them when its trust policy
+had to name the field its proxies write: `ProxyHeader`, `TrustedProxies` and
+`Forwarded` are one policy and what it resolves, and the parsing beneath them is
+private.
 
 Splitting a module that declares *one* type and a pile of `impl` blocks costs
 nothing, because the type stays declared where it was and an inherent `impl` may
@@ -503,7 +506,7 @@ own reason to change. The concern test answers yes there, so
 The budget is the honest record of what stayed. It falls when a module is split,
 and raising it means saying in the same commit why a new module needs the room.
 
-Three of them crossed the line after v0.1.0, and each was argued for as it did.
+Five of them crossed the line after v0.1.0, and each was argued for as it did.
 `response/status.rs` is the shape above rather than a new argument. It declares
 six public types — `Location`, `NoContent`, `Created`, `Accepted`, `Redirect`
 and `ValidRedirectCode` — so splitting it would turn `response::status::Created` into
@@ -533,6 +536,21 @@ constraints — each a question the shape code asks of the same list. What pushe
 it over was reading both sides of a split `rename`, so a member now has the name
 serde writes and the one it reads. One concern, so one file.
 
+`emit/downgrade/unrecognised.rs` was born past the line, and is private, so no
+split costs a path. It visits every object carrying `extensions` to report the
+fields 3.1 cannot read that a flattened map absorbed. Its length is the
+exhaustive destructuring of each object, which is what makes a field added to
+the model a compile error there rather than a map it silently stops reading.
+Every function in it asks the same question of a different object, so a split
+would separate the visits from each other and from the pointer they share. One
+concern, so one file.
+
+`server/mod.rs` is the shape above. It declares `Server` and `BoundServer`, so
+splitting the builder from what it builds would turn `server::Server` into
+`server::builder::Server`. What pushed it over was one more setter,
+`request_body_idle_timeout`, whose documentation is the part a caller reads
+before choosing `None`; the timer itself lives in `middleware/limits/`.
+
 ## Dependencies
 
 Containment rows enforcing the graph in
@@ -549,7 +567,7 @@ fails the build when a crate is named outside the module that owns it.
 | compatibility | `tower`, `tower-layer` and `tower-service` are named only in `unchecked.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `http-body` and `http-body-util` are named only at the body sites architecture.md lists | `mise run containment:check` | `enforced` |
 | compatibility | `async-compression` is named only under `middleware/compression/` and `middleware/decompression/` | `mise run containment:check` | `enforced` |
-| compatibility | `serde_urlencoded` is named only in `extract/body/form.rs`, `response/codec/form.rs` and `test/mod.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `serde_html_form` is named only in `extract/body/form.rs`, `response/codec/form.rs` and `test/mod.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `tracing` is named only under `server/` and in `middleware/trace.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `futures-core` is named only under `response/stream/` and `extract/body/json_lines/` and in `http/body.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `multer` is named only in `extract/body/multipart.rs` | `mise run containment:check` | `enforced` |
@@ -631,11 +649,15 @@ open against a `kynos-otel` that may never be written.
 | reliability | Nothing a package publishes reads a path outside that package | `mise run containment:check`, resolving every `include_bytes!`, `include_str!` and `CARGO_MANIFEST_DIR` path literal against the package that holds it, and exempting only what the manifest's `exclude` names | `enforced`. `publish:check` cannot see this: its verify step builds the library, not the test targets, so a file the archive omits and a test target names resolves in the working tree and nowhere else |
 | compatibility | A release reports whether its API broke | `cargo-semver-checks` via release-plz, verdict in the release pull request body | `partial`: default features only, and fail-open — it is evidence for the reviewer, not a gate |
 | compatibility | A pull request reports whether it broke the public API, across every feature | `mise run semver:check`, dedicated CI job, comparing the workspace at `--all-features` against the last published version | `partial`: advisory before 1.0 — the verdict goes to the job summary rather than failing the pull request. Pre-1.0 a minor bump is how an intentional break is declared, and the baseline is the *published* version, so one break landed for the next minor release is reported by every later pull request until that release ships; blocking would put a red mark meaning "the release has not happened yet" on all of them. The job still fails when the tool produces no verdict at all, which is the fail-open hole the release-time copy has. Reaching 1.0, or an explicit change to the `master` ruleset, is what would make it required |
+| security | No crate in the graph, at any feature, carries a RustSec advisory or is yanked, unless `deny.toml` waives it with a reason | `mise run deny:check` (`cargo deny check`), the `Dependencies` CI job | `enforced`, and blocking. It can fail a pull request that changed no dependency, when an advisory is published against something already locked: that is the point of it. One waiver today, RUSTSEC-2026-0009 in `time`, reached only through the `rcgen` dev-dependency and fixed only above the MSRV |
+| compatibility | Every dependency is under a licence an MIT application can redistribute | `mise run deny:check`, against `deny.toml`'s permissive allow list | `enforced` |
+| reliability | Every dependency comes from crates.io, and no requirement is a wildcard | `mise run deny:check` | `enforced` |
+| reliability | Every declared dependency lower bound builds | `cargo -Z direct-minimal-versions`, nightly | `planned`: the bounds do not resolve together today, so the job cannot start green ([#501](https://github.com/getkono/kynos/issues/501)) |
 | reliability | Every reachable feature combination compiles | `mise run features:check` (`cargo hack --feature-powerset`) | `enforced` |
 | reliability | Every test target compiles and runs at baseline features, not only `--all-features` | `mise run test:baseline` | `enforced` |
 | reliability | Every test target is built at the feature sets its own `#[cfg]` gates decide, not only at all-on, default and baseline | `mise run lint:codecs`, six `-p kynos --all-targets` Clippy runs over `openapi31 + macros` and each optional codec in turn | `enforced` for the codec flags, which is where a per-feature-gated target lives today; a target gated on some other flag would need its set added to that list |
 | reliability | Tests are hermetic; no shared state, no ordering dependence, no retries | `cargo-nextest` process isolation, `retries = 0`, guarded by `crates/kynos/tests/hermeticity.rs` | `enforced` |
-| dx | No module grows past the size the layout rule allows without that being recorded | `mise run containment:check`, against a module-size budget of 29 files stated below | `enforced` as a ratchet: the count cannot rise silently, and lowering it is what splitting a module looks like |
+| dx | No module grows past the size the layout rule allows without that being recorded | `mise run containment:check`, against a module-size budget of 32 files stated below | `enforced` as a ratchet: the count cannot rise silently, and lowering it is what splitting a module looks like |
 | dx | A worktree's `target/` stays near the 17 GiB [PR #126](https://github.com/getkono/kynos/pull/126) measured, against the 44 GiB before it | `mise run containment:check`, holding [`.cargo/config.toml`](../.cargo/config.toml) to declaring `profile.dev.debug` and `profile.dev.package."*".debug`, and to carrying no top-level table but `profile` | `partial`: it holds the cause and not the size. No job takes a `du -sh target` reading, so a build that grows for some other reason passes; the two keys' *values* are unchecked, and so are the two `CARGO_INCREMENTAL = "0"` task envs #126 added beside them. What it closes is the half nobody can review — below |
 | reliability | Panic recovery refuses to compile under `panic = "abort"` | `mise run panic:check` | `enforced` |
 | reliability | Commits follow Conventional Commits, merge commits exempt | `convco`, twice over: the `conventional-commit` `commit-msg` step runs `mise run commits:message` over the one message being written, exempting a merge on the presence of the `MERGE_HEAD` *file*; `mise run commits:check` and the `commits` CI job run `convco check` over a range, where the exemption is convco's own parent-count filter. `mise run commits:test` runs *both* halves over the same commits, since a divergence between them fails neither | `enforced`, with one case out of reach: amending an *existing* merge commit runs the hook with `MERGE_HEAD` already gone over a commit that still has two parents, so the hook rejects what the range form exempts, and `--no-verify` is the escape. `commits:test` pins that residual in both directions, so closing or widening it fails this row |

@@ -1611,10 +1611,10 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
          {"crates/kynos/src/middleware/compression/", "crates/kynos/src/middleware/decompression/"},
          "`async-compression` is named only under `middleware/compression/` and "
          "`middleware/decompression/`"),
-        (("serde_urlencoded",), ONLY_IN,
+        (("serde_html_form",), ONLY_IN,
          {"crates/kynos/src/extract/body/form.rs", "crates/kynos/src/response/codec/form.rs",
           "crates/kynos/src/test/mod.rs"},
-         "`serde_urlencoded` is named only in `extract/body/form.rs`, `response/codec/form.rs` "
+         "`serde_html_form` is named only in `extract/body/form.rs`, `response/codec/form.rs` "
          "and `test/mod.rs`"),
         (("tracing",), ONLY_IN,
          {"crates/kynos/src/server/", "crates/kynos/src/middleware/trace.rs"},

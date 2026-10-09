@@ -311,7 +311,7 @@ impl<C> TestRequest<'_, C> {
     #[cfg(feature = "form")]
     #[must_use]
     pub fn query_string<T: serde::Serialize>(mut self, value: &T) -> Self {
-        let encoded = serde_urlencoded::to_string(value).expect("a serializable query");
+        let encoded = serde_html_form::to_string(value).expect("a serializable query");
         if !encoded.is_empty() {
             let separator = if self.path.contains('?') { '&' } else { '?' };
             self.path.push(separator);
@@ -374,7 +374,7 @@ impl<C> TestRequest<'_, C> {
     #[cfg(feature = "form")]
     #[must_use]
     pub fn form<T: serde::Serialize>(self, body: &T) -> Self {
-        let encoded = serde_urlencoded::to_string(body).expect("a serializable form body");
+        let encoded = serde_html_form::to_string(body).expect("a serializable form body");
         self.body(
             kynos_openapi::model::body::mime_names::APPLICATION_FORM_URLENCODED,
             Bytes::from(encoded.into_bytes()),

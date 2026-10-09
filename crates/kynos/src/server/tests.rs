@@ -890,6 +890,109 @@ async fn repeated_shutdown_trigger_forces_an_incomplete_drain() {
     client.await.expect("client task joins");
 }
 
+/// Makes every later `accept` on `listener` fail the way that ends its loop:
+/// on Linux, shutting a listening socket down for reading leaves it refusing
+/// `accept` with `EINVAL`, an error the backoff gives up on at once.
+/// `listener` is a duplicate of the one the server holds, so it reaches the
+/// same socket.
+#[cfg(all(target_os = "linux", feature = "http1"))]
+fn break_listener(listener: &std::net::TcpListener) {
+    socket2::SockRef::from(listener)
+        .shutdown(std::net::Shutdown::Read)
+        .expect("a listening socket shuts down");
+}
+
+/// A server whose listener `break_listener` can reach, serving `service`.
+#[cfg(all(target_os = "linux", feature = "http1"))]
+async fn breakable_server(
+    service: crate::router::service::Service<()>,
+    shutdown_timeout: std::time::Duration,
+) -> (
+    std::net::SocketAddr,
+    std::net::TcpListener,
+    tokio::task::JoinHandle<crate::Result<()>>,
+) {
+    let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .expect("loopback listener binds");
+    let handle = listener.try_clone().expect("listener duplicates");
+    let bound = crate::server::Server::new(service)
+        .listener(listener)
+        .shutdown_timeout(shutdown_timeout)
+        .prepare()
+        .await
+        .expect("standard listener converts to Tokio ownership");
+    let address = bound.local_addrs()[0];
+    (address, handle, tokio::spawn(bound.serve()))
+}
+
+#[cfg(all(target_os = "linux", feature = "http1"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_listener_that_stops_accepting_drains_what_it_accepted() {
+    let (service, started, release) = blocking_service();
+    let (address, listener, server) =
+        breakable_server(service, std::time::Duration::from_secs(25)).await;
+    let client = tokio::task::spawn_blocking(move || request_http1(address));
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), started.notified())
+        .await
+        .expect("the request reaches the handler");
+    break_listener(&listener);
+    // The backoff gives up on the first `EINVAL`; this outlasts it with
+    // margin, so the listener has certainly failed before the request is let go.
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    assert!(
+        !server.is_finished(),
+        "the accepted request must keep draining"
+    );
+
+    release.notify_one();
+    let response = client.await.expect("client task joins");
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    assert!(response.ends_with("ok"), "{response}");
+    let error = tokio::time::timeout(std::time::Duration::from_secs(1), server)
+        .await
+        .expect("the server exits once its connections drain")
+        .expect("server task joins")
+        .expect_err("the failed listener is reported");
+    assert!(
+        matches!(
+            error,
+            crate::Error::Server(crate::server::error::ServerError::Accept { address: failed, .. })
+                if failed == address
+        ),
+        "{error:?}"
+    );
+}
+
+#[cfg(all(target_os = "linux", feature = "http1"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_listener_that_stops_accepting_drains_under_the_shutdown_timeout() {
+    let (service, started, _release) = blocking_service();
+    let (address, listener, server) =
+        breakable_server(service, std::time::Duration::from_millis(200)).await;
+    let client = tokio::task::spawn_blocking(move || request_http1(address));
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), started.notified())
+        .await
+        .expect("the request reaches the handler");
+    break_listener(&listener);
+
+    let error = tokio::time::timeout(std::time::Duration::from_secs(2), server)
+        .await
+        .expect("a request that never finishes is cut at the shutdown timeout")
+        .expect("server task joins")
+        .expect_err("the failed listener is reported");
+    assert!(
+        matches!(
+            error,
+            crate::Error::Server(crate::server::error::ServerError::Accept { address: failed, .. })
+                if failed == address
+        ),
+        "{error:?}"
+    );
+    client.await.expect("client task joins");
+}
+
 #[cfg(feature = "http2")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn http2_prior_knowledge_serves_over_a_real_socket() {
@@ -1024,6 +1127,214 @@ async fn an_http2_peer_that_never_acknowledges_a_ping_is_disconnected() {
         .expect("server exits cleanly");
 }
 
+/// The header-read timeout the silent-connection cases configure.
+///
+/// Short, so a case that passes is quick, and far below
+/// [`SILENT_CONNECTION_BOUND`], so one that fails is not a slow pass.
+#[cfg(feature = "http1")]
+const HEAD_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// How long a silent-connection case waits for the server to close it.
+#[cfg(feature = "http1")]
+const SILENT_CONNECTION_BOUND: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The first-head deadline is the header-read timeout counted from accept, and
+/// there is none when the timeout is disabled or would overflow the clock.
+#[cfg(feature = "http1")]
+#[test]
+fn the_first_head_deadline_counts_the_header_read_timeout_from_accept() {
+    use std::time::{Duration, Instant};
+
+    let accepted = Instant::now();
+    let deadline = |timeout| {
+        Http1Config::default()
+            .header_read_timeout(timeout)
+            .first_head_deadline(accepted)
+    };
+
+    assert_eq!(deadline(Some(HEAD_TIMEOUT)), Some(accepted + HEAD_TIMEOUT));
+    assert_eq!(deadline(None), None);
+    assert_eq!(deadline(Some(Duration::MAX)), None);
+}
+
+/// A plaintext server whose header-read timeout is [`HEAD_TIMEOUT`].
+#[cfg(feature = "http1")]
+async fn head_timed_server() -> (
+    std::net::SocketAddr,
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<crate::error::Result<()>>,
+) {
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let bound = crate::server::Server::new(test_service())
+        .http1(Http1Config::default().header_read_timeout(Some(HEAD_TIMEOUT)))
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+            let _ = shutdown_receiver.await;
+        }))
+        .prepare()
+        .await
+        .expect("loopback listener binds");
+    let address = bound.local_addrs()[0];
+    (address, shutdown_sender, tokio::spawn(bound.serve()))
+}
+
+/// Reads `stream` until the server closes it, failing past
+/// [`SILENT_CONNECTION_BOUND`].
+///
+/// The read's own result is discarded: a closed connection reports zero bytes
+/// and a reset one an error, and both are the server letting go of it.
+#[cfg(feature = "http1")]
+async fn assert_server_closes(stream: &mut (impl tokio::io::AsyncRead + Unpin), case: &str) {
+    use tokio::io::AsyncReadExt as _;
+
+    let mut discarded = Vec::new();
+    let closed =
+        tokio::time::timeout(SILENT_CONNECTION_BOUND, stream.read_to_end(&mut discarded)).await;
+    assert!(
+        closed.is_ok(),
+        "{case}: the server still holds the connection {SILENT_CONNECTION_BOUND:?} after \
+         accepting it, past a {HEAD_TIMEOUT:?} header-read timeout"
+    );
+}
+
+/// A connection that never sends a byte is closed at the header-read timeout.
+///
+/// With both protocols compiled and no ALPN, hyper-util reads the first bytes
+/// to choose a codec, and hyper's own header-read timer only starts once that
+/// codec runs -- so the wait before it, which is the whole of this
+/// connection's life, had no timer, and it held a `max_connections` permit for
+/// as long as the client kept the socket open.
+#[cfg(feature = "http1")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_connection_that_never_speaks_is_closed_at_the_header_read_timeout() {
+    let (address, shutdown_sender, server) = head_timed_server().await;
+
+    let mut stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    assert_server_closes(&mut stream, "a silent connection").await;
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// A connection that stops inside the HTTP/2 preface is closed the same way.
+///
+/// `PRI` is a prefix of the preface, so the protocol sniff can decide nothing
+/// from it and waits for the rest, which never comes.
+#[cfg(feature = "http1")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_connection_that_stops_inside_the_http2_preface_is_closed() {
+    use tokio::io::AsyncWriteExt as _;
+
+    let (address, shutdown_sender, server) = head_timed_server().await;
+
+    let mut stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    stream.write_all(b"PRI").await.expect("the prefix writes");
+    assert_server_closes(&mut stream, "a connection stopped inside the preface").await;
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// An HTTP/2 connection that finishes its preface and opens no stream is
+/// closed at the header-read timeout.
+///
+/// hyper's client answers every PING itself, which is the peer the issue
+/// describes: keep-alive cannot tell it from a live one, and HTTP/2 has no
+/// header-read timer of its own, so the first request head is what it is held
+/// to.
+#[cfg(all(feature = "http1", feature = "http2"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_http2_connection_that_opens_no_stream_is_closed() {
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+
+    let (address, shutdown_sender, server) = head_timed_server().await;
+
+    let stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    let (sender, connection) = hyper::client::conn::http2::handshake::<
+        _,
+        _,
+        http_body_util::Empty<bytes::Bytes>,
+    >(TokioExecutor::new(), TokioIo::new(stream))
+    .await
+    .expect("HTTP/2 handshake completes");
+    // The connection future ends once the server closes the socket, whatever
+    // it reports doing so.
+    let closed = tokio::time::timeout(SILENT_CONNECTION_BOUND, connection).await;
+    assert!(
+        closed.is_ok(),
+        "an HTTP/2 connection with no stream is still held {SILENT_CONNECTION_BOUND:?} after \
+         accepting it, past a {HEAD_TIMEOUT:?} header-read timeout"
+    );
+    drop(sender);
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// The bound is on the first request head only: a connection that produced one
+/// in time is not closed when the timeout passes.
+///
+/// HTTP/2 rather than HTTP/1, since an idle HTTP/1 connection is held to the
+/// header-read timeout between requests by hyper itself; an HTTP/2 one has no
+/// such timer, so a second request long after the first still finds the
+/// connection open only if the bound stopped at the first head.
+#[cfg(all(feature = "http1", feature = "http2"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_connection_that_sent_a_request_outlives_the_header_read_timeout() {
+    use http_body_util::Empty;
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+
+    let (address, shutdown_sender, server) = head_timed_server().await;
+
+    let stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    let (mut sender, connection) =
+        hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+            .await
+            .expect("HTTP/2 handshake completes");
+    let connection = tokio::spawn(connection);
+    let request = || {
+        hyper::Request::builder()
+            .uri("http://localhost/")
+            .body(Empty::<bytes::Bytes>::new())
+            .expect("request builds")
+    };
+
+    sender
+        .send_request(request())
+        .await
+        .expect("the first request succeeds");
+    tokio::time::sleep(HEAD_TIMEOUT * 3).await;
+    sender
+        .send_request(request())
+        .await
+        .expect("the connection survives its header-read timeout once a request arrived");
+
+    drop(sender);
+    connection.abort();
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
 #[cfg(feature = "http2")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shutdown_drains_an_active_http2_stream() {
@@ -1125,6 +1436,7 @@ async fn shutdown_cancels_an_incomplete_tls_handshake() {
         ),
         shutdown_timeout: std::time::Duration::from_secs(25),
         max_connections: NonZeroUsize::new(1).expect("one is non-zero"),
+        request_body_idle_timeout: None,
     };
     let (stop_sender, stop_receiver) = tokio::sync::watch::channel(super::Lifecycle::Running);
     let mut connection = tokio::spawn(crate::server::connection::serve_connection(
@@ -1261,6 +1573,59 @@ fn mutual_tls_rejects_an_existing_incompatible_component() {
         Err(crate::server::error::ServerError::MutualTlsConflict)
     ));
     assert!(document.security.is_empty());
+}
+
+/// A mounted reference serves the description the bound server reports,
+/// mutual TLS included.
+///
+/// `prepare` adds the scheme after `Router::build` rendered the reference, so
+/// this is the one edit a reference can only carry if the served bytes follow
+/// the document. Here rather than in `tests/docs.rs` because the bound server
+/// hands its service to nothing public short of a mutual-TLS handshake.
+#[cfg(all(feature = "tls", feature = "docs"))]
+#[tokio::test]
+async fn a_mounted_reference_serves_the_mutual_tls_the_bound_server_reports() {
+    use http_body_util::BodyExt as _;
+
+    let issued = authority();
+    let client_authentication =
+        crate::server::tls::ClientCertificateConfig::from_pem_roots(issued.certificate.as_bytes())
+            .expect("CA parses");
+    let tls = crate::server::tls::TlsConfig::from_pem(
+        issued.server.certificate.as_bytes(),
+        issued.server.key.as_bytes(),
+    )
+    .expect("server identity parses")
+    .require_client_certificate(client_authentication);
+    let service = crate::Router::<()>::new()
+        .docs(crate::router::docs::Docs::scalar())
+        .build(())
+        .expect("a describable router");
+
+    let bound = crate::server::Server::new(service)
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .tls(tls)
+        .prepare()
+        .await
+        .expect("TLS listener prepares");
+    let expected = bound.openapi().to_json().expect("a serializable document");
+    assert!(
+        expected.contains(crate::server::tls::document::MUTUAL_TLS_NAME),
+        "the premise of this case is that the bound document declares mutual TLS"
+    );
+
+    let request = hyper::Request::get("/openapi.json")
+        .body(crate::http::body::Body::empty())
+        .expect("request builds");
+    let reply = bound.service.call(request).await;
+    let served = reply
+        .into_body()
+        .collect()
+        .await
+        .expect("a buffered description")
+        .to_bytes();
+
+    assert_eq!(String::from_utf8_lossy(&served), expected);
 }
 
 #[cfg(all(feature = "tls", feature = "http1"))]
@@ -1572,6 +1937,51 @@ async fn a_client_contradicting_its_negotiated_protocol_is_refused() {
         .expect("server exits cleanly");
 }
 
+/// A TLS connection that negotiated `protocol` and then says nothing is closed
+/// at the header-read timeout, counted from accept.
+///
+/// The pin waits for the client's first byte before it builds a codec, and the
+/// TLS handshake timeout ends before that wait starts, so the wait had no timer.
+#[cfg(all(feature = "tls", feature = "http1"))]
+async fn assert_silent_tls_connection_is_closed(protocol: &[u8]) {
+    use tokio_rustls::rustls::pki_types::ServerName;
+
+    let (address, authority, shutdown_sender, server) = tls_server_with(test_service(), |server| {
+        server.http1(Http1Config::default().header_read_timeout(Some(HEAD_TIMEOUT)))
+    })
+    .await;
+
+    let stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    let mut stream = alpn_connector(authority.as_bytes(), &[protocol])
+        .connect(
+            ServerName::try_from("localhost").expect("valid DNS name"),
+            stream,
+        )
+        .await
+        .expect("the handshake succeeds");
+    assert_server_closes(&mut stream, "a silent pinned TLS connection").await;
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+#[cfg(all(feature = "tls", feature = "http1"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_silent_tls_connection_pinned_to_http1_is_closed() {
+    assert_silent_tls_connection_is_closed(b"http/1.1").await;
+}
+
+#[cfg(all(feature = "tls", feature = "http1", feature = "http2"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_silent_tls_connection_pinned_to_h2_is_closed() {
+    assert_silent_tls_connection_is_closed(b"h2").await;
+}
+
 /// A TLS listener serving `service`, and the authority a client must trust.
 ///
 /// Both ALPN cases need the same three parts -- an authority, the server
@@ -1586,6 +1996,20 @@ async fn tls_server(
     tokio::sync::oneshot::Sender<()>,
     tokio::task::JoinHandle<crate::error::Result<()>>,
 ) {
+    tls_server_with(service, |server| server).await
+}
+
+/// [`tls_server`], with `configure` applied to the server before it prepares.
+#[cfg(feature = "tls")]
+async fn tls_server_with(
+    service: crate::router::service::Service<()>,
+    configure: impl FnOnce(crate::server::Server<()>) -> crate::server::Server<()>,
+) -> (
+    std::net::SocketAddr,
+    String,
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<crate::error::Result<()>>,
+) {
     let issued = authority();
     let tls = crate::server::tls::TlsConfig::from_pem(
         issued.server.certificate.as_bytes(),
@@ -1593,7 +2017,7 @@ async fn tls_server(
     )
     .expect("server identity parses");
     let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
-    let bound = crate::server::Server::new(service)
+    let bound = configure(crate::server::Server::new(service))
         .bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .tls(tls)
         .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
@@ -3149,5 +3573,456 @@ fn the_configured_http1_header_cap_is_the_one_the_driver_is_told() {
             configured,
             "a cap of {configured} must reach the driver"
         );
+    }
+}
+
+/// The idle timeout on a request body: a client that stops sending part-way
+/// through a body held the connection, its permit and the handler task for as
+/// long as it kept the socket open, because nothing below the handler bounded
+/// the wait for the next frame.
+mod request_body_idle {
+    use std::time::Duration;
+
+    use crate::{
+        middleware::limits::request_body::{
+            DEFAULT_REQUEST_BODY_IDLE_TIMEOUT, validate_request_body_idle_timeout,
+        },
+        server::{Server, error::ServerError},
+    };
+
+    /// The idle timeout the stalling cases configure: short, so a passing case
+    /// is quick, and far below [`STALL_BOUND`].
+    #[cfg(any(feature = "http1", feature = "http2"))]
+    const IDLE: Duration = Duration::from_millis(200);
+
+    /// How long a stalling case waits for the server's answer.
+    #[cfg(any(feature = "http1", feature = "http2"))]
+    const STALL_BOUND: Duration = Duration::from_secs(5);
+
+    /// The body a stalling client declares, of which it sends only `abc`.
+    #[cfg(feature = "http1")]
+    const STALLED_HEAD: &[u8] =
+        b"POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\nabc";
+
+    #[test]
+    fn a_server_bounds_a_request_body_by_default() {
+        assert_eq!(DEFAULT_REQUEST_BODY_IDLE_TIMEOUT, Duration::from_secs(30));
+        assert_eq!(
+            Server::new(super::test_service()).request_body_idle_timeout,
+            Some(DEFAULT_REQUEST_BODY_IDLE_TIMEOUT),
+            "a server bounds a stalled body unless told not to"
+        );
+    }
+
+    #[test]
+    fn a_timeout_that_expires_at_once_is_refused() {
+        assert!(matches!(
+            validate_request_body_idle_timeout(Some(Duration::ZERO)),
+            Err(ServerError::InvalidConfiguration(
+                "request_body_idle_timeout must be non-zero when enabled"
+            ))
+        ));
+        validate_request_body_idle_timeout(None).expect("waiting indefinitely is a decision");
+        validate_request_body_idle_timeout(Some(Duration::from_nanos(1)))
+            .expect("any positive limit is accepted");
+    }
+
+    /// `prepare` refuses what the validator refuses, rather than binding with it.
+    #[tokio::test]
+    async fn prepare_refuses_a_timeout_that_expires_at_once() {
+        let error = Server::new(super::test_service())
+            .request_body_idle_timeout(Some(Duration::ZERO))
+            .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .prepare()
+            .await
+            .expect_err("a zero idle timeout prevents preparation");
+        assert!(matches!(
+            error,
+            crate::Error::Server(ServerError::InvalidConfiguration(
+                "request_body_idle_timeout must be non-zero when enabled"
+            ))
+        ));
+    }
+
+    /// A limit past the end of the clock -- `Duration::MAX` -- leaves the body
+    /// waiting rather than panicking in `Instant + Duration`, and never marks
+    /// the request stalled.
+    #[tokio::test]
+    async fn a_limit_past_the_clock_leaves_the_body_waiting() {
+        use std::{
+            pin::pin,
+            task::{Context, Waker},
+        };
+
+        use http_body::Body as _;
+
+        use crate::{
+            http::{StatusCode, Version},
+            middleware::limits::request_body::{answer, bounded},
+        };
+
+        let (body, stall) = bounded(Silent, Some(Duration::MAX), Version::HTTP_11, |_| {
+            unreachable!("a body that is not over is bounded")
+        });
+        let mut body = pin!(body);
+        let mut context = Context::from_waker(Waker::noop());
+        for _ in 0..2 {
+            assert!(
+                body.as_mut().poll_frame(&mut context).is_pending(),
+                "a limit the clock cannot reach never fires"
+            );
+        }
+
+        let response = answer(crate::http::Response::default(), stall);
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "a body that only waited is not a stall"
+        );
+    }
+
+    /// The bound body reports its inner body's end and size, so a reader that
+    /// sizes a buffer or stops early sees the body it would have unbounded.
+    #[test]
+    fn a_bounded_body_reports_its_inner_end_and_size() {
+        use std::{
+            pin::pin,
+            task::{Context, Waker},
+        };
+
+        use bytes::Bytes;
+        use http_body::Body as _;
+        use http_body_util::Full;
+
+        use crate::{http::Version, middleware::limits::request_body::bounded};
+
+        let (body, _) = bounded(
+            Full::new(Bytes::from_static(b"abc")),
+            Some(IDLE_UNREACHED),
+            Version::HTTP_11,
+            |_| unreachable!("a body that is not over is bounded"),
+        );
+        let mut body = pin!(body);
+        assert!(
+            !body.is_end_stream(),
+            "a body with a frame left is not over"
+        );
+        assert_eq!(body.size_hint().exact(), Some(3));
+
+        let mut context = Context::from_waker(Waker::noop());
+        let frame = body.as_mut().poll_frame(&mut context);
+        assert!(
+            matches!(frame, std::task::Poll::Ready(Some(Ok(_)))),
+            "the inner frame passes through"
+        );
+        assert!(
+            body.is_end_stream(),
+            "a body whose inner body ended is over"
+        );
+        assert_eq!(body.size_hint().exact(), Some(0));
+    }
+
+    /// A body that stalls ends with an error naming the limit it passed, and
+    /// its request is answered 408 -- closing an HTTP/1 connection, and
+    /// carrying no `Connection` field on HTTP/2, which hyper would strip before
+    /// a client could see it.
+    #[tokio::test]
+    async fn a_stalled_body_names_its_limit_and_closes_only_http1() {
+        use http_body_util::BodyExt as _;
+
+        use crate::{
+            http::{HeaderValue, StatusCode, Version, header},
+            middleware::limits::request_body::{answer, bounded},
+        };
+
+        let limit = Duration::from_millis(1);
+        for (version, connection) in [
+            (Version::HTTP_10, Some(HeaderValue::from_static("close"))),
+            (Version::HTTP_11, Some(HeaderValue::from_static("close"))),
+            (Version::HTTP_2, None),
+        ] {
+            let (mut body, stall) = bounded(Silent, Some(limit), version, |_| {
+                unreachable!("a body that is not over is bounded")
+            });
+            let error = tokio::time::timeout(IDLE_UNREACHED, body.frame())
+                .await
+                .expect("the limit fires before the bound")
+                .expect("a stall ends the body with a frame")
+                .expect_err("the frame is the stall");
+            assert_eq!(
+                error.to_string(),
+                "no request body frame arrived within 1ms"
+            );
+
+            let response = answer(crate::http::Response::default(), stall);
+            assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+            assert_eq!(
+                response.headers().get(header::CONNECTION),
+                connection.as_ref(),
+                "{version:?}"
+            );
+        }
+    }
+
+    /// A body whose peer never sends another frame.
+    struct Silent;
+
+    impl http_body::Body for Silent {
+        type Data = bytes::Bytes;
+        type Error = std::convert::Infallible;
+
+        fn poll_frame(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+            std::task::Poll::Pending
+        }
+    }
+
+    /// A limit no unit test waits out.
+    const IDLE_UNREACHED: Duration = Duration::from_secs(60);
+
+    /// A service that reads its whole body, as every buffering codec does, and
+    /// answers with its length -- or 400 when the read failed, which is what
+    /// the codecs make of a failed read and what a stall must not reach the
+    /// client as.
+    #[cfg(any(feature = "http1", feature = "http2"))]
+    fn reading_service() -> crate::router::service::Service<()> {
+        use http_body_util::BodyExt as _;
+
+        let document = kynos_openapi::Document::new(
+            kynos_openapi::SpecVersion::V3_1,
+            kynos_openapi::Info::new("Test", "1"),
+        );
+        crate::router::service::Service::new(document, |request: crate::http::Request| async move {
+            let (status, body) = match request.into_body().collect().await {
+                Ok(collected) => (
+                    crate::http::StatusCode::OK,
+                    collected.to_bytes().len().to_string(),
+                ),
+                Err(error) => (crate::http::StatusCode::BAD_REQUEST, error.to_string()),
+            };
+            let mut response =
+                crate::http::Response::new(crate::http::body::Body::from_bytes(body.into()));
+            *response.status_mut() = status;
+            response
+        })
+    }
+
+    /// A plaintext server over [`reading_service`] with `idle` as its limit.
+    #[cfg(any(feature = "http1", feature = "http2"))]
+    async fn idle_timed_server(
+        idle: Option<Duration>,
+    ) -> (
+        std::net::SocketAddr,
+        tokio::sync::oneshot::Sender<()>,
+        tokio::task::JoinHandle<crate::error::Result<()>>,
+    ) {
+        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let bound = Server::new(reading_service())
+            .request_body_idle_timeout(idle)
+            .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+                let _ = shutdown_receiver.await;
+            }))
+            .prepare()
+            .await
+            .expect("loopback listener binds");
+        let address = bound.local_addrs()[0];
+        (address, shutdown_sender, tokio::spawn(bound.serve()))
+    }
+
+    /// Everything the server sends before it closes, failing past
+    /// [`STALL_BOUND`].
+    #[cfg(feature = "http1")]
+    async fn read_until_closed(stream: &mut tokio::net::TcpStream) -> String {
+        use tokio::io::AsyncReadExt as _;
+
+        let mut response = Vec::new();
+        tokio::time::timeout(STALL_BOUND, stream.read_to_end(&mut response))
+            .await
+            .expect("the server answers and closes within the bound")
+            .expect("the response reads");
+        String::from_utf8(response).expect("the response is text")
+    }
+
+    /// RFC 9110 §15.5.9: a request the server stopped waiting for is a 408,
+    /// and the `close` option keeps the client from framing what it sends next
+    /// as a new request -- so the server also lets go of the socket.
+    #[cfg(feature = "http1")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_http1_body_that_stalls_is_answered_408_and_the_connection_closed() {
+        use tokio::io::AsyncWriteExt as _;
+
+        let (address, shutdown_sender, server) = idle_timed_server(Some(IDLE)).await;
+
+        let mut stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("server accepts");
+        stream
+            .write_all(STALLED_HEAD)
+            .await
+            .expect("request writes");
+        let response = read_until_closed(&mut stream).await.to_ascii_lowercase();
+
+        assert!(
+            response.starts_with("http/1.1 408 request timeout\r\n"),
+            "{response}"
+        );
+        assert!(response.contains("\r\nconnection: close\r\n"), "{response}");
+        assert!(
+            response.contains("\r\ncontent-type: application/problem+json\r\n"),
+            "{response}"
+        );
+
+        let _ = shutdown_sender.send(());
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
+    }
+
+    /// The limit is on the gap, not the total: a body whose every gap is under
+    /// it is read whole however long it takes altogether.
+    #[cfg(feature = "http1")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_http1_body_arriving_steadily_outlives_its_idle_timeout() {
+        use tokio::io::AsyncWriteExt as _;
+
+        const LIMIT: Duration = Duration::from_secs(1);
+        const GAP: Duration = Duration::from_millis(300);
+
+        let (address, shutdown_sender, server) = idle_timed_server(Some(LIMIT)).await;
+
+        let mut stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("server accepts");
+        stream
+            .write_all(
+                b"POST / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 10\r\n\r\n",
+            )
+            .await
+            .expect("head writes");
+        // Five gaps of 300 ms: 1.5 s altogether, past the limit, and never 1 s
+        // without a byte.
+        for chunk in [&b"ab"[..], b"cd", b"ef", b"gh", b"ij"] {
+            tokio::time::sleep(GAP).await;
+            stream.write_all(chunk).await.expect("chunk writes");
+        }
+        let response = read_until_closed(&mut stream).await;
+
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+        assert!(response.ends_with("\r\n\r\n10"), "{response}");
+
+        let _ = shutdown_sender.send(());
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
+    }
+
+    /// `None` waits: a body that stalls well past [`IDLE`] is still read once
+    /// the rest of it arrives.
+    #[cfg(feature = "http1")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_disabled_idle_timeout_waits_for_the_rest_of_the_body() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        let (address, shutdown_sender, server) = idle_timed_server(None).await;
+
+        let mut stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("server accepts");
+        stream
+            .write_all(STALLED_HEAD)
+            .await
+            .expect("request writes");
+
+        let mut early = [0_u8; 1];
+        let answered = tokio::time::timeout(IDLE * 3, stream.read(&mut early)).await;
+        assert!(
+            answered.is_err(),
+            "the server answered a body it was told to wait for"
+        );
+
+        stream.write_all(b"defghij").await.expect("the rest writes");
+        let mut response = vec![0_u8; 256];
+        let read = tokio::time::timeout(STALL_BOUND, stream.read(&mut response))
+            .await
+            .expect("the server answers within the bound")
+            .expect("the response reads");
+        let response = String::from_utf8_lossy(&response[..read]);
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+
+        let _ = shutdown_sender.send(());
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
+    }
+
+    /// A request body that yields one frame and then nothing, ever.
+    #[cfg(feature = "http2")]
+    struct SendsOnceThenStalls(Option<bytes::Bytes>);
+
+    #[cfg(feature = "http2")]
+    impl http_body::Body for SendsOnceThenStalls {
+        type Data = bytes::Bytes;
+        type Error = std::convert::Infallible;
+
+        fn poll_frame(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Result<http_body::Frame<bytes::Bytes>, Self::Error>>> {
+            match self.get_mut().0.take() {
+                Some(data) => std::task::Poll::Ready(Some(Ok(http_body::Frame::data(data)))),
+                None => std::task::Poll::Pending,
+            }
+        }
+    }
+
+    /// Over HTTP/2 the stall held one stream, so the 408 ends that stream and
+    /// carries no `Connection` field, which RFC 9113 §8.2.2 makes malformed.
+    #[cfg(feature = "http2")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_http2_body_that_stalls_is_answered_408_on_its_stream() {
+        use hyper_util::rt::{TokioExecutor, TokioIo};
+
+        let (address, shutdown_sender, server) = idle_timed_server(Some(IDLE)).await;
+
+        let stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("server accepts");
+        let (mut sender, connection) =
+            hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+                .await
+                .expect("HTTP/2 handshake completes");
+        let connection = tokio::spawn(connection);
+        let request = hyper::Request::builder()
+            .method("POST")
+            .uri("http://localhost/")
+            .body(SendsOnceThenStalls(Some(bytes::Bytes::from_static(b"abc"))))
+            .expect("request builds");
+        let response = tokio::time::timeout(STALL_BOUND, sender.send_request(request))
+            .await
+            .expect("the server answers within the bound")
+            .expect("the request is answered");
+
+        assert_eq!(response.status(), crate::http::StatusCode::REQUEST_TIMEOUT);
+        assert!(
+            !response
+                .headers()
+                .contains_key(crate::http::header::CONNECTION),
+            "{:?}",
+            response.headers()
+        );
+
+        drop(sender);
+        connection.abort();
+        let _ = shutdown_sender.send(());
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
     }
 }

@@ -22,10 +22,11 @@
 //!   read, so an unsatisfiable request costs no read at all — and a whole
 //!   representation streams in spans rather than arriving in memory first.
 //! * **The conditions are one argument.** `Conditions` carries `Range`,
-//!   `If-Range`, `If-None-Match` and `If-Modified-Since` together, because the
-//!   specification fixes the order they are evaluated in and a handler taking
-//!   them separately could apply them in the wrong one. Taking it is also what
-//!   puts all four in the emitted description.
+//!   `If-Range`, `If-Match`, `If-Unmodified-Since`, `If-None-Match` and
+//!   `If-Modified-Since` together, because the specification fixes the order
+//!   they are evaluated in and a handler taking them separately could apply
+//!   them in the wrong one. Taking it is also what puts all six in the emitted
+//!   description.
 //! * **A strong validator is what makes a resume safe.** `If-Range` is only
 //!   defined against one, so a source that cannot mint a strong `ETag` is
 //!   telling you it cannot support resumption. `Last-Modified` is the weaker

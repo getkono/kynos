@@ -55,6 +55,7 @@ use kynos::{
         Authenticates, Authenticator,
         auth::{Auth, MaybeAuth, Scoped, Scopes},
         carrier::{ApiKey, BearerToken},
+        requirement::{AllOf, AnyOf, Either2},
         schemes::Bearer,
     },
     test::TestClient,
@@ -388,8 +389,8 @@ async fn me(Auth(caller): Auth<Bearer<Caller>>) -> Json<User> {
 ///
 /// `[{}, {Bearer: []}]` — the empty requirement first. Here because the
 /// conformance harness reads what the *document* says as well as what the
-/// service sends, and this is the one operation whose security list has two
-/// members.
+/// service sends, and this is the one operation whose security list admits
+/// anonymity.
 #[kynos::get("/feed")]
 async fn feed(caller: MaybeAuth<Bearer<Caller>>) -> Json<User> {
     Json(User {
@@ -419,6 +420,28 @@ async fn usage(Auth(caller): Auth<ServiceKey>) -> Json<User> {
     Json(User {
         id: 3,
         name: caller.subject,
+    })
+}
+
+/// Guarded by either credential, which declares `[{ServiceKey}, {Bearer}]`.
+///
+/// The first scheme that authenticates wins, so a refused key beside a valid
+/// token is still a success — the description promised either.
+#[kynos::get("/either")]
+async fn either(Auth(caller): Auth<AnyOf<(ServiceKey, Bearer<Caller>)>>) -> Json<User> {
+    let (Either2::First(caller) | Either2::Second(caller)) = caller;
+    Json(User {
+        id: 5,
+        name: caller.subject,
+    })
+}
+
+/// Guarded by both credentials, which declares `[{ServiceKey, Bearer}]`.
+#[kynos::get("/both")]
+async fn both(Auth((key, token)): Auth<AllOf<(ServiceKey, Bearer<Caller>)>>) -> Json<User> {
+    Json(User {
+        id: 6,
+        name: format!("{} for {}", key.subject, token.subject),
     })
 }
 
@@ -536,6 +559,8 @@ fn service() -> kynos::Result<kynos::router::service::Service<App>> {
             feed,
             reports,
             usage,
+            either,
+            both,
             greeting
         ])
         // Group scope: one operation each, because a declared status is a
@@ -627,6 +652,7 @@ async fn the_owned_layer_matrix_matches_the_description_it_emits() {
 
     exercise_the_operations(&client).await;
     exercise_the_rejections(&client).await;
+    exercise_the_combined_guards(&client).await;
     exercise_the_shared_status(&client).await;
     exercise_the_limits(&client).await;
     #[cfg(feature = "assets")]
@@ -929,6 +955,86 @@ async fn exercise_the_rejections(client: &TestClient<App>) {
         .assert_status(StatusCode::FORBIDDEN);
 }
 
+/// Every outcome of the two combined guards.
+///
+/// `AnyOf` and `AllOf` decide between alternatives at run time, so each is
+/// driven through the cases that tell "either" from "both" — the distinction
+/// the description is making.
+async fn exercise_the_combined_guards(client: &TestClient<App>) {
+    // Either alternative alone satisfies `AnyOf`, and a refused key does not
+    // stand in the way of the token beside it.
+    client
+        .get("/either")
+        .header("x-api-key", "k_ok")
+        .send()
+        .await
+        .assert_status(StatusCode::OK);
+
+    client
+        .get("/either")
+        .header("authorization", "Bearer tok_ok")
+        .send()
+        .await
+        .assert_status(StatusCode::OK);
+
+    client
+        .get("/either")
+        .header("x-api-key", "k_wrong")
+        .header("authorization", "Bearer tok_ok")
+        .send()
+        .await
+        .assert_status(StatusCode::OK);
+
+    // Neither alternative presented is the 401 `AnyOf` declares; when every
+    // alternative presented was refused, the first refusal is the answer.
+    client
+        .get("/either")
+        .send()
+        .await
+        .assert_status(StatusCode::UNAUTHORIZED);
+
+    client
+        .get("/either")
+        .header("x-api-key", "k_revoked")
+        .header("authorization", "Bearer tok_unknown")
+        .send()
+        .await
+        .assert_status(StatusCode::FORBIDDEN);
+
+    // `AllOf` succeeds only on both. Half of it is not an anonymous request,
+    // and not a sufficient one.
+    client
+        .get("/both")
+        .header("x-api-key", "k_ok")
+        .header("authorization", "Bearer tok_ok")
+        .send()
+        .await
+        .assert_status(StatusCode::OK);
+
+    // Neither credential presented is absence, the 401 `AllOf` declares.
+    client
+        .get("/both")
+        .send()
+        .await
+        .assert_status(StatusCode::UNAUTHORIZED);
+
+    client
+        .get("/both")
+        .header("authorization", "Bearer tok_ok")
+        .send()
+        .await
+        .assert_status(StatusCode::UNAUTHORIZED);
+
+    client
+        .get("/both")
+        .header("x-api-key", "k_ok")
+        .header("authorization", "Bearer tok_banned")
+        .send()
+        .await
+        .assert_status(StatusCode::FORBIDDEN)
+        .assert_problem_type(BANNED);
+}
+
 /// Every status an interceptor contributes, on the one operation it covers.
 async fn exercise_the_limits(client: &TestClient<App>) {
     client
@@ -1063,8 +1169,8 @@ async fn exercise_the_reference(client: &TestClient<App>) {
         .assert_status(StatusCode::OK);
 }
 
-/// Every status a ranged file can answer with, so the document's 200, 206, 304
-/// and 416 are each checked against a response that actually happened.
+/// Every status a ranged file can answer with, so the document's 200, 206, 304,
+/// 412 and 416 are each checked against a response that actually happened.
 #[cfg(feature = "assets")]
 async fn exercise_the_ranges(client: &TestClient<App>) {
     client
@@ -1093,4 +1199,12 @@ async fn exercise_the_ranges(client: &TestClient<App>) {
         .send()
         .await
         .assert_status(StatusCode::NOT_MODIFIED);
+
+    client
+        .get("/files/report.bin")
+        .header("if-match", "\"report-v0\"")
+        .header("range", "bytes=2-5")
+        .send()
+        .await
+        .assert_status(StatusCode::PRECONDITION_FAILED);
 }

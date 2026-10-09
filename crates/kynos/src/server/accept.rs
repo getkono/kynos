@@ -2,14 +2,14 @@
 //!
 //! One task per listener. It holds the connection semaphore, backs off on a
 //! failing accept, and stops accepting the moment the lifecycle leaves
-//! `Running` — then waits for its own connections rather than the server
-//! waiting for all of them at once.
+//! `Running` or its backoff gives up — then waits for its own connections
+//! rather than the server waiting for all of them at once.
 
 use std::{io, net::SocketAddr, sync::Arc, time::Duration};
 
 use tokio::{
     net::TcpListener,
-    sync::{Semaphore, watch},
+    sync::{Semaphore, mpsc, watch},
     task::JoinSet,
 };
 
@@ -91,6 +91,14 @@ impl AcceptBackoff {
     }
 }
 
+/// Accepts on `listener` until the lifecycle leaves `Running` or the backoff
+/// gives up, then drains the connections it accepted until they finish or the
+/// lifecycle reaches `Forced`.
+///
+/// A listener that gives up reports [`ServerError::Accept`] on `failures`
+/// before it drains, not by returning, so the server starts its shutdown
+/// deadline while these connections are still in flight rather than after.
+#[allow(clippy::too_many_arguments)]
 pub(in crate::server) async fn accept_loop<C: 'static>(
     listener: TcpListener,
     local_addr: SocketAddr,
@@ -99,7 +107,8 @@ pub(in crate::server) async fn accept_loop<C: 'static>(
     config: TransportConfig,
     permits: Arc<Semaphore>,
     mut lifecycle: watch::Receiver<Lifecycle>,
-) -> std::result::Result<(), ServerError> {
+    failures: mpsc::UnboundedSender<ServerError>,
+) {
     let mut connections = JoinSet::new();
     let mut backoff = AcceptBackoff::default();
 
@@ -155,10 +164,13 @@ pub(in crate::server) async fn accept_loop<C: 'static>(
                     AcceptRetry::Now => continue,
                     AcceptRetry::After(delay) => delay,
                     AcceptRetry::Never => {
-                        return Err(ServerError::Accept {
+                        // A send fails only once the server stopped listening,
+                        // and then nobody is left to tell.
+                        let _ = failures.send(ServerError::Accept {
                             address: local_addr,
                             source,
                         });
+                        break;
                     }
                 };
                 tracing::warn!(%source, %local_addr, ?delay, "retrying failed accept");
@@ -188,5 +200,4 @@ pub(in crate::server) async fn accept_loop<C: 'static>(
             }
         }
     }
-    Ok(())
 }

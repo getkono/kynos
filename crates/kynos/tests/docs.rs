@@ -127,6 +127,45 @@ async fn the_description_route_serves_the_document_this_router_emits() {
     assert_eq!(reply.text(), expected);
 }
 
+/// An edit made to a built service reaches the description it serves.
+///
+/// `into_tower_unchecked` flags every operation after `Router::build` rendered
+/// the reference, so the served bytes are only the reported document if they
+/// are rendered again. Mutual TLS, the other such edit, is held the same way
+/// in `src/server/tests.rs`, the one place a bound service can be called
+/// without a handshake.
+#[cfg(feature = "unchecked")]
+#[tokio::test]
+async fn the_description_route_serves_the_flags_a_tower_conversion_adds() {
+    use http_body_util::BodyExt as _;
+    use tower::ServiceExt as _;
+
+    let unchecked = served(Docs::scalar()).into_tower_unchecked();
+    let expected = unchecked
+        .openapi()
+        .to_json()
+        .expect("a serializable document");
+    assert!(
+        expected.contains(kynos::openapi::annotation::OPAQUE_OPERATION_ANNOTATION),
+        "the premise of this case is that the conversion flagged the document"
+    );
+
+    let mut request = kynos::http::Request::new(kynos::http::body::Body::empty());
+    *request.uri_mut() = "/openapi.json".parse().expect("a usable request target");
+    let reply = unchecked
+        .oneshot(request)
+        .await
+        .expect("an infallible service");
+    let served = reply
+        .into_body()
+        .collect()
+        .await
+        .expect("a buffered description")
+        .to_bytes();
+
+    assert_eq!(String::from_utf8_lossy(&served), expected);
+}
+
 #[tokio::test]
 async fn the_configured_paths_move_the_routes_and_the_pointer_together() {
     let service = served(

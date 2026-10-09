@@ -27,26 +27,34 @@ whole request.** No `Request`, no `Body`, no `HeaderMap`. Those are the holes.
 ## `Handler<C, A>`
 
 [`Handler`](../crates/kynos/src/handler/mod.rs) is implemented for `async fn`s
-of up to sixteen arguments. `C` is the application context;
-`A` is `(Marker, T1, .., Tn)`.
+of up to sixteen extractors, optionally after one guard. `C` is the application
+context; `A` is `(Marker, T1, .., Tn)`, or `(Guarded, Marker, G, T1, .., Tn)`
+for a guarded handler.
 
 | Slot | Bound | Notes |
 | --- | --- | --- |
-| Marker | [`ViaRequest`] or [`ViaParts`] | never written by hand; `()` when the handler takes no arguments |
+| Marker | [`ViaRequest`] or [`ViaParts`], led by [`Guarded`] when there is a guard | never written by hand; `()` when the handler takes no arguments, `(Guarded, G)` when it takes only a guard |
+| `G` | [`Guard<C>`](../crates/kynos/src/security/mod.rs) | the first argument, and at most one: `Auth`, `MaybeAuth` or `Scoped` |
 | `T1..Tn-1` | `FromRequestParts<C> + Describe` | read the request head |
 | `Tn` | `FromRequest<C> + Describe`, or `FromRequestParts<C> + Describe` | the last argument alone may consume the body |
 | return | `IntoResponse + Responses` | one says what goes on the wire, the other what the document claims |
 
 [`ViaRequest`]: ../crates/kynos/src/handler/mod.rs
 [`ViaParts`]: ../crates/kynos/src/handler/mod.rs
+[`Guarded`]: ../crates/kynos/src/handler/mod.rs
 
 The marker carries no information a caller supplies — it is inferred at every
-call site — and exists only so the two implementations per arity are disjoint.
-A function of `n` arguments matches both the body-consuming and the head-only
-shape, and coherence has no other way to see the difference. Arities 0 through
-16 are emitted by
+call site — and exists only so the four implementations per arity are
+disjoint. A function of `n` arguments matches the body-consuming and the
+head-only shape, with and without a guard, and coherence has no other way to
+see the difference. Arities 0 through 16 are emitted by
 [`handler/impls.rs`](../crates/kynos/src/handler/impls.rs), which is private
 precisely so the arity macro does not leak.
+
+The guard's slot is fixed for the reason the body's is: an implementation
+exists for one guard and for none, and for nothing else, so a second guard is a
+compile error. [`security.md`](security.md#one-guard-per-operation) says why
+that matters to the description.
 
 The bounds are the whole enforcement mechanism. An argument that cannot
 implement `Describe` has no way into a signature, and a return type that cannot
@@ -211,8 +219,10 @@ that revisiting them is possible on the merits.*
 ### Why sixteen arguments
 
 The arity ceiling is a macro expansion cost, not a design statement. Sixteen is
-where the cost of two implementations per arity stops being free and where no
-real handler has been observed. A handler approaching it is usually one that
+where the cost of the implementations per arity stops being free and where no
+real handler has been observed. The guard's slot sits outside the count, so a
+guarded handler is not one extractor shorter than an unguarded one. A handler
+approaching it is usually one that
 should have grouped its parameters into a derived type, which is cheaper for the
 description too: sixteen loose query parameters and one `Query<Filters>` emit
 different documents, and the second is the one a client generator handles well.
