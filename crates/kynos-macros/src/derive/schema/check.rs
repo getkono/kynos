@@ -302,7 +302,7 @@ fn located(step: &Step, checks: &TokenStream2) -> TokenStream2 {
     }
 }
 
-/// One member's checks: each of its own bounds, then its value's.
+/// One member's checks: [`value_checks`], located by `step`.
 ///
 /// A defaulted member that fails is rechecked on its filled value, and its
 /// violations are reported unless the filled value breaks exactly the same
@@ -314,25 +314,7 @@ fn member(
     filled: Option<&Filled>,
 ) -> TokenStream2 {
     let ty = &field.ty;
-    let keywords = bounds(field)
-        .into_iter()
-        .map(|Bound { key, value: bound }| match bound {
-            // Without the feature, `refusals` refuses every `pattern`.
-            #[cfg(feature = "pattern")]
-            Some(super::attributes::BoundValue::Pattern(pattern)) => {
-                super::pattern::check(ty, &pattern)
-            }
-            bound => {
-                let bound = bound.map(|bound| quote!(#bound,));
-                quote! {
-                    ::kynos::__private::constraints::#key::<#ty>(value, #bound at, violations);
-                }
-            }
-        });
-    let check = quote! {
-        #(#keywords)*
-        ::kynos::schema::Schema::check_constraints(value, at, violations);
-    };
+    let check = value_checks(field);
 
     let checks = match filled {
         None => quote! {
@@ -371,4 +353,30 @@ fn member(
     };
 
     located(step, &checks)
+}
+
+/// The checks on one value of `field`'s type: each of the field's own bounds,
+/// then its type's. Reads `value`, a `&` of that type, `at` and `violations`;
+/// a query parameter's decoder runs them too.
+pub(crate) fn value_checks(field: &Field) -> TokenStream2 {
+    let ty = &field.ty;
+    let keywords = bounds(field)
+        .into_iter()
+        .map(|Bound { key, value: bound }| match bound {
+            // Without the feature, `refusals` refuses every `pattern`.
+            #[cfg(feature = "pattern")]
+            Some(super::attributes::BoundValue::Pattern(pattern)) => {
+                super::pattern::check(ty, &pattern)
+            }
+            bound => {
+                let bound = bound.map(|bound| quote!(#bound,));
+                quote! {
+                    ::kynos::__private::constraints::#key::<#ty>(value, #bound at, violations);
+                }
+            }
+        });
+    quote! {
+        #(#keywords)*
+        ::kynos::schema::Schema::check_constraints(value, at, violations);
+    }
 }

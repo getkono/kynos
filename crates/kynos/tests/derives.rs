@@ -8,8 +8,9 @@
 //!
 //! A derive is a type-level surface, so what a derived decoder does is not
 //! checked here, with recorded exceptions, which no other target exercises:
-//! the query decoder's refusal of a declared value that is not UTF-8, and its
-//! decoding of `+` as a space and of an escaped `+` as a `+`; the cookie
+//! the query decoder's refusal of a declared value that is not UTF-8 or that
+//! breaks a bound, and its decoding of `+` as a space and of an escaped `+` as
+//! a `+`; the cookie
 //! decoder's refusal of a declared cookie that is not ASCII; the header
 //! decoder's refusal of a missing required header or a value that is not
 //! ASCII, and its reading of an absent optional header as `None`; and the
