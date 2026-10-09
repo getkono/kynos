@@ -775,6 +775,108 @@ async fn repeated_shutdown_trigger_forces_an_incomplete_drain() {
     client.await.expect("client task joins");
 }
 
+/// Makes every later `accept` on `listener` fail the way an exhausted backoff
+/// needs: on Linux, shutting a listening socket down for reading leaves it
+/// refusing `accept` with `EINVAL`, an error the loop counts. `listener` is a
+/// duplicate of the one the server holds, so it reaches the same socket.
+#[cfg(all(target_os = "linux", feature = "http1"))]
+fn break_listener(listener: &std::net::TcpListener) {
+    socket2::SockRef::from(listener)
+        .shutdown(std::net::Shutdown::Read)
+        .expect("a listening socket shuts down");
+}
+
+/// A server whose listener `break_listener` can reach, serving `service`.
+#[cfg(all(target_os = "linux", feature = "http1"))]
+async fn breakable_server(
+    service: crate::router::service::Service<()>,
+    shutdown_timeout: std::time::Duration,
+) -> (
+    std::net::SocketAddr,
+    std::net::TcpListener,
+    tokio::task::JoinHandle<crate::Result<()>>,
+) {
+    let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .expect("loopback listener binds");
+    let handle = listener.try_clone().expect("listener duplicates");
+    let bound = crate::server::Server::new(service)
+        .listener(listener)
+        .shutdown_timeout(shutdown_timeout)
+        .prepare()
+        .await
+        .expect("standard listener converts to Tokio ownership");
+    let address = bound.local_addrs()[0];
+    (address, handle, tokio::spawn(bound.serve()))
+}
+
+#[cfg(all(target_os = "linux", feature = "http1"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_listener_that_stops_accepting_drains_what_it_accepted() {
+    let (service, started, release) = blocking_service();
+    let (address, listener, server) =
+        breakable_server(service, std::time::Duration::from_secs(25)).await;
+    let client = tokio::task::spawn_blocking(move || request_http1(address));
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), started.notified())
+        .await
+        .expect("the request reaches the handler");
+    break_listener(&listener);
+    // The backoff gives up after 150 ms; this outlasts it with margin, so the
+    // listener has certainly failed before the request is let go.
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    assert!(
+        !server.is_finished(),
+        "the accepted request must keep draining"
+    );
+
+    release.notify_one();
+    let response = client.await.expect("client task joins");
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    assert!(response.ends_with("ok"), "{response}");
+    let error = tokio::time::timeout(std::time::Duration::from_secs(1), server)
+        .await
+        .expect("the server exits once its connections drain")
+        .expect("server task joins")
+        .expect_err("the failed listener is reported");
+    assert!(
+        matches!(
+            error,
+            crate::Error::Server(crate::server::error::ServerError::Accept { address: failed, .. })
+                if failed == address
+        ),
+        "{error:?}"
+    );
+}
+
+#[cfg(all(target_os = "linux", feature = "http1"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_listener_that_stops_accepting_drains_under_the_shutdown_timeout() {
+    let (service, started, _release) = blocking_service();
+    let (address, listener, server) =
+        breakable_server(service, std::time::Duration::from_millis(200)).await;
+    let client = tokio::task::spawn_blocking(move || request_http1(address));
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), started.notified())
+        .await
+        .expect("the request reaches the handler");
+    break_listener(&listener);
+
+    let error = tokio::time::timeout(std::time::Duration::from_secs(2), server)
+        .await
+        .expect("a request that never finishes is cut at the shutdown timeout")
+        .expect("server task joins")
+        .expect_err("the failed listener is reported");
+    assert!(
+        matches!(
+            error,
+            crate::Error::Server(crate::server::error::ServerError::Accept { address: failed, .. })
+                if failed == address
+        ),
+        "{error:?}"
+    );
+    client.await.expect("client task joins");
+}
+
 #[cfg(feature = "http2")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn http2_prior_knowledge_serves_over_a_real_socket() {
