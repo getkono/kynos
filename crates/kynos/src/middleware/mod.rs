@@ -150,7 +150,9 @@ pub enum MiddlewareError {
     /// `Access-Control-Expose-Headers: *` as the literal field name `*` rather
     /// than as a wildcard, so the pair silently exposes nothing.
     #[error(
-        "a CORS configuration exposes every response header and also permits credentials, which          the protocol reads as exposing a header literally named `*`; name the headers          `expose_headers` should expose, or drop `allow_credentials`"
+        "a CORS configuration exposes every response header and also permits credentials, which \
+         the protocol reads as exposing a header literally named `*`; name the headers \
+         `expose_headers` should expose, or drop `allow_credentials`"
     )]
     CredentialedWildcardExposure,
 }
