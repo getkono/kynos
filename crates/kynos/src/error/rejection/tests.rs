@@ -66,6 +66,7 @@ fn each_body_failure_has_its_own_status() {
         BodyRejection::UnsupportedMediaType {
             received: Some("text/csv".into()),
         },
+        BodyRejection::TooLarge { limit: 1_024 },
     ];
 
     let statuses: Vec<_> = observed.iter().map(BodyRejection::status).collect();
@@ -76,6 +77,7 @@ fn each_body_failure_has_its_own_status() {
             StatusCode::BAD_REQUEST,
             StatusCode::UNPROCESSABLE_ENTITY,
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            StatusCode::PAYLOAD_TOO_LARGE,
         ]
     );
     declares(&statuses, BodyRejection::statuses());
@@ -510,6 +512,7 @@ fn body(expected: StatusCode, rejection: &BodyRejection) -> Row {
         BodyRejection::Syntax { .. } => "BodyRejection::Syntax",
         BodyRejection::Schema { .. } => "BodyRejection::Schema",
         BodyRejection::UnsupportedMediaType { .. } => "BodyRejection::UnsupportedMediaType",
+        BodyRejection::TooLarge { .. } => "BodyRejection::TooLarge",
     };
     let statuses = (rejection.status(), BodyRejection::statuses());
     Row::new(name, expected, statuses, rejection)
@@ -596,6 +599,10 @@ fn ledger() -> Vec<Row> {
                 received: Some(text("text/plain")),
             },
         ),
+        body(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            &BodyRejection::TooLarge { limit: 1_024 },
+        ),
         negotiation(
             StatusCode::BAD_REQUEST,
             &NegotiationRejection::MalformedAccept {
@@ -637,6 +644,7 @@ fn every_variant_produces_a_status_its_type_declares() {
         "BodyRejection::Syntax",
         "BodyRejection::Schema",
         "BodyRejection::UnsupportedMediaType",
+        "BodyRejection::TooLarge",
         "NegotiationRejection::MalformedAccept",
         "NegotiationRejection::NotAcceptable",
         "RangeRejection::NotSatisfiable",

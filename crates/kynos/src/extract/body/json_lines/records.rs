@@ -85,6 +85,7 @@ enum State {
 /// | is JSON that does not fit `T` | 422 at JSON Pointer `/{index}` | the stream continues — the boundaries held, so a bulk ingest can report every bad record at once |
 /// | did not arrive, because the transport failed | 400 | the stream ends |
 /// | opens a `json-seq` body without a record separator | 400 | the stream ends |
+/// | is longer than the operation's body limit | 413 | the stream ends — the rest of the record was never read, so nothing after it can be framed |
 ///
 /// The pointer is the record's index in the body, which OpenAPI 3.2 makes well
 /// defined: an implementation reads a sequential media type as if the values
@@ -111,12 +112,22 @@ enum State {
 /// untouched and streams. A chunked request declares no length, so a running
 /// count is the only bound there is — and the limit materialises the whole body
 /// before the handler is entered. Records still arrive one at a time, but
-/// nothing is saved. `Records` adds no cap of its own and no status of its own;
-/// `docs/nfr.md` records the limit beside HTTP/2 flow control, which is the
-/// same family of fact.
+/// nothing is saved. `docs/nfr.md` records the limit beside HTTP/2 flow
+/// control, which is the same family of fact.
+///
+/// # What one record may cost
+///
+/// The body as a whole is unbounded here, which is what streaming it is for,
+/// but a record is held whole before it is decoded. So the operation's body
+/// limit — [`DEFAULT_LIMIT`](crate::extract::body::DEFAULT_LIMIT), or the
+/// figure a covering `BodySize` names — bounds each record instead, and a
+/// record passing it is the 413 every buffering codec raises. Without it, a
+/// body with no delimiter in it would be buffered without end.
 pub struct Records<T> {
     /// The undecoded body, as the frames it arrives in.
     body: BodyDataStream<Body>,
+    /// The longest record, in bytes, that will be held for decoding.
+    limit: u64,
     /// Bytes read but not yet framed into a record.
     buffer: BytesMut,
     /// How far into `buffer` the search for a delimiter has already reached, so
@@ -161,6 +172,7 @@ impl<T> Records<T> {
         }
 
         Ok(Self {
+            limit: crate::extract::body::limit(&request),
             body: request.into_body().into_data_stream(),
             buffer: BytesMut::new(),
             scanned: 0,
@@ -203,6 +215,15 @@ impl<T> Records<T> {
                 .iter()
                 .position(|byte| *byte == delimiter)
                 .map(|position| from + position);
+
+            // The record so far, framing excluded: whole when a delimiter was
+            // found, and still arriving when none was — in which case it is
+            // refused as soon as what has arrived already passes the limit.
+            let held = found.unwrap_or(self.buffer.len()).saturating_sub(prefix);
+            if u64::try_from(held).unwrap_or(u64::MAX) > self.limit {
+                self.state = State::Fused;
+                return Some(Err(BodyRejection::TooLarge { limit: self.limit }));
+            }
 
             let mut frame = match found {
                 // The delimiter belongs to the framing rather than to the

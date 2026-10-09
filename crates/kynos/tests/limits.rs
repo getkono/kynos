@@ -348,7 +348,11 @@ fn the_default_limit_declares_413_only_where_a_body_is_read() {
 async fn a_body_limit_on_one_operation_raises_it_past_the_default() {
     let raised = DEFAULT_LIMIT * 2;
     let service = Router::<App>::new()
-        .mount(kynos::routes![create_user].0.intercept(BodySize::new(raised)))
+        .mount(
+            kynos::routes![create_user]
+                .0
+                .intercept(BodySize::new(raised)),
+        )
         .build(App::new())
         .expect("a describable router");
 
@@ -366,6 +370,89 @@ async fn a_body_limit_on_one_operation_raises_it_past_the_default() {
         .call()
         .await;
     assert_eq!(declared.status, StatusCode::CREATED, "{}", declared.text());
+}
+
+/// Multipart parses as it reads rather than through one buffered read, so it
+/// is held to the same default by its parser's own count.
+#[cfg(feature = "multipart")]
+mod multipart {
+    use kynos::{
+        Router, Schema, extract::body::multipart::MultipartForm,
+        middleware::limits::body_size::BodySize, response::status::NoContent,
+    };
+
+    use super::{DEFAULT_LIMIT, StatusCode, support};
+
+    /// The one field the bodies below carry.
+    #[derive(Debug, Schema, kynos::MultipartForm)]
+    struct Upload {
+        name: String,
+    }
+
+    #[kynos::post("/uploads")]
+    async fn upload(MultipartForm(upload): MultipartForm<Upload>) -> NoContent {
+        drop(upload);
+        NoContent
+    }
+
+    /// One part whose value pads the whole body to `length` bytes.
+    fn body_of_length(length: u64) -> Vec<u8> {
+        let head = b"--x\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\n";
+        let tail = b"\r\n--x--\r\n";
+        let padding =
+            usize::try_from(length).expect("a body that fits in memory") - head.len() - tail.len();
+
+        let mut body = head.to_vec();
+        body.resize(head.len() + padding, b'n');
+        body.extend_from_slice(tail);
+        body
+    }
+
+    #[tokio::test]
+    async fn a_multipart_body_past_the_default_is_refused() {
+        let service = Router::<()>::new()
+            .mount(kynos::routes![upload])
+            .build(())
+            .expect("a describable router");
+
+        let past = support::post(&service, "/uploads")
+            .header("content-type", "multipart/form-data; boundary=x")
+            .body(body_of_length(DEFAULT_LIMIT + 1))
+            .call()
+            .await;
+        assert_eq!(
+            past.status,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "{}",
+            past.text()
+        );
+
+        let at = support::post(&service, "/uploads")
+            .header("content-type", "multipart/form-data; boundary=x")
+            .body(body_of_length(DEFAULT_LIMIT))
+            .call()
+            .await;
+        assert_eq!(at.status, StatusCode::NO_CONTENT, "{}", at.text());
+    }
+
+    #[tokio::test]
+    async fn a_body_limit_raises_the_multipart_default() {
+        let service = Router::<()>::new()
+            .mount(
+                kynos::routes![upload]
+                    .0
+                    .intercept(BodySize::new(DEFAULT_LIMIT * 2)),
+            )
+            .build(())
+            .expect("a describable router");
+
+        let reply = support::post(&service, "/uploads")
+            .header("content-type", "multipart/form-data; boundary=x")
+            .body(body_of_length(DEFAULT_LIMIT + 1))
+            .call()
+            .await;
+        assert_eq!(reply.status, StatusCode::NO_CONTENT, "{}", reply.text());
+    }
 }
 
 /// A `BodySize` lowering the limit still decides first, and the default never
@@ -1192,11 +1279,25 @@ async fn a_named_body_limit_publishes_one_type_on_both_halves() {
 
     let declared = serde_json::to_value(service.openapi()).expect("a serializable document");
 
+    // An operation reading no body declares the limit's 413 alone.
     assert_eq!(
-        narrowed_type(&declared, "/users", "post", 413),
+        narrowed_type(&declared, "/users/{id}", "delete", 413),
         URI,
         "the declared 413 does not narrow to the type the wire sent: {declared}"
     );
+
+    // One reading a body also declares the default cap's `about:blank`, which
+    // `BodyRejection` states for every operation it covers: a choice that still
+    // admits what the wire sent, and over-declares rather than omits.
+    let choice = &declared["paths"]["/users"]["post"]["responses"]["413"]["content"]["application/problem+json"]
+        ["schema"]["oneOf"];
+    let types: Vec<_> = choice
+        .as_array()
+        .unwrap_or_else(|| panic!("the declared 413 is not a choice: {choice}"))
+        .iter()
+        .map(|branch| branch["allOf"][1]["properties"]["type"]["const"].as_str())
+        .collect();
+    assert_eq!(types, [Some("about:blank"), Some(URI)]);
 }
 
 /// Naming nothing declares and sends `about:blank`, which is what every
