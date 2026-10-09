@@ -7,7 +7,7 @@ use http_body_util::BodyExt;
 
 use crate::{
     error::problem::{ProblemType, refusal_problem, refusal_response},
-    extract::body::{BodyLimit, declared_length},
+    extract::body::limit::{BodyLimit, declared_length},
     http::{self, body::Body},
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
@@ -74,7 +74,7 @@ impl<T: ProblemType> Responses for BodySizeExceeded<T> {
 /// # Replacing the default
 ///
 /// Every body extractor that buffers already caps what it reads at
-/// [`DEFAULT_LIMIT`](crate::extract::body::DEFAULT_LIMIT). This limit
+/// [`DEFAULT_LIMIT`](crate::extract::body::limit::DEFAULT_LIMIT). This limit
 /// replaces that one for every operation it covers, in either direction, so
 /// mounting it on a single endpoint is how one large upload is let through:
 /// `kynos::routes![upload].0.intercept(BodySize::new(..))` for an attribute

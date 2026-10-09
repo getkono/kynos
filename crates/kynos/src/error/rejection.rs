@@ -327,7 +327,7 @@ pub enum BodyRejection {
     /// The body exceeded the limit its operation reads it under. Produces 413.
     ///
     /// Every extractor that holds a body in memory caps it, at
-    /// [`DEFAULT_LIMIT`](crate::extract::body::DEFAULT_LIMIT) unless a
+    /// [`DEFAULT_LIMIT`](crate::extract::body::limit::DEFAULT_LIMIT) unless a
     /// [`BodySize`](crate::middleware::limits::body_size::BodySize) covering
     /// the operation names another, so every operation reading a body can
     /// produce this and declares it.

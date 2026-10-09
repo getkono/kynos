@@ -20,7 +20,7 @@ use tokio::io::{AsyncRead, ReadBuf};
 
 use crate::{
     error::problem::{ProblemType, refusal_problem, refusal_response},
-    extract::body::BodyLimit,
+    extract::body::limit::BodyLimit,
     http::{self, body::Body},
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},

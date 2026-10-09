@@ -28,7 +28,7 @@ use crate::{
     error::rejection::BodyRejection,
     extract::{
         FromRequest,
-        body::BodyLimit,
+        body::limit::BodyLimit,
         describe::{Describe, RequestContent},
     },
     http::{Request, StatusCode, body::Body, header},

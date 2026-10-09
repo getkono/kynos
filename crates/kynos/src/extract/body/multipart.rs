@@ -231,8 +231,8 @@ impl<C: Sync, T: FromMultipart + Send> FromRequest<C> for MultipartForm<T> {
         // Every part is held until `T` is built, so the whole stream is what
         // the limit bounds: multer counts it as it arrives and stops at the
         // frame that passes it.
-        let limit = super::limit(&request);
-        super::refuse_declared_length(request.headers(), limit)?;
+        let limit = super::limit::of(&request);
+        super::limit::refuse_declared(request.headers(), limit)?;
         let constraints =
             multer::Constraints::new().size_limit(multer::SizeLimit::new().whole_stream(limit));
         let mut fields = multer::Multipart::with_constraints(

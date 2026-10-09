@@ -304,7 +304,7 @@ says what neither says alone.
 
 **The default body cap lives in the extractor, not in an interceptor.** Every
 extractor that holds a body in memory reads it under
-`extract::body::DEFAULT_LIMIT`, 2 MiB, the figure axum also ships, and refuses
+`extract::body::limit::DEFAULT_LIMIT`, 2 MiB, the figure axum also ships, and refuses
 past it with `BodyRejection::TooLarge`: a declared `Content-Length` from the
 head, a length-less body on the frame that passes it. Multipart bounds its
 whole stream through multer's own count, and a streamed JSON body bounds each

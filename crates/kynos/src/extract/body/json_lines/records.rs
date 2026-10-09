@@ -119,7 +119,7 @@ enum State {
 ///
 /// The body as a whole is unbounded here, which is what streaming it is for,
 /// but a record is held whole before it is decoded. So the operation's body
-/// limit — [`DEFAULT_LIMIT`](crate::extract::body::DEFAULT_LIMIT), or the
+/// limit — [`DEFAULT_LIMIT`](crate::extract::body::limit::DEFAULT_LIMIT), or the
 /// figure a covering `BodySize` names — bounds each record instead, and a
 /// record passing it is the 413 every buffering codec raises. Without it, a
 /// body with no delimiter in it would be buffered without end.
@@ -172,7 +172,7 @@ impl<T> Records<T> {
         }
 
         Ok(Self {
-            limit: crate::extract::body::limit(&request),
+            limit: crate::extract::body::limit::of(&request),
             body: request.into_body().into_data_stream(),
             buffer: BytesMut::new(),
             scanned: 0,
