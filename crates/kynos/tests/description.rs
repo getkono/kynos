@@ -1361,6 +1361,16 @@ enum AuditError {
     Sealed,
 }
 
+/// A guard beside the extractors it precedes.
+#[kynos::get("/reviews/{id}/audit")]
+async fn audited_review(
+    caller: kynos::security::auth::Auth<kynos::security::schemes::Bearer<Claims>>,
+    Path(path): Path<ReviewPath>,
+) -> NoContent {
+    let _ = (caller.into_inner(), path);
+    NoContent
+}
+
 #[kynos::get("/admin/sealed")]
 async fn sealed(
     caller: kynos::security::auth::Scoped<kynos::security::schemes::Bearer<Claims>, Staff>,
@@ -1379,9 +1389,37 @@ fn declared_problem_schema(document: &Document, path: &str, status: &str) -> ser
 /// The document the guarded operations emit.
 fn guarded_document() -> Document {
     Router::<Guarded>::new()
-        .mount(kynos::routes![audit, reports, me, sealed])
+        .mount(kynos::routes![audit, reports, me, sealed, audited_review])
         .openapi()
         .expect("a describable router")
+}
+
+/// The guard's slot is described like any argument's: its whole `security`
+/// list, once, beside what the extractors after it declare.
+///
+/// The guarded handler implementations are separate from the unguarded ones,
+/// so one that forgot to describe its guard would serve a credential check the
+/// document never mentions.
+#[test]
+fn a_guard_before_other_arguments_declares_its_security_once() {
+    let operation = operation(&guarded_document(), "/reviews/{id}/audit");
+
+    let demanded: Vec<Vec<String>> = operation
+        .security
+        .as_deref()
+        .expect("the guard's requirement")
+        .iter()
+        .map(|requirement| requirement.0.keys().cloned().collect())
+        .collect();
+    assert_eq!(demanded, vec![vec!["Bearer".to_owned()]]);
+
+    assert_eq!(operation.parameters.len(), 1, "{:?}", operation.parameters);
+    for status in ["400", "401", "403"] {
+        assert!(
+            operation.responses.responses.contains_key(status),
+            "{status} is missing"
+        );
+    }
 }
 
 /// A scope set naming a type declares that type *and* `about:blank`.

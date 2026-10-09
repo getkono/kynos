@@ -763,6 +763,13 @@ request." A limiter reading it unasked would let a client choose the bucket it
 counts against — a limit that looks like one and is not, which is worse than
 none.
 
+Trust also names the one field the trusted hops write: `ProxyHeader::Forwarded`
+or `ProxyHeader::XForwarded`, and only that one is read. A proxy appends to one
+and passes the other through as the client sent it, so the request cannot be
+what chooses between them. Neither is a default, because guessing wrong is the
+same spoof: an AWS ALB appends to `X-Forwarded-For`, and a service reading
+`Forwarded` behind it lets the client write its own address.
+
 ### A response no type predicts
 
 The soundness invariant is *emitted ⊇ observable responses* for the responses
@@ -931,8 +938,9 @@ Sessions are named in [`architecture.md`](architecture.md#invariants)'s third
 invariant as the example of what a layer above Kynos owns.
 
 **CSRF and a credential guard do not exclude each other.** `Auth<S>` is not an
-interceptor. It is an extractor — `FromRequestParts` in
-[`security/auth.rs`](../crates/kynos/src/security/auth.rs) — and its 403 reaches
+interceptor. It is a guard — the sealed `Guard` in the handler's first argument
+slot, implemented in [`security/auth.rs`](../crates/kynos/src/security/auth.rs)
+— and its 403 reaches
 the document through `OperationCx::add_responses`, never through a `const`.
 `CompatibleWith` compares only interceptor `Short`s, and `Auth<S>` has none, so
 `Csrf`'s 403 (`CrossSite`) never meets the credential guard's in that comparison

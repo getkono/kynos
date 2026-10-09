@@ -6,9 +6,9 @@
 //! way to the server, including the client making the request."
 //!
 //! So nothing here reads it unless the application has said which hops it
-//! trusts. [`TrustedProxies`] is that statement, it is empty by default, and an
-//! empty one resolves every request to the socket peer — the one address no
-//! header can forge.
+//! trusts and which field they write. [`TrustedProxies`] is that statement, it
+//! is empty by default, and an empty one resolves every request to the socket
+//! peer — the one address no header can forge.
 
 use std::net::{IpAddr, SocketAddr};
 
@@ -23,13 +23,36 @@ const X_FORWARDED_FOR: HeaderName = HeaderName::from_static("x-forwarded-for");
 /// The de-facto scheme field, likewise.
 const X_FORWARDED_PROTO: HeaderName = HeaderName::from_static("x-forwarded-proto");
 
-/// Which hops may be believed when they describe the client.
+/// The field a trusted proxy writes, and so the only one read.
+///
+/// A proxy appends to one of the two and passes the other through as the client
+/// sent it — an AWS ALB or a typical nginx appends to `X-Forwarded-For` and
+/// leaves a client's `Forwarded` alone. Whichever field the proxy does not
+/// write is the client's own word, so reading it lets the client choose its
+/// address. That is why no field is read by default, and why the choice is the
+/// deployment's rather than the request's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ProxyHeader {
+    /// `Forwarded`, per RFC 7239, which carries each hop's address and scheme
+    /// in one element.
+    Forwarded,
+    /// The de-facto `X-Forwarded-For` and `X-Forwarded-Proto` pair, which RFC
+    /// 7239 section 7.1 describes and no specification defines.
+    XForwarded,
+}
+
+/// Which hops may be believed when they describe the client, and through which
+/// field.
 ///
 /// Empty by default, which means "believe nobody": the socket peer is the
 /// client, and every forwarding field is ignored. That is the only safe default
 /// — the fields are attacker-controlled — and it is the same rule
 /// [`Cors::new`](crate::middleware::cors::Cors::new) follows, where every
 /// widening is a call a reviewer can see.
+///
+/// Every constructor that believes anyone names the [`ProxyHeader`] those hops
+/// write, and only that field is read. Neither field is a safe guess: the one
+/// the proxy does not write is passed through from the client.
 ///
 /// # Which constructor
 ///
@@ -40,17 +63,21 @@ const X_FORWARDED_PROTO: HeaderName = HeaderName::from_static("x-forwarded-proto
 /// from an element whose immediate sender was trusted.
 ///
 /// ```
-/// use kynos::http::forwarded::TrustedProxies;
+/// use kynos::http::forwarded::{ProxyHeader, TrustedProxies};
 ///
-/// // One managed load balancer in front of the service.
-/// let trusted = TrustedProxies::hops(1);
+/// // One managed load balancer in front of the service, appending to
+/// // `X-Forwarded-For`.
+/// let trusted = TrustedProxies::hops(ProxyHeader::XForwarded, 1);
 ///
-/// // Or a known private range.
-/// let trusted = TrustedProxies::networks([("10.0.0.0".parse().unwrap(), 8)]);
+/// // Or a known private range writing `Forwarded`.
+/// let trusted =
+///     TrustedProxies::networks(ProxyHeader::Forwarded, [("10.0.0.0".parse().unwrap(), 8)]);
 /// # let _ = trusted;
 /// ```
 #[derive(Clone, Debug, Default)]
 pub struct TrustedProxies {
+    /// The field the trusted hops write; `None` reads none.
+    header: Option<ProxyHeader>,
     /// How many rightmost elements may be believed.
     hops: usize,
     /// Exact addresses that may be believed, whatever their position.
@@ -61,44 +88,57 @@ pub struct TrustedProxies {
 
 impl TrustedProxies {
     /// Trusts nobody. The default.
+    ///
+    /// It names no [`ProxyHeader`], so nothing [`and_addresses`] or
+    /// [`and_networks`] adds to it is ever read from: start from a constructor
+    /// that names one.
+    ///
+    /// [`and_addresses`]: Self::and_addresses
+    /// [`and_networks`]: Self::and_networks
     #[must_use]
     pub fn none() -> Self {
         Self::default()
     }
 
-    /// Trusts the `count` hops nearest the service.
+    /// Trusts the `count` hops nearest the service, which write `header`.
     ///
     /// Counted from the right, because the rightmost element was written by the
     /// hop closest to Kynos and each step left is one step further from anything
     /// this deployment controls.
     #[must_use]
-    pub fn hops(count: usize) -> Self {
+    pub fn hops(header: ProxyHeader, count: usize) -> Self {
         Self {
+            header: Some(header),
             hops: count,
             ..Self::default()
         }
     }
 
-    /// Trusts these exact addresses.
+    /// Trusts these exact addresses, which write `header`.
     #[must_use]
-    pub fn addresses(addresses: impl IntoIterator<Item = IpAddr>) -> Self {
+    pub fn addresses(header: ProxyHeader, addresses: impl IntoIterator<Item = IpAddr>) -> Self {
         Self {
+            header: Some(header),
             addresses: addresses.into_iter().collect(),
             ..Self::default()
         }
     }
 
     /// Trusts every address in these networks, each an address and a prefix
-    /// length.
+    /// length, which write `header`.
     #[must_use]
-    pub fn networks(networks: impl IntoIterator<Item = (IpAddr, u8)>) -> Self {
+    pub fn networks(header: ProxyHeader, networks: impl IntoIterator<Item = (IpAddr, u8)>) -> Self {
         Self {
+            header: Some(header),
             networks: networks.into_iter().collect(),
             ..Self::default()
         }
     }
 
     /// Also trusts these exact addresses.
+    ///
+    /// Adds nothing to a policy that names no [`ProxyHeader`], such as
+    /// [`none`](Self::none): that policy still trusts nobody.
     #[must_use]
     pub fn and_addresses(mut self, addresses: impl IntoIterator<Item = IpAddr>) -> Self {
         self.addresses.extend(addresses);
@@ -106,16 +146,25 @@ impl TrustedProxies {
     }
 
     /// Also trusts every address in these networks.
+    ///
+    /// Adds nothing to a policy that names no [`ProxyHeader`], such as
+    /// [`none`](Self::none): that policy still trusts nobody.
     #[must_use]
     pub fn and_networks(mut self, networks: impl IntoIterator<Item = (IpAddr, u8)>) -> Self {
         self.networks.extend(networks);
         self
     }
 
+    /// The field the trusted hops write, or `None` where nobody is trusted.
+    fn header(&self) -> Option<ProxyHeader> {
+        self.header.filter(|_| !self.trusts_nobody())
+    }
+
     /// Whether this configuration believes anything at all.
     #[must_use]
     pub fn trusts_nobody(&self) -> bool {
-        self.hops == 0 && self.addresses.is_empty() && self.networks.is_empty()
+        self.header.is_none()
+            || (self.hops == 0 && self.addresses.is_empty() && self.networks.is_empty())
     }
 
     /// Whether `address` is one of the hops this configuration names.
@@ -215,14 +264,14 @@ impl Forwarded {
     ) -> Self {
         let peer_ip = peer.map(|peer| peer.ip());
 
-        if trusted.trusts_nobody() {
+        let Some(header) = trusted.header() else {
             return Self {
                 client: peer_ip,
                 proto: None,
             };
-        }
+        };
 
-        let (addresses, proto) = elements(headers);
+        let (addresses, proto) = elements(headers, header);
 
         // Whether the hop that wrote the fields may be believed at all. The
         // socket peer is the only sender this process observed rather than was
@@ -292,19 +341,26 @@ impl Forwarded {
     }
 }
 
-/// Every non-empty element's `for=` address, left to right, and the scheme. An
-/// element naming none (`unknown`, an `obfnode`, no `for=`) is a `None` hop.
+/// Every non-empty element's `for=` address in `header`, left to right, and the
+/// scheme. An element naming none (`unknown`, an `obfnode`, no `for=`) is a
+/// `None` hop.
 ///
-/// `Forwarded` wins where present, because it is the specified field and
-/// carries the scheme in the same element as the address it belongs to. The
-/// `X-Forwarded-*` pair is read only in its absence: those names appear in no
-/// specification -- RFC 7239 section 7.1 describes them and defines nothing --
-/// and reading both risks pairing one hop's address with another's scheme.
-fn elements(headers: &HeaderMap) -> (Vec<Option<IpAddr>>, Option<String>) {
-    let (mut addresses, mut proto, mut saw_forwarded) = (Vec::new(), None, false);
+/// Only `header` is read. The other field is whatever the client sent, and a
+/// fallback to it where `header` is absent would hand the client the address
+/// whenever the proxy wrote nothing.
+fn elements(headers: &HeaderMap, header: ProxyHeader) -> (Vec<Option<IpAddr>>, Option<String>) {
+    match header {
+        ProxyHeader::Forwarded => forwarded_elements(headers),
+        ProxyHeader::XForwarded => x_forwarded_elements(headers),
+    }
+}
+
+/// [`elements`] from `Forwarded`, whose scheme sits in the element it belongs
+/// to.
+fn forwarded_elements(headers: &HeaderMap) -> (Vec<Option<IpAddr>>, Option<String>) {
+    let (mut addresses, mut proto) = (Vec::new(), None);
     for value in headers.get_all(FORWARDED) {
         let Ok(value) = value.to_str() else { continue };
-        saw_forwarded = true;
 
         let (start, mut line_proto) = (addresses.len(), None);
         for element in unquoted_rsplit(value, b',') {
@@ -323,10 +379,12 @@ fn elements(headers: &HeaderMap) -> (Vec<Option<IpAddr>>, Option<String>) {
         proto = line_proto.or(proto);
     }
 
-    if saw_forwarded {
-        return (addresses, proto.map(str::to_ascii_lowercase));
-    }
+    (addresses, proto.map(str::to_ascii_lowercase))
+}
 
+/// [`elements`] from the `X-Forwarded-For` and `X-Forwarded-Proto` pair.
+fn x_forwarded_elements(headers: &HeaderMap) -> (Vec<Option<IpAddr>>, Option<String>) {
+    let mut addresses = Vec::new();
     for value in headers.get_all(X_FORWARDED_FOR) {
         let Ok(value) = value.to_str() else { continue };
         let hops = value.split(',').map(str::trim);

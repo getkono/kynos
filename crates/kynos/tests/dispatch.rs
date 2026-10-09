@@ -23,7 +23,7 @@ use kynos::{
     },
     http::{
         Method, Request, Response, StatusCode,
-        forwarded::{Forwarded, TrustedProxies},
+        forwarded::{Forwarded, ProxyHeader, TrustedProxies},
         header,
     },
     middleware::Observer,
@@ -760,7 +760,10 @@ async fn origin(forwarded: Forwarded) -> Text {
 #[tokio::test]
 async fn a_handler_reads_the_origin_the_router_resolved() {
     for (trusted, expected) in [
-        (TrustedProxies::hops(1), "203.0.113.7"),
+        (
+            TrustedProxies::hops(ProxyHeader::Forwarded, 1),
+            "203.0.113.7",
+        ),
         (TrustedProxies::none(), "none"),
     ] {
         let service = Router::<()>::new()
