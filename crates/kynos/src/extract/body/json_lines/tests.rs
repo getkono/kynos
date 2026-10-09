@@ -28,6 +28,7 @@ use crate::{
     error::rejection::BodyRejection,
     extract::{
         FromRequest,
+        body::limit::BodyLimit,
         describe::{Describe, RequestContent},
     },
     http::{Request, StatusCode, body::Body, header},
@@ -390,6 +391,57 @@ async fn an_empty_body_carries_no_records() {
     );
 }
 
+/// A record is held whole before it is decoded, so the body limit bounds each
+/// one: a record exactly at it decodes, and one past it is the 413 that ends
+/// the stream, since the rest of it was never read.
+#[tokio::test]
+async fn a_record_past_the_limit_ends_the_stream() {
+    let mut request = request(
+        Some(NDJSON),
+        one_frame(b"{\"at\":1}\n{\"at\":123}\n{\"at\":3}\n"),
+        false,
+    );
+    request.extensions_mut().insert(BodyLimit(8));
+    let mut records = JsonLines::<Records<Reading>>::from_request(request, &())
+        .await
+        .expect("the media type is the one this body extracts")
+        .items;
+
+    assert_eq!(expect_record(&mut records).await, Reading { at: 1 });
+
+    let rejection = records
+        .next()
+        .await
+        .expect("the oversized record is reported")
+        .expect_err("a record past the limit is a rejection");
+    assert_eq!(rejection.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(
+        matches!(rejection, BodyRejection::TooLarge { limit: 8 }),
+        "{rejection:?}"
+    );
+    assert!(records.next().await.is_none());
+}
+
+/// A record with no delimiter in sight is refused as soon as what arrived
+/// passes the limit, rather than buffered until the body ends — which a body
+/// that never ends would not.
+#[tokio::test]
+async fn a_record_past_the_limit_is_refused_before_it_ends() {
+    let mut request = request(Some(NDJSON), one_frame(b"{\"at\":12345"), true);
+    request.extensions_mut().insert(BodyLimit(8));
+    let mut records = JsonLines::<Records<Reading>>::from_request(request, &())
+        .await
+        .expect("the media type is the one this body extracts")
+        .items;
+
+    let rejection = records
+        .next()
+        .await
+        .expect("the oversized record is reported while the body is still open")
+        .expect_err("a record past the limit is a rejection");
+    assert_eq!(rejection.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
 /// Bytes that are not JSON are a framing failure: after one, where the next
 /// record starts is a guess.
 #[tokio::test]
@@ -581,7 +633,7 @@ async fn a_utf_8_charset_is_accepted() {
 /// The 415 is not among them: it is raised through the
 /// `unsupported_media_type` every codec in this module shares, and
 /// `a_body_of_another_media_type_is_refused` sweeps it. What is counted
-/// here is what a *streamed* body reaches on its own, so a fifth added
+/// here is what a *streamed* body reaches on its own, so a sixth added
 /// without a case fails the build.
 #[test]
 fn every_streamed_rejection_has_a_case() {
@@ -591,6 +643,7 @@ fn every_streamed_rejection_has_a_case() {
         "a_transport_failure_mid_body_is_a_bad_request",
         "a_record_that_does_not_fit_the_type_does_not_end_the_stream",
         "a_record_that_is_not_json_ends_the_stream",
+        "a_record_past_the_limit_ends_the_stream",
     ];
 
     let sites = SOURCE.matches("BodyRejection::").count();

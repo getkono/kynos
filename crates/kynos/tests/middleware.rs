@@ -1627,6 +1627,24 @@ mod decompression {
         assert_eq!(reply.text(), payload());
     }
 
+    /// The limit here is the route's body limit, so it replaces the default
+    /// every buffering extractor applies: a body past 2 MiB and within it
+    /// reaches the handler rather than the extractor's 413.
+    #[tokio::test]
+    async fn its_limit_replaces_the_extractor_default() {
+        let body = "n".repeat(2 * 1024 * 1024 + 1);
+        let service = service(Decompression::new(4 * 1024 * 1024));
+
+        let reply = post(&service, "/echo")
+            .header("content-type", "text/plain")
+            .body(body.clone())
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(reply.body.len(), body.len());
+    }
+
     /// RFC 9110 section 8.4: the representation *is* the coded form, and "all
     /// other metadata about the representation is about the coded form". Once
     /// the coded form is gone that metadata describes nothing — a

@@ -215,10 +215,14 @@ fn boundary(headers: &HeaderMap) -> Result<String, BodyRejection> {
 }
 
 /// Every way the parser can fail is a body that is not the one the client meant
-/// to send, which is the same 400 a transport failure part-way through is.
+/// to send, which is the same 400 a transport failure part-way through is —
+/// except passing the limit, which is the 413 every buffering codec raises.
 fn malformed_body(error: &multer::Error) -> BodyRejection {
-    BodyRejection::Syntax {
-        detail: error.to_string(),
+    match error {
+        multer::Error::StreamSizeExceeded { limit } => BodyRejection::TooLarge { limit: *limit },
+        _ => BodyRejection::Syntax {
+            detail: error.to_string(),
+        },
     }
 }
 
@@ -230,7 +234,19 @@ impl<C: Sync, T: FromMultipart + Schema + Send> FromRequest<C> for MultipartForm
 
     async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
         let boundary = boundary(request.headers())?;
-        let mut fields = multer::Multipart::new(request.into_body().into_data_stream(), boundary);
+
+        // Every part is held until `T` is built, so the whole stream is what
+        // the limit bounds: multer counts it as it arrives and stops at the
+        // frame that passes it.
+        let limit = super::limit::of(&request);
+        super::limit::refuse_declared(request.headers(), limit)?;
+        let constraints =
+            multer::Constraints::new().size_limit(multer::SizeLimit::new().whole_stream(limit));
+        let mut fields = multer::Multipart::with_constraints(
+            request.into_body().into_data_stream(),
+            boundary,
+            constraints,
+        );
 
         // Every part is read to completion before `T` is built, for the reason
         // the JSON codec serializes before it commits a status: a decision made

@@ -326,7 +326,7 @@ rejection_response!(CookieRejection);
 /// The request body could not be turned into the handler's argument.
 ///
 /// The one rejection with a genuinely wide status set, because deciding a body
-/// is unacceptable happens in three distinct ways.
+/// is unacceptable happens in four distinct ways.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum BodyRejection {
@@ -354,13 +354,19 @@ pub enum BodyRejection {
         /// What the client sent, if anything.
         received: Option<String>,
     },
-    // There is deliberately no `TooLarge` variant. Capping a body is
-    // `middleware::limits::body_size::BodySize`'s job, and it answers 413 through its own
-    // `BodySizeExceeded` short circuit before a body extractor is reached — so
-    // an extractor never meets an oversized body. A variant here would declare
-    // a 413 on every operation taking a body, including the ones no `BodySize`
-    // covers, which is a status the service cannot produce. `assert_conformance`
-    // caught exactly that.
+
+    /// The body exceeded the limit its operation reads it under. Produces 413.
+    ///
+    /// Every extractor that holds a body in memory caps it, at
+    /// [`DEFAULT_LIMIT`](crate::extract::body::limit::DEFAULT_LIMIT) unless a
+    /// [`BodySize`](crate::middleware::limits::body_size::BodySize) covering
+    /// the operation names another, so every operation reading a body can
+    /// produce this and declares it.
+    #[error("the request body is too large")]
+    TooLarge {
+        /// The limit it exceeded, in bytes.
+        limit: u64,
+    },
 }
 
 impl BodyRejection {
@@ -371,6 +377,7 @@ impl BodyRejection {
             Self::Syntax { .. } => StatusCode::BAD_REQUEST,
             Self::Schema { .. } => StatusCode::UNPROCESSABLE_ENTITY,
             Self::UnsupportedMediaType { .. } => StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            Self::TooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
         }
     }
 }
@@ -394,12 +401,19 @@ impl IntoProblem for BodyRejection {
                 || format!("{summary}: the request declared no `Content-Type`"),
                 |received| format!("{summary}: `{received}`"),
             )),
+
+            // The same sentence `BodySizeExceeded` writes, so a client reads
+            // one refusal whichever of the two caps answered.
+            Self::TooLarge { limit } => {
+                problem.with_detail(format!("the request body exceeds {limit} bytes"))
+            }
         }
     }
 
     fn statuses() -> &'static [StatusCode] {
         &[
             StatusCode::BAD_REQUEST,
+            StatusCode::PAYLOAD_TOO_LARGE,
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             StatusCode::UNPROCESSABLE_ENTITY,
         ]

@@ -5,12 +5,13 @@
 //! that the responses a suite actually observed match what the emitted document
 //! promises.
 //!
-//! Both directions run. `every_declared_response_is_exercised` was `#[ignore]`d
-//! for a declaration this fixture could not exercise: every body extractor
-//! promised a 413 through `BodyRejection`, and only `middleware::limits` ever
-//! produced one. Removing that variant removed the gap, so the attribute went
-//! with it — the fix for a promise nothing can keep is to stop making it, never
-//! to stop asking.
+//! Both directions run. `every_declared_response_is_exercised` was once
+//! `#[ignore]`d for a declaration this fixture could not exercise: every body
+//! extractor promised a 413 through `BodyRejection` that only
+//! `middleware::limits` produced. The 413 is declared again now because every
+//! buffering extractor enforces a default cap, so the promise is kept and the
+//! test exercises it — the fix for a promise nothing can keep is to keep it or
+//! stop making it, never to stop asking.
 
 #![cfg(all(feature = "macros", feature = "json", feature = "test-util"))]
 
@@ -204,6 +205,18 @@ async fn every_declared_response_is_exercised() {
         .send()
         .await
         .assert_status(StatusCode::UNPROCESSABLE_ENTITY);
+
+    // No limit is mounted, so this is the default cap every buffering body
+    // extractor applies, and the 413 `BodyRejection` declares for it.
+    client
+        .post("/users")
+        .json(&User {
+            id: 3,
+            name: "n".repeat(2 * 1024 * 1024),
+        })
+        .send()
+        .await
+        .assert_status(StatusCode::PAYLOAD_TOO_LARGE);
 
     client.assert_declared_responses_covered();
 }

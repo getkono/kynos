@@ -6,10 +6,13 @@
 //! `#[cfg]` threaded through a shared file at every impl site.
 //!
 //! [`OneOf`] and `Option<T>` are the two combinators over those codecs, and
-//! live here because they are generic over any [`RequestContent`].
+//! live here because they are generic over any [`RequestContent`]. [`limit`]
+//! is the one thing every buffering codec shares beyond media types: how much
+//! of a body it will hold.
 
 pub mod alternative;
 pub mod binary;
+pub mod limit;
 pub mod text;
 
 #[cfg(test)]
@@ -27,7 +30,6 @@ pub mod multipart;
 pub mod protobuf;
 
 use bytes::Bytes;
-use http_body_util::{BodyExt, Collected};
 
 #[cfg(any(feature = "json", feature = "form", feature = "multipart"))]
 use crate::schema::{
@@ -143,26 +145,20 @@ fn unsupported_media_type(headers: &HeaderMap) -> BodyRejection {
     }
 }
 
-/// Enforces `media_type`, then reads the whole body into memory.
+/// Enforces `media_type`, then reads the whole body into memory, up to the
+/// operation's [limit](limit::DEFAULT_LIMIT).
 ///
 /// This is the first half of every codec in this module. Enforcing the content
 /// type first is what keeps an operation from accepting one its description
-/// never claimed, and a transport failure part-way through is a 400: what
-/// arrived is not the body the client meant to send, and no codec can be asked
-/// about it.
+/// never claimed, and only then is a byte of the body read.
 async fn read_body(request: Request, media_type: &str) -> Result<Bytes, BodyRejection> {
     if !offers(request.headers(), media_type) {
         return Err(unsupported_media_type(request.headers()));
     }
 
-    request
-        .into_body()
-        .collect()
-        .await
-        .map(Collected::to_bytes)
-        .map_err(|error| BodyRejection::Syntax {
-            detail: error.to_string(),
-        })
+    let limit = limit::of(&request);
+    limit::refuse_declared(request.headers(), limit)?;
+    limit::read(request.into_body(), limit).await
 }
 
 /// Holds a decoded body, or the record of one sitting at `at`, to the bounds

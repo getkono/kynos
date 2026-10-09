@@ -20,6 +20,7 @@ use tokio::io::{AsyncRead, ReadBuf};
 
 use crate::{
     error::problem::{ProblemType, refusal_problem, refusal_response},
+    extract::body::limit::BodyLimit,
     http::{self, body::Body},
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
@@ -627,6 +628,11 @@ where
         };
 
         let (mut parts, body) = request.into_parts();
+
+        // This is the route's body limit, so it replaces the extractor's
+        // default as `BodySize` does: what is handed on within it is never
+        // refused beneath.
+        parts.extensions.insert(BodyLimit(self.limit));
 
         // Read once, whether or not a coding was applied: the limit is the
         // route's body limit, and a request that skipped the coding is not

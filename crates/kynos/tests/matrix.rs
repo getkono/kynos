@@ -18,10 +18,11 @@
 //!   declare its status on all of them and every one would then have to be
 //!   made to produce it.
 //!
-//! Its narrow sibling has already earned its keep once —
-//! [`error/rejection.rs`](../src/error/rejection.rs) records that
-//! `assert_conformance` is what caught `BodyRejection` declaring a 413 no
-//! operation could produce, a class of defect no line-coverage number shows.
+//! Its narrow sibling has already earned its keep once: `assert_conformance`
+//! caught `BodyRejection` declaring a 413 no operation could produce, a class
+//! of defect no line-coverage number shows. That 413 is declared again now,
+//! because every buffering extractor enforces a default cap, and the exchange
+//! past it below is what keeps the declaration honest.
 
 #![cfg(all(
     feature = "macros",
@@ -655,6 +656,7 @@ async fn the_owned_layer_matrix_matches_the_description_it_emits() {
     exercise_the_combined_guards(&client).await;
     exercise_the_shared_status(&client).await;
     exercise_the_limits(&client).await;
+    exercise_the_default_body_cap(&client).await;
     #[cfg(feature = "assets")]
     exercise_the_ranges(&client).await;
 
@@ -1033,6 +1035,20 @@ async fn exercise_the_combined_guards(client: &TestClient<App>) {
         .await
         .assert_status(StatusCode::FORBIDDEN)
         .assert_problem_type(BANNED);
+}
+
+/// The default cap every buffering extractor enforces where no limit covers
+/// the operation, which is the 413 every operation reading a body declares.
+async fn exercise_the_default_body_cap(client: &TestClient<App>) {
+    client
+        .post("/users")
+        .json(&User {
+            id: 3,
+            name: "n".repeat(2 * 1024 * 1024),
+        })
+        .send()
+        .await
+        .assert_status(StatusCode::PAYLOAD_TOO_LARGE);
 }
 
 /// Every status an interceptor contributes, on the one operation it covers.

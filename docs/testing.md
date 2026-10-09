@@ -923,10 +923,10 @@ operation that reads a body, and the only thing that ever produced one was
 `middleware::limits::body_size::BodySize`. A service without that limit therefore promised
 a response it could not send. Line coverage cannot see this: every line of the
 declaration runs, and the gap is between the document and the service rather
-than inside either. The fix was to remove the variant — recorded at
-[`error/rejection.rs`](../crates/kynos/src/error/rejection.rs)'s `TooLarge`
-comment — and it is what let `every_declared_response_is_exercised` stop being
-`#[ignore]`d.
+than inside either. The fix then was to remove the variant, and it is what let
+`every_declared_response_is_exercised` stop being `#[ignore]`d. `TooLarge` is
+back since every buffering extractor enforces a default cap, so the 413 is one
+each of those operations can send, and the same assertion now drives one.
 
 **A response header declared where nothing resolves it.** An interceptor's
 `Adds` group was filed under the `2XX` wildcard beside the operation's declared

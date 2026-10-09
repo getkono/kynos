@@ -7,6 +7,7 @@ use http_body_util::BodyExt;
 
 use crate::{
     error::problem::{ProblemType, refusal_problem, refusal_response},
+    extract::body::limit::{BodyLimit, declared_length},
     http::{self, body::Body},
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
@@ -69,6 +70,16 @@ impl<T: ProblemType> Responses for BodySizeExceeded<T> {
 /// Contributes 413 to every covered operation — which is the point.
 /// Configuring a limit and documenting that the limit exists are the same
 /// action, so an API cannot quietly reject payloads it claims to accept.
+///
+/// # Replacing the default
+///
+/// Every body extractor that buffers already caps what it reads at
+/// [`DEFAULT_LIMIT`](crate::extract::body::limit::DEFAULT_LIMIT). This limit
+/// replaces that one for every operation it covers, in either direction, so
+/// mounting it on a single endpoint is how one large upload is let through:
+/// `kynos::routes![upload].0.intercept(BodySize::new(..))` for an attribute
+/// route. It also covers operations that read no body, which then declare a
+/// 413 too; mount it where bodies are read.
 ///
 /// # What it costs a streaming read
 ///
@@ -169,17 +180,6 @@ impl BodySize<()> {
     }
 }
 
-/// The length the request declared, when it declared one.
-fn declared_length(headers: &http::HeaderMap) -> Option<u64> {
-    headers
-        .get(http::header::CONTENT_LENGTH)?
-        .to_str()
-        .ok()?
-        .trim()
-        .parse()
-        .ok()
-}
-
 /// Reads `body` while the running total stays within `limit`, returning the
 /// body to hand on.
 ///
@@ -228,12 +228,18 @@ where
 
     async fn intercept(
         &self,
-        request: http::Request,
+        mut request: http::Request,
         reads: (),
         context: &C,
         next: Next<'_, C>,
     ) -> Result<Continued<()>, BodySizeExceeded<T>> {
         let _ = (reads, context);
+
+        // This limit replaces the extractor's default for every operation it
+        // covers, upward as well as downward: an extractor beneath reads the
+        // body under the same figure this enforces, so it never refuses what
+        // was let through here.
+        request.extensions_mut().insert(BodyLimit(self.limit));
 
         // A declared length is the cheapest answer: an oversized upload is
         // refused before a byte of it is read.
