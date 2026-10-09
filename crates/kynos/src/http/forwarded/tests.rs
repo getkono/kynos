@@ -482,6 +482,30 @@ fn the_rightmost_x_forwarded_proto_is_the_trusted_hops() {
     }
 }
 
+/// A rightmost `X-Forwarded-Proto` line that is not text, and so cannot be
+/// read, does not hand the scheme to the line before it, which may be the
+/// client's.
+#[test]
+fn an_unreadable_rightmost_x_forwarded_proto_states_no_scheme() {
+    let mut headers = map(&[
+        ("x-forwarded-for", "203.0.113.7"),
+        ("x-forwarded-proto", "https"),
+    ]);
+    headers.append(
+        "x-forwarded-proto",
+        HeaderValue::from_bytes(b"\xe9").expect("obs-text is a legal field value"),
+    );
+
+    let resolved = Forwarded::resolve(
+        &headers,
+        Some(peer("10.0.0.1")),
+        &TrustedProxies::hops(ProxyHeader::XForwarded, 1),
+    );
+
+    assert_eq!(resolved.client(), Some(ip("203.0.113.7")));
+    assert_eq!(resolved.proto(), None);
+}
+
 /// Every `nodename` form section 6 defines, and what each yields.
 ///
 /// The table is the grammar. `unknown` and an `obfnode` are identifiers rather

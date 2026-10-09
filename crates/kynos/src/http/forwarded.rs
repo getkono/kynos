@@ -271,14 +271,14 @@ impl Forwarded {
             };
         };
 
-        let (addresses, proto) = elements(headers, header);
+        let (chain, peer_proto) = elements(headers, header);
 
         // Whether the hop that wrote the fields may be believed at all. The
         // socket peer is the only sender this process observed rather than was
         // told about, so nothing in the request is worth reading unless that
         // peer is named -- either outright, or by `hops` budgeting a first step
-        // of trust. It is what decides `proto`, which names no hop of its own
-        // and so has only the immediate sender's word behind it.
+        // of trust. It is what decides `peer_proto`, which names no hop of its
+        // own and so has only the immediate sender's word behind it.
         let peer_is_trusted =
             trusted.hops > 0 || peer_ip.is_some_and(|address| trusted.names(address));
 
@@ -290,24 +290,34 @@ impl Forwarded {
         // cannot be trusted" -- is exactly what stopping there respects.
         let mut client = peer_ip;
         let mut sender = peer_ip;
+        let mut stop = None;
 
         // `believed` counts the elements already taken, so it is the index the
         // walk is at -- and it is what `hops` is spent against. One naming no
         // address spends its hop too, or the client's own would slide into it.
-        for (believed, address) in addresses.iter().rev().enumerate() {
+        for (believed, hop) in chain.iter().rev().enumerate() {
             let trusted_sender =
                 sender.is_some_and(|sender| trusted.names(sender)) || (believed < trusted.hops);
             if !trusted_sender {
                 break;
             }
 
-            client = *address;
-            sender = *address;
+            client = hop.address;
+            sender = hop.address;
+            stop = Some(hop);
         }
+
+        // The scheme sits beside the client's address, in the element the walk
+        // stopped at: one hop wrote both. A `proto=` nearer the service names a
+        // connection between proxies, and one further out an untrusted
+        // sender's word, so neither stands in for a stop that states none.
+        let proto = stop
+            .and_then(|hop| hop.proto)
+            .or(peer_proto.filter(|_| peer_is_trusted));
 
         Self {
             client,
-            proto: proto.filter(|_| peer_is_trusted),
+            proto: proto.map(str::to_ascii_lowercase),
         }
     }
 
@@ -341,63 +351,97 @@ impl Forwarded {
     }
 }
 
-/// Every non-empty element's `for=` address in `header`, left to right, and the
-/// scheme. An element naming none (`unknown`, an `obfnode`, no `for=`) is a
-/// `None` hop.
+/// One element of a forwarding field: the hop a proxy wrote.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Hop<'a> {
+    /// The `for=` address, or `None` where the element names none (`unknown`,
+    /// an `obfnode`, no `for=`).
+    address: Option<IpAddr>,
+    /// The `proto=` the same element states, as written.
+    proto: Option<&'a str>,
+}
+
+/// Every non-empty element in `header`, left to right, and the scheme the
+/// immediate sender stated outside any element.
+///
+/// Only `Forwarded` gives an element a scheme of its own; only
+/// `X-Forwarded-Proto` states one apart from the elements, as its rightmost
+/// value. Each kind is `None` from the other field.
 ///
 /// Only `header` is read. The other field is whatever the client sent, and a
 /// fallback to it where `header` is absent would hand the client the address
 /// whenever the proxy wrote nothing.
-fn elements(headers: &HeaderMap, header: ProxyHeader) -> (Vec<Option<IpAddr>>, Option<String>) {
+fn elements(headers: &HeaderMap, header: ProxyHeader) -> (Vec<Hop<'_>>, Option<&str>) {
     match header {
-        ProxyHeader::Forwarded => forwarded_elements(headers),
+        ProxyHeader::Forwarded => (forwarded_elements(headers), None),
         ProxyHeader::XForwarded => x_forwarded_elements(headers),
     }
 }
 
 /// [`elements`] from `Forwarded`, whose scheme sits in the element it belongs
 /// to.
-fn forwarded_elements(headers: &HeaderMap) -> (Vec<Option<IpAddr>>, Option<String>) {
-    let (mut addresses, mut proto) = (Vec::new(), None);
+fn forwarded_elements(headers: &HeaderMap) -> Vec<Hop<'_>> {
+    let mut hops = Vec::new();
     for value in headers.get_all(FORWARDED) {
         let Ok(value) = value.to_str() else { continue };
 
-        let (start, mut line_proto) = (addresses.len(), None);
+        let start = hops.len();
         for element in unquoted_rsplit(value, b',') {
-            let mut element_address = None;
+            let (mut address, mut proto) = (None, None);
             let pairs = unquoted_rsplit(element, b';').filter_map(|pair| pair.split_once('='));
             for (name, raw) in pairs.map(|(name, raw)| (name, unquote(raw.trim()))) {
                 if name.trim().eq_ignore_ascii_case("for") {
-                    element_address = element_address.or(Some(node_address(raw)));
+                    address = address.or(Some(node_address(raw)));
                 } else if name.trim().eq_ignore_ascii_case("proto") {
-                    line_proto = line_proto.or(Some(raw));
+                    proto = proto.or(Some(raw));
                 }
             }
-            addresses.push(element_address.flatten());
+            hops.push(Hop {
+                address: address.flatten(),
+                proto,
+            });
         }
-        addresses[start..].reverse();
-        proto = line_proto.or(proto);
+        hops[start..].reverse();
     }
 
-    (addresses, proto.map(str::to_ascii_lowercase))
+    hops
 }
 
 /// [`elements`] from the `X-Forwarded-For` and `X-Forwarded-Proto` pair.
-fn x_forwarded_elements(headers: &HeaderMap) -> (Vec<Option<IpAddr>>, Option<String>) {
-    let mut addresses = Vec::new();
+///
+/// `X-Forwarded-Proto` is one list across its lines, like any list field (RFC
+/// 9110 section 5.3), and its rightmost value is the one the immediate sender
+/// wrote: a proxy that appends rather than replaces leaves a client's own value
+/// to its left. A rightmost line that is not text yields no scheme rather than
+/// handing the answer to an earlier, further-out line.
+fn x_forwarded_elements(headers: &HeaderMap) -> (Vec<Hop<'_>>, Option<&str>) {
+    let mut hops = Vec::new();
     for value in headers.get_all(X_FORWARDED_FOR) {
         let Ok(value) = value.to_str() else { continue };
-        let hops = value.split(',').map(str::trim);
-        addresses.extend(hops.filter(|hop| !hop.is_empty()).map(node_address));
+        let addresses = value.split(',').map(str::trim);
+        hops.extend(
+            addresses
+                .filter(|address| !address.is_empty())
+                .map(|address| Hop {
+                    address: node_address(address),
+                    proto: None,
+                }),
+        );
     }
 
-    let proto = headers
-        .get(X_FORWARDED_PROTO)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.split(',').next())
-        .map(|first| first.trim().to_ascii_lowercase());
+    let mut proto = None;
+    for value in headers.get_all(X_FORWARDED_PROTO).iter().rev() {
+        let Ok(value) = value.to_str() else { break };
+        proto = value
+            .rsplit(',')
+            .map(str::trim)
+            .find(|value| !value.is_empty());
+        if proto.is_some() {
+            break;
+        }
+    }
 
-    (addresses, proto)
+    (hops, proto)
 }
 
 /// `text`'s non-blank pieces between `delimiter`s outside any `quoted-string`
