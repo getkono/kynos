@@ -88,8 +88,8 @@ pub fn min_length<T: Textual + ?Sized>(
     at: Pointer<'_>,
     violations: &mut Violations,
 ) {
-    if value.text().is_some_and(|text| length(text) < bound) {
-        violations.report(at, format!("must be at least {bound} characters long"));
+    if let Some(text) = value.text() {
+        text_min_length(text, bound, at, violations);
     }
 }
 
@@ -100,7 +100,31 @@ pub fn max_length<T: Textual + ?Sized>(
     at: Pointer<'_>,
     violations: &mut Violations,
 ) {
-    if value.text().is_some_and(|text| length(text) > bound) {
+    if let Some(text) = value.text() {
+        text_max_length(text, bound, at, violations);
+    }
+}
+
+/// `min_length` on text in hand, which a map key is as well as a field.
+pub(crate) fn text_min_length(
+    text: &str,
+    bound: u64,
+    at: Pointer<'_>,
+    violations: &mut Violations,
+) {
+    if length(text) < bound {
+        violations.report(at, format!("must be at least {bound} characters long"));
+    }
+}
+
+/// `max_length` on text in hand, which a map key is as well as a field.
+pub(crate) fn text_max_length(
+    text: &str,
+    bound: u64,
+    at: Pointer<'_>,
+    violations: &mut Violations,
+) {
+    if length(text) > bound {
         violations.report(at, format!("must be at most {bound} characters long"));
     }
 }

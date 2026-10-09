@@ -32,7 +32,7 @@ use crate::{
     },
     http::{Request, StatusCode, body::Body, header},
     router::operation::OperationCx,
-    schema::registry::Registry,
+    schema::{Schema, registry::Registry},
 };
 
 const NDJSON: &str = "application/x-ndjson";
@@ -45,6 +45,15 @@ type Frame = Result<Bytes, io::Error>;
 #[derive(Debug, PartialEq, Eq, serde::Deserialize)]
 struct Reading {
     at: u32,
+}
+
+/// Open and unbounded, so every record that deserializes is admitted: a
+/// record held to its bounds is `tests/constraints.rs`' to read.
+impl Schema for Reading {
+    fn schema(registry: &mut Registry) -> kynos_openapi::Schema {
+        let _ = registry;
+        kynos_openapi::Schema::any()
+    }
 }
 
 /// A body arriving as exactly the frames it was given.

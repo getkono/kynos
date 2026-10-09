@@ -12,7 +12,7 @@ use crate::{
     },
     http::Request,
     router::operation::OperationCx,
-    schema::{Schema, registry::Registry},
+    schema::{Schema, constraints::Pointer, registry::Registry},
 };
 
 /// An `application/x-www-form-urlencoded` request body.
@@ -78,7 +78,7 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send> FromRequest<C> for
         let value = serde_html_form::from_str(text).map_err(|error| BodyRejection::Schema {
             failures: BTreeMap::from([(String::new(), error.to_string())]),
         })?;
-        super::checked(value).map(Self)
+        super::checked(value, Pointer::root()).map(Self)
     }
 }
 

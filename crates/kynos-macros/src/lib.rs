@@ -260,9 +260,10 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// `max_length`, `pattern`, `min_items`, `max_items` and the `unique_items`
 /// flag. They become JSON Schema assertions *and* the parser's checks, which is
 /// what keeps the description honest without a JSON Schema interpreter on the
-/// hot path: the derive generates `Schema::check_constraints`, which `Json` and
-/// `Form` run on the value they deserialized, refusing a broken bound with a
-/// 422 naming the member by JSON Pointer. A member serde also reads under an
+/// hot path: the derive generates `Schema::check_constraints`, which every
+/// input decoding a `Schema` type runs on the value it decoded, refusing a
+/// broken bound by naming the member by JSON Pointer — `docs/schema.md` lists
+/// the inputs and their statuses. A member serde also reads under an
 /// `alias` is named by the object holding it, and a member serde fills from a
 /// `default` is admitted with a broken bound only where the value it would be
 /// filled with breaks the same bounds. `pattern` alone is described and not yet enforced. A bound on a type of another kind — `max_length` on a number —

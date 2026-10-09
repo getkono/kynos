@@ -42,7 +42,9 @@ pub(crate) const SEQUENCE_MEDIA_TYPE: &str = mime_names::APPLICATION_JSON_SEQ;
 ///
 /// One type, both directions. As a response, `items` is any stream of
 /// serializable values and each is written as one line. As a request, `items`
-/// is [`Records<T>`], which decodes the body one line at a time.
+/// is [`Records<T>`], which decodes the body one line at a time and holds each
+/// record to the bounds `T`'s schema declares, so extracting one requires
+/// `T: Schema` as well as `T: DeserializeOwned`.
 ///
 /// ```no_run
 /// # #[cfg(all(feature = "json", feature = "openapi32"))]
@@ -53,7 +55,7 @@ pub(crate) const SEQUENCE_MEDIA_TYPE: &str = mime_names::APPLICATION_JSON_SEQ;
 ///     response::status::NoContent,
 /// };
 ///
-/// #[derive(serde::Deserialize)]
+/// #[derive(kynos::Schema, serde::Deserialize)]
 /// struct Reading {
 ///     value: f64,
 /// }
@@ -98,7 +100,7 @@ pub struct JsonLines<S> {
 ///     extract::body::json_lines::{JsonSeq, records::Records},
 /// };
 ///
-/// #[derive(serde::Deserialize)]
+/// #[derive(kynos::Schema, serde::Deserialize)]
 /// struct Reading {
 ///     value: f64,
 /// }
@@ -120,7 +122,7 @@ pub struct JsonSeq<S> {
     pub items: S,
 }
 
-impl<C: Sync, T: serde::de::DeserializeOwned> FromRequest<C> for JsonLines<Records<T>> {
+impl<C: Sync, T: serde::de::DeserializeOwned + Schema> FromRequest<C> for JsonLines<Records<T>> {
     type Rejection = BodyRejection;
 
     async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
@@ -151,7 +153,7 @@ impl<T: Schema> RequestContent for JsonLines<Records<T>> {
     }
 }
 
-impl<C: Sync, T: serde::de::DeserializeOwned> FromRequest<C> for JsonSeq<Records<T>> {
+impl<C: Sync, T: serde::de::DeserializeOwned + Schema> FromRequest<C> for JsonSeq<Records<T>> {
     type Rejection = BodyRejection;
 
     async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {

@@ -12,7 +12,7 @@ use crate::{
     },
     http::Request,
     router::operation::OperationCx,
-    schema::{Schema, registry::Registry},
+    schema::{Schema, constraints::Pointer, registry::Registry},
 };
 
 /// An `application/json` request or response body.
@@ -50,7 +50,7 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send> FromRequest<C> for
     async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
         let bytes = super::read_body(request, MEDIA_TYPE).await?;
         let value = serde_json::from_slice(&bytes).map_err(rejection)?;
-        super::checked(value).map(Self)
+        super::checked(value, Pointer::root()).map(Self)
     }
 }
 
