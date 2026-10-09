@@ -106,6 +106,11 @@ pub(in crate::server) fn validate_protocol_config(
                 "HTTP/2 keep-alive durations must be non-zero",
             ));
         }
+        if http2.idle_timeout.is_some_and(|timeout| timeout.is_zero()) {
+            return Err(ServerError::InvalidConfiguration(
+                "HTTP/2 idle_timeout must be non-zero when enabled",
+            ));
+        }
     }
     Ok(())
 }

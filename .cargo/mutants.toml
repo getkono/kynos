@@ -109,6 +109,10 @@ exclude_globs = [
   # missed, and a full build each. An entry point that does more than forward
   # belongs in the module it forwards to.
   "crates/kynos-macros/src/lib.rs",
+  # The fuzz entry points. The module is `cfg(fuzzing)`, which only `cargo fuzz`
+  # sets, so no test build compiles it and every mutant in it is reported
+  # missed. Each one only forwards to a crate-private parser, which is mutated.
+  "crates/kynos/src/__private/fuzz.rs",
 ]
 
 exclude_re = [

@@ -37,7 +37,7 @@ pub struct Http1Config {
     /// sent no complete head this long after connecting -- over HTTP/2 or
     /// TLS too, and before either side knows which protocol it is -- is
     /// disconnected. Past the first head, it bounds each later HTTP/1 head;
-    /// an HTTP/2 connection is then held only to its keep-alive.
+    /// an HTTP/2 connection is then held to the HTTP/2 idle timeout instead.
     pub header_read_timeout: Option<Duration>,
     /// The maximum number of request headers.
     pub max_headers: usize,

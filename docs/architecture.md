@@ -711,7 +711,7 @@ That 16 KiB is prose, and nothing gates it against hyper. So what
 [#87](https://github.com/getkono/kynos/issues/87) asked to be stated as a
 relation against this figure is guarded as absolute `size_of` ceilings on
 Kynos's own per-connection state instead — 192 bytes for the inline connection
-record, 192 for the protocol configuration cloned per socket. Those are what
+record, 256 for the protocol configuration cloned per socket. Those are what
 can fail. The relation itself is recorded beside them as prose
 (`crates/kynos/src/extract/connection/tests.rs`,
 `crates/kynos/src/server/tests.rs`): per-connection state is a fraction of a
