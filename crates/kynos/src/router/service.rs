@@ -47,6 +47,13 @@ impl<C> Service<C> {
     /// Returns [`Error::Json`](crate::Error::Json) when the edited document
     /// cannot be serialized for a mounted reference.
     #[cfg(any(feature = "tls", feature = "unchecked"))]
+    #[cfg_attr(
+        not(feature = "docs"),
+        expect(
+            clippy::unnecessary_wraps,
+            reason = "only a mounted reference can fail to render, and `docs` is what mounts one"
+        )
+    )]
     pub(crate) fn openapi_mut<R>(
         &mut self,
         edit: impl FnOnce(&mut Document) -> R,

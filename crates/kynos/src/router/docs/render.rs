@@ -1,6 +1,6 @@
 //! Serializing the finished document into the bytes a reference serves.
 //!
-//! Split out of [`super`] so that the one function holding a
+//! Split out of [`super`] so that the code holding a
 //! [`Document`](kynos_openapi::Document) sits in a different file from the
 //! [`State`](super::State) the endpoints read and the endpoints themselves.
 //! `docs/testing.md`'s off-path table allows a `Document` per file, so a file
