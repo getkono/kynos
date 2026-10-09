@@ -62,7 +62,11 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// # Errors
     ///
     /// Returns [`Error::Invalid`] when validation finds an error-level
-    /// violation, so a misleading description is never emitted.
+    /// violation, so a misleading description is never emitted. Also returns
+    /// it, in every build, for a key without the `x-` prefix in any object's
+    /// `extensions`, such as the `Info` given to [`info`](Router::info): the
+    /// model types no such field at either version, so it is refused rather
+    /// than raising the version the description claims.
     pub fn openapi(&self) -> Result<Document>
     where
         C: 'static,
