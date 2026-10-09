@@ -241,3 +241,35 @@ mod a_form_body_decodes_what_it_describes {
         assert_eq!(flattened.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 }
+
+/// The message a protobuf body carries is the one the extractor yields.
+///
+/// A non-default value, so an extractor that skipped the decode and yielded
+/// `T::default()` cannot pass.
+#[cfg(feature = "protobuf")]
+#[tokio::test]
+async fn a_protobuf_body_decodes_to_the_message_it_encodes() {
+    use crate::{
+        extract::{FromRequest, body::protobuf::Protobuf},
+        http::{HeaderValue, Request, body::Body, header},
+    };
+
+    #[derive(Clone, PartialEq, prost::Message)]
+    struct Tagged {
+        #[prost(int32, tag = "1")]
+        value: i32,
+    }
+
+    // Field 1, varint wire type, value 7 -- the whole message.
+    let mut request = Request::new(Body::from_bytes(bytes::Bytes::from_static(&[0x08, 0x07])));
+    request.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/protobuf"),
+    );
+
+    let Protobuf(message) = Protobuf::<Tagged>::from_request(request, &())
+        .await
+        .expect("a well-formed message");
+
+    assert_eq!(message, Tagged { value: 7 });
+}

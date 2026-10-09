@@ -5,7 +5,7 @@
 Report privately through GitHub's private vulnerability reporting: open a
 [security advisory](https://github.com/getkono/kynos/security/advisories/new),
 or use "Report a vulnerability" on the repository's Security tab. Do not open
-a public issue, and do not raise it in Discussions.
+a public issue.
 
 Include what the bug form asks for — the version or commit, the exact feature
 set, the toolchain, and a reproduction — plus what an attacker gets out of it.

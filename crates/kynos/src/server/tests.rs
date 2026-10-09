@@ -3741,6 +3741,19 @@ mod protocol_configuration {
             .expect("the defaults Kynos ships must be a configuration it accepts");
     }
 
+    /// The case table refuses one byte under the floor; this accepts the floor
+    /// itself, so the refusal cannot creep up to include it.
+    #[test]
+    fn a_read_buffer_of_exactly_the_floor_is_accepted() {
+        use crate::server::protocol::http1::MIN_HTTP1_BUFFER_SIZE;
+
+        validate_protocol_config(
+            Http1Config::default().max_buffer_size(MIN_HTTP1_BUFFER_SIZE),
+            Http2Config::default(),
+        )
+        .expect("a read buffer of exactly the floor is one hyper accepts");
+    }
+
     /// RFC 9113 §6.9.1 caps a flow-control window at 2^31-1, and `h2` asserts
     /// it during the handshake, so a larger window panicked every HTTP/2
     /// connection instead of failing `prepare`. The case table reaches the

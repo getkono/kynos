@@ -13,8 +13,8 @@ body:
           it are `todo!()`-bodied by design.
         - **A deliberate refusal.** The README's anti-patterns list eleven things
           Kynos declines to do on purpose.
-        - **A rule you disagree with.** Everything under `docs/` is normative.
-          Argue the rule in Discussions, not here.
+        - **A rule you disagree with.** Everything under `docs/` is normative,
+          so behaviour that follows a rule is not a defect in it.
 
         What *is* worth reporting, and stated as such in the README: anything
         `Router::openapi()` cannot express about a handler it routes.
@@ -102,7 +102,7 @@ body:
       description: >
         Name the source of the expectation: an RFC 9110 section, an OpenAPI 3.1
         or 3.2 section, a statement in `docs/`, or a rustdoc guarantee. "It
-        surprised me" is a question for Discussions, not a bug.
+        surprised me" names no source, so it is not a bug.
       placeholder: |
         RFC 9110 §8.8.1 requires a strong validator to change whenever the
         representation data changes observably, so ...
