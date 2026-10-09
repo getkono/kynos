@@ -28,8 +28,8 @@ pub enum Http2FlowControl {
 /// connection is closed if it is not acknowledged within `timeout`, so a busy
 /// connection is never pinged. This is what releases an HTTP/2 connection
 /// whose peer vanished with no stream open. A peer that answers every PING is
-/// held to the HTTP/1 header-read timeout only until its first request head,
-/// and by nothing after it: HTTP/2 has no idle timeout of its own.
+/// alive by this measure, so what releases it is
+/// [`Http2Config::idle_timeout`] instead.
 ///
 /// `#[non_exhaustive]`, so construct it with [`new`](Self::new):
 ///
@@ -82,6 +82,16 @@ pub struct Http2Config {
     /// the acknowledgement by default, so a vanished peer holds its connection
     /// permit for at most 50 seconds past the last frame it sent.
     pub keep_alive: Option<Http2KeepAlive>,
+    /// How long a connection may hold no stream in flight before it is sent a
+    /// GOAWAY and closed. 30 seconds by default, the bound HTTP/1's
+    /// `header_read_timeout` puts on an idle HTTP/1 connection.
+    ///
+    /// A stream is in flight from its request head until its response body
+    /// ends or is reset, so a long download or event stream holds the
+    /// connection open however long it runs. In a build without `http1`, it
+    /// also bounds the wait for a connection's first request head, counted
+    /// from accept.
+    pub idle_timeout: Option<Duration>,
     /// Maximum decoded request header-list size.
     pub max_header_list_size: u32,
     /// Maximum buffered response bytes per stream.
@@ -104,6 +114,7 @@ impl Default for Http2Config {
                 Duration::from_secs(30),
                 Duration::from_secs(20),
             )),
+            idle_timeout: Some(Duration::from_secs(30)),
             max_header_list_size: 16 * 1024,
             max_send_buffer_size: 400 * 1024,
             max_pending_accept_reset_streams: 20,
@@ -141,6 +152,20 @@ impl Http2Config {
     #[must_use]
     pub fn keep_alive(mut self, keep_alive: Option<Http2KeepAlive>) -> Self {
         self.keep_alive = keep_alive;
+        self
+    }
+
+    /// Sets how long a connection may hold no stream in flight before it is
+    /// sent a GOAWAY and closed.
+    ///
+    /// `None` leaves a connection whose peer answers every keep-alive PING open
+    /// for as long as the peer likes, which is a decision rather than a default.
+    ///
+    /// [`Server::prepare`](crate::server::Server::prepare) refuses
+    /// `Some(Duration::ZERO)`.
+    #[must_use]
+    pub fn idle_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.idle_timeout = timeout;
         self
     }
 

@@ -32,6 +32,7 @@ fn http2_defaults_are_owned_by_kynos() {
             timeout: std::time::Duration::from_secs(20),
         })
     );
+    assert_eq!(http2.idle_timeout, Some(std::time::Duration::from_secs(30)));
 }
 
 /// Every setter writes its own field and no other: each value differs from
@@ -69,6 +70,7 @@ fn http2_setters_write_their_own_fields() {
         .max_concurrent_streams(64)
         .flow_control(Http2FlowControl::Adaptive)
         .keep_alive(Some(keep_alive))
+        .idle_timeout(Some(Duration::from_secs(9)))
         .max_header_list_size(8 * 1024)
         .max_send_buffer_size(128 * 1024)
         .max_pending_accept_reset_streams(5)
@@ -79,6 +81,7 @@ fn http2_setters_write_their_own_fields() {
             max_concurrent_streams: 64,
             flow_control: Http2FlowControl::Adaptive,
             keep_alive: Some(keep_alive),
+            idle_timeout: Some(Duration::from_secs(9)),
             max_header_list_size: 8 * 1024,
             max_send_buffer_size: 128 * 1024,
             max_pending_accept_reset_streams: 5,
@@ -385,12 +388,12 @@ fn an_http1_config_is_cheap_to_copy_per_connection() {
     );
 }
 
-/// The same, for the HTTP/2 half. Measured at 80 bytes, rounded up to 128.
+/// The same, for the HTTP/2 half. Measured at 96 bytes, rounded up to 128.
 ///
 /// `Http2FlowControl` and `Http2KeepAlive` get no ceiling of their own because
 /// neither is ever held per connection on its own. This bound does not
-/// substitute for one: 80 against 128 leaves 48 bytes of slack, so either could
-/// roughly double before it fires.
+/// substitute for one: 96 against 128 leaves 32 bytes of slack, so either could
+/// grow by its own `Duration` before it fires.
 #[cfg(feature = "http2")]
 #[test]
 fn an_http2_config_is_cheap_to_copy_per_connection() {
@@ -398,7 +401,7 @@ fn an_http2_config_is_cheap_to_copy_per_connection() {
 
     assert!(
         http2 <= 128,
-        "Http2Config grew to {http2} bytes from a measured 80; \
+        "Http2Config grew to {http2} bytes from a measured 96; \
          it is copied once per accepted socket"
     );
 }
@@ -406,11 +409,11 @@ fn an_http2_config_is_cheap_to_copy_per_connection() {
 /// `TransportConfig` is the struct `accept.rs` actually clones per socket, which
 /// is what makes the two ceilings above per-connection costs at all.
 ///
-/// Measured at 168 bytes with every feature on, which is where it is widest --
-/// it gains its TLS runtime there -- and rounded up to 192, so the ceiling holds
+/// Measured at 200 bytes with every feature on, which is where it is widest --
+/// it gains its TLS runtime there -- and rounded up to 256, so the ceiling holds
 /// at every smaller feature set by construction. Ungated for that reason.
 ///
-/// 192 is well under the smallest read/write buffer the configuration
+/// 256 is well under the smallest read/write buffer the configuration
 /// configures, so describing a connection never costs more than serving one.
 /// That relation is prose rather than an assertion: nothing can falsify it while
 /// this ceiling holds, and `MIN_HTTP1_BUFFER_SIZE` is pinned by a `const`
@@ -421,8 +424,8 @@ fn a_transport_config_is_cheap_to_clone_per_connection() {
     let config = size_of::<super::TransportConfig>();
 
     assert!(
-        config <= 192,
-        "TransportConfig grew to {config} bytes from a measured 168; \
+        config <= 256,
+        "TransportConfig grew to {config} bytes from a measured 200; \
          it is cloned once per accepted socket"
     );
 }
@@ -3248,6 +3251,12 @@ mod protocol_configuration {
                     Duration::from_secs(5),
                 ))),
                 "HTTP/2 keep-alive durations must be non-zero",
+            ),
+            (
+                "an idle timeout that expires at once",
+                Http1Config::default(),
+                Http2Config::default().idle_timeout(Some(Duration::ZERO)),
+                "HTTP/2 idle_timeout must be non-zero when enabled",
             ),
         ]
     }
