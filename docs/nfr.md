@@ -506,7 +506,7 @@ own reason to change. The concern test answers yes there, so
 The budget is the honest record of what stayed. It falls when a module is split,
 and raising it means saying in the same commit why a new module needs the room.
 
-Three of them crossed the line after v0.1.0, and each was argued for as it did.
+Four of them crossed the line after v0.1.0, and each was argued for as it did.
 `response/status.rs` is the shape above rather than a new argument. It declares
 six public types — `Location`, `NoContent`, `Created`, `Accepted`, `Redirect`
 and `ValidRedirectCode` — so splitting it would turn `response::status::Created` into
@@ -535,6 +535,12 @@ attribute list — its names, whether it is described, required or open, and its
 constraints — each a question the shape code asks of the same list. What pushed
 it over was reading both sides of a split `rename`, so a member now has the name
 serde writes and the one it reads. One concern, so one file.
+
+`server/mod.rs` is the shape above. It declares `Server` and `BoundServer`, so
+splitting the builder from what it builds would turn `server::Server` into
+`server::builder::Server`. What pushed it over was one more setter,
+`request_body_idle_timeout`, whose documentation is the part a caller reads
+before choosing `None`; the timer itself lives in `middleware/limits/`.
 
 ## Dependencies
 

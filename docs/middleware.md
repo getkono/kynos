@@ -635,7 +635,7 @@ four different answers depending on which layer is asked.
 | Query-string length | subsumed by the URI | subsumed by the list size | — | — | yes, loosely |
 | Body size | — | — | — | `BodySize`, when mounted | **no, deliberately** |
 | Request-head read time | `header_read_timeout`, 30 s | the first head only | `header_read_timeout` again, from accept to the first head, before a protocol is known | — | yes |
-| Slow body | — | — | — | `Timeout`, *outside* `BodySize` | **no** |
+| Slow body | — | — | `request_body_idle_timeout`, 30 s between frames → 408 | `Timeout`, *outside* `BodySize`, for a total | yes, by the gap |
 | Keep-alive idle | `header_read_timeout` covers the wait for the next head | — ; past its first request, a client answering every PING may idle indefinitely | — | — | HTTP/1 only |
 | Vanished peer | `tcp_keepalive`, with nothing in flight | `Http2KeepAlive`, a PING after 30 s silent and 20 s to answer | `tcp_keepalive`, probing after 60 s idle, every 15 s | — | yes; mid-response over HTTP/1 by retransmission only |
 | Handler runtime | — | — | — | `Timeout`, when mounted | **no** |
@@ -667,18 +667,36 @@ cannot be mounted together — both answer 413, and `CompatibleWith` refuses
 the pair — which is right rather than awkward: on a route that accepts content
 codings, `BodySize` alone is not a weaker guard but a misleading one.
 
-**The slow-body row depends on mounting order.** `BodySize` reads a length-less
-body frame by frame, so a client sending one frame slowly holds that loop open.
-`Timeout` wraps whatever is beneath it, which means it bounds the read only when
-it is mounted *outside* the limit doing the reading — the earlier `intercept`
-call, per [the ordering rule](#the-order-a-chain-runs-in). The types do not
-enforce it, and neither does a test:
-`a_timeout_over_a_body_limit_declares_both_statuses` in
-[`tests/limits.rs`](../crates/kynos/tests/limits.rs) mounts the arrangement but
-asserts only on the emitted document, which is order-insensitive and passes
-either way. Pinning the read needs a client that dribbles a chunked body over a
-real socket, which the harness cannot express today. This paragraph is where a
-reader learns the rule, and nothing below it is checked.
+**A stalled body is the server's to bound, and a slow one is not.** The
+server wraps every request body it reads off a socket in an idle timer,
+`Server::request_body_idle_timeout`, 30 seconds by default. The clock runs only
+while something is reading the body and has nothing to read, so it bounds the
+gap between frames: a large upload arriving steadily is never cut short, a
+handler that reads its body late is not charged for the wait, and neither is a
+client holding its body back for `100 Continue`, which hyper sends on the first
+read. A body that stalls fails that read — whoever is reading it: a codec,
+`BodySize`'s count, `Decompression`, a streamed `Records` — and the request is
+answered 408 in place of whatever the operation made of the failure, with
+`Connection: close` over HTTP/1 as RFC 9110 §15.5.9 advises. Over HTTP/2 the
+stall held one stream, and the 408 ends that stream alone. A response the
+handler had already returned before its read stalled stands, since by then its
+head may be on the wire. `None` waits indefinitely.
+
+The server applies the timer rather than an extractor or an interceptor because
+only the server has a peer to wait on, and it wraps the body once, before the
+chain sees it, so no reader can be left out. The cases are in
+[`server/tests.rs`](../crates/kynos/src/server/tests.rs) over a real socket, each
+protocol's 408 and a body whose every gap is under the limit but whose total is
+over it.
+
+A client that sends one byte every 29 seconds still passes. Bounding the
+*total* is `Timeout`'s job, and it bounds the read only when it is mounted
+*outside* the limit doing the reading — the earlier `intercept` call, per
+[the ordering rule](#the-order-a-chain-runs-in). The types do not enforce it,
+and neither does a test: `a_timeout_over_a_body_limit_declares_both_statuses`
+in [`tests/limits.rs`](../crates/kynos/tests/limits.rs) mounts the arrangement
+but asserts only on the emitted document, which is order-insensitive and passes
+either way.
 
 **A response body is bounded by neither of the rows above.** `Timeout` wraps the
 chain's future, and that future completes when the *head* is ready. A handler
@@ -779,6 +797,13 @@ operation and no `Responses` implementation ever saw it. It joins the panic, the
 unhandled 500 and the upstream proxy on the list of responses the invariant does
 not reach — named here rather than left to be discovered, because a consumer
 meeting one is entitled to know Kynos never claimed otherwise.
+
+The **408** a stalled request body is answered with is on that list too. The
+server writes it in place of the operation's response, so no operation
+declares it, and an `Observer` inside the chain records what the operation
+made of the failed read rather than the 408 the client received. Declaring it
+instead would put a 408 on every operation that takes a body, which no
+in-process `TestClient` could ever exercise, since only a socket stalls.
 
 ## Preflight
 
