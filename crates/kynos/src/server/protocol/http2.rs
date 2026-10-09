@@ -221,7 +221,9 @@ impl Http2Config {
     /// request head, in a build with no HTTP/1 header-read timeout to count.
     ///
     /// `None` when the idle timeout is disabled or would overflow the clock.
-    #[cfg(not(feature = "http1"))]
+    /// Compiled for tests in every build, so the all-features build that
+    /// mutation testing runs reaches it.
+    #[cfg(any(test, not(feature = "http1")))]
     pub(in crate::server) fn first_head_deadline(
         &self,
         accepted: std::time::Instant,

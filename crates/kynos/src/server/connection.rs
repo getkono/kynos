@@ -312,9 +312,9 @@ const IDLE: &str = "no stream in flight for the idle timeout while draining";
 /// Holds nothing for an HTTP/1 request, whose connection hyper's own timers
 /// bound instead.
 #[cfg(feature = "http2")]
-struct Counted {
-    body: crate::http::body::Body,
-    _in_flight: Option<InFlight>,
+pub(in crate::server) struct Counted {
+    pub(in crate::server) body: crate::http::body::Body,
+    pub(in crate::server) _in_flight: Option<InFlight>,
 }
 
 #[cfg(feature = "http2")]

@@ -1045,10 +1045,11 @@ fn the_first_head_deadline_counts_the_header_read_timeout_from_accept() {
 }
 
 /// Without HTTP/1 the first-head deadline is the HTTP/2 idle timeout counted
-/// from accept, with the same two cases of none.
-#[cfg(all(feature = "http2", not(feature = "http1")))]
+/// from accept, with the same two cases of none. Run in every HTTP/2 build, so
+/// the all-features build reaches it too.
+#[cfg(feature = "http2")]
 #[test]
-fn the_first_head_deadline_counts_the_idle_timeout_from_accept_without_http1() {
+fn the_http2_first_head_deadline_counts_the_idle_timeout_from_accept() {
     use std::time::{Duration, Instant};
 
     let accepted = Instant::now();
@@ -1122,6 +1123,32 @@ async fn a_stream_opened_during_the_idle_wait_holds_it_until_the_stream_closes()
 
     let idled = idle.await.expect("the idle wait does not panic");
     assert_eq!(idled - started, closed - started + IDLE);
+}
+
+/// A counted response body reports its inner body's end and size, so hyper
+/// still ends an empty HTTP/2 response on its HEADERS frame.
+#[cfg(feature = "http2")]
+#[test]
+fn a_counted_body_reports_its_inner_end_and_size() {
+    use hyper::body::Body as _;
+
+    use crate::{http::body::Body, server::connection::Counted};
+
+    let counted = |body| Counted {
+        body,
+        _in_flight: None,
+    };
+
+    let empty = counted(Body::empty());
+    assert!(empty.is_end_stream(), "an empty body is over");
+    assert_eq!(empty.size_hint().exact(), Some(0));
+
+    let full = counted(Body::from("abc"));
+    assert!(
+        !full.is_end_stream(),
+        "a body with a frame left is not over"
+    );
+    assert_eq!(full.size_hint().exact(), Some(3));
 }
 
 /// A plaintext server whose header-read timeout is [`HEAD_TIMEOUT`].
