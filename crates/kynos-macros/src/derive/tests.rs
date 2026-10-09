@@ -483,6 +483,36 @@ mod schema {
         );
     }
 
+    /// A self-reference inside a delimited group, a tuple or an array, is
+    /// found as surely as one between angle brackets, which are not a group.
+    #[test]
+    fn a_generic_type_naming_itself_inside_a_tuple_or_array_is_refused() {
+        for declaration in [
+            quote::quote!(
+                struct Node<T> {
+                    value: T,
+                    pairs: Vec<(String, Node<T>)>,
+                }
+            ),
+            quote::quote!(
+                struct Node<T> {
+                    value: T,
+                    children: Box<[Self; 2]>,
+                }
+            ),
+        ] {
+            let input: syn::DeriveInput =
+                syn::parse2(declaration).expect("the case itself must parse");
+            let Err(error) = expand_inner(&input) else {
+                panic!("a generic type naming itself inside a group must be refused");
+            };
+            assert!(
+                error.to_string().contains("refers to itself"),
+                "refused with another diagnostic: {error}"
+            );
+        }
+    }
+
     /// Only a generic type naming itself where its schema descends is refused:
     /// a concrete type is named and so `$ref`s itself, and a member serde skips
     /// both ways, a `PhantomData`, or a path qualified to another type of the
