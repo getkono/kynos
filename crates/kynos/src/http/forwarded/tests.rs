@@ -701,6 +701,45 @@ fn a_configured_network_list_is_parsed_or_refused_by_entry() {
     );
 }
 
+/// A policy prints whom it believes and through which field, and a policy
+/// believing nobody prints as nobody whatever it was widened by.
+#[test]
+fn a_policy_prints_whom_it_believes() {
+    let cases: &[(TrustedProxies, &str)] = &[
+        (TrustedProxies::none(), "nobody"),
+        (
+            TrustedProxies::none().and_addresses([ip("10.0.0.1")]),
+            "nobody",
+        ),
+        (TrustedProxies::hops(ProxyHeader::Forwarded, 0), "nobody"),
+        (
+            TrustedProxies::hops(ProxyHeader::Forwarded, 1),
+            "Forwarded from the nearest hop",
+        ),
+        (
+            TrustedProxies::hops(ProxyHeader::XForwarded, 3),
+            "X-Forwarded-For from the 3 nearest hops",
+        ),
+        (
+            TrustedProxies::addresses(ProxyHeader::XForwarded, [ip("10.0.0.1"), ip("::1")])
+                .and_networks([net("2001:db8::1/32")]),
+            "X-Forwarded-For from 10.0.0.1, ::1, 2001:db8::/32",
+        ),
+        (
+            TrustedProxies::networks(ProxyHeader::Forwarded, [net("10.0.0.0/8")]),
+            "Forwarded from 10.0.0.0/8",
+        ),
+        (
+            TrustedProxies::everyone(ProxyHeader::Forwarded),
+            "Forwarded from 0.0.0.0/0, ::/0",
+        ),
+    ];
+
+    for (trusted, printed) in cases {
+        assert_eq!(trusted.to_string(), *printed, "{trusted:?}");
+    }
+}
+
 /// Trusting everyone is said outright, and it believes the leftmost element of
 /// either family's chain.
 #[test]

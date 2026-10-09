@@ -49,8 +49,11 @@ pub enum ProxyHeader {
 /// [`hops`](Self::hops) is right when the number of proxies is fixed and their
 /// addresses are not — a managed load balancer whose pool changes under you.
 /// [`addresses`](Self::addresses) and [`networks`](Self::networks) are right
-/// when you know where the proxies are. They compose: a hop is only counted
-/// from an element whose immediate sender was trusted.
+/// when you know where the proxies are, and
+/// [`parse_networks`](Self::parse_networks) reads the networks from
+/// configuration. They compose: a hop is only counted from an element whose
+/// immediate sender was trusted. [`everyone`](Self::everyone) is right only
+/// where nothing but your proxies can reach the service.
 ///
 /// ```
 /// use kynos::http::forwarded::{ProxyHeader, TrustedProxies};
@@ -135,7 +138,7 @@ impl TrustedProxies {
     ///
     /// let configured = ["10.0.0.0/8", "2001:db8::/32"];
     /// let trusted = TrustedProxies::parse_networks(ProxyHeader::XForwarded, configured)?;
-    /// # let _ = trusted;
+    /// assert_eq!(trusted.to_string(), "X-Forwarded-For from 10.0.0.0/8, 2001:db8::/32");
     ///
     /// let refused = TrustedProxies::parse_networks(ProxyHeader::XForwarded, ["0.0.0.0/0"]);
     /// assert_eq!(refused.unwrap_err().entry(), "0.0.0.0/0");
@@ -218,6 +221,59 @@ impl TrustedProxies {
                 .networks
                 .iter()
                 .any(|network| network.contains(address))
+    }
+}
+
+/// What a startup log needs: whom the policy believes, and through which
+/// field.
+///
+/// `nobody` where it believes nobody; otherwise the field, then the nearest
+/// hops it counts, the exact addresses and the networks, in that order.
+/// [`everyone`](TrustedProxies::everyone) prints as its two `/0` networks.
+///
+/// ```
+/// use kynos::http::forwarded::{ProxyHeader, TrustedProxies};
+///
+/// let trusted = TrustedProxies::hops(ProxyHeader::Forwarded, 2)
+///     .and_addresses(["192.0.2.1".parse()?])
+///     .and_networks(["10.9.9.9/8".parse()?]);
+/// assert_eq!(
+///     trusted.to_string(),
+///     "Forwarded from the 2 nearest hops, 192.0.2.1, 10.0.0.0/8",
+/// );
+/// assert_eq!(TrustedProxies::none().to_string(), "nobody");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+impl fmt::Display for TrustedProxies {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Some(header) = self.header() else {
+            return f.write_str("nobody");
+        };
+        f.write_str(match header {
+            ProxyHeader::Forwarded => "Forwarded from ",
+            ProxyHeader::XForwarded => "X-Forwarded-For from ",
+        })?;
+
+        match self.hops {
+            0 => {}
+            1 => f.write_str("the nearest hop")?,
+            hops => write!(f, "the {hops} nearest hops")?,
+        }
+
+        let addresses = self
+            .addresses
+            .iter()
+            .map(|address| address as &dyn fmt::Display);
+        let networks = self
+            .networks
+            .iter()
+            .map(|network| network as &dyn fmt::Display);
+        let mut separator = if self.hops == 0 { "" } else { ", " };
+        for named in addresses.chain(networks) {
+            write!(f, "{separator}{named}")?;
+            separator = ", ";
+        }
+        Ok(())
     }
 }
 
