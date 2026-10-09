@@ -376,11 +376,16 @@ fn repeated_forwarded_lines_are_one_chain_in_written_order() {
     }
 }
 
-/// Where several elements state a scheme, the last one written wins, across
-/// elements and across repeated lines, and is lowercased. A later line stating
-/// no scheme leaves the earlier one standing rather than clearing it.
+/// The scheme is the one stated in the element the walk stops at, lowercased.
+///
+/// That element's `for=` is the client and its `proto=` is the scheme the
+/// client connected with, both written by the same trusted hop (RFC 7239
+/// section 5.4). A `proto=` nearer the service describes a connection between
+/// proxies; one further out was written by a sender nobody trusts. Neither
+/// stands in for a stop element that states none, across elements and across
+/// repeated lines alike.
 #[test]
-fn the_last_written_scheme_wins_across_elements_and_lines() {
+fn the_scheme_is_read_from_the_element_the_walk_stops_at() {
     let headers = map(&[
         (
             "forwarded",
@@ -388,10 +393,39 @@ fn the_last_written_scheme_wins_across_elements_and_lines() {
         ),
         (
             "forwarded",
-            "for=192.0.2.7;proto=http, for=10.0.0.2;proto=HTTPS",
+            "for=192.0.2.7;proto=HTTPS, for=10.0.0.2;proto=http",
         ),
         ("forwarded", "for=10.0.0.3"),
     ]);
+
+    for (hops, proto) in [
+        (1, None),
+        (2, Some("http")),
+        (3, Some("https")),
+        (4, Some("http")),
+        (5, Some("ws")),
+        (6, Some("ws")),
+    ] {
+        let resolved = Forwarded::resolve(
+            &headers,
+            Some(peer("10.0.0.1")),
+            &TrustedProxies::hops(ProxyHeader::Forwarded, hops),
+        );
+
+        assert_eq!(resolved.proto(), proto, "hops({hops})");
+    }
+}
+
+/// A scheme the client wrote is not read through a trusted hop that states
+/// none.
+///
+/// The client sends `Forwarded: proto=https`, and the trusted proxy appends its
+/// own element without a `proto=`. The walk stops at the proxy's element, so
+/// the client's claim is never reached -- believing it would report https over
+/// a plain-HTTP hop.
+#[test]
+fn a_client_written_scheme_is_not_read_through_a_trusted_hop() {
+    let headers = map(&[("forwarded", "proto=https, for=203.0.113.9")]);
 
     let resolved = Forwarded::resolve(
         &headers,
@@ -399,7 +433,53 @@ fn the_last_written_scheme_wins_across_elements_and_lines() {
         &TrustedProxies::hops(ProxyHeader::Forwarded, 1),
     );
 
-    assert_eq!(resolved.proto(), Some("https"));
+    assert_eq!(resolved.client(), Some(ip("203.0.113.9")));
+    assert_eq!(resolved.proto(), None, "the client's own proto= was read");
+    assert_eq!(resolved.client_is_secure(), None);
+}
+
+/// The walk stopping at an untrusted sender stops the scheme there too.
+#[test]
+fn a_scheme_beyond_an_untrusted_sender_is_not_read() {
+    let headers = map(&[(
+        "forwarded",
+        "for=198.51.100.1;proto=https, for=203.0.113.9;proto=http",
+    )]);
+    let trusted = TrustedProxies::addresses(ProxyHeader::Forwarded, [ip("10.0.0.1")]);
+
+    let resolved = Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &trusted);
+
+    assert_eq!(resolved.client(), Some(ip("203.0.113.9")));
+    assert_eq!(resolved.proto(), Some("http"));
+}
+
+/// `X-Forwarded-Proto`'s rightmost value is the one the trusted hop wrote.
+///
+/// A client can send the field itself, and a proxy that appends rather than
+/// replaces leaves the client's value leftmost -- on the first line, or on a
+/// line of its own before the proxy's. Only the rightmost value, across every
+/// line, came from the socket peer.
+#[test]
+fn the_rightmost_x_forwarded_proto_is_the_trusted_hops() {
+    let appended = [("x-forwarded-proto", "https, HTTP")];
+    let repeated = [
+        ("x-forwarded-proto", "https"),
+        ("x-forwarded-proto", "http"),
+    ];
+
+    for fields in [&appended[..], &repeated[..]] {
+        let mut headers = map(fields);
+        headers.append("x-forwarded-for", HeaderValue::from_static("203.0.113.7"));
+
+        let resolved = Forwarded::resolve(
+            &headers,
+            Some(peer("10.0.0.1")),
+            &TrustedProxies::hops(ProxyHeader::XForwarded, 1),
+        );
+
+        assert_eq!(resolved.proto(), Some("http"), "{fields:?}");
+        assert_eq!(resolved.client_is_secure(), Some(false), "{fields:?}");
+    }
 }
 
 /// Every `nodename` form section 6 defines, and what each yields.
