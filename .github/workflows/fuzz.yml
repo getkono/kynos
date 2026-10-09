@@ -1,15 +1,8 @@
 name: Fuzz
 
-# The `fuzz/` targets, apart from `ci.yml` because neither half is a task in
-# `mise run check`: both build on the dated nightly `cargo fuzz` needs, in a
-# workspace of their own. What each target asserts, and why the search runs
-# nightly rather than on a pull request, is `docs/testing.md#fuzzing`.
-#
-# Two halves. A pull request is held to the committed corpus: every target
-# builds against the change and replays every seed, which is how a crash once
-# promoted into `fuzz/corpus/` stays fixed. Each night, every target searches
-# for new inputs for a bounded time, and a crash fails that target's job with
-# the input that caused it uploaded beside it.
+# The `fuzz/` targets, on the nightly toolchain `cargo fuzz` needs. A pull
+# request replays the committed corpus; each night every target searches for a
+# bounded time. `docs/testing.md#fuzzing` has the reasons.
 on:
   pull_request:
   schedule:
@@ -25,8 +18,7 @@ on:
 permissions:
   contents: read
 
-# `mutants.yml`'s rule: a pull request's superseded run is cancelled, and a
-# night's run queues behind the next rather than being cancelled by it.
+# A superseded pull request run is cancelled; a night's run queues instead.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -44,8 +36,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-      # No `cargo-cache-key`: the targets build under `fuzz/target/`, which the
-      # cache this action restores does not hold.
+      # No `cargo-cache-key`: the targets build under `fuzz/target/`.
       - name: Set up
         uses: ./.github/actions/setup
       - name: Build every target and replay its corpus
@@ -58,10 +49,8 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      # One job per target, so a crash in one leaves the others searching.
-      # The `[[bin]]` list in `fuzz/Cargo.toml`, which a new target joins too:
-      # `fuzz:check` replays every target it lists, and this searches only
-      # those named here.
+      # One job per target. Keep in step with `fuzz/Cargo.toml`'s `[[bin]]`
+      # list, which `fuzz:check` replays.
       matrix:
         target:
           - accept
