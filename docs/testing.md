@@ -757,13 +757,18 @@ by the UTC weekday, so a week covers every mutant. A shard is a slice of the
 current list, so a week in which the list changes may test a mutant twice or
 not at all.
 
-[`.cargo/mutants.toml`](../.cargo/mutants.toml) argues every setting. In
-summary: tests run under nextest, because `hermeticity.rs` fails under
+[`.cargo/mutants.toml`](../.cargo/mutants.toml) holds the settings, for these
+reasons. Tests run under nextest, because `hermeticity.rs` fails under
 `cargo test`. Every feature is on, because a mutant in uncompiled code is
 reported missed. `kynos`'s suite runs for every mutant, because it is where
-most of the other two crates are witnessed. Some tests are left out because a
-mutant would decide their verdict for the wrong reason. Some code is not
-mutated, each for its own reason:
+most of the other two crates are witnessed: a proc macro's expansion runs only
+in a crate that uses it. The per-mutant timeout has a floor, because
+cargo-mutants derives it from a baseline that runs only the mutated crate's
+tests. Some tests are left out because a mutant would decide their verdict for
+the wrong reason: token-counting tests change their count under any body
+mutant, allocation budgets fail a mutant for its cost, and the determinism
+suite catches an unordered walk only by the luck of its hash seeds. Some code
+is not mutated, each for its own reason:
 
 - `kynos-profile`, an unpublished measurement harness nothing depends on.
 - `server/shutdown/signal.rs`, whose arms are `cfg(unix)`, `cfg(windows)` or
