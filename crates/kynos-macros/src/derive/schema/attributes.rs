@@ -1,7 +1,6 @@
 use super::{
     COUNTS, Container, Field, Fields, IdentExt, Lit, LitFloat, LitInt, LitStr, NUMERIC, Span,
-    Spanned,
-    TokenStream2, Type, Variant, quote, skip_value, string_value,
+    Spanned, TokenStream2, Type, Variant, quote, skip_value, string_value,
 };
 
 /// The name serde writes a named field under: the serialize side of its
