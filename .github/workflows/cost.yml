@@ -1,40 +1,15 @@
 name: Cost
 
-# The per-feature cost sweep and the request-path profile, apart from `ci.yml`
-# because they are the jobs no pull request needs to wait for. What follows
-# argues the sweep; the `profile` job below carries its own reasons.
-#
-# The sweep builds two fixtures at some fifty feature points, over half of them
-# fat-LTO release builds, and gates no ordinary pull request.
-#
-# What the numbers are for is a release. So an ordinary pull request skips the
-# job, a push to master measures after the merge as a trend nobody waits on,
-# and a release pull request runs it as a gate that fails unless the committed
-# baselines are exactly what the release measures -- `KYNOS_COST=check`, whose
-# reasoning is in `scripts/cost_features.py`. `docs/releasing.md` has the loop.
-#
-# No `continue-on-error` and no verdict-parsing in YAML, for the `semver` job's
-# reason in `ci.yml`: the first leaves a red mark that means nothing, the second
-# is where a pattern silently stops matching. The script draws the distinction
-# instead, where it is tested: outside the gate it exits zero whenever it
-# measured something and non-zero only when it could not measure at all, and
-# the gate's refusal has a code of its own.
-#
-# The gate judges no number too large. `nfr.md#thresholds` sets a ceiling from a
-# recorded measurement and never guesses one; what a release pull request is
-# refused for is a cost nobody recorded, and the pull request that records it is
-# where the cost is reviewed.
-#
-# Making `Cost trend` required is a change to the `master` ruleset rather than to
-# this file. The skip below is what lets it be required without an ordinary
-# pull request waiting on it.
+# The per-feature cost sweep and the request-path profile: the slow jobs no
+# ordinary pull request waits on. The sweep is a trend after each merge and a
+# release pull request's gate (`KYNOS_COST=check`, argued in
+# `scripts/cost_features.py`; `docs/releasing.md` has the loop). The script,
+# not YAML, decides what exit status a measurement earns.
 on:
   push:
     branches:
       - master
-  # Every pull request, so the job reports on each one, skipped unless it is a
-  # release. A required check that a workflow never reports on waits forever,
-  # while a job skipped by its `if` counts as passing.
+  # Every pull request, so a required check is reported (as skipped) on each.
   pull_request:
   workflow_dispatch:
     inputs:
@@ -48,26 +23,20 @@ on:
 permissions:
   contents: read
 
-# `ci.yml`'s rule: a superseded pull request run is worthless, and master's are
-# the trend.
+# Master's runs are the trend; a superseded pull request run is not.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
-  # `ci.yml`'s reason: CI has no working tree for incremental artifacts to pay
-  # off across.
   CARGO_INCREMENTAL: 0
 
 jobs:
   cost:
     name: Cost trend
-    # A release pull request runs on every event, never skipped, so no later run
-    # at the same commit can report a skip over a failed gate; the step below
-    # keeps a manual run there from reporting an ungated pass over one. `release-plz-` is
-    # the prefix release-plz opens its branch with, and the prefix
-    # `docs/releasing.md` says a hand-made release pull request must use too.
+    # Never skipped on a release branch (`release-plz-`, per `docs/releasing.md`),
+    # so no later run at a commit can report a skip over a failed gate.
     if: >-
       github.event_name != 'pull_request'
       || startsWith(github.head_ref, 'release-plz-')
@@ -76,29 +45,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
-          # The report reads the baselines the last `kynos-v*` tag shipped, so
-          # it needs the tags and the history that reaches them.
+          # The report reads the baselines the last `kynos-v*` tag shipped.
           fetch-depth: 0
-      # No `cargo-cache-key`. The sweep's target directory is the largest any
-      # job here would save, and `setup` records why saving it is the wrong
-      # trade: a branch's cache entries are readable by nobody else while still
-      # counting against the repository-wide limit, so a save this size evicts
-      # the master entries every other job reads. The cost is rebuilding each
-      # run, which this job pays anyway: a sweep compares points built in one
-      # run, not against a cache.
+      # No `cargo-cache-key`: a save this size would evict master's entries, and
+      # the sweep rebuilds every point anyway.
       - name: Set up
         uses: ./.github/actions/setup
-      # The gate on a release branch whatever the event: a required check reads
-      # the latest run at a commit, so a manual run there that passed without
-      # the gate would stand in for the refusal before it.
+      # Gated on a release branch whatever the event, so a manual run there
+      # cannot pass in place of a refusal.
       - name: Measure per-feature codegen and binary deltas, and per-codec ones
         env:
           KYNOS_COST: >-
             ${{ (github.event_name == 'pull_request' || inputs.check
             || startsWith(github.ref_name, 'release-plz-')) && 'check' || '' }}
         run: mise run cost:features
-      # Also after a refused gate: the report is what the re-record is reviewed
-      # against, and the script writes it before it stops.
+      # Also after a refused gate: the re-record is reviewed against the report.
       - name: Add cost summary
         if: ${{ !cancelled() && hashFiles('cost-report.md') != '' }}
         run: cat cost-report.md >> "$GITHUB_STEP_SUMMARY"
@@ -115,11 +76,7 @@ jobs:
 
   profile:
     name: Profile trend
-    # A trend and nothing else: it runs after each merge, and on demand, and no
-    # pull request waits on it. The counts it compares are exact, so nothing
-    # stops this becoming a release gate the way `cost` is -- but that is a
-    # second re-record per release, and whether it is worth one is a decision
-    # to take once the trend has shown how often the numbers move.
+    # A trend only, until it shows whether a second per-release re-record pays.
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -127,27 +84,22 @@ jobs:
         uses: actions/checkout@v6
       - name: Set up
         uses: ./.github/actions/setup
-      # Valgrind only, at the version `profile:valgrind` builds: the action's
-      # default is the newest it can find, and which CPU features Valgrind
-      # reports -- and so which routines a dependency picks -- moves with it.
-      # The runner is `profile:requests`' task-scoped mise pin.
+      # Pinned to `profile:valgrind`'s version: the CPU features Valgrind
+      # reports decide which routines a dependency picks.
       - name: Install Valgrind
         uses: gungraun/setup-gungraun@v1
         with:
           runner-strategy: none
           valgrind-version: 3.27.1
-          # Built or downloaded at that version, never the distribution's own,
-          # which is a different one.
+          # Never the distribution's, which is a different version.
           valgrind-strategy: builder,source
       - name: Count instructions and heap blocks over the request path
         run: mise run profile:requests
       - name: Add profile summary
         if: ${{ !cancelled() && hashFiles('profile-report.md') != '' }}
         run: cat profile-report.md >> "$GITHUB_STEP_SUMMARY"
-      # The Callgrind files are the attribution, not just the totals: a moved
-      # count is read by annotating the file it came from. `profile-requests.tsv`
-      # is this run in the baseline's format; CI is the host of record, so
-      # recording the baseline is copying it over `requests.tsv`.
+      # The Callgrind files attribute a moved count. CI is the host of record:
+      # recording the baseline is copying `profile-requests.tsv` over `requests.tsv`.
       - name: Upload profile
         if: ${{ !cancelled() && hashFiles('profile-report.md') != '' }}
         uses: actions/upload-artifact@v4
