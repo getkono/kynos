@@ -77,6 +77,10 @@ proc-macro2 = "1.0.101"
 proptest = "1.11.0"
 quote = "1.0.40"
 rust_decimal = { version = "1.42.1", default-features = false }
+# `setrlimit` behind a safe signature, for the test that runs a listener out of
+# file descriptors: `unsafe_code` is forbidden workspace-wide, so `libc` is not
+# an option. Already in the graph through `tempfile`, at this major version.
+rustix = { version = "1.1.4", default-features = false }
 # The hostile graph `server/tls/` exists to survive, declared so the suite runs
 # under it. Nothing in `src/` names it -- it reaches the library through
 # `tokio-rustls` -- but a dev-dependency asking the same `rustls` for `ring`
