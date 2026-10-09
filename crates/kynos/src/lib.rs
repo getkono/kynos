@@ -6,8 +6,12 @@
 //! Kynos only lets you build APIs it can fully describe. Every handler input
 //! describes itself as a Parameter or a Request Body; every handler output
 //! describes itself as a Responses Object; every interceptor declares what it
-//! contributes to the description. Anything that cannot be described does not
-//! compile.
+//! contributes to the description. Anything that cannot be described is
+//! refused: by the compiler wherever the types can see it, otherwise by
+//! [`Router::build`]. The only ways past are the `unchecked` feature's escape
+//! hatches, named below, and `assets-fs`, which implies it. Two README anti-patterns —
+//! request-derived dependencies and header-based versioning — are advice the
+//! compiler does not keep.
 //!
 //! The emitted document is therefore not documentation that drifts from the
 //! code — it is a checked contract derived from the same types the server runs

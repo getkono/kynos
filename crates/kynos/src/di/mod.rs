@@ -5,8 +5,9 @@
 //! one part where Kynos can be more capable than its peers at no cost to the
 //! thesis.
 //!
-//! The design goal is that a missing dependency is a **compile error**. Axum,
-//! actix-web and poem all resolve erased state at runtime and panic when it is
+//! The design goal is that a missing dependency is a **compile error**. axum's
+//! `State<S>` already is one; its `Extension<T>`, actix-web's `Data<T>` and
+//! poem's `Data<&T>` resolve erased state at runtime and answer 500 when it is
 //! absent; salvo's `Depot` is a stringly-typed map. Here, a handler asking for
 //! `Inject<Db>` where the context provides no `Db` fails to typecheck.
 //!

@@ -13,7 +13,7 @@
 
 Kynos is an idiomatic, performance-focused Rust framework for building REST APIs with first-class OpenAPI 3.1 and 3.2 support.
 
-Kynos only lets you build APIs it can fully describe. Every handler input describes itself as a Parameter or Request Body, every handler output describes itself as a Responses Object, and every interceptor declares what it contributes. Anything undescribable does not compile.
+Kynos only lets you build APIs it can fully describe. Every handler input describes itself as a Parameter or Request Body, every handler output describes itself as a Responses Object, and every interceptor declares what it contributes. Anything undescribable is refused: by the compiler wherever the types can see it, otherwise when the router is built. The only ways past are the named escape hatches behind the `unchecked` feature, which `assets-fs` implies. The [anti-patterns](#anti-patterns) say which rules the compiler keeps and which are advice.
 
 The emitted document is therefore not documentation that drifts from the code. It is a checked contract derived from the same types the server runs on.
 
@@ -127,11 +127,11 @@ Each of these is something another Rust framework offers and Kynos does not, and
 
 **6. `serde_json::Value` bodies.** No `Schema` implementation, so `Json<Value>` does not compile. A payload that really is unconstrained must say so in the type — `Unchecked<Value>` — which is annotated in the document and reported by `validate`. Weakness is allowed; *silent* weakness is not. The same rule removes `usize` (maps to `int32` or `int64` depending on the build target), `SystemTime` (serde emits a seconds/nanos struct) and `Box<dyn Trait>`.
 
-**7. Erased state maps.** `Extension<T>` and salvo's `Depot` turn a missing dependency into a runtime panic. `Inject<T>` makes it a compile error.
+**7. Erased state maps.** `Extension<T>` and salvo's `Depot` turn a missing dependency into a runtime failure: axum's `Extension<T>` answers 500 on the first request that needs it, and salvo hands the handler a `Result` to unwrap. `Inject<T>` makes it a compile error.
 
-**8. Request-derived values as dependencies.** A `CurrentUser` read from an `Authorization` header is not application state; injecting it would make the requirement invisible in the description. It arrives through `Auth<S>`, so enforcing a credential and declaring it are one act.
+**8. Request-derived values as dependencies.** A `CurrentUser` read from an `Authorization` header is not application state; injecting it would make the requirement invisible in the description. It arrives through `Auth<S>`, so enforcing a credential and declaring it are one act. This is not mechanically enforced: `Inject<CurrentUser>` typechecks whenever the context provides a `CurrentUser`, since no type tells a request-derived value from application state, so it is advice rather than a rule the compiler keeps.
 
-**9. Header-based API versioning.** OpenAPI expresses paths. Put the version in the path. This is the one item here with no mechanical enforcement — a version header declared with `#[derive(HeaderParams)]` compiles — so it is advice rather than a rule the compiler keeps.
+**9. Header-based API versioning.** OpenAPI expresses paths. Put the version in the path. Like 8, this has no mechanical enforcement — a version header declared with `#[derive(HeaderParams)]` compiles — so it is advice rather than a rule the compiler keeps.
 
 **10. Per-route trailing-slash or case normalization.** One app-level policy, or none. Paths in a description are exact.
 

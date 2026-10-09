@@ -9,8 +9,9 @@
 //! to parse, or a path parameter will not deserialize, the resulting 400 is a
 //! problem document and it appears in the operation's `responses` — because
 //! [`FromRequestParts::Rejection`](crate::extract::FromRequestParts::Rejection)
-//! is required to describe itself. No other Rust framework documents its
-//! extractor rejections at all.
+//! is required to describe itself. A rejection type that does not implement
+//! [`Responses`](crate::response::Responses) does not compile, so no
+//! extractor's failure can be left out of the description.
 //!
 //! [RFC 9457 problem details]: https://www.rfc-editor.org/rfc/rfc9457
 //!
