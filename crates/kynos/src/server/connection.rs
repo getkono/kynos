@@ -279,6 +279,9 @@ where
                 }
                 connection.as_mut().graceful_shutdown();
                 draining = true;
+                // A drain gets a whole idle period of its own, not the rest
+                // of one already under way.
+                quiet.set(idle());
             }
             result = &mut connection => return result,
             () = &mut unheard => return Err(NO_REQUEST_HEAD.into()),
