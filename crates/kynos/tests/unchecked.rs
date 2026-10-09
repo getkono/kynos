@@ -250,7 +250,7 @@ async fn inside() -> NoContent {
 
 /// The reasons the operation at `path` is marked opaque for, empty when it is
 /// not marked.
-fn opaque_reasons(router: Router<()>, path: &str) -> Vec<OpaqueReason> {
+fn opaque_reasons(router: &Router<()>, path: &str) -> Vec<OpaqueReason> {
     let document = router.openapi().expect("a describable router");
     let item = document.paths.items.get(path).expect("a described path");
     let (_, operation) = item.operations().next().expect("one operation");
@@ -283,10 +283,10 @@ fn layered(on_router: bool, on_group: bool) -> Router<()> {
 #[test]
 fn a_group_layer_alone_marks_exactly_the_groups_operations() {
     assert_eq!(
-        opaque_reasons(layered(false, true), "/inside"),
+        opaque_reasons(&layered(false, true), "/inside"),
         [OpaqueReason::UntypedLayer]
     );
-    assert_eq!(opaque_reasons(layered(false, true), "/outside"), []);
+    assert_eq!(opaque_reasons(&layered(false, true), "/outside"), []);
 }
 
 /// A router's layer marks every operation beneath it without any layer on the
@@ -295,7 +295,7 @@ fn a_group_layer_alone_marks_exactly_the_groups_operations() {
 fn a_router_layer_alone_marks_every_operation() {
     for path in ["/inside", "/outside"] {
         assert_eq!(
-            opaque_reasons(layered(true, false), path),
+            opaque_reasons(&layered(true, false), path),
             [OpaqueReason::UntypedLayer],
             "{path}"
         );
