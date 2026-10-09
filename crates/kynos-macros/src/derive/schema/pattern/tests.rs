@@ -57,6 +57,9 @@ fn a_translated_pattern_matches_as_ecma_262_reads_it() {
         (r"^é\u{1F600}\x41$", "é😀A", true),
         (r"^\.\/$", "./", true),
         (r"^[\-\]]+$", "-]", true),
+        (r"^(?:a{2})*$", "aaaa", true),
+        (r"^(?:a{2})*$", "aaa", false),
+        (r"^(?<año>a)$", "a", true),
         // Not anchored unless it says so.
         ("b", "abc", true),
         ("", "anything", true),
@@ -86,6 +89,10 @@ fn refusals() -> Vec<(&'static str, &'static str)> {
         (r"\a", "an escape such as `\\a`"),
         (r"\pL", "a one-letter Unicode class"),
         (r"\p{scx:Greek}", "a Unicode class written with `:`"),
+        ("a**", "a quantifier on a quantifier"),
+        (r"\b+", "a quantified assertion"),
+        ("[]a]", "a `]` first in a class"),
+        ("(?<a.b>x)", "a group name that is not an ECMA-262 identifier"),
     ]
 }
 
@@ -97,6 +104,32 @@ fn a_pattern_the_dialects_read_apart_is_refused() {
         };
         assert!(
             reason.contains(expects) && reason.contains("ECMA-262"),
+            "`{pattern}`: expected {expects:?}, got {reason:?}"
+        );
+    }
+}
+
+/// The other spellings of the refusals above, each of which ECMA-262 with
+/// the `u` flag refuses and the engine reads.
+#[test]
+fn each_spelling_of_a_refused_construct_is_refused() {
+    for (pattern, expects) in [
+        ("x{2}{3}", "a quantifier on a quantifier"),
+        ("a*??", "a quantifier on a quantifier"),
+        ("^*", "a quantified assertion"),
+        ("$?", "a quantified assertion"),
+        (r"\B{2}", "a quantified assertion"),
+        ("[^]a]", "a `]` first in a class"),
+        ("[]-a]", "a `]` first in a class"),
+        ("(?<a[0]>x)", "a group name that is not an ECMA-262 identifier"),
+        ("(?<a\u{bd}>x)", "a group name that is not an ECMA-262 identifier"),
+        ("(?<\u{345}a>x)", "a group name that is not an ECMA-262 identifier"),
+    ] {
+        let Err(reason) = translate(pattern) else {
+            panic!("`{pattern}` must be refused");
+        };
+        assert!(
+            reason.contains(expects),
             "`{pattern}`: expected {expects:?}, got {reason:?}"
         );
     }
@@ -140,6 +173,6 @@ fn a_pattern_the_engine_cannot_run_is_refused() {
         );
     }
 
-    let reason = translate(r"\w{1000}{1000}").expect_err("past the engine's size limit");
+    let reason = translate(r"(?:\w{1000}){1000}").expect_err("past the engine's size limit");
     assert!(reason.contains("cannot compile"), "{reason}");
 }
