@@ -15,18 +15,8 @@ hooks {
                 check = "mise run format:check"
                 fix = "mise run format"
             }
-            // `.cargo/config.toml` is in the glob for the reason `Cargo.toml`
-            // is: it decides how the workspace builds. Its `[profile.dev]`
-            // keys override the manifest's, and an invalid *value* there
-            // fails every build on the branch while matching none of the
-            // other steps' globs.
-            //
-            // A misspelled key is the weaker half and this step does not
-            // catch it: cargo reports `unused config key profile.dev.debgu`
-            // and exits 0, and a misspelled profile *table* is not reported
-            // at all -- `-D warnings` is a rustc flag and never reaches a
-            // cargo-level config warning. What would catch that is a gate
-            // reading the file's own keys, which is filed as #127.
+            // `.cargo/config.toml` decides how the workspace builds, as
+            // `Cargo.toml` does; `containment:check` catches a misspelled key.
             ["lint"] {
                 glob = List("*.rs", "Cargo.toml", "Cargo.lock", ".cargo/config.toml")
                 check_first = true
@@ -34,21 +24,9 @@ hooks {
                 fix = "mise run lint:fix"
                 depends = List("format")
             }
-            // Check-only: the script reports where a rule is broken and cannot
-            // know which of the two edits that reach it -- the source or the
-            // table it is counted against -- was the mistaken one.
-            //
-            // Here as well as in `hooks:pre-push` because the rules it holds are
-            // layout rules, and layout is what a commit is reviewed as. It reads
-            // committed text and compiles nothing, so it costs a fraction of the
-            // Clippy pass above it. The globs are the inputs it actually reads:
-            // the sources, the crate manifests, the four documents whose tables
-            // it counts against, the script itself, and its tests.
-            //
-            // The tests run with the gate rather than in a step of their own.
-            // A parser that breaks is what makes the gate pass over a table it
-            // half read, so a green gate is worth exactly what the parsers
-            // under it are -- and the two are edited in the same commit.
+            // Check-only: it cannot know whether the source or the table it is
+            // counted against was the mistaken edit. The globs are what it reads;
+            // its tests run with it because a broken parser passes a half-read table.
             ["containment"] {
                 glob = List(
                     "*.rs",
@@ -66,22 +44,9 @@ hooks {
     }
     ["commit-msg"] {
         steps {
-            // A merge in progress is exempt, and the exemption lives inside
-            // the task rather than in a `step_condition` here: hk's `exec()`
-            // raises on a non-zero exit, so the natural spelling of "skip when
-            // MERGE_HEAD resolves" would fail the hook on every commit that is
-            // not a merge, and `hk test` renders no `{{commit_msg_file}}` to
-            // exercise a condition with.
-            //
-            // `mise run commits:test` covers this step without restating it: it
-            // installs `hk run commit-msg` as a throwaway repository's own hook
-            // and drives a real `git merge --no-ff` through it, so hk resolves
-            // this file itself and answers with the exit code git obeys. That
-            // reading is downstream of every way the step can be turned off --
-            // a merged duplicate entry, a module-level `skip_steps`, a `glob`
-            // selecting none of a commit's staged files -- which no reading of
-            // this file's text would catch. A rename is not one of them, and
-            // the suite is right to stay green through one.
+            // The task exempts a merge in progress; a `step_condition` cannot,
+            // since hk's `exec()` raises on a non-zero exit. `mise run
+            // commits:test` drives a real merge through this hook.
             ["conventional-commit"] {
                 check = "mise run --quiet commits:message < {{commit_msg_file}}"
                 output_summary = "stdout"
@@ -91,9 +56,8 @@ hooks {
     ["pre-push"] {
         steps {
             ["validate"] {
-                // Git still invokes pre-push when it has no ref updates. hk preserves
-                // Git's ref-update input as {{hook_stdin}}, so only run the expensive
-                // checks when at least one update was proposed.
+                // Git invokes pre-push even with no ref updates; run only when
+                // {{hook_stdin}} proposes one.
                 check = "if IFS= read -r _; then mise run --quiet hooks:pre-push; fi"
                 stdin = "{{ hook_stdin }}"
                 exclusive = true
