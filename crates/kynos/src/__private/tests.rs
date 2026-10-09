@@ -95,6 +95,16 @@ fn an_overlong_mismatch_message_is_cut_between_characters() {
     assert_eq!(message.len(), 1024);
 }
 
+/// A push that exactly fills the buffer is taken whole, not treated as an
+/// overflow to cut back; the clauses after it no longer fit.
+#[test]
+fn a_mismatch_message_that_exactly_fills_the_buffer_keeps_the_name() {
+    let prefix = "`MemberPath` declares path parameter `";
+    let name = "n".repeat(1024 - prefix.len());
+    let message = mismatch(&[name.as_str(), "id"]).expect("a mismatch");
+    assert_eq!(message, format!("{prefix}{name}"));
+}
+
 /// RFC 8187 section 3.2.1, transcribed here rather than read from
 /// `EXT_VALUE_ENCODE_SET`: an oracle derived from the set under test agrees
 /// with it wherever both are wrong.
