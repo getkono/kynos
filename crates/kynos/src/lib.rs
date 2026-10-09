@@ -72,6 +72,11 @@
 //! tokio, which is the only supported runtime: Kynos does not abstract over the
 //! runtime and offers no flag selecting another one.
 
+// docs.rs builds on nightly with `--cfg docsrs`, so every feature-gated item
+// there carries its "available on crate feature X only" badge. Stable builds
+// never see the attribute.
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 // `openapi31` is the baseline object model rather than an optional extra.
 // `openapi32` implies it, so this fires only when a caller disables default
 // features and asks for neither.

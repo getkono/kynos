@@ -34,6 +34,9 @@
 //! assert!(json.contains("\"openapi\""));
 //! ```
 
+// docs.rs badges each feature-gated item; see `crates/kynos/src/lib.rs`.
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 // `openapi31` is the baseline object model, not an optional extra: without it
 // there is nothing to build a description out of. `openapi32` implies it, so
 // this fires only when a caller disables default features and asks for neither.

@@ -25,6 +25,9 @@
 //! demonstrations live in `crates/kynos/tests/derives.rs` and the framework's
 //! examples; `AGENTS.md` records the rule.
 
+// docs.rs badges each feature-gated item; see `crates/kynos/src/lib.rs`.
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 #[cfg(feature = "assets")]
 mod assets;
 mod derive;
