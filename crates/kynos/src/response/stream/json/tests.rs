@@ -20,11 +20,20 @@ use crate::{
     },
     http::{Request, Response, header},
     response::IntoResponse,
+    schema::{Schema, registry::Registry},
 };
 
 #[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct Reading {
     at: u32,
+}
+
+/// Open and unbounded, which is all reading a written stream back needs.
+impl Schema for Reading {
+    fn schema(registry: &mut Registry) -> kynos_openapi::Schema {
+        let _ = registry;
+        kynos_openapi::Schema::any()
+    }
 }
 
 /// An item whose `Serialize` always fails, as a map with a non-string key

@@ -164,7 +164,7 @@ fn a_body_extractor_rejects_with_the_body_type() {
     {
         use kynos::extract::body::json_lines::{JsonLines, JsonSeq, records::Records};
 
-        #[derive(serde::Deserialize)]
+        #[derive(Schema, serde::Deserialize)]
         struct Reading {
             value: f64,
         }

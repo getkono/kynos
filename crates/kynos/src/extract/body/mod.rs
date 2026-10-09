@@ -165,16 +165,17 @@ async fn read_body(request: Request, media_type: &str) -> Result<Bytes, BodyReje
         })
 }
 
-/// Holds a deserialized body to the bounds its schema declares, which is the
-/// second half of every codec here that deserializes a [`Schema`] type.
+/// Holds a decoded body, or the record of one sitting at `at`, to the bounds
+/// its schema declares, which is the second half of every codec here that
+/// decodes a [`Schema`] type.
 ///
 /// A broken bound is a 422 keyed by where it was broken, the same rejection
 /// serde's own type mismatches are, since both are well-formed input that
 /// does not fit the declared schema.
 #[cfg(any(feature = "json", feature = "form"))]
-fn checked<T: Schema>(value: T) -> Result<T, BodyRejection> {
+fn checked<T: Schema>(value: T, at: Pointer<'_>) -> Result<T, BodyRejection> {
     let mut violations = Violations::new();
-    value.check_constraints(Pointer::root(), &mut violations);
+    value.check_constraints(at, &mut violations);
     if violations.is_empty() {
         Ok(value)
     } else {
