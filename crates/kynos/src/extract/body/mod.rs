@@ -29,7 +29,7 @@ pub mod protobuf;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Collected};
 
-#[cfg(any(feature = "json", feature = "form"))]
+#[cfg(any(feature = "json", feature = "form", feature = "multipart"))]
 use crate::schema::{
     Schema,
     constraints::{Pointer, Violations},
@@ -172,7 +172,7 @@ async fn read_body(request: Request, media_type: &str) -> Result<Bytes, BodyReje
 /// A broken bound is a 422 keyed by where it was broken, the same rejection
 /// serde's own type mismatches are, since both are well-formed input that
 /// does not fit the declared schema.
-#[cfg(any(feature = "json", feature = "form"))]
+#[cfg(any(feature = "json", feature = "form", feature = "multipart"))]
 fn checked<T: Schema>(value: T, at: Pointer<'_>) -> Result<T, BodyRejection> {
     let mut violations = Violations::new();
     value.check_constraints(at, &mut violations);

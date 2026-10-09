@@ -14,12 +14,16 @@ use crate::{
     },
     http::{HeaderMap, Request, header},
     router::operation::OperationCx,
-    schema::{Schema, registry::Registry},
+    schema::{Schema, constraints::Pointer, registry::Registry},
 };
 
 /// A `multipart/form-data` request body with declared fields.
 ///
 /// `T` derives `Schema`, and each field becomes a part with its own `Encoding`.
+/// A request is held to the bounds `T`'s fields declare once its parts are
+/// read, and a part that breaks one is a 422 keyed by the field's JSON Pointer,
+/// as a [`Json`](super::json::Json) member is; which bounds are enforced is
+/// [`constraints`](crate::schema::constraints)' to say.
 /// The same wrapper may be returned as a response, preserving the declared
 /// field names, per-part media types, and encodings in both directions.
 /// There is no dynamic-field iterator: a handler that accepts arbitrary part
@@ -218,7 +222,10 @@ fn malformed_body(error: &multer::Error) -> BodyRejection {
     }
 }
 
-impl<C: Sync, T: FromMultipart + Send> FromRequest<C> for MultipartForm<T> {
+/// `T: Schema` because the schema is what the parts are held to: the bounds a
+/// derived field declares are checked once `T` is built, each part under its
+/// field's name.
+impl<C: Sync, T: FromMultipart + Schema + Send> FromRequest<C> for MultipartForm<T> {
     type Rejection = BodyRejection;
 
     async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
@@ -248,7 +255,7 @@ impl<C: Sync, T: FromMultipart + Send> FromRequest<C> for MultipartForm<T> {
             });
         }
 
-        T::from_parts(parts).map(Self)
+        super::checked(T::from_parts(parts)?, Pointer::root()).map(Self)
     }
 }
 
