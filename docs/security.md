@@ -97,6 +97,42 @@ of the description learns that the credential is *honoured* rather than
 That is a different thing from a middleware configured not to reject, which
 appears in no document at all.
 
+### A deployment may run without credentials
+
+A daemon that guards with `Auth<S>` wherever credentials are configured, and
+admits anyone when none are, is not `MaybeAuth<S>`: `[{}, {S}]` would tell every
+client of every deployment that anonymity is allowed. It is a scheme whose
+carrier hands absence to the authenticator, which is the one party that knows
+the configuration:
+
+```rust
+#[derive(SecurityScheme)]
+#[security(bearer, carrier = optional)]
+struct Token;
+```
+
+`carrier = optional` reads with the kind's own reader and presents
+`Option<BearerToken>`. Absence arrives at `Authenticator::authenticate` as
+`None` instead of being answered by the guard, so the authenticator admits it
+when the deployment has no credentials and refuses it with
+`AuthRejection::unauthenticated()` — which carries the scheme's challenge as any
+refusal does — when it has. A malformed credential is still refused before the
+authenticator is asked, exactly as in the table above.
+
+The description stays `[{S}]` in both deployments. It is assembled from types,
+before any authenticator exists, and it remains sound: a client that presents
+the credential is admitted by either deployment, and the 401 it declares is one
+an open deployment merely never sends — the direction
+[`middleware.md`](middleware.md#soundness-not-exactness) permits. A router-level
+switch that rewrote the served document per deployment was declined: it would
+make the description a function of configuration rather than of the handlers,
+and the authenticator it would consult is unreachable while the document is
+built.
+
+Under an optional carrier nothing reports absence, so `MaybeAuth<S>` never sees
+anonymity, an `AnyOf` never skips `S`, and an `AllOf` holding `S` treats a
+missing partner as a partial set.
+
 ### A 403 may name itself; a 401 may not
 
 `AuthRejection::forbidden_as(uri)` puts an application's own problem `type` on
