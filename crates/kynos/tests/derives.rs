@@ -2760,6 +2760,27 @@ enum LookupError {
     TenantUnknown,
 }
 
+/// The prefix `LookupError` writes out, held where several types can share it.
+const PROBLEM_BASE: &str = "https://errors.example.com/";
+
+/// `LookupError` with its `base` naming [`PROBLEM_BASE`], and generic, so the
+/// `const` items joining the prefix are declared inside a generic `impl`.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = PROBLEM_BASE)]
+enum SharedLookupError<T: std::fmt::Debug> {
+    #[error("no user with that id")]
+    #[problem(
+        status = 404,
+        type = "https://errors.example.com/user-unknown",
+        title = "User unknown"
+    )]
+    UserUnknown(std::marker::PhantomData<T>),
+
+    #[error("no tenant with that slug")]
+    #[problem(status = 404, title = "Tenant unknown")]
+    TenantUnknown,
+}
+
 /// Two failures answering with one status, neither naming a type and the enum
 /// declaring no `base`, so both publish `about:blank`. The schema is one
 /// branch — a `oneOf` repeating a `const` is satisfied by two at once — but
@@ -3052,6 +3073,27 @@ fn a_variant_without_a_type_sends_its_slug_under_base() {
 
     let shared = LookupError::TenantUnknown.into_problem();
     assert_eq!(shared.type_uri, "https://errors.example.com/tenant-unknown");
+}
+
+/// A `base` naming a `const` publishes what the same prefix written out does,
+/// on the wire and in the description, and still borrows a `&'static str`
+/// joined at compile time rather than allocating per response.
+#[test]
+fn a_base_naming_a_const_publishes_what_the_literal_does() {
+    use kynos::error::problem::IntoProblem;
+    use std::borrow::Cow;
+
+    let joined = SharedLookupError::<u8>::TenantUnknown.into_problem();
+    assert_eq!(joined.type_uri, "https://errors.example.com/tenant-unknown");
+    assert!(matches!(joined.type_uri, Cow::Borrowed(_)));
+
+    let typed = SharedLookupError::<u8>::UserUnknown(std::marker::PhantomData).into_problem();
+    assert_eq!(typed.type_uri, "https://errors.example.com/user-unknown");
+
+    assert_eq!(
+        emitted_responses::<SharedLookupError<u8>>(),
+        emitted_responses::<LookupError>()
+    );
 }
 
 /// A problem's `detail` is the error's `Display` sentence for that occurrence,
