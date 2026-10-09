@@ -1,0 +1,39 @@
+name: Minimal versions
+
+# Every direct dependency resolved to its declared lower bound, then built.
+# Apart from `ci.yml` because it is not a gate on a pull request: what moves
+# under it is the registry and the lockfile, not the change under review, and
+# it needs a nightly cargo. Why the bounds matter, and what the check covers,
+# is `mise.toml`'s `minimal-versions:check`.
+on:
+  schedule:
+    # 05:29 UTC, off the hour and clear of the mutants and fuzz runs.
+    - cron: "29 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A night's run queues behind the next rather than being cancelled by it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  minimal-versions:
+    name: Minimal versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Set up
+        uses: ./.github/actions/setup
+        with:
+          cargo-cache-key: minimal-versions
+      - name: Build at every direct dependency's lower bound
+        run: mise run minimal-versions:check
