@@ -32,6 +32,7 @@ fn http2_defaults_are_owned_by_kynos() {
             timeout: std::time::Duration::from_secs(20),
         })
     );
+    assert_eq!(http2.idle_timeout, Some(std::time::Duration::from_secs(30)));
 }
 
 /// Every setter writes its own field and no other: each value differs from
@@ -69,6 +70,7 @@ fn http2_setters_write_their_own_fields() {
         .max_concurrent_streams(64)
         .flow_control(Http2FlowControl::Adaptive)
         .keep_alive(Some(keep_alive))
+        .idle_timeout(Some(Duration::from_secs(9)))
         .max_header_list_size(8 * 1024)
         .max_send_buffer_size(128 * 1024)
         .max_pending_accept_reset_streams(5)
@@ -79,6 +81,7 @@ fn http2_setters_write_their_own_fields() {
             max_concurrent_streams: 64,
             flow_control: Http2FlowControl::Adaptive,
             keep_alive: Some(keep_alive),
+            idle_timeout: Some(Duration::from_secs(9)),
             max_header_list_size: 8 * 1024,
             max_send_buffer_size: 128 * 1024,
             max_pending_accept_reset_streams: 5,
@@ -500,12 +503,12 @@ fn an_http1_config_is_cheap_to_copy_per_connection() {
     );
 }
 
-/// The same, for the HTTP/2 half. Measured at 80 bytes, rounded up to 128.
+/// The same, for the HTTP/2 half. Measured at 96 bytes, rounded up to 128.
 ///
 /// `Http2FlowControl` and `Http2KeepAlive` get no ceiling of their own because
 /// neither is ever held per connection on its own. This bound does not
-/// substitute for one: 80 against 128 leaves 48 bytes of slack, so either could
-/// roughly double before it fires.
+/// substitute for one: 96 against 128 leaves 32 bytes of slack, so either could
+/// grow by its own `Duration` before it fires.
 #[cfg(feature = "http2")]
 #[test]
 fn an_http2_config_is_cheap_to_copy_per_connection() {
@@ -513,7 +516,7 @@ fn an_http2_config_is_cheap_to_copy_per_connection() {
 
     assert!(
         http2 <= 128,
-        "Http2Config grew to {http2} bytes from a measured 80; \
+        "Http2Config grew to {http2} bytes from a measured 96; \
          it is copied once per accepted socket"
     );
 }
@@ -521,11 +524,11 @@ fn an_http2_config_is_cheap_to_copy_per_connection() {
 /// `TransportConfig` is the struct `accept.rs` actually clones per socket, which
 /// is what makes the two ceilings above per-connection costs at all.
 ///
-/// Measured at 168 bytes with every feature on, which is where it is widest --
-/// it gains its TLS runtime there -- and rounded up to 192, so the ceiling holds
+/// Measured at 200 bytes with every feature on, which is where it is widest --
+/// it gains its TLS runtime there -- and rounded up to 256, so the ceiling holds
 /// at every smaller feature set by construction. Ungated for that reason.
 ///
-/// 192 is well under the smallest read/write buffer the configuration
+/// 256 is well under the smallest read/write buffer the configuration
 /// configures, so describing a connection never costs more than serving one.
 /// That relation is prose rather than an assertion: nothing can falsify it while
 /// this ceiling holds, and `MIN_HTTP1_BUFFER_SIZE` is pinned by a `const`
@@ -536,8 +539,8 @@ fn a_transport_config_is_cheap_to_clone_per_connection() {
     let config = size_of::<super::TransportConfig>();
 
     assert!(
-        config <= 192,
-        "TransportConfig grew to {config} bytes from a measured 168; \
+        config <= 256,
+        "TransportConfig grew to {config} bytes from a measured 200; \
          it is cloned once per accepted socket"
     );
 }
@@ -1127,15 +1130,15 @@ async fn an_http2_peer_that_never_acknowledges_a_ping_is_disconnected() {
         .expect("server exits cleanly");
 }
 
-/// The header-read timeout the silent-connection cases configure.
+/// The header-read or HTTP/2 idle timeout the silent-connection cases configure.
 ///
 /// Short, so a case that passes is quick, and far below
 /// [`SILENT_CONNECTION_BOUND`], so one that fails is not a slow pass.
-#[cfg(feature = "http1")]
+#[cfg(any(feature = "http1", feature = "http2"))]
 const HEAD_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(200);
 
 /// How long a silent-connection case waits for the server to close it.
-#[cfg(feature = "http1")]
+#[cfg(any(feature = "http1", feature = "http2"))]
 const SILENT_CONNECTION_BOUND: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// The first-head deadline is the header-read timeout counted from accept, and
@@ -1155,6 +1158,113 @@ fn the_first_head_deadline_counts_the_header_read_timeout_from_accept() {
     assert_eq!(deadline(Some(HEAD_TIMEOUT)), Some(accepted + HEAD_TIMEOUT));
     assert_eq!(deadline(None), None);
     assert_eq!(deadline(Some(Duration::MAX)), None);
+}
+
+/// Without HTTP/1 the first-head deadline is the HTTP/2 idle timeout counted
+/// from accept, with the same two cases of none. Run in every HTTP/2 build, so
+/// the all-features build reaches it too.
+#[cfg(feature = "http2")]
+#[test]
+fn the_http2_first_head_deadline_counts_the_idle_timeout_from_accept() {
+    use std::time::{Duration, Instant};
+
+    let accepted = Instant::now();
+    let deadline = |timeout| {
+        Http2Config::default()
+            .idle_timeout(timeout)
+            .first_head_deadline(accepted)
+    };
+
+    assert_eq!(deadline(Some(HEAD_TIMEOUT)), Some(accepted + HEAD_TIMEOUT));
+    assert_eq!(deadline(None), None);
+    assert_eq!(deadline(Some(Duration::MAX)), None);
+}
+
+/// The idle timeout the `Streams::idle` cases wait out, on a paused clock.
+#[cfg(feature = "http2")]
+const IDLE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Streams that have opened and closed one stream, and the instant the idle
+/// wait over them started, which is when that stream closed.
+#[cfg(feature = "http2")]
+fn quiet_streams() -> (
+    std::sync::Arc<crate::server::protocol::http2::Streams>,
+    tokio::task::JoinHandle<tokio::time::Instant>,
+    tokio::time::Instant,
+) {
+    let streams = std::sync::Arc::new(crate::server::protocol::http2::Streams::default());
+    drop(streams.open());
+    let started = tokio::time::Instant::now();
+    let waiting = std::sync::Arc::clone(&streams);
+    let idle = tokio::spawn(async move {
+        waiting.idle(Some(IDLE)).await;
+        tokio::time::Instant::now()
+    });
+    (streams, idle, started)
+}
+
+/// A stream that opens and finishes inside the idle wait restarts the idle
+/// period from its close, so the connection idles a whole timeout after its
+/// last stream and no longer.
+#[cfg(feature = "http2")]
+#[tokio::test(start_paused = true)]
+async fn a_stream_finished_during_the_idle_wait_restarts_it_from_its_close() {
+    let (streams, idle, started) = quiet_streams();
+
+    tokio::time::sleep(IDLE * 2 / 5).await;
+    drop(streams.open());
+    let closed = tokio::time::Instant::now();
+
+    let idled = idle.await.expect("the idle wait does not panic");
+    assert_eq!(idled - started, closed - started + IDLE);
+}
+
+/// A stream that opens inside the idle wait and is still in flight when the
+/// wait's timer ends holds the connection until a whole timeout after it
+/// closes.
+#[cfg(feature = "http2")]
+#[tokio::test(start_paused = true)]
+async fn a_stream_opened_during_the_idle_wait_holds_it_until_the_stream_closes() {
+    let (streams, idle, started) = quiet_streams();
+
+    tokio::time::sleep(IDLE * 2 / 5).await;
+    let in_flight = streams.open();
+    tokio::time::sleep(IDLE * 3).await;
+    assert!(
+        !idle.is_finished(),
+        "a connection with a stream in flight is not idle"
+    );
+    drop(in_flight);
+    let closed = tokio::time::Instant::now();
+
+    let idled = idle.await.expect("the idle wait does not panic");
+    assert_eq!(idled - started, closed - started + IDLE);
+}
+
+/// A counted response body reports its inner body's end and size, so hyper
+/// still ends an empty HTTP/2 response on its HEADERS frame.
+#[cfg(feature = "http2")]
+#[test]
+fn a_counted_body_reports_its_inner_end_and_size() {
+    use hyper::body::Body as _;
+
+    use crate::{http::body::Body, server::connection::Counted};
+
+    let counted = |body| Counted {
+        body,
+        _in_flight: None,
+    };
+
+    let empty = counted(Body::empty());
+    assert!(empty.is_end_stream(), "an empty body is over");
+    assert_eq!(empty.size_hint().exact(), Some(0));
+
+    let full = counted(Body::from("abc"));
+    assert!(
+        !full.is_end_stream(),
+        "a body with a frame left is not over"
+    );
+    assert_eq!(full.size_hint().exact(), Some(3));
 }
 
 /// A plaintext server whose header-read timeout is [`HEAD_TIMEOUT`].
@@ -1183,7 +1293,7 @@ async fn head_timed_server() -> (
 ///
 /// The read's own result is discarded: a closed connection reports zero bytes
 /// and a reset one an error, and both are the server letting go of it.
-#[cfg(feature = "http1")]
+#[cfg(any(feature = "http1", feature = "http2"))]
 async fn assert_server_closes(stream: &mut (impl tokio::io::AsyncRead + Unpin), case: &str) {
     use tokio::io::AsyncReadExt as _;
 
@@ -1193,7 +1303,7 @@ async fn assert_server_closes(stream: &mut (impl tokio::io::AsyncRead + Unpin), 
     assert!(
         closed.is_ok(),
         "{case}: the server still holds the connection {SILENT_CONNECTION_BOUND:?} after \
-         accepting it, past a {HEAD_TIMEOUT:?} header-read timeout"
+         accepting it, past a {HEAD_TIMEOUT:?} timeout"
     );
 }
 
@@ -1290,9 +1400,10 @@ async fn an_http2_connection_that_opens_no_stream_is_closed() {
 /// in time is not closed when the timeout passes.
 ///
 /// HTTP/2 rather than HTTP/1, since an idle HTTP/1 connection is held to the
-/// header-read timeout between requests by hyper itself; an HTTP/2 one has no
-/// such timer, so a second request long after the first still finds the
-/// connection open only if the bound stopped at the first head.
+/// header-read timeout between requests by hyper itself; an HTTP/2 one is held
+/// only to its idle timeout, 30 s by default, so a second request long after
+/// the first still finds the connection open only if the bound stopped at the
+/// first head.
 #[cfg(all(feature = "http1", feature = "http2"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_connection_that_sent_a_request_outlives_the_header_read_timeout() {
@@ -1328,6 +1439,196 @@ async fn a_connection_that_sent_a_request_outlives_the_header_read_timeout() {
 
     drop(sender);
     connection.abort();
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// A plaintext server whose HTTP/2 idle timeout is [`HEAD_TIMEOUT`], serving
+/// `service`.
+#[cfg(feature = "http2")]
+async fn idle_timed_server(
+    service: crate::router::service::Service<()>,
+    http2: Http2Config,
+) -> (
+    std::net::SocketAddr,
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<crate::error::Result<()>>,
+) {
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let bound = crate::server::Server::new(service)
+        .http2(http2.idle_timeout(Some(HEAD_TIMEOUT)))
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+            let _ = shutdown_receiver.await;
+        }))
+        .prepare()
+        .await
+        .expect("loopback listener binds");
+    let address = bound.local_addrs()[0];
+    (address, shutdown_sender, tokio::spawn(bound.serve()))
+}
+
+/// An HTTP/2 connection that answers every PING and opens no stream after its
+/// first is sent a GOAWAY and closed at the idle timeout.
+///
+/// Raw bytes rather than hyper's client, so the frames the server sent can be
+/// read: the GOAWAY is what tells a conforming client not to open another
+/// stream on a connection about to close. The one request is a HEADERS frame
+/// of three static-table indices -- `GET`, `http` and `/` -- ending its stream.
+/// Keep-alive pings every 50 ms and the client acknowledges each, which is the
+/// peer keep-alive cannot tell from a live one.
+#[cfg(feature = "http2")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_idle_http2_connection_that_answers_pings_is_sent_a_goaway_and_closed() {
+    use std::time::Duration;
+
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    const HEADERS: u8 = 0x1;
+    const SETTINGS: u8 = 0x4;
+    const PING: u8 = 0x6;
+    const GOAWAY: u8 = 0x7;
+    const ACK: u8 = 0x1;
+
+    let keep_alive = Http2KeepAlive::new(Duration::from_millis(50), Duration::from_secs(1));
+    let (address, shutdown_sender, server) = idle_timed_server(
+        test_service(),
+        Http2Config::default().keep_alive(Some(keep_alive)),
+    )
+    .await;
+
+    let mut stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    stream
+        .write_all(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n\0\0\0\x04\0\0\0\0\0")
+        .await
+        .expect("preface and empty SETTINGS send");
+    stream
+        .write_all(&[0, 0, 3, HEADERS, 0x5, 0, 0, 0, 1, 0x82, 0x86, 0x84])
+        .await
+        .expect("one request sends");
+
+    let frames = tokio::time::timeout(SILENT_CONNECTION_BOUND, async {
+        let mut seen = Vec::new();
+        loop {
+            let mut header = [0_u8; 9];
+            if stream.read_exact(&mut header).await.is_err() {
+                return seen;
+            }
+            let length =
+                usize::from(header[0]) << 16 | usize::from(header[1]) << 8 | usize::from(header[2]);
+            let mut payload = vec![0_u8; length];
+            if stream.read_exact(&mut payload).await.is_err() {
+                return seen;
+            }
+            let (kind, flags) = (header[3], header[4]);
+            if kind == SETTINGS && flags & ACK == 0 {
+                stream
+                    .write_all(&[0, 0, 0, SETTINGS, ACK, 0, 0, 0, 0])
+                    .await
+                    .expect("SETTINGS acknowledgement sends");
+            }
+            if kind == PING && flags & ACK == 0 {
+                let mut ack = vec![0, 0, 8, PING, ACK, 0, 0, 0, 0];
+                ack.extend_from_slice(&payload);
+                // The server may already have closed; the read below says so.
+                let _ = stream.write_all(&ack).await;
+            }
+            seen.push(kind);
+        }
+    })
+    .await
+    .expect("the server closes a connection that holds no stream past its idle timeout");
+
+    let answered = frames
+        .iter()
+        .position(|kind| *kind == HEADERS)
+        .expect("the request was answered before the connection idled");
+    let goaway = frames
+        .iter()
+        .rposition(|kind| *kind == GOAWAY)
+        .expect("the server sent a GOAWAY before closing");
+    assert!(answered < goaway, "{frames:?}");
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// A stream is in flight until its response body ends, not only while its
+/// handler runs: a body that outlasts the idle timeout keeps the connection
+/// open for the next request.
+#[cfg(feature = "http2")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_response_body_that_outlasts_the_idle_timeout_holds_the_connection() {
+    use http_body_util::{BodyExt as _, Empty};
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+
+    let (service, release) = held_body_service();
+    let (address, shutdown_sender, server) =
+        idle_timed_server(service, Http2Config::default()).await;
+
+    let stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    let (mut sender, connection) =
+        hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+            .await
+            .expect("HTTP/2 handshake completes");
+    let connection = tokio::spawn(connection);
+    let request = || {
+        hyper::Request::builder()
+            .uri("http://localhost/")
+            .body(Empty::<bytes::Bytes>::new())
+            .expect("request builds")
+    };
+
+    let held = sender
+        .send_request(request())
+        .await
+        .expect("the held response's head arrives");
+    tokio::time::sleep(HEAD_TIMEOUT * 3).await;
+    let _ = release.send(());
+    let body = held
+        .into_body()
+        .collect()
+        .await
+        .expect("the held body finishes")
+        .to_bytes();
+    assert_eq!(body, bytes::Bytes::from_static(b"ok"));
+    sender
+        .send_request(request())
+        .await
+        .expect("the connection was not idle while the body was in flight");
+
+    drop(sender);
+    connection.abort();
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// A build without HTTP/1 has no header-read timeout, so the HTTP/2 idle
+/// timeout bounds a connection's wait for its first request head instead.
+#[cfg(all(feature = "http2", not(feature = "http1")))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_http2_only_connection_that_never_speaks_is_closed_at_the_idle_timeout() {
+    let (address, shutdown_sender, server) =
+        idle_timed_server(test_service(), Http2Config::default()).await;
+
+    let mut stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    assert_server_closes(&mut stream, "a silent HTTP/2-only connection").await;
+
     let _ = shutdown_sender.send(());
     server
         .await
@@ -3265,6 +3566,55 @@ fn blocking_service() -> (
     (service, started, release)
 }
 
+/// A service whose first response body sends nothing until the returned
+/// sender fires, and whose later responses are the usual `ok`.
+#[cfg(feature = "http2")]
+fn held_body_service() -> (
+    crate::router::service::Service<()>,
+    tokio::sync::oneshot::Sender<()>,
+) {
+    /// `ok`, once `0` resolves.
+    struct Held(Option<tokio::sync::oneshot::Receiver<()>>);
+
+    impl http_body::Body for Held {
+        type Data = bytes::Bytes;
+        type Error = crate::http::body::BoxError;
+
+        fn poll_frame(
+            mut self: std::pin::Pin<&mut Self>,
+            context: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+            let Some(held) = self.0.as_mut() else {
+                return std::task::Poll::Ready(None);
+            };
+            // A dropped sender releases the body as a sent one does.
+            let _ = std::task::ready!(std::future::Future::poll(std::pin::Pin::new(held), context));
+            self.0 = None;
+            std::task::Poll::Ready(Some(Ok(http_body::Frame::data(bytes::Bytes::from_static(
+                b"ok",
+            )))))
+        }
+    }
+
+    let (release, held) = tokio::sync::oneshot::channel();
+    let held = std::sync::Arc::new(std::sync::Mutex::new(Some(held)));
+    let document = kynos_openapi::Document::new(
+        kynos_openapi::SpecVersion::V3_1,
+        kynos_openapi::Info::new("Test", "1"),
+    );
+    let service = crate::router::service::Service::new(document, move |_| {
+        let held = held.lock().expect("the held receiver's lock").take();
+        async move {
+            let body = match held {
+                Some(held) => crate::http::body::Body::from_body(Held(Some(held))),
+                None => crate::http::body::Body::from_bytes(bytes::Bytes::from_static(b"ok")),
+            };
+            crate::http::Response::new(body)
+        }
+    });
+    (service, release)
+}
+
 #[cfg(feature = "http1")]
 fn request_http1(address: std::net::SocketAddr) -> String {
     use std::io::{Read as _, Write as _};
@@ -3364,6 +3714,12 @@ mod protocol_configuration {
                     Duration::from_secs(5),
                 ))),
                 "HTTP/2 keep-alive durations must be non-zero",
+            ),
+            (
+                "an idle timeout that expires at once",
+                Http1Config::default(),
+                Http2Config::default().idle_timeout(Some(Duration::ZERO)),
+                "HTTP/2 idle_timeout must be non-zero when enabled",
             ),
         ]
     }

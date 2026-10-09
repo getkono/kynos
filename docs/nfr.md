@@ -35,10 +35,10 @@ ceiling by the standard [Thresholds](#thresholds) sets.
 
 Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`,
 `trybuild`, `proptest`, `alloc_counter`, `cargo-llvm-lines`, `cargo-mutants`,
-`gungraun` over Valgrind, rustdoc with
+`gungraun` over Valgrind, `cargo-fuzz`, rustdoc with
 `missing_docs = "deny"`, and `cargo-semver-checks` — the last through both
 release-plz, at default features and fail-open, and `mise run semver:check`, at
-every feature — and `cargo-deny`. Not yet present: `cargo-public-api`, `cargo-fuzz`, `cargo-udeps`. `criterion` is
+every feature — and `cargo-deny`. Not yet present: `cargo-public-api`, `cargo-udeps`. `criterion` is
 not on this list and will not be: benchmarks live in `kynos-bench`.
 
 ## Thresholds
@@ -269,7 +269,7 @@ rewrite.
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
-| reliability | No extractor panics on any input | `cargo-fuzz` target per extractor, run nightly, corpus committed | `needs-tooling` |
+| reliability | No extractor panics on any input | `cargo-fuzz` targets in [`fuzz/`](../fuzz/), one per hand-written parser of untrusted input, each asserting no panic and a round trip or an independent oracle where one exists; [`fuzz.yml`](../.github/workflows/fuzz.yml) searches each nightly and replays the committed [`fuzz/corpus/`](../fuzz/corpus/) on every pull request | `partial`: a pull request fails only on a committed input, while a new one fails the nightly job, which no merge waits on; and the nine targets are Kynos's own parsers, not every extractor — a codec whose parser is a dependency's (`serde_json`, `serde_html_form`, `multer`, `prost`) is not fuzzed here. [`testing.md`](testing.md#fuzzing) lists them |
 | security | Header count and header-list size are bounded by default | The driver is configured from [`Http1Config`](../crates/kynos/src/server/protocol/http1.rs) and [`Http2Config`](../crates/kynos/src/server/protocol/http2.rs) on every connection; [`server/tests.rs`](../crates/kynos/src/server/tests.rs) asserts the configured cap is the one forwarded | `enforced` |
 | security | A body-size limit is available, and once mounted is enforced *and* declared | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) asserting rejection at limit+1, that a declared length past the limit is refused before the body is read, and that a service mounting none neither refuses nor declares a 413 | `enforced`; no default, deliberately, and `planned` for the allocation bound |
 | security | Per-IP connection caps | none yet — see below | `planned` |
@@ -416,7 +416,7 @@ paragraph in [Status](#status).
 | reliability | A streamed request body is decoded as it arrives rather than after it has been collected | [`extract/body/json_lines/tests.rs`](../crates/kynos/src/extract/body/json_lines/tests.rs) reading a body delivered one frame per byte, and every frame boundary of a fixed body | `enforced` for a body declaring a `Content-Length`; `by-design` under `BodySize` for a chunked one |
 | performance | Syscalls per request ≤ TBD | `strace -c` assertion over a fixed request count | `kynos-bench` |
 | performance | Idle memory per connection ≤ TBD at 100k connections | Nightly load test measuring RSS delta | `kynos-bench` |
-| performance | The per-connection state Kynos itself holds inline stays within its recorded ceilings | [`extract/connection/tests.rs`](../crates/kynos/src/extract/connection/tests.rs), asserting `Connection` one pointer wide, narrower than `Inner`, and shared rather than copied on clone, `Inner` ≤ 192 from a measured 144 and `TlsIdentity` ≤ 128 from a measured 72; and [`server/tests.rs`](../crates/kynos/src/server/tests.rs), asserting the configuration cloned per accepted socket — `Http1Config` ≤ 64 from 40, `Http2Config` ≤ 128 from 80, `TransportConfig` ≤ 192 from 168. Every reading is a `size_of`, so what a certificate chain or a server name points at is counted by none of them | `enforced` for the ceilings; the relation to the smallest transport buffer is prose in the same doc comments, since it cannot fail while a ceiling holds |
+| performance | The per-connection state Kynos itself holds inline stays within its recorded ceilings | [`extract/connection/tests.rs`](../crates/kynos/src/extract/connection/tests.rs), asserting `Connection` one pointer wide, narrower than `Inner`, and shared rather than copied on clone, `Inner` ≤ 192 from a measured 144 and `TlsIdentity` ≤ 128 from a measured 72; and [`server/tests.rs`](../crates/kynos/src/server/tests.rs), asserting the configuration cloned per accepted socket — `Http1Config` ≤ 64 from 40, `Http2Config` ≤ 128 from 96, `TransportConfig` ≤ 256 from 200. Every reading is a `size_of`, so what a certificate chain or a server name points at is counted by none of them | `enforced` for the ceilings; the relation to the smallest transport buffer is prose in the same doc comments, since it cannot fail while a ceiling holds |
 | compatibility | `Listener::Tokio` is the only public item naming a tokio type | `cargo-public-api` assertion over the framework surface | `needs-tooling` |
 | compatibility | Every `tokio` mention outside `crates/kynos/src/server/` appears in the allowance table in [`architecture.md`](architecture.md#runtime-policy), and the table has exactly six rows | `mise run containment:check`, which reads the table rather than restating it, over source stripped of comments, string literals and `#[cfg(test)]` modules | `enforced` |
 
@@ -565,6 +565,15 @@ splitting the builder from what it builds would turn `server::Server` into
 `server::builder::Server`. What pushed it over was one more setter,
 `request_body_idle_timeout`, whose documentation is the part a caller reads
 before choosing `None`; the timer itself lives in `middleware/limits/`.
+
+`server/connection.rs` is private, so a split would cost no path, and it is
+still one concern: handing hyper one accepted socket and deciding when to stop.
+It is also the only file under `server/` the dependency rows below let name
+`hyper`, so the builder, the service it is given and the wait over the codec
+cannot leave it without a second site. What pushed it over was the HTTP/2 idle
+timeout's arm in that wait and the in-flight guard the service takes per
+stream; the counting they read lives in `server/protocol/http2.rs`, which names
+no `hyper`.
 
 ## Dependencies
 
@@ -728,13 +737,12 @@ can write.
 
 ## Tooling gaps
 
-Three crates stand between this document and its enforcement. In order of what
+Two crates stand between this document and its enforcement. In order of what
 they unblock:
 
 | Tool | Unblocks | Notes |
 | --- | --- | --- |
 | `cargo-public-api` | Four `compatibility`/`dx` rows across the document model, runtime and workspace | The single highest-leverage addition: it enforces the architecture policy mechanically rather than by review |
-| `cargo-fuzz` | Extractor panic-freedom | Needs a committed corpus and a nightly job |
 | `cargo-udeps` | The unused-`[workspace.dependencies]` row under dependencies | An equivalent manifest check would do as well |
 
 `criterion` is intentionally absent from this list, and stays absent now that

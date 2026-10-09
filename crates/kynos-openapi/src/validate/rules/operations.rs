@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     model::{
+        components::Components,
         paths::{item::PathItem, operation::Operation, template::PathTemplate},
         reference::RefOr,
         response::Response,
@@ -46,6 +47,7 @@ impl Validator {
         template: Option<&PathTemplate>,
         item: &PathItem,
         operation: &'doc Operation,
+        components: &Components,
         declared_schemes: &HashSet<&str>,
         declared_tags: &HashSet<&str>,
         operation_ids: &mut HashMap<&'doc str, String>,
@@ -114,16 +116,17 @@ impl Validator {
             }
         }
 
-        check_parameter_list(location, &operation.parameters, violations);
+        check_parameter_list(location, &operation.parameters, components, violations);
         #[cfg(feature = "openapi32")]
         super::parameters::check_querystring(
             location,
             &item.parameters,
             &operation.parameters,
+            components,
             violations,
         );
         if let Some(template) = template {
-            check_path_correspondence(location, template, item, operation, violations);
+            check_path_correspondence(location, template, item, operation, components, violations);
         }
         check_operation_content(location, operation, violations);
 

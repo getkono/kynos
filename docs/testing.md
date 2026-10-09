@@ -14,6 +14,7 @@ these are asked to enforce; this document is about the mechanics.
 | UI snapshot | `crates/kynos/tests/ui/` | `trybuild` | the exact text of a diagnostic | in use |
 | Property | `crates/kynos-openapi/tests/`, over `support/`'s generators | `proptest` | round-tripping, determinism and totality over generated documents | in use |
 | Conformance | a harness over a fixture app | `TestClient` over live responses | *emitted ⊇ observable* against a running service | in use |
+| Fuzz | [`fuzz/fuzz_targets/`](../fuzz/fuzz_targets/), over a committed corpus | `cargo fuzz`, on a pinned nightly | that a parser of untrusted input neither panics nor breaks its round trip or oracle on inputs nobody wrote — see [Fuzzing](#fuzzing) | in use |
 
 Tests move to a sibling `tests.rs` once a module passes ~400 lines, whether or
 not that module also becomes a directory — the two halves of the layout rule are
@@ -160,7 +161,7 @@ Five kinds of code account for the workspace.
 | --- | --- | --- | --- |
 | Value type | a `Serialize`/`Deserialize` derive, and no logic beyond builders and accessors | the crate's round-trip and determinism properties, reached through a shared generator; and one exact-JSON case fixing its wire shape | per-field tests, accessor tests, a hand-written round-trip |
 | Closed enumeration | an enum or `const` table mirroring a fixed list in the specification | one table test whose closure fails when a variant is added | cases covering some of the variants |
-| Parser | an open input space — a `&str`, arbitrary JSON, a whole document | a property against an independently constructed oracle; and one case per error variant, counted against the source | round-tripping alone |
+| Parser | an open input space — a `&str`, arbitrary JSON, a whole document | a property against an independently constructed oracle; and one case per error variant, counted against the source; where it is hand-written and reads a request, a `fuzz/` target | round-tripping alone |
 | Type-level surface | a trait, a bound, an arity impl, a derive, or a rule that something must not compile | a doctest for the rule, a `.stderr` snapshot for its wording, a witness fn for the bound | running it — above all against a `todo!()` |
 | Runtime I/O | a socket, a timer, a task or a signal | an integration test over a real socket | a mock of the runtime |
 
@@ -762,6 +763,8 @@ mutated, each for its own reason:
   neither, so on any one platform two are uncompiled and their mutants missed.
 - The proc-macro entry points in `kynos-macros/src/lib.rs`, which only forward
   to a mutated `expand` function, so a mutant there is unviable.
+- The fuzz entry points in `__private/fuzz.rs`, which are `cfg(fuzzing)` and
+  so never compiled by a test build, and only forward to a mutated parser.
 - Hand-written `Debug` impls, which hold no contract a mutant can break: a
   redacting one is tested, but a mutant only prints less.
 
@@ -783,6 +786,43 @@ giving the reason. The attribute needs `mutants = { workspace = true }` under
 the member's `[dev-dependencies]`. Add that line the first time a member uses
 it. An exclusion that covers a whole kind of code belongs in `exclude_re`
 instead, with its reason beside it.
+
+## Fuzzing
+
+A property test draws from a generator someone wrote, so it reaches the inputs
+its author imagined. A fuzzer is guided by coverage instead, which is what
+finds the input a hand-written parser of request fields was never shown.
+
+| Command | Does | Where it runs |
+| --- | --- | --- |
+| `mise run fuzz [target] [--seconds n]` | searches one target, or each in turn, for `n` seconds | locally; nightly in [`fuzz.yml`](../.github/workflows/fuzz.yml), twenty minutes per target |
+| `mise run fuzz:check` | builds every target and replays [`fuzz/corpus/`](../fuzz/corpus/) | every pull request |
+
+[`fuzz/`](../fuzz/) is a workspace of its own: `cargo fuzz` needs a nightly
+toolchain, pinned by date in both tasks, and a member would break every stable
+`--workspace` gate. A parser with a public path is fuzzed through it; the rest
+are reached through `kynos::__private::fuzz`, which exists only under the
+`cfg(fuzzing)` `cargo fuzz` sets.
+
+| Target | Parser | Asserts beyond no panic |
+| --- | --- | --- |
+| `accept` | `Accept::parse`, and the qvalue reader in `http/quality.rs` | the qvalue reader agrees with section 12.4.2's grammar, transcribed by character class |
+| `basic` | `security::carrier::basic`, and its base64 decoder | the credential read is the one the `base64` crate's strict engine decodes, or neither reads one |
+| `cookie` | `http::cookie::jar` and `value_of` | every pair is ASCII without `;`, and a name the jar yields is found by `value_of` |
+| `date` | the HTTP-date reader and writer in `http/date.rs` | whatever the reader produces the writer renders back to it, and the reverse for every instant before the year 10000 |
+| `etag` | the entity-tag list reader and both comparisons in `http/etag.rs` | each member is trimmed and non-empty, and both comparisons find it in the field it came from |
+| `forwarded` | `Forwarded::resolve` | trusting nobody answers with the peer, a scheme is lowercased, and `client_is_secure` follows it |
+| `media_type` | the codec matcher `offers` in `extract/body/mod.rs` | a match agrees on type and subtype, and a bare media type offers itself |
+| `query` | `__private::uri::query_pairs` | the pairs equal a byte-at-a-time form decoder's |
+| `range` | `Range::parse` and `select` | a field is ignored only for a reason this constructor can see, and a part lies inside the representation |
+
+The search runs nightly rather than on a pull request because its verdict
+depends on how long it ran: a gate that fails on an input a longer run found is
+a gate whose result turns on the runner. What a pull request owes is the
+corpus. A crash the nightly job uploads is a bug fix, and lands as one: the
+input, copied into `fuzz/corpus/<target>/`, is the failing test, and the fix
+follows it. `fuzz:check` replays it from then on. The search writes what it
+discovers under `fuzz/target/`, so a run never edits the committed seeds.
 
 ## Snapshots
 

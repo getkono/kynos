@@ -893,6 +893,73 @@ git diff "$(git merge-base "${MUTANTS_BASE:-origin/master}" HEAD)" >target/mutan
 cargo mutants "$@"
 '''
 
+[tasks.fuzz]
+description = "Fuzz one parser target, or every one, for a bounded time each"
+# What the targets assert, and why this is a nightly job rather than a gate, is
+# `docs/testing.md#fuzzing`.
+#
+# `cargo fuzz` needs a nightly toolchain, and a dated one: an undated nightly
+# moves under the job between two nights, and a failure that appears with it
+# says nothing about Kynos. `fuzz:check` installs and builds with the same one.
+#
+# Two corpus directories. libFuzzer writes what it discovers into the first,
+# which is under the ignored `fuzz/target/`, and only reads the rest, so a run
+# never dirties the committed seeds in `fuzz/corpus/`. Promoting a discovered
+# input is a deliberate copy, reviewed like any other change.
+#
+# cargo-fuzz is a task-scoped pin for `cost:features`' reason: a `[tools]`
+# entry would download it into every CI job. Upstream publishes an x86-64 Linux
+# binary only, so on an arm64 machine this task has nothing to install. That
+# binary is linked against musl and defaults to building for musl too, where
+# the sanitizer cannot link, so `--target` names the toolchain's own host.
+tools = { "github:rust-fuzz/cargo-fuzz" = "0.13.2" }
+env = { FUZZ_TOOLCHAIN = "nightly-2026-06-10" }
+usage = '''
+arg "[target]" help="One target under fuzz/fuzz_targets; every target when omitted"
+flag "--seconds <seconds>" help="How long each target runs" default="60"
+'''
+run = '''
+set -eu
+rustup toolchain install "$FUZZ_TOOLCHAIN" --profile minimal --no-self-update
+host="$(rustc +"$FUZZ_TOOLCHAIN" -vV | sed -n 's/^host: //p')"
+
+if [ -n "${usage_target:-}" ]; then
+  set -- "$usage_target"
+else
+  set -- $(cargo +"$FUZZ_TOOLCHAIN" fuzz list --fuzz-dir fuzz)
+fi
+
+for target in "$@"; do
+  mkdir -p "fuzz/target/corpus/$target"
+  cargo +"$FUZZ_TOOLCHAIN" fuzz run --fuzz-dir fuzz --target "$host" "$target" \
+    "fuzz/target/corpus/$target" "fuzz/corpus/$target" \
+    -- -max_total_time="$usage_seconds"
+done
+'''
+
+[tasks."fuzz:check"]
+description = "Build every fuzz target and replay its committed corpus"
+# The pull-request half of `fuzz`: no new input is generated, so it finishes in
+# the time the instrumented build takes. It is what keeps `fuzz/` compiling
+# against the tree -- nothing else builds it, since it is a workspace of its
+# own on another toolchain -- and what holds every committed seed, including a
+# crash once promoted into `fuzz/corpus/`, to its target on every change.
+#
+# `-runs=0` executes the corpus libFuzzer loads at start-up and nothing after.
+# The pins, and `--target`, are `fuzz`'s, for its reasons.
+tools = { "github:rust-fuzz/cargo-fuzz" = "0.13.2" }
+env = { FUZZ_TOOLCHAIN = "nightly-2026-06-10" }
+run = '''
+set -eu
+rustup toolchain install "$FUZZ_TOOLCHAIN" --profile minimal --no-self-update
+host="$(rustc +"$FUZZ_TOOLCHAIN" -vV | sed -n 's/^host: //p')"
+
+for target in $(cargo +"$FUZZ_TOOLCHAIN" fuzz list --fuzz-dir fuzz); do
+  cargo +"$FUZZ_TOOLCHAIN" fuzz run --fuzz-dir fuzz --target "$host" "$target" \
+    "fuzz/corpus/$target" -- -runs=0
+done
+'''
+
 [tasks.check]
 description = "Run formatting, linting, and tests"
 # `features:check` and `features:targets` are here because `AGENTS.md` names

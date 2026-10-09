@@ -1,6 +1,15 @@
-//! HTTP/2 tuning.
+//! HTTP/2 tuning, and the in-flight stream count its idle timeout is read
+//! against.
 
-use std::time::Duration;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
+
+use tokio::sync::Notify;
 
 /// HTTP/2 flow-control policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,8 +37,8 @@ pub enum Http2FlowControl {
 /// connection is closed if it is not acknowledged within `timeout`, so a busy
 /// connection is never pinged. This is what releases an HTTP/2 connection
 /// whose peer vanished with no stream open. A peer that answers every PING is
-/// held to the HTTP/1 header-read timeout only until its first request head,
-/// and by nothing after it: HTTP/2 has no idle timeout of its own.
+/// alive by this measure, so what releases it is
+/// [`Http2Config::idle_timeout`] instead.
 ///
 /// `#[non_exhaustive]`, so construct it with [`new`](Self::new):
 ///
@@ -82,6 +91,16 @@ pub struct Http2Config {
     /// the acknowledgement by default, so a vanished peer holds its connection
     /// permit for at most 50 seconds past the last frame it sent.
     pub keep_alive: Option<Http2KeepAlive>,
+    /// How long a connection may hold no stream in flight before it is sent a
+    /// GOAWAY and closed. 30 seconds by default, the bound HTTP/1's
+    /// `header_read_timeout` puts on an idle HTTP/1 connection.
+    ///
+    /// A stream is in flight from its request head until its response body
+    /// ends or is reset, so a long download or event stream holds the
+    /// connection open however long it runs. In a build without `http1`, it
+    /// also bounds the wait for a connection's first request head, counted
+    /// from accept.
+    pub idle_timeout: Option<Duration>,
     /// Maximum decoded request header-list size.
     pub max_header_list_size: u32,
     /// Maximum buffered response bytes per stream.
@@ -104,6 +123,7 @@ impl Default for Http2Config {
                 Duration::from_secs(30),
                 Duration::from_secs(20),
             )),
+            idle_timeout: Some(Duration::from_secs(30)),
             max_header_list_size: 16 * 1024,
             max_send_buffer_size: 400 * 1024,
             max_pending_accept_reset_streams: 20,
@@ -144,6 +164,20 @@ impl Http2Config {
         self
     }
 
+    /// Sets how long a connection may hold no stream in flight before it is
+    /// sent a GOAWAY and closed.
+    ///
+    /// `None` leaves a connection whose peer answers every keep-alive PING open
+    /// for as long as the peer likes, which is a decision rather than a default.
+    ///
+    /// [`Server::prepare`](crate::server::Server::prepare) refuses
+    /// `Some(Duration::ZERO)`.
+    #[must_use]
+    pub fn idle_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.idle_timeout = timeout;
+        self
+    }
+
     /// Sets the maximum decoded request header-list size.
     ///
     /// [`Server::prepare`](crate::server::Server::prepare) refuses zero.
@@ -179,5 +213,96 @@ impl Http2Config {
     pub fn max_local_error_reset_streams(mut self, streams: usize) -> Self {
         self.max_local_error_reset_streams = streams;
         self
+    }
+}
+
+impl Http2Config {
+    /// When a connection accepted at `accepted` must have produced its first
+    /// request head, in a build with no HTTP/1 header-read timeout to count.
+    ///
+    /// `None` when the idle timeout is disabled or would overflow the clock.
+    /// Compiled for tests in every build, so the all-features build that
+    /// mutation testing runs reaches it.
+    #[cfg(any(test, not(feature = "http1")))]
+    pub(in crate::server) fn first_head_deadline(
+        &self,
+        accepted: std::time::Instant,
+    ) -> Option<std::time::Instant> {
+        self.idle_timeout
+            .and_then(|timeout| accepted.checked_add(timeout))
+    }
+}
+
+/// The HTTP/2 streams one connection has in flight.
+///
+/// Two monotonic counters rather than one that rises and falls, so the idle
+/// wait can tell a connection that stayed quiet from one that opened and
+/// finished a stream while it slept: both end with nothing in flight, and only
+/// the first is idle.
+#[derive(Debug, Default)]
+pub(in crate::server) struct Streams {
+    opened: AtomicUsize,
+    closed: AtomicUsize,
+    /// Woken by each close that leaves none in flight. An open wakes nothing:
+    /// the idle wait has nothing to do until that stream closes.
+    quiet: Notify,
+}
+
+impl Streams {
+    /// Counts one stream in flight until the returned guard drops.
+    pub(in crate::server) fn open(self: &Arc<Self>) -> InFlight {
+        self.opened.fetch_add(1, Ordering::SeqCst);
+        InFlight(Arc::clone(self))
+    }
+
+    /// Resolves once no stream has been in flight for `timeout`, and never
+    /// before the first stream opens: until then the first-head deadline is
+    /// what bounds the connection.
+    pub(in crate::server) async fn idle(&self, timeout: Option<Duration>) {
+        let Some(timeout) = timeout else {
+            return std::future::pending().await;
+        };
+        loop {
+            let quiet = self.quiet.notified();
+            tokio::pin!(quiet);
+            // Registered before the counters are read, so a close between the
+            // reads and the wait is not missed.
+            quiet.as_mut().enable();
+            // `closed` first: it never passes `opened`, so equal readings mean
+            // nothing was in flight when `closed` was read.
+            let closed = self.closed.load(Ordering::SeqCst);
+            let opened = self.opened.load(Ordering::SeqCst);
+            if opened == 0 || closed != opened {
+                quiet.await;
+                continue;
+            }
+            // A stream that opens and closes during the sleep wakes `quiet`,
+            // which restarts the idle period from that close.
+            tokio::select! {
+                () = tokio::time::sleep(timeout) => {}
+                () = &mut quiet => continue,
+            }
+            // One still in flight wakes nothing until it closes.
+            if self.opened.load(Ordering::SeqCst) == opened {
+                return;
+            }
+        }
+    }
+}
+
+/// One stream counted in flight by [`Streams`].
+#[derive(Debug)]
+pub(in crate::server) struct InFlight(Arc<Streams>);
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        let streams = &self.0;
+        let closed = streams
+            .closed
+            .fetch_add(1, Ordering::SeqCst)
+            .wrapping_add(1);
+        if closed == streams.opened.load(Ordering::SeqCst) {
+            streams.quiet.notify_one();
+        }
     }
 }

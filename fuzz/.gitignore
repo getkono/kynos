@@ -1,0 +1,4 @@
+# What `cargo fuzz` writes beside the crate. A crash worth keeping is copied
+# into `corpus/` by hand, where `fuzz:check` replays it on every change.
+artifacts
+coverage
