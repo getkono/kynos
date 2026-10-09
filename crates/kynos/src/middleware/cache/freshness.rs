@@ -115,11 +115,8 @@ pub(super) fn storable(
         }
     }
 
-    if response
-        .get(header::VARY)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.split(',').any(|name| name.trim() == "*"))
-    {
+    // Every line, as `vary` reads them: a split list carries `*` on any of them.
+    if vary(response).iter().any(|name| name == "*") {
         return Err(Unstorable::VaryWildcard);
     }
 
