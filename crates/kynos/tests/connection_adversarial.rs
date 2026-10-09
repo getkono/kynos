@@ -145,3 +145,49 @@ async fn a_listener_out_of_descriptors_serves_its_queue_once_they_are_freed() {
         .expect("the server task joins")
         .expect("the server exits cleanly");
 }
+
+/// A client that connects to a TLS listener and never sends its `ClientHello`
+/// is let go at the handshake timeout.
+///
+/// The silent clients `src/server/tests.rs` covers either speak plaintext or
+/// finish their handshake first; this one stops before the handshake starts,
+/// where only `TlsConfig::handshake_timeout` bounds the wait. The header-read
+/// timeout is left at its 30-second default, past [`BOUND`], so a close inside
+/// the bound is the handshake timeout's alone (#403).
+#[cfg(feature = "tls")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_client_that_never_starts_its_tls_handshake_is_let_go() {
+    use kynos::server::tls::TlsConfig;
+
+    const HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(200);
+
+    let certified = rcgen::generate_simple_self_signed(["localhost".to_owned()])
+        .expect("a self-signed certificate");
+    let tls = TlsConfig::from_pem(
+        certified.cert.pem().as_bytes(),
+        certified.signing_key.serialize_pem().as_bytes(),
+    )
+    .expect("the identity parses")
+    .handshake_timeout(HANDSHAKE_TIMEOUT)
+    .expect("a non-zero handshake timeout");
+    let (address, shutdown, serving) = serve(server().tls(tls)).await;
+
+    let mut client = TcpStream::connect(address)
+        .await
+        .expect("the server accepts");
+    let mut discarded = Vec::new();
+    // Zero bytes for a close and an error for a reset: either is the server
+    // letting go.
+    let released = tokio::time::timeout(BOUND, client.read_to_end(&mut discarded)).await;
+    assert!(
+        released.is_ok(),
+        "the server still holds a silent TLS client {BOUND:?} after accepting it, past a \
+         {HANDSHAKE_TIMEOUT:?} handshake timeout"
+    );
+
+    let _ = shutdown.send(());
+    serving
+        .await
+        .expect("the server task joins")
+        .expect("the server exits cleanly");
+}
