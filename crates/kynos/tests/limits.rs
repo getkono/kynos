@@ -30,7 +30,7 @@ use kynos::{
 #[path = "support/mod.rs"]
 mod support;
 
-use support::{App, User, get, send};
+use support::{App, User, create_user, get, send};
 
 /// A concurrency limit of one, which most of the cases below want.
 ///
@@ -255,61 +255,135 @@ async fn a_limit_does_not_answer_for_a_route_that_does_not_exist() {
 
 // --- What applies when nothing is mounted --------------------------------
 
-/// A service with no `BodySize` accepts a body of any size.
+/// The cap every buffering body extractor applies when no limit covers its
+/// operation: 2 MiB, the figure axum also ships.
+const DEFAULT_LIMIT: u64 = 2 * 1024 * 1024;
+
+/// A user whose JSON encoding is exactly `length` bytes long.
+fn user_of_length(length: u64) -> User {
+    let skeleton = serde_json::to_vec(&User {
+        id: 1,
+        name: String::new(),
+    })
+    .expect("a serializable body");
+    let padding = usize::try_from(length).expect("a body that fits in memory") - skeleton.len();
+
+    User {
+        id: 1,
+        name: "n".repeat(padding),
+    }
+}
+
+/// A service mounting no limit still refuses a body past the default, so a
+/// chunked upload to a `Json<T>` operation cannot run the process out of
+/// memory.
 ///
-/// Recorded rather than fixed. `docs/nfr.md` read "body size, header count and
-/// header size limits are enforced by default", and only the second and third
-/// are: they are hyper's, set on the connection. A body cap is an interceptor
-/// and `Router::build` mounts none.
-///
-/// Making one default was considered and rejected, and any one of three reasons
-/// is sufficient. It would add 413 to every operation of every application that
-/// never asked for one. It would make a user's own `BodySize` a `const` compile
-/// error, since `CompatibleWith` is what stops two interceptors claiming a
-/// status. And it would buffer a body that declares no length, which is exactly
-/// the streaming upload the limit is supposed to leave alone.
-///
-/// The framework's own rule — configuring a limit and documenting it are one
-/// action — has a converse, and this is it: a limit nobody configured must not
-/// be documented either.
+/// The body declares no length, so the running count is what refuses it.
 #[tokio::test]
-async fn a_service_with_no_body_limit_accepts_a_body_of_any_size() {
-    let service = support::router()
-        .build(App::new())
-        .expect("a describable router");
+async fn a_service_with_no_body_limit_refuses_a_body_past_the_default() {
+    let service = support::service();
 
     let reply = support::post(&service, "/users")
-        .json(&User {
-            id: 1,
-            name: "n".repeat(64 * 1024),
-        })
+        .json(&user_of_length(DEFAULT_LIMIT + 1))
         .call()
         .await;
 
-    assert_ne!(
-        reply.status,
-        StatusCode::PAYLOAD_TOO_LARGE,
-        "no limit was mounted, so nothing may refuse for size"
+    assert_eq!(reply.status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(
+        reply.text().contains(&DEFAULT_LIMIT.to_string()),
+        "{}",
+        reply.text()
     );
 }
 
-/// And says so in the description: no operation declares a 413.
-///
-/// The other half. A service that accepted any body while *claiming* a 413
-/// would be the defect `tests/matrix.rs` found in `BodyRejection`, which is
-/// recorded in `docs/testing.md`.
+/// A declared length past the default is refused from the head.
+#[tokio::test]
+async fn a_declared_length_past_the_default_is_refused_without_reading_the_body() {
+    let service = support::service();
+
+    let reply = support::post(&service, "/users")
+        .header("content-type", "application/json")
+        .header("content-length", &(DEFAULT_LIMIT + 1).to_string())
+        .body(&b"{}"[..])
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+/// The default is the largest body accepted, not the smallest one refused.
+#[tokio::test]
+async fn a_body_exactly_at_the_default_reaches_its_operation() {
+    let service = support::service();
+
+    let reply = support::post(&service, "/users")
+        .json(&user_of_length(DEFAULT_LIMIT))
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::CREATED);
+}
+
+/// The default declares its 413 where a body is buffered and nowhere else: an
+/// operation reading no body cannot produce one.
 #[test]
-fn a_service_with_no_body_limit_declares_no_413() {
+fn the_default_limit_declares_413_only_where_a_body_is_read() {
     let document = support::router().openapi().expect("a describable router");
 
     for (path, item) in &document.paths.items {
         for (method, operation) in item.operations() {
-            assert!(
-                !operation.responses.responses.contains_key("413"),
-                "{method:?} {path} declares a 413 that nothing can produce"
+            let reads_a_body = operation.request_body.is_some();
+            assert_eq!(
+                operation.responses.responses.contains_key("413"),
+                reads_a_body,
+                "{method:?} {path} reads a body: {reads_a_body}"
             );
         }
     }
+}
+
+/// A `BodySize` on one operation replaces the default for that operation
+/// alone, which is how one large upload avoids a group of its own.
+#[tokio::test]
+async fn a_body_limit_on_one_operation_raises_it_past_the_default() {
+    let raised = DEFAULT_LIMIT * 2;
+    let service = Router::<App>::new()
+        .mount(kynos::routes![create_user].0.intercept(BodySize::new(raised)))
+        .build(App::new())
+        .expect("a describable router");
+
+    let counted = support::post(&service, "/users")
+        .json(&user_of_length(DEFAULT_LIMIT + 1))
+        .call()
+        .await;
+    assert_eq!(counted.status, StatusCode::CREATED, "{}", counted.text());
+
+    let body = serde_json::to_vec(&user_of_length(raised)).expect("a serializable body");
+    let declared = support::post(&service, "/users")
+        .header("content-type", "application/json")
+        .header("content-length", &body.len().to_string())
+        .body(body)
+        .call()
+        .await;
+    assert_eq!(declared.status, StatusCode::CREATED, "{}", declared.text());
+}
+
+/// A `BodySize` lowering the limit still decides first, and the default never
+/// lets through what it refused.
+#[tokio::test]
+async fn a_body_limit_below_the_default_still_governs() {
+    let service = support::router()
+        .intercept(BodySize::new(64))
+        .build(App::new())
+        .expect("a describable router");
+
+    let reply = support::post(&service, "/users")
+        .json(&user_of_length(65))
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(reply.text().contains("64"), "{}", reply.text());
 }
 
 /// A timeout and a body limit stacked together each declare their own status.
