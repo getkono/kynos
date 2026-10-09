@@ -633,7 +633,7 @@ four different answers depending on which layer is asked.
 | Header count | `max_headers`, 100 → 431 | by list size rather than count | — | — | yes |
 | Header-list size | `max_buffer_size` | `max_header_list_size` | — | — | yes |
 | Query-string length | subsumed by the URI | subsumed by the list size | — | — | yes, loosely |
-| Body size | — | — | — | `BodySize`, when mounted | **no, deliberately** |
+| Body size | — | — | every buffering body extractor, 2 MiB → 413 | `BodySize`, replacing the default where mounted | yes |
 | Request-head read time | `header_read_timeout`, 30 s | the first head only; `Http2Config::idle_timeout` in a build without `http1` | `header_read_timeout` again, from accept to the first head, before a protocol is known | — | yes |
 | Slow body | — | — | `request_body_idle_timeout`, 30 s between frames → 408 | `Timeout`, *outside* `BodySize`, for a total | yes, by the gap |
 | Keep-alive idle | `header_read_timeout` covers the wait for the next head | `idle_timeout`, 30 s with no stream in flight → GOAWAY, then close; a stream counts until its response body ends | — | — | yes |
@@ -653,11 +653,13 @@ four different answers depending on which layer is asked.
 
 Five rows are worth reading twice.
 
-**A body cap is not default, and that is a decision.**
-[`nfr.md`](nfr.md#extraction) records the three reasons. The shortest is that a
-default limit would add 413 to every operation of every application that never
-asked for one — and this framework's whole position is that a declared response
-is a promise.
+**A body cap is default, and it lives in the extractor.** Every extractor that
+holds a body in memory refuses one past 2 MiB with 413, and declares that 413
+on exactly the operations that read a body — a declared response is a promise,
+and these are the operations that can keep it. `BodySize` replaces the figure
+for whatever it covers, upward too, so one large upload is one `BodySize` on its
+own endpoint. [`nfr.md`](nfr.md#extraction) records why this reverses the
+earlier decision against a default.
 
 **A decompression bomb is `BodySize`'s blind spot, not its job.** Two kilobytes
 of zeroes are a gigabyte of gzip output, so a cap measured before decoding

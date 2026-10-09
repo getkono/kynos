@@ -271,7 +271,7 @@ rewrite.
 | --- | --- | --- | --- |
 | reliability | No extractor panics on any input | `cargo-fuzz` targets in [`fuzz/`](../fuzz/), one per hand-written parser of untrusted input, each asserting no panic and a round trip or an independent oracle where one exists; [`fuzz.yml`](../.github/workflows/fuzz.yml) searches each nightly and replays the committed [`fuzz/corpus/`](../fuzz/corpus/) on every pull request | `partial`: a pull request fails only on a committed input, while a new one fails the nightly job, which no merge waits on; and the nine targets are Kynos's own parsers, not every extractor — a codec whose parser is a dependency's (`serde_json`, `serde_html_form`, `multer`, `prost`) is not fuzzed here. [`testing.md`](testing.md#fuzzing) lists them |
 | security | Header count and header-list size are bounded by default | The driver is configured from [`Http1Config`](../crates/kynos/src/server/protocol/http1.rs) and [`Http2Config`](../crates/kynos/src/server/protocol/http2.rs) on every connection; [`server/tests.rs`](../crates/kynos/src/server/tests.rs) asserts the configured cap is the one forwarded | `enforced` |
-| security | A body-size limit is available, and once mounted is enforced *and* declared | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) asserting rejection at limit+1, that a declared length past the limit is refused before the body is read, and that a service mounting none neither refuses nor declares a 413 | `enforced`; no default, deliberately, and `planned` for the allocation bound |
+| security | Every buffered request body is capped by default, the cap is declared wherever a body is read, and a mounted limit replaces it per operation | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) asserting a 2 MiB default refuses at default+1 counted and declared, accepts at the default, declares its 413 only on operations reading a body, is raised past itself by a `BodySize` on one operation, and holds for multipart; a mounted limit asserted at limit+1 and refused from a declared length before the body is read; [`json_lines/tests.rs`](../crates/kynos/src/extract/body/json_lines/tests.rs) bounding each streamed record | `enforced`; `planned` for the allocation bound |
 | security | Per-IP connection caps | none yet — see below | `planned` |
 | correctness | Every Rust type expressible as a handler input has a valid JSON Schema projection | Property test over a macro fixture set, validated against 3.1 and 3.2 validators | `planned` |
 | dx | Every rejection produces an error naming the field and the fix | `trybuild` UI tests, plus [`error/rejection/tests.rs`](../crates/kynos/src/error/rejection/tests.rs) counting every variant and asserting each renders a sentence rather than a debug dump | `enforced` for the counting; `planned` for the snapshots |
@@ -302,16 +302,37 @@ rather than the interceptor over them. Read beside
 is what the flag costs a program that never mounts it, the pair
 says what neither says alone.
 
-**There is deliberately no default body cap**, and the row above says so rather
-than claiming one: header count and header size are the driver's, and a body
-cap is an interceptor `Router::build` does not mount. Making one default was
-rejected for three reasons, any one
-sufficient: it would add 413 to every operation of every application that never
-asked for one, it would make a user's own `BodySize` a `const` compile error
-against `CompatibleWith`, and it would buffer a length-less body — which is
-the streaming upload the limit exists to leave alone. The framework's rule that
-configuring a limit and documenting it are one action has a converse, and this
-is it.
+**The default body cap lives in the extractor, not in an interceptor.** Every
+extractor that holds a body in memory reads it under
+`extract::body::DEFAULT_LIMIT`, 2 MiB, the figure axum also ships, and refuses
+past it with `BodyRejection::TooLarge`: a declared `Content-Length` from the
+head, a length-less body on the frame that passes it. Multipart bounds its
+whole stream through multer's own count, and a streamed JSON body bounds each
+record rather than the body, since a record is all it holds. A `BodySize`
+covering an operation replaces the figure for it in either direction, and so
+does `Decompression`, whose limit is the route's; each hands it on as a
+crate-private request extension, so nothing that does not declare its own 413
+can move the cap. One large upload is one `BodySize` on its own endpoint —
+`routes![upload].0.intercept(..)` for an attribute route — and needs no group.
+
+This reverses an earlier decision that there would be no default, and the three
+reasons it gave each fall to where the cap now sits. *It would add 413 to every
+operation that never asked for one*: it adds 413 to every operation reading a
+body, which every one of them can now produce, and to none that reads no body —
+the description stays a promise kept, and the 413 is the price of a default
+build that a chunked upload cannot run out of memory. *It would make a user's
+own `BodySize` a `const` compile error against `CompatibleWith`*: that check
+compares interceptors, and the cap is a rejection, so a `BodySize` mounts beside
+it exactly as before. *It would buffer a length-less body, the streaming upload
+the limit exists to leave alone*: the codecs that buffer already did, and the
+one that streams, `Records`, is bounded per record and still streams.
+
+What the placement costs is precision under a named problem type. The 413
+`BodyRejection` declares is `about:blank`, and a `BodySize` naming its own type
+unions with it into a choice of the two, of which only the limit's is ever sent
+once that limit covers the operation. The document over-declares by one branch
+rather than omitting one; closing it would need an interceptor to retract what
+a rejection declared, which nothing in the description model does.
 
 **The per-IP row has no method, and that is the requirement.** In the common
 deployment every connection arrives from the load balancer's address, so a cap
