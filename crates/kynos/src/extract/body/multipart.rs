@@ -32,11 +32,10 @@ use crate::{
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MultipartForm<T>(pub T);
 
-/// One spelling, read by both halves: what is decoded and what is described.
+/// The media type decoded and described.
 pub(super) const MEDIA_TYPE: &str = mime_names::MULTIPART_FORM_DATA;
 
-/// The parameters this codec reads: RFC 2046 delimits the parts with
-/// `boundary`, which every multipart request therefore carries.
+/// The parameters this codec reads: RFC 2046's `boundary`.
 pub(super) const PARAMETERS: &[&str] = &["boundary"];
 
 /// One uploaded file within a [`MultipartForm`].
@@ -50,13 +49,8 @@ pub struct FilePart {
     pub bytes: bytes::Bytes,
 }
 
-/// A part's bytes are raw binary, which sits outside JSON Schema's `type`
-/// exactly as a raw binary message body does.
-///
-/// The part's media type is the Encoding Object's to state, and a
-/// `contentMediaType` here would contradict it — which the specification says
-/// is ignored. So the schema is the empty one, and every part-level fact is
-/// carried where a consumer will actually read it. See `docs/schema.md`.
+/// The empty schema: raw binary sits outside JSON Schema's `type`, and the
+/// part's media type is the Encoding Object's to state. See `docs/schema.md`.
 impl Schema for FilePart {
     fn schema(_registry: &mut Registry) -> kynos_openapi::Schema {
         kynos_openapi::Schema::Object(Box::default())
@@ -65,14 +59,12 @@ impl Schema for FilePart {
 
 /// One part of a `multipart/form-data` body, with the field name it carries.
 ///
-/// A part always has a name: RFC 7578 requires every part to carry a
-/// `Content-Disposition` naming the form field it belongs to, so a part without
-/// one belongs to no declared field and the body is malformed.
+/// A part always has a name: RFC 7578 requires a `Content-Disposition` naming
+/// its form field, so a part without one is malformed.
 ///
-/// This is the currency both directions trade in — [`FromMultipart`] receives
-/// these and [`IntoMultipart`](crate::response::codec::multipart::IntoMultipart)
-/// produces them — which is what makes the field names, media types and
-/// encodings the same in both.
+/// [`FromMultipart`] receives these and
+/// [`IntoMultipart`](crate::response::codec::multipart::IntoMultipart)
+/// produces them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Part {
     /// The form field this part carries.
@@ -85,8 +77,7 @@ pub struct Part {
     pub bytes: Bytes,
 }
 
-/// A file part is one part with its name forgotten: the name is the field it
-/// filled, which the declaring type already records.
+/// Drops the name, which the declaring field already records.
 impl From<Part> for FilePart {
     fn from(part: Part) -> Self {
         Self {
@@ -99,9 +90,7 @@ impl From<Part> for FilePart {
 
 /// How a declared type is built from a decoded `multipart/form-data` body.
 ///
-/// A multipart body is decoded part by part rather than through a
-/// `Deserializer`, so this is the trait that says how parts become a value —
-/// the role `DeserializeOwned` plays for [`Json`](super::json::Json) and
+/// The role `DeserializeOwned` plays for [`Json`](super::json::Json) and
 /// [`Form`](super::form::Form). `#[derive(MultipartForm)]` writes it, along
 /// with its writing counterpart, from the field declarations.
 ///
@@ -140,15 +129,12 @@ pub trait FromMultipart: Sized {
 
 /// How one declared field is built from the part carrying it.
 ///
-/// Multipart's answer to the [`FromStr`](std::str::FromStr) that
-/// [`params`](crate::extract::params) decodes a parameter through: a part is
-/// bytes plus a media type rather than text, so the conversion a Rust program
-/// already has for text is not the one that applies.
+/// Multipart's counterpart to the [`FromStr`](std::str::FromStr) that
+/// [`params`](crate::extract::params) decodes a parameter through.
 ///
-/// Implemented for [`FilePart`], `String` and [`Bytes`], which are the three
-/// shapes a form field takes. `#[derive(MultipartForm)]` reads an `Option<T>`
-/// field as an optional part and a `Vec<T>` field as a repeated one, so an
-/// implementation here only ever answers for a single part.
+/// Implemented for [`FilePart`], `String` and [`Bytes`]. `#[derive(MultipartForm)]`
+/// reads an `Option<T>` field as an optional part and a `Vec<T>` field as a
+/// repeated one, so an implementation only ever answers for a single part.
 pub trait FromPart: Sized {
     /// Builds the field from one part.
     ///
@@ -179,8 +165,7 @@ impl FromPart for Bytes {
     }
 }
 
-/// Every text format Kynos decodes is UTF-8, so a part that is not is a part
-/// this field cannot hold rather than one to reinterpret in another charset.
+/// A part that is not UTF-8 is a 422.
 impl FromPart for String {
     fn from_part(part: Part) -> Result<Self, BodyRejection> {
         Self::from_utf8(part.bytes.to_vec())
@@ -191,11 +176,8 @@ impl FromPart for String {
 /// The delimiter the request declares, or the rejection saying why there is
 /// none to read the body with.
 ///
-/// A `Content-Type` naming anything but `multipart/form-data`, or a parameter
-/// beside it this codec does not read, is the 415 every codec here raises. One
-/// naming it without a `boundary` is different: the media type is accepted and
-/// RFC 2046 delimits the parts with that parameter, so what arrived is a body
-/// no parser can find the parts in.
+/// An unacceptable media type is the 415; an accepted one without a `boundary`
+/// is a 400, since no parser can find the parts.
 fn boundary(headers: &HeaderMap) -> Result<String, BodyRejection> {
     if !super::offers(headers, MEDIA_TYPE) {
         return Err(super::unsupported_media_type(headers));
@@ -214,9 +196,7 @@ fn boundary(headers: &HeaderMap) -> Result<String, BodyRejection> {
     }
 }
 
-/// Every way the parser can fail is a body that is not the one the client meant
-/// to send, which is the same 400 a transport failure part-way through is —
-/// except passing the limit, which is the 413 every buffering codec raises.
+/// A parser failure is a 400, except passing the limit, which is the 413.
 fn malformed_body(error: &multer::Error) -> BodyRejection {
     match error {
         multer::Error::StreamSizeExceeded { limit } => BodyRejection::TooLarge { limit: *limit },
@@ -226,18 +206,16 @@ fn malformed_body(error: &multer::Error) -> BodyRejection {
     }
 }
 
-/// `T: Schema` because the schema is what the parts are held to: the bounds a
-/// derived field declares are checked once `T` is built, each part under its
-/// field's name.
+/// `T: Schema` because the bounds a derived field declares are checked once `T`
+/// is built, each part under its field's name.
 impl<C: Sync, T: FromMultipart + Schema + Send> FromRequest<C> for MultipartForm<T> {
     type Rejection = BodyRejection;
 
     async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
         let boundary = boundary(request.headers())?;
 
-        // Every part is held until `T` is built, so the whole stream is what
-        // the limit bounds: multer counts it as it arrives and stops at the
-        // frame that passes it.
+        // Every part is held until `T` is built, so the limit bounds the whole
+        // stream.
         let limit = super::limit::of(&request);
         super::limit::refuse_declared(request.headers(), limit)?;
         let constraints =
@@ -248,10 +226,6 @@ impl<C: Sync, T: FromMultipart + Schema + Send> FromRequest<C> for MultipartForm
             constraints,
         );
 
-        // Every part is read to completion before `T` is built, for the reason
-        // the JSON codec serializes before it commits a status: a decision made
-        // half-way through a body has already spent the response it would need
-        // to report the rest.
         let mut parts = Vec::new();
         while let Some(field) = fields.next_field().await.map_err(|e| malformed_body(&e))? {
             let Some(name) = field.name().map(str::to_owned) else {
@@ -287,14 +261,8 @@ impl<T: Schema> RequestContent for MultipartForm<T> {
         vec![MEDIA_TYPE]
     }
 
-    // No Encoding Object is written, because the specification's default for a
-    // property is derived from that property's schema -- `application/json` for
-    // an object, `application/octet-stream` for anything typeless, `text/plain`
-    // otherwise -- and those are exactly the values Kynos would emit. A
-    // `FilePart` is the typeless case and a `String` field the last one, so
-    // stating them would repeat the schema rather than add to it. An encoding
-    // that departs from the default is a per-field decision, and the schema
-    // reaching this point may be a `$ref` with no fields left to read.
+    // No Encoding Object: the specification's per-property default derived
+    // from the schema is exactly what Kynos would emit.
     fn request_body(registry: &mut Registry) -> kynos_openapi::RequestBody {
         kynos_openapi::RequestBody::new(
             MEDIA_TYPE,

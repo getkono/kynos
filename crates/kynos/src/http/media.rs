@@ -1,14 +1,9 @@
 //! Naming a media type in the type system.
 //!
-//! A media type marker is what lets
-//! [`Binary`](crate::extract::body::binary::Binary) state what its bytes are
-//! rather than shrugging. Declaring a unit struct and implementing
-//! [`MediaType`] is all a vendor type needs.
-//!
-//! The markers live under `http` rather than `extract` because they type
-//! response bodies as much as request bodies: the same `Binary<M>` is both,
-//! and a ranged [`Served`](crate::response::range::served::Served) response is
-//! typed by one too.
+//! A marker lets [`Binary`](crate::extract::body::binary::Binary) state what
+//! its bytes are; a vendor type needs only a unit struct implementing
+//! [`MediaType`]. Markers type request and response bodies alike, including a
+//! ranged [`Served`](crate::response::range::served::Served) response.
 
 use kynos_openapi::model::body::mime_names;
 
@@ -47,11 +42,7 @@ impl MediaType for Png {
     const MEDIA_TYPE: &'static str = "image/png";
 }
 
-/// `text/html; charset=utf-8`.
-///
-/// The charset is part of the constant rather than left to the recipient to
-/// sniff, which is the same call [`Text`](crate::extract::body::text::Text)
-/// makes for `text/plain`.
+/// `text/html; charset=utf-8`, the charset stated rather than left to sniffing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Html;
 

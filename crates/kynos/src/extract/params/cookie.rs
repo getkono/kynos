@@ -1,9 +1,6 @@
 //! Declared request cookies.
 //!
-//! Splitting a jar is [`http::cookie`](crate::http::cookie)'s, not this
-//! module's: a credential carried in a cookie is a
-//! [`SecurityScheme`](crate::security::SecurityScheme) rather than a parameter,
-//! and it reads a jar in a build where this module does not exist.
+//! Splitting a jar is [`http::cookie`](crate::http::cookie)'s.
 
 use crate::{
     error::rejection::CookieRejection,
@@ -28,28 +25,19 @@ pub trait CookieParams: Sized {
 
     /// Decodes this group from the request's cookie header fields.
     ///
-    /// The whole [`HeaderMap`] rather than the `Cookie` field alone, because a
-    /// request may carry more than one and the jar is their concatenation.
-    ///
-    /// Required, where the header and parameter groups split their two
-    /// directions into traits of their own. There is nothing to split here: a
-    /// cookie group is only ever read — a cookie is *set* through
-    /// [`response::cookie`](crate::response::cookie) — so the one-direction
-    /// case the defaults existed for does not arise, and a default would only
-    /// let a group satisfy this trait without doing the one thing it is for.
+    /// The whole [`HeaderMap`], since a request may carry several `Cookie`
+    /// fields. A cookie group is only ever read; cookies are *set* through
+    /// [`response::cookie`](crate::response::cookie).
     fn decode(headers: &HeaderMap) -> Result<Self, CookieRejection>;
 
     /// Describes the declared OpenAPI cookie parameters.
     ///
     /// The default describes the declared [`NAMES`](CookieParams::NAMES) with an
-    /// unconstrained schema, and marks none of them required: a group that has
-    /// not said which cookies a request must carry has not said they all are.
+    /// unconstrained schema, and marks none of them required.
     ///
-    /// `style` is left unstated, so it defaults to `form`, which tells a client
-    /// to percent-encode. Whether a value is decoded is [`decode`]'s choice,
-    /// which this default cannot see; a group reading values as sent, as the
-    /// `CookieParams` derive does, states `style: cookie` under `openapi32`
-    /// by overriding this.
+    /// `style` defaults to `form`, which tells a client to percent-encode. A
+    /// group whose [`decode`] reads values as sent, as the derive's does,
+    /// overrides this to state `style: cookie` under `openapi32`.
     ///
     /// [`decode`]: CookieParams::decode
     fn parameters(registry: &mut Registry) -> Vec<kynos_openapi::Parameter> {

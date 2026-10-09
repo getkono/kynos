@@ -15,42 +15,28 @@ use crate::{
 /// `T` derives `PathParams`, and its wire names, each a field's `rename` or
 /// else its name under any `rename_all` as the `Schema` derive applies it,
 /// are checked in order against the route template's variables at compile
-/// time — a mismatch is a compile error, not a runtime 500, which is the
-/// failure mode every other Rust framework has here.
+/// time — a mismatch is a compile error, not a runtime 500.
 ///
 /// # Where the values come from
 ///
-/// The router records what a match captured, and this is the only reader of
-/// that record. Each value is percent-decoded before it reaches
-/// [`DecodePath::decode`], so a variable holding `%2F` arrives as `/` rather
-/// than as the two segments it was encoded to avoid becoming.
+/// Each value the router captured is percent-decoded before it reaches
+/// [`DecodePath::decode`], so a variable holding `%2F` arrives as `/`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Path<T>(pub T);
 
 /// Where in the request path a matched route found each of its variables.
 ///
-/// Internal, and the contract between the router and its two readers, [`Path`]
-/// and [`captured`](crate::unchecked::captured): the router records one, in the
-/// request's routing record, for every request whose route template has
-/// variables.
-///
-/// Ranges into the request's own path rather than owned strings, because a
-/// capture *is* a slice of that path — keeping it one means a match costs one
-/// allocation for the vector and none per variable, which is what
-/// `docs/nfr.md`'s routing budget is written against.
+/// Read by [`Path`] and [`captured`](crate::unchecked::captured). Ranges into
+/// the request path, so a match allocates nothing per variable.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct PathCaptures(Vec<(&'static str, Range<usize>)>);
 
 impl PathCaptures {
     /// Records what a match captured out of `path`.
     ///
-    /// Each value must be a subslice of `path`, which is exactly what the
-    /// router yields: a capture borrows the path it was matched against.
-    ///
     /// # Panics
     ///
-    /// Panics if a value does not lie inside `path`, which would mean the
-    /// captures and the path came from two different requests.
+    /// Panics if a value is not a subslice of `path`.
     pub(crate) fn new<'a>(
         path: &str,
         captures: impl IntoIterator<Item = (&'static str, &'a str)>,
@@ -74,9 +60,8 @@ impl PathCaptures {
 
     /// The value captured for `name`, borrowed back out of `path`.
     ///
-    /// `None` rather than a panic when the range does not fit, so that a path
-    /// rewritten between matching and extraction produces a rejection rather
-    /// than taking the process down.
+    /// `None` when the range does not fit, as for a path rewritten after
+    /// matching.
     pub(crate) fn get<'p>(&self, path: &'p str, name: &str) -> Option<&'p str> {
         self.0
             .iter()
@@ -85,11 +70,8 @@ impl PathCaptures {
     }
 }
 
-/// Percent-decodes one captured value.
-///
-/// Delegates to [`__private::uri`](crate::__private::uri), which is the one
-/// path the dependency table gives `percent-encoding`; that module renders a
-/// typed URI and this is the inverse, so both directions stay in one place.
+/// Percent-decodes one captured value, through the one module allowed
+/// `percent-encoding`.
 fn decode_capture(value: &str) -> Result<Cow<'_, str>, Utf8Error> {
     crate::__private::uri::decode_path_value(value)
 }
@@ -97,22 +79,8 @@ fn decode_capture(value: &str) -> Result<Cow<'_, str>, Utf8Error> {
 /// A group of path parameters, as the description sees it.
 ///
 /// [`NAMES`](PathParams::NAMES) is what the route attribute compares against
-/// the path template.
-///
-/// # Why the directions are separate traits
-///
-/// A group is read on the way in and written on the way out, and a given one
-/// may only ever do one: a typed URI needs only [`EncodePath`], and an
-/// extracted group needs only [`DecodePath`]. Both used to be defaulted methods
-/// here with `unimplemented!()` bodies, so a hand-written group that supplied
-/// neither satisfied this trait and panicked on its first request.
-///
-/// Splitting them keeps the one-direction case — that is the whole reason the
-/// defaults existed — and moves the failure to where the framework's other
-/// bounds put theirs. `AssetHeaders` and `FileHeaders` are the in-tree proof:
-/// both are response-side header groups that never decode, and both carried a
-/// reachable panic until [`HeaderParams`](super::header::HeaderParams) was
-/// split the same way.
+/// the path template. A typed URI needs only [`EncodePath`]; an extracted
+/// group needs only [`DecodePath`].
 pub trait PathParams: Sized {
     /// The parameter names, in declaration order.
     const NAMES: &'static [&'static str];
@@ -120,13 +88,7 @@ pub trait PathParams: Sized {
     /// Describes each captured value as an OpenAPI path parameter.
     ///
     /// The default describes the declared [`NAMES`](PathParams::NAMES) with an
-    /// unconstrained schema. That is less than a derive emits and never more
-    /// than is true: a group that has not said what its values look like has a
-    /// description saying only that they exist, which is the honest reading of
-    /// a path template that names them.
-    ///
-    /// `style` is left unstated: `simple` is the default for a path parameter,
-    /// so stating it would only repeat what the location already says.
+    /// unconstrained schema, and leaves `style` at its `simple` default.
     fn parameters(registry: &mut Registry) -> Vec<kynos_openapi::Parameter> {
         let _ = registry;
         Self::NAMES
@@ -143,9 +105,7 @@ pub trait PathParams: Sized {
 /// that is extracted; one that only ever appears in a typed URI implements
 /// [`EncodePath`] instead.
 ///
-/// A group that encodes but does not decode cannot be extracted. That is the
-/// whole of what this split buys — it used to compile and panic on the first
-/// request:
+/// A group that encodes but does not decode cannot be extracted:
 ///
 /// ```compile_fail
 /// # use kynos::extract::params::path::{EncodePath, Path, PathParams};
@@ -165,7 +125,7 @@ pub trait PathParams: Sized {
 /// extracted::<Path<Report>>();
 /// ```
 ///
-/// Its control: the same group with a decoder, which is what a derive writes.
+/// The same group with a decoder, which is what a derive writes:
 ///
 /// ```
 /// # use kynos::{
@@ -194,7 +154,7 @@ pub trait DecodePath: PathParams {
 
 /// Writing a path parameter group into a typed endpoint URI.
 ///
-/// The counterpart to [`DecodePath`]; see that trait for why the two are apart.
+/// The counterpart to [`DecodePath`].
 pub trait EncodePath: PathParams {
     /// Encodes this value for a typed endpoint URI.
     fn encode(&self) -> Vec<(&'static str, String)>;

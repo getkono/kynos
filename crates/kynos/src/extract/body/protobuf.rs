@@ -29,7 +29,7 @@ use crate::{
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Protobuf<T>(pub T);
 
-/// One spelling, read by both halves: what is decoded and what is described.
+/// The media type decoded and described.
 const MEDIA_TYPE: &str = "application/protobuf";
 
 impl<C: Sync, T: prost::Message + Default + Send> FromRequest<C> for Protobuf<T> {
@@ -38,9 +38,7 @@ impl<C: Sync, T: prost::Message + Default + Send> FromRequest<C> for Protobuf<T>
     async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
         let bytes = super::read_body(request, MEDIA_TYPE).await?;
 
-        // Protobuf has no layer between the wire format and the message, so a
-        // decode failure is always a malformed body rather than one that
-        // parsed and then disagreed with the message definition.
+        // Protobuf has no parse-then-fit stage, so every failure is a 400.
         T::decode(bytes)
             .map(Self)
             .map_err(|error| BodyRejection::Syntax {

@@ -1,13 +1,8 @@
 //! The streamed JSON codecs: newline-delimited, and RFC 7464 text sequences.
 //!
-//! Both are *sequential* media types: the body repeats one JSON value rather
-//! than being one. That is what OpenAPI 3.2's `itemSchema` describes, and why
-//! this module is gated on it as well as on `json`.
-//!
-//! Here are the two codec types and the six trait halves that read and describe
-//! them. [`records`] is the decoder they read *with*, and it is a module of its
-//! own because framing bytes into records changes for reasons a media type
-//! spelling does not.
+//! Both are *sequential* media types, described by OpenAPI 3.2's `itemSchema`,
+//! so this module needs `openapi32` as well as `json`. [`records`] is the
+//! decoder a request body is read with.
 
 pub mod records;
 
@@ -28,11 +23,10 @@ use crate::{
     schema::{Schema, registry::Registry},
 };
 
-/// One spelling, read by every half: what is decoded, what is described, and
-/// what the responding half of this codec sends.
+/// The NDJSON media type, shared by decoding, description and the response half.
 pub(crate) const LINES_MEDIA_TYPE: &str = mime_names::APPLICATION_NDJSON;
 
-/// One spelling, read by every half, as [`LINES_MEDIA_TYPE`] is.
+/// The JSON text sequence media type, shared as [`LINES_MEDIA_TYPE`] is.
 pub(crate) const SEQUENCE_MEDIA_TYPE: &str = mime_names::APPLICATION_JSON_SEQ;
 
 /// A newline-delimited JSON body (`application/x-ndjson`).
@@ -85,12 +79,9 @@ pub struct JsonLines<S> {
 /// Requires both `json` and `openapi32`; the latter supplies the `itemSchema`
 /// needed to describe each streamed value.
 ///
-/// The same items as [`JsonLines`] under a different framing, and the framing
-/// is not a detail. RFC 7464's separator is a *prefix*, so a record is known
-/// complete only once the next separator arrives or the body ends: the last
-/// record of a `JsonSeq` lags where a `JsonLines` record does not. What that
-/// buys is a record that may itself contain newlines — a pretty-printed JSON
-/// value is one record here and cannot be carried by NDJSON at all.
+/// The same items as [`JsonLines`] under a different framing. RFC 7464's
+/// separator is a *prefix*, so a record is complete only once the next one
+/// arrives or the body ends; in exchange a record may contain newlines.
 ///
 /// ```no_run
 /// # #[cfg(all(feature = "json", feature = "openapi32"))]
@@ -142,9 +133,7 @@ impl<T: Schema> RequestContent for JsonLines<Records<T>> {
         vec![LINES_MEDIA_TYPE]
     }
 
-    // `itemSchema` alone, and no `schema`. The specification permits both and
-    // says so is unlikely to help, and an array `schema` here would contradict
-    // what the response half emits for the same media type.
+    // `itemSchema` alone, matching what the response half emits.
     fn request_body(registry: &mut Registry) -> kynos_openapi::RequestBody {
         kynos_openapi::RequestBody::new(
             LINES_MEDIA_TYPE,
@@ -173,8 +162,6 @@ impl<T: Schema> RequestContent for JsonSeq<Records<T>> {
         vec![SEQUENCE_MEDIA_TYPE]
     }
 
-    // The framing differs from JSON Lines and the described item does not: both
-    // repeat one JSON value, which is what a sequential media type is.
     fn request_body(registry: &mut Registry) -> kynos_openapi::RequestBody {
         kynos_openapi::RequestBody::new(
             SEQUENCE_MEDIA_TYPE,

@@ -18,10 +18,9 @@ use crate::{
 /// describe search filters, JSON in the query, or RFC 9535 JSONPath — shapes a
 /// list of named parameters cannot express. It must be the only query-related
 /// input on its handler.
-/// The media type is a marker rather than a field, so this is a named struct
-/// and not the newtype every other parameter extractor is: a handler binds the
-/// whole value and reaches the decoded query through
-/// [`into_inner`](Self::into_inner) or the public field.
+///
+/// Reach the decoded query through [`into_inner`](Self::into_inner) or the
+/// public field.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct QueryString<T, M> {
     /// The decoded query string.
@@ -48,19 +47,13 @@ impl<T, M> QueryString<T, M> {
 
 /// The `name` an `in: querystring` parameter carries.
 ///
-/// The field is required of every Parameter Object, and OpenAPI 3.2 states that
-/// its value is not used in the serialization of this location — the parameter
-/// *is* the whole query string, so there is no key to match. A constant label
-/// keeps emitted documents byte-stable, and an `in: querystring` parameter may
-/// not share an operation with any `in: query` one, so it can collide with
-/// nothing.
+/// Required of every Parameter Object but unused for this location (OpenAPI
+/// 3.2); a constant keeps emitted documents byte-stable.
 const QUERYSTRING_NAME: &str = "querystring";
 
 /// Whether a media type carries a JSON document.
 ///
-/// True for `application/json` and for any type using the `+json` structured
-/// syntax suffix of RFC 6839, which is what lets a vendor marker —
-/// `application/vnd.acme.filter+json` — be decoded as the JSON it is.
+/// True for `application/json` and any RFC 6839 `+json` suffix type.
 fn is_json(media_type: &str) -> bool {
     let base = media_type
         .split(';')
@@ -74,12 +67,10 @@ fn is_json(media_type: &str) -> bool {
 
 /// The whole query string is decoded as the document `M` names.
 ///
-/// `T: DeserializeOwned + Schema` is what every sibling codec asks for —
-/// `Json<T>` and `Form<T>` both do — and it is the bound this needs for the
-/// same reason: the parameter *is* a document, so decoding it is
-/// deserialization rather than the field-by-field walk a
-/// [`QueryParams`](crate::extract::params::query::QueryParams) group gets, and
-/// the decoded document is held to the bounds `T`'s schema declares.
+/// `T: DeserializeOwned + Schema`, as for `Json<T>`: the parameter is a
+/// document, deserialized whole rather than field by field as a
+/// [`QueryParams`](crate::extract::params::query::QueryParams) group is, and
+/// held to the bounds `T`'s schema declares.
 ///
 /// # Absence
 ///
@@ -92,11 +83,8 @@ fn is_json(media_type: &str) -> bool {
 ///
 /// # Rejections
 ///
-/// A media type Kynos has no decoder for is rejected rather than guessed at.
-/// Every shape the type's own documentation names — search filters, JSON in the
-/// query, RFC 9535 JSONPath — is carried as JSON, so JSON is what is decoded;
-/// a marker naming anything else describes a query string this extractor
-/// cannot read, and answering 400 says so rather than silently mis-parsing it.
+/// Only JSON media types are decoded; any other marker is a 400 rather than a
+/// guess.
 ///
 /// A document that decodes and breaks a bound is
 /// [`QueryRejection::Schema`], a 400 keyed by JSON Pointer into the decoded
@@ -119,9 +107,7 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send, M: MediaType + Sen
             )));
         }
 
-        // No `?` at all is JSON's `null`, which is how `describe` decides
-        // whether to call the parameter required. A bare `?` is a present,
-        // empty query string, and is no document.
+        // No `?` is `null` (see `describe`); a bare `?` is empty, not a document.
         let raw = parts.uri.query().unwrap_or(ABSENT);
         let decoded = crate::__private::uri::decode_path_value(raw).map_err(|error| {
             invalid(format!(
@@ -155,7 +141,6 @@ impl<T: Schema, M: MediaType> Describe for QueryString<T, M> {
             M::MEDIA_TYPE,
             kynos_openapi::MediaType::new(schema),
         );
-        // `false` is the default, so it is left unstated, as `Query` does.
         operation.add_parameter(if required {
             parameter.required(true)
         } else {
@@ -169,21 +154,10 @@ const ABSENT: &str = "null";
 
 /// Whether `schema` visibly admits the `null` an absent query string reads as.
 ///
-/// True for the `true` schema, a `type` naming `null`, and an `anyOf` or
-/// `oneOf` with such a member: the shapes `Option<T>` widens a schema to. A
-/// `$ref` is not followed, and a schema carrying a keyword that can exclude
-/// `null` whatever its `type` says — `const`, `enum`, `allOf` or `not` — is not
-/// evaluated. Anything not recognised answers false, which errs towards
-/// `required`: a client told to send a query string the server could have done
-/// without is merely over-cautious, while one told it may omit a query string
-/// the server refuses fails every time.
-///
-/// Some `Option<T>` is over-required this way: any `T` described inline as
-/// `type: object` beside an `allOf`, which `Option` widens to
-/// `type: [object, null]` keeping the `allOf`. That is refused on the `allOf`,
-/// so the parameter is `required` although an absent query string decodes as
-/// `None`. A generic derived struct is described inline, and gains an `allOf`
-/// from a `#[serde(flatten)]` field or a field with a `#[serde(alias)]`.
+/// True for the `true` schema, a `type` naming `null`, and an `anyOf`/`oneOf`
+/// with such a member. Anything else — a `$ref`, or `const`, `enum`, `allOf`,
+/// `not` — answers false, erring towards `required`, which is merely
+/// over-cautious (e.g. an inline `Option<T>` whose `T` carries an `allOf`).
 fn admits_null(schema: &kynos_openapi::Schema) -> bool {
     let Some(object) = schema.as_object() else {
         return matches!(schema, kynos_openapi::Schema::Bool(true));
