@@ -1,0 +1,67 @@
+name: Question
+description: Ask what the documentation and the API reference leave unanswered.
+title: "question(scope): "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read before you ask. [`docs/`](https://github.com/getkono/kynos/tree/master/docs)
+        records the design and its rules, and the
+        [API reference](https://docs.rs/kynos) documents every public item.
+        Most usage questions are answered in one of the two.
+
+        A question here is one they leave open. If the answer is that Kynos
+        behaves other than they promise, file a bug report instead; if it is
+        that Kynos cannot express what you need, file a feature request.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched the open and closed issues and this is not a duplicate.
+          required: true
+        - label: I read the parts of `docs/` and the API reference this concerns.
+          required: true
+        - label: A human wrote and reviewed this question.
+          required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What you want to know, in one or two sentences.
+    validations:
+      required: true
+
+  - type: textarea
+    id: read
+    attributes:
+      label: What you read
+      description: >
+        The `docs/` pages and API reference items you consulted, as links or
+        paths, and what each told you.
+      placeholder: |
+        - docs/routing.md: ...
+        - `kynos::router::Router`: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: unanswered
+    attributes:
+      label: What remains unanswered
+      description: >
+        The gap between what you read and what you need: what it leaves out,
+        or where two sources seem to disagree.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: >
+        Code you tried, the version and features you build with, or anything
+        else that narrows the answer.
