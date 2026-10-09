@@ -979,10 +979,11 @@ mod checking {
     struct OpaqueShort;
 
     fn short() -> crate::schema::constraints::Constraints {
-        let mut constraints = crate::schema::constraints::Constraints::default();
-        constraints.min_length = Some(2);
-        constraints.max_length = Some(3);
-        constraints
+        crate::schema::constraints::Constraints {
+            min_length: Some(2),
+            max_length: Some(3),
+            ..Default::default()
+        }
     }
 
     impl Schema for Short {
