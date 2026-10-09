@@ -4,38 +4,25 @@ on:
   push:
     branches:
       - master
-  # Every pull request, whatever it targets. Filtering on `master` meant a
-  # stacked pull request -- one based on another that has not merged yet --
-  # reported no checks at all, so the only evidence it had was its author
-  # saying the gates passed locally. That is the wrong half of the review to
-  # trust, and it is exactly the review where a long-lived base branch makes
-  # stacking the sensible way to work.
+  # Whatever it targets, so a stacked pull request is checked too.
   pull_request:
 
 permissions:
   contents: read
 
-# Superseding a pull request makes its in-flight run worthless, so stop paying
-# for it. master is exempt because release-plz consumes those runs.
+# master is exempt: release-plz consumes those runs.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
-  # Incremental artifacts only pay off across edits in one working tree. CI has
-  # no such tree, so they are dead weight in the cache and slow the build.
+  # No working tree persists across edits, so incremental is dead weight.
   CARGO_INCREMENTAL: 0
   NEXTEST_PROFILE: ci
 
-# Between them these jobs run every task in `mise run check`, plus the ones
-# too slow to belong there but for those with workflows of their own:
-# `cost.yml` runs `cost:features` and `profile:requests`, which no pull request
-# waits on, after a merge and as the release gate; `mutants.yml` runs `mutants`
-# nightly and `mutants:diff` on each pull request. Splitting
-# them apart trades one serial runner for parallel ones and gives each its own
-# Cargo cache; keep a task in exactly one job so no two jobs compile the same
-# thing.
+# Between them these jobs run every task in `mise run check`; `cost.yml` and
+# `mutants.yml` run the slower ones. Keep each task in exactly one job.
 jobs:
   lint:
     name: Lint
@@ -51,51 +38,28 @@ jobs:
         run: mise run format:check
       - name: Lint
         run: mise run lint
-      # A second Clippy pass rather than a second job: `--all-features` and the
-      # default set share every dependency build, so they belong on one cache.
+      # Further Clippy passes share this job's dependency cache.
       - name: Lint at baseline features
         run: mise run lint:baseline
-      # And a third, for the second one's reason: this job is where Clippy
-      # runs, and a pass with a runner and a checkout of its own would pay for
-      # both to compile `-p kynos` six times. Not in the `features` job, though
-      # feature sets are what it is about: nothing here is driven by
-      # cargo-hack, and both tasks in that job rewrite member manifests while
-      # they walk.
       - name: Lint at each codec's feature set
         run: mise run lint:codecs
-      # Here because it compiles nothing, so it wants no Cargo cache of its
-      # own. It belongs in some job: `check` runs it, and the comment above
-      # says these jobs run every task `check` does.
+      # The gates below compile nothing, so they need no cache of their own.
       - name: Verify the vendored specifications
         run: mise run references:verify
 
-      # Here for the same reason, and beside that one because it is the same
-      # kind of gate: it reads committed text rather than compiling anything.
       - name: Verify dependency and runtime containment
         run: mise run containment:check
 
-      # And here for it once more: this one runs the parsers that gate reads
-      # its tables and its sources with, over cells and fragments written for
-      # the purpose, so it compiles nothing either.
       - name: Test the containment gate's parsers
         run: mise run containment:test
 
-      # And once more again: this one runs the cost sweep's parsers, its table
-      # reader and its ranking over captured output, so it compiles nothing
-      # either. `cost:features` -- the half of the sweep that does compile, at
-      # every feature point -- is `cost.yml`.
       - name: Test the cost sweep's parsers and report
         run: mise run cost:test
 
-      # The same for the request-path profile: its Callgrind reader, its
-      # calibration and its baseline, over text written for the purpose.
-      # `profile:requests` -- the half that needs Valgrind -- is `cost.yml`.
       - name: Test the request-path profile's parsers and report
         run: mise run profile:test
 
-      # Here rather than in the `commits` job below, which the rule is about:
-      # that job is `if: github.event_name == 'pull_request'`, so a task placed
-      # there would not run on a push to master.
+      # Not in `commits`, which runs on pull requests only.
       - name: Test that the commit rule's two halves agree
         run: mise run commits:test
 
@@ -109,10 +73,7 @@ jobs:
         uses: ./.github/actions/setup
         with:
           cargo-cache-key: test
-      # The instrumented run is the test of record. It selects the same tests
-      # as `mise run test`, so running both would execute the suite twice --
-      # except the compile-fail suite, which `ui:check` in `mise.toml` says
-      # cannot run instrumented.
+      # The instrumented run is the test of record; `ui` cannot run under it.
       - name: Run tests under coverage
         run: mise run coverage:ci
       - name: Run the compile-fail suite
@@ -137,8 +98,7 @@ jobs:
         uses: ./.github/actions/setup
         with:
           cargo-cache-key: docs
-      # Paired with the rustdoc build: both compile the workspace with every
-      # feature and no extra rustflags, so the second reuses the first's deps.
+      # Same features and flags as the rustdoc build, so they share deps.
       - name: Run doc tests
         run: mise run test:doc
       - name: Build documentation
@@ -154,35 +114,21 @@ jobs:
         uses: ./.github/actions/setup
         with:
           cargo-cache-key: features
-      # Ahead of `features:check`, which rewrites manifests in place while it
-      # walks the powerset: a run that shares a job with it must not follow it.
+      # Test builds run before `features:check`, which rewrites manifests and
+      # strips dev-dependencies while it walks.
       - name: Test at baseline features
         run: mise run test:baseline
-      # Ahead of `features:check` for the reason `test:baseline` is: it builds a
-      # test target, so it needs the dev-dependencies that task strips.
       - name: Test kynos-openapi with arbitrary_precision forced on
         run: mise run test:arbitrary-precision
       - name: Check every feature combination
         run: mise run features:check
-      # After `features:check`, which strips dev-dependencies while it walks:
-      # this one needs them, so it must not run against a manifest that job
-      # left rewritten.
       - name: Check every target at each feature
         run: mise run features:targets
-      # Also a check that a build configuration is rejected, so it belongs
-      # here rather than on the critical path in `test`.
       - name: Check panic recovery gating
         run: mise run panic:check
 
-  # Every other job runs on Linux, so the `cfg(windows)` arms -- the shutdown
-  # signals in `server/shutdown/signal.rs` above all -- were compiled nowhere,
-  # and a Windows user installing `tls` was the first to learn whether
-  # `aws-lc-sys` builds there. The suite rather than a bare `cargo check`:
-  # `--all-targets` compiles everything `check` would, and running it is what
-  # makes `tests/conformance_corpus.rs` compare each OS's emission against the
-  # same committed bytes, which is the cross-platform determinism `docs/nfr.md`
-  # claims. Both OSes run to the end, since a failure on one says nothing
-  # about the other.
+  # Compiles the non-Linux `cfg` arms and runs the suite, which holds each OS's
+  # emission to the same committed corpus.
   portability:
     name: Tests (${{ matrix.os }})
     strategy:
@@ -195,7 +141,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-      # `rust-cache` keys on the runner's OS itself, so one key serves both.
+      # `rust-cache` keys on the OS itself.
       - name: Set up
         uses: ./.github/actions/setup
         with:
@@ -219,37 +165,9 @@ jobs:
   semver:
     name: API compatibility
     runs-on: ubuntu-latest
-    # Advisory before 1.0: reports the verdict in the job summary and does not
-    # fail the pull request on a break.
-    #
-    # Pre-1.0, a minor bump *is* how an intentional break is declared. The
-    # baseline is the last version published to crates.io, so once one break
-    # lands on `master` for the next minor release, every later pull request
-    # reports it too, whatever that pull request changed, until the release
-    # ships. A blocking job would fail all of them, and a red mark that means
-    # "the next release has not happened yet" teaches reviewers to ignore the
-    # column. Whether a break is intended is decided in review and again in the
-    # release pull request, which carries release-plz's own verdict.
-    #
-    # `continue-on-error` is deliberately *not* used here. It keeps the
-    # workflow's own conclusion green but leaves the check run reporting
-    # `failure`, so the pull request still shows a red mark -- which is the
-    # thing this job must not do.
-    #
-    # So the verdict goes to the job summary, where `coverage:ci` already puts
-    # its own, and the step separates the two outcomes that matter:
-    # semver-checks ran and found breaks (report, pass) from semver-checks
-    # could not run at all (fail). An advisory job that swallows every exit
-    # code cannot tell a clean run from a broken toolchain, which is the
-    # failure `release-plz.toml` records about the release-time copy and the
-    # one this job exists to not repeat.
-    #
-    # This stays advisory until the policy changes, not until a release does.
-    # Two things would change it: reaching 1.0, after which a break needs a
-    # major version and should block; or an explicit decision to gate on it
-    # sooner. Either way the step becomes a plain `run: mise run
-    # semver:check`, and making it required is a change to the `master`
-    # ruleset rather than to this file.
+    # Advisory before 1.0 (docs/nfr.md): a break goes to the job summary and
+    # passes; no verdict at all fails. Not `continue-on-error`, which still
+    # marks the check run red.
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -262,12 +180,7 @@ jobs:
           set -o pipefail
           mise run semver:check 2>&1 | tee semver.log || true
 
-          # `CARGO_TERM_COLOR: always` is set for the whole workflow, so
-          # semver-checks colours its verdict -- and puts a reset escape
-          # *between* `Summary` and the words after it. A pattern written
-          # against the plain text matches nothing, silently: the first version
-          # of this step reported "no verdict" for a run that had just printed
-          # two of them. Parse a stripped copy; the live log keeps its colour.
+          # `CARGO_TERM_COLOR: always` puts escapes inside the verdict line.
           sed -r 's/\x1b\[[0-9;]*m//g' semver.log > semver.txt
 
           if grep -q 'Summary semver requires new major version' semver.txt; then
@@ -298,13 +211,8 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # A job of its own, not a step in `lint` beside the other gates that compile
-  # nothing: it is the one gate that can turn red with no change to this
-  # repository, when the RustSec database learns of an advisory against
-  # something already locked. Under its own name that reads as what it is
-  # rather than as a lint failure, and it blocks: a known vulnerability in the
-  # graph is a reason to stop, not a column to read later. A waiver is an
-  # `ignore` entry in `deny.toml` with its reason, reviewed like any change.
+  # Its own job: the one gate that can turn red with no change here, when a new
+  # advisory names something locked. It blocks; waivers live in `deny.toml`.
   deny:
     name: Dependencies
     runs-on: ubuntu-latest
@@ -323,19 +231,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-      # No `cargo-cache-key`. `cargo package` verifies by extracting each
-      # `.crate` and building it under `target/package/<crate>-<version>/target`,
-      # beside a staging registry in `target/package/tmp-registry/` -- neither of
-      # which `Swatinem/rust-cache` keys or prunes, so caching this job would
-      # spend the repository's cache budget on three extracted source trees, on
-      # a job whose next run rebuilds from a pristine extraction by design. The
-      # cost is re-fetching the dependency graph each run, which is the cheaper
-      # half.
+      # No cache: `cargo package` builds pristine extractions under
+      # `target/package/`, which `rust-cache` neither keys nor prunes.
       - name: Set up
         uses: ./.github/actions/setup
-      # `cargo package` refuses to archive a dirty tree, and `actions/checkout`
-      # leaves a clean one, so this also proves the archive is exactly what the
-      # commit says it is.
       - name: Package every crate
         run: mise run publish:check
 
