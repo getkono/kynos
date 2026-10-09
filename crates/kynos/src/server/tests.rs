@@ -1014,15 +1014,15 @@ async fn an_http2_peer_that_never_acknowledges_a_ping_is_disconnected() {
         .expect("server exits cleanly");
 }
 
-/// The header-read timeout the silent-connection cases configure.
+/// The header-read or HTTP/2 idle timeout the silent-connection cases configure.
 ///
 /// Short, so a case that passes is quick, and far below
 /// [`SILENT_CONNECTION_BOUND`], so one that fails is not a slow pass.
-#[cfg(feature = "http1")]
+#[cfg(any(feature = "http1", feature = "http2"))]
 const HEAD_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(200);
 
 /// How long a silent-connection case waits for the server to close it.
-#[cfg(feature = "http1")]
+#[cfg(any(feature = "http1", feature = "http2"))]
 const SILENT_CONNECTION_BOUND: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// The first-head deadline is the header-read timeout counted from accept, and
@@ -1070,7 +1070,7 @@ async fn head_timed_server() -> (
 ///
 /// The read's own result is discarded: a closed connection reports zero bytes
 /// and a reset one an error, and both are the server letting go of it.
-#[cfg(feature = "http1")]
+#[cfg(any(feature = "http1", feature = "http2"))]
 async fn assert_server_closes(stream: &mut (impl tokio::io::AsyncRead + Unpin), case: &str) {
     use tokio::io::AsyncReadExt as _;
 
@@ -1080,7 +1080,7 @@ async fn assert_server_closes(stream: &mut (impl tokio::io::AsyncRead + Unpin), 
     assert!(
         closed.is_ok(),
         "{case}: the server still holds the connection {SILENT_CONNECTION_BOUND:?} after \
-         accepting it, past a {HEAD_TIMEOUT:?} header-read timeout"
+         accepting it, past a {HEAD_TIMEOUT:?} timeout"
     );
 }
 
@@ -1215,6 +1215,196 @@ async fn a_connection_that_sent_a_request_outlives_the_header_read_timeout() {
 
     drop(sender);
     connection.abort();
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// A plaintext server whose HTTP/2 idle timeout is [`HEAD_TIMEOUT`], serving
+/// `service`.
+#[cfg(feature = "http2")]
+async fn idle_timed_server(
+    service: crate::router::service::Service<()>,
+    http2: Http2Config,
+) -> (
+    std::net::SocketAddr,
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<crate::error::Result<()>>,
+) {
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let bound = crate::server::Server::new(service)
+        .http2(http2.idle_timeout(Some(HEAD_TIMEOUT)))
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+            let _ = shutdown_receiver.await;
+        }))
+        .prepare()
+        .await
+        .expect("loopback listener binds");
+    let address = bound.local_addrs()[0];
+    (address, shutdown_sender, tokio::spawn(bound.serve()))
+}
+
+/// An HTTP/2 connection that answers every PING and opens no stream after its
+/// first is sent a GOAWAY and closed at the idle timeout.
+///
+/// Raw bytes rather than hyper's client, so the frames the server sent can be
+/// read: the GOAWAY is what tells a conforming client not to open another
+/// stream on a connection about to close. The one request is a HEADERS frame
+/// of three static-table indices -- `GET`, `http` and `/` -- ending its stream.
+/// Keep-alive pings every 50 ms and the client acknowledges each, which is the
+/// peer keep-alive cannot tell from a live one.
+#[cfg(feature = "http2")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_idle_http2_connection_that_answers_pings_is_sent_a_goaway_and_closed() {
+    use std::time::Duration;
+
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    const HEADERS: u8 = 0x1;
+    const SETTINGS: u8 = 0x4;
+    const PING: u8 = 0x6;
+    const GOAWAY: u8 = 0x7;
+    const ACK: u8 = 0x1;
+
+    let keep_alive = Http2KeepAlive::new(Duration::from_millis(50), Duration::from_secs(1));
+    let (address, shutdown_sender, server) = idle_timed_server(
+        test_service(),
+        Http2Config::default().keep_alive(Some(keep_alive)),
+    )
+    .await;
+
+    let mut stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    stream
+        .write_all(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n\0\0\0\x04\0\0\0\0\0")
+        .await
+        .expect("preface and empty SETTINGS send");
+    stream
+        .write_all(&[0, 0, 3, HEADERS, 0x5, 0, 0, 0, 1, 0x82, 0x86, 0x84])
+        .await
+        .expect("one request sends");
+
+    let frames = tokio::time::timeout(SILENT_CONNECTION_BOUND, async {
+        let mut seen = Vec::new();
+        loop {
+            let mut header = [0_u8; 9];
+            if stream.read_exact(&mut header).await.is_err() {
+                return seen;
+            }
+            let length =
+                usize::from(header[0]) << 16 | usize::from(header[1]) << 8 | usize::from(header[2]);
+            let mut payload = vec![0_u8; length];
+            if stream.read_exact(&mut payload).await.is_err() {
+                return seen;
+            }
+            let (kind, flags) = (header[3], header[4]);
+            if kind == SETTINGS && flags & ACK == 0 {
+                stream
+                    .write_all(&[0, 0, 0, SETTINGS, ACK, 0, 0, 0, 0])
+                    .await
+                    .expect("SETTINGS acknowledgement sends");
+            }
+            if kind == PING && flags & ACK == 0 {
+                let mut ack = vec![0, 0, 8, PING, ACK, 0, 0, 0, 0];
+                ack.extend_from_slice(&payload);
+                // The server may already have closed; the read below says so.
+                let _ = stream.write_all(&ack).await;
+            }
+            seen.push(kind);
+        }
+    })
+    .await
+    .expect("the server closes a connection that holds no stream past its idle timeout");
+
+    let answered = frames
+        .iter()
+        .position(|kind| *kind == HEADERS)
+        .expect("the request was answered before the connection idled");
+    let goaway = frames
+        .iter()
+        .rposition(|kind| *kind == GOAWAY)
+        .expect("the server sent a GOAWAY before closing");
+    assert!(answered < goaway, "{frames:?}");
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// A stream is in flight until its response body ends, not only while its
+/// handler runs: a body that outlasts the idle timeout keeps the connection
+/// open for the next request.
+#[cfg(feature = "http2")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_response_body_that_outlasts_the_idle_timeout_holds_the_connection() {
+    use http_body_util::{BodyExt as _, Empty};
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+
+    let (service, release) = held_body_service();
+    let (address, shutdown_sender, server) =
+        idle_timed_server(service, Http2Config::default()).await;
+
+    let stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    let (mut sender, connection) =
+        hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+            .await
+            .expect("HTTP/2 handshake completes");
+    let connection = tokio::spawn(connection);
+    let request = || {
+        hyper::Request::builder()
+            .uri("http://localhost/")
+            .body(Empty::<bytes::Bytes>::new())
+            .expect("request builds")
+    };
+
+    let held = sender
+        .send_request(request())
+        .await
+        .expect("the held response's head arrives");
+    tokio::time::sleep(HEAD_TIMEOUT * 3).await;
+    let _ = release.send(());
+    let body = held
+        .into_body()
+        .collect()
+        .await
+        .expect("the held body finishes")
+        .to_bytes();
+    assert_eq!(body, bytes::Bytes::from_static(b"ok"));
+    sender
+        .send_request(request())
+        .await
+        .expect("the connection was not idle while the body was in flight");
+
+    drop(sender);
+    connection.abort();
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// A build without HTTP/1 has no header-read timeout, so the HTTP/2 idle
+/// timeout bounds a connection's wait for its first request head instead.
+#[cfg(all(feature = "http2", not(feature = "http1")))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_http2_only_connection_that_never_speaks_is_closed_at_the_idle_timeout() {
+    let (address, shutdown_sender, server) =
+        idle_timed_server(test_service(), Http2Config::default()).await;
+
+    let mut stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    assert_server_closes(&mut stream, "a silent HTTP/2-only connection").await;
+
     let _ = shutdown_sender.send(());
     server
         .await
@@ -3150,6 +3340,55 @@ fn blocking_service() -> (
         })
     };
     (service, started, release)
+}
+
+/// A service whose first response body sends nothing until the returned
+/// sender fires, and whose later responses are the usual `ok`.
+#[cfg(feature = "http2")]
+fn held_body_service() -> (
+    crate::router::service::Service<()>,
+    tokio::sync::oneshot::Sender<()>,
+) {
+    /// `ok`, once `0` resolves.
+    struct Held(Option<tokio::sync::oneshot::Receiver<()>>);
+
+    impl http_body::Body for Held {
+        type Data = bytes::Bytes;
+        type Error = crate::http::body::BoxError;
+
+        fn poll_frame(
+            mut self: std::pin::Pin<&mut Self>,
+            context: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+            let Some(held) = self.0.as_mut() else {
+                return std::task::Poll::Ready(None);
+            };
+            // A dropped sender releases the body as a sent one does.
+            let _ = std::task::ready!(std::future::Future::poll(std::pin::Pin::new(held), context));
+            self.0 = None;
+            std::task::Poll::Ready(Some(Ok(http_body::Frame::data(bytes::Bytes::from_static(
+                b"ok",
+            )))))
+        }
+    }
+
+    let (release, held) = tokio::sync::oneshot::channel();
+    let held = std::sync::Arc::new(std::sync::Mutex::new(Some(held)));
+    let document = kynos_openapi::Document::new(
+        kynos_openapi::SpecVersion::V3_1,
+        kynos_openapi::Info::new("Test", "1"),
+    );
+    let service = crate::router::service::Service::new(document, move |_| {
+        let held = held.lock().expect("the held receiver's lock").take();
+        async move {
+            let body = match held {
+                Some(held) => crate::http::body::Body::from_body(Held(Some(held))),
+                None => crate::http::body::Body::from_bytes(bytes::Bytes::from_static(b"ok")),
+            };
+            crate::http::Response::new(body)
+        }
+    });
+    (service, release)
 }
 
 #[cfg(feature = "http1")]
