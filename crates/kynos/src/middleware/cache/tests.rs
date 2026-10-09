@@ -18,13 +18,29 @@ fn map(fields: &[(&str, &str)]) -> HeaderMap {
     headers
 }
 
-/// A storable GET, for the cases that vary one thing.
+/// A storable GET to an unguarded operation, for the cases that vary one thing.
 fn storable(request: &[(&str, &str)], response: &[(&str, &str)]) -> Result<Duration, Unstorable> {
     freshness::storable(
         &Method::GET,
         StatusCode::OK,
         &map(request),
         &map(response),
+        false,
+        None,
+    )
+}
+
+/// The same GET, to an operation declaring a security requirement.
+fn storable_when_secured(
+    request: &[(&str, &str)],
+    response: &[(&str, &str)],
+) -> Result<Duration, Unstorable> {
+    freshness::storable(
+        &Method::GET,
+        StatusCode::OK,
+        &map(request),
+        &map(response),
+        true,
         None,
     )
 }
@@ -52,6 +68,7 @@ fn every_refusal_has_a_case() {
                 StatusCode::OK,
                 &HeaderMap::new(),
                 &map(&[("cache-control", "max-age=60")]),
+                false,
                 None,
             ),
         ),
@@ -62,6 +79,7 @@ fn every_refusal_has_a_case() {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &HeaderMap::new(),
                 &map(&[("cache-control", "max-age=60")]),
+                false,
                 None,
             ),
         ),
@@ -174,6 +192,7 @@ fn a_wildcard_on_any_vary_line_is_refused() {
             StatusCode::OK,
             &HeaderMap::new(),
             &response,
+            false,
             None,
         ),
         Err(Unstorable::VaryWildcard)
@@ -208,6 +227,54 @@ fn an_authenticated_response_is_stored_only_when_it_says_so() {
     }
 }
 
+/// RFC 9111 section 3.5 for a credential outside `Authorization`: a response
+/// to an operation declaring a security requirement is stored only where it
+/// says it may be shared, whatever the request carried.
+///
+/// The control is the unguarded operation, where the same response is stored.
+#[test]
+fn a_guarded_operations_response_is_stored_only_when_it_says_so() {
+    let unshared = [("cache-control", "max-age=60")];
+    assert_eq!(
+        storable_when_secured(&[("x-api-key", "k")], &unshared),
+        Err(Unstorable::Authorized)
+    );
+    assert_eq!(
+        storable_when_secured(&[], &unshared),
+        Err(Unstorable::Authorized)
+    );
+    assert!(storable(&[("x-api-key", "k")], &unshared).is_ok());
+
+    for directive in ["max-age=60, public", "s-maxage=60"] {
+        assert!(
+            storable_when_secured(&[], &[("cache-control", directive)]).is_ok(),
+            "{directive}"
+        );
+    }
+}
+
+/// What a guarded operation serves from the store is what it would store: a
+/// response that said it may be shared, and nothing else.
+#[test]
+fn a_guarded_operation_is_served_only_a_shared_response() {
+    for (fields, servable) in [
+        (&[("cache-control", "max-age=60")][..], false),
+        (&[][..], false),
+        (&[("cache-control", "max-age=60, Public")][..], true),
+        (&[("cache-control", "s-maxage=60")][..], true),
+        (
+            &[("cache-control", "max-age=60"), ("cache-control", "public")][..],
+            true,
+        ),
+    ] {
+        assert_eq!(
+            freshness::servable_when_secured(&map(fields)),
+            servable,
+            "{fields:?}"
+        );
+    }
+}
+
 /// `s-maxage` wins, because this is a shared cache and that is what it is for.
 #[test]
 fn the_shared_lifetime_wins_over_the_private_one() {
@@ -231,6 +298,7 @@ fn a_response_that_said_nothing_is_not_reused_unless_a_default_was_set() {
             StatusCode::OK,
             &HeaderMap::new(),
             &HeaderMap::new(),
+            false,
             Some(Duration::from_secs(30)),
         ),
         Ok(Duration::from_secs(30))

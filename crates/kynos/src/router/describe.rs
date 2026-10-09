@@ -154,13 +154,15 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             };
 
             let method = mounted.endpoint.method();
-            let operation_id = document
+            let described = document
                 .paths
                 .items
                 .get(&key)
-                .and_then(|item| item.operation(method))
+                .and_then(|item| item.operation(method));
+            let operation_id = described
                 .and_then(|operation| operation.operation_id.clone())
                 .unwrap_or_default();
+            let secured = described.is_some_and(declares_security);
 
             let mut interceptors = self.interceptors.clone();
             interceptors.extend(mounted.interceptors);
@@ -178,6 +180,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 terminal: Arc::new(EndpointTerminal::new(mounted.endpoint)),
                 interceptors,
                 catch_panics: mounted.catch_panics || catches::<P>(),
+                secured,
                 #[cfg(feature = "unchecked")]
                 unchecked_layers,
             });
@@ -574,4 +577,16 @@ pub(super) fn match_table_refusal(pattern: &str, error: matchit::InsertError) ->
             pattern: pattern.to_owned(),
         },
     }
+}
+
+/// Whether `operation` declares a security requirement.
+///
+/// An absent `security` and an empty list both declare none. A list holding the
+/// empty requirement beside a scheme declares one, since a request presenting
+/// the credential is answered as its holder.
+fn declares_security(operation: &kynos_openapi::Operation) -> bool {
+    operation
+        .security
+        .as_ref()
+        .is_some_and(|requirements| !requirements.is_empty())
 }
