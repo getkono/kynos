@@ -383,7 +383,6 @@ impl Textual for String {
         Some(self)
     }
 }
-
 /// Whether the items `iter` yields are pairwise distinct.
 fn distinct<'a, T: PartialOrd + 'a>(iter: impl Iterator<Item = &'a T>) -> bool {
     let mut items: Vec<&T> = iter.collect();

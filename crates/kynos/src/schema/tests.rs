@@ -970,6 +970,71 @@ mod checking {
         assert_eq!(opaque.keys().collect::<Vec<_>>(), ["/v"]);
     }
 
+    /// A key bounded to two or three characters, written under `self.0`.
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    struct Short(&'static str);
+
+    /// The same bounds on a key that cannot say what member name it is.
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+    struct OpaqueShort;
+
+    fn short() -> crate::schema::constraints::Constraints {
+        let mut constraints = crate::schema::constraints::Constraints::default();
+        constraints.min_length = Some(2);
+        constraints.max_length = Some(3);
+        constraints
+    }
+
+    impl Schema for Short {
+        fn schema(registry: &mut Registry) -> kynos_openapi::Schema {
+            String::schema(registry)
+        }
+    }
+
+    impl MapKey for Short {
+        fn key_constraints() -> crate::schema::constraints::Constraints {
+            short()
+        }
+
+        fn as_member(&self) -> Option<&str> {
+            Some(self.0)
+        }
+    }
+
+    impl Schema for OpaqueShort {
+        fn schema(registry: &mut Registry) -> kynos_openapi::Schema {
+            String::schema(registry)
+        }
+    }
+
+    impl MapKey for OpaqueShort {
+        fn key_constraints() -> crate::schema::constraints::Constraints {
+            short()
+        }
+    }
+
+    #[test]
+    fn a_map_key_is_reported_at_the_map_naming_the_key() {
+        assert!(failures(&BTreeMap::from([(Short("ab"), NonZero(1))])).is_empty());
+        assert_eq!(
+            failures(&HashMap::from([(Short("abcd"), NonZero(1))])),
+            BTreeMap::from([(
+                "/v".to_owned(),
+                "the key `abcd` must be at most 3 characters long".to_owned()
+            )])
+        );
+        assert_eq!(
+            failures(&BTreeMap::from([(Short("a"), NonZero(1))])),
+            BTreeMap::from([(
+                "/v".to_owned(),
+                "the key `a` must be at least 2 characters long".to_owned()
+            )])
+        );
+        // The key's bounds are described and not checked where the key
+        // cannot say what it is, which `MapKey::as_member` documents.
+        assert!(failures(&BTreeMap::from([(OpaqueShort, NonZero(1))])).is_empty());
+    }
+
     #[test]
     fn an_absent_option_breaks_no_bound() {
         assert!(failures(&None::<NonZero>).is_empty());
