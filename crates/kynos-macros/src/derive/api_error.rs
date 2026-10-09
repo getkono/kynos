@@ -10,17 +10,9 @@
 //!         | type = "<absolute URI>"
 //! ```
 //!
-//! `status` is what closes the set: it becomes the `statuses()` const, the
-//! `ShortCircuit` const and the keys of the `Responses`, all read once so that
-//! none of the three can disagree. `title` and `type` fill the problem detail's
-//! two type-level members, and `base` supplies the prefix a variant with no
-//! `type` of its own hangs its slug under — so an application declares the
-//! prefix once and every variant gets a stable identifier without writing a
-//! URI per failure.
-//!
-//! `detail` is the occurrence-specific member and comes from `Display`, which
-//! is why `thiserror` is the expected companion: the `#[error("...")]` a Rust
-//! reader sees is the sentence an API consumer receives.
+//! `status` is read once into `statuses()`, the `ShortCircuit` const and the
+//! `Responses` keys, so the three agree. `base` is the prefix a variant without
+//! its own `type` hangs its slug under. `detail` comes from `Display`.
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
@@ -32,10 +24,8 @@ use syn::{
 
 use crate::derive::common::{doc_string, skip_value};
 
-/// The range a problem detail's status may fall in.
-///
-/// RFC 9457 defines the format for 4xx and 5xx; a problem describing a success
-/// is a contradiction, and one describing a redirect has no consumer.
+/// The range a problem detail's status may fall in: RFC 9457 errors, 4xx and
+/// 5xx.
 const STATUS_RANGE: std::ops::RangeInclusive<u16> = 400..=599;
 
 pub(crate) fn expand(item: TokenStream) -> TokenStream {
@@ -59,11 +49,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
-    // `detail` is the occurrence-specific half of a problem detail and comes
-    // from `Display`, so a type without one would describe every occurrence
-    // identically. Asserted here rather than bounded on the implementation so
-    // the diagnostic lands on the error type instead of on the handler that
-    // returns it.
+    // `detail` comes from `Display`; asserted here rather than bounded so the
+    // diagnostic lands on the error type, not the handler returning it.
     let display = quote! {
         const _: () = {
             #[allow(dead_code)]
@@ -77,9 +64,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let problem = into_problem(&failures);
     let responses = responses(&failures, &statuses);
 
-    // `Responses` comes from the same declaration as `into_problem`, so a
-    // status the error can return and a status the description advertises
-    // cannot drift apart.
+    // `Responses` and `into_problem` come from the same declarations.
     Ok(quote! {
         #display
 
@@ -91,10 +76,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
             }
 
             fn statuses() -> &'static [::kynos::http::StatusCode] {
-                // `StatusCode` has no const constructor, so the codes the
-                // derive already validated are built once on first use rather
-                // than on every call. This runs while the router is built, not
-                // while a request is served.
+                // `StatusCode` has no const constructor, so the validated codes
+                // are built once, on first use while the router is built.
                 static STATUSES: ::std::sync::LazyLock<
                     ::std::vec::Vec<::kynos::http::StatusCode>
                 > = ::std::sync::LazyLock::new(|| {
@@ -125,11 +108,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
             }
         }
 
-        // The same list again, as a `const`, so that two interceptors claiming
-        // one status is a compile error rather than a build-time one. It is
-        // emitted here rather than written by hand precisely so it cannot
-        // disagree with the `Responses` above: both come from the `#[problem]`
-        // attributes, read once.
+        // The same list as a `const`, so two interceptors claiming one status
+        // is a compile error.
         impl #impl_generics ::kynos::response::ShortCircuit for #name #ty_generics #where_clause {
             const STATUSES: &'static [u16] = &[#(#statuses),*];
         }
@@ -154,11 +134,8 @@ struct Failure {
     doc: Option<String>,
 }
 
-/// The `into_problem` body.
-///
-/// `detail` is taken from `Display` before the value is destructured, since the
-/// two want it at once: the sentence describes the whole error, and the
-/// extension members are moved out of it.
+/// The `into_problem` body; `detail` is taken from `Display` before the
+/// extension members are moved out.
 fn into_problem(failures: &[Failure]) -> TokenStream2 {
     let arms = failures.iter().map(|failure| {
         let pattern = &failure.pattern;
@@ -181,9 +158,8 @@ fn into_problem(failures: &[Failure]) -> TokenStream2 {
             #pattern => {
                 let status = ::kynos::http::StatusCode::from_u16(#status)
                     .expect("the derive checked this code");
-                // `new` supplies the status code's own reason phrase as the
-                // title, which is what RFC 9457 asks for when the type carries
-                // no semantics of its own.
+                // `new` titles it with the reason phrase, as RFC 9457 asks of
+                // `about:blank`.
                 let mut problem = ::kynos::Problem::new(status);
                 #with_type
                 #with_title
@@ -202,20 +178,11 @@ fn into_problem(failures: &[Failure]) -> TokenStream2 {
     }
 }
 
-/// The `responses` body: one response per distinct status.
-///
-/// Every error response is a problem detail, so the schema is `Problem`'s and
-/// is registered once as a component rather than repeated per operation. What
-/// each status adds to that component — the type URIs its failures publish,
-/// and the summaries they gave — is passed to
-/// `kynos::__private::problem::response`, which is where the shapes are built:
-/// `about:blank` is `Problem`'s own constant, and this crate cannot name it.
+/// The `responses` body: one response per distinct status, over the `Problem`
+/// component, shaped by `kynos::__private::problem::response`.
 fn responses(failures: &[Failure], statuses: &[u16]) -> TokenStream2 {
     let entries = statuses.iter().map(|status| {
-        // Every failure declaring this status, in declaration order. Several
-        // may share one — two 404s that differ in the type they publish — and
-        // a response carries one schema, so all of them reach it rather than
-        // whichever was written first.
+        // Every failure declaring this status, in declaration order.
         let branches = failures
             .iter()
             .filter(|failure| failure.status == *status)
@@ -250,11 +217,8 @@ fn optional(value: Option<&str>) -> TokenStream2 {
     )
 }
 
-/// The statuses in declaration order, without repeats.
-///
-/// A repeated code is not an error — two variants may well be different 404s —
-/// but the description carries one response per status, so the list is deduped
-/// before it becomes one.
+/// The statuses in declaration order, without repeats; two variants may share
+/// a status.
 fn distinct_statuses(failures: &[Failure]) -> Vec<u16> {
     let mut seen: Vec<u16> = Vec::new();
     for failure in failures {
@@ -271,8 +235,7 @@ fn failures(input: &DeriveInput) -> syn::Result<Vec<Failure>> {
 
     match &input.data {
         Data::Enum(data) => {
-            // A status on the enum itself would apply to every variant, which
-            // is the opposite of what a closed set of failures is for.
+            // A status belongs on each variant, not the enum.
             if let Some(status) = parse_problem(&input.attrs, Position::Type)?.status {
                 return Err(syn::Error::new(
                     status.1,
@@ -345,11 +308,8 @@ fn failures(input: &DeriveInput) -> syn::Result<Vec<Failure>> {
 
 /// The URI identifying this failure's *type*, if the declaration gives one.
 ///
-/// An explicit `type` wins. Otherwise a `base` on the type supplies the prefix
-/// and the variant's own name the slug, which is what lets an application
-/// declare one prefix and still hand every failure a stable identifier. With
-/// neither, the problem keeps `about:blank` — the reading RFC 9457 gives to a
-/// problem whose status is the whole story.
+/// An explicit `type` wins, else `base` plus the name as a slug; with neither,
+/// the problem keeps RFC 9457's `about:blank`.
 fn type_uri(args: &ProblemArgs, base: Option<&str>, name: &Ident) -> Option<String> {
     if let Some(uri) = &args.type_uri {
         return Some(uri.clone());
@@ -484,8 +444,8 @@ fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Result<Problem
     Ok(args)
 }
 
-/// `#[problem(extension)]` names a member by the field's own name, so a field
-/// without one has nothing to be published as.
+/// Refuses `#[problem(extension)]` on an unnamed field, which has no member
+/// name.
 fn reject_unnamed_extensions(fields: &Fields) -> syn::Result<()> {
     let Fields::Unnamed(unnamed) = fields else {
         return Ok(());

@@ -14,11 +14,8 @@ use crate::derive::{
     },
 };
 
-/// Fields a header parameter definition may not name, and what to reach for.
-///
-/// The specification says a parameter definition for the first three *shall be
-/// ignored*, so declaring one is a claim no consumer will honour.
-/// `Content-Type` on a response is likewise derived from the content map.
+/// Fields a header parameter definition may not name, and what to reach for;
+/// the OpenAPI Parameter Object says such definitions *shall be ignored*.
 const RESERVED: &[(&str, &str)] = &[
     (
         "accept",
@@ -69,10 +66,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let params = Param::pair(fields, &names);
     let rejection = quote!(::kynos::error::rejection::HeaderRejection);
 
-    // Only the first value of a repeated field is read. A field this group
-    // declares is one typed value; the repeated ones -- `Set-Cookie` above all
-    // -- are what `encode` keeps separate, and no OpenAPI parameter describes
-    // a group of them.
+    // Only the first value of a repeated field is read: a field is one value.
     let reads = params.iter().map(|param| {
         let wire = param.name();
         let found = quote! {
@@ -105,9 +99,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let response_headers = response_headers_body(&params);
     let encode = header_encode_body(&params);
 
-    // Three implementations; see `path_params.rs` for why the directions are
-    // separate traits. A derived group does both, which is why `Headers<T>`
-    // and `WithHeaders<_, T>` both keep working on one derive.
+    // Three implementations, one per direction plus the description.
     Ok(quote! {
         impl #impl_generics ::kynos::extract::params::header::DecodeHeaders
             for #name #ty_generics #where_clause

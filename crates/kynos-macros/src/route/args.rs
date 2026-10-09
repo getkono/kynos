@@ -47,8 +47,7 @@ impl RouteArgs {
                         .unwrap_or_default();
                     match name.as_str() {
                         "operation_id" => operation_id = Some(expect_str(&pair.value)?),
-                        // Overwriting would discard the first silently, which is
-                        // the same defect as never reading it at all.
+                        // A second tag is refused rather than silently overwriting.
                         "tag" if tag.is_some() => {
                             return Err(syn::Error::new(
                                 pair.span(),

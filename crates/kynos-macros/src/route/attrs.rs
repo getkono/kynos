@@ -49,9 +49,7 @@ pub(crate) fn doc_lines(function: &ItemFn) -> Vec<String> {
 /// `Operation.deprecated`.
 ///
 /// Delegates to [`crate::derive::common::is_deprecated`] so an operation and a
-/// schema answer the question the same way. They did not always: this read the
-/// function's attributes and the `Schema` derive read nothing at all, so a
-/// deprecated field reached no description.
+/// schema answer the question the same way.
 pub(crate) fn is_deprecated(function: &ItemFn) -> bool {
     crate::derive::common::is_deprecated(&function.attrs)
 }

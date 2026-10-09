@@ -29,9 +29,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
-    // One implementation per field. A handler asking for something no field
-    // supplies fails to typecheck at the mount site, which is where the
-    // context type first becomes concrete.
+    // One implementation per field; a missing one fails at the mount site.
     let implementations = provided.iter().map(|field| {
         let ident = field.ident.as_ref().expect("named fields");
         let ty = &field.ty;
@@ -66,10 +64,8 @@ fn is_skipped(field: &Field) -> bool {
     })
 }
 
-/// Two fields of the same type would emit the same implementation twice.
-///
-/// Reported here rather than left to coherence, which would blame the derive
-/// output for a mistake in the input and name neither field.
+/// Two fields of the same type would emit the same implementation twice;
+/// refused here so the error names both fields.
 fn reject_duplicate_types(provided: &[&Field]) -> syn::Result<()> {
     for (index, field) in provided.iter().enumerate() {
         let rendered = render(&field.ty);
@@ -101,9 +97,6 @@ fn reject_duplicate_types(provided: &[&Field]) -> syn::Result<()> {
 /// A field whose type is one of the context's own type parameters would emit
 /// `impl<T> Provides<T> for Ctx<T>`, which overlaps every other field's
 /// implementation at that instantiation.
-///
-/// Coherence catches it, but blames the derive's own output and names neither
-/// field — the exact diagnostic `reject_duplicate_types` exists to prevent.
 fn reject_type_parameter_fields(input: &DeriveInput, provided: &[&Field]) -> syn::Result<()> {
     if provided.len() < 2 {
         return Ok(());
@@ -136,11 +129,8 @@ fn reject_type_parameter_fields(input: &DeriveInput, provided: &[&Field]) -> syn
     Ok(())
 }
 
-/// A type as written, normalized enough to compare two spellings.
-///
-/// Textual rather than semantic: two different spellings of one type slip
-/// through and are caught by coherence instead, which is a worse diagnostic but
-/// not a wrong one.
+/// A type as written, normalized enough to compare two spellings; differing
+/// spellings of one type fall through to coherence.
 fn render(ty: &Type) -> String {
     quote!(#ty).to_string().replace(' ', "")
 }

@@ -29,13 +29,10 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let rejection = quote!(::kynos::error::rejection::QueryRejection);
 
     let pairs = query_pairs();
-    // The first occurrence wins. A repeated name is how a list is spelled in a
-    // query string, and a group of named parameters is not the shape that
-    // describes one -- 3.2's whole-query parameter is.
+    // The first occurrence of a repeated name wins.
     let reads = params.iter().map(|param| {
         let wire = param.name();
-        // A name that is not UTF-8 never equals a declared one, so only a
-        // declared value is held to being text.
+        // Only a declared parameter's value is required to be UTF-8.
         let found = quote! {
             match pairs.iter().find_map(|(name, value)| {
                 (**name == *#wire.as_bytes()).then_some(&**value)
@@ -67,8 +64,7 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     );
     let encode = query_encode_body(&params);
 
-    // Three implementations; see `path_params.rs` for why the directions are
-    // separate traits.
+    // Three implementations, one per direction plus the description.
     Ok(quote! {
         impl #impl_generics ::kynos::extract::params::query::QueryParams
             for #name #ty_generics #where_clause

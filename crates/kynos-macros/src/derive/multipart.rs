@@ -1,26 +1,12 @@
 //! `#[derive(MultipartForm)]`.
 //!
-//! No attribute of its own. Both directions come from one declaration: a field
-//! is read from the part carrying its name and written back under the same one,
-//! so the names, media types and encodings a body accepts are the ones it
-//! produces.
+//! No attribute of its own: a field is read from and written to the part named
+//! as [`schema`](super::schema) names its property. A split `rename` or
+//! `rename_all` whose sides differ is refused, since a part has one name.
 //!
-//! The names themselves come from [`schema`](super::schema), which is what
-//! keeps the part a body carries and the property the description names from
-//! being two rules that agree until a `rename_all` is added. A split `rename`
-//! whose sides differ is refused, whichever way serde uses the field, and so is
-//! a split container `rename_all` whose sides differ: a part has one name, and
-//! serde's directions play no part in a multipart body.
-//!
-//! # How a part becomes a field
-//!
-//! Through `FromPart` and `IntoPart`, the way a parameter travels through
-//! `FromStr` and `Display`. Multiplicity is read from the field's type, exactly
-//! as the parameter derives read an `Option`: a `Vec<T>` field is one part per
-//! element, an `Option<T>` field is a part that need not have been sent, and
-//! anything else is a part that must have been. The recognition is syntactic,
-//! as serde's own is, so an alias for `Option<T>` reads as required and
-//! spelling the type out is the remedy.
+//! Parts convert through `FromPart` and `IntoPart`. Multiplicity is read
+//! syntactically from the type: `Vec<T>` is one part per element, `Option<T>`
+//! an optional part, anything else a required one.
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
@@ -70,8 +56,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
         .map(|(index, (field, name))| Declared::new(index, field, name))
         .collect();
 
-    // One binding per field, so the parts are sorted into their fields in a
-    // single pass over the body rather than one scan per declared name.
+    // One binding per field, filled in a single pass over the parts.
     let bindings = declared.iter().map(Declared::binding);
     let dispatch = dispatch(&declared);
     let reads = declared.iter().map(Declared::read);
@@ -91,10 +76,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
             ) -> ::core::result::Result<Self, ::kynos::error::rejection::BodyRejection> {
                 #(#bindings)*
 
-                // A part naming no declared field is ignored, the way an
-                // undeclared query parameter is: a form may carry what the
-                // agent that rendered it added, and refusing that would make
-                // every such body a 422.
+                // A part naming no declared field is ignored, like an
+                // undeclared query parameter.
                 for part in parts {
                     #dispatch
                 }
@@ -118,10 +101,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
     })
 }
 
-/// Sorts one part into the field that declared its name, or drops it.
-///
-/// A chain rather than a `match`, because an arm of a `match` on `part.name`
-/// cannot move `part`: the scrutinee's borrow outlives the arm bodies.
+/// Sorts one part into the field that declared its name, or drops it; an
+/// `if` chain, since a `match` on `part.name` could not move `part`.
 fn dispatch(declared: &[Declared<'_>]) -> TokenStream2 {
     declared.iter().rev().fold(quote!({}), |rest, field| {
         let gathered = field.gathered();
@@ -179,10 +160,8 @@ impl<'a> Declared<'a> {
             .expect("a multipart form is a struct with named fields")
     }
 
-    /// The local the parts naming this field are gathered into.
-    ///
-    /// Numbered rather than named after the field, since a field may be a raw
-    /// identifier and `r#type` does not concatenate into one.
+    /// The local the parts naming this field are gathered into; numbered, since
+    /// a raw identifier such as `r#type` does not concatenate.
     fn gathered(&self) -> Ident {
         format_ident!("__kynos_parts_{}", self.index)
     }
@@ -195,11 +174,8 @@ impl<'a> Declared<'a> {
         }
     }
 
-    /// Binds this field from the parts gathered for it.
-    ///
-    /// The conversion carries the field's own span, so a type with no
-    /// `FromPart` is reported against the field a user wrote rather than
-    /// against code they never saw.
+    /// Binds this field from the parts gathered for it, spanned at the field
+    /// so a missing `FromPart` is reported there.
     fn read(&self) -> TokenStream2 {
         let ident = self.ident();
         let gathered = self.gathered();
@@ -212,9 +188,7 @@ impl<'a> Declared<'a> {
         };
 
         match self.arity {
-            // Only the first part under this name is read, matching how a
-            // header parameter reads only the first value: a field declared
-            // once is one value, and the parts after it were never described.
+            // Only the first part under this name is read.
             Arity::One => quote! {
                 let ::core::option::Option::Some(part) =
                     ::core::iter::IntoIterator::into_iter(#gathered).next()
