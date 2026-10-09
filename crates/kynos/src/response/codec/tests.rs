@@ -68,6 +68,27 @@ async fn a_form_writes_the_pairs_and_states_its_type() {
     assert_eq!(&body(response).await[..], b"x=1&y=-2");
 }
 
+/// The one shape the scalar case cannot show: an array property is written as
+/// the description's default `form` style with `explode` states it, one pair
+/// per item under the property's name, rather than refused.
+#[cfg(feature = "form")]
+#[tokio::test]
+async fn a_form_writes_an_array_as_one_pair_per_item() {
+    use crate::extract::body::form::Form;
+
+    #[derive(serde::Serialize)]
+    struct Tags {
+        tag: Vec<&'static str>,
+    }
+
+    let response = Form(Tags {
+        tag: vec!["a", "b"],
+    })
+    .into_response();
+
+    assert_eq!(&body(response).await[..], b"tag=a&tag=b");
+}
+
 #[tokio::test]
 async fn text_writes_the_string_and_states_its_charset() {
     use crate::extract::body::text::Text;

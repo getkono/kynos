@@ -38,12 +38,14 @@ pub enum ServerError {
     /// A supplied listener could not be prepared.
     #[error("could not prepare a supplied listener")]
     Listener(#[source] io::Error),
-    /// A listener repeatedly failed to accept connections.
-    #[error("listener `{address}` repeatedly failed to accept connections")]
+    /// A listener failed in a way waiting cannot clear: it is no longer
+    /// listening. Running out of file descriptors or memory is not this; the
+    /// listener waits and retries instead.
+    #[error("listener `{address}` can no longer accept connections")]
     Accept {
         /// The listener address.
         address: SocketAddr,
-        /// The final accept failure.
+        /// The accept failure.
         #[source]
         source: io::Error,
     },

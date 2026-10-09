@@ -17,6 +17,7 @@ use std::{
 
 use kynos::{
     Router,
+    error::rejection::AuthRejection,
     http::etag::ETag,
     http::{Method, StatusCode, header},
     middleware::{
@@ -28,6 +29,11 @@ use kynos::{
     },
     prelude::*,
     response::{headers::WithHeaders, status::NoContent},
+    security::{
+        Authenticates, Authenticator,
+        auth::{Auth, MaybeAuth},
+        carrier::ApiKey,
+    },
 };
 use serde::{Deserialize, Serialize};
 
@@ -51,13 +57,13 @@ impl<C: Sync> CacheStore<C> for Stored {
             .unwrap_or_default()
     }
 
+    /// Replaces what `key` held, which is the contract's "replaces the variant
+    /// whose selecting values match" for a fixture none of whose routes vary.
     async fn put(&self, key: PrimaryKey, response: StoredResponse, _: &C) {
         self.0
             .lock()
             .expect("no test panics while holding this")
-            .entry(key)
-            .or_default()
-            .push(response);
+            .insert(key, vec![response]);
     }
 
     async fn invalidate(&self, key: &PrimaryKey, _: &C) {
@@ -83,6 +89,19 @@ struct Report {
 async fn reports() -> WithHeaders<Json<Report>, CacheControl> {
     CALLS.fetch_add(1, Ordering::SeqCst);
     WithHeaders::new(Json(Report { id: 1 }), CacheControl)
+}
+
+/// Cacheable, and numbers each response by the call that produced it, so a
+/// hit names the call it replays.
+#[kynos::get("/numbered")]
+async fn numbered() -> WithHeaders<Json<Report>, CacheControl> {
+    let id = CALLS.fetch_add(1, Ordering::SeqCst);
+    WithHeaders::new(
+        Json(Report {
+            id: u64::try_from(id).expect("a call count fits"),
+        }),
+        CacheControl,
+    )
 }
 
 /// Says nothing about how long it may be reused.
@@ -135,7 +154,14 @@ impl kynos::extract::params::header::EncodeHeaders for CacheControl {
 /// A service caching through `store`.
 fn cached(store: Stored) -> kynos::router::service::Service<()> {
     Router::<()>::new()
-        .mount(kynos::routes![reports, uncacheable, tagged, create, empty])
+        .mount(kynos::routes![
+            reports,
+            numbered,
+            uncacheable,
+            tagged,
+            create,
+            empty
+        ])
         .intercept(Cache::new(store).namespace("test"))
         .build(())
         .expect("a describable router")
@@ -318,6 +344,316 @@ async fn a_failed_unsafe_method_leaves_the_stored_response_alone() {
         calls_during(before),
         1,
         "a refused write invalidated a copy it had no reason to touch"
+    );
+}
+
+// --- Which request a stored response answers ------------------------------
+
+/// RFC 9111 section 2 keys a stored response on the whole target URI, and the
+/// authority is part of it.
+///
+/// Without it, a handler that picks a tenant from `Host` hands one tenant's
+/// page to the next one asking for the same path.
+#[tokio::test]
+async fn a_response_stored_for_one_host_is_not_served_to_another() {
+    let service = cached(Stored::default());
+    let before = CALLS.load(Ordering::SeqCst);
+
+    for host in ["a.example.com", "a.example.com", "b.example.com"] {
+        assert_eq!(
+            get(&service, "/reports")
+                .header("host", host)
+                .call()
+                .await
+                .status,
+            StatusCode::OK
+        );
+    }
+
+    assert_eq!(
+        calls_during(before),
+        2,
+        "the second host was answered from the first host's copy, or the first host was never \
+         answered from its own"
+    );
+}
+
+/// A host is matched without regard to case, as RFC 3986 section 3.2.2 compares
+/// it, and an authority carried on an absolute-form target names the same
+/// resource the same authority carried in `Host` does.
+#[tokio::test]
+async fn one_host_is_one_key_however_it_was_spelled() {
+    let service = cached(Stored::default());
+    let before = CALLS.load(Ordering::SeqCst);
+
+    assert_eq!(
+        get(&service, "/reports")
+            .header("host", "a.example.com")
+            .call()
+            .await
+            .status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        get(&service, "/reports")
+            .header("host", "A.Example.COM")
+            .call()
+            .await
+            .status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        get(&service, "http://a.example.com/reports")
+            .call()
+            .await
+            .status,
+        StatusCode::OK
+    );
+
+    assert_eq!(
+        calls_during(before),
+        1,
+        "one host spelled two ways, or carried two ways, was filed under two keys"
+    );
+}
+
+/// An unsafe method drops the copy stored for its own host, and only that one.
+#[tokio::test]
+async fn an_unsafe_method_invalidates_only_its_own_hosts_copy() {
+    let service = cached(Stored::default());
+    let before = CALLS.load(Ordering::SeqCst);
+
+    for host in ["a.example.com", "b.example.com"] {
+        get(&service, "/reports").header("host", host).call().await;
+    }
+
+    assert_eq!(
+        send(&service, Method::POST, "/reports")
+            .header("host", "a.example.com")
+            .call()
+            .await
+            .status,
+        StatusCode::NO_CONTENT
+    );
+
+    for host in ["a.example.com", "b.example.com"] {
+        get(&service, "/reports").header("host", host).call().await;
+    }
+
+    assert_eq!(
+        calls_during(before),
+        3,
+        "the write to one host left its own copy in place, or dropped another host's"
+    );
+}
+
+/// RFC 9111 section 5.2.1.4: a request saying `no-cache` is not answered from
+/// the store without validation, and this cache does not validate, so the
+/// handler answers it.
+///
+/// The response it gets is stored as any other is, since the directive limits
+/// reuse rather than storage: the request after it is a hit on *that*
+/// response, not on the one stored before it.
+#[tokio::test]
+async fn a_request_saying_no_cache_is_answered_by_the_handler() {
+    let service = cached(Stored::default());
+    let before = CALLS.load(Ordering::SeqCst);
+
+    let first = get(&service, "/numbered").call().await;
+
+    let refreshed = get(&service, "/numbered")
+        .header("cache-control", "max-age=0, No-Cache")
+        .call()
+        .await;
+    assert_eq!(refreshed.status, StatusCode::OK);
+    assert_eq!(
+        calls_during(before),
+        2,
+        "a request saying no-cache was answered from the store"
+    );
+    assert_ne!(refreshed.json()["id"], first.json()["id"]);
+
+    let after = get(&service, "/numbered").call().await;
+    assert_eq!(calls_during(before), 2, "the request after it missed");
+    assert_eq!(
+        after.json()["id"],
+        refreshed.json()["id"],
+        "the response to a no-cache request was not stored for the next one"
+    );
+}
+
+// --- Credentials outside `Authorization` ---------------------------------
+
+/// Who presented the key.
+#[derive(Clone, Debug)]
+struct Holder;
+
+/// A credential carried in a field of its own, which is the case a check on
+/// `Authorization` alone does not see.
+#[derive(kynos::SecurityScheme)]
+#[security(api_key(in = "header", name = "X-Api-Key"))]
+#[security(name = "ReportKey", credential = Holder)]
+struct ReportKey;
+
+/// Accepts one issued key.
+struct Keys;
+
+impl<C: Sync> Authenticator<ReportKey, C> for Keys {
+    async fn authenticate(&self, presented: ApiKey, _: &C) -> Result<Holder, AuthRejection> {
+        if presented.as_str() == "k_ok" {
+            Ok(Holder)
+        } else {
+            Err(AuthRejection::unauthenticated())
+        }
+    }
+
+    async fn authorize(
+        &self,
+        _: &Holder,
+        _: &'static [&'static str],
+        _: &C,
+    ) -> Result<(), AuthRejection> {
+        Ok(())
+    }
+}
+
+impl Authenticates<ReportKey> for () {
+    type Authenticator = Keys;
+
+    fn authenticator(&self) -> &Self::Authenticator {
+        &Keys
+    }
+}
+
+/// Demands the key, and says the response may be reused for a minute.
+#[kynos::get("/keyed")]
+async fn keyed(Auth(_): Auth<ReportKey>) -> WithHeaders<Json<Report>, CacheControl> {
+    CALLS.fetch_add(1, Ordering::SeqCst);
+    WithHeaders::new(Json(Report { id: 5 }), CacheControl)
+}
+
+/// Honours the key without demanding it, and answers which of the two it got.
+#[kynos::get("/feed")]
+async fn feed(MaybeAuth(holder): MaybeAuth<ReportKey>) -> WithHeaders<Json<Report>, CacheControl> {
+    CALLS.fetch_add(1, Ordering::SeqCst);
+    WithHeaders::new(
+        Json(Report {
+            id: u64::from(holder.is_some()),
+        }),
+        CacheControl,
+    )
+}
+
+/// RFC 9111 section 3.5, for a credential `Authorization` does not carry: a
+/// response to a request that satisfied the operation's security requirement
+/// is not stored unless it says it may be shared, so the anonymous request
+/// after it reaches `Auth` and is refused.
+#[tokio::test]
+async fn a_response_authenticated_by_an_api_key_is_not_served_to_an_anonymous_caller() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![keyed])
+        .intercept(Cache::new(Stored::default()).namespace("test"))
+        .build(())
+        .expect("a describable router");
+
+    let keyed = get(&service, "/keyed")
+        .header("x-api-key", "k_ok")
+        .call()
+        .await;
+    assert_eq!(keyed.status, StatusCode::OK);
+
+    let anonymous = get(&service, "/keyed").call().await;
+    assert_eq!(
+        anonymous.status,
+        StatusCode::UNAUTHORIZED,
+        "the keyed response was stored and replayed to a caller with no key"
+    );
+}
+
+/// The same, with the cache mounted on the one operation rather than the
+/// router: the endpoint's own chain is handed the operation too.
+#[tokio::test]
+async fn an_endpoint_scoped_cache_does_not_serve_an_authenticated_response_either() {
+    let endpoint = kynos::router::endpoint::builder::EndpointBuilder::new(
+        kynos::openapi::Method::Get,
+        kynos::openapi::PathTemplate::parse("/keyed").expect("valid path"),
+        keyed,
+    )
+    .intercept(Cache::new(Stored::default()).namespace("test"));
+    let service = Router::<()>::new()
+        .mount(endpoint)
+        .build(())
+        .expect("a describable router");
+
+    let keyed = get(&service, "/keyed")
+        .header("x-api-key", "k_ok")
+        .call()
+        .await;
+    assert_eq!(keyed.status, StatusCode::OK);
+
+    let anonymous = get(&service, "/keyed").call().await;
+    assert_eq!(
+        anonymous.status,
+        StatusCode::UNAUTHORIZED,
+        "the keyed response was stored and replayed to a caller with no key"
+    );
+}
+
+/// An operation that honours a credential without demanding it answers an
+/// anonymous request differently from a credentialed one, so neither answer is
+/// stored for the other: the keyed request after an anonymous one is not
+/// handed the anonymous response.
+#[tokio::test]
+async fn an_anonymous_response_is_not_served_to_a_caller_presenting_a_key() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![feed])
+        .intercept(Cache::new(Stored::default()).namespace("test"))
+        .build(())
+        .expect("a describable router");
+
+    let anonymous = get(&service, "/feed").call().await;
+    assert_eq!(anonymous.json()["id"], 0);
+
+    let keyed = get(&service, "/feed")
+        .header("x-api-key", "k_ok")
+        .call()
+        .await;
+    assert_eq!(
+        keyed.json()["id"],
+        1,
+        "the anonymous response was replayed to a caller presenting a key"
+    );
+}
+
+/// The lookup half: a response stored for the same target while the operation
+/// was unguarded -- a store outliving a deploy that added the guard, under an
+/// unchanged namespace -- is not served once it is guarded, since nothing in it
+/// says it may be shared.
+#[tokio::test]
+async fn a_stored_response_that_does_not_say_it_is_shared_is_not_served_for_a_guarded_operation() {
+    /// The same path, before the guard was added.
+    #[kynos::get("/keyed")]
+    async fn unguarded() -> WithHeaders<Json<Report>, CacheControl> {
+        WithHeaders::new(Json(Report { id: 6 }), CacheControl)
+    }
+
+    let store = Stored::default();
+    let before = Router::<()>::new()
+        .mount(kynos::routes![unguarded])
+        .intercept(Cache::new(store.clone()).namespace("test"))
+        .build(())
+        .expect("a describable router");
+    assert_eq!(get(&before, "/keyed").call().await.status, StatusCode::OK);
+
+    let after = Router::<()>::new()
+        .mount(kynos::routes![keyed])
+        .intercept(Cache::new(store).namespace("test"))
+        .build(())
+        .expect("a describable router");
+    assert_eq!(
+        get(&after, "/keyed").call().await.status,
+        StatusCode::UNAUTHORIZED,
+        "a response stored without a guard was served past one"
     );
 }
 

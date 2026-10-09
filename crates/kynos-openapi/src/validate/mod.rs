@@ -52,11 +52,11 @@ impl Validator {
     pub fn validate(&self, document: &Document) -> Vec<Violation> {
         let mut violations = Vec::new();
 
-        // A document is checked against the version it claims to be. 3.2-only
-        // constructs are `#[cfg]`-gated, so a 3.1-only build cannot hold one --
-        // but a 3.2-capable build can, and being asked to validate such a
-        // document as 3.1 has to say so rather than pass a description 3.1
-        // cannot express. This is the same walk `Document::emit` refuses on,
+        // A document is checked against the version it claims to be. A
+        // 3.2-capable build types 3.2-only fields, and a 3.1-only one keeps
+        // them in `extensions` under names lacking the `x-` prefix; either
+        // way, being asked to validate such a document as 3.1 has to say so
+        // rather than pass a description 3.1 cannot express. This is the same walk `Document::emit` refuses on,
         // read here so that validating and emitting agree.
         //
         // `EmptyDocument` used to be the only rule this version was consulted
@@ -79,6 +79,7 @@ impl Validator {
         check_servers(document, &mut violations);
         check_tags(document, &mut violations);
         check_component_names(document, &mut violations);
+        self.check_security(document, &mut violations);
         self.check_paths(document, &mut violations);
         check_unchecked_schemas(document, &mut violations);
         check_opaque(document, &mut violations);

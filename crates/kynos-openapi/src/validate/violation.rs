@@ -156,6 +156,55 @@ pub enum SpecError {
         location: String,
     },
 
+    /// An `in: querystring` parameter was described by `schema`.
+    ///
+    /// 3.2 requires `content` there: the value is the whole query string, and
+    /// only a media type says how that string encodes it.
+    ///
+    /// Gated, like every rule below about `querystring`: the location is 3.2's,
+    /// so under 3.1 no document could provoke it.
+    #[cfg(feature = "openapi32")]
+    #[error("`in: querystring` parameter `{name}` must be described by `content`, not `schema`")]
+    QuerystringWithoutContent {
+        /// The offending parameter.
+        name: String,
+    },
+
+    /// Two `in: querystring` parameters apply to one operation.
+    ///
+    /// Counted across the operation and its path item, after the operation's
+    /// own parameters override the path item's: there is one query string, so
+    /// at most one parameter may describe the whole of it.
+    #[cfg(feature = "openapi32")]
+    #[error(
+        "`in: querystring` parameters `{first}` and `{second}` both describe the query string; \
+         an operation may declare at most one"
+    )]
+    DuplicateQuerystring {
+        /// The querystring parameter declared first.
+        first: String,
+        /// The one declared after it.
+        second: String,
+    },
+
+    /// An `in: query` parameter applies to an operation beside an
+    /// `in: querystring` one.
+    ///
+    /// Counted across the operation and its path item, like
+    /// [`DuplicateQuerystring`](Self::DuplicateQuerystring): the querystring
+    /// parameter already describes every pair the query parameter names.
+    #[cfg(feature = "openapi32")]
+    #[error(
+        "`in: query` parameter `{query}` must not appear beside `in: querystring` parameter \
+         `{querystring}`"
+    )]
+    QueryBesideQuerystring {
+        /// The query parameter.
+        query: String,
+        /// The querystring parameter it appears beside.
+        querystring: String,
+    },
+
     /// An interceptor's short circuit declared statuses its responses do not
     /// describe, or the reverse.
     ///
@@ -391,10 +440,10 @@ pub enum SpecError {
     #[error("a document must declare at least one of `paths`, `components` or `webhooks`")]
     EmptyDocument,
 
-    /// The document uses constructs that only OpenAPI 3.2 can express.
-    #[error("cannot emit as OpenAPI 3.1: {} 3.2-only construct(s) in use: {}", blockers.len(), blockers.join(", "))]
+    /// The document uses 3.2-only constructs or unrecognised non-`x-` fields 3.1 cannot express.
+    #[error("cannot emit as OpenAPI 3.1: {} 3.2-only or unrecognised field(s) in use: {}", blockers.len(), blockers.join(", "))]
     RequiresV3_2 {
-        /// Locations of the constructs standing in the way.
+        /// Locations of the fields standing in the way.
         blockers: Vec<String>,
     },
 }

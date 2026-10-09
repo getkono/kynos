@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use super::{
     freshness::{self, CACHEABLE, HOP_BY_HOP, Unstorable},
-    is_non_error, refuses_cross_origin,
+    is_non_error, primary_key, refuses_cross_origin,
 };
 use crate::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 
@@ -18,13 +18,29 @@ fn map(fields: &[(&str, &str)]) -> HeaderMap {
     headers
 }
 
-/// A storable GET, for the cases that vary one thing.
+/// A storable GET to an unguarded operation, for the cases that vary one thing.
 fn storable(request: &[(&str, &str)], response: &[(&str, &str)]) -> Result<Duration, Unstorable> {
     freshness::storable(
         &Method::GET,
         StatusCode::OK,
         &map(request),
         &map(response),
+        false,
+        None,
+    )
+}
+
+/// The same GET, to an operation declaring a security requirement.
+fn storable_when_secured(
+    request: &[(&str, &str)],
+    response: &[(&str, &str)],
+) -> Result<Duration, Unstorable> {
+    freshness::storable(
+        &Method::GET,
+        StatusCode::OK,
+        &map(request),
+        &map(response),
+        true,
         None,
     )
 }
@@ -52,6 +68,7 @@ fn every_refusal_has_a_case() {
                 StatusCode::OK,
                 &HeaderMap::new(),
                 &map(&[("cache-control", "max-age=60")]),
+                false,
                 None,
             ),
         ),
@@ -62,6 +79,7 @@ fn every_refusal_has_a_case() {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &HeaderMap::new(),
                 &map(&[("cache-control", "max-age=60")]),
+                false,
                 None,
             ),
         ),
@@ -143,6 +161,44 @@ fn every_refusal_has_a_case() {
     assert_eq!(cases.len(), variants.len(), "a refusal has no case");
 }
 
+/// A wildcard on any `Vary` line refuses the response.
+///
+/// RFC 9110 section 5.3 lets a list field be split across lines, so `*` on a
+/// later line is the same `Vary: *` -- and a first line that is not UTF-8 must
+/// not hide it.
+#[test]
+fn a_wildcard_on_any_vary_line_is_refused() {
+    assert_eq!(
+        storable(
+            &[],
+            &[
+                ("cache-control", "max-age=60"),
+                ("vary", "accept"),
+                ("vary", "*"),
+            ],
+        ),
+        Err(Unstorable::VaryWildcard)
+    );
+
+    let mut response = map(&[("cache-control", "max-age=60")]);
+    response.append(
+        header::VARY,
+        HeaderValue::from_bytes(b"\xff").expect("an opaque field"),
+    );
+    response.append(header::VARY, HeaderValue::from_static("*"));
+    assert_eq!(
+        freshness::storable(
+            &Method::GET,
+            StatusCode::OK,
+            &HeaderMap::new(),
+            &response,
+            false,
+            None,
+        ),
+        Err(Unstorable::VaryWildcard)
+    );
+}
+
 /// A narrowed directive is read as the whole one.
 ///
 /// `private="set-cookie"` narrows what must not be shared. Storing part of a
@@ -171,6 +227,54 @@ fn an_authenticated_response_is_stored_only_when_it_says_so() {
     }
 }
 
+/// RFC 9111 section 3.5 for a credential outside `Authorization`: a response
+/// to an operation declaring a security requirement is stored only where it
+/// says it may be shared, whatever the request carried.
+///
+/// The control is the unguarded operation, where the same response is stored.
+#[test]
+fn a_guarded_operations_response_is_stored_only_when_it_says_so() {
+    let unshared = [("cache-control", "max-age=60")];
+    assert_eq!(
+        storable_when_secured(&[("x-api-key", "k")], &unshared),
+        Err(Unstorable::Authorized)
+    );
+    assert_eq!(
+        storable_when_secured(&[], &unshared),
+        Err(Unstorable::Authorized)
+    );
+    assert!(storable(&[("x-api-key", "k")], &unshared).is_ok());
+
+    for directive in ["max-age=60, public", "s-maxage=60"] {
+        assert!(
+            storable_when_secured(&[], &[("cache-control", directive)]).is_ok(),
+            "{directive}"
+        );
+    }
+}
+
+/// What a guarded operation serves from the store is what it would store: a
+/// response that said it may be shared, and nothing else.
+#[test]
+fn a_guarded_operation_is_served_only_a_shared_response() {
+    for (fields, servable) in [
+        (&[("cache-control", "max-age=60")][..], false),
+        (&[][..], false),
+        (&[("cache-control", "max-age=60, Public")][..], true),
+        (&[("cache-control", "s-maxage=60")][..], true),
+        (
+            &[("cache-control", "max-age=60"), ("cache-control", "public")][..],
+            true,
+        ),
+    ] {
+        assert_eq!(
+            freshness::servable_when_secured(&map(fields)),
+            servable,
+            "{fields:?}"
+        );
+    }
+}
+
 /// `s-maxage` wins, because this is a shared cache and that is what it is for.
 #[test]
 fn the_shared_lifetime_wins_over_the_private_one() {
@@ -194,6 +298,7 @@ fn a_response_that_said_nothing_is_not_reused_unless_a_default_was_set() {
             StatusCode::OK,
             &HeaderMap::new(),
             &HeaderMap::new(),
+            false,
             Some(Duration::from_secs(30)),
         ),
         Ok(Duration::from_secs(30))
@@ -301,4 +406,69 @@ fn every_status_class_is_classified_the_way_section_4_4_defines() {
     ] {
         assert!(!is_non_error(status), "{status} is neither 2xx nor 3xx");
     }
+}
+
+/// Only the request directive section 5.2.1.4 names forbids reuse.
+///
+/// The control is the negative half: `no-store` limits storage, not reuse,
+/// and a directive merely starting with the name is a different directive.
+#[test]
+fn only_a_request_saying_no_cache_forbids_reuse() {
+    for (fields, forbids) in [
+        (&[][..], false),
+        (&[("cache-control", "no-cache")][..], true),
+        (
+            &[
+                ("cache-control", "max-age=60"),
+                ("cache-control", "no-cache"),
+            ][..],
+            true,
+        ),
+        (&[("cache-control", "no-store")][..], false),
+        (&[("cache-control", "no-cache-please")][..], false),
+        (&[("pragma", "no-cache")][..], false),
+    ] {
+        assert_eq!(
+            freshness::forbids_reuse(&map(fields)),
+            forbids,
+            "{fields:?}"
+        );
+    }
+}
+
+/// A request naming no authority is filed under none, and the target's
+/// authority decides where the request also carries a `Host` that disagrees.
+///
+/// RFC 9112 section 3.2.2: an origin server receiving an absolute-form target
+/// "MUST ignore the received Host header field". The request below is an
+/// HTTP/1.1 one, as `Request::new` builds it; a version-2 request's
+/// `:authority` lands on the same URI and is read the same way. Filing it under
+/// `Host` would let one request plant a response for another host.
+#[test]
+fn the_key_names_the_authority_the_request_carried() {
+    let request = |target: &str, host: Option<&str>| {
+        let mut request = crate::http::Request::new(crate::http::body::Body::empty());
+        *request.uri_mut() = target.parse().expect("a usable target");
+        if let Some(host) = host {
+            request
+                .headers_mut()
+                .insert(header::HOST, HeaderValue::from_str(host).expect("a host"));
+        }
+        request
+    };
+
+    assert_eq!(
+        primary_key("", &request("/reports?page=2", None), "/reports").authority,
+        None
+    );
+    assert_eq!(
+        primary_key(
+            "",
+            &request("http://B.example.com/reports", Some("A.example.com")),
+            "/reports"
+        )
+        .authority
+        .as_deref(),
+        Some("b.example.com")
+    );
 }

@@ -85,8 +85,10 @@ rust_decimal = { version = "1.42.1", default-features = false }
 # list is only what the graph is being put into.
 rustls = { version = "0.23.43", default-features = false }
 serde = "1.0.219"
+# `serde_urlencoded`'s fork that reads a repeated key as a sequence, which is
+# what the `form` style with `explode` describes for an array property.
+serde_html_form = "0.4.1"
 serde_json = "1.0.145"
-serde_urlencoded = "0.7.1"
 serde_yaml_ng = "0.10.0"
 # Accepted-socket options tokio's `TcpStream` does not expose: TCP keepalive
 # with an idle time. Already in the graph through tokio's `net`, at this major

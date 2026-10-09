@@ -96,7 +96,8 @@ impl Directory {
         self
     }
 
-    /// Resolves `requested` against the root, or `None` where it escapes.
+    /// Resolves `requested` against the root, or `None` where it escapes or
+    /// names something hidden.
     ///
     /// Structural rather than canonicalizing. Every component is examined and
     /// anything that is not a plain name is refused: `..` cannot climb out
@@ -105,12 +106,19 @@ impl Directory {
     /// canonicalized and then compared is one that has to be remembered; this
     /// one cannot be forgotten, because there is no branch that admits the bad
     /// input.
+    ///
+    /// A segment beginning with a dot is refused too, as
+    /// [`assets!`](crate::assets) skips one: `Directory::new(".")` over a
+    /// checkout must not hand out `.git` or `.env`.
     fn resolve(&self, requested: &str) -> Option<PathBuf> {
         let mut resolved = self.root.clone();
 
         for segment in requested.split('/') {
             if segment.is_empty() || segment == "." {
                 continue;
+            }
+            if segment.starts_with('.') {
+                return None;
             }
 
             // `Path::new(segment).components()` is what turns a segment into a
@@ -125,6 +133,57 @@ impl Directory {
 
         Some(resolved)
     }
+
+    /// The file `requested` names on disk and what `stat` said of it, or
+    /// `None` where nothing may be served.
+    ///
+    /// A directory stands for its index. Every failure is `None`, including
+    /// `PermissionDenied`: a file the process cannot read is, to a client, not
+    /// there, and 404 leaks least.
+    ///
+    /// No link below the root is followed, wherever it points: each segment
+    /// is `lstat`ed and a link refused, as [`assets!`](crate::assets) skips
+    /// one. The root itself is followed, since a deploy's `current` link is
+    /// the operator's rather than the directory's. The check precedes the
+    /// read, so a link swapped in between the two is not caught.
+    async fn locate(&self, requested: &str) -> Option<(PathBuf, std::fs::Metadata)> {
+        let resolved = self.resolve(requested)?;
+        let mut path = self.root.clone();
+        let mut below = None;
+        for name in resolved.strip_prefix(&self.root).ok()? {
+            path.push(name);
+            below = Some(unlinked(&path).await?);
+        }
+        let mut metadata = match below {
+            Some(metadata) => metadata,
+            None => tokio::fs::metadata(&path).await.ok()?,
+        };
+
+        if metadata.is_dir() {
+            path.push(self.index?);
+            metadata = unlinked(&path).await?;
+        }
+
+        metadata.is_file().then_some((path, metadata))
+    }
+}
+
+/// What `lstat` reports of `path`, or `None` where it is a link or cannot be
+/// read.
+async fn unlinked(path: &Path) -> Option<std::fs::Metadata> {
+    let metadata = tokio::fs::symlink_metadata(path).await.ok()?;
+    (!metadata.file_type().is_symlink()).then_some(metadata)
+}
+
+/// The media type a located file is served as.
+///
+/// Read from the file rather than from the request, so a directory's index is
+/// typed as the index it is.
+fn media_type(path: &Path) -> &'static str {
+    path.file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .and_then(media::for_path)
+        .unwrap_or(media::FALLBACK)
 }
 
 /// A weak entity tag from what a `stat` already knows.
@@ -135,16 +194,14 @@ impl Directory {
 /// every file to hash it would turn a conditional request into the work it
 /// exists to avoid.
 ///
-/// # So an `If-Range` is never honoured here
+/// # So neither `If-Range` nor a listed `If-Match` ever holds here
 ///
-/// RFC 9110 section 13.1.5 evaluates that condition with the *strong*
-/// comparison, under which a weak tag is equivalent to nothing — not even to
-/// itself. A directory therefore answers every `If-Range` request with the
-/// whole file and a 200, which is the correct answer rather than a missing
-/// feature: a client splicing a part into a copy it holds needs to know the
-/// representation has not changed, and a tag this one cannot promise that.
-/// A plain `Range` with no condition is served as a 206 exactly as an embedded
-/// file's is; it is only the precondition that a weak validator cannot pass.
+/// RFC 9110 sections 13.1.5 and 13.1.1 take the *strong* comparison, under
+/// which a weak tag is equivalent to nothing — not even to itself. A directory
+/// therefore answers every `If-Range` with the whole file and a 200, and every
+/// `If-Match` but `*` with a 412: a client splicing a part into its copy needs
+/// to know the representation has not changed, and this tag cannot promise
+/// that. A plain `Range` is served as a 206 exactly as an embedded file's is.
 /// [`assets!`](crate::assets) hashes the contents and gets a strong tag, which
 /// is the mode to reach for when resumption matters.
 fn etag(metadata: &std::fs::Metadata) -> Option<String> {
@@ -198,37 +255,19 @@ impl EncodeHeaders for FileHeaders {
 async fn serve(directory: &Directory, request: &Request) -> Response {
     let requested = crate::unchecked::captured(request, "path").unwrap_or_default();
 
-    let Some(mut path) = directory.resolve(&requested) else {
+    let Some((path, metadata)) = directory.locate(&requested).await else {
         return refused(StatusCode::NOT_FOUND);
     };
-
-    // Every read failure is a 404, including `PermissionDenied`. A file the
-    // process cannot read is, to a client, not there — and 404 leaks least.
-    // The same holds for the index read below, which stays a `match` only
-    // because it reassigns rather than binds.
-    let Ok(mut metadata) = tokio::fs::metadata(&path).await else {
-        return refused(StatusCode::NOT_FOUND);
-    };
-
-    if metadata.is_dir() {
-        let Some(index) = directory.index else {
-            return refused(StatusCode::NOT_FOUND);
-        };
-        path.push(index);
-        metadata = match tokio::fs::metadata(&path).await {
-            Ok(metadata) => metadata,
-            Err(_) => return refused(StatusCode::NOT_FOUND),
-        };
-    }
-
-    if !metadata.is_file() {
-        return refused(StatusCode::NOT_FOUND);
-    }
 
     let headers = FileHeaders {
         etag: etag(&metadata),
         cache_control: directory.cache_control,
     };
+
+    // Section 13.2.2 step 1, which a weak tag passes only as `*`: see `etag`.
+    if let Some(refused) = range::precondition_failed(request.headers(), headers.etag.as_deref()) {
+        return refused;
+    }
 
     if let (Some(tag), Some(field)) = (
         headers.etag.as_deref(),
@@ -243,10 +282,8 @@ async fn serve(directory: &Directory, request: &Request) -> Response {
     }
 
     // Section 14.2: the `Range` field is evaluated *only if the result in
-    // absence of the Range header field would be a 200*, which the 304 above
-    // has already settled. The validator goes with it and is weak, so section
-    // 13.1.5's condition never holds -- see `etag` for why that is the answer
-    // rather than a gap.
+    // absence of the Range header field would be a 200*, which the 412 and the
+    // 304 above have settled. The weak validator never passes an `If-Range`.
     let range_set = spec::read(request.method(), request.headers(), headers.etag.as_deref());
 
     // `stat` already reported the length, so satisfiability is decided before a
@@ -264,8 +301,7 @@ async fn serve(directory: &Directory, request: &Request) -> Response {
         return refused(StatusCode::NOT_FOUND);
     };
 
-    let media_type = media::for_path(&requested).unwrap_or(media::FALLBACK);
-    range::assembled(body, selection, media_type, &headers)
+    range::assembled(body, selection, media_type(&path), &headers)
 }
 
 /// The bytes from `first` to `last` inclusive, without reading the rest.

@@ -156,6 +156,17 @@ impl CacheTagging for Tagged {
 /// [`Conditional`](super::conditional::Conditional) useful for a handler that
 /// declares no validator.
 ///
+/// A stored response is filed under the request's authority as well as its
+/// target, and a request saying `Cache-Control: no-cache` is answered by the
+/// handler, since a cache that does not revalidate cannot honour it otherwise.
+///
+/// A response to an operation declaring a security requirement — through
+/// [`Auth`](crate::security::auth::Auth), [`MaybeAuth`](crate::security::auth::MaybeAuth)
+/// or any other guard — is stored and served only where it says `public` or
+/// `s-maxage`, as one to a request carrying `Authorization` is: a hit is served
+/// before the guard runs, so whatever credential carried the request, nothing
+/// else keeps one caller's answer from another.
+///
 /// ```no_run
 /// use kynos::middleware::cache::{
 ///     Cache,
@@ -262,31 +273,36 @@ where
     ) -> Result<Continued<D::Headers>, Infallible> {
         let () = reads;
 
-        let route = next.route();
-        let key = PrimaryKey {
-            namespace: self.namespace,
-            method: kynos_openapi::Method::from_wire_str(request.method().as_str())
-                .unwrap_or(kynos_openapi::Method::Get),
-            route: route.path().to_owned(),
-            target: request
-                .uri()
-                .path_and_query()
-                .map_or_else(|| request.uri().path().to_owned(), ToString::to_string),
-        };
+        let key = primary_key(self.namespace, &request, next.route().path());
+        // Read from what routing recorded, which an endpoint's own chain sees
+        // as the router's does. A request no router dispatched carries no
+        // record, and is read as guarded: refusing a store is the safe error.
+        let secured = request
+            .extensions()
+            .get::<crate::router::dispatch::Routed>()
+            .is_none_or(|routed| routed.secured);
 
         let request_headers = request.headers().clone();
         let method = request.method().clone();
 
         // A hit replays a status the operation already declares, which is why
-        // `Short` is `Infallible`: nothing here invents a response.
-        if let Some(stored) = self
-            .store
-            .get(&key, context)
-            .await
-            .into_iter()
-            .filter(|stored| stored.selected_by(&request_headers))
-            .find(StoredResponse::is_fresh)
-        {
+        // `Short` is `Infallible`: nothing here invents a response. A request
+        // forbidding reuse skips the store rather than reading and discarding.
+        //
+        // A hit is served before the operation's guard runs, so for a guarded
+        // operation only a response that said it may be shared is a hit.
+        let stored = if freshness::forbids_reuse(&request_headers) {
+            None
+        } else {
+            self.store
+                .get(&key, context)
+                .await
+                .into_iter()
+                .filter(|stored| stored.selected_by(&request_headers))
+                .filter(|stored| !secured || freshness::servable_when_secured(stored.headers()))
+                .find(StoredResponse::is_fresh)
+        };
+        if let Some(stored) = stored {
             let age = stored.age();
             let etag = stored
                 .headers()
@@ -345,6 +361,7 @@ where
             continued.status(),
             &request_headers,
             continued.headers(),
+            secured,
             self.default_freshness,
         ) else {
             return Ok(continued.with_headers(D::headers(Duration::ZERO, None)));
@@ -401,6 +418,28 @@ where
 
         continued.set_body(crate::http::body::Body::from_bytes(bytes));
         Ok(continued.with_headers(D::headers(Duration::ZERO, etag)))
+    }
+}
+
+/// What `request` is filed under, for the operation whose `paths` key is
+/// `route`.
+fn primary_key(namespace: &'static str, request: &http::Request, route: &str) -> PrimaryKey {
+    PrimaryKey {
+        namespace,
+        method: kynos_openapi::Method::from_wire_str(request.method().as_str())
+            .unwrap_or(kynos_openapi::Method::Get),
+        authority: crate::middleware::csrf::own_authority(
+            request.headers(),
+            request
+                .uri()
+                .authority()
+                .map(::http::uri::Authority::as_str),
+        ),
+        route: route.to_owned(),
+        target: request
+            .uri()
+            .path_and_query()
+            .map_or_else(|| request.uri().path().to_owned(), ToString::to_string),
     }
 }
 

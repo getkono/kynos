@@ -6,12 +6,43 @@
 
 There is no way to guard an operation without describing the guard, and no way
 to describe one without enforcing it. `Auth<S>` is the only door, and taking one
-as a handler argument adds the scheme to `security`, registers it under
+as a handler's guard sets `security`, registers each scheme under
 `components.securitySchemes`, adds 401 and 403 to `responses`, and declares the
 `WWW-Authenticate` the 401 carries. Four things, one argument, no way to do a
 subset.
 
 ## Policy
+
+### One guard per operation
+
+`Auth`, `MaybeAuth` and `Scoped` implement
+[`Guard`](../crates/kynos/src/security/mod.rs), not `FromRequestParts`. A guard
+has a slot of its own, the first argument, the way a body has the last, and
+`Handler` is implemented with that slot and without it — never with two. A
+second guard does not compile.
+
+Schemes combine in the guard's type parameter instead, so each shape has one
+spelling and the `security` the guard emits is the whole list, set once:
+
+| Guard | `security` | Enforced |
+| --- | --- | --- |
+| `Auth<S>` | `[{S}]` | `S` |
+| `Auth<AnyOf<(A, B)>>` | `[{A}, {B}]` | the first of `A`, `B` that authenticates |
+| `Auth<AllOf<(A, B)>>` | `[{A, B}]` | both |
+| `MaybeAuth<…>` | `[{}, …]` | the same, or nothing presented at all |
+| `Scoped<S, R>` | `[{S: R::SCOPES}]` | `S`, then `R` |
+
+- **`AnyOf` tries in order.** An absent credential is skipped and a refused one
+  does not block the next. When none authenticates, the first refusal in tuple
+  order is the answer; when none was presented, the guard sees absence.
+- **`AllOf` reads every credential before verifying any.** None presented is
+  absence; some but not all is a 401, because a partial set is not an anonymous
+  request.
+- **A combination's 401 carries the first challenge among its schemes.** A
+  field value is one string, and RFC 9110 section 11.6.1 asks for at least one
+  challenge the client can answer.
+- **A combinator takes schemes, from two to four**, never another combinator,
+  and `Scoped` stays single-scheme. Nesting would give one shape two spellings.
 
 ### A scheme says where its credential travels, once
 
@@ -26,6 +57,18 @@ receives `S::Presented` and not a `&Parts`. An authenticator is not given the
 request, so it *cannot* reach for a field the scheme did not declare. The
 constraint is the feature: every framework that configures a credential finder
 beside its documentation has two statements that agree until someone edits one.
+
+### A derived scheme's challenge follows from its kind
+
+The kind fixes the `WWW-Authenticate` a 401 carries, and `challenge = "..."`
+replaces it, typically to add a `realm`:
+
+| Kind | Default challenge | Because |
+| --- | --- | --- |
+| `bearer`, `oauth2`, `openid_connect` | `Bearer` | Each reads an access token from `Authorization`; RFC 6750 section 3 |
+| `basic` | `Basic charset="UTF-8"` | RFC 7617 section 2 |
+| `http(scheme = ..)` | none | Its parameters are the application's to know |
+| `api_key`, `mutual_tls` | none | Travels outside `Authorization`, so no registered scheme names it |
 
 ### The three states of a presented credential
 
@@ -246,6 +289,21 @@ operations requiring it exist.
 
 *Non-normative. This section explains the reasoning behind the rules above so
 that revisiting them is possible on the merits.*
+
+### Why a second guard does not compile
+
+Each guard argument used to declare its own Security Requirement Object while
+every one of them ran. OpenAPI reads separate objects as alternatives, so
+`Auth<A>` beside `Auth<B>` documented "either" and enforced "both", and
+`MaybeAuth<A>` beside `Auth<B>` advertised anonymous access the server refused.
+
+Merging the arguments' requirements into one object would have matched the
+runtime, and it would also have made `MaybeAuth<A>` + `Auth<B>` and `Auth<S>` +
+`Scoped<S, R>` supported spellings of shapes nobody should write. Refusing a
+second guard when the router is built leaves a handler that compiles and is
+then rejected. A fixed slot rejects it at the signature, and moving the
+combination into the type parameter makes the description a function of the
+one type the guard runs.
 
 ### Why `Presented` is owned
 

@@ -5,7 +5,10 @@ use quote::quote;
 use syn::{DeriveInput, parse_macro_input, spanned::Spanned};
 
 use crate::derive::{
-    common::{named_fields, names_const, reject_duplicate_names, wire_names},
+    common::{
+        NameCase, named_fields, names_const, reject_duplicate_names, reject_non_token_names,
+        wire_names,
+    },
     params::{
         Param, construct, decode_field, header_encode_body, parameters_body, response_headers_body,
     },
@@ -46,6 +49,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let fields = named_fields(input, "Headers")?;
 
     let names = wire_names(input, fields, "header")?;
+    reject_non_token_names(fields, &names, "header", "an RFC 9110 field name")?;
     for (field, name) in fields.named.iter().zip(&names) {
         // HTTP field names are case-insensitive, so the check must be too.
         let folded = name.to_ascii_lowercase();
@@ -56,7 +60,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
             ));
         }
     }
-    reject_duplicate_names(fields, &names, "header")?;
+    reject_duplicate_names(fields, &names, "header", NameCase::Insensitive)?;
 
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();

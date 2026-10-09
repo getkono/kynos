@@ -35,7 +35,7 @@ edit.
 | `Cors`, and the preflight | WHATWG Fetch §3.2 (CORS protocol) | [`whatwg-fetch-2026-06.html`](../references/whatwg-fetch-2026-06.html) |
 | `Compression` | RFC 9110 §8.4 (`Content-Encoding`), §12.4.2 (qvalues), §12.5.3 (`Accept-Encoding`), §12.5.5 (`Vary`), §8.8.1 (validators), §14 (ranges) | [`rfc9110.txt`](../references/rfc9110.txt) |
 | — its codings | RFC 9110 §8.4.1 (`gzip`, `deflate`, `compress`), RFC 7932 (`br`), RFC 9659 (`zstd`, and its 8 MB window) | [`rfc7932.txt`](../references/rfc7932.txt), [`rfc9659.txt`](../references/rfc9659.txt) |
-| `Cache` | RFC 9111 §3 (storing), §4.1 (`Vary` matching), §4.2 (freshness), §4.4 (invalidation), §3.5 (`Authorization`) | [`rfc9111.txt`](../references/rfc9111.txt) |
+| `Cache` | RFC 9111 §2 (the cache key), §3 (storing), §4.1 (`Vary` matching), §4.2 (freshness), §4.4 (invalidation), §3.5 (`Authorization`, and any operation declaring a security requirement), §5.2.1.4 (request `no-cache`); RFC 9112 §3.2.2 (an absolute-form target's authority over `Host`) | [`rfc9111.txt`](../references/rfc9111.txt), [`rfc9112.txt`](../references/rfc9112.txt) |
 | `Conditional` | RFC 9110 §13 (preconditions), §8.8.3 (comparison), §15.4.5 (304) | [`rfc9110.txt`](../references/rfc9110.txt) |
 | `BodySize` | RFC 9110 §15.5.14 (413), §10.1.1 (`Expect`) | [`rfc9110.txt`](../references/rfc9110.txt) |
 | `Timeout` | RFC 9110 §15.5.9 (408) | [`rfc9110.txt`](../references/rfc9110.txt) |
@@ -46,7 +46,7 @@ edit.
 | `SetCookies`, and `response::cookie` | RFC 6265 §4.1 (`Set-Cookie`), `draft-ietf-httpbis-rfc6265bis-22` §4.1.3 (name prefixes), §5.6 (size) | [`rfc6265.txt`](../references/rfc6265.txt), [`draft-…-rfc6265bis-22.txt`](../references/draft-ietf-httpbis-rfc6265bis-22.txt) |
 | `RequestId` | none. `X-Request-Id` is defined by no specification; RFC 6648 argues against the spelling and W3C Trace Context is the standardised alternative | [`rfc6648.txt`](../references/rfc6648.txt), [`w3c-trace-context-20211123.html`](../references/w3c-trace-context-20211123.html) |
 | `Trace` | none | — |
-| `Csrf` | W3C Fetch Metadata (`Sec-Fetch-Site`), WHATWG Fetch (`Origin`), RFC 9113 §8.3.1 (`:authority`) | [`w3c-fetch-metadata-20250401.html`](../references/w3c-fetch-metadata-20250401.html), [`whatwg-fetch-2026-06.html`](../references/whatwg-fetch-2026-06.html), [`rfc9113.txt`](../references/rfc9113.txt) |
+| `Csrf` | W3C Fetch Metadata (`Sec-Fetch-Site`), WHATWG Fetch (`Origin`), RFC 9113 §8.3.1 (`:authority`), RFC 9112 §3.2.2 (an absolute-form target's authority over `Host`) | [`w3c-fetch-metadata-20250401.html`](../references/w3c-fetch-metadata-20250401.html), [`whatwg-fetch-2026-06.html`](../references/whatwg-fetch-2026-06.html), [`rfc9113.txt`](../references/rfc9113.txt), [`rfc9112.txt`](../references/rfc9112.txt) |
 | `Decompression` | RFC 9110 §8.4 (`Content-Encoding`), §15.5.16 (415), RFC 7932 (`br`), RFC 9659 (`zstd`) | [`rfc9110.txt`](../references/rfc9110.txt), [`rfc7932.txt`](../references/rfc7932.txt), [`rfc9659.txt`](../references/rfc9659.txt) |
 | Forwarded addresses | RFC 7239 §5.2 (`for`), §6 (`nodename`), §8.1 (what it is worth) | [`rfc7239.txt`](../references/rfc7239.txt) |
 | Message framing, wherever a body's length changes | RFC 9110 §8.6 (`Content-Length`), RFC 9112 §6 (HTTP/1.1), RFC 9113 §8.1.1 and §8.2.2 (HTTP/2) | [`rfc9112.txt`](../references/rfc9112.txt), [`rfc9113.txt`](../references/rfc9113.txt) |
@@ -89,6 +89,7 @@ in [`middleware.md`](middleware.md).
 | `Compression` never encodes a ranged or range-advertising response | RFC 9110 §14.1.2 computes ranges over encoded octets and §8.8.1 forbids one strong validator naming two representations. An asset set answers `Accept-Encoding` itself instead, minting a validator per stored coding, which is the same sections satisfied rather than traded against |
 | `Compression` ships no `deflate` or `compress` | RFC 9110 §8.4.1.2 records that `deflate` is widely mis-implemented; `compress` is obsolete |
 | `Cache` has no heuristic freshness | RFC 9111 §4.2.2 permits one; every heuristic is a guess that turns a correct origin into an incorrect cache |
+| `Cache` keys on the authority but not the scheme | RFC 9111 §2 keys on the whole target URI. Behind a TLS-terminating proxy the service cannot see the scheme the client used, so a key holding a guessed one is unstable. The cost is that `http` and `https` share an entry, which matters only to a service that answers the two differently |
 | `Cache` never stores a response setting a cookie | `Vary` cannot protect against it — the cookie is in the response, and nothing in the request selects it |
 | `Conditional` implements `If-None-Match` alone | `If-Match` and `If-Unmodified-Since` must be evaluated before the change, which only a handler can do |
 | `RateLimit` keeps the `X-` prefix by default | The unprefixed names belong to a draft that has already replaced them once; squatting them would reach generated clients |

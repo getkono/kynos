@@ -1361,6 +1361,16 @@ enum AuditError {
     Sealed,
 }
 
+/// A guard beside the extractors it precedes.
+#[kynos::get("/reviews/{id}/audit")]
+async fn audited_review(
+    caller: kynos::security::auth::Auth<kynos::security::schemes::Bearer<Claims>>,
+    Path(path): Path<ReviewPath>,
+) -> NoContent {
+    let _ = (caller.into_inner(), path);
+    NoContent
+}
+
 #[kynos::get("/admin/sealed")]
 async fn sealed(
     caller: kynos::security::auth::Scoped<kynos::security::schemes::Bearer<Claims>, Staff>,
@@ -1379,9 +1389,37 @@ fn declared_problem_schema(document: &Document, path: &str, status: &str) -> ser
 /// The document the guarded operations emit.
 fn guarded_document() -> Document {
     Router::<Guarded>::new()
-        .mount(kynos::routes![audit, reports, me, sealed])
+        .mount(kynos::routes![audit, reports, me, sealed, audited_review])
         .openapi()
         .expect("a describable router")
+}
+
+/// The guard's slot is described like any argument's: its whole `security`
+/// list, once, beside what the extractors after it declare.
+///
+/// The guarded handler implementations are separate from the unguarded ones,
+/// so one that forgot to describe its guard would serve a credential check the
+/// document never mentions.
+#[test]
+fn a_guard_before_other_arguments_declares_its_security_once() {
+    let operation = operation(&guarded_document(), "/reviews/{id}/audit");
+
+    let demanded: Vec<Vec<String>> = operation
+        .security
+        .as_deref()
+        .expect("the guard's requirement")
+        .iter()
+        .map(|requirement| requirement.0.keys().cloned().collect())
+        .collect();
+    assert_eq!(demanded, vec![vec!["Bearer".to_owned()]]);
+
+    assert_eq!(operation.parameters.len(), 1, "{:?}", operation.parameters);
+    for status in ["400", "401", "403"] {
+        assert!(
+            operation.responses.responses.contains_key(status),
+            "{status} is missing"
+        );
+    }
 }
 
 /// A scope set naming a type declares that type *and* `about:blank`.
@@ -1565,6 +1603,42 @@ fn a_router_using_no_3_2_construct_is_described_as_3_1() {
     assert_eq!(claimed_version(&router), "3.1.2");
 }
 
+/// The one violation a router refused to describe reports.
+fn sole_refusal<C: 'static>(router: &Router<C>) -> kynos::openapi::SpecError {
+    let Err(kynos::Error::Invalid { violations }) = router.openapi() else {
+        panic!("a router carrying an unrecognised field was described");
+    };
+    let [violation] = violations.as_slice() else {
+        panic!("one violation: {violations:#?}");
+    };
+    assert_eq!(violation.location, "#");
+    violation.error.clone()
+}
+
+/// A router's own metadata holding `key` beside its extensions.
+fn info_with(key: &str) -> kynos::openapi::Info {
+    let mut info = kynos::openapi::Info::new("API", "1.0.0");
+    info.extensions.insert(key, true);
+    info
+}
+
+/// A key without the `x-` prefix is no field either version expresses, so
+/// describing the router refuses it in every build rather than claiming
+/// whichever version would carry it.
+#[test]
+fn an_unrecognised_field_refuses_the_description() {
+    let router = Router::<()>::new()
+        .info(info_with("foo"))
+        .mount(kynos::routes![alpha]);
+
+    assert_eq!(
+        sole_refusal(&router),
+        kynos::openapi::SpecError::RequiresV3_2 {
+            blockers: vec!["#/info/foo".to_owned()],
+        }
+    );
+}
+
 /// A stream that ends at once: describing one is all that is asked of it.
 #[cfg(feature = "openapi32")]
 struct NoEvents;
@@ -1630,6 +1704,24 @@ fn a_querystring_parameter_raises_the_description_to_3_2() {
     assert_eq!(claimed_version(&router), "3.2.0");
 }
 
+/// A 3.2 construct beside an unrecognised field does not carry the description
+/// to 3.2, which cannot express the field either: the refusal names the field
+/// alone, since the construct is not what stands in the way.
+#[cfg(feature = "openapi32")]
+#[test]
+fn an_unrecognised_field_refuses_a_description_using_3_2() {
+    let router = Router::<()>::new()
+        .info(info_with("foo"))
+        .mount(kynos::routes![alpha, search]);
+
+    assert_eq!(
+        sole_refusal(&router),
+        kynos::openapi::SpecError::RequiresV3_2 {
+            blockers: vec!["#/info/foo".to_owned()],
+        }
+    );
+}
+
 /// `openapi_as` targets and never downgrades: 3.1 asked of an API using
 /// 3.2-only constructs is one refusal naming where each is, not a document
 /// with the operations missing.
@@ -1659,7 +1751,7 @@ fn openapi_as_3_1_refuses_a_3_2_construct_and_names_it() {
     );
     assert_eq!(
         violation.to_string(),
-        "error at #: cannot emit as OpenAPI 3.1: 3 3.2-only construct(s) in use: \
+        "error at #: cannot emit as OpenAPI 3.1: 3 3.2-only or unrecognised field(s) in use: \
          #/paths/~1events/get/responses/200/content/text~1event-stream/itemSchema, \
          #/paths/~1search/query, #/paths/~1filtered/get/parameters/querystring"
     );

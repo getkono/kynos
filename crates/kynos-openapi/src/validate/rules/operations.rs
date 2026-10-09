@@ -35,7 +35,7 @@ impl Validator {
     /// relative URI is spelled `./foo` — so `Bearer` with nothing declared is
     /// the misspelling this rule exists to catch, and accepting it would leave
     /// the rule with nothing to reject.
-    fn names_a_scheme_by_uri(self, name: &str) -> bool {
+    pub(in crate::validate) fn names_a_scheme_by_uri(self, name: &str) -> bool {
         self.version.supports_3_2()
             && (name.contains('/') || name.contains(':') || name.contains('#'))
     }
@@ -117,6 +117,13 @@ impl Validator {
         }
 
         check_parameter_list(location, &operation.parameters, components, violations);
+        #[cfg(feature = "openapi32")]
+        super::parameters::check_querystring(
+            location,
+            &item.parameters,
+            &operation.parameters,
+            violations,
+        );
         if let Some(template) = template {
             check_path_correspondence(location, template, item, operation, components, violations);
         }

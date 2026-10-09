@@ -77,6 +77,10 @@ pub(super) fn install_unchecked<C>(
                 terminal: Arc::clone(&route.terminal),
                 interceptors: interceptors.to_vec(),
                 catch_panics,
+                // Nothing describes an unchecked route, so it declares no
+                // requirement; a credential it checks itself in `Authorization`
+                // still keeps its response out of a cache.
+                secured: false,
                 unchecked_layers: unchecked_layers.clone(),
             });
         }
@@ -127,11 +131,25 @@ pub(super) fn highest_version() -> SpecVersion {
 ///
 /// [`Document::emit`] already knows which constructs block a downgrade, so this
 /// asks it rather than repeating the analysis.
+///
+/// A field the model does not recognise is refused in every build. Without
+/// `openapi32` it is among what blocks 3.1. With it, 3.2 would not carry it
+/// either, so only the 3.2 constructs the model types move the description to
+/// 3.2, and the refusal names the unrecognised fields alone.
 pub(super) fn lowest_expressing(document: &Document) -> Result<Document> {
     match document.emit(SpecVersion::V3_1) {
         Ok(emitted) => Ok(emitted),
         #[cfg(feature = "openapi32")]
-        Err(_) => document.emit(SpecVersion::V3_2).map_err(invalid),
+        Err(_) => {
+            let unrecognised = kynos_openapi::emit::downgrade::unrecognised_fields(document);
+            if unrecognised.is_empty() {
+                document.emit(SpecVersion::V3_2).map_err(invalid)
+            } else {
+                Err(invalid(SpecError::RequiresV3_2 {
+                    blockers: unrecognised,
+                }))
+            }
+        }
         #[cfg(not(feature = "openapi32"))]
         Err(blocked) => Err(invalid(blocked)),
     }
@@ -266,8 +284,22 @@ pub(super) fn install_preflight<C: Send + Sync + 'static>(
             })
             .collect();
 
+        // Every method the path answers, so a preflight can refuse one that
+        // runs under no `Cors` rather than let an override approve it.
+        let mut served: Vec<_> = entry
+            .operations
+            .iter()
+            .map(|operation| operation.method)
+            .collect();
+        if served.contains(&kynos_openapi::Method::Get)
+            && !served.contains(&kynos_openapi::Method::Head)
+        {
+            served.push(kynos_openapi::Method::Head);
+        }
+
         let preflight = crate::middleware::cors::preflight::Preflight::new(
             scopes,
+            served,
             options_implemented.then(|| entry.allow.clone()),
             method_not_allowed.clone(),
         );
@@ -278,6 +310,7 @@ pub(super) fn install_preflight<C: Send + Sync + 'static>(
             terminal: Arc::new(dispatch::PreflightTerminal::new(preflight)),
             interceptors: Vec::new(),
             catch_panics: false,
+            secured: false,
             #[cfg(feature = "unchecked")]
             unchecked_layers: Vec::new(),
         });

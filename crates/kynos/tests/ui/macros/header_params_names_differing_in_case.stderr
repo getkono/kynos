@@ -1,0 +1,5 @@
+error: two fields declare the header `x-request-id`; the first is `request_id`, which spells it `X-Request-Id`
+ --> tests/ui/macros/header_params_names_differing_in_case.rs:5:5
+  |
+5 |     #[serde(rename = "x-request-id")]
+  |     ^
