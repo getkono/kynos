@@ -63,6 +63,7 @@ fn matched(path: &'static str, captures: &[(&'static str, &'static str)]) -> Req
             matched: crate::extract::connection::MatchedPath(path),
             captures: Some(recorded),
             forwarded,
+            secured: false,
         });
 
     request

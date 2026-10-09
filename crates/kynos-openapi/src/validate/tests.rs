@@ -128,6 +128,112 @@ fn an_operation_outside_paths_is_validated_too() {
     );
 }
 
+/// An operation's own `callbacks` describe operations too.
+///
+/// The case above reaches a callback only through `components.callbacks`; one
+/// written inline on an operation hangs off that operation instead, and is
+/// just as much one of "all operations described in the API". Each case
+/// carries a different operation-level rule, and the nested one shows the walk
+/// descends through a callback's own operations as well.
+#[test]
+fn an_operation_inside_an_inline_callback_is_validated() {
+    use crate::model::{callback::Callback, reference::RefOr};
+
+    let with_callback = |operation: Operation| {
+        let mut owner = Operation::new("subscribe").with_responses(ok_responses());
+        owner.callbacks.insert(
+            "onData".to_owned(),
+            RefOr::Item(Callback::new().with(
+                "{$request.body#/url}",
+                PathItem::new().with_operation(Method::Post, operation),
+            )),
+        );
+        owner
+    };
+    let validate = |owner: Operation| {
+        Validator::new(SpecVersion::V3_1).validate(&document_with(&[(
+            "/subscriptions",
+            PathItem::new().with_operation(Method::Post, owner),
+        )]))
+    };
+
+    let duplicate = validate(with_callback(
+        Operation::new("subscribe").with_responses(ok_responses()),
+    ));
+    assert!(
+        duplicate.iter().any(|violation| matches!(
+            &violation.error,
+            SpecError::DuplicateOperationId { operation_id, .. } if operation_id == "subscribe"
+        ) && violation.location
+            == "#/paths/~1subscriptions/post/callbacks/onData/{$request.body#~1url}/post"),
+        "an inline callback describes an operation; got {duplicate:?}"
+    );
+
+    let responseless = validate(with_callback(with_callback(Operation::new("notify"))));
+    assert!(
+        responseless.iter().any(
+            |violation| matches!(violation.error, SpecError::NoResponses)
+                && violation.location
+                    == "#/paths/~1subscriptions/post/callbacks/onData/{$request.body#~1url}/post\
+                /callbacks/onData/{$request.body#~1url}/post"
+        ),
+        "a callback's own callbacks describe operations; got {responseless:?}"
+    );
+}
+
+/// A referenced callback is validated once, at the component it names.
+///
+/// The walk above follows inline items only: following a `$ref` would visit
+/// the component once per reference and report a duplicate `operationId`
+/// against the component itself. Both reference positions are covered — the
+/// callback itself, and a Path Item inside an inline callback.
+#[test]
+fn a_referenced_callback_is_not_walked_again_from_its_operation() {
+    use crate::model::{
+        callback::Callback,
+        reference::{Ref, RefOr},
+    };
+
+    let notify = |operation_id: &str| {
+        PathItem::new().with_operation(
+            Method::Post,
+            Operation::new(operation_id).with_responses(ok_responses()),
+        )
+    };
+    let mut owner = Operation::new("subscribe").with_responses(ok_responses());
+    owner.callbacks.insert(
+        "onData".to_owned(),
+        RefOr::Ref(Ref::new("#/components/callbacks/OnData")),
+    );
+    let mut item_ref = Callback::new();
+    item_ref.items.insert(
+        "{$request.body#/url}".to_owned(),
+        RefOr::Ref(Ref::new("#/components/pathItems/Notify")),
+    );
+    owner
+        .callbacks
+        .insert("onItem".to_owned(), RefOr::Item(item_ref));
+
+    let mut document = document_with(&[(
+        "/subscriptions",
+        PathItem::new().with_operation(Method::Post, owner),
+    )]);
+    document.components.callbacks.insert(
+        "OnData".to_owned(),
+        RefOr::Item(Callback::new().with("{$request.body#/url}", notify("onData"))),
+    );
+    document
+        .components
+        .path_items
+        .insert("Notify".to_owned(), notify("onItem"));
+
+    let found = errors(&document);
+    assert!(
+        found.is_empty(),
+        "a referenced callback is validated at its component alone; got {found:?}"
+    );
+}
+
 /// An operation with no responses is reported wherever it is written.
 ///
 /// The companion to the case above, and a different rule on purpose: it shows
@@ -1036,6 +1142,251 @@ fn a_violation_says_everything_in_one_line() {
     assert!(std::error::Error::source(&violation).is_none());
 }
 
+// --- `in: querystring` ----------------------------------------------------
+
+/// A querystring parameter described the way 3.2 requires: by `content`.
+#[cfg(feature = "openapi32")]
+fn querystring(name: &str) -> Parameter {
+    use crate::model::{body::media_type::MediaType, parameter::ParameterIn};
+
+    Parameter::with_content(
+        name,
+        ParameterIn::Querystring,
+        "application/x-www-form-urlencoded",
+        MediaType::new(Schema::of_type(SchemaType::Object)),
+    )
+}
+
+/// The querystring violations a document raises, with where each was raised.
+#[cfg(feature = "openapi32")]
+fn querystring_violations(document: &Document) -> Vec<(String, SpecError)> {
+    Validator::new(SpecVersion::V3_2)
+        .validate(document)
+        .into_iter()
+        .filter(|v| {
+            matches!(
+                v.error,
+                SpecError::QuerystringWithoutContent { .. }
+                    | SpecError::DuplicateQuerystring { .. }
+                    | SpecError::QueryBesideQuerystring { .. }
+            )
+        })
+        .map(|v| (v.location, v.error))
+        .collect()
+}
+
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_lone_querystring_parameter_described_by_content_is_valid() {
+    let item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("listUsers")
+            .with_parameter(querystring("filter"))
+            .with_parameter(Parameter::header(
+                "X-Trace",
+                Schema::of_type(SchemaType::String),
+            ))
+            .with_responses(ok_responses()),
+    );
+
+    let violations =
+        Validator::new(SpecVersion::V3_2).validate(&document_with(&[("/users", item)]));
+    assert!(violations.is_empty(), "{violations:?}");
+}
+
+#[cfg(feature = "openapi32")]
+#[test]
+fn each_querystring_rule_names_the_parameters_it_is_about() {
+    use crate::model::parameter::ParameterIn;
+
+    let item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("listUsers")
+            .with_parameter(Parameter::query("q", Schema::of_type(SchemaType::String)))
+            .with_parameter(querystring("filter"))
+            .with_parameter(Parameter::new(
+                "sort",
+                ParameterIn::Querystring,
+                Schema::of_type(SchemaType::String),
+            ))
+            .with_responses(ok_responses()),
+    );
+
+    let at = "#/paths/~1users/get".to_owned();
+    assert_eq!(
+        querystring_violations(&document_with(&[("/users", item)])),
+        vec![
+            (
+                at.clone(),
+                SpecError::QuerystringWithoutContent {
+                    name: "sort".to_owned()
+                }
+            ),
+            (
+                at.clone(),
+                SpecError::DuplicateQuerystring {
+                    first: "filter".to_owned(),
+                    second: "sort".to_owned(),
+                }
+            ),
+            (
+                at,
+                SpecError::QueryBesideQuerystring {
+                    query: "q".to_owned(),
+                    querystring: "filter".to_owned(),
+                }
+            ),
+        ]
+    );
+}
+
+/// 3.2 forbids the pair "in the same operation (or in the operation's
+/// path-item)", so a conflict split across the two is still one.
+#[cfg(feature = "openapi32")]
+#[test]
+fn querystring_rules_count_the_path_items_parameters() {
+    use crate::model::reference::RefOr;
+
+    let mut item = PathItem::new()
+        .with_operation(
+            Method::Get,
+            Operation::new("listUsers")
+                .with_parameter(Parameter::query("q", Schema::of_type(SchemaType::String)))
+                .with_responses(ok_responses()),
+        )
+        .with_operation(
+            Method::Post,
+            Operation::new("searchUsers")
+                .with_parameter(querystring("sort"))
+                .with_responses(ok_responses()),
+        );
+    item.parameters.push(RefOr::Item(querystring("filter")));
+
+    assert_eq!(
+        querystring_violations(&document_with(&[("/users", item)])),
+        vec![
+            (
+                "#/paths/~1users/get".to_owned(),
+                SpecError::QueryBesideQuerystring {
+                    query: "q".to_owned(),
+                    querystring: "filter".to_owned(),
+                }
+            ),
+            (
+                "#/paths/~1users/post".to_owned(),
+                SpecError::DuplicateQuerystring {
+                    first: "filter".to_owned(),
+                    second: "sort".to_owned(),
+                }
+            ),
+        ]
+    );
+}
+
+/// An operation's parameter replaces its path item's of the same name and
+/// location, so redeclaring the querystring parameter leaves one, not two.
+#[cfg(feature = "openapi32")]
+#[test]
+fn an_operation_overriding_its_path_items_querystring_parameter_declares_one() {
+    use crate::model::reference::RefOr;
+
+    let mut item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("listUsers")
+            .with_parameter(querystring("filter"))
+            .with_responses(ok_responses()),
+    );
+    item.parameters.push(RefOr::Item(querystring("filter")));
+
+    assert_eq!(
+        querystring_violations(&document_with(&[("/users", item)])),
+        vec![]
+    );
+}
+
+/// A conflict wholly inside the path item's own list is the path item's, and
+/// is not repeated once per operation that inherits it.
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_conflict_within_the_path_item_is_reported_once_where_it_is() {
+    use crate::model::reference::RefOr;
+
+    let mut item = PathItem::new()
+        .with_operation(
+            Method::Get,
+            Operation::new("listUsers").with_responses(ok_responses()),
+        )
+        .with_operation(
+            Method::Post,
+            Operation::new("searchUsers").with_responses(ok_responses()),
+        );
+    item.parameters.push(RefOr::Item(Parameter::query(
+        "q",
+        Schema::of_type(SchemaType::String),
+    )));
+    item.parameters.push(RefOr::Item(querystring("filter")));
+
+    assert_eq!(
+        querystring_violations(&document_with(&[("/users", item)])),
+        vec![(
+            "#/paths/~1users".to_owned(),
+            SpecError::QueryBesideQuerystring {
+                query: "q".to_owned(),
+                querystring: "filter".to_owned(),
+            }
+        )]
+    );
+}
+
+/// An operation adding a querystring parameter to a path item that already
+/// conflicts is reported for what it adds: beside each inherited parameter,
+/// against the querystring parameter it declares.
+#[cfg(feature = "openapi32")]
+#[test]
+fn an_operation_adding_to_a_conflicting_path_item_is_reported_for_its_own_part() {
+    use crate::model::reference::RefOr;
+
+    let mut item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("listUsers")
+            .with_parameter(querystring("sort"))
+            .with_responses(ok_responses()),
+    );
+    item.parameters.push(RefOr::Item(Parameter::query(
+        "q",
+        Schema::of_type(SchemaType::String),
+    )));
+    item.parameters.push(RefOr::Item(querystring("filter")));
+
+    let at = "#/paths/~1users/get".to_owned();
+    assert_eq!(
+        querystring_violations(&document_with(&[("/users", item)])),
+        vec![
+            (
+                "#/paths/~1users".to_owned(),
+                SpecError::QueryBesideQuerystring {
+                    query: "q".to_owned(),
+                    querystring: "filter".to_owned(),
+                }
+            ),
+            (
+                at.clone(),
+                SpecError::DuplicateQuerystring {
+                    first: "filter".to_owned(),
+                    second: "sort".to_owned(),
+                }
+            ),
+            (
+                at,
+                SpecError::QueryBesideQuerystring {
+                    query: "q".to_owned(),
+                    querystring: "sort".to_owned(),
+                }
+            ),
+        ]
+    );
+}
+
 // --- The variant ledger ---------------------------------------------------
 
 /// A variant's name, as an exhaustive match.
@@ -1053,6 +1404,12 @@ fn variant_name(error: &SpecError) -> &'static str {
         SpecError::UnusedPathParameter { .. } => "UnusedPathParameter",
         SpecError::PathParameterNotRequired { .. } => "PathParameterNotRequired",
         SpecError::DuplicateParameter { .. } => "DuplicateParameter",
+        #[cfg(feature = "openapi32")]
+        SpecError::QuerystringWithoutContent { .. } => "QuerystringWithoutContent",
+        #[cfg(feature = "openapi32")]
+        SpecError::DuplicateQuerystring { .. } => "DuplicateQuerystring",
+        #[cfg(feature = "openapi32")]
+        SpecError::QueryBesideQuerystring { .. } => "QueryBesideQuerystring",
         SpecError::ShortCircuitMismatch { .. } => "ShortCircuitMismatch",
         SpecError::IllegalStyle { .. } => "IllegalStyle",
         SpecError::IgnoredHeaderParameter { .. } => "IgnoredHeaderParameter",
@@ -1110,6 +1467,14 @@ const RAISED_ELSEWHERE: &[&str] = &[
     // neither of which a 3.1 build has.
     #[cfg(not(feature = "openapi32"))]
     "ConflictingEncoding",
+    // And `in: querystring` is a 3.2 location, so a 3.1 build has no parameter
+    // to raise any of these three with.
+    #[cfg(not(feature = "openapi32"))]
+    "QuerystringWithoutContent",
+    #[cfg(not(feature = "openapi32"))]
+    "DuplicateQuerystring",
+    #[cfg(not(feature = "openapi32"))]
+    "QueryBesideQuerystring",
     // `kynos`'s `short_circuit_mismatch` compares an interceptor's declared
     // statuses against the responses it describes. No document reaches it, and
     // `crates/kynos/src/response/mod.rs` covers it where it lives.
@@ -1130,6 +1495,8 @@ const RAISED_ELSEWHERE: &[&str] = &[
 fn ledger() -> Vec<(&'static str, SpecVersion, Document)> {
     let mut cases = ledger_paths();
     cases.extend(ledger_parameters());
+    #[cfg(feature = "openapi32")]
+    cases.extend(ledger_querystring());
     cases.extend(ledger_document());
     cases.extend(ledger_opacity());
     cases
@@ -1287,6 +1654,51 @@ fn ledger_parameters() -> Vec<(&'static str, SpecVersion, Document)> {
         )])
     });
     cases
+}
+
+/// Cases for the `in: querystring` rules, which are 3.2 only, like the location
+/// all three are about.
+#[cfg(feature = "openapi32")]
+fn ledger_querystring() -> Vec<(&'static str, SpecVersion, Document)> {
+    use crate::model::{parameter::ParameterIn, schema::Schema};
+
+    let operation = || Operation::new("listUsers").with_responses(ok_responses());
+    let get = |operation: Operation| PathItem::new().with_operation(Method::Get, operation);
+
+    vec![
+        (
+            "QuerystringWithoutContent",
+            SpecVersion::V3_2,
+            document_with(&[(
+                "/users",
+                get(operation().with_parameter(Parameter::new(
+                    "filter",
+                    ParameterIn::Querystring,
+                    Schema::of_type(SchemaType::Object),
+                ))),
+            )]),
+        ),
+        (
+            "DuplicateQuerystring",
+            SpecVersion::V3_2,
+            document_with(&[(
+                "/users",
+                get(operation()
+                    .with_parameter(querystring("filter"))
+                    .with_parameter(querystring("sort"))),
+            )]),
+        ),
+        (
+            "QueryBesideQuerystring",
+            SpecVersion::V3_2,
+            document_with(&[(
+                "/users",
+                get(operation()
+                    .with_parameter(Parameter::query("q", Schema::of_type(SchemaType::String)))
+                    .with_parameter(querystring("filter"))),
+            )]),
+        ),
+    ]
 }
 
 /// Cases for the whole-document rules: components, tags, servers, security.

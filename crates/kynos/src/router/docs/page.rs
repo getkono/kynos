@@ -21,8 +21,36 @@ pub(super) const DESCRIPTION_URL: &str = "{{description_url}}";
 /// The document's title. Substituted as HTML text.
 pub(super) const TITLE: &str = "{{title}}";
 
+/// A page Kynos ships, and the policy it is served under.
+///
+/// # Why the policy is a constant
+///
+/// The bundle is pinned to one exact version and carries a Subresource
+/// Integrity hash, so a compromised or breaking upstream publish is refused by
+/// the browser rather than run on the API's own origin. The response's
+/// `Content-Security-Policy` then allows that one bundle and the one inline
+/// script that boots it, named by its hash, and nothing else.
+///
+/// A hash only names a script that never changes, so the shipped boot scripts
+/// hold no token. The description URL is substituted into a JSON data block
+/// instead, which the browser parses and never runs, and the boot script reads
+/// it from there. That keeps `{{description_url}}` in the one context it is
+/// escaped for, and keeps the policy a constant rather than a value derived
+/// per mount.
+///
+/// Custom pages get neither header: Kynos cannot know what a page it did not
+/// write loads, and a policy guessed for it would break it.
+#[derive(Debug)]
+pub(super) struct Shipped {
+    /// The page, with both tokens still in it.
+    pub(super) template: &'static str,
+    /// The `Content-Security-Policy` the page is served under.
+    pub(super) policy: &'static str,
+}
+
 /// The Scalar playground: a reference with a client built into it.
-pub(super) const SCALAR: &str = r#"<!doctype html>
+pub(super) const SCALAR: Shipped = Shipped {
+    template: r#"<!doctype html>
 <html>
   <head>
     <meta charset="utf-8">
@@ -31,13 +59,16 @@ pub(super) const SCALAR: &str = r#"<!doctype html>
   </head>
   <body>
     <div id="app"></div>
-    <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
-    <script>
-      Scalar.createApiReference('#app', { url: {{description_url}} })
-    </script>
+    <script id="description-url" type="application/json">{{description_url}}</script>
+    <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.73.1/dist/browser/standalone.js" integrity="sha384-kYDGzV91Jnn3TbHINV3nt54riK2uMJDfN5Al8dAkz4FssELTBWbD8rgw32sTKfOi" crossorigin="anonymous"></script>
+    <script>Scalar.createApiReference('#app', { url: JSON.parse(document.getElementById('description-url').textContent) })</script>
   </body>
 </html>
-"#;
+"#,
+    policy: "script-src 'sha256-J/fJKAZX9bnXNfWmo/83p2nvJPUNFTingwNtRW2cTh0=' \
+             https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.73.1/dist/browser/standalone.js; \
+             object-src 'none'; base-uri 'none'",
+};
 
 /// Redoc: the same description, read-only, in three panels.
 ///
@@ -45,7 +76,14 @@ pub(super) const SCALAR: &str = r#"<!doctype html>
 /// lands in the one context this module escapes for. The element form would
 /// need markup escaping and nothing else here would, which is a second rule
 /// for one value.
-pub(super) const REDOC: &str = r#"<!doctype html>
+///
+/// Loaded from jsDelivr's copy of the npm package rather than from
+/// `cdn.redoc.ly`, which serves the same bytes: one CDN origin for both pages,
+/// and an npm version is immutable. `worker-src blob:` admits the search
+/// worker the bundle builds from its own source; a blob is created by script
+/// the policy already allows, so it admits nothing a page could inject.
+pub(super) const REDOC: Shipped = Shipped {
+    template: r#"<!doctype html>
 <html>
   <head>
     <meta charset="utf-8">
@@ -54,13 +92,16 @@ pub(super) const REDOC: &str = r#"<!doctype html>
   </head>
   <body>
     <div id="redoc"></div>
-    <script src="https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js"></script>
-    <script>
-      Redoc.init({{description_url}}, {}, document.getElementById('redoc'))
-    </script>
+    <script id="description-url" type="application/json">{{description_url}}</script>
+    <script src="https://cdn.jsdelivr.net/npm/redoc@2.5.4/bundles/redoc.standalone.js" integrity="sha384-w447zOpYfw/1Tv/5AK9NfHTlQIqE3RVR6KY62jCyy9zNDgO64cMwGGP1Fj0zJVf5" crossorigin="anonymous"></script>
+    <script>Redoc.init(JSON.parse(document.getElementById('description-url').textContent), {}, document.getElementById('redoc'))</script>
   </body>
 </html>
-"#;
+"#,
+    policy: "script-src 'sha256-PBZ5Sp8gfwtQxdNCcMjRlhBC7XcdtM/rWrspQE5kTKM=' \
+             https://cdn.jsdelivr.net/npm/redoc@2.5.4/bundles/redoc.standalone.js; \
+             worker-src blob:; object-src 'none'; base-uri 'none'",
+};
 
 /// Every page this module ships, for the sweeps in `tests.rs`.
 ///
@@ -68,7 +109,7 @@ pub(super) const REDOC: &str = r#"<!doctype html>
 /// case is what the sweeps exist to fail on, and they can only be total over a
 /// set that is written down once.
 #[cfg(test)]
-pub(super) const SHIPPED: &[(&str, &str)] = &[("scalar", SCALAR), ("redoc", REDOC)];
+pub(super) const SHIPPED: &[(&str, &Shipped)] = &[("scalar", &SCALAR), ("redoc", &REDOC)];
 
 /// One page, with both values substituted.
 pub(super) fn render(template: &str, description_url: &str, title: &str) -> String {

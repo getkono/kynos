@@ -77,6 +77,10 @@ pub(super) fn install_unchecked<C>(
                 terminal: Arc::clone(&route.terminal),
                 interceptors: interceptors.to_vec(),
                 catch_panics,
+                // Nothing describes an unchecked route, so it declares no
+                // requirement; a credential it checks itself in `Authorization`
+                // still keeps its response out of a cache.
+                secured: false,
                 unchecked_layers: unchecked_layers.clone(),
             });
         }
@@ -306,6 +310,7 @@ pub(super) fn install_preflight<C: Send + Sync + 'static>(
             terminal: Arc::new(dispatch::PreflightTerminal::new(preflight)),
             interceptors: Vec::new(),
             catch_panics: false,
+            secured: false,
             #[cfg(feature = "unchecked")]
             unchecked_layers: Vec::new(),
         });

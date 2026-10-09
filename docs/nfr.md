@@ -536,6 +536,13 @@ constraints — each a question the shape code asks of the same list. What pushe
 it over was reading both sides of a split `rename`, so a member now has the name
 serde writes and the one it reads. One concern, so one file.
 
+`kynos-openapi`'s `validate/violation.rs` is `status.rs`'s shape. It declares
+`Severity`, `Violation` and `SpecError`, the one vocabulary a validation run
+reports in, so splitting it would turn `validate::violation::SpecError`, the
+path every consumer matches on, into a longer one. What pushed it over was the
+three variants for 3.2's `in: querystring` rules, each documented with the
+reason the rule exists.
+
 `emit/downgrade/unrecognised.rs` was born past the line, and is private, so no
 split costs a path. It visits every object carrying `extensions` to report the
 fields 3.1 cannot read that a flattened map absorbed. Its length is the

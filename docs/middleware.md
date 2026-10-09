@@ -1056,6 +1056,15 @@ response carrying `access-control-*` headers whose `Vary` does not name `origin`
 is refused outright, because storing one hands one origin's
 `Access-Control-Allow-Origin` to another and defeats the check entirely.
 
+So is the case of a guarded operation. A hit is served before the handler's
+`Auth` or `MaybeAuth` runs, and a credential need not travel in
+`Authorization`, the one field RFC 9111 §3.5 names. A response to an operation
+declaring a security requirement is therefore stored, and served from the store,
+only where it says `public` or `s-maxage`. A requirement that also admits
+anonymous access counts, since an anonymous response replayed to a credentialed
+caller is the same leak run backwards. An unchecked route is described by
+nothing, so only `Authorization` covers it.
+
 The other half — a `Cache` *inside* `Compression` — is not refused either, and
 needs no refusal: the body is stored and tagged over identity octets, and the
 encoder leaves a strongly tagged response alone, so one strong validator never

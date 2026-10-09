@@ -35,7 +35,7 @@ edit.
 | `Cors`, and the preflight | WHATWG Fetch §3.2 (CORS protocol) | [`whatwg-fetch-2026-06.html`](../references/whatwg-fetch-2026-06.html) |
 | `Compression` | RFC 9110 §8.4 (`Content-Encoding`), §12.4.2 (qvalues), §12.5.3 (`Accept-Encoding`), §12.5.5 (`Vary`), §8.8.1 (validators), §14 (ranges) | [`rfc9110.txt`](../references/rfc9110.txt) |
 | — its codings | RFC 9110 §8.4.1 (`gzip`, `deflate`, `compress`), RFC 7932 (`br`), RFC 9659 (`zstd`, and its 8 MB window) | [`rfc7932.txt`](../references/rfc7932.txt), [`rfc9659.txt`](../references/rfc9659.txt) |
-| `Cache` | RFC 9111 §2 (the cache key), §3 (storing), §4.1 (`Vary` matching), §4.2 (freshness), §4.4 (invalidation), §3.5 (`Authorization`), §5.2.1.4 (request `no-cache`); RFC 9112 §3.2.2 (an absolute-form target's authority over `Host`) | [`rfc9111.txt`](../references/rfc9111.txt), [`rfc9112.txt`](../references/rfc9112.txt) |
+| `Cache` | RFC 9111 §2 (the cache key), §3 (storing), §4.1 (`Vary` matching), §4.2 (freshness), §4.4 (invalidation), §3.5 (`Authorization`, and any operation declaring a security requirement), §5.2.1.4 (request `no-cache`); RFC 9112 §3.2.2 (an absolute-form target's authority over `Host`) | [`rfc9111.txt`](../references/rfc9111.txt), [`rfc9112.txt`](../references/rfc9112.txt) |
 | `Conditional` | RFC 9110 §13 (preconditions), §8.8.3 (comparison), §15.4.5 (304) | [`rfc9110.txt`](../references/rfc9110.txt) |
 | `BodySize` | RFC 9110 §15.5.14 (413), §10.1.1 (`Expect`) | [`rfc9110.txt`](../references/rfc9110.txt) |
 | `Timeout` | RFC 9110 §15.5.9 (408) | [`rfc9110.txt`](../references/rfc9110.txt) |
