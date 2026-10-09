@@ -1333,6 +1333,133 @@ fn a_query_value_that_is_not_utf8_is_refused_naming_its_parameter() {
     }
 }
 
+// --- A derived query parameter keeps its field's bounds ---------------------
+//
+// A recorded runtime exception for the reason the UTF-8 one is: a field's
+// `#[schema(...)]` bounds reach its parameter's schema, and the derived decoder
+// refuses a value that breaks one, or that breaks a bound its type declares.
+
+/// A named number with a bound of its own, so a field's bound lands beside a
+/// `$ref` and the type's is checked as well.
+#[derive(Schema, Debug, PartialEq)]
+struct Score(#[schema(maximum = 100)] u32);
+
+impl std::str::FromStr for Score {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        raw.parse().map(Self)
+    }
+}
+
+impl std::fmt::Display for Score {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl kynos::schema::ParamValue for Score {}
+
+#[derive(Schema, QueryParams)]
+struct Bounded {
+    #[schema(min_length = 2)]
+    #[param(rename = "q")]
+    search: String,
+    #[schema(minimum = 1, maximum = 1000)]
+    limit: Option<u32>,
+    #[schema(minimum = 1)]
+    score: Option<Score>,
+}
+
+/// `T`'s schema as a field or parameter of type `T` refers to it.
+fn resolved<T: SchemaTrait>() -> serde_json::Value {
+    let mut registry = kynos::schema::registry::Registry::new();
+    serde_json::to_value(registry.resolve::<T>()).expect("a schema serializes")
+}
+
+/// `schema` with `bounds` written beside its own keywords.
+fn bounded(mut schema: serde_json::Value, bounds: &serde_json::Value) -> serde_json::Value {
+    for (keyword, bound) in bounds.as_object().expect("bounds are an object") {
+        schema[keyword] = bound.clone();
+    }
+    schema
+}
+
+/// Each parameter's schema is its type's under the field's bounds, beside the
+/// `$ref` for a named type, as the `Schema` derive writes the property.
+#[test]
+fn a_query_parameter_carries_its_fields_bounds() {
+    assert_eq!(
+        query_parameters::<Bounded>(),
+        serde_json::json!([
+            {
+                "name": "q",
+                "in": "query",
+                "required": true,
+                "schema": bounded(resolved::<String>(), &serde_json::json!({"minLength": 2})),
+            },
+            {
+                "name": "limit",
+                "in": "query",
+                "required": false,
+                "schema": bounded(
+                    resolved::<Option<u32>>(),
+                    &serde_json::json!({"minimum": 1.0, "maximum": 1000.0}),
+                ),
+            },
+            {
+                "name": "score",
+                "in": "query",
+                "required": false,
+                "schema": bounded(resolved::<Option<Score>>(), &serde_json::json!({"minimum": 1.0})),
+            },
+        ])
+    );
+}
+
+/// A decoded value that breaks its field's bound, or its type's, is refused as
+/// `Schema`, naming the parameter by its wire name with the failure at the
+/// parameter's own pointer; an absent optional parameter breaks nothing.
+#[test]
+fn a_query_value_that_breaks_a_bound_is_refused_naming_its_parameter() {
+    use kynos::{error::rejection::QueryRejection, extract::params::query::DecodeQuery};
+
+    for (query, parameter, detail) in [
+        ("q=a", "q", "must be at least 2 characters long"),
+        ("q=ab&limit=0", "limit", "must be at least 1"),
+        ("q=ab&limit=1001", "limit", "must be at most 1000"),
+        ("q=ab&score=0", "score", "must be at least 1"),
+        ("q=ab&score=101", "score", "must be at most 100"),
+    ] {
+        match <Bounded as DecodeQuery>::decode(Some(query)) {
+            Err(QueryRejection::Schema { name, failures }) => {
+                assert_eq!(name, parameter, "{query}");
+                assert_eq!(
+                    failures,
+                    std::collections::BTreeMap::from([(String::new(), detail.to_owned())]),
+                    "{query}"
+                );
+            }
+            Err(other) => panic!("{query}: refused for another reason: {other}"),
+            Ok(decoded) => panic!("{query}: accepted as {:?}", decoded.limit),
+        }
+    }
+
+    for (query, limit, score) in [
+        ("q=ab", None, None),
+        ("q=ab&limit=1&score=1", Some(1), Some(Score(1))),
+        ("q=ab&limit=1000&score=100", Some(1000), Some(Score(100))),
+    ] {
+        match <Bounded as DecodeQuery>::decode(Some(query)) {
+            Ok(decoded) => {
+                assert_eq!(decoded.limit, limit, "{query}");
+                assert_eq!(decoded.score, score, "{query}");
+            }
+            Err(rejection) => panic!("{query}: refused: {rejection}"),
+        }
+    }
+}
+
 // --- The derived cookie decoder reads only a cookie that is text -----------
 //
 // The second runtime property checked here, for the reason the query one is:
