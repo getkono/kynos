@@ -320,7 +320,12 @@ const PER_LAYER: usize = 1;
 /// Only `<=` is asserted per build, so this is where the two readings are
 /// recorded — an equality would fail on the first build whose feature set
 /// makes the future narrower, which is not a regression.
-const DISPATCH_FUTURE_BYTES: usize = 280;
+///
+/// Both readings are Linux's. The width is the compiler's layout of a state
+/// machine over platform types, so macOS reads its own: 288 bytes with
+/// `--all-features` on the CI `macos-latest` runner, where 280 failed. Windows
+/// reads within 280 on its runner.
+const DISPATCH_FUTURE_BYTES: usize = if cfg!(target_os = "macos") { 288 } else { 280 };
 
 /// The record, for the middleware half: what one request costs at each depth a
 /// stack is mounted at, over interceptors that allocate nothing of their own.
@@ -427,7 +432,8 @@ fn a_layer_costs_the_same_wherever_it_sits() {
 /// The ceiling is the half that can fail, and it is a ratchet rather than a
 /// target: a future that widened would cost every in-flight request on the
 /// server, which no allocation count above can see. 280 bytes at every depth,
-/// and 280 at each of the two feature sets this target is built at — see
+/// and 280 at each of the two feature sets this target is built at on Linux
+/// (288 on macOS) — see
 /// [`DISPATCH_FUTURE_BYTES`] for the readings and for what the number does not
 /// cover. That is also the figure the request for this guard named, but it is
 /// recorded here because it was measured — a number carried over unmeasured
