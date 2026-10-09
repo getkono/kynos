@@ -10,9 +10,11 @@
 //! type first becomes concrete, and therefore where asking for something the
 //! context does not have stops compiling.
 //!
-//! The comparison worth drawing: axum, actix-web and poem all resolve erased
-//! state at run time and panic when it is absent, and salvo's `Depot` is keyed
-//! by string. Here there is nothing to look up. Try adding
+//! The comparison worth drawing: axum's `State<S>` is checked at compile time
+//! too, but its `Extension<T>`, actix-web's `Data<T>` and poem's `Data<&T>`
+//! resolve erased state at run time and answer 500 when it is absent, and
+//! salvo's `Depot` is keyed by string. Here there is nothing to look up. Try
+//! adding
 //!
 //! ```ignore
 //! #[kynos::get("/mailer")]
