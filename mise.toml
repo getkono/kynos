@@ -27,6 +27,7 @@ hk = "1.53.0"
 "github:nextest-rs/nextest" = { version = "cargo-nextest-0.9.140", exe = "cargo-nextest" }
 "github:convco/convco" = "0.7.0"
 "github:obi1kenobi/cargo-semver-checks" = "0.50.0"
+"github:EmbarkStudios/cargo-deny" = "0.20.2"
 
 [tasks.format]
 description = "Format the Rust workspace"
@@ -772,6 +773,18 @@ description = "Compare the public API against the last published release"
 # the wrong tool for it.
 run = "cargo semver-checks check-release --workspace --all-features"
 
+[tasks."deny:check"]
+description = "Check dependencies for advisories, licences, bans and sources"
+# The policy -- which licences, which sources, which advisories are waived and
+# why -- is `deny.toml`'s, and each field is argued there. This task adds
+# nothing to it, so a human and CI run the same check.
+#
+# It compiles nothing; it reads `cargo metadata` and fetches the RustSec
+# advisory database. That fetch is why an advisory published overnight can fail
+# a pull request that changed no dependency: the graph did not move, what is
+# known about it did.
+run = "cargo deny --locked check"
+
 [tasks.coverage]
 description = "Run tests with LLVM coverage"
 # `-E 'not binary(ui)'` for the reason `ui:check` gives, here as in
@@ -904,6 +917,7 @@ run = [
   { task = "references:verify" },
   { task = "containment:check" },
   { task = "containment:test" },
+  { task = "deny:check" },
   { task = "cost:test" },
   { task = "profile:test" },
   { task = "commits:test" },
