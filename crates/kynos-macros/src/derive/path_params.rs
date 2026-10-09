@@ -29,10 +29,8 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let params = Param::pair(fields, &names);
     let rejection = quote!(::kynos::error::rejection::PathRejection);
 
-    // A capture the route matched is looked up by name rather than by
-    // position. The route attribute already asserts that `NAMES` matches the
-    // template's variables in order, so the two agree; looking up by name keeps
-    // decoding correct without depending on that assertion.
+    // Looked up by name, so decoding does not depend on the route attribute's
+    // order assertion.
     let reads = params.iter().map(|param| {
         let wire = param.name();
         let found = quote! {
@@ -52,9 +50,7 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let parameters = parameters_body(&params, &quote!(::kynos::openapi::ParameterIn::Path), true);
     let encode = path_encode_body(&params);
 
-    // Three implementations, because the two directions are their own traits.
-    // A derive supplies both, so nothing a user writes changes; what the split
-    // removes is the *hand-written* group that supplied neither and panicked.
+    // Three implementations, one per direction plus the description.
     Ok(quote! {
         impl #impl_generics ::kynos::extract::params::path::PathParams
             for #name #ty_generics #where_clause

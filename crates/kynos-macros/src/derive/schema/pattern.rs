@@ -5,13 +5,9 @@
 
 use super::{LitStr, TokenStream2, Type, quote};
 
-/// The `pattern` check on `value`, a `&#ty`, against a `static` the block
-/// declares, so the pattern compiles once per process however many values
-/// reach it.
-///
-/// The static holds the pattern in the engine's dialect, translated here
-/// rather than at run time. `refusals` has already refused one that does not
-/// translate, so the empty expansion is never emitted.
+/// The `pattern` check on `value`, a `&#ty`, against a `static` so the pattern
+/// compiles once per process. `refusals` already refused an untranslatable
+/// one, so the empty expansion is never emitted.
 pub(super) fn check(ty: &Type, declared: &LitStr) -> TokenStream2 {
     let Ok(translated) = translate(&declared.value()) else {
         return TokenStream2::new();

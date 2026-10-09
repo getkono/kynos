@@ -6,9 +6,8 @@ use crate::model::{extensions::Extensions, external_docs::ExternalDocumentation}
 
 /// Metadata for a single tag used by [`Operation::tags`](crate::Operation::tags).
 ///
-/// Tag names must be unique across a document. In Kynos a tag is a *type*
-/// rather than a string, so uniqueness is a property of the type system rather
-/// than something checked after the fact.
+/// Tag names must be unique across a document; in Kynos a tag is a *type*, so
+/// the type system enforces that.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tag {
     /// The name of the tag. Operations refer to it by this value.

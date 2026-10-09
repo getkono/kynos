@@ -29,12 +29,9 @@ impl Validator {
     /// 3.2 admits both (`references/3.2.0.md:4685`); 3.1 admits only a
     /// component name, so this is always `false` there.
     ///
-    /// A *bare* single-segment name is not read as a URI even though one would
-    /// be a legal relative reference. 3.2 says a name matching a component
-    /// name is a component name, and that referencing by single-segment
-    /// relative URI is spelled `./foo` — so `Bearer` with nothing declared is
-    /// the misspelling this rule exists to catch, and accepting it would leave
-    /// the rule with nothing to reject.
+    /// A *bare* single-segment name is not read as a URI: 3.2 spells a
+    /// single-segment relative reference `./foo`, so an undeclared `Bearer` is
+    /// a misspelling, which accepting would leave the rule unable to catch.
     pub(in crate::validate) fn names_a_scheme_by_uri(self, name: &str) -> bool {
         self.version.supports_3_2()
             && (name.contains('/') || name.contains(':') || name.contains('#'))
@@ -70,9 +67,7 @@ impl Validator {
         }
 
         // 3.1 marks a response's `description` REQUIRED and 3.2 does not, so
-        // the model holds an `Option` and this is where the requirement is
-        // applied — against the version the document claims, rather than
-        // against both at once.
+        // the model holds an `Option` and the claimed version decides here.
         if !self.version.supports_3_2() {
             let mut require_description = |status: &str, response: &RefOr<Response>| {
                 if response
@@ -165,12 +160,8 @@ pub(in crate::validate) fn check_operation_content(
                 violations,
             );
         }
-        // A response link used to be checked here too: it names one of
-        // `operationRef` and `operationId`, which holds by construction, so a
-        // link carries nothing this function could reject. The same is true of
-        // a header's shape, its examples and its style -- but not of its name,
-        // which is a key in the map rather than anything the value's type can
-        // reach, so that one is still a rule.
+        // Links and a header's shape hold by construction; a header's name is
+        // a map key no type reaches, so it is still checked.
         check_header_map(
             &format!("{response_location}/headers"),
             &response.headers,

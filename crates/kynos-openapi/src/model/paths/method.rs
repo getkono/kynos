@@ -8,11 +8,9 @@ use serde::{Deserialize, Serialize};
 pub mod http;
 
 /// An HTTP method that has a dedicated Path Item field.
-/// `#[non_exhaustive]` because OpenAPI 3.2 adds to this and the addition is
-/// `#[cfg]`-gated. Cargo unifies features across a dependency graph, so any
-/// crate enabling `openapi32` enables it for every crate in the build -- and
-/// without this attribute that would turn a downstream exhaustive `match` into
-/// a compile error, which is not what "purely additive" is supposed to mean.
+///
+/// `#[non_exhaustive]` because `openapi32` adds a variant and Cargo unifies
+/// features across a build.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -77,11 +75,8 @@ impl Method {
 
     /// The method with this wire spelling, if it has a Path Item field.
     ///
-    /// Case-sensitive: HTTP method tokens are, and a description that spelled
-    /// one differently would not be describing the same request. Returns
-    /// `None` for a method OpenAPI has no field for, which is a different
-    /// answer from "not a method" — under `openapi32` those reach a Path Item
-    /// through `additionalOperations` instead.
+    /// Case-sensitive, as HTTP method tokens are. Returns `None` for a method
+    /// with no field; under `openapi32` those use `additionalOperations`.
     #[must_use]
     pub fn from_wire_str(name: &str) -> Option<Self> {
         Some(match name {

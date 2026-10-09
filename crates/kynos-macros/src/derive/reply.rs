@@ -7,26 +7,13 @@
 //!         | description = "<what it means>"
 //! ```
 //!
-//! `status` is what makes the set closed, and it is checked three ways: it must
-//! be present on every variant, it must name a final response, and no two
-//! variants may share one. `description` is what the response says it means,
-//! falling back to the variant's own doc comment and then to the status code's
-//! reason phrase, so a variant is described without being described twice.
+//! `status` is required on every variant, names a final response, and is
+//! unique. `description` falls back to the variant's doc comment, then the
+//! reason phrase.
 //!
-//! # What carries a variant's body onto the wire
-//!
-//! `serde::Serialize`, required of a bodied variant's payload by the emitted
-//! `into_response` rather than by a bound anyone writes.
-//!
-//! It follows from the description this derive already emits: a bodied variant
-//! is described as `application/json`, and a payload that cannot be serialized
-//! as JSON would make that description a claim the handler cannot honour. The
-//! alternative bound, `IntoResponse`, is the wrong one — Kynos deliberately has
-//! no `IntoResponse for u32` or `for String`, and a reply variant legitimately
-//! holds either.
-//!
-//! A unit variant writes its status and an empty body, and needs no bound at
-//! all.
+//! A bodied variant is described and written as `application/json`, so its
+//! payload must be `serde::Serialize` (not `IntoResponse`, which `u32` or
+//! `String` lack). A unit variant writes an empty body.
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
@@ -38,11 +25,7 @@ use syn::{
 
 use crate::derive::common::doc_string;
 
-/// The range a reply's status may fall in.
-///
-/// A 1xx is an interim response that precedes the final one, so a handler that
-/// returns a `Reply` never produces it. 6xx and above are not status codes at
-/// all.
+/// The range a reply's status may fall in: final responses only, never 1xx.
 const STATUS_RANGE: std::ops::RangeInclusive<u16> = 200..=599;
 
 pub(crate) fn expand(item: TokenStream) -> TokenStream {
@@ -54,9 +37,7 @@ pub(crate) fn expand(item: TokenStream) -> TokenStream {
 }
 
 pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
-    // The point of the derive is a *closed set* of responses, one variant per
-    // status. A struct has one shape and therefore one status, which the
-    // status types in `response::status` already express.
+    // A closed set of responses needs an enum; one status is a status wrapper.
     let data = match &input.data {
         Data::Enum(data) => data,
         Data::Struct(data) => {
@@ -75,8 +56,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         }
     };
 
-    // A status on the enum itself would apply to every variant, which is the
-    // opposite of what a closed set of responses is for.
+    // A status belongs on each variant, not the enum.
     if let Some((_, span)) = parse_reply(&input.attrs)?.status {
         return Err(syn::Error::new(
             span,
@@ -103,10 +83,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
             ));
         };
 
-        // Unlike an `ApiError`, whose variants carry a `detail` that tells two
-        // occurrences of one status apart, a reply's variants are keyed by
-        // status alone: two under the same code are two bodies the description
-        // would have to file under one key.
+        // Unlike an `ApiError`, a reply's variants are keyed by status alone.
         if seen.iter().any(|(earlier, _)| *earlier == status) {
             return Err(syn::Error::new(
                 span,
@@ -146,11 +123,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     })
 }
 
-/// One variant, as the response it declares.
-///
-/// A variant carrying a body describes it as JSON, which is the representation
-/// a described type reaches a consumer as unless a body wrapper says otherwise;
-/// a unit variant describes a response with no content at all.
+/// One variant, as the response it declares: JSON content for a body, none for
+/// a unit variant.
 fn response(variant: &Variant, status: u16, description: Option<&str>) -> TokenStream2 {
     let description = description
         .map(ToOwned::to_owned)
@@ -191,12 +165,7 @@ fn response(variant: &Variant, status: u16, description: Option<&str>) -> TokenS
     quote!(responses = responses.with(#status, #built);)
 }
 
-/// One variant, as the match arm that writes it.
-///
-/// The mirror of [`response`]: a bodied variant writes the `application/json`
-/// that function described it as, and a unit variant the empty body. Both carry
-/// the status the variant declared, so what a consumer receives and what the
-/// description promised come from one attribute.
+/// One variant, as the match arm that writes it; the mirror of [`response`].
 fn write(variant: &Variant, status: u16) -> TokenStream2 {
     let ident = &variant.ident;
 
@@ -275,11 +244,8 @@ fn parse_reply(attrs: &[Attribute]) -> syn::Result<ReplyArgs> {
     Ok(args)
 }
 
-/// A variant's fields are its response body, and a body is one described type.
-///
-/// An anonymous record has no name to register a component under and no
-/// `Schema` implementation to build one from, so the remedy is to give it a
-/// name. A unit variant is the empty body and needs no type at all.
+/// A variant's fields are its response body, and a body is one described type
+/// (or none, for a unit variant).
 fn body_is_one_named_type(variant: &syn::Variant) -> syn::Result<()> {
     match &variant.fields {
         Fields::Unit => Ok(()),

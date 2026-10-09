@@ -15,13 +15,11 @@ pub const RESERVED_EXTENSION_PREFIXES: &[&str] = &["x-oai-", "x-oas-"];
 
 /// Implementation-defined fields attached to an object.
 ///
-/// Most objects in the model carry one of these flattened into their
-/// serialization. Two do not, because the specification forbids it: the
+/// Flattened into most objects; the specification forbids them on the
 /// Reference Object and the Security Requirement Object.
 ///
-/// Keys are *not* checked on construction — [`crate::validate`] reports
-/// non-conforming names, so that a description parsed from an external source
-/// round-trips rather than being silently rewritten.
+/// Keys are *not* checked on construction, so parsed descriptions round-trip;
+/// [`crate::validate`] reports non-conforming names.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Extensions(pub Map<Value>);
@@ -54,10 +52,8 @@ impl Extensions {
 
     /// Removes an extension, returning its value.
     ///
-    /// Removal preserves the order of the remaining entries, which is what
-    /// keeps an emitted description byte-stable across an edit. Owning that
-    /// choice here is the point: a caller reaching through to the map would
-    /// have to make it, and could make it differently each time.
+    /// Preserves the order of the remaining entries, keeping emitted output
+    /// byte-stable across an edit.
     pub fn remove(&mut self, key: &str) -> Option<Value> {
         self.0.shift_remove(key)
     }

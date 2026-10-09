@@ -10,19 +10,15 @@ use crate::model::{
     server::Server,
 };
 
-// `Map` backs `additional_operations`, which OpenAPI 3.2 introduced, so the
-// import is gated the same way the field is.
+// Gated with `additional_operations`, its only user.
 #[cfg(feature = "openapi32")]
 use crate::Map;
 
 /// The operations available on a single path.
 ///
-/// The per-method slots are boxed. An [`Operation`] is over a kilobyte, and
-/// inlining nine of them made this type 8.7 KB — a cost every
-/// [`Paths`](crate::model::paths::Paths) entry paid on insert and on rehash.
-/// Use [`operation`](PathItem::operation) and
-/// [`set_operation`](PathItem::set_operation) rather than touching the fields,
-/// and the indirection stays invisible.
+/// The per-method slots are boxed to keep the type small; use
+/// [`operation`](PathItem::operation) and
+/// [`set_operation`](PathItem::set_operation) to avoid handling the boxes.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PathItem {
     /// A reference to an external Path Item.
@@ -97,9 +93,6 @@ pub struct PathItem {
     pub servers: Vec<Server>,
 
     /// Parameters applying to every operation on this path.
-    ///
-    /// Hoisting shared parameters here rather than repeating them on each
-    /// operation is what keeps a large description readable.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parameters: Vec<RefOr<Parameter>>,
 

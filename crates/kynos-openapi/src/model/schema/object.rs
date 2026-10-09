@@ -19,9 +19,8 @@ use crate::{
 /// vocabulary.
 ///
 /// Unrecognized keywords are preserved in
-/// [`unknown_keywords`](SchemaObject::unknown_keywords) rather than dropped,
-/// because JSON Schema is extensible by design and a description parsed from an
-/// external source must round-trip.
+/// [`unknown_keywords`](SchemaObject::unknown_keywords) so a parsed description
+/// round-trips.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SchemaObject {
     // --- Core ------------------------------------------------------------

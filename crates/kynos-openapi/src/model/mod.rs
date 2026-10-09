@@ -1,11 +1,7 @@
 //! The OpenAPI object model.
 //!
-//! Data and invariant-preserving constructors, and nothing else. Producing an
-//! artifact from this model lives in [`crate::emit`]; checking one against the
-//! specification lives in [`crate::validate`].
-//!
-//! This is the subtree that would become a standalone IR crate if the
-//! satellite-crate boundary described in `docs/architecture.md` is ever drawn.
+//! Data and invariant-preserving constructors only; emission lives in
+//! [`crate::emit`] and validation in [`crate::validate`].
 
 pub mod body;
 pub mod callback;
@@ -16,11 +12,9 @@ pub mod extensions;
 pub mod external_docs;
 pub mod info;
 pub mod link;
-// Private: it declares one deserializer the model's own fields point at, and
-// nothing a caller has a path to.
+// Private: one deserializer for the model's own fields.
 mod nullable;
-// Private: it declares one deserializer the model's own fields point at, and
-// nothing a caller has a path to.
+// Private: one deserializer for the model's own fields.
 mod number;
 pub mod parameter;
 pub mod paths;

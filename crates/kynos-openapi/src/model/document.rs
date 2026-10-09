@@ -20,13 +20,9 @@ use crate::{
 };
 
 /// The version of the OpenAPI Specification a document targets.
-/// `#[non_exhaustive]` because OpenAPI 3.2 adds to this and the addition is
-/// `#[cfg]`-gated. Cargo unifies features across a dependency graph, so any
-/// crate enabling `openapi32` enables it for every crate in the build -- and
-/// without this attribute that would turn a downstream exhaustive `match` into
-/// a compile error, which is not what "purely additive" is supposed to mean.
 ///
-/// The same reasoning marks [`Method`](crate::Method),
+/// `#[non_exhaustive]` because `openapi32` adds variants and Cargo unifies
+/// features; so are [`Method`](crate::Method),
 /// [`ParameterIn`](crate::ParameterIn), [`Style`](crate::Style),
 /// [`ExampleValue`](crate::ExampleValue) and
 /// [`SecurityScheme`](crate::SecurityScheme). Matching one takes a wildcard
@@ -43,9 +39,7 @@ use crate::{
 /// # assert_eq!(label(SpecVersion::V3_1), "3.1");
 /// ```
 ///
-/// Without one it does not compile, which is the guarantee: this is the error
-/// a downstream crate would otherwise have met the day something else in its
-/// build turned `openapi32` on.
+/// Without one it does not compile:
 ///
 /// ```compile_fail
 /// # use kynos_openapi::SpecVersion;
@@ -69,9 +63,8 @@ pub enum SpecVersion {
 impl SpecVersion {
     /// The version string emitted in the `openapi` field.
     ///
-    /// Kynos implements the 3.1.2 and 3.2.0 texts. Patch releases of the
-    /// specification are clarifying rather than breaking, so a consumer that
-    /// understands 3.1 understands anything emitted here.
+    /// Kynos implements the 3.1.2 and 3.2.0 texts; patch releases are
+    /// clarifying rather than breaking.
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -111,8 +104,7 @@ pub struct Document {
     /// The canonical URI of this document.
     ///
     /// Introduced in OpenAPI 3.2. When present it is the base URI that
-    /// references resolve against, which is what makes a `$ref` between two
-    /// separately-served documents interoperable.
+    /// references resolve against.
     #[cfg(feature = "openapi32")]
     #[serde(rename = "$self", default, skip_serializing_if = "Option::is_none")]
     pub self_uri: Option<String>,
@@ -122,8 +114,7 @@ pub struct Document {
 
     /// The default JSON Schema dialect for schemas in this document.
     ///
-    /// Defaults to [`OAS_DIALECT`] when absent. Note that 3.1 and 3.2 share one
-    /// dialect URI, so this does not vary by specification version.
+    /// Defaults to [`OAS_DIALECT`] when absent, under both 3.1 and 3.2.
     #[serde(
         rename = "jsonSchemaDialect",
         default,
@@ -137,14 +128,9 @@ pub struct Document {
 
     /// The available paths and operations.
     ///
-    /// Always written, even when empty. Every version Kynos emits requires a
-    /// document to carry at least one of `paths`, `components` or `webhooks`,
-    /// and this is the one of the three that is always true of an API: an
-    /// empty Paths Object says there are no operations to show, which the
-    /// specification's "Security Filtering" section blesses in as many words.
-    /// Skipping it is what let a description of nothing but opaque routes --
-    /// which take no `paths` key by design -- emit as a document declaring
-    /// nothing at all.
+    /// Always written, even when empty: a document must carry one of `paths`,
+    /// `components` or `webhooks`, and an empty Paths Object is legal per the
+    /// specification's "Security Filtering" section.
     #[serde(default)]
     pub paths: Paths,
 
@@ -197,8 +183,7 @@ impl Document {
     /// The specification version this document declares.
     ///
     /// Returns `None` when [`openapi`](Document::openapi) holds a version this
-    /// build does not model — a 3.2 document read by a 3.1-only build, most
-    /// often.
+    /// build does not model, such as 3.2 in a 3.1-only build.
     #[must_use]
     pub fn spec_version(&self) -> Option<SpecVersion> {
         let mut parts = self.openapi.split('.');

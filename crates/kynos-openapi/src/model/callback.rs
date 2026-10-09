@@ -19,8 +19,7 @@ use crate::{
 /// `{$request.body#/callbackUrl}`. Each maps to the operations the API will
 /// perform against that URL.
 ///
-/// Extensions sit beside those keys, so this is not a bare map — see
-/// [`Paths`](crate::Paths), which has the same shape for the same reason.
+/// Extensions sit beside those keys, as in [`Paths`](crate::Paths).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Callback {
     /// The Path Items, keyed by runtime expression.

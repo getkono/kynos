@@ -18,10 +18,8 @@ use crate::{
 
 /// Media types whose payload is a sequence of items rather than one value.
 ///
-/// Introduced as a concept in OpenAPI 3.2, which also supplies
-/// [`MediaType::item_schema`] to describe the individual items. Under 3.1 these
-/// payloads can only be described as opaque strings, which is why Kynos gates
-/// its streaming response types behind `openapi32`.
+/// Introduced in OpenAPI 3.2, alongside [`MediaType::item_schema`] to describe
+/// the individual items.
 #[cfg(feature = "openapi32")]
 pub const SEQUENTIAL_MEDIA_TYPES: &[&str] = &[
     "application/jsonl",
@@ -30,11 +28,8 @@ pub const SEQUENTIAL_MEDIA_TYPES: &[&str] = &[
     "application/geo+json-seq",
     crate::model::body::mime_names::TEXT_EVENT_STREAM,
     "multipart/mixed",
-    // RFC 9110 section 14.6. A 206 carrying several parts holds an unnamed,
-    // request-determined number of them, each with its own `Content-Range` --
-    // which is a sequence rather than a value, and which 3.2's own
-    // *Streaming Byte Ranges* example describes with `itemSchema` and
-    // `itemEncoding`.
+    // RFC 9110 section 14.6: a multi-part 206 is a sequence of parts, as 3.2's
+    // *Streaming Byte Ranges* example describes with `itemSchema`.
     "multipart/byteranges",
 ];
 
@@ -48,16 +43,14 @@ pub struct MediaType {
     /// The schema of the complete content.
     ///
     /// For a [sequential media type](SEQUENTIAL_MEDIA_TYPES) this describes the
-    /// whole stream treated as an array, which is only useful to a consumer
-    /// willing to buffer it. Use [`item_schema`](MediaType::item_schema) to
-    /// describe items that are processed as they arrive.
+    /// whole stream as an array; use [`item_schema`](MediaType::item_schema) to
+    /// describe items as they arrive.
     pub schema: Option<Schema>,
 
     /// The schema of each item within a sequential media type.
     ///
-    /// Introduced in OpenAPI 3.2. This is what makes Server-Sent Events, JSON
-    /// Lines and JSON Text Sequences describable at all; it may be used
-    /// alongside [`schema`](MediaType::schema).
+    /// Introduced in OpenAPI 3.2. May be used alongside
+    /// [`schema`](MediaType::schema).
     #[cfg(feature = "openapi32")]
     pub item_schema: Option<Schema>,
 
@@ -122,8 +115,7 @@ impl MediaType {
 
     /// Shows the body with one inline example.
     ///
-    /// Replaces any named examples: the two forms exclude each other, so there
-    /// is no state that holds both.
+    /// Replaces any named examples; the two forms exclude each other.
     #[must_use]
     pub fn with_example(mut self, value: impl Into<Value>) -> Self {
         self.examples = Some(Examples::Inline(value.into()));

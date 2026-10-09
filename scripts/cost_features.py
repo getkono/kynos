@@ -1,95 +1,32 @@
 """Per-feature cost sweep: what each feature costs a linked artifact and in IR.
 
-[`performance.md`](../docs/performance.md)'s taxonomy files two sweep kinds --
-a binary delta over `.text` and a codegen delta over monomorphized IR -- and
-says of both that they "build the same fixture at each feature and compare
-artifacts". This is the driver for that, and `crates/kynos/cost/fixture.rs` is
-the fixture. Because that fixture never *uses* an optional feature, each row
-answers one question: what does merely enabling F cost a program that does not
-use F?
+The driver for [`performance.md`](../docs/performance.md)'s binary delta (over
+`.text`) and codegen delta (over monomorphized IR), both built from
+`crates/kynos/cost/fixture.rs`. That fixture uses no optional feature, so each
+row answers: what does merely enabling F cost a program that does not use F? A
+zero row means nothing survived into `.text`, or was instantiated, because
+nothing called it.
 
-A zero row is therefore evidence about the linker and the monomorphization
-collector, not about the API: it says that enabling F added nothing that
-survived into `.text`, or nothing that was instantiated here, because nothing
-called it. A non-zero row says the opposite, and says how much.
+`--kind codec` answers the other question over `crates/kynos/cost/codec.rs`,
+which mounts each codec behind its flag over a transport floor; its baseline is
+that floor. A codec row includes the codec's dependency and derives, so it is
+what a program mounting the codec pays, not Kynos code alone.
 
-A third sweep answers the other question, over a second fixture. The shape
-table in that document bills an opt-in payload codec "a binary delta, and an
-allocation count on an operation that names it", and says the delta is taken on
-a route that *mounts* the codec. No program can answer both questions: a route
-naming `Json<T>` cannot compile with `json` off, so the fixture that keeps its
-`json` row honest is the fixture that cannot be built at the baseline. So
-`--kind codec` sweeps `crates/kynos/cost/codec.rs` instead, which mounts one
-operation each way per codec behind that codec's flag, over a transport floor
-mounted at every point. Its baseline is that floor alone.
+The binary half builds `--release` (the shipped artifact, fat LTO); the codegen
+half the dev profile, since `cargo llvm-lines` reads pre-link IR that fat LTO
+deletes. It sees only the example crate's instantiations, and rustc shares
+generics out of upstream rlibs, so **a negative codegen row is a relocation, not
+a saving**.
 
-What a codec row includes is stated in `codec.tsv` and worth stating here too:
-mounting a codec pulls in its dependency -- `serde_json`, `serde_html_form`,
-`multer`, `prost`, `async-compression` -- and its operations declare a payload
-type carrying two derives. The delta is all of that, which is what a program
-mounting the codec pays, and it is not Kynos code alone.
+The loop is driven here rather than by `cargo hack`, which has no hook between
+builds to attribute each overwritten artifact to its feature.
 
-That is narrower than the additivity `lib.rs` states, and deliberately not the
-same claim. `lib.rs` makes its claim about `openapi32` alone, and makes it
-about *source* compatibility -- the model types it extends are
-`non_exhaustive`, so a `match` over one keeps compiling whether or not the
-feature is enabled. Nothing there is a statement about cost, and nothing
-measured here would falsify it.
-
-The two halves run under different profiles, on purpose. The binary half is
-`--release`, because that is the artifact that ships and `lto = "fat",
-codegen-units = 1` gives a build with no cross-CGU nondeterminism. The codegen
-half runs the dev profile, because `cargo llvm-lines` reads pre-link IR and a
-fat-LTO release build deletes the very monomorphizations the codegen delta
-exists to count.
-
-One limit of the codegen half is worth stating rather than discovering:
-`cargo llvm-lines --example` reports the IR of the *example* crate, so it sees
-framework generics as the fixture instantiates them rather than generic-free
-library code compiled into the rlib. That is the intended scope --
-`performance.md` says both kinds build the same fixture.
-
-It also means the sign can invert, which a subset limitation alone would not
-predict, so read a negative row carefully. rustc shares generic instantiations
-out of upstream rlibs, so a feature that enlarges the dependency graph can move
-instantiations off the example crate and *reduce* this number without deleting
-any work at all: **a negative codegen row is a relocation, not a saving**.
-`test-util` is the worked example. It gates one module the fixture never names
-and still reports -3982 lines, because `core::str::pattern::simd_contains` and
-`hashbrown`'s resize paths stop being instantiated here and start being
-instantiated upstream -- neither is Kynos code and neither stopped existing.
-
-Measuring the whole graph instead would need `-Z share-generics=off`, which is
-nightly-only and out of scope here. The `.text` half is the number without this
-confound, which is one reason both halves exist.
-
-`cargo hack` is deliberately not the driver, though the feature list copies
-`features:targets`' shape exactly. cargo-hack has no hook between builds and
-every build overwrites `target/release/examples/cost_fixture`, so a sweep it
-drove could not attribute an artifact to the feature that produced it: it would
-measure the last build once per point. Driving the loop here also means nothing
-in this task rewrites a member manifest, which is why it may share a job with
-neither `features:check` nor anything that follows it.
-
-A script rather than a shell pipeline for `containment.py`'s reason: this
-parses two tools' output, diffs two committed tables and emits Markdown, and
-every one of those is where a pipeline gets it quietly wrong.
-
-Exit codes follow the `semver` CI job's rule. Zero whenever a measurement was
-made, whatever it says -- no threshold is applied here and none is recorded
-anywhere, per [`nfr.md`](../docs/nfr.md#thresholds), which sets a ceiling from a
-first recorded measurement and never guesses one. Non-zero only when a
-measurement could not be made at all: a build that did not compile, a missing
-`llvm-size`, an ambient `RUSTFLAGS`, an output with no `(TOTAL)` in it.
-
-`KYNOS_COST=check` is the one exception, and it is the release gate rather than
-a ceiling. It asks whether the committed baselines are what this run measured
--- whether `cost:record` would write nothing new -- and exits `UNRECORDED` when
-they are not. No number is judged too large: what it refuses is a release whose
-cost nobody recorded, so that every release tag carries the baselines of the
-release it names and the diff that re-records them is where a cost is reviewed.
-That is also what lets every report compare against the last release without
-rebuilding it: `released` reads the baselines the last `kynos-v*` tag shipped.
+Exit zero whenever a measurement was made, whatever it says (no threshold, per
+[`nfr.md`](../docs/nfr.md#thresholds)); non-zero only when one could not be
+made. `KYNOS_COST=check` is the release gate: it exits `UNRECORDED` when the
+committed baselines are not what this run measured, so every release tag
+carries its own baselines and the diff re-recording them is where a cost is
+reviewed. `released` reads the baselines the last `kynos-v*` tag shipped.
 """
 
 import argparse
@@ -101,91 +38,51 @@ import sys
 from collections import namedtuple
 from pathlib import Path
 
-# From the script's own location rather than the working directory, so running
-# it by hand from a crate directory sweeps the same tree mise does.
+# From the script's location, so it sweeps the same tree from any directory.
 ROOT = Path(__file__).resolve().parent.parent
 COST = ROOT / "crates/kynos/cost"
 
-# `features:targets`' exclusions, for its reasons: `server` and `tls` need an
-# HTTP protocol, `time` and `decimal` are umbrellas that do not compile alone,
-# and `full` would pull in everything and sweep nothing partial. `openapi31` is
-# excluded on top of those because it is the pinned baseline every other point
-# is measured against, so a point for it alone is the baseline row.
+# `features:targets`' exclusions, plus `openapi31`, which is the baseline row.
 EXCLUDED = frozenset(
     {"default", "server", "tls", "time", "decimal", "full", "openapi31"}
 )
 BASELINE = "openapi31"
-# Parenthesised the way `cargo llvm-lines` parenthesises `(TOTAL)`, so a reader
-# of the table cannot mistake it for a feature name.
+# Parenthesised like `(TOTAL)`, so it cannot be mistaken for a feature name.
 ALL_FEATURES = "(all-features)"
 TOP = 5
 
-# The two example targets, named rather than spelled at each call site: a sweep
-# that built one and weighed the other would report a table of zeroes and exit
-# zero, which is the failure `measure_binary` already refuses to make possible
-# by taking the artifact path from cargo rather than guessing it.
 FIXTURE = "cost_fixture"
 CODEC_FIXTURE = "cost_codec"
 
-# The five opt-in payload codecs, and the feature set each is measured at.
-#
-# Stated rather than derived, because nothing in `[features]` marks a flag as a
-# codec -- `mise.toml`'s `lint:codecs` writes the same five out and argues for
-# writing them out, and `crates/kynos/tests/alloc_codecs.rs` has a module per
-# name. `cost_features_test.py` holds this set against that task's, so the three
-# lists cannot drift apart in the direction that loses a codec.
+# The opt-in payload codecs. Stated, since no `[features]` entry marks a codec;
+# `mise.toml`'s `lint:codecs` and `tests/alloc_codecs.rs` list the same five,
+# and `cost_features_test.py` holds this set against that task's.
 CODECS = frozenset({"json", "form", "multipart", "protobuf", "compression"})
-# `macros` rather than `openapi31` alone: an operation is declared with an
-# attribute macro, so the fixture that mounts a codec cannot be built without
-# it. Pinned at every point, so it is not what any delta is measuring.
+# The codec fixture declares operations with an attribute macro.
 CODEC_BASELINE_FEATURES = "openapi31,macros"
-# Parenthesised for `ALL_FEATURES`' reason. It is not a feature: it is the point
-# where the fixture mounts its transport floor and no codec at all.
+# The transport floor with no codec mounted.
 CODEC_BASELINE = "(no codec)"
 
-# `cargo llvm-lines` prints its total as two bare integers and every other row
-# with a share and a running share beside each -- `1608 (3.2%,  3.2%)     1
-# (0.1%,  0.1%)  <matchit::tree::Node<usize>>::insert` -- so both parentheses
-# are optional here. A name may hold spaces, commas and angle brackets, which
-# is why it is taken as the rest of the line rather than as a field.
+# Both share parentheses are optional: the total row has none. A name may hold
+# spaces, commas and angle brackets, so it is the rest of the line.
 LLVM_LINES_ROW = re.compile(
     r"^\s*(\d+)(?:\s*\([^)]*\))?\s+(\d+)(?:\s*\([^)]*\))?\s+(\S.*?)\s*$"
 )
-# `kynos[a28856ce07048254]::router::describe` -- the bracketed part is the
-# stable crate id, which is a hash of the crate's *enabled features* among
-# other things. It therefore differs between two points of this very sweep, so
-# leaving it in would make every function look new at every feature and
-# attribution would report nothing but noise.
-#
-# Bounded two ways, because unbounded it also eats a slice of a float type:
-# `[f64]` is entirely hex digits, so `<[f64] as core::fmt::Debug>::fmt` and its
-# `f32` twin would both collapse to `< as core::fmt::Debug>::fmt` and one would
-# silently overwrite the other in the table.
-#
-# The lookbehind is the sharp half: a crate id always follows the crate's name,
-# and a slice bracket never does -- it follows `<`, `&`, `(` or a comma. The
-# length bound is the blunt half. It is a range rather than exactly sixteen
-# because a `StableCrateId` is a 64-bit value printed without leading-zero
-# padding, so it is *usually* sixteen digits and sometimes fewer: one sweep's
-# output holds 9592 of sixteen digits and 2332 of fifteen. Pinning it at
-# sixteen would leave every `alloc` and `hashbrown` id in place, which is the
-# noise the stripping exists to remove.
+# The stable crate id in `kynos[a28856ce07048254]::router::describe`, which
+# hashes the enabled features and so differs between points. The lookbehind
+# spares `[f64]`, which follows `<`, never a name; a `StableCrateId` prints
+# without zero padding, so up to sixteen digits.
 DISAMBIGUATOR = re.compile(r"(?<=\w)\[[0-9a-f]{8,16}\]")
 
-# The two header lines `write_tsv` emits that are read back rather than only
-# written: which compiler produced the rows below them. `# baseline:` is not
-# among them: the absolute it repeats is read from the baseline row instead.
+# The header lines `write_tsv` emits that are read back: which compiler
+# produced the rows.
 PROVENANCE = re.compile(r"^#\s*(toolchain|host):\s*(\S.*?)\s*$")
 
-# A committed baseline and the compiler that measured it, kept together
-# because a drift is only a fact about Kynos when both sides of the
-# subtraction came from the same rustc.
+# A drift is only about Kynos when both sides came from the same rustc.
 Recorded = namedtuple("Recorded", ("toolchain", "host", "rows"))
 
-# The exit code `KYNOS_COST=check` stops with when it measured and found numbers
-# nobody recorded. Distinct from 1 and 2, which say no measurement was made, so
-# a failed release gate never reads as a broken runner, nor a broken runner as
-# a cost to review.
+# `KYNOS_COST=check` found numbers nobody recorded. Distinct from 1 and 2, which
+# say no measurement was made.
 UNRECORDED = 3
 
 BINARY_TSV = "binary.tsv"
@@ -700,9 +597,7 @@ def table(rows, recorded, value, delta, unit, versions, baseline=BASELINE):
         was = None if recorded is None else recorded.rows.get(label, {}).get(delta)
         if was is None:
             shown, moved = ("—", "—") if recorded is None else ("—", "new")
-            # Not on a first run, where `movers` already ranks every point by
-            # cost, and not for the baseline, which is the point the deltas are
-            # taken against rather than a point with a cost of its own.
+            # Not on a first run, which `movers` ranks, nor for the baseline.
             if recorded is not None and label != baseline:
                 fresh[label] = measured[delta]
         else:
@@ -733,11 +628,7 @@ def movers(rows, drifts, recorded, delta, baseline=BASELINE):
     else:
         ranked = list(drifts.items())
         heading = "Largest drift, against the recorded baseline"
-    # Only what actually moved. Padding the list to five with rows that did not
-    # move makes the steady state -- nothing drifting at all -- into five lines
-    # of noise that happen to be the alphabetically first features, and a
-    # reader who learns to skip that section skips the run where something did
-    # move. It is also what makes `- none` reachable and true.
+    # Only what actually moved, so a steady state reads `- none`.
     ranked = [row for row in ranked if row[1] != 0]
     ranked.sort(key=lambda item: (-abs(item[1]), item[0]))
     return ranked[:TOP], heading
@@ -759,10 +650,7 @@ def attribute(label, functions):
     than a baseline.
     """
     base, here = functions[BASELINE], functions[label]
-    # The union of the two name sets, not just this point's. A feature that
-    # *removes* a monomorphization moves the total exactly as much as one that
-    # adds one, and walking only this point's functions would report a total
-    # that changed with nothing under it to explain the change.
+    # The union of both name sets, so a removed monomorphization is attributed.
     moved = []
     for name in set(base) | set(here):
         lines, copies = here.get(name, (0, 0))
@@ -1120,10 +1008,6 @@ def report(
 
 def main():
     parsed = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    # `all` rather than the `both` it was: there are three kinds now, and a
-    # default whose name says two would be a default that lies about what it
-    # runs. Nothing passes the old name -- `cost:codegen` passes `codegen` and
-    # every other task takes the default.
     parsed.add_argument(
         "--kind",
         choices=("all", "binary", "codegen", "codec"),
@@ -1220,9 +1104,7 @@ def main():
             file=sys.stderr,
         )
 
-    # Last, so a refused release still leaves every artifact above behind: the
-    # report and the measured tables are what the reviewer of the re-record
-    # reads.
+    # Last, so a refused release still leaves the report and tables behind.
     if verdict:
         for reason in verdict:
             print(f"cost: {reason}", file=sys.stderr)
@@ -1233,8 +1115,6 @@ def main():
         )
 
 
-# Guarded rather than called outright, so that `scripts/cost_features_test.py`
-# can import the pure functions above -- the two parsers, the round-trip and
-# the report's ranking -- without running a fifty-build sweep to reach them.
+# Guarded so `cost_features_test.py` can import the pure functions.
 if __name__ == "__main__":
     main()

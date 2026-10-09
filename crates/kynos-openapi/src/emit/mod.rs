@@ -1,11 +1,8 @@
 //! Producing an artifact from a [`Document`], at a chosen specification
 //! version.
 //!
-//! The split from [`crate::model`] is the one the architecture asks for: the
-//! model is version-agnostic data, and everything that turns it into bytes at a
-//! particular version lives here. The serde derives stay on the model types
-//! themselves — they are part of how those types are represented, not part of
-//! choosing a version to represent them at.
+//! [`crate::model`] is version-agnostic data; turning it into bytes at a
+//! particular version lives here.
 
 pub mod downgrade;
 
@@ -29,18 +26,14 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// Returns an error only if a number cannot be written as a YAML number:
-    /// either it is beyond the range of a 64-bit float, or a value holds an
-    /// object shaped like `serde_json`'s private number token whose string is
-    /// no number at all. Both can happen only when `serde_json`'s
-    /// `arbitrary_precision` feature is unified into the build: without it,
-    /// `serde_json` holds no such number, and gives that key no meaning.
+    /// Returns an error only if a number cannot be written as a YAML number,
+    /// which can happen only when `serde_json`'s `arbitrary_precision` feature
+    /// is unified into the build: a number beyond the range of a 64-bit float,
+    /// or a hand-built object shaped like its private number token.
     #[cfg(feature = "yaml")]
     pub fn to_yaml(&self) -> Result<String, YamlError> {
-        // Only a build that writes numbers as token mappings pays for, or is
-        // changed by, the detour through a `Value`: a mapping there holds one
-        // value per key, where the model's own serialization writes every key
-        // it is given.
+        // Only token-mapping builds take the detour through a `Value`, which
+        // keeps one value per key where direct serialization writes every key.
         if !yaml_numbers::serialized_as_token() {
             return serde_yaml_ng::to_string(self).map_err(YamlError);
         }
@@ -51,11 +44,8 @@ impl Document {
 
     /// Produces this document as `version`, refusing a lossy downgrade.
     ///
-    /// Cargo unifies features across a dependency graph, so a program can find
-    /// itself built with `openapi32` enabled even when it needs to publish a
-    /// 3.1 description. This is the safe way to ask for one: rather than
-    /// dropping 3.2-only constructs and emitting something that misdescribes
-    /// the API, it fails and names what stands in the way.
+    /// The way to get a 3.1 description from a build with `openapi32` enabled:
+    /// rather than dropping 3.2-only constructs, it names what stands in the way.
     ///
     /// # Errors
     ///
@@ -75,14 +65,10 @@ impl Document {
 
 /// The failure [`Document::to_yaml`] returns.
 ///
-/// Opaque, so that the YAML library behind it stays an implementation detail:
-/// it is pre-1.0, and naming its error here would make each of its releases a
-/// breaking release of this crate. What the library said is kept as this
-/// error's [`source`](std::error::Error::source), so a reporter walking the
-/// chain still prints it.
+/// Opaque, so the pre-1.0 YAML library behind it stays out of this crate's API;
+/// its message is this error's [`source`](std::error::Error::source).
 ///
-/// It implements [`serde::ser::Error`], as a serializer's error does, which is
-/// also how one is constructed outside this crate.
+/// Construct one outside this crate through [`serde::ser::Error`].
 #[cfg(feature = "yaml")]
 #[derive(Debug, thiserror::Error)]
 #[error("the description could not be emitted as YAML")]
@@ -98,22 +84,16 @@ impl serde::ser::Error for YamlError {
 /// Numbers as YAML writes them, whatever `serde_json` features the build
 /// unifies.
 ///
-/// With `serde_json/arbitrary_precision` on anywhere in the graph, a
-/// `serde_json::Number` serializes as a one-field struct named by a private
-/// token, holding its digits as a string. `serde_json`'s own serializer
-/// recognises the token and `serde_yaml_ng`'s writes a mapping. Cargo unifies
-/// the feature across the whole build and a crate cannot `cfg` on a
-/// dependency's features, so this reads the serialized tree instead: it finds
-/// each token mapping and writes the number back in its place.
+/// Under `serde_json/arbitrary_precision` a number serializes as a private-token
+/// mapping, which `serde_yaml_ng` writes verbatim; since a crate cannot `cfg` on
+/// a dependency's features, this rewrites each such mapping back to a number.
 #[cfg(feature = "yaml")]
 mod yaml_numbers {
     use serde::ser::Error as _;
     use serde_yaml_ng::{Mapping, Number, Value};
 
-    /// The name `serde_json` serializes a number under with
-    /// `arbitrary_precision` on: `TOKEN` in its `number.rs`, which is
-    /// `pub(crate)` and so cannot be named from here.
-    /// `mise run test:arbitrary-precision` holds this copy to it.
+    /// Copy of `serde_json`'s `pub(crate)` `TOKEN` in `number.rs`; must stay in
+    /// sync, which `mise run test:arbitrary-precision` checks.
     const TOKEN: &str = "$serde_json::private::Number";
 
     /// Whether this build serializes a `serde_json::Number` as a token
@@ -156,9 +136,7 @@ mod yaml_numbers {
     /// is off.
     ///
     /// An integer that fits `u64` is unsigned, a negative one that fits `i64`
-    /// is signed, and everything else is a float -- including `-0`, which has
-    /// no integer to be. Matching that is what makes YAML under the feature the
-    /// YAML the same source text emits without it.
+    /// is signed, and everything else (including `-0`) is a float.
     pub(super) fn number_from_digits(digits: &str) -> Result<Number, serde_yaml_ng::Error> {
         if let Ok(unsigned) = digits.parse::<u64>() {
             return Ok(Number::from(unsigned));

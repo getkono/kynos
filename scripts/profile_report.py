@@ -1,69 +1,32 @@
 """Runs the request-path profile and reports what it counted, exactly.
 
-The instruction-count kind in [`performance.md`](../docs/performance.md) runs
-`crates/kynos-profile/benches/requests.rs` under Callgrind and DHAT. gungraun
-prints what it measured; this turns that into numbers a comparison can hold
-exact, and the reason it has to do more than read gungraun's own summary is
-what the first measurement found.
+Runs `crates/kynos-profile/benches/requests.rs` under Callgrind and DHAT, the
+instruction-count kind in [`performance.md`](../docs/performance.md), and turns
+gungraun's output into numbers a comparison can hold exact.
 
-**Callgrind's total is not repeatable, and the part of it that is not is
-glibc's.** Across two runs of one binary over one request, every function in
-the benchmark binary cost the same instructions, and two functions did not:
-`_int_malloc` (426 against 468) and `__memcpy_avx_unaligned_erms` (1778 against
-1780). What `malloc` does on a call depends on what the heap looks like, which
-`Router::build` and every other allocation before the region decide, and a
-`memcpy`'s head and tail depend on where the allocator put the buffers. So the
-total moved by up to four percent between runs while no line of Kynos did.
-Disabling address-space randomization does not change that; the heap's history
-is the variable, not its base.
+**Callgrind counts are split by object.** glibc's `malloc` and `memcpy` vary
+with the heap's history, so only the benchmark binary's count (Kynos and every
+Rust dependency, statically linked) is compared; shared objects are reported
+beside it. DHAT counts the allocator's work exactly.
 
-So every Callgrind count is split by the object the instructions ran in. The
-benchmark binary carries Kynos and every Rust dependency, statically linked, and
-its count is exact: the same integer on every run of the same build on the same
-host, which is what `performance.md` asks of a counted kind. What ran in
-`libc.so.6` and in any other shared object is reported beside it and never
-compared. The allocator's work is not lost by that: DHAT counts every block and
-every byte, and those depend on what was asked for rather than on how the
-allocator found it.
+**Exact per host, not across hosts.** Dependencies pick routines from the CPU
+they find, so the baseline records its host and a report taken elsewhere says
+so.
 
-**Exact per host, not across hosts.** Dependencies choose code paths from the
-CPU they find: `memchr`, which `serde_json` scans strings with, picks AVX2 or
-SSE2 routines at run time, and Valgrind reports whatever the host has. The
-benchmark serves one request before the measured one, so the *detection* is
-outside the region; the path it chose is not, and cannot be. The baseline
-therefore records the host it was taken on, and a report taken elsewhere says
-so rather than presenting a CPU's difference as a change.
-
-**The calibration group holds this instrument to the other one.**
-`crates/kynos/tests/alloc.rs` counts three request shapes and two interceptor
-stacks with `alloc_counter`, and its `SHAPES` and `STACKS` tables are read off
-disk here rather than copied, so DHAT's block count for each has to equal the
-count those tables record. Two instruments that share no line of code agreeing
-on one region is what says both measure the request and neither measures the
-harness around it.
-
-Equality rather than the `<=` that file asserts, because the failure this check
-exists for is DHAT counting *too few*: gungraun finds the region through each
-allocation's backtrace, and at DHAT's default depth an eight-layer stack read
-fewer blocks than no stack at all. A ceiling passes that silently. The price is
-that `alloc.rs`'s ceilings become exact for these five rows: a change that
-removes an allocation must lower the ceiling in the same change, or the next
-profile reports `DISAGREE`. `alloc.rs` itself only asserts `<=`, so a pull
-request that forgets passes its own checks and the profile job on `master` is
-where it goes red.
+**Calibration.** DHAT's block count for each `SHAPES` and `STACKS` row of
+`crates/kynos/tests/alloc.rs`, read off disk, must *equal* the row's count:
+the failure guarded against is DHAT counting too few. So a change removing one
+of those allocations must lower the ceiling in the same change, or the profile
+on `master` reports `DISAGREE`.
 
 `KYNOS_PROFILE=overwrite` records this run as
-`crates/kynos-profile/requests.tsv`; otherwise the run is compared with it and
-reported. Either way the run is also written, in the baseline's own format, to
-`profile-requests.tsv` at the repository root: CI uploads that file, so the
-baseline can be recorded from the host of record by copying it over the
-committed one, the way `cost.yml`'s artifacts are read.
+`crates/kynos-profile/requests.tsv`; otherwise the run is compared with it.
+Either way it is written to `profile-requests.tsv`, which CI uploads so the host
+of record's run can be copied over the baseline.
 
-Exit codes follow `cost_features.py`'s rule: zero whenever a measurement was
-made, whatever it says, because no threshold is set here and
-[`nfr.md`](../docs/nfr.md#thresholds) sets none without a recorded
-measurement. Non-zero when nothing could be measured or read (`NOTHING`), and
-when the two instruments disagree (`DISAGREE`), which no mode tolerates.
+Exit zero whenever a measurement was made (no threshold, per
+[`nfr.md`](../docs/nfr.md#thresholds)); non-zero when nothing could be measured
+or read (`NOTHING`), or when the two instruments disagree (`DISAGREE`).
 """
 
 import argparse
@@ -89,10 +52,8 @@ VALGRIND = Path(
 
 MEASURED, NOTHING, DISAGREE = 0, 1, 2
 
-# Each calibration benchmark and the `alloc.rs` row it is the same request as:
-# a `SHAPES` row by its request target, a `STACKS` row by its depth. Keyed
-# rather than paired by position, so that reordering either table cannot pair
-# a benchmark with a neighbour whose count happens to match.
+# Each calibration benchmark and its `alloc.rs` row (`SHAPES` by request
+# target, `STACKS` by depth), keyed so reordering cannot mispair them.
 CALIBRATION = {
     "alloc_counter_agreement.static_match": ("shape", "/ping"),
     "alloc_counter_agreement.capture": ("shape", "/users/7"),
@@ -101,9 +62,8 @@ CALIBRATION = {
     "alloc_counter_agreement.stacked_8": ("stack", "8"),
 }
 
-# An ambient flag builds something other than what the profile describes, and
-# `-C target-cpu=native` on a host with AVX-512 builds a binary Valgrind cannot
-# decode at all.
+# An ambient flag builds something else; `-C target-cpu=native` with AVX-512
+# builds a binary Valgrind cannot decode.
 RUSTFLAGS = ("RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "CARGO_BUILD_RUSTFLAGS")
 
 Row = namedtuple("Row", "benchmark program other blocks bytes")

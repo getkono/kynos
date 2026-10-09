@@ -13,13 +13,7 @@ use crate::derive::schema::{
 };
 
 /// A variant serde writes and never reads has no closed schema true of both.
-///
-/// `skip_deserializing` alone keeps the variant in what serde writes and out of
-/// what it reads, so a `oneOf` or `enum` listing it describes a request serde
-/// refuses, and one leaving it out describes a response serde writes.
-/// `skip_serializing` alone is the other way round and needs no refusal: every
-/// variant serde writes is one it also reads, so the schema listing the variant
-/// is true of both. A variant serde skips both ways is in no schema.
+/// (`skip_serializing` alone needs no refusal: what serde writes it also reads.)
 pub(super) fn reject_unread_variant(input: &DeriveInput) -> syn::Result<()> {
     let Data::Enum(data) = &input.data else {
         return Ok(());
@@ -44,19 +38,8 @@ pub(super) fn reject_unread_variant(input: &DeriveInput) -> syn::Result<()> {
 /// truthful `required`, and neither has `skip_serializing` alone, which is
 /// `skip_serializing_if` with a condition that always holds.
 ///
-/// serde may leave such a field out of what it writes, and rejects a document
-/// without it on read, so listing it in `required` misdescribes a response and
-/// leaving it out misdescribes a request. An `Option`, a field-level
-/// `#[serde(default)]` or a struct's container `#[serde(default)]` lets the
-/// field be absent both ways, which is what lets [`is_required`] leave it out;
-/// this refusal reads that same rule, so the two cannot disagree. A flattened
-/// field is decided before that rule, by `#[schema(open)]` alone, because serde
-/// ignores any default on it. Only named fields are checked, since only an
-/// object has a `required` list; a field serde never reads is in no schema, and a
-/// field of a variant serde never writes is only read, where neither key changes
-/// anything. A `#[serde(transparent)]` struct is not checked at all: serde writes
-/// its one field's value whatever `skip_serializing_if` says, and the schema
-/// describing that value has no `required` list to contradict.
+/// Reads [`is_required`] so the two cannot disagree. Only named fields of
+/// written objects are checked; a transparent struct has no `required` list.
 pub(super) fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> {
     let container = Container::read(input);
     if container.transparent {
@@ -87,14 +70,8 @@ pub(super) fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> 
             continue;
         };
 
-        // A flattened field is decided by `#[schema(open)]` alone, before any
-        // default: serde ignores `#[serde(default)]` on a flattened field, at
-        // field and container level alike. An open map reads absent as empty
-        // and is never listed in `required`, recognised by the same pair
-        // `object_body` reads. The field's Rust type is invisible here, and
-        // this error aborts expansion before any `Flatten` or `OpenMap`
-        // witness is emitted, so one message states a map's remedy and a
-        // struct's alike.
+        // serde ignores `default` on a flattened field, so `#[schema(open)]`
+        // alone decides; an open map reads absent as empty.
         if is_flattened(field) {
             if is_open(field) {
                 continue;
@@ -131,21 +108,9 @@ pub(super) fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> 
 /// A member serde leaves out in one direction only has no one position to
 /// describe.
 ///
-/// A position is on the wire or not as a whole, and so is a newtype variant's
-/// payload, which serde writes as a unit variant without it. So a tuple,
-/// tuple-variant or newtype-variant member carrying `skip_serializing` or
-/// `skip_deserializing` alone makes serde write one shape and read another.
-/// `skip_serializing_if` does the same on a tuple member, except on the last
-/// position beside `#[serde(default)]`, which serde fills when the array ends
-/// early and [`min_items`](crate::derive::schema::min_items) leaves out of the
-/// bound.
-///
-/// A newtype struct is never checked, since serde ignores all three there, and
-/// neither is a newtype variant's `skip_serializing_if`. A
-/// `#[serde(transparent)]` struct is described by its one field rather than as
-/// an array, and a variant serde skips both ways is in no schema. A variant
-/// serde never writes is only read, so there only a lone `skip_deserializing`
-/// is refused.
+/// `skip_serializing_if` is allowed only on the last position beside a default,
+/// which [`min_items`](crate::derive::schema::min_items) leaves out of the
+/// bound. serde ignores all three on a newtype struct.
 pub(super) fn reject_one_way_member_skip(input: &DeriveInput) -> syn::Result<()> {
     let container = Container::read(input);
     if container.transparent {
@@ -197,8 +162,7 @@ pub(super) fn reject_one_way_member_skip(input: &DeriveInput) -> syn::Result<()>
             let Some((_, span)) = serde_key_span(&field.attrs, &["skip_serializing_if"]) else {
                 continue;
             };
-            // A container default fills the end of a tuple struct as a
-            // field-level one fills its own member.
+            // A container default fills the end of a tuple struct too.
             let defaulted = container.default || serde_flag(&field.attrs, &["default"]);
             let last = index + 1 == positions.len();
             if members.len() == 1 || (last && defaulted) {
@@ -220,16 +184,8 @@ pub(super) fn reject_one_way_member_skip(input: &DeriveInput) -> syn::Result<()>
 /// A newtype variant of an adjacently tagged enum whose member serde skips has
 /// no one schema, unless that member is an `Option`.
 ///
-/// serde writes the variant as its tag alone, but reads it by its declared
-/// newtype style rather than the unit style it wrote, so it demands the content
-/// property and reads only `{"t":"V","c":null}`. An `Option` member reads the
-/// missing content as `None`, so it round-trips as the tag-only branch `branch`
-/// emits. External and internal tagging read back what they write, and a
-/// member skipped one way only is refused before this is reached.
-///
-/// Checked on every variant the schema describes, including one serde reads
-/// and never writes: serde still reads it only with its content, so the
-/// tag-only branch would describe a request serde refuses.
+/// serde writes the tag alone but reads the newtype style, demanding the
+/// content; an `Option` member reads it absent as `None`.
 pub(super) fn reject_skipped_adjacent_payload(input: &DeriveInput) -> syn::Result<()> {
     let Data::Enum(data) = &input.data else {
         return Ok(());

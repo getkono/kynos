@@ -109,15 +109,12 @@ pub struct Contact {
 
 /// License information for the exposed API.
 ///
-/// Every version of the specification makes `identifier` and `url` mutually
-/// exclusive, and makes both optional beside a required `name`. This type holds
-/// at most one of the two, so the three states the specification allows are the
-/// three a program can build — and a document setting both cannot be
-/// constructed, nor parsed, nor emitted.
+/// `identifier` and `url` are mutually exclusive and both optional beside a
+/// required `name`; this type holds at most one, so a document setting both
+/// can be neither built nor parsed.
 ///
-/// Reach for [`spdx`](License::spdx) in preference to
-/// [`with_url`](License::with_url): an SPDX expression is machine-readable and a
-/// URL is not. Both are permitted, which is why both are here.
+/// Prefer [`spdx`](License::spdx) to [`with_url`](License::with_url): an SPDX
+/// expression is machine-readable.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "RawLicense", into = "RawLicense")]
 pub struct License {
@@ -128,11 +125,8 @@ pub struct License {
     pub extensions: Extensions,
 }
 
-/// How a license points at its terms, when it does.
-///
-/// An enum rather than two `Option` fields, for the reason
-/// [`SecurityScheme`](crate::model::security::SecurityScheme) is one: an
-/// unusable combination that cannot be spelled needs no rule to reject it.
+/// How a license points at its terms, when it does; an enum so both cannot be
+/// set.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum LicenseLink {
     /// An [SPDX] license expression.
@@ -147,8 +141,7 @@ enum LicenseLink {
 impl License {
     /// Creates a license identified by name alone.
     ///
-    /// Valid, and the weakest of the three: a consumer gets something to show a
-    /// human and nothing to resolve.
+    /// Valid, but gives a consumer nothing to resolve.
     pub fn named(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -159,8 +152,8 @@ impl License {
 
     /// Creates a license identified by an SPDX expression.
     ///
-    /// This is preferred over [`License::with_url`]: an SPDX identifier is
-    /// machine-readable, a URL is not.
+    /// Preferred over [`License::with_url`]: an SPDX identifier is
+    /// machine-readable.
     pub fn spdx(name: impl Into<String>, identifier: impl Into<String>) -> Self {
         Self {
             link: Some(LicenseLink::Spdx(identifier.into())),
@@ -205,9 +198,8 @@ impl License {
 
 /// The wire shape: two flat optional fields, as the specification writes them.
 ///
-/// The exclusion is enforced crossing this boundary rather than inside
-/// [`License`], so the invariant holds for a parsed document as well as a built
-/// one.
+/// The exclusion is enforced crossing this boundary, so it holds for parsed
+/// documents too.
 #[derive(Serialize, Deserialize)]
 struct RawLicense {
     name: String,

@@ -1,15 +1,9 @@
 //! The names serde reads a named field or a variant under, and how a schema
 //! says so.
 //!
-//! serde reads a field under its wire name or under any `#[serde(alias)]` it
-//! carries, and refuses a document naming two of them as a duplicate field.
-//! So every name is a property under the field's schema, and where there is
-//! more than one, an `allOf` entry bounds how many of them may be present.
-//!
-//! serde reads a variant the same way, wherever its name travels: a string
-//! naming it is an `enum` of its names, and an externally tagged object keyed
-//! by it is a property under each name, present under exactly one. A name two
-//! variants claim is read as the first alone, so only that one names it.
+//! serde refuses a document naming two of a member's names as a duplicate, so
+//! each name is a property and an `allOf` entry bounds how many are present. A
+//! name two variants claim is read as the first alone.
 
 use super::{
     Container, Field, TokenStream2, Variant, close, field_read_name, is_required, quote,
@@ -17,11 +11,7 @@ use super::{
 };
 
 /// Every name serde reads a named field under: its read name first, then each
-/// `alias` in the order written, each once.
-///
-/// An alias is the literal name serde reads, since `rename_all` does not reach
-/// it, and one repeating a name already listed adds nothing, as serde reads its
-/// aliases as a set.
+/// `alias` in the order written, each once. `rename_all` does not reach an alias.
 pub(super) fn read_names(field: &Field, container: &Container) -> Vec<String> {
     names(field_read_name(field, container), &field.attrs)
 }
@@ -32,12 +22,8 @@ pub(super) fn variant_names(variant: &Variant, container: &Container) -> Vec<Str
 }
 
 /// The names serde reads as each of `variants`, in order: its
-/// [`variant_names`] less any an earlier one claims.
-///
-/// serde tries the variants it reads in declaration order and reads a name as
-/// the first claiming it, so a later variant's claim is never reached. No name
-/// is left in two lists, and no variant is left without its wire name once
-/// [`shadowed_variant`] finds none.
+/// [`variant_names`] less any an earlier one claims, since serde reads a name
+/// as the first variant claiming it.
 pub(super) fn variants_read_names(
     variants: &[&Variant],
     container: &Container,
@@ -57,11 +43,8 @@ pub(super) fn variants_read_names(
 }
 
 /// The first of `variants` whose own name an earlier one claims, with that
-/// earlier variant: serde reads the name as the earlier one.
-///
-/// The own name is the read name: once `reject_split_rename` has run, a
-/// variant serde both writes and reads is written under a name it is read
-/// under, and one serde only reads is named by the side it is read under.
+/// earlier variant. The own name is the read name, which `reject_split_rename`
+/// makes the written one too.
 pub(super) fn shadowed_variant<'a>(
     variants: &[&'a Variant],
     container: &Container,
@@ -99,11 +82,8 @@ fn names(wire: String, attrs: &[syn::Attribute]) -> Vec<String> {
 
 /// What a described, unflattened named field adds to the object carrying it.
 ///
-/// A field serde reads under one name is a property, listed in `required`
-/// where [`is_required`] says so. One it reads under several is a property
-/// under each, and required means present under exactly one name, a `oneOf`
-/// over `required`; optional means present under at most one, a `not` over
-/// every pair. Neither lists the field in the object's own `required`.
+/// One name: a property, in `required` per [`is_required`]. Several: a property
+/// under each, bounded to exactly one (required) or at most one (optional).
 pub(super) fn property(field: &Field, container: &Container) -> TokenStream2 {
     let names = read_names(field, container);
     let schema = member_schema(field);
@@ -168,10 +148,6 @@ pub(super) fn named_string(names: &[String]) -> TokenStream2 {
 /// An externally tagged branch keyed by the variant's `names`: `payload` under
 /// each, present under exactly one, since serde reads the branch as one entry,
 /// and closed to every other key.
-///
-/// One name is listed in `required`. Several are bounded by an `allOf` entry
-/// of a `oneOf` over `required`, as a required aliased field is, which makes
-/// [`close`]'s keyword `unevaluatedProperties`.
 pub(super) fn keyed(names: &[String], payload: &TokenStream2) -> TokenStream2 {
     let bound = if let [name] = names {
         quote! {

@@ -18,12 +18,9 @@
 //!   backreferences, which need a backtracking search — it is refused, since
 //!   no check could enforce it.
 //!
-//! The translation is then compiled, as a check enforcing it will compile it,
-//! so a pattern [`translate`] returns is one the engine runs.
-//!
-//! Kynos holds a derived field's pattern to this when the derive expands, and
-//! a map key's when the router is built, so neither reaches a request
-//! untranslated.
+//! A pattern [`translate`] returns has been compiled, so the engine runs it.
+//! Kynos translates a derived field's pattern when the derive expands, and a
+//! map key's when the router is built.
 
 use regex_syntax::ast::{
     self, Assertion, AssertionKind, Ast, ClassPerl, ClassPerlKind, ClassSetBinaryOp, ClassSetItem,
@@ -141,9 +138,8 @@ impl ast::Visitor for Translator {
     fn visit_pre(&mut self, ast: &Ast) -> Result<(), String> {
         match ast {
             Ast::Empty(_) | Ast::Alternation(_) | Ast::Concat(_) | Ast::ClassBracketed(_) => Ok(()),
-            // The parser already refuses `{,n}`. ECMA-262 with Unicode support
-            // quantifies only an atom, so neither a quantifier nor an
-            // assertion can be quantified, where the engine reads both.
+            // ECMA-262 with Unicode support quantifies only an atom, so neither
+            // a quantifier nor an assertion can be quantified.
             Ast::Repetition(repetition) => match &*repetition.ast {
                 Ast::Repetition(_) => Err(not_ecma(
                     "a quantifier on a quantifier, such as `a**` or `x{2}{3}`, which ECMA-262 \
@@ -272,9 +268,8 @@ impl Translator {
 fn literal_escape(literal: &Literal, in_class: bool) -> Result<(), String> {
     match &literal.kind {
         LiteralKind::Verbatim => {
-            // A bare `]` inside a class is one the engine read as its first
-            // character, where ECMA-262 reads `[]` as the empty class and
-            // then refuses the `]` that follows.
+            // A bare `]` inside a class was its first character to the engine;
+            // ECMA-262 reads `[]` as the empty class.
             if in_class && literal.c == ']' {
                 Err(not_ecma(
                     "a `]` first in a class, such as `[]a]`; ECMA-262 reads `[]` as the empty \

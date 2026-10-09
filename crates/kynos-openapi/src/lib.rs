@@ -9,13 +9,10 @@
 //! `openapi31` is the baseline and is enabled by default. `openapi32` adds the
 //! fields introduced by OpenAPI 3.2.0 as a strict superset.
 //!
-//! Fields introduced by 3.2 are `#[cfg]`-gated rather than runtime-optional, so
-//! a build without `openapi32` cannot construct a document it would be unable
-//! to describe. Where a program needs a 3.1 document from a build that has
-//! `openapi32` enabled — Cargo unifies features across a dependency graph, so
-//! this is not always the program's own choice — use [`Document::emit`], which
-//! fails with the list of 3.2-only constructs that block the downgrade rather
-//! than silently emitting an invalid description.
+//! Fields introduced by 3.2 are `#[cfg]`-gated, so a build without `openapi32`
+//! cannot construct a document it could not describe. To get a 3.1 document
+//! from a build with `openapi32` enabled, use [`Document::emit`], which fails
+//! with the 3.2-only constructs that block the downgrade.
 //!
 //! # A note on the JSON Schema dialect
 //!
@@ -37,9 +34,8 @@
 // docs.rs badges each feature-gated item; see `crates/kynos/src/lib.rs`.
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-// `openapi31` is the baseline object model, not an optional extra: without it
-// there is nothing to build a description out of. `openapi32` implies it, so
-// this fires only when a caller disables default features and asks for neither.
+// `openapi31` is the baseline object model; `openapi32` implies it, so this
+// fires only when default features are disabled and neither is asked for.
 #[cfg(not(feature = "openapi31"))]
 compile_error!(
     "kynos-openapi requires the `openapi31` feature. OpenAPI 3.1 is the baseline object model; \
@@ -53,10 +49,8 @@ pub mod model;
 pub mod pattern;
 pub mod validate;
 
-// The curated crate-root facade. Every item below has exactly one canonical
-// path inside `annotation`, `model` or `validate`; these shortcuts exist so
-// that the common names stay one import away despite the module tree being
-// deep.
+// The curated crate-root facade: shortcuts to items whose canonical paths are
+// inside `annotation`, `model` or `validate`.
 pub use crate::{
     annotation::{MalformedAnnotation, Opaque, OpaqueReason, OpaqueRoute},
     model::{
@@ -93,7 +87,5 @@ pub use crate::{
 
 /// The ordered map used throughout the model.
 ///
-/// Field order in an OpenAPI description is not semantically meaningful, but
-/// preserving insertion order makes emitted documents byte-stable across runs,
-/// which in turn makes them reviewable in version control.
+/// Preserving insertion order keeps emitted documents byte-stable across runs.
 pub type Map<V> = indexmap::IndexMap<String, V>;

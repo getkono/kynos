@@ -1,9 +1,7 @@
 //! Shape checks and name handling shared by the derives.
 //!
-//! Every diagnostic here carries the span of the offending item and names the
-//! tool that does work, rather than the trait that refused it. A user should
-//! never have to read a Kynos internal to understand why their type was
-//! rejected.
+//! Every diagnostic is spanned at the offending item and names the remedy, not
+//! the trait that refused it.
 
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
@@ -65,29 +63,16 @@ pub(crate) fn unit_struct(input: &DeriveInput, derive: &str, purpose: &str) -> s
 
 /// Whether the item carries Rust's own `#[deprecated]`.
 ///
-/// One rule for every place a description can say `deprecated`: an operation
-/// reads it from the handler function, a schema from the type, the field or the
-/// variant. Kynos defines no `deprecated` key of its own, because the language
-/// already has the attribute and a second spelling would let the two disagree
-/// -- a field marked in the description and not in the compiler is a
-/// deprecation nobody is warned about.
-///
-/// The note is deliberately not read. `#[deprecated(note = "...")]` addresses a
-/// Rust caller at the call site, and `SchemaObject::deprecated` is a boolean; a
-/// description that carried the note would be repeating advice about a Rust API
-/// to a consumer that has none.
+/// The one source of `deprecated` for operations and schemas alike; Kynos has
+/// no key of its own. The note is not read, since it addresses Rust callers.
 pub(crate) fn is_deprecated(attrs: &[Attribute]) -> bool {
     attrs
         .iter()
         .any(|attribute| attribute.path().is_ident("deprecated"))
 }
 
-/// Skips the value of the nested-meta item just matched.
-///
-/// Consuming `meta.input` wholesale would swallow every *later* item too, so
-/// an attribute would silently lose everything after its first unrecognized
-/// key. This takes exactly one `= value` or one `(...)` group and leaves the
-/// rest of the list to the loop.
+/// Skips the value of the nested-meta item just matched: exactly one
+/// `= value` or `(...)` group, leaving later items to the loop.
 pub(crate) fn skip_value(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
     if meta.input.peek(syn::Token![=]) {
         let _: syn::Expr = meta.value()?.parse()?;
@@ -102,19 +87,10 @@ pub(crate) fn skip_value(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<(
 
 /// The wire name of every field of a parameter group, in declaration order.
 ///
-/// `attribute` is the derive's own attribute -- `param`, `header` or
-/// `cookie` -- whose `rename` is consulted first. After it come serde's field
-/// `rename`, then the identifier under the container's `rename_all`: serde's
-/// precedence. The case rule is the `Schema` derive's, taken from
-/// `property_names` rather than restated, and is serde's own
-/// `apply_to_field`, so a field no Kynos attribute renames carries the name
-/// serde and the `Schema` derive give it. The `Schema` derive never reads the
-/// Kynos `rename`, so a field that attribute renames is a parameter under one
-/// name and a property under another.
-///
-/// A parameter has exactly one name, so whatever gives a field a second is
-/// refused rather than dropped: a field `alias`, and the split forms of
-/// `rename` and `rename_all`.
+/// Precedence: the derive's own `attribute` (`param`, `header` or `cookie`)
+/// `rename`, then serde's field `rename`, then `rename_all` as `property_names`
+/// applies it. A field `alias` and the split `rename`/`rename_all` forms are
+/// refused, since a parameter has exactly one name.
 pub(crate) fn wire_names(
     input: &DeriveInput,
     fields: &FieldsNamed,
@@ -132,11 +108,7 @@ pub(crate) fn wire_names(
         .collect()
 }
 
-/// The wire name of a field: its `rename` if it has one, else `fallback`.
-///
-/// Both the Kynos attribute and serde's are consulted, in that order, so that a
-/// type already carrying `#[serde(rename = "...")]` does not have to repeat
-/// itself — and cannot end up describing one name while serializing another.
+/// The wire name of a field: the Kynos then serde `rename`, else `fallback`.
 fn wire_name(field: &Field, attribute: &str, fallback: String) -> syn::Result<String> {
     if let Some(renamed) = kynos_rename(field, attribute)? {
         return Ok(renamed);
@@ -169,12 +141,8 @@ fn reject_split_rename_all(input: &DeriveInput) -> syn::Result<()> {
     Ok(())
 }
 
-/// Refuses a field's `#[serde(alias = "...")]`.
-///
-/// serde reads the field under every alias, and the description can name one:
-/// dropping the alias leaves a value sent under it unread, and a required
-/// field refused, while the `Schema` derive lists both. Checked before the
-/// Kynos `rename`, which settles the described name but not what serde reads.
+/// Refuses a field's `#[serde(alias = "...")]`, even under a Kynos `rename`:
+/// serde would read a name the description cannot carry.
 fn reject_alias(field: &Field) -> syn::Result<()> {
     for attr in &field.attrs {
         if !attr.path().is_ident("serde") {
@@ -194,10 +162,7 @@ fn reject_alias(field: &Field) -> syn::Result<()> {
     Ok(())
 }
 
-/// The `rename = "..."` inside a Kynos attribute.
-///
-/// Strict about its own key and silent about every other, since the attribute
-/// grammar grows and a key this derive does not yet model is not a mistake.
+/// The `rename = "..."` inside a Kynos attribute; other keys are skipped.
 fn kynos_rename(field: &Field, attribute: &str) -> syn::Result<Option<String>> {
     let mut found = None;
     for attr in &field.attrs {
@@ -216,13 +181,7 @@ fn kynos_rename(field: &Field, attribute: &str) -> syn::Result<Option<String>> {
     Ok(found)
 }
 
-/// The `rename = "..."` inside `#[serde(...)]`.
-///
-/// Reading serde's own attribute is what stops a type describing one field
-/// name while serializing another. serde also has a split form,
-/// `rename(serialize = "a", deserialize = "b")`, which describes two names
-/// where a parameter can have one — that is rejected rather than guessed at,
-/// because guessing is the failure this whole function exists to prevent.
+/// The `rename = "..."` inside `#[serde(...)]`; the split form is refused.
 fn serde_rename(field: &Field) -> syn::Result<Option<String>> {
     let mut found = None;
     for attr in &field.attrs {
@@ -247,11 +206,8 @@ fn serde_rename(field: &Field) -> syn::Result<Option<String>> {
     Ok(found)
 }
 
-/// The text of an item's doc comment, with its paragraphs intact.
-///
-/// What a derive falls back to when no description was written explicitly: the
-/// sentence a Rust reader already sees is the sentence an API consumer should
-/// receive, and asking for it twice is how the two come to disagree.
+/// The text of an item's doc comment, with its paragraphs intact; the fallback
+/// for an unwritten description.
 pub(crate) fn doc_string(attrs: &[syn::Attribute]) -> Option<String> {
     let text = attrs
         .iter()
@@ -302,9 +258,6 @@ impl NameCase {
 }
 
 /// Rejects two fields that would occupy the same wire name.
-///
-/// Left to the derive rather than to validation because the span is here: a
-/// duplicate reported against the emitted document names neither field.
 pub(crate) fn reject_duplicate_names(
     fields: &FieldsNamed,
     names: &[String],
@@ -318,8 +271,7 @@ pub(crate) fn reject_duplicate_names(
                 .iter()
                 .nth(index)
                 .expect("index came from the same list");
-            // A clash through case folding names both spellings, since the
-            // reader sees two names that do not look alike.
+            // A clash through case folding names both spellings.
             let spelled = if names[earlier] == *name {
                 String::new()
             } else {
@@ -344,11 +296,9 @@ pub(crate) fn reject_duplicate_names(
 
 /// Rejects a wire name that is not a token.
 ///
-/// A header field name (RFC 9110 §5.1) and a cookie name (RFC 6265 §4.1.1)
-/// share one grammar: one or more `tchar`s. A name outside it can never be
-/// sent, so a field declared under one is a field no request reaches, and a
-/// header one makes `HeaderName::from_static` panic the first time it is
-/// encoded. `grammar` names what the name must be, for the diagnostic.
+/// A header field name (RFC 9110 §5.1) and a cookie name (RFC 6265 §4.1.1) are
+/// both one or more `tchar`s; anything else would make `HeaderName::from_static`
+/// panic. `grammar` names what the name must be, for the diagnostic.
 pub(crate) fn reject_non_token_names(
     fields: &FieldsNamed,
     names: &[String],
@@ -363,11 +313,8 @@ pub(crate) fn reject_non_token_names(
     Ok(())
 }
 
-/// Says why `name` is not a token, or `None` where it is one.
-///
-/// The rule behind [`reject_non_token_names`], for a site whose name is not a
-/// field's: the diagnostic it words is that function's, so the two never
-/// disagree about what a token is.
+/// Says why `name` is not a token, or `None` where it is one; the rule behind
+/// [`reject_non_token_names`], for a name that is not a field's.
 pub(crate) fn non_token_message(name: &str, kind: &str, grammar: &str) -> Option<String> {
     let problem = match name.chars().find(|&character| !is_tchar(character)) {
         Some(character) => format!("the {kind} `{name}` contains {character:?}"),

@@ -10,23 +10,10 @@ use crate::model::{extensions::Extensions, parameter::ParameterIn, security::oau
 
 /// A security scheme the API can use.
 ///
-/// The variants are the five `type` values the specification defines. Modelling
-/// them as an enum rather than one struct with conditionally-required fields
-/// means an unusable combination — an `apiKey` scheme with OAuth flows, say —
-/// cannot be constructed.
-/// `#[non_exhaustive]` because OpenAPI 3.2 adds to this and the addition is
-/// `#[cfg]`-gated. Cargo unifies features across a dependency graph, so any
-/// crate enabling `openapi32` enables it for every crate in the build -- and
-/// without this attribute that would turn a downstream exhaustive `match` into
-/// a compile error, which is not what "purely additive" is supposed to mean.
-///
-/// # Every variant is sealed too
-///
-/// The attribute above covers a variant being *added*. 3.2 also adds a field
-/// to every variant already here — `deprecated`, and `oauth2MetadataUrl` on
-/// [`OAuth2`](Self::OAuth2) — so each variant carries the attribute as well.
-/// The enum's does not reach a variant's field list, and a field list is what
-/// a pattern names.
+/// One variant per `type` value the specification defines, so an unusable
+/// combination — an `apiKey` scheme with OAuth flows, say — cannot be
+/// constructed. The enum and every variant are `#[non_exhaustive]`, since
+/// `openapi32` adds fields and Cargo unifies features across a build.
 ///
 /// So a pattern takes `..`, and reads the same in either build:
 ///
@@ -41,10 +28,8 @@ use crate::model::{extensions::Extensions, parameter::ParameterIn, security::oau
 /// # assert_eq!(scheme_of(&SecurityScheme::basic()), Some("basic"));
 /// ```
 ///
-/// Without it, naming every field is a compile error even when the list is
-/// complete for this build — which is the guarantee. It is the error a
-/// downstream crate would otherwise have met the day something else in its
-/// build turned `openapi32` on.
+/// Naming every field is a compile error even when the list is complete for
+/// this build:
 ///
 /// ```compile_fail
 /// # use kynos_openapi::SecurityScheme;
@@ -62,9 +47,8 @@ use crate::model::{extensions::Extensions, parameter::ParameterIn, security::oau
 /// }
 /// ```
 ///
-/// Construction goes through the constructors for the same reason:
-/// [`http`](Self::http), [`bearer`](Self::bearer), [`basic`](Self::basic), the
-/// three `api_key_*`, [`mutual_tls`](Self::mutual_tls),
+/// Construct through [`http`](Self::http), [`bearer`](Self::bearer),
+/// [`basic`](Self::basic), the three `api_key_*`, [`mutual_tls`](Self::mutual_tls),
 /// [`oauth2`](Self::oauth2) and [`open_id_connect`](Self::open_id_connect),
 /// then [`with_description`](Self::with_description),
 /// [`with_extension`](Self::with_extension) and the rest.
@@ -126,9 +110,8 @@ pub enum SecurityScheme {
 
     /// Mutual TLS client certificate authentication.
     ///
-    /// Kynos declares this automatically when the listener is configured to
-    /// verify client certificates, so enabling mTLS cannot leave the
-    /// description silent about it.
+    /// Kynos declares this automatically when the listener verifies client
+    /// certificates.
     #[non_exhaustive]
     #[serde(rename = "mutualTLS")]
     MutualTls {
@@ -201,9 +184,7 @@ pub enum SecurityScheme {
 impl SecurityScheme {
     /// An HTTP authentication scheme, named by its RFC 7235 scheme token.
     ///
-    /// [`bearer`](Self::bearer) and [`basic`](Self::basic) are the two worth
-    /// naming; this is for the rest of the IANA registry, and for a scheme
-    /// read out of a description someone else wrote.
+    /// For schemes other than [`bearer`](Self::bearer) and [`basic`](Self::basic).
     #[must_use]
     pub fn http(scheme: impl Into<String>, bearer_format: Option<String>) -> Self {
         Self::Http {
@@ -276,10 +257,6 @@ impl SecurityScheme {
     }
 
     /// OAuth 2.0 with the given flows.
-    ///
-    /// A constructor rather than a struct literal, so the `#[cfg]`-gated
-    /// fields are written down once here instead of at every call site — which
-    /// is what a caller in a crate that cannot see the feature needs.
     #[must_use]
     pub fn oauth2(flows: OAuthFlows) -> Self {
         Self::OAuth2 {
@@ -320,10 +297,7 @@ impl SecurityScheme {
 
     /// Attaches a specification extension.
     ///
-    /// Every variant is `#[non_exhaustive]`, so a caller outside this crate
-    /// cannot reach `extensions` through a struct literal; this is how one
-    /// arrives. Reading them back needs no method — a pattern with `..` still
-    /// binds the field.
+    /// Read them back with a pattern binding `extensions` and `..`.
     #[must_use]
     pub fn with_extension(mut self, key: impl Into<String>, value: impl Into<Value>) -> Self {
         let slot = match &mut self {
@@ -339,10 +313,7 @@ impl SecurityScheme {
 
     /// States whether the scheme is deprecated.
     ///
-    /// [`deprecated`](Self::deprecated) is the common case. This exists because
-    /// `deprecated: false` is a thing a description can say and a round trip
-    /// has to keep saying, which a method that only ever writes `true` cannot
-    /// express.
+    /// Unlike [`deprecated`](Self::deprecated), this can state `false`.
     ///
     /// Introduced in OpenAPI 3.2, and a blocker for emitting the document as
     /// 3.1 — see [`emit`](crate::emit).
@@ -380,8 +351,7 @@ impl SecurityScheme {
 
     /// Sets the RFC 8414 authorization server metadata URL.
     ///
-    /// Ignored by any scheme that is not OAuth 2.0, because no other kind has
-    /// the field. Introduced in OpenAPI 3.2.
+    /// Ignored by any scheme that is not OAuth 2.0. Introduced in OpenAPI 3.2.
     #[cfg(feature = "openapi32")]
     #[must_use]
     pub fn with_oauth2_metadata_url(mut self, url: impl Into<String>) -> Self {

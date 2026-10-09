@@ -14,17 +14,9 @@ use crate::derive::schema::{
 };
 
 /// A variant whose own name serde reads as an earlier variant has no schema
-/// true of both directions.
-///
-/// serde reads a name as the first variant claiming it, by its wire name or an
-/// `alias`, and does not refuse the collision, so it writes the later variant
-/// under a name it reads back as the earlier one: naming the later variant's
-/// branch or `enum` item there describes a request serde reads otherwise, and
-/// leaving the name out describes a response serde writes. A variant serde
-/// reads and never writes is refused alike, since its own name is dead and its
-/// aliases could all be too. An alias an earlier variant claims is only
-/// unreachable, and [`aliases::variants_read_names`] leaves it out. A variant
-/// serde skips both ways claims nothing.
+/// true of both directions: serde writes it under a name it reads back as the
+/// earlier one. A merely shadowed alias is left out by
+/// [`aliases::variants_read_names`] instead.
 pub(super) fn reject_shadowed_variant(input: &DeriveInput) -> syn::Result<()> {
     let Data::Enum(data) = &input.data else {
         return Ok(());
@@ -50,21 +42,10 @@ pub(super) fn reject_shadowed_variant(input: &DeriveInput) -> syn::Result<()> {
 
 /// A member serde both writes and reads is refused where a split `rename`
 /// gives the two directions different names and serde never reads the written
-/// one.
+/// one (an `alias` of the written name makes it true both ways).
 ///
-/// One schema serves both directions, so no name it gives the member is true of
-/// both: under the written name it describes a request serde refuses, under the
-/// read name a response serde never writes. Where serde also reads the written
-/// name, through an `alias`, the member is described under every name serde
-/// reads it as, the written one among them, which is true both ways; a variant's
-/// alias an earlier variant claims is not read as it, so it does not count. A
-/// member serde uses one way is
-/// named by that side, so it is exempt: a field serde skips in either
-/// direction, every field of a variant serde never writes, and a variant serde
-/// only reads. A flattened field's own name is neither written nor read, and
-/// neither is a transparent struct's field's. A variant serde only writes is
-/// refused before this runs, by
-/// [`reject_unread_variant`](super::skips::reject_unread_variant).
+/// A member serde uses one way is named by that side and exempt, as are
+/// flattened and transparent fields, whose own names are not on the wire.
 pub(super) fn reject_split_rename(input: &DeriveInput) -> syn::Result<()> {
     let container = Container::read(input);
     // Each group of fields serde writes, under the container naming them.
@@ -148,20 +129,9 @@ pub(super) fn reject_split_rename(input: &DeriveInput) -> syn::Result<()> {
 /// `rename_all_fields(...)` that reaches a struct variant, or the own
 /// `rename_all(...)` of a struct variant serde writes.
 ///
-/// Such a rule gives a member two wire names, and one schema describes both
-/// directions, so the form is refused as the parameter derives refuse a split
-/// `rename_all`. A variant serde writes is one it also reads, since a lone
-/// `skip_deserializing` is refused before this runs, by
-/// [`reject_unread_variant`](super::skips::reject_unread_variant), so the
-/// variant filter is [`is_written`], as in [`reject_split_rename`]. A rule
-/// naming no field serde both writes and reads is not refused: a variant serde
-/// skips both ways is in no schema, a variant serde only reads has its fields
-/// named by its rule's deserialize side in [`Container::fields_of`], a unit or
-/// tuple variant has no named field for its own rule to name, and a
-/// `rename_all_fields` every struct variant overrides on both sides, or on an
-/// enum with none, names nothing. Sides that agree are the `key = "..."` they
-/// spell, and [`Container`] and [`variant_rename_all`] read them so. Runs
-/// before any check that reads a [`Container`].
+/// Such a rule gives a member two wire names. A rule naming no field serde both
+/// writes and reads is not refused. Runs before any check that reads a
+/// [`Container`].
 pub(super) fn reject_split_rename_all(input: &DeriveInput) -> syn::Result<()> {
     let variants = match &input.data {
         Data::Enum(data) => data.variants.iter().collect(),

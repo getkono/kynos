@@ -34,13 +34,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let params = Param::pair(fields, &names);
     let rejection = quote!(::kynos::error::rejection::CookieRejection);
 
-    // Splitting a jar is `http::cookie`'s job, not an expansion's: the rules
-    // are RFC 6265's, they belong in one place, and a credential carried in a
-    // cookie reads them from there in a build with no `cookie` feature at all.
-    // A declared cookie that was sent but cannot be read is refused rather
-    // than reported missing: it was not absent. The detail is a literal, as
-    // the query and header derives write theirs, so a 400's wording does not
-    // move with `Unreadable`'s `Display`.
+    // RFC 6265 jar splitting stays in `http::cookie`. A sent but unreadable
+    // cookie is invalid, not missing; the detail is a literal so it is stable.
     let reads = params.iter().map(|param| {
         let wire = param.name();
         let found = quote! {
@@ -63,12 +58,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         &quote!(::kynos::openapi::ParameterIn::Cookie),
         false,
     );
-    // A cookie reaches its field as it was sent: `value_of` removes no
-    // percent-encoding. An unstated style defaults to `form`, which tells a
-    // client to percent-encode, so a 3.2 build states `cookie`, which applies
-    // and removes none; `explode: true` is its default, and a scalar field
-    // ignores it. 3.1 has no style saying so, and a description stating this
-    // one cannot be emitted as 3.1, so a 3.1 build states nothing.
+    // `value_of` removes no percent-encoding, which OpenAPI 3.2's `cookie` style
+    // states (the default `form` would not); 3.1 has no such style.
     let parameters = if cfg!(feature = "openapi32") {
         quote! {
             let parameters = { #parameters };

@@ -91,16 +91,12 @@ pub(super) fn sides(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<Sides>
 }
 
 /// The [`sides`] of the `rename` in a member's `#[serde(...)]` lists.
-///
-/// Shape errors in the list are serde's to report, so this raises none.
 fn serde_renames(attrs: &[syn::Attribute]) -> Sides {
     serde_sides(attrs, "rename")
 }
 
-/// A variant's own `rename_all` style on each side: the rule serde names the
-/// variant's fields by on that side ahead of the enum's `rename_all_fields`.
-/// `reject_split_rename_all` refuses sides that differ on a variant serde both
-/// writes and reads.
+/// A variant's own `rename_all` style on each side, which names its fields
+/// ahead of the enum's `rename_all_fields`.
 pub(super) fn variant_rename_all(variant: &Variant) -> Sides {
     serde_sides(&variant.attrs, "rename_all")
 }
@@ -125,10 +121,7 @@ fn serde_sides(attrs: &[syn::Attribute], key: &str) -> Sides {
 
 /// A field's identifier under a `rename_all` style: `serde_derive` 1.0.229's
 /// `RenameRule::apply_to_field` (`internals/case.rs`), transcribed.
-///
-/// serde reads the identifier as `snake_case` and never splits it on case, so
-/// an underscore maps wherever it stands, and letters change case only in
-/// ASCII.
+/// The identifier is read as `snake_case`; case changes are ASCII-only.
 fn rename_field(field: &str, style: &str) -> String {
     let pascal = || {
         let mut pascal = String::new();
@@ -151,19 +144,15 @@ fn rename_field(field: &str, style: &str) -> String {
         "camelCase" => lower_first(&pascal()),
         "kebab-case" => field.replace('_', "-"),
         "SCREAMING-KEBAB-CASE" => field.to_ascii_uppercase().replace('_', "-"),
-        // `lowercase` and `snake_case` are the identity for a field, and a
-        // style this derive has not learned leaves the name alone, so that
-        // serde owns the diagnostic for a style neither of them knows.
+        // `lowercase` and `snake_case` are the identity for a field; an
+        // unknown style is serde's to refuse.
         _ => field.to_owned(),
     }
 }
 
 /// A variant's identifier under a `rename_all` style: `serde_derive` 1.0.229's
 /// `RenameRule::apply_to_variant` (`internals/case.rs`), transcribed.
-///
-/// serde reads the identifier as `PascalCase`: it splits only before an
-/// uppercase letter, keeps an underscore already there, and changes case only
-/// in ASCII.
+/// The identifier is read as `PascalCase`, split before each uppercase letter.
 fn rename_variant(variant: &str, style: &str) -> String {
     let snake = || {
         let mut snake = String::new();
@@ -189,10 +178,8 @@ fn rename_variant(variant: &str, style: &str) -> String {
     }
 }
 
-/// `name` with its first character lowered in ASCII.
-///
-/// serde lowers the first byte, and panics where that splits a character, so
-/// what this gives for a non-ASCII first letter is never observable.
+/// `name` with its first character lowered in ASCII (serde panics on a
+/// non-ASCII one, so that case is unobservable).
 fn lower_first(name: &str) -> String {
     let mut characters = name.chars();
     characters.next().map_or_else(String::new, |first| {
@@ -202,16 +189,9 @@ fn lower_first(name: &str) -> String {
     })
 }
 
-/// Whether a named field is in the object serde reads.
-///
-/// serde reads a field unless it is `skip` or `skip_deserializing`, so a field it
-/// only never writes is described, and one it only never reads is not.
-///
-/// A `PhantomData` is read like any other field: serde writes it as `null` and
-/// refuses a document without it, so it is described, as the `null`
-/// [`member_schema`](super::shape::member_schema) gives it. A flattened one is
-/// the exception, since serde writes nothing of it into the object and reads
-/// nothing from it.
+/// Whether a named field is in the object serde reads: not `skip` or
+/// `skip_deserializing`, nor a flattened `PhantomData` (an unflattened one is
+/// the `null` serde requires).
 pub(super) fn is_described(field: &Field) -> bool {
     !(serde_flag(&field.attrs, &["skip", "skip_deserializing"])
         || (is_phantom(&field.ty) && is_flattened(field)))
@@ -225,12 +205,8 @@ pub(super) fn described_members(fields: &Fields) -> Vec<&Field> {
 
 /// The field a `#[serde(transparent)]` struct is written through and the field
 /// it is read through: each direction's single candidate, or `None` for none or
-/// several, where serde refuses that direction's derive and calls no function.
-///
-/// `serde_derive`'s `allow_transparent`, read from the attributes: a field is a
-/// write candidate unless `skip` or `skip_serializing`, a read candidate unless
-/// `skip`, `skip_deserializing` or a field-level `default` (serde ignores a
-/// container one), and a `PhantomData` is neither.
+/// several, where serde refuses that direction's derive. Mirrors
+/// `serde_derive`'s `allow_transparent`.
 pub(super) fn transparent_picks(fields: &Fields) -> (Option<&Field>, Option<&Field>) {
     let pick = |excluded: &[&str]| {
         let mut candidates = fields
@@ -249,11 +225,6 @@ pub(super) fn transparent_picks(fields: &Fields) -> (Option<&Field>, Option<&Fie
 
 /// The one field a `#[serde(transparent)]` struct is described by: the field
 /// both directions pick, or the field of the one direction that picks one.
-///
-/// Where only one direction picks a field the struct compiles with that
-/// direction's derive alone, and the field is all serde writes, or reads. Two
-/// different picks give no field, and `reject_transparent_without_one_field`
-/// refuses that struct.
 pub(super) fn transparent_member(fields: &Fields) -> Option<&Field> {
     match transparent_picks(fields) {
         (Some(written), Some(read)) => std::ptr::eq(written, read).then_some(written),
@@ -262,12 +233,8 @@ pub(super) fn transparent_member(fields: &Fields) -> Option<&Field> {
     }
 }
 
-/// Whether a type is a `PhantomData`.
-///
-/// A type a macro passed through a `$t:ty` fragment arrives inside an invisible
-/// group, which `serde_derive`'s `ungroup` unwraps, and nothing else, before its
-/// own test. This unwraps the same, so a marker is a marker however it was
-/// written.
+/// Whether a type is a `PhantomData`, unwrapping invisible groups as
+/// `serde_derive`'s `ungroup` does.
 pub(super) fn is_phantom(ty: &Type) -> bool {
     let mut ty = ty;
     while let Type::Group(group) = ty {
@@ -306,18 +273,14 @@ pub(super) fn is_flattened(field: &Field) -> bool {
     serde_flag(&field.attrs, &["flatten"])
 }
 
-/// Whether a field carries `#[schema(open)]`, and where it says so.
-///
-/// The span is the `open` key itself, so a diagnostic about it points at the
-/// word rather than at the whole field.
+/// Whether a field carries `#[schema(open)]`, at the `open` key.
 pub(super) fn open_span(field: &Field) -> Option<Span> {
     let mut found = None;
     for attr in &field.attrs {
         if !attr.path().is_ident("schema") {
             continue;
         }
-        // Shape errors in the list are `check_constraints`' to report, so this
-        // reads the one key it wants and stays silent about the rest.
+        // Shape errors in the list are `check_constraints`' to report.
         let _ = attr.parse_nested_meta(|meta| {
             if meta.path.is_ident("open") {
                 found = Some(meta.path.span());
@@ -329,10 +292,7 @@ pub(super) fn open_span(field: &Field) -> Option<Span> {
     found
 }
 
-/// The first of `keys` a `#[serde(...)]` list names, and where it is written.
-///
-/// Shaped like [`open_span`]: the span is the key itself, and shape errors in
-/// the list are serde's to report, so this raises none.
+/// The first of `keys` a `#[serde(...)]` list names, at the key.
 pub(super) fn serde_key_span(attrs: &[syn::Attribute], keys: &[&str]) -> Option<(String, Span)> {
     let mut found = None;
     for attr in attrs {
@@ -354,20 +314,9 @@ pub(super) fn is_open(field: &Field) -> bool {
     open_span(field).is_some()
 }
 
-/// Whether a property must be present.
-///
-/// An `Option` is optional because the type says so, and a field with a serde
-/// `default` of its own, or in a struct whose container carries one, is
-/// optional because the wire form says so in both directions: serde fills the
-/// missing field from `Default` on read. Anything else is required, which is
-/// what makes `required` follow from the declaration rather than from an
-/// annotation that could contradict it.
-///
-/// `skip_serializing_if` is not read here: it only lets a field be absent from
-/// what is written, and `reject_read_required_skip` refuses it on every
-/// described, unflattened field of an object serde writes that this rule says
-/// is still required on read. A flattened field never reaches this rule:
-/// `#[schema(open)]` decides it.
+/// Whether a property must be present: not an `Option` and no field or
+/// container `#[serde(default)]`. `skip_serializing_if` is not read here;
+/// `reject_read_required_skip` refuses it on a required field.
 pub(super) fn is_required(field: &Field, container: &Container) -> bool {
     !is_option(&field.ty) && !container.default && !serde_flag(&field.attrs, &["default"])
 }
@@ -415,8 +364,6 @@ pub(super) enum DefaultFrom {
 }
 
 /// The `default` in a `#[serde(...)]` list, and where it takes its value.
-///
-/// Shape errors in the list are serde's to report, so this raises none.
 pub(super) fn serde_default(attrs: &[syn::Attribute]) -> Option<DefaultFrom> {
     let mut found = None;
     for attr in attrs {
@@ -465,11 +412,8 @@ impl quote::ToTokens for BoundValue {
     }
 }
 
-/// A field's `#[schema(...)]` constraints, in the order written.
-///
-/// Read by both projections of the declaration — [`constraints`], which
-/// describes them, and `check::member`, which enforces them — so the two
-/// cannot read the attribute differently.
+/// A field's `#[schema(...)]` constraints, in the order written; shared by
+/// [`constraints`] and `check::member` so both read the attribute alike.
 pub(super) fn bounds(field: &Field) -> Vec<Bound> {
     let mut bounds = Vec::new();
 
@@ -477,17 +421,14 @@ pub(super) fn bounds(field: &Field) -> Vec<Bound> {
         if !attr.path().is_ident("schema") {
             continue;
         }
-        // Every shape here was checked by `check_constraints` before any code
-        // was emitted, so a value that does not fit is already a diagnostic.
+        // `check_constraints` already reported any malformed shape.
         let _ = attr.parse_nested_meta(|meta| {
             let Some(key) = meta.path.get_ident() else {
                 return skip_value(&meta);
             };
             let name = key.to_string();
 
-            // `open` is not a constraint on a value: it says how a flattened
-            // field composes into the object carrying it, and `object_body`
-            // reads it there.
+            // `open` is not a constraint; `object_body` reads it.
             if name == "open" {
                 return Ok(());
             }
@@ -534,10 +475,7 @@ pub(super) fn bounds(field: &Field) -> Vec<Bound> {
 }
 
 /// A field's `#[schema(...)]` constraints, as a `Constraints` expression.
-///
-/// `Constraints` is `#[non_exhaustive]`, so the value is built from `default`
-/// and assigned into: it grows without breaking an expansion that predates the
-/// growth.
+/// Built from `default` and assigned into, as `Constraints` is `#[non_exhaustive]`.
 pub(super) fn constraints(field: &Field) -> Option<TokenStream2> {
     let assignments: Vec<TokenStream2> = bounds(field)
         .into_iter()
@@ -569,10 +507,7 @@ pub(super) fn constraints(field: &Field) -> Option<TokenStream2> {
     })
 }
 
-/// A numeric literal as an `f64` one, which is what JSON Schema bounds are.
-///
-/// The digits are carried across as written rather than reformatted, so a
-/// bound spelled `1_000_000` stays legible in the expansion.
+/// A numeric literal as an `f64` one, its digits kept as written.
 pub(super) fn as_float(literal: &Lit) -> Option<LitFloat> {
     let (digits, span) = match literal {
         Lit::Int(value) => (value.token().to_string(), value.span()),

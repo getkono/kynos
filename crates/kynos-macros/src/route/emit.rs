@@ -14,9 +14,7 @@ use crate::route::{
 pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> TokenStream2 {
     let raw_path = args.path.value();
 
-    // Reuse the document model's parser rather than reimplementing it here: two
-    // notions of "valid path template" that could disagree is exactly the kind
-    // of drift this framework exists to prevent.
+    // The document model's parser, so there is one notion of a valid template.
     let variables = match kynos_openapi::PathTemplate::parse(raw_path.clone()) {
         Ok(template) => template
             .variables()
@@ -46,9 +44,8 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> TokenSt
     };
     let variables = variables.iter().map(String::as_str);
 
-    // A braced struct occupies only the type namespace, so it can share a name
-    // with the handler function rather than shadowing it. `routes!` refers to
-    // the type; callers and unit tests keep calling the function.
+    // A braced struct occupies only the type namespace, so it shares the
+    // handler function's name without shadowing it.
     let endpoint = format_ident!("{name}");
     let panic_policy = if args.catch_panics {
         quote!(::kynos::middleware::catch_panic::Catch)
@@ -63,13 +60,8 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> TokenSt
             );
         }
     });
-    // A tag is one of the operation's compile-time facts, so it reaches the
-    // description through the same constants as the method and the path rather
-    // than through a separate assertion that only proved the type was a `Tag`.
-    // A `DeclaredTag` carries the name *and* the thunk that documents it, which
-    // is what lets `from_meta` register both from this one constant. Naming
-    // `DeclaredTag::of` carries the `Tag` bound anyway, so one mistake is still
-    // one diagnostic.
+    // A `DeclaredTag` carries the name and the thunk documenting it, so
+    // `from_meta` registers both from this constant; `of` carries the `Tag` bound.
     let tags = args.tag.as_ref().map_or_else(
         || quote!(&[]),
         |tag| quote!(&[::kynos::router::operation::DeclaredTag::of::<#tag>()]),

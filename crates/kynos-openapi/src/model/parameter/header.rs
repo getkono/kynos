@@ -20,7 +20,7 @@ use crate::{
 /// parameters.
 ///
 /// The specification states that a parameter definition for any of these shall
-/// be ignored, which makes declaring one a silent lie in the description.
+/// be ignored.
 pub const IGNORED_HEADER_PARAMETERS: &[&str] = &["Accept", "Content-Type", "Authorization"];
 
 /// Whether `name` is a header that must not be declared as a parameter.
@@ -35,11 +35,8 @@ pub fn is_ignored_header_parameter(name: &str) -> bool {
 
 /// Header names that must not be declared in a `headers` map.
 ///
-/// A response states its media type in `content` and an encoded part states
-/// its own in `contentType`, so the specification says a `Content-Type` entry
-/// in either map shall be ignored. The list is shorter than
-/// [`IGNORED_HEADER_PARAMETERS`] because `Accept` and `Authorization` are
-/// request headers, which neither map describes.
+/// The specification says a `Content-Type` entry in either map shall be
+/// ignored, since `content` or `contentType` states the media type.
 pub const IGNORED_HEADERS: &[&str] = &["Content-Type"];
 
 /// Whether `name` is a header that must not be declared in a `headers` map.
@@ -82,15 +79,8 @@ pub struct Header {
 /// How a header's value is described.
 ///
 /// [`ParameterShape`](crate::model::parameter::ParameterShape) without
-/// `allowReserved`: header values are not URI-encoded, so there is no reserved
-/// set to allow through, and a field for it would be a question with no answer.
-///
-/// That is 3.1's reasoning, and 3.1 agrees — it forbids `allowReserved` on a
-/// Header Object outright. **3.2 does not.** It drops the field from that
-/// prohibition, so a 3.2 Header Object may carry one and this type cannot hold
-/// it: such a header loses the field on a round trip. That is a missing 3.2
-/// feature rather than a wrong answer to 3.1's question, and it is deliberately
-/// not fixed here — adding it widens the model rather than correcting it.
+/// `allowReserved`, which 3.1 forbids on a Header Object. 3.2 permits it, and
+/// this type does not hold it, so a 3.2 header loses it on a round trip.
 #[derive(Clone, Debug, PartialEq)]
 pub enum HeaderShape {
     /// A schema, plus how its value is serialized.
@@ -106,10 +96,6 @@ pub enum HeaderShape {
     },
 
     /// One media type describing the value.
-    ///
-    /// Boxed for the reason
-    /// [`ParameterShape::Content`](crate::model::parameter::ParameterShape::Content)
-    /// is: a `MediaType` dwarfs the schema-side fields beside it.
     Content {
         /// The media type the value is carried as.
         media_type: String,
@@ -155,11 +141,7 @@ impl Header {
         &self.shape
     }
 
-    /// The same, mutably.
-    ///
-    /// Handing out `&mut` costs nothing here: every [`HeaderShape`] is a valid
-    /// description, so there is no combination a caller could reach by editing
-    /// one that it could not reach by building one.
+    /// The same, mutably; every [`HeaderShape`] is a valid description.
     pub fn shape_mut(&mut self) -> &mut HeaderShape {
         &mut self.shape
     }
@@ -195,10 +177,7 @@ impl Header {
     ///
     /// A no-op on a content-described header, which has no style to set.
     ///
-    /// Naming [`HeaderStyle::Simple`] is not redundant even though it is the
-    /// only style a header may take: the specification distinguishes a header
-    /// that states it from one that leaves it out, and a description that
-    /// stated it is emitted back the way it arrived.
+    /// A stated [`HeaderStyle::Simple`] is emitted back, unlike an omitted one.
     #[must_use]
     pub fn with_style(mut self, style: HeaderStyle, explode: bool) -> Self {
         if let HeaderShape::Schema {
@@ -239,8 +218,7 @@ impl Header {
 
     /// Shows the value with one inline example.
     ///
-    /// Replaces any named examples: the two forms exclude each other, so there
-    /// is no state that holds both.
+    /// Replaces any named examples; the two forms exclude each other.
     #[must_use]
     pub fn with_example(mut self, value: impl Into<Value>) -> Self {
         self.examples = Some(Examples::Inline(value.into()));

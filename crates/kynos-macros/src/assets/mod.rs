@@ -10,17 +10,8 @@
 //! }
 //! ```
 //!
-//! # Why the contents are `include_bytes!` rather than byte literals
-//!
-//! A proc macro reading a file leaves no trace the build system can see:
-//! `proc_macro::tracked_path` is nightly, so an expansion that embedded the
-//! bytes directly would serve whatever it read the first time it ran, forever.
-//! `include_bytes!` registers a compiler file dependency, so a *changed* asset
-//! rebuilds.
-//!
-//! Adding or removing a file still does not, because membership is not a file's
-//! contents. `examples/assets.rs` shows the `cargo::rerun-if-changed` line that
-//! closes it, which is a `build.rs` away rather than something the macro can do.
+//! Contents are `include_bytes!` so a changed file rebuilds; an added or
+//! removed one needs the `build.rs` line `examples/assets.rs` shows.
 
 mod args;
 mod walk;
@@ -114,12 +105,8 @@ pub(crate) fn expand_inner(args: &AssetArgs) -> syn::Result<proc_macro2::TokenSt
     })
 }
 
-/// The compiler warning an oversized set emits, spanned at the `dir` literal.
-///
-/// `proc_macro::Diagnostic` is nightly, so the warning is produced by *using* an
-/// item this expansion marked `#[deprecated]` — which is warn-by-default, fires
-/// at the use rather than the definition, and carries whatever span the use has.
-/// That is the one way to say something non-fatal from a stable proc macro.
+/// The compiler warning an oversized set emits, spanned at the `dir` literal:
+/// a use of a `#[deprecated]` item, stable Rust's only non-fatal diagnostic.
 fn size_guard(args: &AssetArgs, walked: &Walked) -> Option<proc_macro2::TokenStream> {
     let threshold = args.warn_over?;
     if walked.total_bytes <= threshold {
@@ -136,8 +123,6 @@ fn size_guard(args: &AssetArgs, walked: &Walked) -> Option<proc_macro2::TokenStr
          `warn_over = \"{suggestion}\"`, or turn the check off with `warn_over = \"none\"`."
     );
 
-    // Spanned at the `dir` literal, so the warning points at the directory that
-    // caused it rather than at the macro call as a whole.
     let span = args.dir.span();
     let marker = syn::Ident::new("this_embedded_asset_set_is_large", span);
 
@@ -147,9 +132,7 @@ fn size_guard(args: &AssetArgs, walked: &Walked) -> Option<proc_macro2::TokenStr
             #[allow(non_upper_case_globals)]
             const #marker: () = ();
 
-            // Deliberately *not* `#[allow(deprecated)]`: using the item is the
-            // whole mechanism, and allowing the lint here would silence the
-            // warning this exists to produce.
+            // Not `#[allow(deprecated)]`: this use is the warning.
             let _ = #marker;
         };
     })

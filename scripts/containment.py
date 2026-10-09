@@ -1,19 +1,9 @@
 """Containment checks: a crate may be named only where its owner allows.
 
-`docs/architecture.md` states the allowances and says twice that the count
-is the check. This is that check. It reads the tables rather than restating
-them, so the document and the gate cannot drift apart.
-
-Source is stripped of comments and string literals before anything is
-matched -- these rules are discussed in prose throughout `src`, and the
-`b"h2"` ALPN identifier is a literal -- and `#[cfg(test)]` modules are
-dropped, both inline and as sibling files.
-
-One rule needs the literals back: a `#[cfg(feature = "x")]` gate writes the
-flag name as a string, so it is matched over a second corpus that keeps
-literals and drops everything else the first drops. Comments go from both.
-A rule matched over genuinely raw text reads a renamed flag off a stale
-comment and reports the row as holding.
+Reads the allowance tables in `docs/` rather than restating them. Source is
+matched with comments, string literals and `#[cfg(test)]` modules (inline and
+sibling files) removed; feature-gate rules use a second corpus that keeps
+literals, since a `#[cfg(feature = "x")]` flag name is a string.
 """
 
 import ast
@@ -23,14 +13,10 @@ import sys
 import tomllib
 from pathlib import Path
 
-# From the script's own location rather than the working directory, so that
-# running it by hand from a crate directory checks the same tree mise does.
+# Relative to the script, so a run from any directory checks the same tree.
 ROOT = Path(__file__).resolve().parent.parent
 ARCHITECTURE = (ROOT / "docs/architecture.md").read_text()
-# The counts a document may state in words. A count this dict cannot read
-# fails loudly where it is read, rather than skipping the check that holds
-# it, so extending a table past the last word here is part of writing the
-# rows.
+# Counts a document may state in words; an unlisted word fails loudly.
 NUMBERS = {
     "Three": 3,
     "Four": 4,
@@ -56,11 +42,7 @@ TEST_MODULE = re.compile(r"#\[cfg\(test\)\]\s*mod\s+\w+\s*")
 def blank(text):
     """`text` with every character but its newlines replaced by a space.
 
-    What the corpus that drops literals puts in place of one. Blanked rather
-    than deleted so that the two corpora one scan produces stay the same
-    length, character for character: a span found in either is a span in both,
-    which is what lets `#[cfg(test)]` modules be located once. The newlines
-    survive so a blanked literal leaves the lines around it where they were.
+    Keeps both corpora the same length, so one span applies to both.
     """
     return "".join("\n" if char == "\n" else " " for char in text)
 
@@ -68,10 +50,8 @@ def blank(text):
 def literal_end(source, i):
     """Where the literal starting at `i` ends, or `None` if none starts there.
 
-    Raw strings, ordinary strings and char literals, which the scanner has to
-    walk rather than skip: a `//` inside one is not a comment and a `"` inside
-    a raw string is not its close. A bare `'` that does not close is a lifetime
-    rather than a char literal, and is ordinary code.
+    Raw strings, ordinary strings and char literals; an unclosed `'` is a
+    lifetime, not a literal.
     """
     if source[i] == "r" and (m := re.match(r'r(#*)"', source[i:])):
         close = '"' + m.group(1)
@@ -90,17 +70,8 @@ def literal_end(source, i):
 def test_module_spans(text):
     """Every inline `#[cfg(test)] mod` in `text`, as `(start, end)` offsets.
 
-    Found once, over the text whose literals are blanked, and applied to both
-    corpora -- which is the whole reason the two are the same length. The end
-    of a braced module is where the braces balance, and a brace inside a string
-    is not a brace: counted over text that keeps its literals, a `"{"` in a
-    test module means the depth never returns to zero and every line after the
-    module is dropped, so a gate written below the tests is invisible; a `"}"`
-    balances one brace early, and the tail of the test module survives into a
-    corpus that is supposed to hold only what a request can run.
-
-    Outermost spans only. A nested module is already inside its parent's, and
-    returning both would have the caller cut one and shift the other.
+    `text` must have its literals blanked, so a brace in a string is not
+    counted. Outermost spans only.
     """
     spans = []
     for match in TEST_MODULE.finditer(text):
@@ -108,8 +79,7 @@ def test_module_spans(text):
             continue
         rest = text[match.end() :]
         if not rest.startswith("{"):
-            # `mod tests;`, whose body is the sibling file `under_test` holds
-            # out of `files` separately.
+            # `mod tests;`: `under_test` drops the sibling file.
             spans.append((match.start(), match.end() + rest.startswith(";")))
             continue
         depth, end = 0, len(text)
@@ -118,8 +88,7 @@ def test_module_spans(text):
             if depth == 0:
                 end = match.end() + k + 1
                 break
-        # Braces that never balance are a file that does not compile, and the
-        # module runs to the end of it. A literal can no longer make one.
+        # Unbalanced braces: the module runs to the end of the file.
         spans.append((match.start(), end))
     return spans
 
@@ -127,20 +96,9 @@ def test_module_spans(text):
 def strip(source, literals=True):
     """Drop comments and `#[cfg(test)]` modules, and literals unless asked.
 
-    A hand-rolled scanner rather than a set of regexes, because the three
-    constructs nest: `"//"` is not a comment, `'"'` is not a string, and
-    Rust's block comments nest inside each other. Getting any of those
-    wrong desynchronises the scan and silently inverts what survives.
-
-    `literals=False` keeps every literal and drops the rest, which is the
-    corpus a `#[cfg(feature = "x")]` gate is read against: the flag name is a
-    string, so a rule that dropped literals would find no gate anywhere, and
-    one matched over raw text would find one in a comment.
-
-    One scan produces both, because the two differ in the literals alone: a
-    literal is kept verbatim in one and blanked to the same width in the other,
-    so the two are the same length and the `#[cfg(test)]` modules `strip` drops
-    are located once, on the text where a brace is only ever a brace.
+    A scanner rather than regexes, since comments, strings and nested block
+    comments interleave. `literals=False` keeps literals: the corpus a
+    `#[cfg(feature = "x")]` gate is read against.
     """
     masked, kept, i, n = [], [], 0, len(source)
     while i < n:
@@ -201,41 +159,21 @@ def substituted(pairs, path, text):
 class Corpus:
     """The tree of `.rs` files every rule stated over the source is stated over.
 
-    Four views of one tree, and each rule takes the one it can defend:
+    * `files`: the code a request can run; test modules and sibling test
+      files dropped.
+    * `sources`: `files` plus sibling test files; what a spelling's existence
+      is asked of.
+    * `gate_files`, `gate_sources`: those two with string literals kept, for
+      feature-gate rules.
+    * `raw`: each file's unstripped text, keyed by path.
 
-    * `files` is the code a request can run, and is what most rules read. Test
-      modules are dropped, inline by `strip` and as sibling files by
-      `under_test`.
-    * `sources` is the same with the sibling test files kept, and is what a
-      spelling's *existence* is asked of: a mint spelling earns its place in a
-      cell by being reachable, not by being reached.
-    * `gate_files` and `gate_sources` are those two with string literals kept,
-      for the one rule that needs one back. A `#[cfg(feature = "x")]` gate
-      writes the flag name as a literal, so the two above cannot see one at
-      all; raw text can, but it also sees the flag named in every comment,
-      every rustdoc example and every `#[cfg(test)]` module beside the code --
-      and a gate found in one of those holds a row up on a mention no build
-      reads, which is the false-positive class `strip()` exists to remove. So
-      this pair drops exactly what the pair above drops, minus the literals.
-    * `raw` is what each file says before any of that, keyed by path. The
-      module-size budget counts the lines a reader sees rather than the lines
-      left after a corpus has cut a test module out of the middle.
-
-    An object `main` takes rather than five module constants, and for the
-    reason `main` takes its documents. Three rules here state their whole claim
-    over `files` -- the dependency-graph stray scan, the parent re-export scan
-    and the placeholder scan -- and while the corpus was built at import there
-    was nothing a case could hand them: by the time `main` ran, the corpus was
-    already what the tree said. Silencing any one of those three left both
-    gates green, which is this file's worst outcome, and it was the reason the
-    suite named them unheld. `replacing` is what a case hands over instead.
+    Passed to `main` so a test can hand it a `replacing` corpus.
     """
 
     def __init__(self, raw, sources=None, gate_sources=None):
         """`raw` is `(path, text)` pairs, or anything `dict` accepts.
 
-        The two derived lists are parameters so `replacing` can fill them in
-        rather than strip three hundred files again to rewrite one.
+        `sources` and `gate_sources` default to stripping `raw`.
         """
         self.raw = dict(raw)
         pairs = list(self.raw.items())
@@ -256,18 +194,7 @@ class Corpus:
     def replacing(self, path, text):
         """This corpus with `path` reading as `text`, and nothing else stripped again.
 
-        A path the corpus does not hold is added, so a case may inject a file
-        the tree does not have as readily as rewrite one it does.
-
-        Every other file keeps the text it already has, which is what makes a
-        case over one of these precise as well as cheap: every rule but the one
-        under test reads exactly what it reads over the real tree, so the case
-        asserts one new failure rather than the hundred a corpus of one file
-        would produce.
-
-        The order the files come back in is not load-bearing -- every rule
-        stated over a corpus sorts its offenders or collects them into a set --
-        so a file the corpus did not hold goes on the end.
+        A path the corpus does not hold is appended.
         """
         return Corpus(
             self.raw | {path: text},
@@ -276,35 +203,25 @@ class Corpus:
         )
 
 
-#: This repository's own tree, and the corpus every rule reads when `main` is
-#: given no other. Built at import, which costs the file reads and no rule: what
-#: a rule does with it is `main`'s, and every one of them is stated there.
+#: This repository's tree; `main`'s default corpus. Importing runs no rule.
 WORKSPACE = Corpus(RAW_SOURCES)
 
-# What a failure says a spelling was looked for in, keyed by whether it is a
-# gate. Two corpora are two claims, and a message naming neither leaves a
-# reviewer guessing which text the rule read.
+# Which corpus a failure says a spelling was looked for in, keyed by is-a-gate.
 LOOKED_IN = {
     False: "with comments, string literals and inline `#[cfg(test)]` modules removed",
     True: "with comments and inline `#[cfg(test)]` modules removed and string literals kept",
 }
 
 
-#: The sentence two documents state a table's row count in, and the one
-#: sentence this file reads out of two of them: `architecture.md`'s allowance
-#: table and `testing.md`'s off-path table each write it over their own table.
-#: A module constant for the reason `TAXONOMY_CLAIM` and `OFF_PATH_HEADER` are:
-#: an anchor spelled at its call site is an anchor spelled twice.
+#: The row-count sentence over `architecture.md`'s allowance table and
+#: `testing.md`'s off-path table.
 ROW_COUNT_CLAIM = r"\*\*(\w+) rows, and the count is the check\.\*\*"
 
 
 def claimed(text, sentence, failures):
-    """The number `architecture.md` writes into one of its count claims.
+    """The number `text` writes into the count claim `sentence`, or `None`.
 
-    The document is a parameter for the reason `main`'s are: a count that stays
-    held when the section beside it is gone is a claim about which rules a
-    missing marker costs, and that is only observable against a document
-    missing one.
+    A missing or unreadable count is appended to `failures`.
     """
     found = re.search(sentence, text)
     if found is None:
@@ -316,8 +233,6 @@ def claimed(text, sentence, failures):
     word = found.group(1)
     number = NUMBERS.get(word.capitalize())
     if number is None:
-        # Loudly, rather than skipping the check: a count written in a word
-        # this gate cannot read is a count nothing is holding.
         failures.append(f"architecture.md writes an unreadable count: {word!r}")
     return number
 
@@ -325,25 +240,9 @@ def claimed(text, sentence, failures):
 def section(text, start, failures, end=None, unrun=""):
     """`text` from `start` to `end`, or `None` with the missing marker reported.
 
-    What `.index()` was here, minus the raise. A marker is a heading or a table
-    header in a document someone is free to reword, and `.index()` answers a
-    reworded document with a `ValueError` that takes the process down: the gate
-    stops before it reports anything, and `containment_test.py` imports this
-    module, so the run that would have named the missing marker never starts
-    either. A rule whose text is gone is skipped instead, and said to be
-    skipped -- the discipline the off-path row loop already states for a row it
-    has just called untrustworthy.
-
-    `end` is looked for after `start`, and its absence is a failure too rather
-    than a fall back to the end of the document. A slice that silently widens is
-    the rule reading exactly the text it was written to exclude, which is worse
-    than a rule that says it did not run.
-
-    The first occurrence of each marker, which is `.index()`'s own semantics.
-
-    `unrun` is the caller's sentence, naming the document and the rule that goes
-    unchecked without the slice. The marker alone would leave a reader knowing
-    what is missing and not what stopped being held.
+    First occurrence of each marker; `end` is searched after `start`, and a
+    missing `end` fails rather than widening to the end of the document.
+    `unrun` completes the failure message, naming the rule left unchecked.
     """
     begin = text.find(start)
     if begin < 0:
@@ -377,10 +276,7 @@ def expand(entry):
 def permitted(path, allowed):
     """Whether the `allowed` sites let `path` name tokio outside `server/`.
 
-    The sites are a parameter rather than a global so the rule can be skipped
-    whole when the table they are read from is gone. An empty allowance is not a
-    narrower answer here: it is every file in the crate reported as an offender,
-    with the one failure that explains why buried under them.
+    Skip the rule rather than pass an empty `allowed` when its table is gone.
     """
     if path.startswith("crates/kynos/src/server/"):
         return True
@@ -402,153 +298,29 @@ def listed(path, sites):
 
 
 # --- The off-path elements ---------------------------------------------------
-# `performance.md` grades the document model, the emitters, the validators and
-# `describe` as off-path elements, and an off-path element owes a proof that a
-# request cannot reach it rather than a measurement. This is that proof's outer
-# half, and `testing.md#the-off-path-proof` is where it is argued.
-#
-# Stated negatively, because a request path is not a set of files: the table
-# names each element with the sites allowed to name it, and every other file
-# under the scope is on the request path by default. So the rule needs no list
-# of what serves a request -- which is the list nobody could keep true -- and a
-# new site is a failing build until someone writes a row saying why a request
-# cannot reach it.
-#
-# The declared side is read off disk, as it is everywhere else here: `naming()`
-# computes the real set, and the only hand-written thing in a row is the reason,
-# which is quoted back in the failure. Subset semantics, like the `ONLY_IN`
-# rules above: a site that has stopped naming its element is stale rather than
-# wrong, and only a stray fails.
-#
-# The inner half is not here and cannot be. `Dispatch` hands every request to a
-# trait object, and what sits behind one is declared in a file this rule reads
-# as an allowed site; `router/dispatch/tests.rs` closes that from the other side
-# by destructuring the three types a request travels through.
+# The outer half of the off-path proof (`testing.md#the-off-path-proof`): every
+# file naming an element outside its row's sites is on the request path and
+# fails. A site that stopped naming its element is stale, not a failure.
 TESTING = (ROOT / "docs/testing.md").read_text()
 OFF_PATH_HEADER = "| Element | Named by | Named only in | Why a request cannot reach it |"
-# The scope every row is read against, and the one a bare site is relative to.
-# A row reaches further by writing a `crates/...` site: the scope it is checked
-# under is derived from its own sites, below, so widening is a property of the
-# row that needs it rather than of the whole table. The alternative -- one scope
-# spanning both crates for every row -- fails the `Document` row on sight, since
-# `kynos-openapi` is where the type is declared.
+# Bare sites are relative to this; a `crates/...` site widens its row's scope.
 OFF_PATH_SCOPE = "crates/kynos/src/"
 
 
-# What one spelling in a *Named by* cell may hold: an identifier, or a path of
-# them. The backticks are load-bearing as soon as a cell holds more than one
-# spelling -- they are what separates them, and `backticked` refuses a cell that
-# writes anything but commas outside them -- and are optional here only so that
-# a cell written as a single bare token is still read whole.
+# A *Named by* spelling: an identifier or `::` path. Backticks separate several
+# spellings in one cell and are optional for a single bare token.
 NAMED_BY = re.compile(r"`?(\w+(?:\s*::\s*\w+)*)`?")
-# The other kind: a Cargo feature gate, written as the `#[cfg]` attribute writes
-# it. A flag is not an identifier -- `decimal-big` is not even a Rust name -- so
-# an element whose whole contribution is what a gate compiles has no crate or
-# type to be named by, and the gate is the only thing that names it.
-#
-# Two spellings, because polarity is a property of the cell rather than of the
-# rule. `feature = "x"` names what the flag compiles when it is on;
-# `not(feature = "x")` names what it compiles when it is off, which is the whole
-# of what the `openapi31` row has to hold -- both of its sites are
-# `#[cfg(not(feature = "openapi31"))] compile_error!`. A cell read at either
-# polarity could not say which one it holds, and saying so is what it is for.
-#
-# That is the *existence* check. The offender scan reads no polarity at all, and
-# the two questions are split for that reason: `Gate.search` answers the cell's
-# claim, `Gate.named` answers whether a site names the flag. What a site owes a
-# row does not turn on which way its gate reads -- `not(feature = "x")` compiles
-# code in every build the flag is off in, and the row's reason either covers
-# that build or does not cover the site. Reading the polarity in both places
-# left a cell catching one half of its own claim, and for the four rows whose
-# element has no companion identifier -- `test-util`, `time`, `decimal`,
-# `openapi31` -- there was nothing else to catch the other half, so the loss was
-# total. Negated gates are idiom here rather than a corner: `lib.rs` writes four.
-#
-# Existence stays the narrower of the two, which is the safe direction: a row
-# cannot be held up by a mention the offender scan would not have counted.
-#
-# A cell writing both spellings is refused all the same, and by the row loop
-# rather than by a rule about cells: every spelling is held to matching
-# something, so over this tree the positive `openapi31` spelling empties and
-# fails the build. Run against the real tree, not assumed. `kynos-openapi`
-# declares `default = ["openapi31"]` and `openapi32 = ["openapi31"]`, and both
-# sites of the flag are the `compile_error!` that refuses a build without it, so
-# no build that compiles has it off and a positive gate on it is code that
-# cannot exist. `git log --all -S'cfg(feature = "openapi31")' -- crates/`
-# returns nothing -- though that string is blind to a multi-line predicate, and
-# one exists: `crates/kynos/tests/matrix.rs` writes the flag positively inside a
-# `#![cfg(all(...))]`, and `-S` is blind to any compound predicate rather than
-# only to one broken across lines. That file is under `crates/kynos/tests/`,
-# outside both scanned trees, so the row is unaffected and the idiom is real.
+# A feature-gate spelling, at either polarity: `feature = "x"` names what the
+# flag compiles when on, `not(feature = "x")` what it compiles when off.
+# `Gate.search` (existence) reads the polarity; `Gate.named` (offenders) does not.
 GATE = re.compile(r'`?feature\s*=\s*"([\w-]+)"`?')
 NEGATED_GATE = re.compile(r'`?not\(\s*feature\s*=\s*"([\w-]+)"\s*\)`?')
-# Where a predicate starts. `cfg_attr` is here for its predicate, which
-# `Gate.names` argues is a gate: `#[cfg_attr(feature = "x", serde(default))]`
-# varies the item the attribute sits on, and that is what a row's spelling
-# claims. It is not here to keep the documentation annotation out, which is
-# what this comment used to say and what the measurement refutes -- dropping
-# `cfg_attr` from this pattern leaves `#[cfg_attr(docsrs,
-# doc(cfg(feature = "x")))]` reading `False` exactly as before, since a
-# `cfg`-only pattern cannot match `#[cfg_attr(` and the inner `cfg(` has no
-# `#[` in front of it. What excluding `cfg_attr` here loses is the predicate,
-# and nothing else.
-#
-# The `cfg!` macro is the one form here that is not an attribute, and is why
-# this pattern is named for the predicate rather than for the attribute around
-# it: what the two questions below read is a `cfg` predicate, and Rust writes
-# one inside four attributes and one macro. `cfg!` compiles in every
-# configuration and branches at run time, so what it guards is code every build
-# emits -- more of the request path than either attribute form compiles, not
-# less -- and a file writing one is coupled to the flag it names. Anchoring on
-# `#[` read it as naming no gate at all, which is a silent pass of the class
-# the polarity defect was, landing on the same four rows: `test-util`, `time`,
-# `decimal` and `openapi31` hold a gate spelling and nothing else in their
-# *Named by* cell, so no companion identifier catches the site by another
-# spelling.
-#
-# One pattern, so both questions read it, and that is decided rather than
-# incidental. The predicate inside a `cfg!` is the predicate inside a `#[cfg]`
-# -- `not(`, `all(`, `any(` and all -- so one walk answers both and `search`
-# reads the polarity the cell asked for. Feeding `named` alone would invert the
-# order the two are kept in: existence is the narrower of the pair so that a
-# row cannot be held up by a mention the offender scan would not have counted,
-# and a form only `named` read would call a cell stale over a spelling live
-# code writes. The `!` in `!cfg!(feature = "x")` is Rust's operator on the
-# expanded `bool` and sits outside the predicate, so it reads as no negation --
-# which is right, since the gate names the flag positively and the branch is
-# what inverts.
-#
-# Live idiom rather than a shape invented for this pattern: `crates/` writes
-# eleven `cfg!(feature = "…")`. None of them fires over this tree, and that was
-# established before the pattern changed rather than after. Every one names
-# `openapi32`, which no off-path row names at all; ten are under
-# `crates/kynos-macros/src/`, a tree no row's sites reach and so no row's scope
-# covers; and the three written in a `tests.rs` sibling are held out of
-# `gate_files` besides.
-#
-# The macro alternative accepts all three delimiters and the attribute
-# alternatives accept only `(`, which is Rust's asymmetry rather than this
-# pattern's. A macro invocation may be delimited `(`, `{` or `[` -- `rustc`
-# compiles `cfg!{feature = "x"}` and `cfg![feature = "x"]` as readily as the
-# parenthesised form -- while `#[cfg{...}]` is refused outright with "wrong
-# meta list delimiters". Requiring the paren everywhere read two of the three
-# macro spellings as no gate at all; widening the attribute forms to match
-# would read a gate into source no build compiles.
-#
-# The macro alternative also requires the name to stand bare. A word boundary
-# stops `mycfg!` and nothing else, because it fires after `:` and after `$` as
-# readily as after a space -- so `other::cfg!(...)` and `$cfg!(...)`, both of
-# which `rustc` compiles, read as gates under one. Neither is this gate: a path
-# resolves to whatever macro the named module exports, a metavariable to
-# whatever the caller passed, and text alone resolves neither. The lookbehind
-# refuses all three prefixes. It trades that pair for a miss should someone
-# re-export `core::cfg` under a path and gate on it, which is the direction a
-# scan reading text should err in when it cannot tell a gate from a namesake.
+# Where a `cfg` predicate starts: `#[cfg(`, `#![cfg(`, `cfg_attr` likewise, or
+# a bare `cfg!` under any of its three delimiters (attributes accept only `(`).
+# The lookbehind refuses `mycfg!`, `path::cfg!` and `$cfg!`, which text cannot
+# resolve to the real macro.
 PREDICATE = re.compile(r"#!?\[\s*(cfg_attr|cfg)\s*\(|(?<![\w:$])cfg!\s*([({\[])")
-#: What closes each delimiter a predicate may open. Only the outermost one
-#: varies: every group nested inside a `cfg` predicate is a parenthesised
-#: `not(`, `all(` or `any(`, so the walk closes on this one at depth one and on
-#: `)` everywhere below it.
+#: What closes a predicate's outermost delimiter; nested groups always use `(`.
 CLOSING = {"(": ")", "{": "}", "[": "]"}
 # A `not(` group, which inverts the polarity of everything inside it.
 NEGATION = re.compile(r"\bnot\s*\(")
@@ -557,38 +329,10 @@ NEGATION = re.compile(r"\bnot\s*\(")
 class Gate:
     """One gate spelling, matched against the `cfg` predicate around it.
 
-    `.search(text)` like a compiled pattern's -- a bool rather than a match
-    object, since every consumer reads it in boolean context -- and `.named`
-    beside it for the one caller that must not read a polarity. `Name` answers
-    both for an identifier spelling, so the row loop asks every spelling the
-    same two questions.
-
-    Text matching could not answer what a gate spelling asks. `feature = "uuid"`
-    is written by the gate; by `not(feature = "uuid")`, which compiles code only
-    where the flag is *off*; and by `#[cfg_attr(docsrs, doc(cfg(...)))]`, which
-    compiles nothing in any configuration. All three read alike as text, so an
-    offender scan over one reported a row broken by the other two. It is also
-    written by `cfg!(feature = "uuid")`, which is not an attribute at all and
-    compiles in *every* configuration. The predicate is read instead: every
-    `#[cfg(`, `#![cfg(`, `#[cfg_attr(`, `#![cfg_attr(` and `cfg!` under any of
-    its three delimiters -- what `PREDICATE` matches -- is walked with its
-    delimiters balanced, and `search` counts the flag only where the parity of
-    the `not(` groups enclosing it is the one the spelling asked for. `named` counts it at either
-    parity and nowhere else, which is what separates a polarity a cell claims
-    from a flag a file names.
-
-    Anchoring on `#[cfg(feature = "x")]` instead was measured against this tree
-    and is wrong on it, not merely in principle: `lib.rs` names `time` and
-    `decimal` positively and their backends negatively inside compound
-    predicates, and compound predicates are the norm in this workspace rather
-    than the exotic case. A pattern that read only the bare form would miss
-    every one of those sites, and would let
-    `#[cfg(all(feature = "uuid", debug_assertions))]` past the offender scan --
-    the silent pass this file names as its worst outcome.
-
-    `literal_end` balances the parentheses, which is what keeps a paren inside a
-    string literal from desynchronising the walk. The corpus a gate is read
-    against keeps its literals, because the flag name is one.
+    Each `PREDICATE` match is walked with delimiters balanced (skipping
+    literals). `search` counts the flag only at the `not(` parity the spelling
+    asked for; `named` counts it at either. `Name` answers the same two
+    questions for an identifier.
     """
 
     def __init__(self, flag, negated):
@@ -603,21 +347,8 @@ class Gate:
     def named(self, text):
         """Whether any predicate in `text` names this flag at either polarity.
 
-        What the offender scan asks, where `search` is what the existence check
-        asks. A cell states a polarity and the existence check holds it to that
-        one, because that is the claim the cell makes. Whether a *site* is one
-        the row has to cover is a different question and does not turn on the
-        polarity: `not(feature = "x")` names the flag and couples the file to
-        it, and what it compiles exists in every build the flag is off in --
-        which is a build the row's reason says nothing about. Reading the
-        polarity here answered half of what a row claims, and for a row whose
-        element has no companion identifier -- `test-util`, `time`, `decimal`,
-        `openapi31` -- it answered none of it.
-
-        Blind to the polarity alone, and not a text match. A
-        `#[cfg_attr(docsrs, doc(cfg(feature = "x")))]` compiles nothing in any
-        configuration and names the flag at no polarity, which is the false
-        positive half of #134 and stays fixed.
+        The offender scan's question: a site gated either way is coupled to the
+        flag. Still a predicate walk, so a `cfg_attr` argument does not count.
         """
         return any(
             self.names(text, found, polarity=False)
@@ -627,42 +358,14 @@ class Gate:
     def names(self, text, opened, polarity=True):
         """Whether one `opened` predicate names this flag, at this polarity or at any.
 
-        `polarity=False` is `named`'s question: the flag counts wherever the
-        walk reaches it, whatever the parity of the `not(` groups around it.
-
-        A `cfg_attr` is walked as far as its predicate and stops at the comma,
-        and that asymmetry is decided rather than incidental. "Compiles
-        nothing" is not what separates the two halves: `cfg_attr`
-        conditionally applies an *attribute*, so neither its predicate nor its
-        arguments conditionally compile the item, and the comment on the comma
-        branch below states the weaker of the two reasons for stopping there.
-        What separates them is what a row's spelling claims -- that the flag
-        varies the item the attribute sits on. A `cfg_attr` predicate does
-        vary it: under `#[cfg_attr(feature = "x", serde(default))]` the flag
-        decides how the item deserialises, so a row naming that flag has found
-        a site it is the proof for. The attributes applied after the comma
-        decide nothing about the item -- the flag in
-        `#[cfg_attr(docsrs, doc(cfg(feature = "x")))]` is being described in
-        prose a documentation build renders, and reading that as the gate was
-        half of #134.
-
-        With one shape where that is false, recorded rather than handled:
-        `#[cfg_attr(pred, cfg(feature = "x"))]` applies a `cfg`, which does
-        compile the item conditionally, and this returns `False` over it. No
-        `.rs` file in the workspace writes `cfg_attr` at all -- `grep -rn
-        cfg_attr crates/` finds it only in manifest prose recording a decision
-        not to adopt `docsrs` -- so the shape is unreachable here. Handling it
-        means walking into a nested `cfg(` at the outer polarity rather than
-        stopping at the comma, which is a decision for whoever writes the
-        first one.
+        `polarity=False` ignores `not(` parity. A `cfg_attr` is read only up to
+        its first comma: the flag varies the item through the predicate, not
+        through the attributes applied. Known gap: a `cfg(...)` applied by a
+        `cfg_attr` returns `False`; no workspace file writes `cfg_attr`.
         """
-        # The parity of the `not(` groups enclosing each open paren, innermost
-        # last. The predicate's own paren is already open, at even parity; the
-        # walk ends when it closes, which is what keeps one predicate from
-        # running into the code below it.
+        # `not(` parity per open paren, innermost last; ends when the
+        # predicate's own delimiter closes.
         parity, i, n = [False], opened.end(), len(text)
-        # The delimiter the predicate opened on, which is `(` for every
-        # attribute form and any of the three for the macro.
         closes = CLOSING[text[i - 1]]
         applies = opened.group(1) == "cfg_attr"
         while i < n and parity:
@@ -680,31 +383,20 @@ class Gate:
                 parity.pop()
                 i += 1
             elif applies and text[i] == "," and len(parity) == 1:
-                # Only the first argument of a `cfg_attr` is a predicate. The
-                # attributes applied after it do not compile the item
-                # conditionally, so a flag named among them names no gate at
-                # either polarity -- unless one of those attributes is itself
-                # a `cfg`, which the docstring above records as the shape this
-                # returns `False` over and nothing in the workspace writes.
+                # Only a `cfg_attr`'s first argument is a predicate.
                 return False
             elif (end := literal_end(text, i)) is not None:
                 i = end
             else:
                 i += 1
-        # Parentheses that never balance are a file that does not compile, and
-        # the walk runs to the end of the text reporting nothing -- the posture
-        # `test_module_spans` takes for the same reason.
+        # Unbalanced: the file does not compile, so report nothing.
         return False
 
 
 class Name:
     """One identifier spelling, matched as the text it is.
 
-    `Gate`'s counterpart, and it exists so that the row loop can ask every
-    spelling both of its questions without asking which kind it holds. A name
-    has no polarity to read, so "does anything write this spelling" and "does
-    anything outside the row's sites write it" are the same question here and
-    two questions in `Gate`.
+    `Gate`'s counterpart; a name has no polarity, so `search` and `named` agree.
     """
 
     def __init__(self, pattern):
@@ -726,17 +418,9 @@ RESIDUE = re.compile(r"[\s,]*")
 def backticked(cell):
     """The backticked entries of one cell, or `None` if anything else is in it.
 
-    Both cells below are comma-separated lists of backticked entries, and both
-    are read by collecting the runs. Collecting them is not enough on its own:
-    a list of two whose second entry lost its backticks collects as a list of
-    one, and every rule downstream then holds a row up by the half of it that
-    still parses. So the residue is checked too -- outside the runs a cell may
-    write commas and whitespace and nothing else.
-
-    A cell with no backticks at all is a different case and is not refused
-    here. `None` means a run was found *and* something outside the runs was;
-    a bare cell returns an empty list, and the caller reads it whole and fails
-    loudly there if it is not a token or a path.
+    Outside the backticks only commas and whitespace are allowed, so an entry
+    that lost its backticks is not silently dropped. A cell with no backticks
+    returns `[]` for the caller to read whole.
     """
     entries = BACKTICKED.findall(cell)
     if entries and not RESIDUE.fullmatch(BACKTICKED.sub("", cell)):
@@ -747,51 +431,16 @@ def backticked(cell):
 def token(cell):
     """One `(spelling, matcher, gate)` per spelling in a *Named by* cell, or `None`.
 
-    `None` loudly rather than a pattern that cannot match: a cell this function
-    guesses at compiles to an escaped literal nothing in Rust source contains,
-    and a rule that always passes reports that the elements are off the path
-    when nobody has checked. A new kind of token belongs in `NAMED_BY` and here,
-    not in a fallback. A cell writing anything but commas outside its backticks
-    is `None` for the same reason and by `backticked`: a spelling silently
-    dropped for having lost its backticks is a claim nobody is holding, and it
-    reads exactly like a row with one spelling that holds.
+    `None` for an unreadable cell rather than a pattern that cannot match, since
+    a rule that always passes reports that the elements are off the path
+    when nobody has checked.
 
-    `Registry::new` is a path rather than an identifier, and the source may
-    write it spaced or wrapped, so each `::` matches the whitespace a formatter
-    is free to put around it.
-
-    A cell may hold more than one spelling -- a comma-separated list of
-    backticked entries, each of which may brace-expand the way a *Named only in*
-    cell expands a directory of siblings -- and the row holds all of them at
-    once. `Registry::{new,default}` is the case that forced the brace form:
-    `new` is `Self::default()` and `Registry` derives `Default`, so a row
-    holding only `new` lets a derived `default()` mint a registry anywhere with
-    the gate green. The comma form is what a feature row needs: a flag's
-    contribution is the code its gate compiles *and* the crate that code calls,
-    and `` `uuid`, `feature = "uuid"` `` is one element with two names, not two
-    elements sharing a reason written twice.
-
-    A gate spelling may be written negated -- `not(feature = "x")` -- and then
-    exists only where the flag compiles code by being *off*. Its matcher is a
-    `Gate` rather than a compiled pattern, because the spelling is a claim about
-    the `#[cfg]` predicate around the string and not about the string. An
-    identifier's matcher is a `Name`, which answers the same two questions a
-    `Gate` does with the same answer, since a name has no polarity.
-
-    Which corpus a spelling is matched over is `gate` in each triple: an
-    identifier over `sources`, a gate over `gate_sources`. The two differ in
-    the literals alone. A gate matched over the stripped text would name
-    nothing anywhere, since a flag name is a literal and the rule would read
-    every `#[cfg]` in the workspace as absent and every feature row as
-    vacuously held; a gate matched over raw text would be satisfied by the
-    flag named in a comment, a rustdoc example or an inline test module, and a
-    renamed flag would go on reporting that its row holds.
-
-    Each spelling keeps its own pattern rather than joining them into one
-    alternation, so the caller can hold every spelling to naming a file. A
-    union hides a stale spelling behind a live one: `Registry::{new,defualt}`
-    matches wherever `new` is written, and the row goes on reporting that a
-    registry is off the path while `Registry::default()` mints one anywhere.
+    A cell is a comma-separated list of backticked entries, each of which may
+    brace-expand (`Registry::{new,default}`). An identifier or `::` path (each
+    `::` tolerating whitespace) gets a `Name`; a gate or negated gate gets a
+    `Gate`. `gate` is true when the spelling must be matched over the
+    literal-keeping corpus. One matcher per spelling, so each is held to
+    naming a file on its own.
     """
     entries = backticked(cell)
     if entries is None:
@@ -820,22 +469,9 @@ def token(cell):
 def allowed_sites(cell):
     """The files one *Named only in* cell allows.
 
-    A comma-separated list of backticked paths, each of which may brace-expand:
-    a row naming nine files is one cell, and `router/{describe,install}.rs` is
-    the same shorthand the allowance table above uses.
-
-    A path is relative to `OFF_PATH_SCOPE` unless it starts at `crates/`, which
-    makes it relative to the repository root and is how a row names a sibling
-    crate. The prefix is the whole of the distinction on purpose: it is what a
-    reader of the table already has to type to say where the file is, so a row
-    reaching into another crate cannot be written without saying so.
-
-    `None` when the cell writes anything but commas outside its backticks, by
-    `backticked` and for a consequence worse than a lost spelling: the scan
-    scope is derived from these sites, so a `crates/...` site dropped for
-    having lost its backticks does not merely go unchecked -- it takes the
-    sibling crate out of the scan with it, and the row narrows silently back
-    to the home scope where every spelling it names is still written.
+    A comma-separated list of backticked, brace-expandable paths, relative to
+    `OFF_PATH_SCOPE` unless they start at `crates/`. `None` when anything but
+    commas sits outside the backticks.
     """
     entries = backticked(cell)
     if entries is None:
@@ -853,30 +489,9 @@ def scanned(allowance, exists=None):
     """The `crates/<name>/src/` trees a row's own sites put it in reach of,
     paired with the derived trees that are not directories.
 
-    Always the home scope, plus one tree per crate-qualified site. Derived
-    rather than declared, so the widening and the reason for it are the same
-    edit: a row that names `crates/kynos-openapi/src/emit/mod.rs` has said
-    where its element lives, and a second cell repeating that as a scope could
-    only ever disagree with the first.
-
-    The narrowness is the point. Scanning both crates for every row would fail
-    the `Document`, `Registry` and `Validator` rows immediately -- all three
-    elements are *declared* in `kynos-openapi`, and the claim those rows make
-    is about the crate a request runs in.
-
-    A derived tree is held to existing because the derivation is string
-    surgery over a hand-written cell, and a crate name is not spell-checked by
-    anything else here. `crates/kynos-opanapi/src/emit/mod.rs` is backticked,
-    is `crates/`-prefixed, and reads as a path, so every other check on the
-    cell passes -- and the tree it yields matches no file, which silently
-    narrows the row back to the home scope where the element it names is not
-    written at all. Both halves of the row then pass: the spelling is found in
-    the home crate, and nothing in the sibling crate is scanned for offenders.
-    One transposed letter takes a whole crate out of the gate while the run
-    reports that every rule holds, so the tree is checked rather than trusted.
-
-    `exists` is the directory test, injected so the rule can be exercised
-    against a stated tree set rather than the repository's own.
+    Always the home scope, plus one tree per crate-qualified site. A missing
+    tree is returned so a misspelt crate fails rather than narrowing the scan.
+    `exists` is the directory test, injectable for tests.
     """
     if exists is None:
         exists = lambda tree: (ROOT / tree).is_dir()
@@ -889,67 +504,23 @@ def scanned(allowance, exists=None):
 
 
 # --- The module-size budget -------------------------------------------------
-# AGENTS.md: a module becomes a directory once it exceeds ~400 lines excluding
-# tests. Files still over that line are a debt, and `nfr.md` writes down how
-# many there are so the number can only move deliberately -- down as one is
-# split, and never up without someone editing the ledger and saying why.
-#
-# "Excluding tests" is satisfied by the layout rule rather than by parsing:
-# the corpus's `files` already drops every `tests.rs`, and the convention puts a
-# module's tests in one. A module keeping an inline `mod tests` would have those
-# lines counted, which is the right pressure -- the same rule says to move them
-# out, and the count is read off `raw` so an inline module is not cut out of the
-# middle of the file before its lines are counted.
-#
-# Counted with `count("\n")` rather than `len(split("\n"))`: every file here
-# ends in a newline, so splitting yields one empty trailing element and a file
-# of exactly 400 lines would be read as 401 and reported as past a line it has
-# not passed.
+# Modules past ~400 lines excluding tests are a debt `nfr.md` counts. Sibling
+# `tests.rs` files are excluded; an inline `mod tests` counts, read off `raw`.
 NFR = (ROOT / "docs/nfr.md").read_text()
 
 # --- The feature grading -----------------------------------------------------
-# `docs/performance.md` grades every flag `crates/kynos` declares, and the grade
-# decides what the flag owes: a full battery, an off-path proof, or nothing of
-# its own because it is an aggregate. A flag nobody graded is the exact failure
-# the table exists to make visible, and until this rule it failed nothing.
-#
-# Both sides are read off disk -- the flags from the table, the keys from the
-# manifest -- so neither is transcribed here and no count is stated in either.
-# `testing.md#cross-cutting` is the argument: a count reports that two numbers
-# differ where a set names the flag nothing accounts for, and a count puts two
-# branches each adding a flag on the same line where the table puts them on
-# different ones.
-#
-# The manifest is parsed rather than scanned. The failure `strip()`'s docstring
-# names applies here too: a regex over `^([\w-]+)\s*=` drops a quoted key, and a
-# dropped key is a flag falling silently out of the compared set. A rule whose
-# whole purpose is catching the flag nobody noticed cannot rest on a parser that
-# can lose one.
+# Every flag `crates/kynos` declares must be graded in `docs/performance.md`.
+# Compared as sets read off disk; the manifest is parsed so no key is dropped.
 PERFORMANCE = (ROOT / "docs/performance.md").read_text()
-# One grade is not self-executing. A full battery is owed to a suite that either
-# runs or does not; an aggregate owes nothing. An off-path proof is an argument,
-# and the failure it has is the one every argument has -- being graded and never
-# written. So the flags in this row are held to appearing in the off-path table
-# above, and regrading a flag into this column is a failing build until its row
-# exists. Forward only: a row for a flag graded elsewhere is not an error, since
-# an element may be worth holding under any grade.
+# Flags graded here must have an off-path table row (forward only).
 OFF_PATH_GRADE = "Off-path proof"
 
 
 def off_path_coverage(off_path_graded, off_path_elements, grades):
     """What the off-path table fails to cover of what performance.md graded.
 
-    A function rather than two statements in the rule body, because this is
-    the one comparison here whose inputs are both parsed and whose own failure
-    mode is silence: the check reads a grade by name, and a name that is gone
-    empties the compared set instead of emptying the table. Written inline it
-    was reachable only by running the gate against the real two documents, so
-    `and False` on the guard below left every case green and the gate at zero.
-
-    `grades` is every grade the table writes, and is what the name is checked
-    against: renaming the grade in `performance.md` and not here would pass
-    every flag in it silently -- a rule about the argument nobody wrote,
-    itself passing because nobody wrote the grade.
+    `grades` is every grade the table writes; a missing `OFF_PATH_GRADE` fails
+    rather than emptying the compared set.
     """
     if OFF_PATH_GRADE not in grades:
         return [
@@ -970,47 +541,19 @@ def off_path_coverage(off_path_graded, off_path_elements, grades):
 
 
 # --- The count of measurement kinds ------------------------------------------
-# `performance.md` opens by saying how many of the kinds in its taxonomy run
-# today, and until this rule nothing read that sentence. It went stale twice in
-# one day (#130): two branches rewrote the same count from two readings of the
-# same five rows, and the gate stayed green through both. There is no Markdown
-# linter here, so prose and the table it summarises can only agree by someone
-# recounting the rows by hand -- which is the check this replaces.
-#
-# The first of the two numbers is held and the second is not. Whether a kind
-# runs is the Status cell opening `in use`, which is countable. Whether it
-# covers only part of what it names is a concession the rest of that cell makes
-# in prose, and no token separates the four cells that make one from the one
-# that does not: an em dash misses the off-path row, a semicolon and `no ` miss
-# the size guard, and `rather than` matches the allocation count, whose only
-# qualifier explains why it has four targets rather than limiting what it
-# covers. Every candidate was run against the five cells before this said so. A
-# conjunction fitted to today's five cells would pass because it was drawn
-# around them and would fail the first honest rewording, which is worse than an
-# unheld number that the document admits is unheld. Holding it would take a
-# signal in the table -- a column, or a marker in the cell -- rather than a
-# cleverer regex over the same prose.
-#
-# The sentence is held as written, `All` included. Rewording it past this
-# pattern fails loudly rather than silently unholding the count, so a taxonomy
-# that stops running in full is a deliberate edit here and in the document
-# together.
+# `performance.md`'s opening count of running kinds must match its taxonomy
+# table. Only the running count is held: partial coverage is prose no token
+# separates. The sentence is matched as written, `All` included.
 TAXONOMY_HEADER = "| Kind | Lives in | Runs under | Proves | Status |"
 TAXONOMY_CLAIM = r"All (\w+) of the kinds below run today"
-# What a Status cell opens with when the kind it grades runs. A prefix rather
-# than a search, so that a cell reading `not in use` -- or one conceding a limit
-# by naming what is *not* in use -- is read as the kind not running.
+# A Status cell prefix, so `not in use` reads as not running.
 RUNNING = "in use"
 
 
 def taxonomy_failures(text):
     """Whether `performance.md`'s opening count matches its taxonomy table.
 
-    Text in, problems out, for `cargo_config_failures`' reason: the rule is
-    what needs the cases, and this repository's own document is one input to it
-    rather than the definition of it. The header is searched for rather than
-    sliced at, so a renamed column is a failure here instead of a traceback
-    that takes the test run with it.
+    `text` is the document; returns a list of problems, never raises.
     """
     header = text.find(TAXONOMY_HEADER)
     if header < 0:
@@ -1045,7 +588,6 @@ def taxonomy_failures(text):
             "means rewording TAXONOMY_CLAIM in the same commit"
         )
     elif (expected := NUMBERS.get(stated.group(1).capitalize())) is None:
-        # Loudly, rather than skipping the check, for the reason NUMBERS gives.
         problems.append(
             "performance.md writes an unreadable count of measurement kinds: "
             f"{stated.group(1)!r}"
@@ -1074,30 +616,15 @@ def taxonomy_failures(text):
 
 
 # --- Nothing a package compiles reaches outside the package ------------------
-# `cargo package` copies a package directory and nothing above it, so a path
-# literal that climbs out of one names a file the archive cannot carry. Two
-# distinct faults of exactly that shape had already reached the tree, and no
-# gate could see either: every other task builds the working tree, where both
-# paths resolve, and `cargo package`'s own verify step does not build test
-# targets.
-#
-# Read from the file on disk rather than from the corpus, whose text has had its
-# string literals stripped, and over every `.rs` file in each package rather
-# than `src/` alone -- a test target is published too.
-# Resolved against the reading file: `include_bytes!` and `include_str!` take a
-# path relative to the source that names them.
+# `cargo package` carries only the package directory, so a path literal climbing
+# out of it breaks the archive. Read raw from disk, over every `.rs` file.
+# Relative to the reading file.
 INCLUDED = re.compile(r'include_(?:bytes|str)!\s*\(\s*"([^"]*)"')
-# Resolved against the package: the two spellings of building a path from the
-# manifest directory. Only literals attached directly to it are read -- a path
-# assembled through a variable is beyond a source scan, and every site in this
-# workspace is one expression.
+# Relative to the package; only literals attached directly to the macro.
 CONCATENATED = re.compile(r'CARGO_MANIFEST_DIR"\s*\)\s*,\s*"([^"]*)"')
 JOINED = re.compile(r'CARGO_MANIFEST_DIR"\s*\)\s*\)?((?:\s*\.join\(\s*"[^"]*"\s*\))+)')
 JOIN = re.compile(r'\.join\(\s*"([^"]*)"\s*\)')
-# The manifest's own `exclude`, which is what says a file never reaches an
-# archive. A target excluded there is exempt by construction: the rule is that
-# nothing *published* reaches out, and the exemption is the manifest's to grant
-# and to explain.
+# The manifest's `exclude`: files that never reach an archive are exempt.
 EXCLUDED = re.compile(r"^exclude\s*=\s*\[([^\]]*)\]", re.M)
 
 
@@ -1107,13 +634,7 @@ def published(package):
     exempt = re.findall(r'"([^"]*)"', manifest.group(1)) if manifest else []
     for source in sorted(package.rglob("*.rs")):
         relative = source.relative_to(package).as_posix()
-        # Unreachable over this layout: `target/` sits at the workspace root
-        # and never inside `crates/<name>/`. Kept all the same, because a
-        # `CARGO_TARGET_DIR` pointed inside a package is all it takes to put
-        # one there, and what the walk would then read is a build script's
-        # generated sources -- whose every `include!` resolves outside the
-        # package by construction, so the escape rule below would report a
-        # tree of them. `Published` in the test file is where it is reachable.
+        # A `CARGO_TARGET_DIR` inside a package holds generated sources.
         if "target" in source.relative_to(package).parts:
             continue
         if any(relative == entry or relative.startswith(entry.rstrip("/") + "/") for entry in exempt):
@@ -1122,79 +643,27 @@ def published(package):
 
 
 # --- Parent re-exports ------------------------------------------------------
-# AGENTS.md: submodules are `pub` with no parent re-exports, so every item has
-# one canonical path, and the crate root and `kynos::prelude` are the only
-# curated shortcuts. Both of those live in `lib.rs`, which is why it is the one
-# file exempt rather than a list of names.
-#
-# What is refused is a *second* path to one of our own items: a `pub use` naming
-# `crate`, `self`, `super`, or a module the same file declares. Re-exporting a
-# foreign crate is a facade rather than a second path -- `http/mod.rs`
-# republishes `http::HeaderMap`, which does not thereby acquire a Kynos path at
-# all -- so the rule is written against where the path leads, not against an
-# allowlist of files that would need editing every time one moved.
-#
-# `pub(crate) use` is left alone. The rule is about the paths a *user* can write,
-# and a crate-visible alias is not one of them.
+# One canonical path per item: outside `lib.rs`, a `pub use` may not name
+# `crate`, `self`, `super` or a module the file declares. Foreign re-exports and
+# `pub(crate) use` are allowed.
 DECLARED_MODULE = re.compile(r"\bmod\s+(\w+)\s*[;{]")
 REEXPORT = re.compile(r"^[ \t]*pub\s+use\s+(\w+)", re.MULTILINE)
 
 # --- Placeholder bodies -----------------------------------------------------
-# AGENTS.md permitted a `todo!()` body only during the pre-v1 API-skeleton
-# milestone, where the surface was designed ahead of its implementation so it
-# could be reviewed and frozen as a whole, and now records that the exception
-# has lapsed. `docs/testing.md` records why -- "the API-skeleton
-# milestone is over, the bodies landed, and what it deferred has been paid" --
-# and until now nothing held the lapse. That is the failure a spent exception
-# has: it stops being argued for and quietly stays available.
-#
-# No allowlist is needed, which is the whole reason this rule is cheap. Every
-# `todo!()` in the tree is inside a doc example, standing in for an application's
-# own code, and `strip()` has already removed doc comments by the time this runs.
-# The word boundary keeps the rule off a macro that merely ends in `todo!`.
-#
-# `unimplemented!()` is the same placeholder under another name: it panics
-# identically when reached, and the lapsed exception never allowed it.
+# No `todo!` or `unimplemented!` outside doc examples, which `strip()` removes.
 PLACEHOLDER = re.compile(r"\b(todo|unimplemented)!")
 
 # --- The dev build profile ---------------------------------------------------
-# `.cargo/config.toml` is what keeps a worktree's `target/` near the 17 GiB
-# `nfr.md`'s Workspace table records rather than the 44 GiB before it, and until
-# this rule nothing observed it at all. Every task in `mise run check` and every
-# CI job compiles the same code whether the file is there or not -- only slower,
-# and onto four times the disk -- so deleting it, losing it to a merge, or
-# misspelling a key inside it is a change no gate here could see.
-#
-# Cargo will not see it either, which was run rather than assumed. Against a
-# scratch package, a misspelled key is `warning: unused config key
-# profile.dev.debgu` and an exit status of zero, and a misspelled profile
-# *table* -- `[profile.dve]` -- is not reported at all. Both builds finish
-# `unoptimized + debuginfo`. The failure this catches is the one that looks
-# exactly like a passing build.
-#
-# Presence, not value. `debug = 2` written over `line-tables-only` is a
-# one-token diff on a line whose comment prices six alternatives against each
-# other, and a reviewer reads it; a key that has lost a letter is what nobody
-# reads. Pinning the value would also turn the file's own escape hatch --
-# `cargo --config 'profile.dev.package."*".debug=2'`, offered there for reading
-# a panic through `hyper` -- into a setting someone has to argue with a gate
-# about. So the size itself stays unmeasured and the row in `nfr.md` says so:
-# this holds the cause, and `du -sh target` is the effect nothing reads.
+# `.cargo/config.toml` holds the dev-profile keys behind `nfr.md`'s Workspace
+# footprint. Cargo only warns on a misspelt key and ignores a misspelt table, so
+# key presence is checked here; values are left to review.
 CARGO_CONFIG = ROOT / ".cargo/config.toml"
-# Each key as a path through the parsed document, with the spelling a failure
-# names it by -- `"*"` is a table name rather than an identifier, and the
-# difference is what the file's own comment turns on: `CARGO_PROFILE_DEV_DEBUG`
-# spells the first key and there is no environment spelling of the second.
+# Each key as a path through the parsed document, with its display spelling.
 FOOTPRINT_KEYS = [
     (("profile", "dev", "debug"), "profile.dev.debug"),
     (("profile", "dev", "package", "*", "debug"), 'profile.dev.package."*".debug'),
 ]
-# And nothing else at the top level. Cargo consults this file on every
-# invocation anywhere under the repository, so a `[build] rustc-wrapper` or a
-# `[source] replace-with` written here runs on every machine that builds the
-# workspace and in every CI job, with nothing reading it -- while the file's own
-# comment justifies its existence by the dev profile alone. A tool setting
-# belongs in the `env` of the mise task that needs it, where the task names it.
+# The only top-level tables allowed; tool settings belong in a mise task's `env`.
 CONFIG_TABLES = {"profile"}
 
 
@@ -1211,13 +680,8 @@ def declares(config, key):
 def cargo_config_failures(text):
     """What is wrong with `.cargo/config.toml`, whose contents are `text`.
 
-    `None` for a file that is not there, which is a case rather than an error:
-    a merge that drops it leaves a tree where every other rule here holds.
-
-    Unparseable TOML is reported rather than raised, for the reason the guard
-    at the foot of this file gives -- a rule that takes the process down takes
-    the test run with it, and reports the parsers as untested exactly when
-    something they read is what broke.
+    `text` is `None` for a file that is not there. Unparseable TOML is
+    reported rather than raised.
     """
     if text is None:
         return [
@@ -1257,53 +721,19 @@ def cargo_config_failures(text):
 
 
 # --- The Python floor --------------------------------------------------------
-# What grammar the files under `scripts/` are written in. A declaration rather
-# than a measurement: until something states a floor it is whatever the newest
-# syntax anyone has happened to write, and the only record that this one had
-# already moved was a commit message on #144, where an f-string was rewritten so
-# the file would parse under an interpreter nobody had named.
-#
-# 3.11 rather than the 3.9 grammar these five files happen to parse under.
-# `import tomllib` at the head of this file is 3.11, so the *runtime* floor was
-# already this one whatever the grammar allowed, and declaring 3.9 would publish
-# a number the gate script itself cannot run at.
-#
-# The number is written twice deliberately -- here, and as the `python` pin on
-# every mise task that runs one of these files -- because neither half closes
-# the gap alone. The pin makes what runs deterministic and declares nothing, so
-# a contributor on a newer interpreter still raises the floor with nothing
-# reporting it. This check declares what is allowed and cannot make the pinned
-# interpreter the one anybody runs. A change to one is a change to both, and
-# `python_pin_failures` below is what holds them to that rather than the three
-# comments that merely state it.
-#
-# What neither of them holds is the *runtime* floor. `feature_version` bounds
-# grammar and nothing else: `import tomllib` parses at every version this rule
-# can ask about, so a script reaching for a newer standard library -- the shape
-# `tomllib` itself is -- moves the real floor with this number and this rule
-# both unchanged. That side is held by the gate being run under the pin, where
-# an interpreter below 3.11 fails at the import above before any rule runs, and
-# it is held by nothing else. Raising the stdlib a script calls means raising
-# this number by hand in the same commit.
+# The grammar `scripts/` is held to, matched by every script task's `python`
+# pin in mise.toml (`python_pin_failures`). `import tomllib` at the head of this
+# file needs 3.11 whatever the grammar allows; that runtime floor is held only
+# by running the gate under the pin, so raise this by hand with the stdlib.
 PYTHON_FLOOR = (3, 11)
 SCRIPTS = ROOT / "scripts"
 MISE_CONFIG = ROOT / "mise.toml"
-# The one task that runs `python3` over something other than a file in
-# `scripts/`: `publish:check` pipes `cargo metadata` through a one-liner. Named
-# here rather than skipped by a pattern, so a second inline interpreter has to
-# be argued for in this file instead of arriving unnoticed -- inline code is
-# code no floor rule reads, because the floor rule reads files.
+# Tasks running inline `python3` rather than a `scripts/` file, exempt by name.
 PYTHON_UNPINNED = {"publish:check"}
 
 
 def refused_at(source, path, version):
-    """The `SyntaxError` parsing `source` at `version` raises, or `None`.
-
-    Returned rather than raised, for the reason `cargo_config_failures` gives:
-    a rule that takes the process down takes the test run with it. A script the
-    interpreter cannot read is exactly when the rest of this gate has to go on
-    reporting.
-    """
+    """The `SyntaxError` parsing `source` at `version` raises, or `None`."""
     try:
         ast.parse(source, filename=path, feature_version=version)
     except SyntaxError as error:
@@ -1314,26 +744,9 @@ def refused_at(source, path, version):
 def python_floor_failures(scripts, floor=PYTHON_FLOOR):
     """Which of `scripts` stopped parsing at `floor`, and what each one needs.
 
-    `scripts` is `(path, source)` pairs, opened by `main` rather than read here
-    for the reason its docstring gives: importing this module runs no rule.
-
-    `floor` is an argument so that a case can state its own, the way the rules
-    above take the documents they are stated over. It has to be one: the syntax
-    that violates a floor is by definition syntax the interpreter under the
-    case may be too old to parse, so a suite pinned to this module's constant
-    could assert only what the newest CPython accepts.
-
-    Each file that fails is re-parsed at every minor version between `floor`
-    and this interpreter's own, and the first that accepts it is the version
-    the message reports. `testing.md#cross-cutting` is the argument for naming
-    it rather than saying that two version numbers differ: five files are held
-    here, and a mismatch leaves the reader to find which one moved and how far.
-
-    A file that parses at none of them gets its own sentence. It is either
-    broken or written in grammar newer than the interpreter running this gate,
-    and from in here the two are the same observation -- `ast` cannot parse
-    syntax the running CPython never implemented, so the search has no answer
-    to give above `sys.version_info`.
+    `scripts` is `(path, source)` pairs. A failing file is reported with the
+    first minor version up to the running interpreter's that parses it, or as
+    unparseable at all of them.
     """
     stated, running = f"3.{floor[1]}", f"3.{sys.version_info.minor}"
     problems = []
@@ -1375,36 +788,11 @@ def python_floor_failures(scripts, floor=PYTHON_FLOOR):
 def python_pin_failures(text, scripts, floor=PYTHON_FLOOR, exempt=PYTHON_UNPINNED):
     """What `mise.toml`'s `python` pins do not hold, `text` being that file.
 
-    The floor is written in nine places -- `PYTHON_FLOOR` above, and a `python`
-    pin on each mise task that runs a file from `scripts/` -- and three separate
-    comments say that moving one means moving the rest. Nothing held them to it.
-    `PYTHON_FLOOR` set two minors above every pin printed `every rule holds`, and
-    so did a ninth script task carrying no pin at all: the same silence the floor
-    rule exists to break, one layer further out. `testing.md#cross-cutting` is
-    the rule applied -- a closed set with names, one pin apiece, asserted against
-    the names rather than intended. `Exclusions.excluded_by` in
-    `cost_features_test.py` and `declared_merge_guard` in `commits_test.py` are
-    the two precedents for reading a declaration back out of `mise.toml`.
-
-    Parsed rather than scanned, for the reason the grading comment gives about
-    the manifest: a regex over the task headers loses a quoted key, and every
-    task key in that file is quoted. A lost key here is a task whose missing pin
-    this rule reports as absent because it never read it.
-
-    `scripts` is the set of paths the floor rule read out of `scripts/`, relative
-    to that directory and handed over rather than globbed again, so that one set
-    answers both rules. That is the whole of what holds the glob: narrowing it to
-    `cost_*.py` silences the floor rule over three files and no other rule here
-    can see it, while from in here those are three scripts a task runs and the
-    floor rule no longer reads.
-
-    There is deliberately no failure for a file under `scripts/` that no task
-    runs. A module imported by one of these scripts rather than run as one is a
-    shape this repository does not have today and has no reason to refuse, and
-    the floor rule reads it either way.
-
-    Unparseable TOML is reported rather than raised, for `cargo_config_failures`'
-    reason.
+    Every task running a `scripts/` file must pin one `python` equal to
+    `floor`; only `exempt` tasks may run inline `python3`. `scripts` is the
+    paths (relative to `scripts/`) the floor rule read, so a task running a
+    file outside that set fails. A script no task runs is allowed. Unparseable
+    TOML is reported rather than raised.
     """
     try:
         config = tomllib.loads(text)
@@ -1518,31 +906,8 @@ def python_pin_failures(text, scripts, floor=PYTHON_FLOOR, exempt=PYTHON_UNPINNE
 def main(architecture=None, testing=None, performance=None, nfr=None, corpus=None):
     """Run every rule over this repository, and report what does not hold.
 
-    Every rule body lives here rather than at module scope, so that importing
-    this module runs none of them. `containment_test.py` imports it to hold the
-    parsers above to their own cases, and a rule that raised at import time took
-    that run down with the tree it was reading -- reporting the parsers as
-    untested exactly when a parser was what broke. What is still read at import
-    is the corpora and the documents above, which costs a few file reads and no
-    build; what is deferred is every rule stated over them.
-
-    `failures` is a local for the same reason. A module holding a failure list
-    at import is a module that has already checked something.
-
-    The four documents default to this repository's own and are arguments so
-    that a case can hand one over with a marker removed, the way `scanned`
-    takes `exists`. What each rule *stops* checking when its marker is gone is
-    a decision this file makes four times over, and reading the documents off
-    module scope would leave all four of them assertable only by editing the
-    repository.
-
-    `corpus` is the fifth argument and the same argument. The rules stated over
-    the source read it rather than a module constant, so a case can hand over
-    this repository's tree with one file rewritten -- `Corpus.replacing` -- and
-    reach a rule whose whole claim is about what the tree says. Three of them
-    were reachable no other way while the corpus was a constant: by the time
-    `main` ran it was already what the tree said, and silencing any one of the
-    three left both gates green.
+    Rules run here, never at import. Each argument defaults to this
+    repository's own document or `WORKSPACE`, and may be replaced by a test.
     """
     corpus = WORKSPACE if corpus is None else corpus
     architecture = ARCHITECTURE if architecture is None else architecture
@@ -1667,16 +1032,11 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
         )
 
     off_path_rows = 0
-    # Every backticked token an *Element* cell writes, which is where a row says
-    # which flag it is the proof for. Read from the same rows the rest of this loop
-    # checks, so a row cannot satisfy the grading below without also being held
-    # above: the feature grading compares against this set further down.
+    # Backticked tokens of every *Element* cell, for the feature grading below.
     off_path_elements = set()
     for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
         if not line.startswith("|"):
             break
-        # `strip("|")` before the split, so the outer pipes do not yield two empty
-        # cells and shift every column by one.
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         if len(cells) != 4:
             failures.append(f"testing.md's off-path table has a malformed row: {line.strip()}")
@@ -1719,36 +1079,9 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
             )
             continue
 
-        # Every spelling is held to naming something, one at a time rather than as
-        # a union. A union hides a stale spelling behind a live one: with the cell
-        # written `Registry::{new,defualt}`, `new` keeps the row's match set
-        # non-empty and the typo is swallowed, so the row goes on reporting that a
-        # registry is off the request path while `Registry::default()` mints one
-        # anywhere. A spelling is a claim about a name, and a name nothing in the
-        # workspace writes is a rename or a typo rather than an element nothing
-        # reaches. (Stale *sites* stay tolerated, deliberately -- subset semantics,
-        # as above -- because a site claims a location, and locations may empty out
-        # while the claim stays true.)
-        #
-        # Existence is asked of `sources`, not `files`: a mint spelling earns its
-        # place in a cell by being reachable, not by being reached, so the row is at
-        # its strongest when no file a request can run writes it at all.
-        # `Registry::default` is that case -- it is written only in a sibling test
-        # file, which is exactly the row holding.
-        #
-        # Sibling test files, and not every test: `strip()` has already dropped the
-        # inline `#[cfg(test)] mod` bodies from `sources` and from `gate_sources`
-        # alike, so the corpus this widens to is exactly the `tests.rs` siblings
-        # `under_test` holds out of `files`. That is the layout rule's corpus rather
-        # than an approximation of it -- a module's tests belong in a sibling -- and
-        # lifting the inline removal would re-admit the comment and literal mentions
-        # `strip()` exists to drop.
-        #
-        # A gate spelling is asked of `gate_sources` for the reason `token` gives:
-        # the flag name is a string literal, invisible in the stripped text, so
-        # that corpus is the same source with its literals kept. Its comments and
-        # inline test modules go all the same -- a gate is a claim about code a
-        # build compiles, and a flag named in a comment is not one.
+        # Each spelling must exist on its own (a union would hide a typo behind a
+        # live spelling). Asked of `sources`, which adds sibling test files: a
+        # spelling only tests write is the row at its strongest.
         stale = [
             (spelling, gate)
             for spelling, pattern, gate in spellings
@@ -1768,26 +1101,11 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
                     "sites reach, which is a site to add rather than a spelling to "
                     "keep. The row's sites go unchecked until the cell is repaired"
                 )
-            # One failure per row. A cell this rule has just called untrustworthy
-            # does not also get to render a verdict on the sites: the offender scan
-            # under a stale spelling reports against a match set nobody should
-            # believe, and a reviewer handed two failures repairs the second by
-            # editing the row the first says is already wrong. The message above
-            # says the sites went unchecked, so the skip is stated rather than
-            # inferred from a passing build.
+            # One failure per row: a stale cell's sites are not scanned.
             continue
 
-        # The offender scan, over the request-runnable half of each corpus a
-        # spelling asked for -- the same corpus its existence was asked of, so a
-        # row cannot be held up by a mention the offender scan would not have
-        # counted. A file counts as naming the element if any one spelling matches
-        # it, in that spelling's own text.
-        #
-        # `named` rather than `search`, which is the one place the two differ: a
-        # gate spelling states a polarity and is held to it above, where what is
-        # under test is the cell's claim, and reads either polarity here, where
-        # what is under test is the site. A flag named negatively is a flag this
-        # file compiles code on.
+        # Offenders: request-runnable files any spelling names, at either
+        # polarity (`named`), outside the row's sites.
         named = sorted(
             {
                 path
@@ -1812,12 +1130,7 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
             "performance.md's allocation, not by emptying the table"
         )
 
-    # The row *set* needs holding as well as the rows. Every check above runs per
-    # row, so a row that is deleted -- or cut off early, which one blank line in
-    # the middle of the table does, since the loop breaks on the first line that is
-    # not a row -- takes its element out of the gate while the run still reports
-    # that every rule holds. `testing.md` states the count for that reason, and
-    # this compares it.
+    # The stated row count catches a deleted row or a table cut short.
     elif len(halves) == 2:
         stated = re.search(ROW_COUNT_CLAIM, testing)
         if stated is None:
@@ -1840,10 +1153,7 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
                 )
 
     # --- Hand-rolled `Stream` implementations ---------------------------------
-    # Only the section that enumerates them. Collecting every link in the
-    # document would let an unrelated mention anywhere else silently authorise a
-    # new hand-rolled `Stream` -- which is also why a missing end marker fails here
-    # rather than widening the slice to the foot of the document.
+    # Only links in the section that enumerates them authorise a site.
     surface = section(
         architecture,
         "### Public API surface",
@@ -1932,9 +1242,7 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
         if member.startswith("dep:")
     }
 
-    # The same guard again rather than one block around both halves: the loop above
-    # binds `flags` to one row's flags and the manifest read binds it to the crate's
-    # feature set, and these three comparisons want the second.
+    # Separate guard: `flags` is now the crate's feature set, not one row's.
     if grading is not None:
         if ungraded := sorted(flags - set(graded)):
             failures.append(
@@ -1961,11 +1269,8 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
                 + "\n    ".join(regraded)
             )
 
-    # An optional dependency no feature names with `dep:` makes Cargo synthesise an
-    # implicit feature for it: a flag the crate declares, absent from `[features]`,
-    # and so invisible to the three comparisons above. Its own failure rather than a
-    # fourth entry in `ungraded`, because the remedy differs -- write the `dep:`, do
-    # not add a table row.
+    # An optional dependency no `dep:` names gets an implicit feature that
+    # `[features]` does not list, invisible to the comparisons above.
     if implicit := sorted(
         name
         for name, spec in manifest["dependencies"].items()
@@ -2056,12 +1361,6 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
     return 0
 
 
-# Nothing above this line has checked anything: the rules run from `main()` and
-# nowhere else, so importing this module costs the file reads at the top of it
-# and no more. That is the other half of what this guard was always meant to
-# buy, and until #134 it bought only the first: `containment_test.py` imports
-# this module, and a rule raising over a reworded document took that run down
-# with the tree it was reading, reporting the parsers as untested exactly when a
-# parser was what broke. `section()` closed the raise; this closes the import.
+# Importing runs no rule; `containment_test.py` relies on that.
 if __name__ == "__main__":
     sys.exit(main())

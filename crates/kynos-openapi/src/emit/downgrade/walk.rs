@@ -6,10 +6,8 @@ use super::{
 
 /// The 3.2-only fields one security scheme can carry.
 ///
-/// `deprecated` is read through a match rather than through a shared accessor
-/// because [`SecurityScheme`] is an enum with the field repeated on every
-/// variant, and a match is what makes a sixth variant a compile error here
-/// rather than a construct this walk silently stops reporting.
+/// `deprecated` is read through a match so that a sixth [`SecurityScheme`]
+/// variant is a compile error here.
 pub(super) fn collect_security_scheme_blockers(
     location: &str,
     scheme: &SecurityScheme,
@@ -41,10 +39,8 @@ pub(super) fn collect_security_scheme_blockers(
 
 /// The 3.2-only constructs an OAuth 2.0 flow set can carry.
 ///
-/// The device authorization *flow* is 3.2's addition to the set; the device
-/// authorization *URL* is 3.2's addition to a flow, and can ride on one of the
-/// four flows 3.1 already had. Reporting only the first would let the second
-/// through wherever it does.
+/// Both the device authorization *flow* and the device authorization *URL*,
+/// which can ride on any of the four flows 3.1 already had.
 pub(super) fn collect_oauth_flow_blockers(
     location: &str,
     flows: &OAuthFlows,
@@ -69,12 +65,8 @@ pub(super) fn collect_oauth_flow_blockers(
 
 /// One Server Object, wherever it hangs.
 ///
-/// A Server Object is not reachable from one place. The specification hangs
-/// one off the document, off a Path Item, off an Operation and off a Link, and
-/// `name` is 3.2-only in all four. Reading it at the root alone let the other
-/// three emit as 3.1 carrying a field 3.1 does not define — and the 3.1
-/// meta-schema sets `unevaluatedProperties: false` on `$defs/server`, so the
-/// result was invalid rather than merely generous.
+/// The document, a Path Item, an Operation and a Link each hang one, and
+/// `name` is 3.2-only in all four.
 pub(super) fn collect_server_blockers(location: &str, server: &Server, blockers: &mut Vec<String>) {
     if server.name.is_some() {
         blockers.push(format!("{location}/name"));
@@ -101,9 +93,7 @@ pub(super) fn collect_link_blockers(location: &str, link: &Link, blockers: &mut 
 
 /// Every reusable object, each reached the same way its inline twin is.
 ///
-/// `mediaTypes` is the whole map rather than anything within it: the section
-/// itself arrived in 3.2, so its presence is the blocker and descending into it
-/// would name one document twice.
+/// `mediaTypes` is not descended into: the section itself is 3.2-only.
 pub(super) fn collect_components_blockers(
     location: &str,
     components: &Components,
@@ -189,8 +179,7 @@ pub(super) fn collect_path_item_blockers(
         blockers.push(format!("{location}/additionalOperations"));
     }
 
-    // Parameters hoisted above the operations apply to every one of them, so a
-    // 3.2 location declared here is no less 3.2 for being declared once.
+    // Path-level parameters can carry a 3.2 location too.
     for parameter in item.parameters.iter().filter_map(RefOr::as_item) {
         collect_parameter_blockers(
             &format!("{location}/parameters/{}", parameter.name),
@@ -209,10 +198,8 @@ pub(super) fn collect_path_item_blockers(
         );
     }
 
-    // `operations()` is `Method::all()`-driven, so it stops at the methods with
-    // a field of their own. The map's own presence is already a blocker above,
-    // which masks this today — but a construct is reported where it lives, and
-    // an operation written here is as real as one written beside it.
+    // `operations()` stops at the methods with a field of their own; a
+    // construct is reported where it lives, even under a map already reported.
     for (method, operation) in &item.additional_operations {
         collect_operation_blockers(
             &format!("{location}/additionalOperations/{}", pointer_token(method)),
@@ -281,8 +268,7 @@ pub(super) fn collect_operation_blockers(
 
 /// The keyed responses *and* the `default` beside them.
 ///
-/// The two are separate fields, and walking only the map is what let a 3.2
-/// construct in a `default` response through.
+/// The two are separate fields.
 pub(super) fn collect_responses_blockers(
     location: &str,
     responses: &Responses,
@@ -337,9 +323,7 @@ pub(super) fn collect_response_blockers(
 
 /// A parameter, located at the pointer the caller built for it.
 ///
-/// The location is passed in rather than appended here because a parameter is
-/// named by its position under an operation and by its component key under
-/// `components`, and only the caller knows which.
+/// Only the caller knows whether it is named by position or component key.
 pub(super) fn collect_parameter_blockers(
     location: &str,
     parameter: &Parameter,
@@ -418,11 +402,8 @@ pub(super) fn collect_media_type_blockers(
         }
     }
 
-    // The three fields above are the Media Type Object's. Everything below is
-    // one level further down, which is where this stopped: an Encoding Object
-    // carries the same three names of its own, an Example Object carries the
-    // two 3.2 added beside `value`, and a Schema Object holds the two that ride
-    // on `xml` and `discriminator`.
+    // The fields above are the Media Type Object's; below, its nested
+    // Encoding, Example and Schema Objects carry 3.2 fields of their own.
     for (property, encoding) in &content.encoding {
         collect_encoding_blockers(
             &format!("{location}/encoding/{}", pointer_token(property)),
@@ -452,9 +433,7 @@ pub(super) fn collect_media_type_blockers(
 
 /// The Encoding Object's own three 3.2 fields.
 ///
-/// Nested encodings are not walked, and that is not an omission: each of these
-/// three *is* the nesting, so reporting the outer field already refuses the
-/// emission and naming what sits beneath it would say the same thing twice.
+/// Nested encodings are not walked: each of these three *is* the nesting.
 pub(super) fn collect_encoding_blockers(
     location: &str,
     encoding: &Encoding,
@@ -473,8 +452,7 @@ pub(super) fn collect_encoding_blockers(
 
 /// The two example forms 3.2 added beside `value`.
 ///
-/// `externalValue` is a form 3.1 can express, so an external example is not
-/// itself a blocker -- only the `dataValue` that 3.2 lets ride along with it.
+/// `externalValue` is 3.1, so only a `dataValue` beside it blocks.
 pub(super) fn collect_example_blockers(
     location: &str,
     example: &Example,
@@ -496,17 +474,12 @@ pub(super) fn collect_example_blockers(
 
 /// `xml.nodeType` and `discriminator.defaultMapping`, wherever they are nested.
 ///
-/// Walked over the serialized schema rather than over `SchemaObject`'s fields.
-/// Nineteen of those fields hold a subschema, and a hand-written walk over them
-/// is exactly the shape that made this function necessary in the first place:
-/// correct when written and silently short by one the next time a keyword is
-/// added. The serialized form has no such edge to miss.
+/// Walked over the serialized schema, so a subschema keyword added later
+/// cannot be missed.
 ///
-/// Both names are matched only directly beneath a key that holds the object
-/// defining them, so a `properties` entry that happens to be spelled `xml` is
-/// not mistaken for an XML Object unless it also carries `nodeType` -- and a
-/// schema that does is refused rather than downgraded, which is the safe way to
-/// be wrong here.
+/// Both names are matched only directly beneath `xml` or `discriminator`; a
+/// `properties` entry spelled `xml` carrying `nodeType` is refused, which is
+/// the safe way to be wrong.
 pub(super) fn collect_schema_blockers(location: &str, schema: &Schema, blockers: &mut Vec<String>) {
     let Ok(value) = serde_json::to_value(schema) else {
         return;

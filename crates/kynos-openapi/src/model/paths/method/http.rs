@@ -1,17 +1,11 @@
 //! Conversions between [`Method`] and [`http::Method`].
-//!
-//! The pair exists because `kynos` exposes both types in adjacent APIs — an
-//! `Observer` receives a request's method and a route's — and could not write
-//! the conversion itself: both types are foreign to it, so the orphan rule
-//! puts these here.
 
 use super::Method;
 
 /// A described method has a wire spelling, so this direction never fails.
 impl From<Method> for ::http::Method {
     fn from(method: Method) -> Self {
-        // `as_wire_str` returns a token from a closed set, all of which are
-        // valid method tokens, so this cannot fail.
+        // `as_wire_str` returns only valid method tokens.
         Self::from_bytes(method.as_wire_str().as_bytes())
             .expect("every described method is a valid HTTP method token")
     }
@@ -19,10 +13,7 @@ impl From<Method> for ::http::Method {
 
 /// Not every HTTP method is one a Path Item has a field for.
 ///
-/// Fallible on purpose, and in two ways worth telling apart in a message
-/// rather than in the type: an extension method has no variant at all, and
-/// `QUERY` has one only under `openapi32`. Both reach a Path Item through
-/// `additionalOperations`, which is 3.2's answer and not a conversion.
+/// Fails for an extension method, and for `QUERY` without `openapi32`.
 impl TryFrom<&::http::Method> for Method {
     type Error = UnnamedMethod;
 

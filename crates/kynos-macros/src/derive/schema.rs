@@ -1,8 +1,7 @@
 //! `#[derive(Schema)]`.
 //!
 //! The constraint half of the field grammar is exactly the keys of
-//! `schema::constraints::Constraints`, so the attribute and the type it fills
-//! are one list and neither can grow without the other:
+//! `schema::constraints::Constraints`:
 //!
 //! ```text
 //! #[schema( <member> [, <member>]* )]             on a field, optional
@@ -18,18 +17,11 @@
 //!             | unique_items
 //! ```
 //!
-//! `format` is deliberately absent. It states what a value *is*, which follows
-//! from the type or from nothing, so naming it here is an error that points at
-//! the remedy rather than a key that quietly works.
+//! `format` is deliberately absent: it follows from the type, so naming it here
+//! is an error that points at the remedy.
 //!
-//! `open` is the one member that is not a constraint, which is why the list is
-//! no longer the `Constraints` keys alone. It says how a `#[serde(flatten)]`
-//! field composes rather than what a value may be. An open field is bounded by
-//! `kynos::schema::flatten::OpenMap`, or by `kynos::schema::flatten::AdmitsAny`
-//! beside a field serde never reads, and every other flattened field by
-//! `kynos::schema::flatten::Flatten`, and in an object
-//! `#[serde(deny_unknown_fields)]` closes by
-//! `kynos::schema::flatten::ClosedFlatten` as well.
+//! `open` is not a constraint: it says how a `#[serde(flatten)]` field composes
+//! (bounded by `OpenMap` rather than `Flatten`; see `flatten_witnesses`).
 
 mod aliases;
 mod attributes;
@@ -90,12 +82,9 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let generics = schema_bounded_generics(input);
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
-    // Only a concrete type claims a component name. A generic one would give
-    // every instantiation the same name, so `Page<User>` and `Page<Order>`
-    // would collide in `components`; mangling the arguments into a legal
-    // component key is the eventual answer, and inlining is the honest
-    // placeholder rather than a name that is wrong. An inlined type cannot
-    // refer to itself, so `refusals::recursion` refuses one that does.
+    // Only a concrete type claims a component name: `Page<User>` and
+    // `Page<Order>` would collide, so a generic type is inlined (and so may not
+    // recurse; see `refusals::recursion`).
     let component = LitStr::new(&name.to_string(), name.span());
     let named = if input.generics.type_params().next().is_some() {
         quote!(::core::option::Option::None)
@@ -129,11 +118,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         #closed_flatten
         #kinds
 
-        // A deprecated type still has to describe itself, and the impl below
-        // names it. Without this, `#[deprecated]` plus `#[derive(Schema)]` is a
-        // warning at the type's own definition -- an error under `-D warnings`,
-        // which this workspace and many others set. serde's derives carry the
-        // same allow for the same reason.
+        // The impl names the type, so a `#[deprecated]` type would otherwise warn
+        // at its own definition (as serde's derives also allow).
         #[allow(deprecated)]
         impl #impl_generics ::kynos::schema::Schema for #name #ty_generics #where_clause {
             fn schema(
@@ -161,16 +147,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
 
 /// The input's generics, with `Schema` required of each type parameter.
 ///
-/// serde's own default shape, and for the same reason: bounding the
-/// *parameters* rather than the field types is both sufficient and narrower.
-/// `Vec<T>: Schema` follows from `T: Schema` through the blanket
-/// implementation, while a field-type bound would demand `PhantomData<T>:
-/// Schema` — a bound nothing satisfies, on a field described as the `null`
-/// serde writes without it, failing at the handler rather than here.
-///
-/// Emitted now because the implementation will need it, and adding a bound
-/// after the freeze breaks exactly the code this milestone invites people to
-/// write.
+/// Parameters rather than field types, as serde does: a field-type bound would
+/// demand `PhantomData<T>: Schema`, which nothing satisfies.
 fn schema_bounded_generics(input: &DeriveInput) -> syn::Generics {
     let mut generics = input.generics.clone();
     let parameters: Vec<syn::Ident> = generics
@@ -192,40 +170,11 @@ fn schema_bounded_generics(input: &DeriveInput) -> syn::Generics {
 
 /// One witness per flattened field, requiring that its type names its members.
 ///
-/// A flattened field's members become the parent's own, so the parent composes
-/// the field's schema rather than naming it — and a composed schema that
-/// constrains every member it does not name, which is what a map's
-/// `additionalProperties` is, then reaches the members the parent declared
-/// itself. `kynos::schema::flatten::Flatten` is the claim that it does not.
-///
-/// Asserted in a `const _` rather than as a predicate on the implementation,
-/// for the reason the `ApiError` derive's `Display` witness gives: the
-/// diagnostic lands on the type's own definition instead of on whatever
-/// downstream code happens to name it. `schema_bounded_generics` also records
-/// why field-type predicates were rejected once already.
-///
-/// A field carrying `#[schema(open)]` is bounded by
-/// `kynos::schema::flatten::OpenMap` instead. That attribute is the declaration
-/// that the object really is open, and `object_body` describes it by hoisting
-/// the field's `additionalProperties` to `unevaluatedProperties` — which only a
-/// map described in place has to hoist, since anything reached through a `$ref`
-/// would carry its own into the `allOf`.
-///
-/// An internally tagged newtype variant's payload is bounded by `Flatten` too.
-/// The variant has no properties of its own to put the tag beside, so its
-/// payload is composed with a tag-only object in an `allOf` — a flatten in all
-/// but the attribute, with the same thing to get wrong. A newtype variant whose
-/// member serde skips is a unit on the wire and composes no payload, so its
-/// member is bounded by nothing.
-///
-/// In an object `#[serde(deny_unknown_fields)]` closes ([`closed`]), a
-/// flattened field is also bounded by `kynos::schema::flatten::ClosedFlatten`:
-/// serde refuses every key no flattened field took, and only a type it reads by
-/// name takes one ([`flattens_into_closed_objects`]). `Flatten` stays asserted
-/// beside it, since `ClosedFlatten` implies it and a type that is not
-/// flattenable at all is then refused with that reason too. The payload of an
-/// internally tagged newtype variant is bounded by `Flatten` alone, since its
-/// tag-only object is never closed.
+/// A `const _` rather than an impl predicate, so the diagnostic lands on the
+/// type's definition. Bounds: `OpenMap` for `#[schema(open)]` (`AdmitsAny`
+/// beside an unread field), else `Flatten`, plus `ClosedFlatten` in an object
+/// [`closed`] closes. An internally tagged newtype variant's payload, composed
+/// with a tag-only object in an `allOf`, is bounded by `Flatten` alone.
 fn flatten_witnesses(
     input: &DeriveInput,
     container: &Container,
@@ -257,8 +206,7 @@ fn flatten_witnesses(
     let payloads = payloads.into_iter().map(|field| (field, false));
     let witnesses = flattened.chain(payloads).map(|(field, closed)| {
         let ty = &field.ty;
-        // Spanned at the field's type, so the refusal points at what was
-        // written rather than at the derive.
+        // Spanned at the field's type, so the refusal points at what was written.
         if admitting.iter().any(|open| std::ptr::eq(*open, field)) {
             quote_spanned! {ty.span()=>
                 const _: () = {
@@ -316,17 +264,9 @@ fn flatten_witnesses(
 /// The open flattened fields that sit beside a named field serde writes and
 /// never reads, `skip_deserializing` alone, in an object serde writes.
 ///
-/// The schema leaves such a field out, so the object must not constrain the
-/// members it does not name, and an open field that hoists an
-/// `additionalProperties` would. Whether this one does is its type's answer,
-/// invisible here, so [`flatten_witnesses`] bounds it by
-/// `kynos::schema::flatten::AdmitsAny` rather than by `OpenMap`, which it
-/// implies. Read over the objects
-/// `refusals::object_keys::reject_unread_field_in_closed_object` reads: a
-/// `#[serde(transparent)]` struct is its one field's value, with no object to
-/// bound, and an object `#[serde(deny_unknown_fields)]` closes never reaches
-/// here holding an open field, which `refusals::object_keys::reject_contradicted_closure`
-/// refuses.
+/// The schema omits the unread field, so the open field must admit any member:
+/// [`flatten_witnesses`] bounds it by `AdmitsAny`. A transparent struct has no
+/// object to bound.
 fn open_fields_beside_unread_fields<'a>(
     input: &'a DeriveInput,
     container: &Container,
@@ -361,30 +301,11 @@ fn written_groups(input: &DeriveInput) -> Vec<&Fields> {
 /// Whether the schema this input emits names its own members, and so may itself
 /// be flattened.
 ///
-/// True of the shapes whose description is an object whose `properties` names
-/// every member it admits: a struct with named fields, and an enum whose every
-/// `oneOf` branch is such an object. A newtype, a tuple and a unit struct are
-/// not objects at all; an internally tagged newtype variant composes with
-/// whatever its payload resolves to, which is exactly the unknown this trait
-/// exists to refuse; and an externally tagged enum is excluded whatever its
-/// variants. serde reads each of its object branches as exactly one entry, so
-/// the branch is closed to every key but the variant's (`branch`), and a unit
-/// variant is a bare string.
-///
-/// A container carrying `#[schema(open)]` is excluded whatever its shape: its
-/// own `unevaluatedProperties` would, one level up, reach the members the outer
-/// object declared. So is a `#[serde(transparent)]` one, whose wire form is its
-/// one field's value rather than an object naming the fields it declares. So is
-/// a struct, or an internally tagged enum with a struct variant serde writes,
-/// holding a named field serde writes and never reads ([`unread_field_span`]):
-/// its schema leaves out a member serde writes beside the ones it names, which
-/// an open map one level up would refuse.
-///
-/// So is every object [`closed`] closes under `#[serde(deny_unknown_fields)]`,
-/// for the reason an open container is excluded: a struct, an internally tagged
-/// enum with a struct variant, and an adjacently tagged enum. An internally
-/// tagged unit variant stays open, since serde ignores every key beside its
-/// tag.
+/// True of an object whose `properties` names every member it admits: a named
+/// struct, or an internally or adjacently tagged enum of such branches. Never
+/// for an open, transparent or closed container, nor one with a field serde
+/// writes but never reads, since each would constrain the outer object's
+/// members one level up.
 fn flattens(input: &DeriveInput, container: &Container) -> bool {
     if container.transparent {
         return false;
@@ -405,13 +326,10 @@ fn flattens(input: &DeriveInput, container: &Container) -> bool {
             let variants = described_variants(data);
 
             match (&container.tag, &container.content) {
-                // Adjacently tagged: every branch is an object of a tag
-                // property and a content property, whatever the variant holds.
+                // Adjacently tagged: every branch is a tag and content object.
                 (Some(_), Some(_)) => !variants.is_empty() && !container.deny_unknown_fields,
-                // Internally tagged: a named or unit variant becomes an object
-                // naming its own members plus the tag, and serde writes a
-                // variant's fields beside that tag, so one it never reads is a
-                // member the object does not name.
+                // Internally tagged: a named or unit variant is an object of its
+                // members plus the tag.
                 (Some(_), None) => {
                     !variants.is_empty()
                         && variants.iter().all(|variant| match variant.fields {
@@ -424,9 +342,8 @@ fn flattens(input: &DeriveInput, container: &Container) -> bool {
                             .filter(|variant| is_written(variant))
                             .all(|variant| unread_field_span(&variant.fields).is_none())
                 }
-                // Externally tagged: a unit variant is a bare string, and every
-                // other branch is closed to all but its variant key, which one
-                // level up would refuse the outer object's own members.
+                // Externally tagged: each branch is closed to all but its
+                // variant key, and a unit variant is a bare string.
                 (None, _) => false,
             }
         }
@@ -438,15 +355,10 @@ fn flattens(input: &DeriveInput, container: &Container) -> bool {
 /// Whether serde reads this [`flattens`] shape by name, so it may be flattened
 /// into an object `#[serde(deny_unknown_fields)]` closes.
 ///
-/// Such a parent refuses every key no flattened field took, and serde takes a
-/// key only through `deserialize_struct`, which claims the keys it names. It
-/// reads a struct that way unless a field is flattened without
-/// `skip_deserializing` — serde's own test, so a flattened `PhantomData`
-/// counts — in which case it reads the struct as a map. A struct carrying a
-/// container `#[serde(tag = "...")]` is excluded too: serde writes the tag
-/// beside the fields and never names it among the keys it takes. An adjacently
-/// tagged enum names its tag and content; an internally tagged one reads
-/// through `deserialize_any`, which takes nothing.
+/// serde takes a key only through `deserialize_struct`, which it uses unless a
+/// field is flattened without `skip_deserializing` (so a flattened `PhantomData`
+/// counts) or the struct carries a container `tag`. An adjacently tagged enum
+/// names its keys; an internally tagged one reads through `deserialize_any`.
 fn flattens_into_closed_objects(input: &DeriveInput, container: &Container) -> bool {
     if !flattens(input, container) {
         return false;
@@ -464,10 +376,7 @@ fn flattens_into_closed_objects(input: &DeriveInput, container: &Container) -> b
     }
 }
 
-/// Each group of fields the input declares that becomes one emitted object.
-///
-/// A struct has one; an enum has one per variant, because a variant's fields
-/// are composed into a branch of their own.
+/// Each group of fields the input declares: a struct's, or one per variant.
 fn field_groups(input: &DeriveInput) -> Vec<&Fields> {
     match &input.data {
         Data::Struct(data) => vec![&data.fields],
@@ -483,10 +392,8 @@ fn field_groups(input: &DeriveInput) -> Vec<&Fields> {
 /// The field groups the emitted schema describes: every group but that of a
 /// variant serde skips both ways.
 ///
-/// serde neither writes nor reads such a variant, so no branch is emitted for it
-/// and its fields reach neither a flatten witness nor the `Flatten` decision.
-/// [`refusals`]' `grammar::check_constraints` still reads [`field_groups`], because a
-/// malformed attribute is an error wherever it is written.
+/// Attribute grammar still reads [`field_groups`]: a malformed attribute is an
+/// error wherever it is written.
 fn described_groups(input: &DeriveInput) -> Vec<&Fields> {
     match &input.data {
         Data::Enum(data) => described_variants(data)
@@ -498,11 +405,7 @@ fn described_groups(input: &DeriveInput) -> Vec<&Fields> {
 }
 
 /// The variants the emitted schema describes: every one serde does not skip
-/// both ways.
-///
-/// A variant serde reads and never writes is among them, since a request
-/// carrying it is one serde accepts. One serde writes and never reads is
-/// refused by `refusals::skips::reject_unread_variant` before any of these is read.
+/// both ways. A read-only variant is among them, since serde accepts it.
 fn described_variants(data: &DataEnum) -> Vec<&Variant> {
     data.variants
         .iter()
@@ -512,9 +415,6 @@ fn described_variants(data: &DataEnum) -> Vec<&Variant> {
 
 /// Whether serde writes a variant: it carries neither `skip` nor
 /// `skip_serializing`.
-///
-/// serde's `Serialize` arm for any other variant errors before it touches a
-/// field, so an attribute deciding only the written form changes nothing there.
 fn is_written(variant: &Variant) -> bool {
     !serde_flag(&variant.attrs, &["skip", "skip_serializing"])
 }
@@ -542,12 +442,8 @@ fn one_way_skip_span(field: &Field, keys: &[&str]) -> Option<(String, Span)> {
 }
 
 /// The members of a tuple or tuple variant that hold a position on the wire,
-/// in order: each one serde does not skip both ways.
-///
-/// Read off skip attributes rather than [`is_described`], which would drop a
-/// member carrying `skip_deserializing` alone: serde still writes that member
-/// into its position, and `refusals::skips::reject_one_way_member_skip` has to see it
-/// to refuse it.
+/// in order: each one serde does not skip both ways. Not [`is_described`],
+/// which would drop a `skip_deserializing` member the refusals must still see.
 fn positional_members(fields: &Punctuated<Field, Comma>) -> Vec<&Field> {
     fields
         .iter()
@@ -557,16 +453,9 @@ fn positional_members(fields: &Punctuated<Field, Comma>) -> Vec<&Field> {
 
 /// The fewest elements serde reads for a tuple holding these positions.
 ///
-/// Every position up to the last one with no `#[serde(default)]`: serde fills a
-/// defaulted member when the array ends before it, but a default ahead of a
-/// member without one fills nothing, since the array cannot end there. That
-/// covers the last position carrying `skip_serializing_if`, which
-/// `refusals::skips::reject_one_way_member_skip` accepts only beside a default
-/// wherever serde writes the tuple; in a variant serde never writes, such a
-/// member without a default still counts, since serde reads every position it
-/// does not fill.
-/// Under a container default, `defaulted`, serde fills every missing trailing
-/// element, so it reads the empty array and there is no bound.
+/// Every position up to the last one with no `#[serde(default)]`, since serde
+/// fills only trailing defaults. Under a container default (`defaulted`) it
+/// fills every missing element, so there is no bound.
 fn min_items(positions: &[&Field], defaulted: bool) -> u64 {
     if defaulted {
         return 0;
@@ -578,42 +467,26 @@ fn min_items(positions: &[&Field], defaulted: bool) -> u64 {
     u64::try_from(required).unwrap_or(u64::MAX)
 }
 
-/// What the type's own serde attributes said.
-///
-/// Read rather than restated: `rename_all`, `tag` and `content` are already on
-/// the type because it has to serialize, and a parallel `#[schema(...)]`
-/// spelling of them would be a second declaration to keep in step.
+/// What the type's own serde attributes said, read rather than restated.
 #[derive(Clone, Default)]
 struct Container {
-    /// The container `rename`, on the serialize side where it is split: the
-    /// name serde writes a struct's `#[serde(tag = "...")]` as.
+    /// The container `rename`, serialize side: the name serde writes a
+    /// struct's `#[serde(tag = "...")]` as.
     rename: Option<String>,
-    /// The container `rename_all` style, on the serialize side where it is
-    /// split. [`split_rule`] finds sides that differ, which this derive and
-    /// [`multipart`](super::multipart) refuse before any name is taken from
-    /// it, so it is the style of both directions.
-    ///
-    /// It names the members this container describes directly: a struct's
-    /// fields, an enum's variants, and in [`Container::fields_of`] a variant's
-    /// fields.
+    /// The container `rename_all` style, serialize side; a split one is refused
+    /// first ([`split_rule`]). In [`Container::fields_of`], a variant's.
     rename_all: Option<String>,
-    /// An enum's `rename_all_fields` style, read as `rename_all` is: the rule
-    /// serde names a variant's fields by where the variant has no
-    /// `rename_all` of its own.
+    /// An enum's `rename_all_fields`: names a variant's fields where the
+    /// variant has no `rename_all` of its own.
     rename_all_fields: Option<String>,
     tag: Option<String>,
     content: Option<String>,
-    /// `#[serde(transparent)]`: the wire form is the one field's value, not an
-    /// object of the fields the declaration names, so `struct_body` describes
-    /// that field and `flattens` refuses the `Flatten` claim.
+    /// `#[serde(transparent)]`: the wire form is the one field's value.
     transparent: bool,
     doc: Option<String>,
-    /// A container `#[serde(default)]`, which serde fills every missing field
-    /// from, and on a tuple struct every missing trailing element. serde
-    /// accepts it only on a struct, so it is never set for an enum.
+    /// A container `#[serde(default)]` on a non-unit struct.
     default: bool,
-    /// `#[serde(deny_unknown_fields)]`: serde refuses a key naming no field it
-    /// reads, so [`closed`] closes each object that rule reaches.
+    /// `#[serde(deny_unknown_fields)]`, which [`closed`] follows.
     deny_unknown_fields: bool,
 }
 
@@ -628,10 +501,7 @@ impl Container {
             if !attr.path().is_ident("serde") {
                 continue;
             }
-            // Shape errors in serde's own attribute are serde's to report:
-            // this derive reads what it recognizes and stays silent about the
-            // rest, so a key it has not learned is not a second diagnostic on
-            // the same line.
+            // Shape errors in serde's own attribute are serde's to report.
             let _ = attr.parse_nested_meta(|meta| {
                 let Some(key) = meta.path.get_ident() else {
                     return skip_value(&meta);
@@ -658,19 +528,10 @@ impl Container {
         container
     }
 
-    /// The container a variant's fields are named and described under: this
-    /// one, with the variant's own `rename_all`, else the enum's
-    /// `rename_all_fields`, side by side, in place of the enum's `rename_all`,
-    /// which serde applies to variant names alone (`serde_derive` 1.0.229,
-    /// `internals/ast.rs`).
-    ///
-    /// The side is the one serde uses the variant's fields on: the serialize
-    /// side for a variant serde writes, and the deserialize side for one it
-    /// only reads. `refusals::naming::reject_split_rename_all` refuses a struct
-    /// variant's rule whose sides differ where serde uses both, and a split
-    /// `rename_all_fields`
-    /// reaching any struct variant, so the serialize side read into
-    /// [`Container::rename_all_fields`] is its deserialize side too.
+    /// The container a variant's fields are named under: the variant's own
+    /// `rename_all`, else the enum's `rename_all_fields`, in place of the enum's
+    /// `rename_all`, which serde applies to variant names alone. Serialize side
+    /// for a written variant, deserialize side for a read-only one.
     fn fields_of(&self, variant: &Variant) -> Self {
         let own = variant_rename_all(variant);
         let own = if is_written(variant) {
@@ -716,15 +577,8 @@ fn body(input: &DeriveInput, container: &Container) -> TokenStream2 {
 
 /// Marks the schema deprecated, where the item said so and the schema can say it.
 ///
-/// Shaped like [`described`], and for the same reason: a boolean schema has
-/// nowhere to carry a keyword, so it carries none. A `$ref` does -- from 3.1
-/// onward a schema `$ref` applies its siblings -- which is what lets a
-/// deprecated field whose type is a named component be marked at the field
-/// rather than on the component every other field shares.
-///
-/// Never `Some(false)`. The specification defaults the keyword to false, so
-/// writing it out states nothing and puts a word in every schema in the
-/// document; `Operation::set_deprecated` already takes the same line.
+/// A boolean schema carries no keyword; a `$ref` does, since 3.1 applies its
+/// siblings. Never `Some(false)`, the specification's default.
 fn deprecate(schema: TokenStream2, deprecated: bool) -> TokenStream2 {
     if !deprecated {
         return schema;
@@ -743,15 +597,8 @@ fn deprecate(schema: TokenStream2, deprecated: bool) -> TokenStream2 {
 /// Closes an object serde reads under `#[serde(deny_unknown_fields)]`, which
 /// refuses every key naming no field it reads.
 ///
-/// `additionalProperties: false` where the object composes nothing, which is
-/// the spelling every consumer reads. `unevaluatedProperties: false` where the
-/// object carries an `allOf`, which a flattened field composes members through
-/// and an aliased field bounds its names in, since `additionalProperties` sees
-/// only the object's own `properties` and would refuse a flattened field's
-/// members, while `unevaluatedProperties` sees them across the `allOf` and any
-/// `$ref` inside it. serde closes a struct, every struct variant's fields,
-/// and an adjacently tagged branch; a caller wraps exactly those objects, and
-/// the schema is returned as it was without the attribute.
+/// `additionalProperties: false`, or `unevaluatedProperties: false` where the
+/// object carries an `allOf`, whose members `additionalProperties` cannot see.
 fn closed(schema: TokenStream2, container: &Container) -> TokenStream2 {
     if !container.deny_unknown_fields {
         return schema;
@@ -798,10 +645,7 @@ fn described(schema: TokenStream2, doc: Option<&str>) -> TokenStream2 {
 }
 
 /// The names this derive would describe a struct's fields under, in order.
-///
-/// Read by [`multipart`](super::multipart), so that the part a body carries and
-/// the property the description names come from one rule rather than two that
-/// agree until a `rename_all` is added.
+/// Shared with [`multipart`](super::multipart) so part and property names agree.
 pub(super) fn property_names(input: &DeriveInput, fields: &syn::FieldsNamed) -> Vec<String> {
     let container = Container::read(input);
     fields
@@ -812,10 +656,8 @@ pub(super) fn property_names(input: &DeriveInput, fields: &syn::FieldsNamed) -> 
 }
 
 /// The span of the first field whose split `rename` gives serde's two
-/// directions different names, at that `rename`.
-///
-/// Read by [`multipart`](super::multipart), whose part carries one name in both
-/// directions, so no side of such a rename is the part's name.
+/// directions different names, at that `rename`; [`multipart`](super::multipart)
+/// refuses it, since a part has one name.
 pub(super) fn split_renamed_field(input: &DeriveInput, fields: &syn::FieldsNamed) -> Option<Span> {
     let container = Container::read(input);
     fields
@@ -828,13 +670,8 @@ pub(super) fn split_renamed_field(input: &DeriveInput, fields: &syn::FieldsNamed
 }
 
 /// The span of a split `key(serialize = ..., deserialize = ...)` in `attrs`
-/// whose sides differ, one side left out included, at that `key`.
-///
-/// Read by this derive's refusal of a split container `rename_all`, enum
-/// `rename_all_fields` or variant `rename_all`, and by
-/// [`multipart`](super::multipart)'s of a split container `rename_all`, whose
-/// part carries one name in both directions. Shape errors in the list stay
-/// serde's to report.
+/// whose sides differ, one side left out included, at that `key`. Shape errors
+/// stay serde's to report.
 pub(super) fn split_rule(attrs: &[syn::Attribute], key: &str) -> Option<Span> {
     let mut found = None;
     for attr in attrs {

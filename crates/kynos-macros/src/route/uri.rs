@@ -26,13 +26,8 @@ pub(crate) fn endpoint_uri_impl(
         ));
     }
 
-    // Read from `EndpointMeta::PATH_VARIABLES` rather than rebuilt here, so
-    // that what the description will say and what the handler destructures are
-    // checked against one source rather than two that could drift.
-    //
-    // A const panic renders a single `&str`, so the message naming both sides
-    // is composed by the comparison itself; the group's type and the template
-    // are passed in only to be rendered.
+    // Checked against `EndpointMeta::PATH_VARIABLES`, the description's source.
+    // A const panic renders one `&str`, so the comparison composes the message.
     let path_assertion = path_type.as_ref().map(|path_type| {
         let group = quote!(#path_type).to_string().replace(' ', "");
         quote! {
@@ -49,12 +44,7 @@ pub(crate) fn endpoint_uri_impl(
         }
     });
 
-    // The name is the warning. A route attribute knows only the path it was
-    // written with; a `Group` prefix and a `nest` prefix are applied while the
-    // router is built, which is after this expansion and out of its reach. So
-    // what this renders is relative to wherever the route ends up mounted, and
-    // calling it `uri` invited a caller to put a path that does not resolve
-    // into a `Location` header.
+    // Named `relative_uri` because mount prefixes are applied after expansion.
     let relative_doc = "Builds this endpoint's URI **relative to wherever it is mounted**.\n\n\
                         A route attribute knows only its own path template. A `Group` prefix \
                         or a `nest` prefix is applied while the router is built, so a route \

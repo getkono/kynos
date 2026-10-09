@@ -1,29 +1,10 @@
-//! What the four parameter derives share.
+//! What the four parameter derives share: decoding, encoding and describing a
+//! field; each derive supplies only its own lookup.
 //!
-//! A path variable, a query parameter, a header and a cookie differ in *where*
-//! a value is found and in almost nothing else: each is a string that becomes a
-//! typed field, a typed field that becomes a string, and a schema in the
-//! description. Those three acts live here, and each derive supplies only its
-//! own lookup.
-//!
-//! # How a value becomes a field
-//!
-//! Through [`FromStr`](std::str::FromStr), and through it alone. A parameter
-//! arrives as text whatever carried it, so the conversion a Rust program
-//! already has for text is the one that applies — no serde `Deserializer` is
-//! interposed, which would make the wire form of a parameter depend on
-//! attributes that describe a JSON body.
-//!
-//! Each field's type is bounded by `kynos::schema::ParamValue`, which implies
-//! `FromStr` and `Display` and promises a schema describing one value. One
-//! `FromStr` reads one located value, while a `style` spreads an object or an
-//! array over several, so without the bound such a field is described in a
-//! form the decoder never reads.
-//!
-//! An `Option<T>` field is what makes a parameter optional, matching how an
-//! `Option` field makes an object property optional. The recognition is
-//! syntactic, as serde's own is: an alias for `Option<T>` reads as required,
-//! and spelling the type out is the remedy.
+//! A value becomes a field through [`FromStr`](std::str::FromStr) alone, never
+//! serde. Each field's type is bounded by `kynos::schema::ParamValue`, so its
+//! schema describes the one value `FromStr` reads. An `Option<T>` field is
+//! optional; the recognition is syntactic, so an alias for it reads as required.
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
@@ -96,12 +77,8 @@ impl<'a> Param<'a> {
 ///
 /// `found` is an expression of type `Option<&str>`, `rejection` the type the
 /// derive's `decode` returns, and `missing` what a required parameter says when
-/// nothing carried it. The conversion and the `ParamValue` assertion carry the
-/// field's own span, so a type that is not one value is reported against the
-/// field a user wrote rather than against code they never saw.
-///
-/// The assertion lives here because every derive's `decode` calls this, so it
-/// bounds a group only ever written as much as one only ever read.
+/// nothing carried it. The `ParamValue` assertion is spanned at the field and
+/// lives here because every derive's `decode` calls this.
 pub(crate) fn decode_field(
     param: &Param<'_>,
     rejection: &TokenStream2,
@@ -127,8 +104,7 @@ pub(crate) fn decode_field(
         }
     };
 
-    // The `T` of an `Option<T>`, which is what is decoded: optionality is the
-    // derive's to express, and `Option` is no parameter value itself.
+    // An `Option<T>` field bounds its `T`.
     let carried = param.optional().unwrap_or(ty);
     let bounded = quote_spanned! {carried.span()=>
         {
@@ -195,16 +171,10 @@ fn render(param: &Param<'_>) -> TokenStream2 {
 }
 
 /// The `parameters` body: one OpenAPI parameter per field, in declaration
-/// order.
+/// order, each schema resolved through the registry.
 ///
-/// Each field's own type supplies the schema through the registry rather than
-/// through `Schema::schema`, so a named parameter type is registered once and
-/// referenced rather than inlined at every operation that reads it.
-///
-/// `always_required` is the path location's, where the specification requires
-/// it whatever the Rust type says: a template variable a request omits does not
-/// match the template at all, so an `Option` there is optional in a sense no
-/// description can express.
+/// `always_required` is the path location's, which the OpenAPI Parameter Object
+/// requires to be `required: true` whatever the Rust type says.
 pub(crate) fn parameters_body(
     params: &[Param<'_>],
     location: &TokenStream2,
@@ -271,10 +241,8 @@ pub(crate) fn response_headers_body(params: &[Param<'_>]) -> TokenStream2 {
 
 /// The `PathParams::encode` body.
 ///
-/// One entry per declared name whether or not the field held a value, because
-/// a path template has a slot for each and leaving one unfilled would emit the
-/// brace-delimited variable itself. Percent-encoding happens where the template
-/// is rendered, so the strings here are the values as they are.
+/// One entry per declared name, so every template slot is filled; values are
+/// percent-encoded where the template is rendered.
 pub(crate) fn path_encode_body(params: &[Param<'_>]) -> TokenStream2 {
     let entries = params.iter().map(|param| {
         let name = &param.name;
@@ -289,12 +257,8 @@ pub(crate) fn path_encode_body(params: &[Param<'_>]) -> TokenStream2 {
 
 /// The `HeaderParams::encode` body.
 ///
-/// The name is folded here rather than at run time: `HeaderName::from_static`
-/// asks for lower case, and a field name is case-insensitive, so the fold costs
-/// nothing and the construction is infallible. A *value* that could not be a
-/// field value is dropped instead — writing a control character out would let
-/// data end the message early, and omitting one field is the safe half of that
-/// trade.
+/// The name is lower-cased at expansion for `HeaderName::from_static`; a value
+/// that is not a valid field value is dropped rather than written.
 pub(crate) fn header_encode_body(params: &[Param<'_>]) -> TokenStream2 {
     let entries = params.iter().map(|param| {
         let folded = param.name.to_ascii_lowercase();
@@ -319,9 +283,7 @@ pub(crate) fn header_encode_body(params: &[Param<'_>]) -> TokenStream2 {
 
 /// The `QueryParams::encode` body.
 ///
-/// An absent optional parameter is omitted rather than written empty: `?after=`
-/// and no `after` at all are different requests, and only the second means
-/// "unset".
+/// An absent optional parameter is omitted rather than written empty.
 pub(crate) fn query_encode_body(params: &[Param<'_>]) -> TokenStream2 {
     let entries = params.iter().map(|param| {
         let name = &param.name;
@@ -347,15 +309,8 @@ pub(crate) fn query_encode_body(params: &[Param<'_>]) -> TokenStream2 {
     }
 }
 
-/// A form-encoder for one query string component.
-///
-/// Emitted into the body rather than called through `__private::uri`, unlike
-/// the decoder below: the decoder moved there because a query API key reads
-/// the same pairs and two readings had drifted, while this is the only query
-/// encoder Kynos has, so there is no second one to agree with, and it names no
-/// `percent-encoding` item for the containment rule to relocate. It escapes
-/// everything outside RFC 3986's unreserved set, so a value carrying `&`, `=`,
-/// `+` or a space survives the round trip through that decoder.
+/// A form-encoder for one query string component, escaping everything outside
+/// RFC 3986's unreserved set so a value round-trips through [`query_pairs`].
 fn query_encoder() -> TokenStream2 {
     quote! {
         fn encode(raw: &str) -> ::std::string::String {
@@ -384,11 +339,7 @@ fn query_encoder() -> TokenStream2 {
 /// The reverse: the pairs a raw query string carries, each half decoded to
 /// octets, so a name is compared as octets.
 ///
-/// The decoding is `kynos::__private::uri::query_pairs`, the one a query API
-/// key is read through too, so a parameter and a key cannot disagree about an
-/// escape; its rules are written there. A value this group declares whose
-/// octets are not UTF-8 is refused where the field is read, naming the field,
-/// rather than repaired into text the client never sent.
+/// Decoded by `kynos::__private::uri::query_pairs`, shared with query API keys.
 pub(crate) fn query_pairs() -> TokenStream2 {
     quote! {
         let pairs: ::std::vec::Vec<(

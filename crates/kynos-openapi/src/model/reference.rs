@@ -6,16 +6,11 @@ use serde::{Deserialize, Serialize};
 ///
 /// # This is not a JSON Schema `$ref`
 ///
-/// The specification draws a sharp line that is easy to miss. A *Reference
-/// Object* — this type — has exactly three fields, and any other property
-/// present alongside them **shall be ignored**. A *Schema Object* `$ref` is
-/// plain JSON Schema 2020-12, where sibling keywords are fully applied.
-///
-/// [`Schema`](crate::Schema) therefore models `$ref` as an ordinary keyword,
-/// and does not use this type.
-///
-/// Accordingly this object carries no [`Extensions`](crate::Extensions): it
-/// cannot be extended.
+/// A *Reference Object* has exactly three fields, and any other property beside
+/// them **shall be ignored**, so it carries no
+/// [`Extensions`](crate::Extensions). A Schema Object `$ref` is JSON Schema
+/// 2020-12, where siblings apply, so [`Schema`](crate::Schema) does not use
+/// this type.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Ref {
     /// The URI of the referenced component.

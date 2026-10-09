@@ -1,8 +1,7 @@
 //! `#[derive(SecurityScheme)]`.
 //!
-//! The grammar nests the scheme *kind* so that `name` is unambiguous: the
-//! component key a document registers the scheme under and the field name an
-//! API key travels in are different things that would otherwise share a word.
+//! The kind is nested so `name` (the component key) and an API key's field
+//! `name` do not collide.
 //!
 //! ```text
 //! #[security( <kind> )]                     // required, exactly once
@@ -29,17 +28,11 @@
 //!         | scopes("a", "b") | deprecated | carrier = manual
 //! ```
 //!
-//! The kind writes two things, not one. It writes `describe`, which says where
-//! a client puts the credential, and it writes `Carries`, which is where Kynos
-//! reads it from -- one attribute, so the documented carrier and the enforced
-//! one cannot come apart. `carrier = manual` suppresses the second for a scheme
-//! whose credential arrives somewhere the grammar cannot describe.
+//! The kind writes both `describe` and `Carries`, so the documented and the
+//! enforced carrier agree; `carrier = manual` suppresses `Carries`.
 //!
-//! A flow's `scopes` takes either spelling: `scopes("a")` names a scope with no
-//! description, and `scopes("a" = "Read a")` gives it the one the document
-//! prints. The scheme-level `scopes(..)` is a different thing -- what an
-//! operation demands rather than what a server publishes -- and takes names
-//! only.
+//! A flow's `scopes` takes `"a"` or `"a" = "Read a"`; the scheme-level
+//! `scopes(..)` is what an operation demands, and takes names only.
 
 use proc_macro::TokenStream;
 use quote::quote;
@@ -47,24 +40,17 @@ use syn::{DeriveInput, Ident, LitStr, Token, Type, parse_macro_input, parse_quot
 
 use crate::derive::common::{doc_string, non_token_message, skip_value, unit_struct};
 
-/// Locations an API key may travel in.
-///
-/// `path` is absent because a key in the path is part of the URL rather than a
-/// credential, and `querystring` because 3.2's whole-query parameter describes
-/// a payload rather than a named field.
+/// Locations an API key may travel in; not `path` or 3.2's `querystring`.
 const API_KEY_LOCATIONS: &[&str] = &["header", "query", "cookie"];
 
-/// Header names a parameter definition may not claim.
-///
-/// The specification says such a definition shall be ignored, so an API key
-/// declared under one would be a claim no consumer honours.
+/// Header names a parameter definition may not claim; the OpenAPI Parameter
+/// Object says such a definition shall be ignored.
 const RESERVED_HEADERS: &[&str] = &["authorization", "accept", "content-type"];
 
 /// Every OAuth 2.0 flow, and the URLs its own grant cannot work without.
 ///
-/// A table rather than five branches, because the flows differ only in which
-/// URLs they require and the builder each maps to. RFC 6749 sections 4.1 to 4.4
-/// fix the first four; RFC 8628 fixes the fifth, which OpenAPI 3.2 added.
+/// RFC 6749 sections 4.1 to 4.4 fix the first four; RFC 8628 fixes the fifth,
+/// which OpenAPI 3.2 added.
 const FLOWS: &[Flow] = &[
     Flow {
         name: "implicit",
@@ -152,12 +138,8 @@ struct SchemeArgs {
     nested: Nested,
 }
 
-/// The options written inside a kind, whichever kind it was.
-///
-/// One flat set rather than one per kind, because the kinds are already
-/// distinguished by [`SchemeArgs::kind`] and each key means the same thing
-/// wherever it is legal: `format` is a bearer format, `scheme` an RFC 7235
-/// name, `url` a discovery URL.
+/// The options written inside a kind, whichever kind it was; one flat set,
+/// since each key means the same thing wherever it is legal.
 #[derive(Default)]
 struct Nested {
     location: Option<LitStr>,
@@ -166,10 +148,7 @@ struct Nested {
     format: Option<LitStr>,
     url: Option<LitStr>,
     metadata_url: Option<LitStr>,
-    /// The OAuth 2.0 flows declared, in the order they were written.
-    ///
-    /// A `Vec` rather than one field per flow, so declaring one twice is a
-    /// diagnostic here rather than a silent overwrite.
+    /// The OAuth 2.0 flows declared, in order; a `Vec` so a repeat is caught.
     flows: Vec<(Ident, FlowArgs)>,
 }
 
@@ -182,8 +161,7 @@ pub(crate) fn expand(item: TokenStream) -> TokenStream {
 }
 
 pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
-    // A scheme is a marker: it names a way of authenticating and carries no
-    // data. What carries data is the credential, named by the associated type.
+    // A scheme is a marker; the credential type carries the data.
     unit_struct(input, "SecurityScheme", "names a way of authenticating")?;
 
     let args = parse_args(input)?;
@@ -263,10 +241,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     })
 }
 
-/// Where this kind's credential travels, and the type it reads back as.
-///
-/// The same `Nested` that fed `of_kind`, so the field an API key is documented
-/// under and the field it is read from are one string literal in one expansion.
+/// Where this kind's credential travels, and the type it reads back as; read
+/// from the same `Nested` as `of_kind`.
 fn carrier_of(
     nested: &Nested,
     kind: &Ident,
@@ -306,9 +282,7 @@ fn carrier_of(
             quote!(#carrier::peer_certificates(parts)),
         ),
 
-        // `bearer`, and the two kinds whose credential is a bearer token by
-        // definition: RFC 6750 is how an OAuth 2.0 access token reaches a
-        // resource server, and OpenID Connect is OAuth 2.0 with discovery.
+        // `bearer`, `oauth2` and `openid_connect`: an RFC 6750 bearer token.
         _ => (
             quote!(#carrier::BearerToken),
             quote!(#carrier::bearer(parts)),
@@ -317,11 +291,7 @@ fn carrier_of(
 }
 
 /// The `describe` body: the kind, then the prose and the deprecation every kind
-/// shares.
-///
-/// The shared half is applied by matching rather than by five constructions,
-/// because `description` means the same thing in every variant and writing it
-/// once is what stops one kind quietly losing it.
+/// shares, the latter applied once by matching.
 fn describe(args: &SchemeArgs, kind: &Ident, input: &DeriveInput) -> proc_macro2::TokenStream {
     let built = of_kind(args, kind);
 
@@ -342,22 +312,14 @@ fn describe(args: &SchemeArgs, kind: &Ident, input: &DeriveInput) -> proc_macro2
                             ::std::string::String::from(#text),
                         );
                     }
-                    // `SecurityScheme` is `#[non_exhaustive]`, so a later
-                    // scheme type is an arm this expansion has not been taught.
-                    // Every type the specification defines carries a
-                    // `description`, so the arm exists to keep an application's
-                    // build working, not because it can be reached.
+                    // Unreachable today; `SecurityScheme` is `#[non_exhaustive]`.
                     _ => {}
                 }
             }
         });
 
-    // `args.deprecated` is only ever set under `openapi32` -- the parse refuses
-    // the key otherwise -- so this needs no second version test. The `cfg!`
-    // stays because it is what stops the arm below being *compiled* into a 3.1
-    // build, where the field it names does not exist. Decided here rather than
-    // in the expansion, because a `#[cfg]` emitted into an application's crate
-    // would read that crate's features rather than the document model's.
+    // The `cfg!` keeps the arm out of a 3.1 expansion, where the field does not
+    // exist; an emitted `#[cfg]` would read the application's features instead.
     let deprecated = (args.deprecated && cfg!(feature = "openapi32")).then(|| {
         quote! {
             match &mut scheme {
@@ -381,10 +343,8 @@ fn describe(args: &SchemeArgs, kind: &Ident, input: &DeriveInput) -> proc_macro2
     }
 }
 
-/// One scheme of the declared kind, with nothing shared filled in yet.
-///
-/// Built through the model's own constructors wherever one exists, so that a
-/// field the specification only has from 3.2 onward is never named here.
+/// One scheme of the declared kind, with nothing shared filled in yet; built
+/// through the model's constructors so no 3.2-only field is named here.
 fn of_kind(args: &SchemeArgs, kind: &Ident) -> proc_macro2::TokenStream {
     let optional = |value: Option<&LitStr>| {
         value.map_or_else(
@@ -441,9 +401,7 @@ fn of_kind(args: &SchemeArgs, kind: &Ident) -> proc_macro2::TokenStream {
                 quote!(.#builder(#built))
             });
 
-            // Set through the model's own builder, which is a no-op on any
-            // scheme that has no such field -- and this one has it, since the
-            // expression it is chained onto is `oauth2`.
+            // Through the model's builder, chained onto the `oauth2` scheme.
             let metadata = args
                 .nested
                 .metadata_url
@@ -460,10 +418,7 @@ fn of_kind(args: &SchemeArgs, kind: &Ident) -> proc_macro2::TokenStream {
             }
         }
 
-        // `bearer`, and the fallback for a kind `is_kind` admits and this match
-        // has not learned: an HTTP scheme is the one every other kind degrades
-        // to safely, since it claims nothing beyond a credential in
-        // `Authorization`.
+        // `bearer`, and the safe fallback for any kind this match has not learned.
         _ => {
             let format = optional(args.nested.format.as_ref());
             quote!(::kynos::openapi::SecurityScheme::bearer(#format))
@@ -474,8 +429,7 @@ fn of_kind(args: &SchemeArgs, kind: &Ident) -> proc_macro2::TokenStream {
 /// One `OAuthFlow`, built through the model's own builders.
 fn build_flow(flow: &FlowArgs) -> proc_macro2::TokenStream {
     let scopes = flow.scopes.iter().map(|(name, described)| {
-        // A scope with no description still needs one in the map, and the empty
-        // string is what the specification's own examples use.
+        // An undescribed scope maps to the empty string, as the spec's examples do.
         let text = described.as_ref().map_or_else(String::new, LitStr::value);
         quote!((::std::string::String::from(#name), ::std::string::String::from(#text)))
     });
@@ -504,17 +458,9 @@ fn build_flow(flow: &FlowArgs) -> proc_macro2::TokenStream {
 
 /// The challenge a kind sends without being told.
 ///
-/// `oauth2` and `openid_connect` answer `Bearer` like `bearer` does: their
-/// credential is an access token read by the same carrier, and RFC 6750
-/// section 3 is the challenge for one. `basic` carries `charset="UTF-8"`, per
-/// RFC 7617 section 2: it is what tells a client to send a non-ASCII password
-/// as UTF-8, and `UTF-8` is the only value the registry defines. No `realm` in
-/// any, since its value is a deployment's to choose and `challenge = "..."` is
-/// how a scheme says so.
-///
-/// The rest have none. `api_key` and `mutual_tls` travel outside
-/// `Authorization`, so no registered scheme names them, and `http` names a
-/// scheme whose parameters only the application knows.
+/// `bearer`, `oauth2` and `openid_connect` answer `Bearer` (RFC 6750 section
+/// 3); `basic` answers with `charset="UTF-8"` (RFC 7617 section 2). No `realm`;
+/// `challenge = "..."` sets one. The other kinds have no default.
 fn default_challenge(kind: &Ident) -> proc_macro2::TokenStream {
     match kind.to_string().as_str() {
         "bearer" | "oauth2" | "openid_connect" => quote!(::core::option::Option::Some("Bearer")),
@@ -540,9 +486,7 @@ fn parse_args(input: &DeriveInput) -> syn::Result<SchemeArgs> {
                 "credential" => args.credential = Some(meta.value()?.parse()?),
                 "challenge" => args.challenge = Some(meta.value()?.parse()?),
                 "description" => args.description = Some(meta.value()?.parse()?),
-                // Refused rather than dropped, for the reason `metadata_url`
-                // below is: a build with no field to put the answer in would
-                // otherwise emit a scheme that quietly is not deprecated.
+                // A 3.2-only key is refused under 3.1 rather than dropped.
                 "deprecated" if !cfg!(feature = "openapi32") => {
                     return Err(syn::Error::new(
                         key.span(),
@@ -606,11 +550,7 @@ fn is_kind(name: &str) -> bool {
 }
 
 /// Reads the options nested inside one kind, and checks the ones that are
-/// checkable.
-///
-/// One flat reader for every kind, because each key means the same thing
-/// wherever it is legal. Only `api_key` is *checked* in full: its rejections
-/// are the ones a user hits, and each has its span here and nowhere else.
+/// checkable; `api_key` is checked in full here, where the spans are.
 fn check_kind(
     kind: &Ident,
     meta: &syn::meta::ParseNestedMeta<'_>,
@@ -629,17 +569,14 @@ fn check_kind(
                 "format" => nested.format = Some(option.value()?.parse()?),
                 "url" => nested.url = Some(option.value()?.parse()?),
                 "metadata_url" => nested.metadata_url = Some(option.value()?.parse()?),
-                // A flow is only a flow inside `oauth2`. Elsewhere the same
-                // word is an unknown option, and skipping it keeps every other
-                // kind's grammar exactly as permissive as it was.
+                // A flow only inside `oauth2`; elsewhere an unknown option.
                 flow if is_oauth2 => read_flow(key, flow, &option, nested)?,
                 _ => skip_value(&option)?,
             }
             Ok(())
         })?;
     } else {
-        // A kind written bare -- `bearer`, `basic`, `mutual_tls` -- has no list
-        // to read.
+        // A bare kind such as `bearer` has no list to read.
         skip_value(meta)?;
     }
 
@@ -673,9 +610,7 @@ fn check_kind(
             "an API key must say which field carries it: `name = \"X-Api-Key\"`",
         ));
     };
-    // A header field name and a cookie name are tokens, and `carrier::api_key`
-    // can never find one outside that grammar. A query parameter name is any
-    // string its percent-encoding carries, so it is left alone.
+    // Header and cookie names must be tokens; a query name may be any string.
     let grammar = match location.value().as_str() {
         "header" => Some("an RFC 9110 field name"),
         "cookie" => Some("an RFC 6265 cookie name"),
@@ -704,10 +639,8 @@ fn check_kind(
     Ok(())
 }
 
-/// Reads one declared OAuth 2.0 flow.
-///
-/// `name` is checked against [`FLOWS`] here rather than in `check_oauth2`,
-/// because this is where the span of the offending word is.
+/// Reads one declared OAuth 2.0 flow, checking `name` against [`FLOWS`] here
+/// where its span is.
 fn read_flow(
     key: &Ident,
     name: &str,
@@ -760,8 +693,7 @@ fn read_flow(
                 "scopes" => {
                     let content;
                     syn::parenthesized!(content in field.input);
-                    // Both spellings: `"a"` names a scope, `"a" = "Read a"`
-                    // gives it the description the document prints.
+                    // `"a"` or `"a" = "Read a"`.
                     let scopes = content.parse_terminated(parse_scope, Token![,])?;
                     args.scopes.extend(scopes);
                 }
@@ -787,10 +719,8 @@ fn parse_scope(input: syn::parse::ParseStream<'_>) -> syn::Result<(LitStr, Optio
     Ok((name, described))
 }
 
-/// Checks what an OAuth 2.0 scheme declared once every flow has been read.
-///
-/// The per-flow URL requirement is here rather than in `read_flow` because a
-/// flow's own list is only complete when its parenthesised group has closed.
+/// Checks what an OAuth 2.0 scheme declared once every flow has been read,
+/// including each flow's required URLs.
 fn check_oauth2(kind: &Ident, nested: &Nested) -> syn::Result<()> {
     if nested.flows.is_empty() {
         return Err(syn::Error::new(

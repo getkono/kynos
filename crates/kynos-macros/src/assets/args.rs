@@ -2,11 +2,7 @@
 
 use syn::{Attribute, Ident, LitStr, Token, Visibility, parse::Parse};
 
-/// The threshold past which an embedded set warns, unless told otherwise.
-///
-/// Two mebibytes: where a set stops being a bundle and a favicon. Being wrong
-/// about it costs one attribute, which is why it is a default rather than a
-/// rule.
+/// The default threshold past which an embedded set warns.
 pub(super) const DEFAULT_WARN_OVER: usize = 2 * 1024 * 1024;
 
 /// The parsed invocation.
@@ -76,8 +72,7 @@ impl Parse for AssetArgs {
                 }
             }
 
-            // A trailing comma is allowed, which is what makes the last option
-            // look like every other one.
+            // A trailing comma is allowed.
             if input.is_empty() {
                 break;
             }
@@ -102,11 +97,8 @@ impl Parse for AssetArgs {
     }
 }
 
-/// A size in IEC units, or `None` for the word `none`.
-///
-/// IEC only. `KB` is ambiguous — a thousand bytes to a disk vendor and 1024 to
-/// everyone else — and a threshold that means one thing to the writer and
-/// another to the reader is worse than no threshold.
+/// A size in IEC units, or `None` for the word `none`; `KB` is refused as
+/// ambiguous.
 fn parse_size(value: &LitStr) -> syn::Result<Option<usize>> {
     let text = value.value();
     if text == "none" {

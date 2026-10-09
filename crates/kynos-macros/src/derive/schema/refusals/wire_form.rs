@@ -27,15 +27,8 @@ const WRITE_OVERRIDES: &[&str] = &["with", "serialize_with"];
 const CONVERSIONS: &[&str] = &["into", "from", "try_from"];
 
 /// A type serde writes or reads as another type has no schema its declaration
-/// predicts.
-///
-/// `into`, `from` and `try_from` hand the whole value to a conversion, so the
-/// wire carries whatever the named type writes, and the fields or variants
-/// declared here reach it only through code the derive cannot read. Refused on
-/// a struct and an enum alike, which is everywhere serde accepts the keys, and
-/// before any other rule, since every other rule reads a declaration this one
-/// says the wire does not follow. `remote` is not among them: its fields mirror
-/// the type it names, so the declaration still predicts the wire form.
+/// predicts. Runs first, since every other rule reads the declaration. `remote`
+/// is allowed: its fields mirror the type it names.
 pub(super) fn reject_container_conversions(input: &DeriveInput) -> syn::Result<()> {
     let Some((key, span)) = serde_key_span(&input.attrs, CONVERSIONS) else {
         return Ok(());
@@ -59,20 +52,10 @@ pub(super) fn reject_container_conversions(input: &DeriveInput) -> syn::Result<(
 
 /// `#[serde(untagged)]` has no describable decoding rule.
 ///
-/// `anyOf` with no discriminator leaves a consumer to guess which branch a
-/// payload is, and serde's first-match tie-break is not expressible in JSON
-/// Schema. An internally or adjacently tagged enum becomes a `discriminator`,
-/// which is.
-///
-/// The same holds for one variant marked untagged: serde writes it as its bare
-/// payload and reads it only once every tagged variant has failed, so it is
-/// refused on every variant the schema describes rather than emitted as a
-/// tagged branch the wire never carries. A variant serde skips both ways is in
-/// no schema and is left alone.
+/// serde's first-match tie-break is not expressible in JSON Schema; the same
+/// holds for a single untagged variant.
 pub(super) fn reject_untagged(input: &DeriveInput) -> syn::Result<()> {
-    // Only an enum can be untagged. serde refuses the attribute anywhere else
-    // in its own words, and a second diagnostic calling a struct an enum is
-    // this derive restating a serde shape rule and misnaming the shape.
+    // Only an enum can be untagged; serde refuses it elsewhere itself.
     let Data::Enum(data) = &input.data else {
         return Ok(());
     };
@@ -117,33 +100,10 @@ pub(super) fn reject_untagged(input: &DeriveInput) -> syn::Result<()> {
 /// A value serde reads or writes through a function has no schema the type
 /// predicts.
 ///
-/// Refused on every field and variant the schema describes, which is
-/// everywhere serde accepts the three keys, and on a flattened `PhantomData`
-/// serde reads: that marker is in no schema, but serde hands the function its
-/// flattening serializer and deserializer, which write and demand whatever
-/// members the function names. Any other `PhantomData` is described as `null`,
-/// which an override contradicts as it would any other type's schema. A named
-/// field serde never reads and every field of a variant serde skips both ways
-/// are in no schema, so an override on one of them contradicts nothing and is
-/// left alone.
-///
-/// Where serde never writes -- inside a variant serde never writes, and on a
-/// named field carrying `skip_serializing` alone -- only [`READ_OVERRIDES`] are
-/// refused: [`is_written`] says why `serialize_with` changes nothing there.
-///
-/// A `#[serde(transparent)]` struct is scanned only on the one field each
-/// direction picks, from [`transparent_picks`]: a field picked both ways for
-/// [`WIRE_FORM_OVERRIDES`], one picked for writing alone for
-/// [`WRITE_OVERRIDES`], one picked for reading alone for [`READ_OVERRIDES`].
-/// serde derives no direction with several candidates, and applies an override
-/// to the picked field alone, so no other field's value reaches a function in
-/// either direction.
-///
-/// An unnamed member is exempt only when serde skips it both ways, and never on
-/// a newtype struct, whose member serde writes through the function whatever it
-/// skips. Skip attributes are read rather than
-/// [`is_described`](crate::derive::schema::attributes::is_described), which
-/// would exempt that newtype member and a flattened `PhantomData` serde reads.
+/// Scans every member serde reads (including a flattened `PhantomData`, whose
+/// function still writes members), only [`READ_OVERRIDES`] where serde never
+/// writes, and a transparent struct's [`transparent_picks`] per direction. A
+/// newtype struct's member is always scanned, as serde writes it regardless.
 pub(super) fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()> {
     type Scanned<'a> = (&'a [syn::Attribute], &'static str, &'static [&'static str]);
 
@@ -224,15 +184,8 @@ pub(super) fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()>
 
 /// `#[serde(other)]` makes an enum accept every tag it does not name.
 ///
-/// The schema's `oneOf` lists only the named ones, and only OpenAPI 3.2's
-/// `discriminator.defaultMapping` can say where the rest go. This derive emits
-/// no `defaultMapping`, so every build refuses the attribute rather than 3.1
-/// alone. Only a variant serde reads is checked: `skip_serializing` keeps a
-/// catch-all out of what serde writes, not out of deserialization, but serde
-/// draws the fallthrough only from the variants it reads, so `other` on one it
-/// skips both ways catches nothing. A lone `skip_deserializing` is refused
-/// before this runs, by
-/// [`reject_unread_variant`](super::skips::reject_unread_variant).
+/// Only OpenAPI 3.2's `discriminator.defaultMapping` can say where unnamed tags
+/// go, and this derive emits none, so every build refuses it.
 pub(super) fn reject_catch_all(input: &DeriveInput) -> syn::Result<()> {
     let Data::Enum(data) = &input.data else {
         return Ok(());
@@ -255,19 +208,8 @@ pub(super) fn reject_catch_all(input: &DeriveInput) -> syn::Result<()> {
 /// A `#[serde(transparent)]` struct serde writes through one field and reads
 /// through another is refused.
 ///
-/// serde picks per direction, from the attributes alone ([`transparent_picks`]):
-/// it writes through the field without `skip` or `skip_serializing`, reads
-/// through the field without `skip`, `skip_deserializing` or a field-level
-/// `default`, and never through a `PhantomData`. Where each direction picks a
-/// single field and they are different fields, the struct is refused: the
-/// derive compares fields rather than their schemas, so two fields of one type
-/// are refused too. Everything else is
-/// [`transparent_member`](crate::derive::schema::attributes::transparent_member)'s,
-/// which `struct_body` describes. Where only one direction picks a single field,
-/// serde refuses the other derive by itself, so the struct compiles with that
-/// direction's derive alone and the field is true of it. Where neither does,
-/// serde refuses the struct for either derive, and a second error here would
-/// restate it; that covers a unit struct too, and an enum is serde's to refuse.
+/// Fields are compared, not schemas ([`transparent_picks`]). Where a direction
+/// picks no single field, serde itself refuses that direction's derive.
 pub(super) fn reject_transparent_without_one_field(input: &DeriveInput) -> syn::Result<()> {
     let Data::Struct(data) = &input.data else {
         return Ok(());

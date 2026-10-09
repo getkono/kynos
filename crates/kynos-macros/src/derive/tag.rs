@@ -10,20 +10,9 @@
 //!         | kind = "<nav | badge | audience | ...>"   OpenAPI 3.2
 //! ```
 //!
-//! The 3.2 members are refused under `openapi31` rather than dropped.
-//!
-//! They used to be dropped, on the argument that a diagnostic here makes
-//! enabling a feature elsewhere in the dependency graph decide whether an
-//! application compiles. That is true, and it is the lesser of the two costs.
-//! Dropping them means the *same source* emits a different description
-//! depending on a flag some other crate sets — silently, and in the one
-//! artifact this framework exists to keep honest. A build that fails names its
-//! remedy; a description that quietly says less does not.
-//!
-//! It also settles a disagreement rather than creating one.
-//! [`security_scheme`](super::security_scheme) refuses `metadata_url` and the
-//! device authorization flow on exactly these grounds, so the two files
-//! answered one question two ways and only one of them had written down why.
+//! The 3.2 members are refused under `openapi31` rather than dropped, as
+//! [`security_scheme`](super::security_scheme) refuses its own: a failed build
+//! names its remedy, a description that silently says less does not.
 
 use proc_macro::TokenStream;
 use quote::quote;
@@ -57,15 +46,12 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
 
     let args = parse_args(input)?;
 
-    // Defaulting to the type's own identifier is what makes a typo a compile
-    // error: there is no string to get wrong unless one is written on purpose.
+    // Defaults to the type's identifier, so a typo is a compile error.
     let declared = args
         .name
         .unwrap_or_else(|| LitStr::new(&name.to_string(), name.span()));
 
-    // The doc comment a Rust reader already sees, when no description was
-    // written: a tag's prose is the same prose either way, and asking for it
-    // twice is how the two come to differ.
+    // Falls back to the doc comment.
     let described = args
         .description
         .map(|text| text.value())
@@ -76,12 +62,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
             );)
         });
 
-    // `summary`, `kind` and `parent` are 3.2's additions to the Tag Object. A
-    // 3.1 build has no field to put them in, and dropping them silently would
-    // emit a description that quietly says less than the source asked for --
-    // and would say something different depending on a feature any crate in
-    // the graph can turn on. `security_scheme.rs` refuses its own 3.2-only
-    // keys the same way, and this is the half that did not.
+    // `summary`, `kind` and `parent` are OpenAPI 3.2 Tag Object fields; a 3.1
+    // build refuses them (see the module docs).
     if !cfg!(feature = "openapi32") {
         for (key, span) in [
             (
@@ -142,10 +124,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     })
 }
 
-/// Reads the type's `#[tag(...)]` lists.
-///
-/// Silent about a key it does not model, as every Kynos attribute is: the
-/// grammar grows, and a key this derive has not learned yet is not a mistake.
+/// Reads the type's `#[tag(...)]` lists, skipping keys it does not model.
 fn parse_args(input: &DeriveInput) -> syn::Result<TagArgs> {
     let mut args = TagArgs::default();
 

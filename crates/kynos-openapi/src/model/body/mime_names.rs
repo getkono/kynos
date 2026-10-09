@@ -1,8 +1,7 @@
 //! Media type names used often enough to be worth naming.
 //!
-//! These are plain string constants rather than `mime::Mime` values because the
-//! document model must be able to carry media type *ranges* and vendor types
-//! that a parsed `Mime` would normalize.
+//! Plain strings, so the model can carry media type *ranges* and vendor types a
+//! parsed `Mime` would normalize.
 
 /// `application/json`.
 pub const APPLICATION_JSON: &str = "application/json";

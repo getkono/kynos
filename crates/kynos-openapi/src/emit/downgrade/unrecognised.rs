@@ -1,19 +1,12 @@
 //! Fields no object in the model recognises, wherever an `extensions` map
 //! absorbed one.
 //!
-//! Every object carrying [`Extensions`] flattens it, so a key its own fields
-//! leave unclaimed is kept there rather than refused. That is how a
-//! description round-trips, and it is also where a build without `openapi32`
-//! puts every 3.2 field: `$self`, a tag's `parent`, a Path Item's `query`, all
-//! parse into the map of the object they were written on. A `$ref` written as
-//! a `content` entry lands in its Media Type's map in every build. None of them
-//! is an extension -- the name lacks the `x-` prefix -- and 3.1 can read none of
-//! them, so each is reported at the pointer it was written at.
+//! A flattened [`Extensions`] keeps any key its object leaves unclaimed,
+//! including every 3.2 field in a build without `openapi32`. A key lacking the
+//! `x-` prefix is no extension and 3.1 cannot read it, so each is reported.
 //!
-//! The walk runs in every build and reaches every map. Each struct whose fields
-//! are all visible here is destructured without `..`, so a field added to the
-//! model is a compile error in this file rather than a map this walk silently
-//! stops reading.
+//! Each struct whose fields are all visible here is destructured without `..`,
+//! so a field added to the model is a compile error in this file.
 
 use std::fmt::Write as _;
 
@@ -45,9 +38,8 @@ use crate::{
 
 /// Where the walk stands, as a chain of borrowed tokens on the stack.
 ///
-/// Rendered only when a field is reported. A document carrying none therefore
-/// costs this walk no allocation at all, which is what lets it run in a build
-/// without `openapi32` without moving what `tests/alloc.rs` records for one.
+/// Rendered only when a field is reported, so a clean document costs no
+/// allocation (held by `tests/alloc.rs`).
 #[derive(Clone, Copy)]
 struct At<'a> {
     parent: Option<&'a At<'a>>,
@@ -629,9 +621,8 @@ fn oauth_flows_fields(at: At<'_>, flows: &OAuthFlows, found: &mut Vec<String>) {
 /// The two objects a Schema Object holds that carry `extensions`, at any
 /// depth.
 ///
-/// Its own unrecognised keywords are not reported: inside a Schema Object, and
-/// nowhere else, a field may omit the `x-` prefix, so
-/// [`SchemaObject::unknown_keywords`] is legal in 3.1 as written.
+/// Its own [`SchemaObject::unknown_keywords`] are not reported: a Schema Object
+/// alone may hold fields without the `x-` prefix.
 #[expect(
     clippy::too_many_lines,
     reason = "the length is the exhaustive list of a Schema Object's keywords"
