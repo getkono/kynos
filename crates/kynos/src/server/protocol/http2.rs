@@ -275,7 +275,13 @@ impl Streams {
                 quiet.await;
                 continue;
             }
-            tokio::time::sleep(timeout).await;
+            // A stream that opens and closes during the sleep wakes `quiet`,
+            // which restarts the idle period from that close.
+            tokio::select! {
+                () = tokio::time::sleep(timeout) => {}
+                () = &mut quiet => continue,
+            }
+            // One still in flight wakes nothing until it closes.
             if self.opened.load(Ordering::SeqCst) == opened {
                 return;
             }
