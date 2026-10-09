@@ -81,13 +81,18 @@ fn an_extra_path_parameter_is_named() {
 
 /// A name long enough to overflow the buffer is cut between characters, so
 /// the message stays valid UTF-8 rather than falling back.
+///
+/// The 38-byte prefix leaves 986 bytes for a run of 3-byte `€`, so the
+/// buffer fills two bytes into a character and the cut must back off them;
+/// the two bytes it frees take the start of the next clause.
 #[test]
 fn an_overlong_mismatch_message_is_cut_between_characters() {
-    let name = "é".repeat(1024);
+    let prefix = "`MemberPath` declares path parameter `";
+    assert_eq!((1024 - prefix.len()) % '€'.len_utf8(), 2);
+    let name = "€".repeat(1024);
     let message = mismatch(&[name.as_str(), "id"]).expect("a mismatch");
-    assert!(message.starts_with("`MemberPath` declares path parameter `éé"));
-    assert!(message.len() <= 1024 && message.len() > 1020);
-    assert!(message.ends_with('é'));
+    assert_eq!(message, format!("{prefix}{}` ", "€".repeat(328)));
+    assert_eq!(message.len(), 1024);
 }
 
 /// RFC 8187 section 3.2.1, transcribed here rather than read from
