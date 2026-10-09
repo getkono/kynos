@@ -6,7 +6,11 @@ first-class OpenAPI 3.1 and 3.2 support.
 Kynos only lets you build APIs it can fully describe. Every handler input
 describes itself as a Parameter or Request Body, every handler output describes
 itself as a Responses Object, and every interceptor declares what it
-contributes. Anything undescribable does not compile.
+contributes. Anything undescribable is refused: by the compiler wherever the
+types can see it, otherwise when the router is built. The only ways past are
+`Unchecked<T>`, which declares a payload deliberately unconstrained and is
+annotated as such in the document, and the named escape hatches behind the
+`unchecked` feature, which `assets-fs` implies.
 
 The emitted document is therefore not documentation that drifts from the code.
 It is a checked contract derived from the same types the server runs on.
