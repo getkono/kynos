@@ -7,10 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
-# See the note in `crates/kynos/Cargo.toml`: a crate's own README, not a link to
-# the workspace one, because crates.io resolves relative links against the
-# package's directory in the repository. This one's whole job is to say "depend
-# on `kynos` instead", which is worth rendering.
+# Its own README, which says to depend on `kynos` instead.
 readme = "README.md"
 keywords = ["kynos", "openapi", "macros", "proc-macro", "rest"]
 categories = ["web-programming", "development-tools"]
@@ -20,21 +17,15 @@ proc-macro = true
 
 [features]
 default = ["openapi31"]
-# The `assets!` macro walks a directory at expansion time. Gated because a crate
-# that never embeds files should not pay for the walk, and because `kynos` gates
-# the surface it expands into.
+# `assets!`, which walks a directory at expansion time.
 assets = []
 openapi31 = ["kynos-openapi/openapi31"]
 openapi32 = ["openapi31", "kynos-openapi/openapi32"]
-# `#[schema(pattern = "...")]`. Gated because enforcing it takes a regular
-# expression engine on the request path, which `kynos` gates the same way: the
-# derive refuses the key without it rather than describe a bound nothing checks.
+# `#[schema(pattern = "...")]`, refused without it rather than left unchecked.
 pattern = ["dep:regex", "dep:regex-syntax"]
 
 [dependencies]
-# The path-template parser is shared with the document model rather than
-# reimplemented: two notions of "valid path template" that could disagree is
-# exactly the drift this framework exists to prevent.
+# Shares the document model's path-template parser, so the two cannot disagree.
 kynos-openapi = { workspace = true }
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
@@ -45,11 +36,7 @@ syn = { workspace = true, features = ["full", "extra-traits", "parsing"] }
 [lints]
 workspace = true
 
-# docs.rs builds with default features unless told otherwise, which here would
-# leave `assets!` undocumented -- the one macro whose feature is not on by
-# default -- and would document the 3.1 expansion only. See the note in
-# `crates/kynos/Cargo.toml` for why this is `all-features` rather than a list,
-# and for what `--cfg docsrs` turns on.
+# As in `crates/kynos/Cargo.toml`.
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]

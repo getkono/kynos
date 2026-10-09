@@ -7,12 +7,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
-# See the note in `crates/kynos/Cargo.toml`: a crate's own README, not a link to
-# the workspace one, because crates.io resolves relative links against the
-# package's directory in the repository.
+# As in `crates/kynos/Cargo.toml`.
 readme = "README.md"
-# This crate is usable without the runtime, so it is findable on the terms of
-# the document model rather than of the framework.
+# Usable without the runtime, so keyed to the document model.
 keywords = ["openapi", "oas", "json-schema", "schema", "rest"]
 categories = ["web-programming", "data-structures", "encoding"]
 
@@ -22,20 +19,13 @@ required-features = ["openapi32", "yaml"]
 
 [features]
 default = ["openapi31"]
-# The 3.1 object model. Baseline: every other feature builds on it.
+# The 3.1 object model, the baseline.
 openapi31 = []
-# The 3.2 object model, a strict superset of 3.1; the README says what enabling
-# it does to a downstream build.
+# The 3.2 object model, a strict superset of 3.1.
 openapi32 = ["openapi31"]
 yaml = ["dep:serde_yaml_ng"]
-# Conversions between `Method` and `http::Method`. Optional because this crate
-# is otherwise runtime-free, which `docs/nfr.md` records as deliberate: a
-# document model needs no HTTP implementation to describe HTTP. `kynos` turns it
-# on unconditionally, so it costs a framework user nothing and a standalone user
-# nothing unless asked for.
-#
-# The impls live here because the orphan rule puts them here: both types are
-# foreign to `kynos`, so `kynos` cannot write them however much it wants to.
+# `Method` to and from `http::Method`; optional so the model stays runtime-free.
+# Here because the orphan rule forbids `kynos` from writing it.
 http = ["dep:http"]
 
 [dependencies]
@@ -53,12 +43,7 @@ proptest = { workspace = true }
 [lints]
 workspace = true
 
-# docs.rs builds with default features unless told otherwise, which here would
-# publish the 3.1 model alone: every field OpenAPI 3.2 introduces is `#[cfg]`-
-# gated, so a default-features build documents a document model that cannot
-# describe half of what the crate supports, and `yaml` would be invisible too.
-# Why `all-features`, and what `--cfg docsrs` turns on, is the note in
-# `crates/kynos/Cargo.toml`.
+# As in `crates/kynos/Cargo.toml`.
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
