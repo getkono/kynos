@@ -41,7 +41,7 @@ use kynos_openapi::model::schema::types::SchemaType;
 
 use crate::{
     extract::params::header::{EncodeHeaders, HeaderParams},
-    http::{HeaderValue, header},
+    http::{HeaderMap, HeaderValue, header},
     schema::registry::Registry,
 };
 
@@ -273,6 +273,28 @@ pub(crate) fn matches_strongly(field: &HeaderValue, current: Option<&str>) -> bo
     }
 
     current.is_some_and(|current| split(text).any(|candidate| strong_match(candidate, current)))
+}
+
+/// Whether a request's `If-Match` holds for a representation tagged
+/// `current`, or `None` where the request carries no `If-Match` at all.
+///
+/// Section 13.1.1 across every field line, since a list split over two lines
+/// is still one list: the condition holds where [any line
+/// holds](matches_strongly). `None` lets a caller tell an absent field from a
+/// failed one, which section 13.1.4 needs — `If-Unmodified-Since` is read only
+/// in its absence. `current` is asked for only when the field is present, so
+/// a caller that has to encode its tag does so only then.
+#[must_use]
+pub(crate) fn if_match<S: AsRef<str>>(
+    fields: &HeaderMap,
+    current: impl FnOnce() -> Option<S>,
+) -> Option<bool> {
+    let mut lines = fields.get_all(header::IF_MATCH).iter().peekable();
+    lines.peek()?;
+
+    let current = current();
+    let current = current.as_ref().map(AsRef::as_ref);
+    Some(lines.any(|line| matches_strongly(line, current)))
 }
 
 #[cfg(test)]

@@ -83,6 +83,8 @@ thirty-six examples, each about a page and all listed in
 
 ## Documentation
 
+- [Getting started](GETTING_STARTED.md) — the examples by task, middleware
+  data, tower layers, and a note for axum users
 - [API reference](https://docs.rs/kynos), built with every feature enabled
 - [Design documentation](docs/README.md) — the decisions, and what binds
   implementation work
@@ -225,16 +227,8 @@ This table is about the API. Whether a guarantee is *enforced* is a different qu
 
 ## Development
 
-- Prerequisites: rustup, [mise](https://mise.jdx.dev/)
-
-- Install dependencies:
-```bash
-mise install
-mise exec -- hk install --mise
-mise run check
-```
-
-*See <mise.toml> for scripts.*
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the gates, and the commit
+rules, and the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## FAQ
 
