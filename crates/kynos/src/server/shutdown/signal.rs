@@ -85,32 +85,32 @@ pub(in crate::server) fn platform_signals() -> ShutdownFuture {
 
 #[cfg(windows)]
 pub(in crate::server) struct WindowsSignals {
-    ctrl_c: tokio::signal::windows::CtrlC,
-    ctrl_break: tokio::signal::windows::CtrlBreak,
-    ctrl_close: tokio::signal::windows::CtrlClose,
-    ctrl_logoff: tokio::signal::windows::CtrlLogoff,
-    ctrl_shutdown: tokio::signal::windows::CtrlShutdown,
+    interrupt: tokio::signal::windows::CtrlC,
+    break_key: tokio::signal::windows::CtrlBreak,
+    close: tokio::signal::windows::CtrlClose,
+    logoff: tokio::signal::windows::CtrlLogoff,
+    shutdown: tokio::signal::windows::CtrlShutdown,
 }
 
 #[cfg(windows)]
 impl WindowsSignals {
-    fn new() -> io::Result<Self> {
+    fn new() -> std::io::Result<Self> {
         Ok(Self {
-            ctrl_c: tokio::signal::windows::ctrl_c()?,
-            ctrl_break: tokio::signal::windows::ctrl_break()?,
-            ctrl_close: tokio::signal::windows::ctrl_close()?,
-            ctrl_logoff: tokio::signal::windows::ctrl_logoff()?,
-            ctrl_shutdown: tokio::signal::windows::ctrl_shutdown()?,
+            interrupt: tokio::signal::windows::ctrl_c()?,
+            break_key: tokio::signal::windows::ctrl_break()?,
+            close: tokio::signal::windows::ctrl_close()?,
+            logoff: tokio::signal::windows::ctrl_logoff()?,
+            shutdown: tokio::signal::windows::ctrl_shutdown()?,
         })
     }
 
     async fn recv(&mut self) {
         tokio::select! {
-            _ = self.ctrl_c.recv() => {}
-            _ = self.ctrl_break.recv() => {}
-            _ = self.ctrl_close.recv() => {}
-            _ = self.ctrl_logoff.recv() => {}
-            _ = self.ctrl_shutdown.recv() => {}
+            _ = self.interrupt.recv() => {}
+            _ = self.break_key.recv() => {}
+            _ = self.close.recv() => {}
+            _ = self.logoff.recv() => {}
+            _ = self.shutdown.recv() => {}
         }
     }
 }

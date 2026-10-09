@@ -76,6 +76,12 @@ async fn serve(
 /// failures, about 150 ms apart in total, that once ended the server (#401).
 /// Setting the limit in-process is sound only because nextest runs every test
 /// in its own process.
+///
+/// macOS keeps no queue to serve: XNU's `accept` closes the connection it
+/// failed to allocate a descriptor for rather than requeueing it, so the
+/// client there is reset. What holds on every Unix is that the listener
+/// survives, so on macOS a fresh client stands in for the one the kernel
+/// dropped.
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_listener_out_of_descriptors_serves_its_queue_once_they_are_freed() {
@@ -86,6 +92,18 @@ async fn a_listener_out_of_descriptors_serves_its_queue_once_they_are_freed() {
     const LIMIT: u64 = 256;
     /// Longer than the old five-failure budget took to run out.
     const HOLD: Duration = Duration::from_millis(500);
+
+    /// Connects to `address` and writes a whole request, without reading.
+    async fn request(address: std::net::SocketAddr) -> TcpStream {
+        let mut client = TcpStream::connect(address)
+            .await
+            .expect("the kernel completes a handshake the server has yet to accept");
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .await
+            .expect("the request is buffered in the kernel");
+        client
+    }
 
     let (address, shutdown, mut serving) = serve(server()).await;
 
@@ -113,13 +131,7 @@ async fn a_listener_out_of_descriptors_serves_its_queue_once_they_are_freed() {
     );
 
     fillers.pop();
-    let mut client = TcpStream::connect(address)
-        .await
-        .expect("the kernel completes a handshake the server has yet to accept");
-    client
-        .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
-        .await
-        .expect("the request is buffered in the kernel");
+    let client = request(address).await;
 
     let stopped = tokio::time::timeout(HOLD, &mut serving).await;
     assert!(
@@ -128,6 +140,12 @@ async fn a_listener_out_of_descriptors_serves_its_queue_once_they_are_freed() {
     );
 
     drop(fillers);
+    let mut client = if cfg!(target_os = "macos") {
+        drop(client);
+        request(address).await
+    } else {
+        client
+    };
     let mut response = Vec::new();
     tokio::time::timeout(BOUND, client.read_to_end(&mut response))
         .await

@@ -680,10 +680,14 @@ async fn shutdown_closes_listeners_while_an_http1_request_drains() {
         .expect("the request reaches the handler");
     let _ = shutdown_sender.send(());
 
-    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+    // Windows answers a reset by retrying the SYN, so a connect to a closed
+    // port is refused only after about two seconds where Linux and macOS
+    // refuse it at once. Each attempt is bounded past that, or none would ever
+    // observe the refusal there.
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
         loop {
             match tokio::time::timeout(
-                std::time::Duration::from_millis(50),
+                std::time::Duration::from_secs(5),
                 tokio::net::TcpStream::connect(address),
             )
             .await

@@ -88,7 +88,7 @@ half and the timed half are separate rows, and only the timed one carries the
 | correctness | The corpus a downstream generator is built against is the one this build emits | [`tests/conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs), comparing every committed document against a freshly emitted one | `enforced` |
 | correctness | Emitted documents validate against both 3.1 and 3.2 validators | [`tests/metaschema.rs`](../crates/kynos/tests/metaschema.rs), checking a fixture app's 3.1 and 3.2 emissions and the committed corpus against the OAI's own vendored schemas, with a control asserting the 3.1 file rejects a 3.2-only root field | `enforced` in the repository, for the structure; the Schema Object is out of its reach, below, and the vendored schemas are above the package root so the target is excluded from the published archive rather than shipped unable to run |
 | correctness | Emitted documents are byte-deterministic across runs | [`tests/determinism.rs`](../crates/kynos/tests/determinism.rs), emitting one fixture description in three separate processes and byte-comparing | `enforced` |
-| correctness | Emitted documents are byte-deterministic across platforms | A cross-OS CI job, which does not exist: every job runs on `ubuntu-latest` | `planned` |
+| correctness | Emitted documents are byte-deterministic across platforms | [`tests/conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs), run on Linux, Windows and macOS against the one committed corpus | `enforced`, for what the corpus describes |
 | dx | No public item exposes `Pin`, `BoxFuture` or a tokio type | `cargo-public-api` assertion | `needs-tooling` |
 | operability | `--check` mode exits nonzero on drift from the committed document | A binary target, used as a required gate on the framework's own examples | `blocked-on-impl` |
 | performance | Generation allocations and output size scale sub-quadratically in operation count | [`kynos-openapi/tests/alloc.rs`](../crates/kynos-openapi/tests/alloc.rs), counting one `to_json` and one `emit` at 10/100/1000 operations: per-size ceilings recorded from the first measurement over all three series — one `to_json`'s allocations, one `emit`'s, and the emitted document's size in bytes, in JSON — and a per-decade integer relation `a(n)·m² < a(m)·n²` over the same three. **Not** a fitted slope: a pure quadratic fits at exactly 2.0, so a gate there turns on the last bit of a logarithm and any ceiling below it is a number nobody measured, which [Thresholds](#thresholds) refuses | `enforced`, with the division of labour recorded in the file and held by a control rather than assumed: the relation cancels an added exactly-quadratic term algebraically, in bytes exactly as in allocations, so a nested walk over `paths` is caught by the recorded ceilings and not by the relation — dropping either set would leave that half of the requirement caught by nothing. A synthetic series drives both halves in the target itself, so an assertion that stops asserting is red. Counting allocation *calls* still leaves a quadratic that allocates nothing to the timed twin below |
@@ -146,10 +146,13 @@ rebuilds and re-walks all three from scratch under a fresh hash seed; a second
 call would reuse the same maps and agree with itself trivially. Each is indexed
 rather than walked, and that test is what keeps them so.
 
-**Across platforms is not enforced, and saying so is the point of the split.**
-Every CI job runs on `ubuntu-latest`. The plausible divergences are a path
-separator reaching a component name and a float formatting differently, neither
-of which anything here would currently catch.
+**Across platforms is enforced by comparison, not by a second emission.** CI's
+`portability` job runs the whole suite on `windows-latest` and `macos-latest`
+beside the Linux jobs, so each OS emits the corpus afresh and byte-compares it
+against the same committed files; two OSes agreeing with those bytes agree with
+each other. The plausible divergences are a path separator reaching a component
+name and a float formatting differently, and both are caught only where the
+corpus exercises them: a description the corpus does not contain is not covered.
 
 ## Routing
 
@@ -353,7 +356,7 @@ belongs with [`security.md`](security.md) rather than here.
 | correctness | Two interceptors covering one operation never write one response header when either writes it from a short circuit | — | `by-design`, and recorded in [`middleware.md`](middleware.md#what-the-framework-computes-and-what-it-does-not): a `Short` response's headers are in no `const`, so `Retry-After` written from a 429 is compared against nothing. A `HEADERS` const on `ShortCircuit` is what would close it, and `#[derive(ApiError)]` could not derive one from an `IntoResponse` body — the `contribution` method the design refuses. Unreachable with what Kynos ships: only one short circuit answers a request |
 | correctness | Contribution composition is order-sensitive and deterministic | Permuted stacks produce differing, stable documents | `planned` for the *document*; the composition **check** is no longer order-sensitive, which is the order-insensitivity row above |
 | reliability | `Opaque` propagates to every affected operation and omits none | Unit test over a synthetic router tree | `planned` |
-| performance | Added allocations = 1 per layer, held as an equality, and the dispatch future ≤ 280 bytes at any depth | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), counting one request through a no-op interceptor stack at depth 0/4/8 and reporting the marginal cost of a layer, plus a `size_of` ratchet on the future a driver holds | `enforced` |
+| performance | Added allocations = 1 per layer, held as an equality, and the dispatch future ≤ 280 bytes at any depth (288 on macOS) | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), counting one request through a no-op interceptor stack at depth 0/4/8 and reporting the marginal cost of a layer, plus a `size_of` ratchet on the future a driver holds | `enforced` |
 | performance | Per-layer added p99 ≤ TBD | `criterion` at stack depth 0/4/8 with a regression gate | `kynos-bench` |
 | performance | Compression's added allocations never fall as the body grows, and grow by no more than the 8 KiB reads the encoder's drain adds between one non-empty body size and the next; encoding a body the encoder engages on costs strictly more than declining to, with the empty body the baseline of that relation rather than a rung of the first; and what declining costs is a recorded constant rather than a held one | [`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs), over gzip, brotli and zstd at 0/1 KiB/16 KiB/256 KiB, engaged and not by `Accept-Encoding` on one mounted service | `enforced` |
 | correctness | A stored response is never served to a request its stored `Vary` does not select | [`middleware/cache/tests.rs`](../crates/kynos/src/middleware/cache/tests.rs) over the selection rules, plus [`tests/cache.rs`](../crates/kynos/tests/cache.rs) over a live sequence | `enforced` |
@@ -416,7 +419,8 @@ guarantee. It has already earned its keep twice — see
 **A layer costs one heap allocation and no future width.** A static match costs
 five allocations with no stack in front of it, nine behind four layers and
 thirteen behind eight; the future a driver holds is 280 bytes at every one of
-those depths, and at both feature sets that target is built at. The one
+those depths, and at both feature sets that target is built at, on Linux;
+macOS lays the same future out in 288. The one
 allocation is the object-safe form of `Interceptor` boxing the future it
 returns, which is the price of a heterogeneous chain fitting in one slice. Both
 figures are the measurement rather than the target, per
@@ -690,6 +694,7 @@ open against a `kynos-otel` that may never be written.
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
 | reliability | The declared MSRV builds | `mise run msrv:check`, dedicated CI job | `enforced` |
+| reliability | Every target builds, with every feature, and the suite passes on Windows and macOS as on Linux | `mise run test`, the `portability` CI job on `windows-latest` and `macos-latest` | `enforced` for those two runners' architectures, x86-64 Windows and arm64 macOS; the `cfg(windows)` shutdown signals are compiled there and not exercised, since no test delivers a console control event |
 | reliability | Every crate's published archive builds from a pristine extraction, with every feature | `mise run publish:check` (`cargo package --workspace --all-features`), dedicated CI job | `enforced` |
 | reliability | Nothing a package publishes reads a path outside that package | `mise run containment:check`, resolving every `include_bytes!`, `include_str!` and `CARGO_MANIFEST_DIR` path literal against the package that holds it, and exempting only what the manifest's `exclude` names | `enforced`. `publish:check` cannot see this: its verify step builds the library, not the test targets, so a file the archive omits and a test target names resolves in the working tree and nowhere else |
 | compatibility | A release reports whether its API broke | `cargo-semver-checks` via release-plz, verdict in the release pull request body | `partial`: default features only, and fail-open — it is evidence for the reviewer, not a gate |
