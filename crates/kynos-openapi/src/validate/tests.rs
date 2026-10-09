@@ -706,6 +706,61 @@ fn a_declared_scheme_satisfies_the_requirement() {
     assert!(errors(&document).is_empty());
 }
 
+/// The root `security` list is held to the same rule as an operation's:
+/// `references/3.1.2.md:4129` says each name "MUST correspond to a security
+/// scheme which is declared in the Security Schemes", wherever the
+/// requirement appears.
+#[test]
+fn a_document_requirement_must_name_a_declared_scheme() {
+    let document = document_with(&[])
+        .with_security(SecurityRequirement::scheme("Bearer"))
+        .with_security(SecurityRequirement::scheme("Typo"));
+    let mut declared = document.clone();
+    declared.components.security_schemes.insert(
+        "Bearer".to_owned(),
+        crate::RefOr::Item(crate::SecurityScheme::bearer(None)),
+    );
+
+    let reported: Vec<(String, SpecError)> = violations(&declared)
+        .into_iter()
+        .map(|v| (v.location, v.error))
+        .collect();
+    assert!(
+        matches!(
+            reported.as_slice(),
+            [(location, SpecError::UnknownSecurityScheme { name })]
+                if location == "#/security/1" && name == "Typo"
+        ),
+        "only the undeclared name is reported, at its own index: {reported:?}"
+    );
+
+    assert_eq!(
+        violations(&document)
+            .iter()
+            .filter(|v| matches!(v.error, SpecError::UnknownSecurityScheme { .. }))
+            .count(),
+        2,
+        "with nothing declared, both names are unknown"
+    );
+}
+
+/// The 3.2 allowance for naming a scheme by URI holds at the root as well.
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_three_two_document_requirement_may_name_a_scheme_by_uri() {
+    let unknown_schemes = |name: &str, version: SpecVersion| {
+        Validator::new(version)
+            .validate(&document_with(&[]).with_security(SecurityRequirement::scheme(name)))
+            .into_iter()
+            .filter(|v| matches!(v.error, SpecError::UnknownSecurityScheme { .. }))
+            .count()
+    };
+
+    assert_eq!(unknown_schemes("./foo", SpecVersion::V3_2), 0);
+    assert_eq!(unknown_schemes("./foo", SpecVersion::V3_1), 1);
+    assert_eq!(unknown_schemes("Bearer", SpecVersion::V3_2), 1);
+}
+
 #[test]
 fn an_unconstrained_schema_is_a_warning_not_an_error() {
     let mut operation = Operation::new("ingest").with_responses(ok_responses());
