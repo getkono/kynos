@@ -19,6 +19,16 @@ impl EncodeHeaders for VariesOnOrigin {
     }
 }
 
+#[test]
+fn the_credentialed_wildcard_exposure_refusal_reads_as_one_sentence() {
+    assert_eq!(
+        super::MiddlewareError::CredentialedWildcardExposure.to_string(),
+        "a CORS configuration exposes every response header and also permits credentials, which \
+         the protocol reads as exposing a header literally named `*`; name the headers \
+         `expose_headers` should expose, or drop `allow_credentials`"
+    );
+}
+
 /// The `Vary` a response carries after `headers` rides on it.
 fn vary_after<G: EncodeHeaders>(existing: Option<&str>, headers: G) -> Option<String> {
     let mut response = Response::new(crate::http::body::Body::empty());
