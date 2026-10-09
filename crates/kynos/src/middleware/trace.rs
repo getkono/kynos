@@ -7,22 +7,15 @@ use crate::{http, middleware::Observer, router::operation::Route};
 /// Both carry `method`, `matched_path` and `operation_id`; the closing one adds
 /// `status` and `latency`, and `request_id` rides on whichever end the header is
 /// present at. Handler bodies use plain `tracing::info!` and inherit whatever
-/// span the application established, so there is no per-endpoint logging
-/// middleware to attach and nothing to forget.
+/// span the application established.
 ///
-/// `matched_path` is exactly the `paths` key from the description, which
-/// makes it the correct metric label: bounded cardinality, and it lines up
-/// with the documented operation.
+/// `matched_path` is exactly the `paths` key from the description, so it is a
+/// bounded-cardinality metric label.
 ///
-/// Two events rather than one span, because an [`Observer`] is told when a
-/// request arrives and when a response leaves and holds nothing in between: a
-/// span covering the handler would have to be entered across a suspension point
-/// this trait never sees. Nothing is lost from the record — the pair carries
-/// what a span would have — and the alternative would be an observer that could
-/// affect the exchange, which is the one thing an observer is defined not to do.
+/// Two events rather than one span, because an [`Observer`] holds nothing
+/// between the request arriving and the response leaving.
 ///
-/// Choosing a subscriber remains the application's decision — Kynos depends
-/// on the `tracing` facade and nothing more.
+/// Choosing a subscriber remains the application's decision.
 #[derive(Clone, Debug)]
 pub struct Trace {
     level: tracing::Level,
@@ -32,9 +25,7 @@ pub struct Trace {
 
 /// Emits an event at a level chosen at run time.
 ///
-/// `tracing`'s macros bake the level into a `static` callsite, so a level held
-/// in a field has to be matched back onto the constant that names it. This is
-/// the one place that happens.
+/// `tracing`'s macros bake the level into a `static` callsite.
 macro_rules! emit {
     ($level:expr, $($event:tt)*) => {
         match $level {
@@ -47,26 +38,18 @@ macro_rules! emit {
     };
 }
 
-/// What an unmatched request has instead of a `paths` key.
-///
-/// A placeholder rather than an omitted field, so that a log line for a 404 has
-/// the same shape as every other one.
+/// What an unmatched request has instead of a `paths` key, so every log line
+/// has the same shape.
 const UNMATCHED: &str = "<unmatched>";
 
-/// The correlation field name [`Trace`] reads unless told another.
-///
-/// The same name [`XRequestId`](super::request_id::XRequestId) declares, and
-/// the reason [`Trace::correlating`] exists is so that agreement is checked
-/// rather than assumed.
+/// The correlation field name [`Trace`] reads unless told another; the one
+/// [`XRequestId`](super::request_id::XRequestId) declares.
 const DEFAULT_CORRELATION: &str = "x-request-id";
 
 /// Header names recorded as present and never by value.
 ///
-/// Not a policy an application can widen or narrow. A denylist that can be
-/// switched off is one that will be, and the cost of being wrong here is a
-/// credential in a log file that outlives the request by months.
-///
-/// Compared case-insensitively, per RFC 9110 section 5.1.
+/// Fixed: an application cannot widen or narrow it. Compared
+/// case-insensitively, per RFC 9110 section 5.1.
 pub const REDACTED: &[&str] = &[
     "authorization",
     "proxy-authorization",
@@ -88,16 +71,8 @@ impl Trace {
 
     /// Reads the correlation identifier from the group `G` declares.
     ///
-    /// [`RequestId`](super::request_id::RequestId) is generic over its
-    /// correlation group precisely so the field name can be something other
-    /// than `x-request-id`, and this observer had that name written into it a
-    /// second time. Swapping the group then left every event logging an empty
-    /// `request_id`, which is the one field the observer exists to correlate
-    /// on.
-    ///
-    /// The name is read from `G::NAMES` rather than passed as a string, so the
-    /// two sides cannot disagree: it is the same `const` the interceptor
-    /// declares and the conflict check compares.
+    /// Pass the same group [`RequestId`](super::request_id::RequestId) uses;
+    /// the name is read from `G::NAMES`, so the two cannot disagree.
     ///
     /// ```
     /// use kynos::middleware::{request_id::XRequestId, trace::Trace};
@@ -124,10 +99,8 @@ impl Trace {
 
     /// Records request headers matching these names on the emitted events.
     ///
-    /// Anything not listed is omitted, so a header carrying a credential cannot
-    /// end up in a log by accident. A header on [`REDACTED`] is recorded as
-    /// present and never by value, so listing one on purpose does not put a
-    /// secret in a log either.
+    /// Anything not listed is omitted. A header on [`REDACTED`] is recorded as
+    /// present and never by value.
     #[must_use]
     pub fn record_headers(mut self, names: &'static [&'static str]) -> Self {
         self.recorded = names;
@@ -136,8 +109,7 @@ impl Trace {
 
     /// The listed headers this request carries, as one field value.
     ///
-    /// One field rather than one per header: a `tracing` field name is fixed at
-    /// its callsite, and the names here are chosen by the application.
+    /// One field, since a `tracing` field name is fixed at its callsite.
     fn recorded(&self, headers: &http::HeaderMap) -> String {
         let mut recorded = String::new();
 
@@ -155,11 +127,6 @@ impl Trace {
                 .iter()
                 .any(|secret| secret.eq_ignore_ascii_case(name))
             {
-                // Present, and never by value. Whether the field arrived is
-                // usually why it was listed; what it carried is never worth a
-                // log line, and `security.md` already reaches for a
-                // constant-time compare one module away rather than let a
-                // secret leak through a comparison.
                 recorded.push_str("<redacted>");
             } else {
                 recorded.push_str(value);
@@ -217,9 +184,7 @@ impl<C> Observer<C> for Trace {
     }
 
     fn on_panic(&self, payload: &(dyn std::any::Any + Send), route: Option<Route<'_>>) {
-        // Always at `ERROR`, whatever the configured level: a panic is not
-        // routine traffic, and a service that hid one behind a filter would be
-        // hiding the one line worth keeping.
+        // Always `ERROR`, so no level filter hides a panic.
         tracing::error!(
             matched_path = route.map_or(UNMATCHED, |route| route.path()),
             operation_id = route.map_or(UNMATCHED, |route| route.operation_id()),
@@ -229,11 +194,7 @@ impl<C> Observer<C> for Trace {
     }
 }
 
-/// What a panic payload says, when it says anything.
-///
-/// A payload is `Any`, and only the two shapes `panic!` produces carry a
-/// message; anything else is reported as having none rather than as nothing
-/// having happened.
+/// What a panic payload says, when it is one of the two shapes `panic!` makes.
 fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
     if let Some(message) = payload.downcast_ref::<&'static str>() {
         message

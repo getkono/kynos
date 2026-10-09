@@ -39,11 +39,11 @@ use crate::{
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Json<T>(pub T);
 
-/// One spelling, read by both halves: what is decoded and what is described.
+/// The media type decoded and described.
 const MEDIA_TYPE: &str = mime_names::APPLICATION_JSON;
 
-/// `T: Schema` because the schema is what the body is held to: the bounds a
-/// derived field declares are checked once `T` is deserialized.
+/// `T: Schema` because the bounds a derived field declares are checked once `T`
+/// is deserialized.
 impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send> FromRequest<C> for Json<T> {
     type Rejection = BodyRejection;
 
@@ -56,11 +56,8 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send> FromRequest<C> for
 
 /// Malformed JSON is a 400; well-formed JSON that does not fit `T` is a 422.
 ///
-/// serde reports a line and column rather than a location within the document,
-/// so a schema failure is attributed to the root JSON Pointer — the empty
-/// string — rather than to a pointer invented from a byte offset.
-// By value because this is a `map_err` argument, which is handed the error
-// it consumes. A reference does not fit that signature.
+/// Keyed at the root pointer: serde reports a line and column, not a location.
+// By value to fit `map_err`.
 #[allow(clippy::needless_pass_by_value)]
 fn rejection(error: serde_json::Error) -> BodyRejection {
     if is_schema_failure(&error) {
@@ -74,11 +71,8 @@ fn rejection(error: serde_json::Error) -> BodyRejection {
     }
 }
 
-/// Where the 400/422 line falls: serde's `Data` category is a value that does
-/// not fit the type, and every other category is bytes that are not JSON.
-///
-/// One function rather than one per codec, so a second JSON body cannot draw
-/// the line somewhere else. `json_lines` draws it here too.
+/// Where the 400/422 line falls for every JSON codec: serde's `Data` category
+/// is a value that does not fit the type; the rest are bytes that are not JSON.
 pub(super) fn is_schema_failure(error: &serde_json::Error) -> bool {
     match error.classify() {
         serde_json::error::Category::Data => true,

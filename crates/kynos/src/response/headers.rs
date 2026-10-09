@@ -27,14 +27,10 @@ impl<T, H> WithHeaders<T, H> {
     }
 }
 
-/// The body's status is kept: declared headers ride the response the body
-/// already produces rather than making a different one.
+/// The body's status is kept; the declared headers are written onto it.
 ///
-/// Through [`header::write`](crate::extract::params::header), which is also what
-/// [`Continued::with_headers`](crate::middleware::Continued::with_headers)
-/// calls — so a group naming `Set-Cookie` twice sends it twice on either path,
-/// and one naming `Content-Encoding` replaces on either. This comment used to
-/// say the two could not disagree while they were two functions that did.
+/// Written as [`Continued::with_headers`](crate::middleware::Continued::with_headers)
+/// writes them: a repeated `Set-Cookie` is appended, `Content-Encoding` replaced.
 impl<T, H> IntoResponse for WithHeaders<T, H>
 where
     T: IntoResponse,
@@ -47,12 +43,10 @@ where
     }
 }
 
-/// The declared headers join every response the body describes, since every one
-/// of them is produced through this wrapper and carries them.
+/// The declared headers join every response the body describes.
 ///
 /// A group whose [`DESCRIBED`](HeaderParams::DESCRIBED) is `false` joins none of
-/// them: it is still checked for conflicts, it is simply not worth telling a
-/// consumer about.
+/// them, though it is still checked for conflicts.
 impl<T, H> Responses for WithHeaders<T, H>
 where
     T: Responses,

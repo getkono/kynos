@@ -14,10 +14,8 @@ use crate::{
 
 /// What a [`SetCookies`] writes onto a response.
 ///
-/// `REPEATABLE` is `true`, which is the whole reason
-/// [`header::write`](crate::extract::params::header) reads it: RFC 6265 forbids
-/// comma-joining two `Set-Cookie` values, so a group naming it twice has to send
-/// it twice.
+/// `REPEATABLE` is `true`: RFC 6265 forbids comma-joining two `Set-Cookie`
+/// values, so each cookie is sent as its own field.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SetCookieHeaders {
     /// The cookies this response sets.
@@ -33,9 +31,7 @@ impl HeaderParams for SetCookieHeaders {
     ) -> kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>> {
         let _ = registry;
 
-        // One entry, because `Response.headers` is a map keyed by field name and
-        // OpenAPI has no vocabulary for a field that repeats. The description
-        // says so in prose, which is the honest half of what can be said.
+        // OpenAPI keys response headers by name, so repetition is said in prose.
         let mut headers = kynos_openapi::Map::new();
         headers.insert(
             "Set-Cookie".to_owned(),
@@ -55,9 +51,7 @@ impl EncodeHeaders for SetCookieHeaders {
     fn encode(&self) -> Vec<(http::HeaderName, http::HeaderValue)> {
         self.cookies
             .iter()
-            // A cookie that cannot be a field value is dropped rather than
-            // panicking: `Cookie::encode` already refused it, and a response
-            // path that panics is worse than one short a cookie.
+            // Dropped rather than panicking on the response path.
             .filter_map(|cookie| Some((http::header::SET_COOKIE, cookie.encode()?)))
             .collect()
     }
@@ -65,10 +59,8 @@ impl EncodeHeaders for SetCookieHeaders {
 
 /// Where a response's cookies come from.
 ///
-/// Synchronous on purpose. Minting a cookie is a pure function of the request —
-/// a locale from `Accept-Language`, a correlation marker, a consent record — and
-/// anything needing I/O to decide belongs in the handler that is already doing
-/// I/O, where it can also fail in a way the operation declares.
+/// Synchronous: a cookie that needs I/O to decide belongs in the handler,
+/// where it can fail in a way the operation declares.
 pub trait CookieSource<C>: Send + Sync + 'static {
     /// The cookies this response should set.
     fn cookies(&self, request: &http::Request, context: &C) -> Vec<Cookie>;
@@ -93,8 +85,7 @@ where
 
 /// Attaches `Set-Cookie` to every response the covered operations produce.
 ///
-/// Declares the field and nothing else: `Short` is [`Infallible`], because
-/// setting a cookie is not a reason to refuse a request.
+/// Declares the field and nothing else: `Short` is [`Infallible`].
 ///
 /// ```no_run
 /// use kynos::{
@@ -114,10 +105,7 @@ where
 /// # What this is not
 ///
 /// Not a session, not a signed jar, not a CSRF token. The first two are
-/// application policy — see [`response::cookie`](crate::response::cookie) — and
-/// the third could not compose: a CSRF interceptor's short circuit is 403,
-/// which `CompatibleWith` would refuse to compile beside `Auth<S>` on every
-/// authenticated route.
+/// application policy — see [`response::cookie`](crate::response::cookie).
 #[derive(Clone, Debug)]
 pub struct SetCookies<S> {
     source: S,
@@ -149,8 +137,7 @@ where
     ) -> Result<Continued<SetCookieHeaders>, Infallible> {
         let () = reads;
 
-        // Decided before the chain runs, because the source reads the *request*
-        // and the chain consumes it.
+        // Before the chain runs, since the chain consumes the request.
         let cookies = self.source.cookies(&request, context);
 
         Ok(next

@@ -4,9 +4,8 @@ use crate::{router::operation::OperationCx, schema::registry::Registry};
 
 /// What a request-derived input contributes to the description.
 ///
-/// This is the trait that makes an undescribable handler fail to compile: there
-/// is no blanket implementation, and no way to write one for a type that cannot
-/// say what it reads.
+/// There is no blanket implementation, so a handler with an undescribable
+/// argument fails to compile.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not describe itself, so it cannot be a handler argument",
     label = "not describable",

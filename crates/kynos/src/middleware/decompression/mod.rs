@@ -1,14 +1,10 @@
 //! Request-body decompression.
 //!
-//! The other direction from [`compression`](super::compression), and a separate
-//! negotiation: RFC 9110 section 12.5.3's `Accept-Encoding` says what a *client*
-//! will take back, and says nothing about what it may send. What a client sends
-//! is announced in `Content-Encoding` (section 8.4) and is not negotiated at
-//! all -- it arrives, and the server either understands it or refuses it.
+//! The other direction from [`compression`](super::compression). A client's
+//! request coding is announced in `Content-Encoding` (RFC 9110 section 8.4),
+//! not negotiated: the server either decodes it or refuses it.
 //!
-//! Out-of-document, like its counterpart: content coding is transport, and
-//! OpenAPI models neither direction. The refusals are declared, because a
-//! status a route can answer with is part of its contract whatever produced it.
+//! Content coding is out-of-document, but the refusals are declared.
 
 use std::{fmt, io, marker::PhantomData};
 
@@ -36,11 +32,8 @@ enum Coding {
 }
 
 impl Coding {
-    /// The coding `token` names.
-    ///
-    /// Case-insensitive, because RFC 9110 section 8.4.1 says content codings
-    /// are. `x-gzip` is the deprecated spelling section 8.4.1.3 keeps as an
-    /// alias for `gzip`, and clients still send it.
+    /// The coding `token` names, case-insensitively (RFC 9110 section 8.4.1),
+    /// accepting the `x-gzip` alias (section 8.4.1.3).
     fn from_token(token: &str) -> Option<Self> {
         if token.eq_ignore_ascii_case("zstd") {
             Some(Self::Zstd)
@@ -54,32 +47,17 @@ impl Coding {
     }
 }
 
-/// What this server would have accepted, most preferred first.
-///
-/// The value RFC 9110 section 15.5.16 says *ought to* ride on a 415 caused by
-/// an unsupported content coding, so the client learns what to send instead of
-/// guessing.
+/// What this server decodes, most preferred first: the `Accept-Encoding` a 415
+/// for an unsupported coding ought to carry (RFC 9110 section 15.5.16).
 const ACCEPTED: &str = "zstd, br, gzip";
 
-/// The longest chain of codings that will be decoded.
-///
-/// `Content-Encoding` is a list, and each entry costs a decode pass over a body
-/// already bounded by the configured limit -- so a hundred-entry list is a
-/// hundred times the work for one request. No real client sends more than one.
+/// The longest chain of codings that will be decoded; each costs a full pass.
 const MAX_CODINGS: usize = 4;
 
 /// The markers a decoding refusal and its interceptor carry, in one phantom.
-///
-/// A named alias because there are three of them and `clippy::type_complexity`
-/// counts, which is the right pressure: the name says what the tuple is for
-/// where three parameters in a `PhantomData` would not.
 type Markers<U, M, L> = PhantomData<fn() -> (U, M, L)>;
 
 /// Why [`Decompression`] would not hand a body on.
-///
-/// `#[non_exhaustive]`, as every other error type an application can match on
-/// is. This is exactly what a `match` in application code receives, so a
-/// variant added here would otherwise be a breaking change made by accident.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reason {
@@ -98,23 +76,13 @@ pub enum Reason {
 ///
 /// # Three markers, not one
 ///
-/// A 400, a 413 and a 415 are three problems, and a [`ProblemType`] names one.
-/// One marker covering all three would declare a malformed body and an
-/// unsupported coding the *same* problem type — and now that the declaration is
-/// a narrowed `const` rather than an example, it would declare it to a
-/// validator. So each refusal takes its own parameter, set by its own builder
-/// on [`Decompression`]. That is the granularity rule stated on `ProblemType`,
-/// applied where it actually bites: the marker goes on the refusal, and a type
-/// answering with several refusals carries several.
-///
-/// A struct rather than an enum for the same reason: a Rust enum has nowhere to
-/// put the `PhantomData` its variants share, so carrying the markers means
-/// carrying the reason in a field.
+/// A 400, a 413 and a 415 are three problems, and a [`ProblemType`] names one,
+/// so each refusal takes its own marker, set by its own builder on
+/// [`Decompression`].
 pub struct Undecodable<U = (), M = (), L = ()> {
     /// Why the body was refused, and with it which status this answers.
     pub reason: Reason,
-    /// Carries the three markers without storing one. `fn() -> _` rather than
-    /// the bare tuple, so a refusal is `Send` and `Sync` whatever they are.
+    /// The three markers; `fn() -> _` keeps a refusal `Send` and `Sync`.
     problem_type: Markers<U, M, L>,
 }
 
@@ -162,10 +130,8 @@ where
                     ))
                     .into_response();
 
-                // Only on this 415, never on someone else's. A 415 raised by an
-                // unsupported *media type* that carried `Accept-Encoding` would
-                // read as a complaint about the coding, and section 15.5.16
-                // keeps the two answers apart for exactly that reason.
+                // Only on this 415: on a media-type 415 it would misread as a
+                // coding complaint (section 15.5.16).
                 response.headers_mut().insert(
                     http::header::ACCEPT_ENCODING,
                     http::HeaderValue::from_static(ACCEPTED),
@@ -230,8 +196,7 @@ where
     }
 }
 
-// The four derivable implementations, written out: `#[derive]` would bound each
-// on all three markers, and a marker is a name rather than a value.
+// Written out: `#[derive]` would bound each on all three markers.
 
 impl<U, M, L> Clone for Undecodable<U, M, L> {
     fn clone(&self) -> Self {
@@ -276,9 +241,7 @@ fn accepted_encoding_header() -> kynos_openapi::Header {
 
 /// Reads `source` to its end, refusing to produce more than `limit` bytes.
 ///
-/// The cap is checked on the chunk that passes it rather than after the whole
-/// body has arrived, which is what makes it a defence: a bomb is refused while
-/// it is still a few kilobytes of memory.
+/// Checked per chunk, so a bomb is refused while still small.
 async fn drain_capped<R: AsyncRead + Unpin>(mut source: R, limit: u64) -> Result<Bytes, Reason> {
     let mut decoded = BytesMut::new();
     let mut chunk = [0_u8; 8 * 1024];
@@ -309,9 +272,7 @@ async fn drain_capped<R: AsyncRead + Unpin>(mut source: R, limit: u64) -> Result
 async fn decode(coding: Coding, bytes: Bytes, limit: u64) -> Result<Bytes, Reason> {
     match coding {
         Coding::Zstd => drain_capped(ZstdDecoder::new(io::Cursor::new(bytes)), limit).await,
-        // Boxed for the same reason the encoder is: brotli's state is measured
-        // in kilobytes, and an interceptor's future is held for the whole
-        // exchange.
+        // Boxed: brotli's state is kilobytes, held for the whole exchange.
         Coding::Brotli => {
             Box::pin(drain_capped(
                 BrotliDecoder::new(io::Cursor::new(bytes)),
@@ -325,10 +286,8 @@ async fn decode(coding: Coding, bytes: Bytes, limit: u64) -> Result<Bytes, Reaso
 
 /// The codings `headers` declares, in the order they were applied.
 ///
-/// `None` when a token names something this server cannot decode, or when the
-/// list is longer than [`MAX_CODINGS`]. `identity` is dropped rather than
-/// refused: RFC 9110 section 8.4 says it SHOULD NOT appear, and a sender that
-/// includes it anyway means the body was not encoded.
+/// `None` for an undecodable token or more than [`MAX_CODINGS`]. `identity` is
+/// skipped rather than refused (RFC 9110 section 8.4).
 fn declared(headers: &http::HeaderMap) -> Option<Vec<Coding>> {
     let mut codings = Vec::new();
 
@@ -370,70 +329,45 @@ fn declared(headers: &http::HeaderMap) -> Option<Vec<Coding>> {
 /// # }
 /// ```
 ///
-/// # Why the limit is required, and why this replaces `BodySize`
+/// # The limit replaces `BodySize`
 ///
-/// A cap measured before decoding is not a cap. Two kilobytes of zeroes are a
-/// gigabyte of gzip output, so
-/// [`BodySize`](crate::middleware::limits::body_size::BodySize) guarding a route that
-/// accepts codings guards nothing -- it measures the one number the attacker
-/// controls freely.
+/// A cap measured before decoding is not a cap: two kilobytes of zeroes are a
+/// gigabyte of gzip output. The limit here applies to what the handler will
+/// see — the decoded octets, or the bytes as they arrived when no coding was
+/// applied. Mounting
+/// [`BodySize`](crate::middleware::limits::body_size::BodySize) beside this is
+/// a compile error, since both answer 413.
 ///
-/// So the limit here is the route's body limit, applied to whatever the handler
-/// will actually see: the decoded octets when a coding was applied, and the
-/// bytes as they arrived when none was. Mounting `BodySize` beside this is a
-/// compile error, since both answer 413 and a consumer could not tell which
-/// replied — and it would be redundant as well as ambiguous.
+/// # `max_ratio` is off unless you set it
 ///
-/// # Why `max_ratio` is off unless you set it
-///
-/// It is the cheaper of the two checks and catches the same attack earlier: a
-/// body expanding past a plausible multiple of its own size is refused while it
-/// is still kilobytes. But no single number is right for the three codings.
-/// gzip cannot exceed about 1032:1; zstd's long-range matching goes orders of
-/// magnitude beyond that, and brotli's static dictionary makes small inputs
-/// expand further still. A default tight enough to be worth having under gzip
-/// refuses payloads zstd produces legitimately.
-///
-/// It is also the check that refuses *real* traffic when it is wrong, and the
-/// traffic it refuses is the most compressible — a sparse matrix, a padded
-/// document, a log batch of near-identical lines. `"kynos "` repeated four
-/// thousand times gzips past 200:1, and it is not an attack.
-///
-/// So the absolute limit is required and this is not. The absolute limit is
-/// already a complete defence: it bounds the memory a request can cost. This is
-/// how you buy the refusal earlier, once you know what your own payloads look
-/// like. Around 20 suits JSON APIs; measure before choosing.
+/// It refuses a bomb earlier, but no single default suits all three codings:
+/// gzip tops out near 1032:1 while zstd and brotli go far beyond, and highly
+/// compressible legitimate payloads (`"kynos "` repeated four thousand times
+/// gzips past 200:1) are what a wrong ratio refuses. The absolute limit alone
+/// already bounds memory. Around 20 suits JSON APIs; measure before choosing.
 ///
 /// # What it costs a streaming read
 ///
-/// The same as `BodySize`, and for the same reason: 413 and 415 are declared,
-/// and a declared status has to be answerable before the handler runs. So the
-/// body is decoded here in full and handed on as bytes. A coded body is not a
-/// streaming upload in any case — it cannot be, since the coding has to be
-/// undone before anything can read a record out of it.
+/// 413 and 415 are declared and must be answerable before the handler runs, so
+/// the body is decoded here in full and handed on as bytes.
 ///
-/// # What is stripped, and why
+/// # What is stripped
 ///
-/// RFC 9110 section 8.4 says the representation *is* the coded form, and that
-/// "all other metadata about the representation is about the coded form".
-/// Decoding therefore invalidates that metadata rather than preserving it:
-/// `Content-Encoding` is removed, `Content-Length` is restated as the decoded
-/// length, and `Content-Digest`, `Digest` and `Content-MD5` are removed rather
-/// than left to be checked against octets they were never computed over.
+/// Per RFC 9110 section 8.4, representation metadata describes the coded form,
+/// so decoding removes `Content-Encoding`, restates `Content-Length` as the
+/// decoded length, and removes `Content-Digest`, `Digest` and `Content-MD5`.
 ///
 /// # Naming what each refusal is
 ///
 /// Three refusals, three builders:
 /// [`unsupported_coding_problem_type`](Decompression::unsupported_coding_problem_type),
 /// [`malformed_problem_type`](Decompression::malformed_problem_type) and
-/// [`too_large_problem_type`](Decompression::too_large_problem_type). One
-/// builder naming all three would declare a 400 and a 415 the same problem
-/// type, which [`Undecodable`] says more about.
+/// [`too_large_problem_type`](Decompression::too_large_problem_type); see
+/// [`Undecodable`].
 pub struct Decompression<U = (), M = (), L = ()> {
     /// The largest body, decoded, that will be handed on.
     limit: u64,
-    /// The largest decoded-to-encoded ratio that will be handed on, when one
-    /// was set.
+    /// The largest decoded-to-encoded ratio handed on, when set.
     max_ratio: Option<u64>,
     /// Names each refusal's problem type without holding one.
     problem_type: Markers<U, M, L>,
@@ -441,10 +375,6 @@ pub struct Decompression<U = (), M = (), L = ()> {
 
 impl Decompression<(), (), ()> {
     /// Decodes request bodies, capping the decoded body at `bytes`.
-    ///
-    /// Declared on the concrete type so that it still infers without a
-    /// turbofish, as
-    /// [`BodySize::new`](crate::middleware::limits::body_size::BodySize::new) is.
     #[must_use]
     pub fn new(bytes: u64) -> Self {
         Self {
@@ -483,10 +413,7 @@ impl<M, L> Decompression<(), M, L> {
     /// # }
     /// ```
     ///
-    /// Naming one of them twice does not compile — the `impl` block requires
-    /// that slot to be `()`, so the method is simply not there once it is a
-    /// type. The block above is this rule's pass control: it names two
-    /// different refusals, which is the case that must go on compiling.
+    /// Naming one of them twice does not compile:
     ///
     /// ```compile_fail
     /// use kynos::{error::problem::ProblemType, middleware::decompression::Decompression};
@@ -515,8 +442,7 @@ impl<U, L> Decompression<U, (), L> {
     /// Names the RFC 9457 problem type the 400 carries.
     ///
     /// Available only where this refusal has not been named. See
-    /// [`unsupported_coding_problem_type`](Decompression::unsupported_coding_problem_type)
-    /// for the rule and its pass control.
+    /// [`unsupported_coding_problem_type`](Decompression::unsupported_coding_problem_type).
     #[must_use]
     pub fn malformed_problem_type<M: ProblemType>(self) -> Decompression<U, M, L> {
         self.renamed()
@@ -527,8 +453,7 @@ impl<U, M> Decompression<U, M, ()> {
     /// Names the RFC 9457 problem type the 413 carries.
     ///
     /// Available only where this refusal has not been named. See
-    /// [`unsupported_coding_problem_type`](Decompression::unsupported_coding_problem_type)
-    /// for the rule and its pass control.
+    /// [`unsupported_coding_problem_type`](Decompression::unsupported_coding_problem_type).
     #[must_use]
     pub fn too_large_problem_type<L: ProblemType>(self) -> Decompression<U, M, L> {
         self.renamed()
@@ -536,11 +461,8 @@ impl<U, M> Decompression<U, M, ()> {
 }
 
 impl<U, M, L> Decompression<U, M, L> {
-    /// The same configuration under a different set of markers.
-    ///
-    /// One function behind all three builders, so a field added to this type
-    /// is dropped by none of them: the destructuring here is the compile error
-    /// that says so.
+    /// The same configuration under a different set of markers; the
+    /// destructuring makes a newly added field a compile error here.
     fn renamed<U2, M2, L2>(self) -> Decompression<U2, M2, L2> {
         let Self {
             limit,
@@ -557,17 +479,14 @@ impl<U, M, L> Decompression<U, M, L> {
 
     /// Refuses a body that decodes to more than `times` its arrived size.
     ///
-    /// Off unless set, and deliberately: see the type's documentation for why
-    /// one default cannot be right for three codings.
+    /// Off unless set; see the type's documentation for choosing a value.
     #[must_use]
     pub fn max_ratio(mut self, times: u64) -> Self {
         self.max_ratio = Some(times);
         self
     }
 
-    /// The cap to decode under, given `encoded` bytes arrived.
-    ///
-    /// The tighter of the two bounds, so one pass enforces both.
+    /// The tighter of the two caps, given `encoded` bytes arrived.
     fn bound(self, encoded: u64) -> u64 {
         match self.max_ratio {
             Some(ratio) => self.limit.min(encoded.saturating_mul(ratio)),
@@ -576,8 +495,7 @@ impl<U, M, L> Decompression<U, M, L> {
     }
 }
 
-// The three derivable implementations, written out, for the reason
-// `Undecodable`'s four are: derived, they would bound all three markers.
+// Written out: `#[derive]` would bound each on all three markers.
 
 impl<U, M, L> Clone for Decompression<U, M, L> {
     fn clone(&self) -> Self {
@@ -629,23 +547,17 @@ where
 
         let (mut parts, body) = request.into_parts();
 
-        // This is the route's body limit, so it replaces the extractor's
-        // default as `BodySize` does: what is handed on within it is never
-        // refused beneath.
+        // The route's body limit, replacing the extractor's default.
         parts.extensions.insert(BodyLimit(self.limit));
 
-        // Read once, whether or not a coding was applied: the limit is the
-        // route's body limit, and a request that skipped the coding is not
-        // thereby exempt from it.
+        // Read even when uncoded: the limit applies either way.
         let arrived = match collect_capped(body, self.limit)
             .await
             .map_err(Undecodable::of)?
         {
             Collected::Whole(bytes) => bytes,
-            // Not the request the client sent, coded or not: handed on as it
-            // failed, headers and all, so the extractor beneath refuses it as
-            // it would with nothing mounted here. Decoding the part that
-            // arrived would blame the coding for what the transport did.
+            // Handed on as it failed, so the extractor refuses it as usual
+            // rather than blaming the coding for a transport failure.
             Collected::FailedPartWay(body) => {
                 return Ok(next.run(http::Request::from_parts(parts, body)).await);
             }
@@ -660,17 +572,12 @@ where
                 .map_err(Undecodable::of)?;
         }
 
-        // Only what the decode invalidated. A request that carried no coding
-        // carried no coded form either, so its metadata still describes its
-        // body exactly -- and stripping a digest from it would destroy a fact
-        // the handler may be relying on.
+        // An uncoded request's metadata still describes its body exactly.
         if !codings.is_empty() {
             parts.headers.remove(http::header::CONTENT_ENCODING);
 
-            // Metadata about a coded form that no longer exists. Removed rather
-            // than recomputed: this is not the party that computed it, and a
-            // digest rewritten in transit proves nothing about what the client
-            // sent.
+            // Removed, not recomputed: a digest rewritten in transit proves
+            // nothing about what the client sent.
             for stale in ["content-digest", "digest", "content-md5"] {
                 parts.headers.remove(stale);
             }
@@ -696,11 +603,8 @@ enum Collected {
 
 /// Reads `body` while the running total stays within `limit`.
 ///
-/// A read that fails is neither a size violation nor a coding the body got
-/// wrong, and is reported as neither: it comes back as it failed, so the
-/// extractor beneath refuses it with the status it already describes, whatever
-/// that extractor parses. Swallowing the error would hand a truncated payload
-/// to one that parses nothing.
+/// A failed read comes back as it failed, for the extractor beneath to refuse;
+/// swallowing it would hand on a truncated payload.
 async fn collect_capped(mut body: Body, limit: u64) -> Result<Collected, Reason> {
     let mut collected = BytesMut::new();
 

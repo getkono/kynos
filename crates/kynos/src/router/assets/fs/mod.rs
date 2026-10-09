@@ -2,26 +2,17 @@
 //!
 //! # Why this is behind `unchecked`
 //!
-//! A directory that anything may add a file to matches a set of paths no single
-//! path template describes. `/static/{*path}` is not a template: a path
-//! parameter's value must not contain an unescaped `/`, so every key that could
-//! be minted is a claim about either the path or a parameter the service does
-//! not honour. [Anti-pattern 3](https://github.com/getkono/kynos#anti-patterns)
-//! is right about it, and no amount of care makes it describable.
+//! A directory that anything may add a file to matches a set of paths no path
+//! template describes ([anti-pattern
+//! 3](https://github.com/getkono/kynos#anti-patterns)). So the route is
+//! *recorded* instead: an entry in `x-kynos-opaque-routes` at the document
+//! root, with **no `paths` key**, so a client generator emits nothing for it.
 //!
-//! So the route is *recorded* instead: an entry in `x-kynos-opaque-routes` at
-//! the document root, with **no `paths` key**. A client generator emits nothing
-//! for it by construction rather than by convention — which is stronger than a
-//! `paths` entry marked with a vendor extension a generator may or may not
-//! honour.
+//! Kynos still owns the traversal defence, the media types, the entity tags
+//! and the conditional requests; only the `paths` entry is given up.
 //!
-//! Waiving the description does not waive the implementation. Kynos still owns
-//! the traversal defence, the media types, the entity tags and the conditional
-//! requests. What is given up is the `paths` entry, not the correctness.
-//!
-//! [`assets!`](crate::assets) is the other half, and the one to reach for
-//! first: an embedded set is enumerable, so it is described, and nothing is
-//! waived at all.
+//! [`assets!`](crate::assets) is the one to reach for first: an embedded set is
+//! enumerable, so it is described, and nothing is waived at all.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -99,17 +90,9 @@ impl Directory {
     /// Resolves `requested` against the root, or `None` where it escapes or
     /// names something hidden.
     ///
-    /// Structural rather than canonicalizing. Every component is examined and
-    /// anything that is not a plain name is refused: `..` cannot climb out
-    /// because it is never accepted, and a root or prefix component cannot
-    /// replace the base because it is never accepted either. A check that
-    /// canonicalized and then compared is one that has to be remembered; this
-    /// one cannot be forgotten, because there is no branch that admits the bad
-    /// input.
-    ///
-    /// A segment beginning with a dot is refused too, as
-    /// [`assets!`](crate::assets) skips one: `Directory::new(".")` over a
-    /// checkout must not hand out `.git` or `.env`.
+    /// Structural rather than canonicalizing: any component that is not a plain
+    /// name is refused, so `..` and root or prefix components never pass. Dot
+    /// segments are refused too, so `.git` and `.env` are never served.
     fn resolve(&self, requested: &str) -> Option<PathBuf> {
         let mut resolved = self.root.clone();
 
@@ -121,9 +104,7 @@ impl Directory {
                 return None;
             }
 
-            // `Path::new(segment).components()` is what turns a segment into a
-            // verdict: a plain name yields exactly one `Normal`, and anything
-            // else — `..`, `/`, a Windows prefix — yields something else.
+            // Only a plain name yields exactly one `Normal`.
             let mut components = Path::new(segment).components();
             match (components.next(), components.next()) {
                 (Some(Component::Normal(name)), None) => resolved.push(name),
@@ -137,15 +118,10 @@ impl Directory {
     /// The file `requested` names on disk and what `stat` said of it, or
     /// `None` where nothing may be served.
     ///
-    /// A directory stands for its index. Every failure is `None`, including
-    /// `PermissionDenied`: a file the process cannot read is, to a client, not
-    /// there, and 404 leaks least.
-    ///
-    /// No link below the root is followed, wherever it points: each segment
-    /// is `lstat`ed and a link refused, as [`assets!`](crate::assets) skips
-    /// one. The root itself is followed, since a deploy's `current` link is
-    /// the operator's rather than the directory's. The check precedes the
-    /// read, so a link swapped in between the two is not caught.
+    /// A directory stands for its index; every failure, `PermissionDenied`
+    /// included, is `None` (a 404 leaks least). No link below the root is
+    /// followed; the root itself is. A link swapped in after the check is not
+    /// caught.
     async fn locate(&self, requested: &str) -> Option<(PathBuf, std::fs::Metadata)> {
         let resolved = self.resolve(requested)?;
         let mut path = self.root.clone();
@@ -175,10 +151,8 @@ async fn unlinked(path: &Path) -> Option<std::fs::Metadata> {
     (!metadata.file_type().is_symlink()).then_some(metadata)
 }
 
-/// The media type a located file is served as.
-///
-/// Read from the file rather than from the request, so a directory's index is
-/// typed as the index it is.
+/// The media type a located file is served as, read from the file so an index
+/// is typed as itself.
 fn media_type(path: &Path) -> &'static str {
     path.file_name()
         .and_then(std::ffi::OsStr::to_str)
@@ -186,24 +160,11 @@ fn media_type(path: &Path) -> &'static str {
         .unwrap_or(media::FALLBACK)
 }
 
-/// A weak entity tag from what a `stat` already knows.
+/// A weak entity tag from the length and modification time, so a conditional
+/// request never reads the file.
 ///
-/// Weak, and that is the honest strength: it is derived from the length and the
-/// modification time rather than from the contents, so two different files
-/// written in the same nanosecond with the same length would share it. Reading
-/// every file to hash it would turn a conditional request into the work it
-/// exists to avoid.
-///
-/// # So neither `If-Range` nor a listed `If-Match` ever holds here
-///
-/// RFC 9110 sections 13.1.5 and 13.1.1 take the *strong* comparison, under
-/// which a weak tag is equivalent to nothing — not even to itself. A directory
-/// therefore answers every `If-Range` with the whole file and a 200, and every
-/// `If-Match` but `*` with a 412: a client splicing a part into its copy needs
-/// to know the representation has not changed, and this tag cannot promise
-/// that. A plain `Range` is served as a 206 exactly as an embedded file's is.
-/// [`assets!`](crate::assets) hashes the contents and gets a strong tag, which
-/// is the mode to reach for when resumption matters.
+/// Weak, so under the strong comparison of RFC 9110 sections 13.1.5 and 13.1.1
+/// every `If-Range` gets the whole file and every `If-Match` but `*` a 412.
 fn etag(metadata: &std::fs::Metadata) -> Option<String> {
     let modified = metadata
         .modified()
@@ -281,13 +242,10 @@ async fn serve(directory: &Directory, request: &Request) -> Response {
         }
     }
 
-    // Section 14.2: the `Range` field is evaluated *only if the result in
-    // absence of the Range header field would be a 200*, which the 412 and the
-    // 304 above have settled. The weak validator never passes an `If-Range`.
+    // Section 14.2: `Range` is evaluated only once the 412 and 304 are ruled out.
     let range_set = spec::read(request.method(), request.headers(), headers.etag.as_deref());
 
-    // `stat` already reported the length, so satisfiability is decided before a
-    // byte is read -- and an unsatisfiable field costs no read at all.
+    // Decided from `stat`'s length, so an unsatisfiable range costs no read.
     let selection = match crate::response::range::select(&range_set, metadata.len()) {
         Ok(selection) => selection,
         Err(rejection) => return range::unsatisfiable(rejection),
@@ -306,24 +264,15 @@ async fn serve(directory: &Directory, request: &Request) -> Response {
 
 /// The bytes from `first` to `last` inclusive, without reading the rest.
 ///
-/// A seek and one sized read rather than `tokio::fs::read` and a slice. Serving
-/// a kilobyte out of a gigabyte should cost a kilobyte, and that difference is
-/// most of the reason a range request exists at all — slicing after the read
-/// would be honest about the octets and wrong about the work.
-///
-/// `read_exact` rather than a read that settles for less: the file may have
-/// changed since the `stat` that fixed the length, and sending fewer octets
-/// than the `Content-Range` names produces a field RFC 9110 section 14.4 tells
-/// a recipient never to recombine. A file that shrank underneath the request is
-/// a failed read, which the caller answers the way it answers every other one.
+/// `read_exact`, so a file that shrank since `stat` is a failed read rather
+/// than fewer octets than `Content-Range` names (RFC 9110 section 14.4).
 async fn span(path: &Path, first: u64, last: u64) -> std::io::Result<Bytes> {
     use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
     let mut file = tokio::fs::File::open(path).await?;
     file.seek(std::io::SeekFrom::Start(first)).await?;
 
-    // `last` came from the resolver, so it is at most one less than the length
-    // `stat` reported and neither the subtraction nor the addition can wrap.
+    // `first <= last < length`, so this cannot wrap.
     let length = usize::try_from(last - first + 1).unwrap_or(usize::MAX);
     let mut buffer = vec![0_u8; length];
     file.read_exact(&mut buffer).await?;
@@ -360,11 +309,7 @@ impl<C: Send + Sync + 'static, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// ```
     ///
     /// A `prefix` carrying a variable is recorded as a violation and surfaces
-    /// from [`Router::validate`](crate::router::Router::validate): it is the
-    /// mount point rather than a template, so it has no variables of its own.
-    /// This used to `assert!`, which made a path literal at a mount site the
-    /// one kind of malformed path that stopped the program instead of being
-    /// reported with the rest.
+    /// from [`Router::validate`](crate::router::Router::validate).
     #[must_use]
     pub fn assets_directory(mut self, prefix: &str, directory: Directory) -> Self {
         let prefix = prefix.trim_end_matches('/');

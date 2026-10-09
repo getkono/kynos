@@ -31,10 +31,6 @@ pub trait EndpointMeta {
     /// Compared against `PathParams::NAMES` by a const assertion in the
     /// expansion, so a handler whose parameters do not match its path is a
     /// compile error rather than a runtime 500.
-    ///
-    /// The assertion reads this constant rather than rebuilding the list, so
-    /// what the description will say and what the handler destructures are
-    /// checked against one source.
     const PATH_VARIABLES: &'static [&'static str];
 
     /// The operation identifier.
@@ -54,20 +50,10 @@ pub trait EndpointMeta {
 
     /// The tags the route attribute named, in declaration order.
     ///
-    /// Empty when it named none. This is the fourth and innermost of the four
-    /// places a tag can be applied — [`Router::tag`](crate::Router::tag),
+    /// Empty when it named none. The innermost of the four places a tag can be
+    /// applied, beside [`Router::tag`](crate::Router::tag),
     /// [`Group::tag`](crate::router::group::Group::tag) and
-    /// [`EndpointBuilder::tag`](crate::router::endpoint::builder::EndpointBuilder::tag)
-    /// are the other three — and the only one readable without building a
-    /// router, since it is a fact about the operation rather than about what
-    /// encloses it.
-    ///
-    /// A slice rather than an `Option`, because the enclosing levels contribute
-    /// their own and the Operation Object's `tags` is an array either way.
-    ///
-    /// A [`DeclaredTag`] carries the tag's name *and* the thunk that documents
-    /// it, so reading this constant registers both. Two parallel slices — names
-    /// beside metadata — would let one be shorter than the other, which is the
-    /// same silent drop one layer down.
+    /// [`EndpointBuilder::tag`](crate::router::endpoint::builder::EndpointBuilder::tag),
+    /// and the only one readable without building a router.
     const TAGS: &'static [DeclaredTag];
 }

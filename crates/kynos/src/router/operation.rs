@@ -8,10 +8,8 @@ use crate::{http::StatusCode, schema::registry::Registry};
 ///
 /// Handed to an interceptor while the router is built, and to an interceptor or
 /// observer while a request is served, so that a metric label, a log field or a
-/// rate-limit bucket can be keyed by the operation rather than by the raw path.
-/// That is what keeps label cardinality bounded — and because
-/// [`path`](Route::path) is the same string that appears as the `paths` key,
-/// the label cannot disagree with the description.
+/// rate-limit bucket can be keyed by the operation rather than by the raw path,
+/// with bounded cardinality. [`path`](Route::path) is the `paths` key itself.
 ///
 /// Borrowed and [`Copy`]: nothing here allocates on the request path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -92,12 +90,8 @@ impl OperationCx<'_> {
     /// parameter contribute one entry, not a duplicate the specification
     /// forbids.
     ///
-    /// A *header* name is compared case-insensitively, because RFC 9110
-    /// section 5.1 says a field name is — so an operation reading
-    /// `Accept-Language` through the negotiation and `accept-language` through
-    /// a derived group declares one field rather than two spellings of one.
-    /// Every other location is compared as written, since only a field name has
-    /// that property.
+    /// A *header* name is compared case-insensitively (RFC 9110 section 5.1);
+    /// every other location is compared as written.
     pub fn add_parameter(&mut self, parameter: kynos_openapi::Parameter) {
         let names_the_same_field = |existing: &kynos_openapi::Parameter| {
             if parameter.location == kynos_openapi::ParameterIn::Header {
@@ -154,10 +148,6 @@ impl OperationCx<'_> {
     /// schemes under one name are recorded and reported when the router is
     /// built, because a [`Describe`](crate::extract::describe::Describe)
     /// implementation has no way to return an error.
-    ///
-    /// Without this an `Auth<S>` argument could require a credential it had no
-    /// way to declare, and every operation using one would emit a security
-    /// requirement naming a scheme the document never defines.
     pub fn add_security_scheme(
         &mut self,
         name: ComponentName,
@@ -183,26 +173,14 @@ impl OperationCx<'_> {
     /// part of what a client must handle, and only the scheme knows it.
     ///
     /// The response filed under `status` gains the header, and is created with
-    /// a generic description if the operation does not declare one yet — the
-    /// header is evidence the response happens, so omitting it would be worse
-    /// than describing it thinly. A header already declared under that name is
-    /// left alone, and a response held as a `$ref` is not reached into.
+    /// a generic description if the operation does not declare one yet. A
+    /// header already declared under that name is left alone, and a response
+    /// held as a `$ref` is not reached into.
     ///
     /// A *range* pattern never mints its own entry. It reaches the responses
     /// the operation already declares within it, and contributes nothing when
-    /// there are none.
-    ///
-    /// Both halves fix the same thing. The specification gives a consumer
-    /// resolving a status the exact key first, so a header filed under `2XX`
-    /// beside a declared `200` is one no reader of that operation's 200 will
-    /// ever find — and the minted `2XX` is then a response the service cannot
-    /// produce, which is a claim in the description that nothing can keep. For
-    /// an operation declaring no success at all — a redirect — the wildcard
-    /// would be the same untruth with nothing beside it, so the header is
-    /// dropped instead. That understates the description by one header on a
-    /// response that has one; the alternative overstates it by a response that
-    /// does not exist, and `nfr.md`'s *emitted ⊇ observable* is the direction
-    /// that must not break.
+    /// there are none, since a minted `2XX` would describe a response the
+    /// service cannot produce.
     pub fn add_response_header(
         &mut self,
         status: StatusPattern,
@@ -265,16 +243,12 @@ impl OperationCx<'_> {
 
     /// Adds a tag.
     ///
-    /// Adding a tag the operation already carries is a no-op: `tags` is a set
-    /// spelled as an array, and a repeated entry names no further group. A tag
-    /// named at two scopes appears once, in the slot of the *first* scope to
-    /// name it — the operation's own if it named it, otherwise the outermost
-    /// enclosing scope. `docs/routing.md` carries the full order.
+    /// Adding a tag the operation already carries is a no-op, so a tag named
+    /// at two scopes keeps the slot of the *first* to name it.
+    /// `docs/routing.md` carries the full order.
     ///
     /// A [`DeclaredTag`] rather than a name, so that the metadata documenting
-    /// the tag arrives with it. A name on its own is an operation filed under
-    /// a heading the document never declares, which the validator raises as
-    /// [`UndocumentedTag`](kynos_openapi::SpecError::UndocumentedTag).
+    /// the tag arrives with it.
     pub fn add_tag(&mut self, tag: DeclaredTag) {
         if !self.operation.tags.iter().any(|name| name == tag.name()) {
             self.operation.tags.push(tag.name().to_owned());
@@ -293,11 +267,8 @@ impl OperationCx<'_> {
     }
 }
 
-/// Whether `declared` names responses `range` covers.
-///
-/// An exact code is covered when the range matches it; an identical range is
-/// covered by itself, so a second contribution under `2XX` still lands on the
-/// `2XX` a first one created rather than beside it.
+/// Whether `declared` names responses `range` covers: a matching code, or the
+/// identical range.
 fn covered_by(range: StatusPattern, declared: StatusPattern) -> bool {
     match declared {
         StatusPattern::Code(code) => range.matches(code),
@@ -321,10 +292,8 @@ fn declare_header(
     }
 }
 
-/// The description given to a response entry created only to carry a header.
-///
-/// A `Response` must have one, and the reason phrase RFC 9110 registers for the
-/// status is the most any caller has said about it.
+/// The description given to a response entry created only to carry a header:
+/// the status's RFC 9110 reason phrase.
 fn describe_status(status: StatusPattern) -> String {
     let class = match status {
         StatusPattern::Code(code) => {
@@ -345,9 +314,8 @@ fn describe_status(status: StatusPattern) -> String {
 
 /// A tag, as a type.
 ///
-/// Derived with `#[derive(Tag)]` on a unit struct. Making tags types rather
-/// than strings means a typo is a compile error, and tag-name uniqueness is a
-/// property of the module system rather than something checked afterwards.
+/// Derived with `#[derive(Tag)]` on a unit struct, so a typo is a compile
+/// error.
 pub trait Tag {
     /// The tag name as it appears in the description.
     const NAME: &'static str;
@@ -358,16 +326,9 @@ pub trait Tag {
 
 /// A tag as a scope declared it: its name, and the thunk that documents it.
 ///
-/// One value rather than two parallel arrays. A name without its metadata is
-/// an operation carrying a tag the document's `tags` never documents — which
-/// the validator raises as
-/// [`UndocumentedTag`](kynos_openapi::SpecError::UndocumentedTag), and which
-/// two arrays that can differ in length make possible by construction.
-///
 /// [`Copy`] and const-constructible, so a route attribute puts one in an
-/// associated constant and
-/// [`EndpointMeta`](crate::router::endpoint::meta::EndpointMeta) stays
-/// entirely `const`.
+/// associated constant of
+/// [`EndpointMeta`](crate::router::endpoint::meta::EndpointMeta).
 #[derive(Clone, Copy, Debug)]
 pub struct DeclaredTag {
     name: &'static str,

@@ -185,11 +185,8 @@ pub fn unique_items<T: UniqueItems + ?Sized>(
 /// Checks a member serde reads under any of `names`, its read name first,
 /// and reports what `check` finds at `at`, the object holding the member.
 ///
-/// Which name the document used is gone once it is read, so a pointer under
-/// any one of them may name a member the document does not hold. `check`
-/// reports relative to [`Pointer::root`], which is the member, and each
-/// failure is moved to `at`, its location written into the detail, so the
-/// one at the inner pointer that sorts first is the one named.
+/// Which name the document used is gone once read, so each failure is moved
+/// to `at` with its location relative to the member written into the detail.
 #[doc(hidden)]
 pub fn aliased(
     at: Pointer<'_>,

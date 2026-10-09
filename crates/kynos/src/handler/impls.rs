@@ -1,12 +1,8 @@
 //! [`Handler`] for functions of up to sixteen extractors, after an optional
 //! guard.
 //!
-//! Four implementations per arity: the last argument consumes the body or every
-//! argument reads only the head, each with and without a guard in front. They
-//! are told apart by the markers leading the argument tuple, because a function
-//! of `n` arguments matches several shapes and coherence has no other way to
-//! see the difference. There is no shape with two guards, which is what makes a
-//! second one a compile error.
+//! Four implementations per arity (body or head-only, each with or without a
+//! guard), kept disjoint by the markers leading the argument tuple.
 
 use std::future::Future;
 

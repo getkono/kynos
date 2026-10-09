@@ -1,40 +1,17 @@
 //! Where ranged octets come from.
 //!
-//! [`Rangeable`](super::rangeable) is the set of bodies a range can be *sliced*
-//! from — octets already in hand, of a known length. This is the set it can be
-//! *read* from: an object store, a fake filesystem in a test, a decrypting
-//! reader, a file. The difference is that reading is asynchronous and partial,
-//! so the complete representation never has to exist in memory at once.
+//! [`Rangeable`](super::rangeable) is the sealed set of bodies a range can be
+//! *sliced* from, octets already in hand. [`ByteSource`] is the open set it can
+//! be *read* from: an object store, a fake in a test, a file. Reading is
+//! asynchronous and partial, so the complete representation never has to be in
+//! memory at once.
 //!
-//! # The one rule
+//! A source is asked for a span and returns that span, so serving a kilobyte
+//! out of a gigabyte reads a kilobyte. A short answer is asked again for the
+//! remainder; an empty one fails the body with [`Truncated`].
 //!
-//! **A source is asked for a span and returns that span.** It is never asked
-//! for the whole representation, so serving a kilobyte out of a gigabyte costs
-//! a kilobyte — which is most of the reason a range request exists. A source
-//! that read everything and sliced would be honest about the octets and wrong
-//! about the work.
-//!
-//! A source that answers with *fewer* octets than were asked for is simply
-//! asked again for the remainder, so the body still delivers the whole span.
-//! One that answers with *none* has said it cannot make progress at all, and
-//! [`Truncated`] fails the body rather than ending it short of the length
-//! already on the wire.
-//!
-//! # Not sealed
-//!
-//! `Rangeable` is sealed because its members are claims about what a byte range
-//! *means*: a range of a `String` may split a character, and a range of a JSON
-//! document is not a document. Those are closed questions. Where the octets
-//! come from is not — an application knows storage Kynos never will, and
-//! Beam's own requirement is a source that is "not only a filesystem path" so
-//! that a fake one can stand in during tests.
-//!
-//! # Runtime-free
-//!
-//! Nothing here names tokio, which is what keeps
-//! [`architecture.md`](https://github.com/getkono/kynos/blob/master/docs/architecture.md)'s containment table at
-//! the size it states. A source that reads a file names tokio *in the
-//! implementation the application writes*, which is where a runtime belongs.
+//! Nothing here names tokio; a source that reads a file names it in the
+//! application's own implementation.
 
 use std::{future::Future, pin::Pin, task::Poll};
 
@@ -42,20 +19,13 @@ use bytes::Bytes;
 
 /// How much of a representation is read at a time.
 ///
-/// A whole-representation response is streamed in spans of this size rather
-/// than read at once, which is what makes "the full file is never buffered" a
-/// property of the implementation rather than a promise. 64 KiB is large enough
-/// that the per-span overhead disappears and small enough that a slow client
-/// holding a connection open costs one span rather than one file.
+/// A response is streamed in spans of this size, so the full representation is
+/// never buffered and a slow client holds one span rather than one file.
 pub const SPAN: u64 = 64 * 1024;
 
 /// Octets a byte range can be read from.
 ///
-/// Implement this over whatever holds the representation. The two methods are
-/// deliberately the whole seam: anything richer — a seek cursor, a borrowed
-/// reader, a transaction — has no portable equivalent across the stores this is
-/// meant to reach, and would quietly make the trait implementable by one of
-/// them.
+/// Implement this over whatever holds the representation.
 ///
 /// ```
 /// use bytes::Bytes;
@@ -89,17 +59,14 @@ pub const SPAN: u64 = 64 * 1024;
 pub trait ByteSource: Send + Sync + 'static {
     /// What went wrong reading.
     ///
-    /// The application's own error, not one Kynos invented: it is the thing
-    /// that knows whether a missing object is a 404 or a 500, and
-    /// [`Served`](super::served::Served) hands it back rather than choosing.
+    /// [`Served`](super::served::Served) hands it back, so the application
+    /// decides whether it is a 404 or a 500.
     type Error: std::error::Error + Send + Sync + 'static;
 
     /// How many octets the whole representation has.
     ///
-    /// Asked once per request, before anything is read. RFC 9110 section 14.1.2
-    /// makes every offset relative to this, and section 14.4 asks a sender to
-    /// state it — so a source that cannot answer cannot be ranged over, and an
-    /// unsatisfiable request costs no read at all.
+    /// Asked once per request, before anything is read, so an unsatisfiable
+    /// request costs no read (RFC 9110 sections 14.1.2, 14.4).
     fn complete_length(&self) -> impl Future<Output = Result<u64, Self::Error>> + Send;
 
     /// The octets from `first` to `last`, inclusive.
@@ -107,13 +74,9 @@ pub trait ByteSource: Send + Sync + 'static {
     /// Both offsets are within the length this source last reported, so an
     /// implementation does not have to bounds-check them against it.
     ///
-    /// Returning fewer octets than were asked for is a short read and costs
-    /// nothing but another call: the remainder is asked for on the next poll,
-    /// and the body still fills the span its `Content-Range` names. Returning
-    /// *none* is a failure -- it is the one answer that makes no progress, so
-    /// the body cannot go on and cannot end without being shorter than a field
-    /// section 14.4 tells a recipient never to recombine. It surfaces as
-    /// [`Truncated`] on the body stream.
+    /// Returning fewer octets than asked for is a short read: the remainder is
+    /// asked for on the next poll. Returning *none* fails the body with
+    /// [`Truncated`].
     fn read_span(
         &self,
         first: u64,
@@ -124,21 +87,14 @@ pub trait ByteSource: Send + Sync + 'static {
 /// A source stopped short of the length it reported.
 ///
 /// Raised when [`ByteSource::read_span`] answers a non-empty span with no
-/// octets, which is the one short read that cannot be retried: a source with
-/// fewer octets to give would give them, so one that gives none is telling the
-/// body it can make no progress. A file or an object truncated between
-/// [`complete_length`](ByteSource::complete_length) and the read is an ordinary
-/// race for a filesystem or an object store, not a broken implementation.
+/// octets, as when a file shrinks after
+/// [`complete_length`](ByteSource::complete_length) was read.
 ///
-/// It arrives on the body stream rather than as a status, because by then
+/// It arrives on the body stream rather than as a status, because
 /// [`Served::deliver`](super::served::Served::deliver) has already sent a
-/// `Content-Length` -- and a `Content-Range` for a 206 -- sized from the
-/// complete length. Cutting the body off mid-stream is what tells a recipient
-/// the octets it holds are not the part it was promised; ending the body
-/// quietly would hand it a truncated representation under a 200 or a 206.
-///
-/// A caller reads it back out of [`Body::Error`](http_body::Body::Error) by
-/// downcasting the boxed error.
+/// `Content-Length` sized from the complete length; failing the body tells the
+/// recipient it did not get what was promised. Read it back by downcasting
+/// [`Body::Error`](http_body::Body::Error).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Truncated {
     first: u64,
@@ -173,9 +129,7 @@ impl std::error::Error for Truncated {}
 
 /// A representation held in memory.
 ///
-/// The degenerate source, and the one a test reaches for. It exists so that
-/// `ByteSource` has an implementation in the crate that owns it — a trait whose
-/// only implementations are downstream is one nothing here exercises.
+/// The degenerate source, and the one a test reaches for.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct InMemory(Bytes);
 
@@ -217,17 +171,8 @@ fn clamped(octets: &Bytes, first: u64, last: u64) -> Bytes {
 
 /// A body that reads one span at a time.
 ///
-/// An [`http_body::Body`] rather than a `Stream`, which is what keeps two
-/// counted things where they were: `futures_core` reaches the tree only through
-/// `openapi32`, and ranged delivery is behind no feature — and
-/// [`architecture.md`](https://github.com/getkono/kynos/blob/master/docs/architecture.md) enumerates every
-/// hand-rolled `Stream` in the crate, so a fourth would have to be argued for.
-/// A body is what this actually is: `http-body` is already an unconditional
-/// dependency, and `Body::from_body` already exists to erase one.
-///
-/// The pending read is boxed because a `ByteSource`'s future is opaque and has
-/// to be held across polls. That is one allocation per 64 KiB of body, and it
-/// appears in no public signature.
+/// An [`http_body::Body`] rather than a `Stream`: `futures_core` is gated on
+/// `openapi32` and ranged delivery is not.
 pub(super) struct Spans<S: ByteSource> {
     source: std::sync::Arc<S>,
     /// The next offset to read, and the last one enclosed.
@@ -237,19 +182,13 @@ pub(super) struct Spans<S: ByteSource> {
     reading: Option<Reading<S>>,
 }
 
-/// A `read_span` in flight.
-///
-/// Boxed because a [`ByteSource`]'s future is opaque and has to be held across
-/// polls, and named because the type written out is not one a reader should
-/// have to parse.
+/// A `read_span` in flight, boxed because its future is opaque and held across
+/// polls.
 type Reading<S> = Pin<Box<dyn Future<Output = Result<Bytes, <S as ByteSource>::Error>> + Send>>;
 
 #[allow(clippy::missing_fields_in_debug)]
 impl<S: ByteSource> std::fmt::Debug for Spans<S> {
-    /// Hand-written, and deliberately partial: the source is opaque and the
-    /// pending read is a future, neither of which has a `Debug` or anything
-    /// useful to print if it had one. What is left is the position, which is
-    /// the whole of this type's state.
+    /// Partial: the source and the pending read have nothing useful to print.
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("Spans")
@@ -271,9 +210,8 @@ impl<S: ByteSource> Spans<S> {
         }
     }
 
-    /// The span the next read covers, which is also the one an empty answer
-    /// failed to fill -- neither offset moves while a read is in flight, so the
-    /// two callers see the same pair.
+    /// The span the next read covers, or the one an empty answer failed to
+    /// fill: neither offset moves while a read is in flight.
     fn span(&self) -> (u64, u64) {
         (
             self.cursor,
@@ -304,22 +242,15 @@ impl<S: ByteSource> http_body::Body for Spans<S> {
 
                 return match read {
                     Ok(span) if span.is_empty() => {
-                        // Nothing came back for a span that is still owed, so
-                        // the source has said it can make no progress. The head
-                        // is long gone and named a length this body can no
-                        // longer reach, so it fails rather than ending short --
-                        // and the cursor is moved past the end so a driver that
-                        // polls on regardless is answered once and then ended,
-                        // never spun.
+                        // No progress: fail rather than end short of the sent
+                        // length, and move past the end so a further poll ends.
                         let (first, last) = this.span();
                         this.cursor = this.last.saturating_add(1);
                         let truncated = Truncated { first, last };
                         Poll::Ready(Some(Err(Box::new(truncated) as Self::Error)))
                     }
                     Ok(span) => {
-                        // A short answer is not a failure: the cursor advances
-                        // by what arrived and the remainder is asked for on the
-                        // next poll, so the span is still filled in full.
+                        // A short answer: the remainder is asked for next poll.
                         this.cursor = this
                             .cursor
                             .saturating_add(u64::try_from(span.len()).unwrap_or(u64::MAX));
@@ -339,17 +270,8 @@ impl<S: ByteSource> http_body::Body for Spans<S> {
         }
     }
 
-    /// The exact length still to come, which a caller already fixed from
-    /// `complete_length`.
-    ///
-    /// Stated so the response carries a `Content-Length` rather than a chunked
-    /// encoding: section 14.4 asks a 206 to name the part it encloses, and a
-    /// client sizing a download reads the field rather than counting octets.
-    ///
-    /// Zero once the cursor has passed the last offset. The span is inclusive,
-    /// so the remaining count is one more than the difference -- but an
-    /// exhausted body has no remainder to add one to, and reporting one octet
-    /// that will never arrive is how a caller ends up waiting for it.
+    /// The exact length still to come, so the response carries a
+    /// `Content-Length`; zero once exhausted, since the span is inclusive.
     fn size_hint(&self) -> http_body::SizeHint {
         if self.exhausted() {
             return http_body::SizeHint::with_exact(0);

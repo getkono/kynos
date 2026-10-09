@@ -1,8 +1,8 @@
 //! The guards a handler takes, and the scopes they must carry.
 //!
 //! Taking one of these as a handler's [`Guard`] enforces the requirement, sets
-//! the operation's `security`, and adds 401 and 403 to its `responses`. There
-//! is no way to do one without the others — which is the whole point.
+//! the operation's `security`, and adds 401 and 403 to its `responses`, as one
+//! act.
 
 use kynos_openapi::{
     Header, Schema, SecurityRequirement, StatusPattern, model::schema::types::SchemaType,
@@ -49,11 +49,8 @@ use crate::{
 /// ```
 pub struct Auth<S: Requirement>(pub S::Credential);
 
-// Hand-written rather than derived: a derive bounds the implementation on the
-// *scheme*, which is a marker and carries nothing, while what is actually
-// being cloned or compared is the credential. `Default` and `Ord` are absent
-// on purpose — `Auth::default()` would be an unverified credential, and there
-// is no meaningful order on one.
+// Hand-written so the bounds fall on the credential, not the marker scheme. No
+// `Default` (an unverified credential) and no `Ord`.
 impl<S: Requirement> Clone for Auth<S>
 where
     S::Credential: Clone,
@@ -96,10 +93,7 @@ impl<S: Requirement> Describe for Auth<S> {
     /// Declares `about:blank` for its 403, and cannot declare anything else.
     ///
     /// The type on a named 403 is [`Scopes::FORBIDDEN_TYPE`], and this argument
-    /// names no scope set: `S` is a scheme, the authenticator that would refuse
-    /// is a value on the application's context, and nothing here can reach it.
-    /// See the trait's documentation for why the seam sits there rather than on
-    /// the scheme.
+    /// names no scope set; [`Scoped`] is the guard that does.
     fn describe(operation: &mut OperationCx<'_>) {
         let security = S::declare(operation);
         declare(operation, S::challenge(), security, None);
@@ -116,12 +110,8 @@ where
     type Rejection = AuthRejection;
 
     async fn guard(parts: &Parts, context: &C) -> Result<Self, Self::Rejection> {
-        // The challenge is the requirement's, not the authenticator's, and it
-        // is attached here so that it is the same string `describe` declared.
-        //
-        // Absent is this operation's 401 rather than the verifier's: `Auth`
-        // demands a credential, so having none is exactly the failure it exists
-        // to produce, and there is nothing for an authenticator to check.
+        // The challenge is attached here so it is the string `describe`
+        // declared; an absent credential is `Auth`'s own 401.
         S::check(parts, context)
             .await
             .and_then(|checked| checked.ok_or_else(AuthRejection::unauthenticated))
@@ -133,15 +123,12 @@ where
 /// A credential proving requirement `S`, when the request presented one.
 ///
 /// Declares `security: [{}, {S: []}]` — the empty requirement first, which is
-/// how OpenAPI spells "anonymous access is also permitted". A reader of the
-/// description learns that the credential is *honoured* rather than *demanded*,
-/// which is a different promise and one no flag on a middleware can make. For
-/// a combined `S` the empty requirement leads `S`'s own alternatives, so
+/// how OpenAPI spells "anonymous access is also permitted". For a combined `S`
+/// the empty requirement leads `S`'s own alternatives, so
 /// `MaybeAuth<AnyOf<(A, B)>>` declares `[{}, {A: []}, {B: []}]`.
 ///
 /// A credential that is present and wrong is still a 401. Only *absence* is
-/// anonymity: a client that sent a broken token is not an anonymous client, and
-/// treating it as one would wave through exactly the request worth refusing.
+/// anonymity.
 ///
 /// ```no_run
 /// # use kynos::security::auth::MaybeAuth;
@@ -162,8 +149,7 @@ where
 /// ```
 pub struct MaybeAuth<S: Requirement>(pub Option<S::Credential>);
 
-// See `Auth`: bounded on the credential rather than on the scheme, and without
-// `Default` or `Ord`.
+// As on `Auth`: bounded on the credential, without `Default` or `Ord`.
 impl<S: Requirement> Clone for MaybeAuth<S>
 where
     S::Credential: Clone,
@@ -203,13 +189,9 @@ impl<S: Requirement> MaybeAuth<S> {
 }
 
 impl<S: Requirement> Describe for MaybeAuth<S> {
-    /// Declares `about:blank` for its 403, for the reason
-    /// [`Auth`](Auth#method.describe) gives: naming no scope set, it has no
+    /// Declares `about:blank` for its 403: naming no scope set, it has no
     /// [`Scopes::FORBIDDEN_TYPE`] to declare.
     fn describe(operation: &mut OperationCx<'_>) {
-        // First, because the empty requirement leading the list is how a reader
-        // sees that the scheme is one acceptable answer rather than the only
-        // one.
         let mut security = vec![SecurityRequirement::anonymous()];
         security.extend(S::declare(operation));
         declare(operation, S::challenge(), security, None);
@@ -226,9 +208,7 @@ where
     type Rejection = AuthRejection;
 
     async fn guard(parts: &Parts, context: &C) -> Result<Self, Self::Rejection> {
-        // The one place the three states of a presented credential are all
-        // distinct: absent is anonymity, malformed is a 401, and present is a
-        // check.
+        // Absent is anonymity, malformed is a 401, and present is a check.
         S::check(parts, context)
             .await
             .map(Self)
@@ -238,9 +218,8 @@ where
 
 /// A named set of scopes.
 ///
-/// Declared as a unit struct so that scope sets are types rather than string
-/// literals repeated across handlers — a misspelled scope becomes a compile
-/// error, and renaming one is a single edit.
+/// Declared as a unit struct, so a scope set is named once rather than
+/// repeated as string literals across handlers.
 ///
 /// ```
 /// use kynos::security::auth::Scopes;
@@ -271,40 +250,29 @@ pub trait Scopes: Send + Sync + 'static {
     /// The problem `type` a refusal of *these* scopes may publish, beside
     /// `about:blank`.
     ///
-    /// This is the description half of
-    /// [`AuthRejection::forbidden_as`](crate::error::rejection::AuthRejection::forbidden_as),
-    /// and the only seam a document assembled from types has for it. The URI an
-    /// authorizer chooses arrives at run time; the scope set it was refused for
-    /// is a *type*, so this is where an application says once which refusal a
-    /// [`Scoped<S, R>`](Scoped) argument can name.
+    /// The description half of
+    /// [`AuthRejection::forbidden_as`](crate::error::rejection::AuthRejection::forbidden_as):
+    /// says once which refusal a [`Scoped<S, R>`](Scoped) argument can name.
     ///
     /// # What it declares
     ///
     /// A `Some` narrows the operation's 403 to a choice between `about:blank`
-    /// and this URI — **both**, never this one alone.
+    /// and this URI — **both**, never this one alone, since
     /// [`AuthRejection::forbidden()`](crate::error::rejection::AuthRejection::forbidden)
-    /// stays available to every authorizer, so a declaration naming only this
-    /// URI would say less than the operation sends, which is the one direction
-    /// *emitted ⊇ observable* forbids.
+    /// stays available to every authorizer.
     ///
-    /// A `None` — the default, and what every scope set written before this
-    /// existed says — declares the shared `Problem` component and narrows
-    /// nothing, which is what a 403 an authorizer may name anything at all is
-    /// owed.
+    /// A `None`, the default, declares the shared `Problem` component and
+    /// narrows nothing.
     ///
     /// # What it promises
     ///
     /// That every 403 a `Scoped<S, R>` argument produces carries this URI or
-    /// `about:blank`. The whole guard, not the scope check alone: `Scoped`
-    /// authenticates before it authorizes, so an
-    /// [`Authenticator::authenticate`] that refuses with a *third* URI breaks
-    /// the same promise. Nothing in the type system holds it — the conformance harness does, by checking each
-    /// body against the schema declared for its status.
+    /// `about:blank` — the whole guard, so an [`Authenticator::authenticate`]
+    /// refusing with a *third* URI breaks it too. The type system does not hold
+    /// it; the conformance harness checks it.
     ///
-    /// [`Auth<S>`](Auth) and [`MaybeAuth<S>`](MaybeAuth) have no counterpart
-    /// and are not getting one. They name a scheme and no scope set, and a
-    /// type URI hung on the *scheme* would pin one name to every check made
-    /// under it — coarser than the per-refusal conditions the seam exists for.
+    /// [`Auth<S>`](Auth) and [`MaybeAuth<S>`](MaybeAuth) name no scope set and
+    /// have no counterpart.
     const FORBIDDEN_TYPE: Option<&'static str> = None;
 }
 
@@ -314,16 +282,13 @@ pub trait Scopes: Send + Sync + 'static {
 /// reader learns not just that a token is needed but which grants it must
 /// carry.
 ///
-/// A const generic would be the natural spelling, but `&'static [&'static str]`
-/// is not a permitted const parameter type, so the scope set is a type
-/// implementing [`Scopes`].
-/// The marker is private, so a handler destructures `Scoped(claims)` the way
-/// it destructures [`Auth`] and [`MaybeAuth`]. It used to be a second public
-/// field, which made every pattern `Scoped(claims, _)` and made this the only
-/// marker-carrying type in the crate whose `PhantomData` a caller could see.
+/// The scope set is a type implementing [`Scopes`], since
+/// `&'static [&'static str]` is not a permitted const parameter type. The
+/// marker is private, so a handler destructures `Scoped(claims)` the way it
+/// destructures [`Auth`] and [`MaybeAuth`].
 pub struct Scoped<S: SecurityScheme, R: Scopes>(pub S::Credential, std::marker::PhantomData<R>);
 
-// See `Auth`: bounded on the credential, and without `Default`.
+// As on `Auth`: bounded on the credential, without `Default`.
 impl<S: SecurityScheme, R: Scopes> Clone for Scoped<S, R>
 where
     S::Credential: Clone,
@@ -359,8 +324,7 @@ impl<S: SecurityScheme, R: Scopes> Scoped<S, R> {
     /// Wraps a credential that has been verified and authorized.
     ///
     /// The marker field is private, so this is how one is built from outside
-    /// the crate — as [`Auth`] and [`MaybeAuth`] need no constructor, being
-    /// one-field newtypes.
+    /// the crate.
     pub fn new(credential: S::Credential) -> Self {
         Self(credential, std::marker::PhantomData)
     }
@@ -374,10 +338,8 @@ impl<S: SecurityScheme, R: Scopes> Scoped<S, R> {
 
 impl<S: SecurityScheme, R: Scopes> Describe for Scoped<S, R> {
     fn describe(operation: &mut OperationCx<'_>) {
-        // "An `Auth` additionally requiring a set of scopes": the scheme's own
-        // defaults still apply, and `R`'s are added to them rather than
-        // replacing them. Declaring a scope twice would name it twice in the
-        // requirement, so the union is taken by hand.
+        // `R`'s scopes join the scheme's defaults rather than replacing them,
+        // without naming one twice.
         let mut scopes = S::scopes().to_vec();
         for scope in R::SCOPES {
             if !scopes.contains(scope) {
@@ -398,13 +360,11 @@ where
     R: Scopes,
 {
     /// [`AuthRejection`] described against `R`, which is what narrows the 403
-    /// this argument declares. See [`ScopedRejection`] for why the scope set has
-    /// to be read here rather than only in [`Describe`].
+    /// this argument declares.
     type Rejection = ScopedRejection<R>;
 
     async fn guard(parts: &Parts, context: &C) -> Result<Self, Self::Rejection> {
-        // Both halves, because a `authorize` that answers 401 rather than 403
-        // owes the client a challenge for the same reason `authenticate` does.
+        // On both halves: an `authorize` answering 401 owes a challenge too.
         let challenged = |rejection: AuthRejection| {
             ScopedRejection::new(rejection.with_challenge(S::challenge()))
         };
@@ -429,39 +389,23 @@ where
 
 /// Sets the operation's `security` to the guard's, and declares how it refuses.
 ///
-/// The halves are one act: `security` names the schemes the guard already
-/// registered, the 401 and 403 are the statuses it can send, and the 401
-/// carries the challenge the requirement itself supplies.
-///
-/// `security` is the guard's whole list, set once rather than appended to, so
-/// it is exactly the alternatives the guard checks — there is no second guard
-/// whose requirement a reader would take for another alternative.
-///
+/// `security` is the guard's whole list, set once rather than appended to.
 /// `forbidden_type` is [`Scopes::FORBIDDEN_TYPE`] where the argument named a
-/// scope set, and `None` where it named only a scheme. It is the one thing the
-/// three guards do not share, which is why it is a parameter here rather than a
-/// method on [`SecurityScheme`]: the seam is per scope set.
+/// scope set, and `None` where it named only a scheme.
 fn declare(
     operation: &mut OperationCx<'_>,
     challenge: Option<&'static str>,
     security: Vec<SecurityRequirement>,
     forbidden_type: Option<&'static str>,
 ) {
-    // Before the header, not after: `add_response_header` invents a thinly
-    // described 401 when the operation declares none, and merging cannot
-    // replace a response that already exists.
+    // Before the header: `add_response_header` invents a thin 401 when none is
+    // declared, and merging cannot replace an existing response.
     let responses = auth_responses(operation.registry(), forbidden_type);
     operation.add_responses(&responses);
 
-    // RFC 9110 section 11.6.1: a 401 MUST carry at least one challenge. Only a
-    // scheme that has one declares it, so a credential carried outside the
-    // `Authorization` header -- an API key, a cookie, a client certificate --
-    // advertises nothing a client could not answer.
-    //
-    // The `HeaderValue` round trip is the same test `AuthRejection` applies
-    // before writing the header, so a challenge that cannot be a field value is
-    // absent from both the response and the description rather than one of
-    // them.
+    // RFC 9110 section 11.6.1: a 401 MUST carry a challenge; only a scheme that
+    // has one declares it. The `HeaderValue` test matches `AuthRejection`'s, so
+    // an invalid challenge is absent from both the response and the description.
     if let Some(challenge) = challenge.filter(|value| HeaderValue::from_str(value).is_ok()) {
         operation.add_response_header(
             StatusPattern::Code(StatusCode::UNAUTHORIZED.as_u16()),

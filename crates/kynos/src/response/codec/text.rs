@@ -12,8 +12,7 @@ use crate::{
 impl IntoResponse for Text {
     fn into_response(self) -> Response {
         let mut response = Response::new(Body::from_bytes(bytes::Bytes::from(self.0)));
-        // A Rust `String` is UTF-8, and RFC 6657 removed `text/plain`'s
-        // US-ASCII default, so the charset is stated rather than assumed.
+        // RFC 6657 removed `text/plain`'s US-ASCII default, so UTF-8 is stated.
         response.headers_mut().insert(
             header::CONTENT_TYPE,
             HeaderValue::from_static("text/plain; charset=utf-8"),

@@ -2,8 +2,7 @@
 //!
 //! Kynos supplies the description, the 429, the headers and — through
 //! [`Quotas`](quota::Quotas) — a sliding-window algorithm over named quotas.
-//! What stays the application's is *where the counters live*, because
-//! prescribing a store would mean prescribing a dependency.
+//! The application supplies *where the counters live*.
 //!
 //! # How this module is laid out
 //!
@@ -40,13 +39,8 @@ mod sealed {
 
 /// Which spelling of the rate-limit fields a limiter emits.
 ///
-/// Sealed, and there are exactly two. A third would emit a field name nobody
-/// reviewed, and the whole reason this is a choice rather than a default is that
-/// the names reach generated clients.
-/// `T` is the problem type a refusal carries, threaded through rather than
-/// chosen here: which fields a response spells and which type its 429 names are
-/// independent decisions, and a service wanting the draft's fields must not
-/// lose the URI by taking them.
+/// Sealed, and there are exactly two, since the names reach generated clients.
+/// `T` is the problem type a refusal carries, independent of the spelling.
 pub trait RateLimitSpelling<T: ProblemType>: sealed::Sealed + Send + Sync + 'static {
     /// The group a forwarded response carries.
     type Headers: EncodeHeaders;
@@ -155,10 +149,8 @@ pub struct RateLimit<P, D = Legacy, T = ()> {
 impl<P> RateLimit<P, Legacy, ()> {
     /// Limits requests according to `policy`.
     ///
-    /// There is no ceiling argument beside it. The policy reports every quota it
-    /// enforced, so the number a response prints and the number a counter
-    /// checked are one fact — where a separately configured ceiling is two that
-    /// drift.
+    /// The policy reports every quota it enforced, so there is no separate
+    /// ceiling to drift from what a response prints.
     #[must_use]
     pub fn new(policy: P) -> Self {
         Self {
@@ -172,16 +164,11 @@ impl<P, T> RateLimit<P, Legacy, T> {
     /// Emits `RateLimit` and `RateLimit-Policy` instead of the `X-` triple.
     ///
     /// Changes the type, because it changes what every covered operation
-    /// declares and what every generated client reads — the same reason
-    /// [`Cors::document_response_headers`](crate::middleware::cors::Cors::document_response_headers)
-    /// is a type-state rather than a flag.
-    ///
-    /// The two are never emitted together. A response carrying both spellings is
-    /// two statements of one fact, which is the objection this codebase raises
-    /// against a `contribution` method.
+    /// declares and what every generated client reads. The two spellings are
+    /// never emitted together.
     ///
     /// A problem type named by [`problem_type`](RateLimit::problem_type)
-    /// survives the change: the two are independent decisions.
+    /// survives the change.
     #[must_use]
     pub fn standard_fields(self) -> RateLimit<P, Structured, T> {
         RateLimit {
@@ -194,15 +181,9 @@ impl<P, T> RateLimit<P, Legacy, T> {
 impl<P, D> RateLimit<P, D, ()> {
     /// Names the RFC 9457 problem type this limiter's 429 carries.
     ///
-    /// Changes the type, for the reason
-    /// [`standard_fields`](RateLimit::standard_fields) does: it changes what
-    /// every covered operation declares. Stated once, and read by both the
-    /// response body and the description — see
-    /// [`ProblemType`] for why that cannot be a value.
-    ///
-    /// Available only on a limiter that has not named one, so a chain states
-    /// the type at most once and a reader never has to find the last call
-    /// that won.
+    /// Changes the type, since it changes what every covered operation
+    /// declares; see [`ProblemType`]. Available only on a limiter that has not
+    /// named one, so a chain states the type at most once.
     ///
     /// ```no_run
     /// # use std::time::Duration;
@@ -225,10 +206,7 @@ impl<P, D> RateLimit<P, D, ()> {
     /// # let _ = limit;
     /// ```
     ///
-    /// Naming a second one does not compile — the `impl` block is on
-    /// `RateLimit<P, D, ()>`, so the method is simply not there once `T` is a
-    /// type. The block above is this rule's pass control: the two differ only
-    /// in the second call.
+    /// Naming a second one does not compile:
     ///
     /// ```compile_fail
     /// # use std::time::Duration;
@@ -295,12 +273,7 @@ where
     }
 }
 
-// The two derivable implementations, written out. `#[derive]` bounds every
-// parameter, and `D` and `T` are names rather than values here: the struct
-// holds a `PhantomData<fn() -> (D, T)>` and no instance of either. Derived, a
-// limiter naming a problem type would lose `Clone` and `Debug` unless the
-// application's marker derived them too -- undoing, one type down, exactly what
-// [`refusal`]'s eight hand-written implementations buy.
+// Written out because `#[derive]` would bound the phantom `D` and `T`.
 
 impl<P: Clone, D, T> Clone for RateLimit<P, D, T> {
     fn clone(&self) -> Self {
@@ -313,9 +286,7 @@ impl<P: Clone, D, T> Clone for RateLimit<P, D, T> {
 
 impl<P: fmt::Debug, D, T> fmt::Debug for RateLimit<P, D, T> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Destructured, so a field added to the struct is a compile error here
-        // rather than a member this silently stops printing. One field
-        // survives it: `_spelling` holds nothing an operator can read.
+        // Destructured, so a new field is a compile error here.
         let Self {
             policy,
             _spelling: _,

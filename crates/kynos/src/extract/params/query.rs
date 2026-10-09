@@ -25,11 +25,8 @@ pub struct Query<T>(pub T);
 
 /// A group of query parameters, as the description sees it.
 ///
-/// The two directions are [`DecodeQuery`] and [`EncodeQuery`], for the reason
-/// [`PathParams`](crate::extract::params::path::PathParams)' are: a group is
-/// often only ever read or only ever written, and expressing that as a
-/// defaulted method with an `unimplemented!()` body made a group that supplied
-/// neither satisfy this trait and panic on its first request.
+/// The two directions are [`DecodeQuery`] and [`EncodeQuery`], since a group is
+/// often only ever read or only ever written.
 pub trait QueryParams: Sized + Schema {
     /// Describes the individual OpenAPI query parameters.
     ///
@@ -37,19 +34,14 @@ pub trait QueryParams: Sized + Schema {
     /// implements the trait by hand over its [`Schema`].
     ///
     /// The default reads only the top-level `properties` and `required` of the
-    /// group's own schema: one parameter per property, carrying that property's
-    /// schema, required exactly when `required` names it. That is why it needs
-    /// no separate name list the way the other locations do. Nothing else in
-    /// the schema is carried:
+    /// group's own schema: one parameter per property, required exactly when
+    /// `required` names it. Nothing else in the schema is carried:
     ///
     /// - Each name of a field serde reads under an `alias` becomes its own
-    ///   optional parameter. The schema's bound on them, exactly one for a
-    ///   required field and at most one for an optional one, is lost: a
-    ///   Parameter Object describes one parameter and cannot bound several.
-    /// - A member composed through `allOf`, `oneOf` or `$ref` is not listed,
-    ///   because the default does not read them. That covers a flattened
-    ///   field's members, an enum's variants and a `transparent` type's inner
-    ///   fields.
+    ///   optional parameter; the bound across them is lost.
+    /// - A member composed through `allOf`, `oneOf` or `$ref` is not listed:
+    ///   a flattened field's members, an enum's variants and a `transparent`
+    ///   type's inner fields.
     ///
     /// Where that loses something, you have three options:
     ///
@@ -66,13 +58,10 @@ pub trait QueryParams: Sized + Schema {
     ///   so a flattened or `transparent` type's members have to be written out
     ///   as fields.
     ///
-    /// `style` is left unstated: `form` with `explode` is the default for a
-    /// query parameter, so stating it would only repeat the location.
+    /// `style` is left at its `form`-with-`explode` default.
     fn parameters(registry: &mut Registry) -> Vec<kynos_openapi::Parameter> {
-        // `Self::schema` rather than `registry.resolve::<Self>()`: the group is
-        // not a component of the description, and a `$ref` has no properties to
-        // split into parameters. The property schemas underneath still went
-        // through the registry, which is where naming belongs.
+        // Not `resolve`: the group is no component, and a `$ref` has no
+        // properties to split.
         match Self::schema(registry) {
             kynos_openapi::Schema::Object(object) => {
                 let required = object.required.unwrap_or_default();
@@ -90,8 +79,6 @@ pub trait QueryParams: Sized + Schema {
                     })
                     .collect()
             }
-            // A group whose schema constrains nothing names no parameters
-            // either; there is nothing to enumerate.
             kynos_openapi::Schema::Bool(_) => Vec::new(),
         }
     }
@@ -110,8 +97,7 @@ pub trait DecodeQuery: QueryParams {
 
 /// Writing a query parameter group into a typed endpoint URI.
 ///
-/// The counterpart to [`DecodeQuery`]; see [`QueryParams`] for why the two are
-/// apart.
+/// The counterpart to [`DecodeQuery`].
 pub trait EncodeQuery: QueryParams {
     /// Encodes this value as a query string without the leading `?`.
     fn encode(&self) -> String;

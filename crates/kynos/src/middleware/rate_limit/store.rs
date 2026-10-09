@@ -4,13 +4,11 @@ use std::time::Duration;
 
 /// A store of rate-limit counters.
 ///
-/// Two operations, both natively atomic in every cache worth naming, and
-/// neither taking a closure across an `await` — which is what keeps a Redis or
-/// memcached backend implementable rather than only a local map.
+/// Two operations, both natively atomic in common caches such as Redis or
+/// memcached.
 ///
-/// Kynos ships no implementation, for the reason it ships no JWT verifier:
-/// a counter store is a dependency, and prescribing one would mean prescribing
-/// `moka`. [`examples/rate_limit.rs`] is the reference implementation over it.
+/// Kynos ships no implementation; [`examples/rate_limit.rs`] is the reference
+/// implementation over `moka`.
 ///
 /// [`examples/rate_limit.rs`]: https://github.com/getkono/kynos/blob/master/crates/kynos/examples/rate_limit.rs
 pub trait RateLimitStore: Send + Sync + 'static {
@@ -23,9 +21,8 @@ pub trait RateLimitStore: Send + Sync + 'static {
     /// Adds `by` to the counter at `key`, creating it at zero and expiring the
     /// entry `ttl` after it was *created*.
     ///
-    /// Returns the value after the addition. The expiry is from creation rather
-    /// than from the last write, which is what makes a fixed window a window
-    /// rather than a sliding idle timeout.
+    /// Returns the value after the addition. The expiry is from creation, not
+    /// the last write, or a window would become an idle timeout.
     fn increment(
         &self,
         key: &str,
@@ -40,17 +37,15 @@ pub trait RateLimitStore: Send + Sync + 'static {
 pub enum StoreFailure {
     /// Allow the request.
     ///
-    /// The default. An outage of the counter store must not become an outage of
-    /// the API: a limiter exists to shed load, and one that sheds *everything*
-    /// when its cache blinks has turned a degradation into an incident.
+    /// The default, so an outage of the counter store is not an outage of the
+    /// API.
     #[default]
     Allow,
 
     /// Refuse, with the 429 the limiter already declares.
     ///
-    /// Not a 503. A second status here would collide with
-    /// [`Concurrency`](crate::middleware::limits::concurrency::Concurrency) on any route
-    /// carrying both, and `CompatibleWith` would refuse to compile it — so
-    /// the honest choice is the status this interceptor already promises.
+    /// Not a 503, which would collide with
+    /// [`Concurrency`](crate::middleware::limits::concurrency::Concurrency) on any
+    /// route carrying both.
     Deny,
 }

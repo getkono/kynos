@@ -24,10 +24,8 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
 /// A Server-Sent Events response.
 ///
-/// Requires `openapi32`. Under OpenAPI 3.1 an event stream can only be
-/// described as an opaque string, which says nothing useful about the events;
-/// 3.2's `itemSchema` is what makes each event describable. Kynos would rather
-/// not compile than emit a description that lies about your stream.
+/// Requires `openapi32`: OpenAPI 3.1 can describe an event stream only as an
+/// opaque string, while 3.2's `itemSchema` describes each event.
 ///
 /// ```no_run
 /// # #[cfg(feature = "openapi32")]
@@ -215,17 +213,14 @@ struct Records<S> {
 
 /// The timer that keeps an idle stream from being reaped.
 ///
-/// A keep-alive is the one body whose own contract *is* a timer: nothing
-/// outside this stream can know when it last produced, and the connection
-/// driver cannot inspect a body to find out. `docs/architecture.md` records
-/// this as one of the enumerated places the runtime is named outside `server/`.
+/// Only the stream knows when it last produced, so the timer lives here; a
+/// runtime allowance in `docs/architecture.md`.
 struct Heartbeat {
     /// How long a silence may last before a comment is sent.
     interval: std::time::Duration,
-    /// Boxed for the reason [`Records::events`] is: `Pin<Box<Sleep>>` is
-    /// `Unpin`, and `unsafe` is forbidden here.
+    /// Boxed so it is `Unpin`, as [`Records::events`] is.
     sleep: Pin<Box<tokio::time::Sleep>>,
-    /// The comment record, rendered once. Cloning a `Bytes` is a refcount bump.
+    /// The comment record, rendered once.
     record: bytes::Bytes,
 }
 
@@ -248,9 +243,8 @@ impl Heartbeat {
 
 /// The bytes one keep-alive message occupies on the wire.
 ///
-/// A comment record: `: text`, one line per line of the comment, then the blank
-/// line that ends it. An empty comment gives `: `, which is the heartbeat every
-/// SSE client already ignores — and which is why the default carries no text.
+/// A comment record ended by a blank line; an empty comment gives the bare `: `
+/// heartbeat every SSE client ignores.
 fn heartbeat_record(comment: &str) -> bytes::Bytes {
     let mut record = String::new();
     field(&mut record, "", comment);
@@ -269,8 +263,7 @@ where
     fn poll_next(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let records = self.get_mut();
 
-        // The events first: anything they produced resets the silence this is
-        // measuring, so a busy stream never sends a comment at all.
+        // Events first: each resets the silence, so a busy stream sends no comment.
         match records.events.as_mut().poll_next(context) {
             Poll::Ready(Some(Ok(event))) => {
                 if let Some(keep_alive) = records.keep_alive.as_mut() {
@@ -287,9 +280,7 @@ where
             return Poll::Pending;
         };
 
-        // Both futures are now registered -- the events above returned
-        // `Pending` after storing the waker, and this stores it too -- so
-        // whichever fires first wakes the task and neither wakeup is lost.
+        // Both futures now hold the waker, so whichever fires first wakes the task.
         match keep_alive.sleep.as_mut().poll(context) {
             Poll::Ready(()) => {
                 keep_alive.restart();
@@ -300,17 +291,11 @@ where
     }
 }
 
-/// Writes one event as a `text/event-stream` record.
-///
-/// The fields are `name: value` lines and the record ends with the blank line
-/// that tells a client to dispatch it. The data is JSON, which is the form
-/// [`Responses`] describes it in.
+/// Writes one event as a `text/event-stream` record, its data as JSON.
 fn encode<T: serde::Serialize>(event: &Event<T>) -> Result<bytes::Bytes, BoxError> {
     let data = serde_json::to_string(&event.data)?;
 
     let mut record = String::new();
-    // A comment precedes the event it belongs to; a client ignores it, and a
-    // proxy counts it as traffic on an otherwise idle connection.
     if let Some(comment) = &event.comment {
         field(&mut record, "", comment);
     }
@@ -331,10 +316,8 @@ fn encode<T: serde::Serialize>(event: &Event<T>) -> Result<bytes::Bytes, BoxErro
 
 /// A reconnect delay as the whole milliseconds `retry` carries.
 ///
-/// Rounded *up*, as `Access-Control-Max-Age` and `Retry-After` are: truncating
-/// a sub-millisecond delay renders `0`, which tells a client to reconnect at
-/// once — the opposite of the wait that was asked for. An explicit zero stays
-/// zero.
+/// Rounded up, since truncating a sub-millisecond delay to `0` would mean
+/// "reconnect at once". An explicit zero stays zero.
 fn milliseconds(retry: std::time::Duration) -> u128 {
     let whole = retry.as_millis();
     if retry.subsec_nanos() % 1_000_000 > 0 {
@@ -346,9 +329,8 @@ fn milliseconds(retry: std::time::Duration) -> u128 {
 
 /// Writes one field, one line per line of its value.
 ///
-/// A line break inside a value would otherwise end the field, so a multi-line
-/// value is written as several fields of the same name — which is how the format
-/// carries a newline at all. An empty `name` writes the comment form, `: text`.
+/// This is how the format carries a newline. An empty `name` writes the
+/// comment form, `: text`.
 fn field(record: &mut String, name: &str, value: &str) {
     for line in value.split('\n') {
         record.push_str(name);
@@ -384,10 +366,8 @@ where
     S: futures_core::Stream<Item = Result<Event<T>, E>>,
     T: Schema,
 {
-    // The item is the *parsed event*, not the payload: OpenAPI 3.2 requires
-    // `text/event-stream` to be described after the stream has been parsed, so
-    // every field value is a string and the JSON payload is reached through
-    // `contentMediaType`/`contentSchema` rather than being the item itself.
+    // OpenAPI 3.2 describes `text/event-stream` as parsed events, so the item is
+    // the event and the JSON payload hangs off `data`'s `contentSchema`.
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         let mut data = SchemaObject {
             ty: Some(TypeSet::One(SchemaType::String)),

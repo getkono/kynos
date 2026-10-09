@@ -203,9 +203,7 @@ impl<C: 'static> Server<C> {
     /// failure — over HTTP/1 with `Connection: close`, as RFC 9110 §15.5.9
     /// advises, so the client cannot frame what it sends next as a new request.
     /// A response the handler had already returned before the stall stands.
-    ///
-    /// The 408 is the server's rather than an operation's, so no operation
-    /// declares it — the same footing as a 431 from the protocol driver.
+    /// Like a 431 from the protocol driver, no operation declares the 408.
     ///
     /// [`prepare`](Self::prepare) refuses `Some(Duration::ZERO)`.
     #[must_use]
@@ -321,8 +319,7 @@ pub struct BoundServer<C> {
     service: Arc<Service<C>>,
     listeners: Vec<TcpListener>,
     local_addrs: Vec<SocketAddr>,
-    /// Apart from `TransportConfig`, which is cloned per accepted socket: these
-    /// are applied to every socket but held once per listener.
+    /// Held once per listener, unlike the per-socket `TransportConfig`.
     socket: SocketOptions,
     config: TransportConfig,
     shutdown: Option<Shutdown>,

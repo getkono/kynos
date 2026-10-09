@@ -1,19 +1,11 @@
 //! What it means for two interceptors to disagree.
 //!
-//! There is no longer a contribution *value*: what an interceptor declares is
-//! read from its associated types. What survives is the vocabulary for two of
-//! them declaring incompatible things about one operation, which
-//! `Router::intercept` rejects at compile time and which the escape hatches --
-//! where the types are erased and the check cannot run -- still report while
-//! the router is built.
+//! `Router::intercept` rejects such a conflict at compile time; the escape
+//! hatches, where the types are erased, report it while the router is built.
 
 use kynos_openapi::{ComponentName, ParameterIn, StatusPattern};
 
 /// Two interceptors disagreed about the same part of the description.
-///
-/// One variant per part, rather than a free-text field, so that a caller can
-/// tell a contested status from a contested parameter without parsing a
-/// message.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ContributionConflict {

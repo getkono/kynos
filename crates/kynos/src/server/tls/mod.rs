@@ -71,15 +71,13 @@ impl ClientCertificateConfig {
 /// How a returning client resumes its session instead of paying a full
 /// handshake.
 ///
-/// A full TLS handshake costs the server an asymmetric signature and a key
-/// exchange; a resumed one costs neither. For a service whose clients reconnect
-/// often, that is most of its TLS work.
+/// A resumed handshake skips the asymmetric signature and key exchange of a
+/// full one.
 ///
-/// Every listener of a server shares one session store, so a
-/// session established without a client certificate can never be resumed where
-/// one is required: [`require_client_certificate`](TlsConfig::require_client_certificate)
-/// applies to the whole server, and a resumed session carries the certificate
-/// its full handshake verified.
+/// Every listener of a server shares one session store, and
+/// [`require_client_certificate`](TlsConfig::require_client_certificate)
+/// applies to the whole server; a resumed session carries the certificate its
+/// full handshake verified.
 ///
 /// That certificate is not verified again on resumption, and each resumption
 /// issues fresh tickets carrying it, so a client that keeps reconnecting before
@@ -91,20 +89,18 @@ impl ClientCertificateConfig {
 #[non_exhaustive]
 pub enum SessionResumption {
     /// Stateless tickets: the session is sealed into a ticket the client holds,
-    /// so resuming depends on nothing the server stored and no cache bounds how
-    /// many clients can resume.
+    /// so no cache bounds how many clients can resume.
     ///
     /// The ticket keys are random, and a key stays accepted for one rotation
     /// after it stops issuing. Rotation happens on the first handshake more than
     /// six hours after the last one, so a ticket is honoured for at least six
     /// hours, for about twelve on a server with steady traffic, and for longer
-    /// on one that goes quiet. The keys live only in this process. Replicas behind a load
-    /// balancer therefore cannot resume one another's sessions, and neither can
-    /// a restarted process; [`SharedTickets`](Self::SharedTickets) is the
-    /// variant under which they can. Tickets use RFC 5077 §4's construction, with
-    /// AES-256 and HMAC-SHA256, sealed by `aws-lc-rs` even when a caller installed
-    /// another provider as the process default, because rustls's provider
-    /// interface carries no ticketer.
+    /// on one that goes quiet. The keys live only in this process, so replicas
+    /// and a restarted process cannot resume one another's sessions;
+    /// [`SharedTickets`](Self::SharedTickets) is the variant under which they
+    /// can. Tickets use RFC 5077 §4's construction, with AES-256 and
+    /// HMAC-SHA256, sealed by `aws-lc-rs` even when a caller installed another
+    /// provider as the process default.
     ///
     /// A TLS 1.2 ticket carries the session's master secret, so anyone who later
     /// obtains a ticket key — held in memory until two rotations have passed,
@@ -127,32 +123,24 @@ pub enum SessionResumption {
     /// A server-side cache of at most `capacity` entries, and no stateless
     /// tickets.
     ///
-    /// Each entry costs server memory, and a service with more
-    /// recently-connected clients than the cache holds evicts sessions, so
-    /// those clients pay a full handshake. A TLS 1.2 session is one entry; a
-    /// TLS 1.3 handshake stores two, each resumed once, so the cache holds
-    /// about half as many TLS 1.3 clients as it has entries. Nothing leaves
-    /// the process.
+    /// A service with more recently-connected clients than the cache holds
+    /// evicts sessions. A TLS 1.2 session is one entry; a TLS 1.3 handshake
+    /// stores two, each resumed once, so the cache holds about half as many
+    /// TLS 1.3 clients as it has entries. Nothing leaves the process.
     Cache {
         /// The most entries the cache holds before evicting; rustls may round
-        /// it up.
-        ///
-        /// The cache's table is reserved for that many up front when the
-        /// server is [prepared](crate::server::Server::prepare), not grown as
-        /// entries arrive.
+        /// it up. Reserved up front when the server is
+        /// [prepared](crate::server::Server::prepare).
         capacity: NonZeroUsize,
     },
     /// Stateless tickets under keys the operator supplies, so that every
     /// replica given the same keys resumes the sessions the others issued, and
     /// a restarted process resumes its own.
     ///
-    /// What [`Tickets`](Self::Tickets) says of a ticket key holds here, with
-    /// one difference that changes its weight: the key no longer dies with a
-    /// process, and Kynos rotates nothing. What a key exposes and how to
-    /// rotate one are [`TicketKeys`]'s to state; the construction and the
-    /// provider that performs it are [`TicketKey`](ticket::TicketKey)'s.
-    /// rustls's in-memory cache stays beside the tickets, as under
-    /// [`Tickets`](Self::Tickets).
+    /// What [`Tickets`](Self::Tickets) says of a ticket key holds here, except
+    /// that the key outlives the process and Kynos rotates nothing; see
+    /// [`TicketKeys`] and [`TicketKey`](ticket::TicketKey). rustls's in-memory
+    /// cache stays beside the tickets, as under [`Tickets`](Self::Tickets).
     SharedTickets {
         /// The keys, which the application keeps a clone of to rotate them.
         keys: TicketKeys,
@@ -333,35 +321,11 @@ impl TlsConfig {
     }
 }
 
-/// The crypto provider every rustls configuration here is built on.
-///
-/// Named rather than resolved. rustls's implicit constructors -- `ServerConfig`'s
-/// and `ClientConfig`'s `builder`, and `WebPkiClientVerifier`'s -- derive the
-/// process-level provider from the `aws-lc-rs` and `ring` features of whatever
-/// `rustls` the graph unified on, and panic when zero or two of them are
-/// compiled in. Cargo features are additive, so one dependency enabling `ring`
-/// for its own reasons puts every dependent in that state and no downstream
-/// manifest can leave it; the panic then lands inside [`TlsConfig::build`],
-/// whose signature already carries a [`TlsError`]. Every rustls value built
-/// here therefore takes this provider explicitly -- all three constructors, not
-/// the two on the path without a client certificate.
-///
-/// A caller that installed a default still wins, which is what keeps a FIPS or
-/// hardware-backed provider reachable — for everything but the default session
-/// tickets, which rustls's provider interface does not carry: under
-/// [`SessionResumption::Tickets`] they are sealed by `aws-lc-rs` whatever is
-/// installed, and a deployment that needs every secret on its own provider
-/// chooses [`SessionResumption::SharedTickets`], whose tickets that provider
-/// seals, or [`SessionResumption::Cache`] or [`SessionResumption::Disabled`].
-/// Otherwise the choice is Kynos's, and
-/// `tokio-rustls` is declared with `default-features = false` and `aws-lc-rs`
-/// named explicitly so the provider chosen here is always compiled in.
-///
-/// Nothing is installed as a side effect: a library that writes a process-wide
-/// static takes a decision away from the binary that owns it. That is what the
-/// implicit constructors do on their way through -- they install what they
-/// resolved -- and it is why avoiding them matters even where the graph is
-/// unambiguous and they would not have panicked.
+/// The crypto provider every rustls configuration here is built on: the
+/// installed default, else `aws-lc-rs` by name. Every rustls constructor here
+/// takes it explicitly, since the implicit ones panic on an ambiguous feature
+/// graph and install a process-wide default as a side effect (see
+/// `docs/architecture.md`, Dependencies).
 pub(in crate::server) fn crypto_provider() -> Arc<CryptoProvider> {
     CryptoProvider::get_default().map_or_else(
         || Arc::new(tokio_rustls::rustls::crypto::aws_lc_rs::default_provider()),

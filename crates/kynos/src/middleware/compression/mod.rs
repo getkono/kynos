@@ -27,10 +27,8 @@ use crate::{
     },
 };
 
-/// A content coding this crate can produce.
-///
-/// Ordered by server preference, which is what breaks a tie between two codings
-/// the client weighted equally.
+/// A content coding this crate can produce, ordered by server preference to
+/// break ties between equally weighted codings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Coding {
     Zstd,
@@ -54,10 +52,8 @@ impl Coding {
 
 /// What compression sets on a response it encoded.
 ///
-/// `DESCRIBED` is `false`: both headers are defined by HTTP itself and handled
-/// by every client without being told. Declaring the names is still what stops
-/// a second interceptor touching them -- the check does not care whether a
-/// consumer wanted to hear about them.
+/// Both headers are defined by HTTP itself, so they are declared (to stop a
+/// second interceptor writing them) but not described in the document.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ContentEncoding {
     /// The coding applied, or `None` when the response was left as it was.
@@ -69,12 +65,8 @@ pub struct ContentEncoding {
 impl HeaderParams for ContentEncoding {
     const NAMES: &'static [&'static str] = &["content-encoding", "content-length"];
     const DESCRIBED: bool = false;
-    // `Vary` rides on every response, encoded or not: what the cache has to know
-    // is that the answer depends on `Accept-Encoding`, which is true the moment
-    // this interceptor is mounted. It is declared here rather than in `NAMES`
-    // because it is a set the framework unions -- naming it above would make
-    // `Compression` and `Cors` covering one route a compile error, and they are
-    // a pairing every browser-facing service wants.
+    // On every response, encoded or not. A union set rather than in `NAMES`, so
+    // `Compression` and `Cors` can cover one route.
     const VARIES: &'static [&'static str] = &["accept-encoding"];
 }
 
@@ -89,16 +81,9 @@ impl EncodeHeaders for ContentEncoding {
             http::HeaderValue::from_static(coding.token()),
         )];
 
-        // RFC 9110 section 8.6 counts the octets actually transferred, and
-        // section 8.4 defines the representation "in terms of the coded form" --
-        // so a length written before encoding describes a body that no longer
-        // exists. Section 8.6 is blunt about the consequence: "a sender MUST NOT
-        // forward a message with a Content-Length header field value that is
-        // known to be incorrect."
-        //
-        // Restated rather than removed. Removing it would leave hyper to derive
-        // one from the body's size hint, which is right today and depends on the
-        // body being buffered; stating it is right whatever the body becomes.
+        // A pre-encoding length is known to be incorrect (RFC 9110 sections 8.4,
+        // 8.6); restated rather than removed so it stays right if the body stops
+        // being buffered.
         if let Some(length) = self.length {
             if let Ok(value) = http::HeaderValue::from_str(&length.to_string()) {
                 fields.push((http::header::CONTENT_LENGTH, value));
@@ -109,22 +94,8 @@ impl EncodeHeaders for ContentEncoding {
     }
 }
 
-/// Whether the response carries a *strong* validator.
-///
-/// RFC 9110 section 8.8.1 says outright that "if the origin server sends the
-/// same validator for a representation with a gzip content coding applied as it
-/// does for a representation with no content coding, then that validator is
-/// weak". So encoding a strongly tagged response makes the tag a lie: one
-/// strong tag naming two representations.
-///
-/// The encoder cannot correct it from here. The only sanctioned way to write a
-/// response header is the `Adds` group, and declaring `etag` there would make
-/// `Compression` and
-/// [`Cache::deriving_etags`](crate::middleware::cache::Cache::deriving_etags)
-/// a compile error on a stack that is otherwise right.
-///
-/// A *weak* validator may be shared across representations -- that is what weak
-/// means -- so it is left alone and the response still compresses.
+/// Whether the response carries a *strong* validator, which encoding would make
+/// name two representations (RFC 9110 section 8.8.1). A weak one may.
 fn strongly_tagged(headers: &http::HeaderMap) -> bool {
     headers
         .get(http::header::ETAG)
@@ -136,18 +107,16 @@ fn strongly_tagged(headers: &http::HeaderMap) -> bool {
 ///
 /// RFC 9110 section 12.4.1: when no available representation is acceptable, the
 /// origin server "can either honor the header field by sending a 406 (Not
-/// Acceptable) response or disregard the header field". Kynos honours it, since
-/// disregarding a `q=0` means sending octets the client said it cannot decode.
+/// Acceptable) response or disregard the header field". Kynos honours it.
 ///
-/// Reachable only through `Accept-Encoding`: it takes excluding identity *and*
-/// leaving every coding this build offers unacceptable, refused or unlisted
-/// with no wildcard, which no ordinary client does.
+/// Reachable only by excluding identity *and* leaving every coding this build
+/// offers unacceptable, or when a handler requires an encoding
+/// ([`policy::Encoding::Required`]) and none can be applied.
 ///
 /// `T` names the problem type the body carries; `()` leaves `about:blank`. Set
 /// it with [`Compression::problem_type`].
 pub struct NotAcceptable<T = ()> {
-    /// Carries `T` without storing one. `fn() -> T` rather than `T`, so a
-    /// refusal is `Send` and `Sync` whatever the marker is.
+    /// `fn() -> T`, so the refusal is `Send` and `Sync` whatever the marker is.
     problem_type: PhantomData<fn() -> T>,
 }
 
@@ -192,8 +161,7 @@ impl<T: ProblemType> crate::response::Responses for NotAcceptable<T> {
     }
 }
 
-// The derivable implementations, written out: `#[derive]` would bound each on
-// the marker, and a marker is a name rather than a value.
+// Written out because `#[derive]` would bound each on the marker type.
 
 impl<T> Clone for NotAcceptable<T> {
     fn clone(&self) -> Self {
@@ -227,11 +195,9 @@ impl<T> Eq for NotAcceptable<T> {}
 enum Negotiated {
     /// Encode with this coding.
     Encode(Coding),
-    /// Send the representation as it is. Rule 2: identity "is acceptable by
-    /// default unless specifically excluded".
+    /// Send the representation as it is.
     Identity,
-    /// Nothing is acceptable, identity included. Section 12.4.1 leaves the
-    /// server to honour the field with a 406 or disregard it; Kynos honours it.
+    /// Nothing is acceptable, identity included; answered 406 (section 12.4.1).
     Nothing,
 }
 
@@ -262,30 +228,22 @@ fn negotiate(headers: &http::HeaderMap) -> Negotiated {
         }
     }
 
-    // Rule 2: identity "is acceptable by default unless specifically excluded
-    // by the Accept-Encoding header field stating either `identity;q=0` or
-    // `*;q=0` without a more specific entry for `identity`". Both spellings
-    // read as 0. A weight that is not a qvalue, identity's own or the
-    // wildcard's, is neither, so it leaves identity acceptable, even where
-    // the wildcard's refused every coding above.
+    // Rule 2: identity is excluded only by `identity;q=0`, or `*;q=0` with no
+    // more specific `identity` entry; a weight that is not a qvalue excludes
+    // nothing.
     let identity = crate::http::coding::identity_quality(accept);
 
     let Some((coding, weight)) = best else {
         return if identity > 0 {
             Negotiated::Identity
         } else {
-            // Every coding this build offers was refused or left unlisted with
-            // no wildcard, *and* identity was excluded. An empty field value
-            // reaches here too: it "implies that the user agent does not want
-            // any content coding in response", which excludes nothing, so it
-            // resolves to identity above.
+            // Every coding unacceptable and identity excluded. An empty field
+            // value excludes nothing, so it resolves to identity above.
             Negotiated::Nothing
         };
     };
 
-    // Identity only wins when the client asked for it *more* strongly than for
-    // anything encoded. A tie goes to the coding, which is what makes plain
-    // `Accept-Encoding: gzip` mean what everybody writes it to mean.
+    // A tie goes to the coding, so plain `Accept-Encoding: gzip` encodes.
     if identity <= weight {
         Negotiated::Encode(coding)
     } else {
@@ -295,17 +253,11 @@ fn negotiate(headers: &http::HeaderMap) -> Negotiated {
 
 /// How much of an encoder's output one read takes.
 ///
-/// Named because it is measured from outside the crate: `DRAIN_CHUNK` in
-/// `tests/alloc_codecs.rs` mirrors it to bound how the encoder's allocation
-/// count may grow with the body, and an integration target cannot see a
-/// `pub(crate)` const. Moving this number means moving that one.
+/// Mirrored by `DRAIN_CHUNK` in `tests/alloc_codecs.rs`; change both together.
 const DRAIN_CHUNK: usize = 8 * 1024;
 
-/// Reads an encoder to its end.
-///
-/// Driven by hand rather than through `AsyncReadExt`, so that compression needs
-/// nothing of tokio beyond the `AsyncRead` trait `async-compression` is written
-/// against.
+/// Reads an encoder to its end, by hand so compression needs nothing of tokio
+/// beyond `AsyncRead`.
 async fn drain<R: AsyncRead + Unpin>(mut source: R) -> io::Result<Bytes> {
     let mut encoded = BytesMut::new();
     let mut chunk = [0_u8; DRAIN_CHUNK];
@@ -355,20 +307,13 @@ async fn encode(coding: Coding, bytes: Bytes, levels: Levels) -> io::Result<Byte
     }
 }
 
-/// The level as `async-compression` spells one.
-///
-/// Infallible in practice and written to be infallible in fact: both levels
-/// that reach here are bounded at 11 by their own constructors, so the fallback
-/// is unreachable rather than a silent clamp.
+/// The level as `async-compression` spells one. The fallback is unreachable:
+/// both levels reaching here are bounded at 11.
 fn as_level(level: u32) -> i32 {
     i32::try_from(level).unwrap_or(i32::MAX)
 }
 
 /// What each algorithm is asked for.
-///
-/// One value rather than three arguments, so a level cannot be passed to the
-/// wrong encoder: the types already make that impossible, and this keeps the
-/// call sites from having to say so.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Levels {
     /// What gzip is asked for.
@@ -397,40 +342,37 @@ pub(crate) struct Levels {
 ///
 /// # Levels, and the scope they are set at
 ///
-/// Each algorithm keeps its own type — [`GzipLevel`], [`BrotliLevel`],
-/// [`ZstdLevel`] — rather than sharing one `Fastest`/`Best` scale. The three
-/// number their levels differently and put the knee of the curve in a different
-/// place, so a shared scale would hide the one fact an operator is choosing
-/// between. Each refuses a number its own format does not define, and none
-/// converts into another.
+/// Each algorithm keeps its own level type — [`GzipLevel`], [`BrotliLevel`],
+/// [`ZstdLevel`] — since the three number their levels differently. Each
+/// refuses a number its own format does not define, and none converts into
+/// another.
 ///
-/// The defaults are gzip 6, brotli **4** and zstd 3. Brotli's is the one worth
-/// knowing: its reference encoder defaults to 11, which is meant for content
-/// compressed once and served a million times, and applied per request costs
-/// roughly a fifth of a second of CPU on a 200 KB document.
-/// [`BrotliLevel::DEFAULT`] records why 4 is right for an API.
+/// The defaults are gzip 6, brotli **4** and zstd 3. Brotli's departs from its
+/// reference encoder's 11, which is meant for content compressed once and
+/// served many times; see [`BrotliLevel::DEFAULT`].
+///
+/// Levels are set per mount, and a mount is a scope: a `Compression` on the
+/// router covers everything, one on a [`Group`](crate::router::group::Group)
+/// covers that group, one on an endpoint covers that endpoint. A global one
+/// plus a per-endpoint override is refused by
+/// [`CompatibleWith`](crate::middleware::stack::CompatibleWith), since both
+/// would add `Content-Encoding` to the same operation. Mount the one that varies
+/// and leave the rest uncovered.
 ///
 /// # A body still being produced is encoded as it arrives
 ///
 /// A response whose length is already known is collected and encoded in one
-/// pass. One whose length is not — an event stream, a log tail, an export the
-/// handler is writing as it reads — is encoded frame by frame instead of being
-/// left alone, which is what makes it compressible at all. `min_size` does not
-/// apply there: it is a statement about a length nobody has.
+/// pass. One whose length is not — an event stream, a log tail, an export — is
+/// encoded frame by frame. `min_size` does not apply there.
 ///
-/// [`LatencyMode`] is the trade that opens, and its default is
-/// [`Interactive`](LatencyMode::Interactive) rather than the mode that
-/// compresses best. A body the server is producing incrementally is one whose
-/// reader is consuming it incrementally, and holding those bytes back to fill a
-/// compression window does not slow such a response down so much as break it —
-/// an idle event stream can go minutes without the client seeing an event it
-/// was sent immediately. Choose
-/// [`Throughput`](LatencyMode::Throughput) for a body that is a stream only
-/// because it is large.
+/// [`LatencyMode`] sets how eagerly encoded bytes are handed on. Its default,
+/// [`Interactive`](LatencyMode::Interactive), flushes after every frame, so an
+/// idle event stream still delivers each event promptly. Choose [`Throughput`](LatencyMode::Throughput) for a body that is
+/// a stream only because it is large.
 ///
 /// No `Content-Length` rides on a streamed encode: the encoded length is not
-/// known until the encoding finishes, which is after the head has gone, and RFC
-/// 9110 section 8.6 forbids forwarding one known to be incorrect.
+/// known until after the head has gone, and RFC 9110 section 8.6 forbids
+/// forwarding one known to be incorrect.
 ///
 /// # What a handler may say about its own response
 ///
@@ -444,72 +386,37 @@ pub(crate) struct Levels {
 /// take only identity is answered 406 rather than handed the whole
 /// representation.
 ///
-/// Levels are set per mount, and a mount is a scope: a `Compression` on the
-/// router covers everything, one on a [`Group`](crate::router::group::Group)
-/// covers that group, one on an endpoint covers that endpoint. What is *not*
-/// available is a global one plus a per-endpoint override — both would add
-/// `Content-Encoding` to the same operation, which
-/// [`CompatibleWith`](crate::middleware::stack::CompatibleWith) refuses at the mount
-/// site. Mount the one that varies and leave the rest uncovered.
-///
-/// A response whose length is already known is collected and encoded in one
-/// pass. One that cannot state its length is a body still being produced, and
-/// it is encoded frame by frame as it arrives rather than being skipped or
-/// buffered whole. `min_size` bounds only the first: it is a statement about a
-/// length the second does not have.
-///
 /// # A response that ranges is never encoded
 ///
 /// Anything carrying `Accept-Ranges` is left as it is, as are a 206, a 416 and
 /// anything carrying `Content-Range`. RFC 9110 section 14.1.2 calculates a byte
 /// range over the *encoded* octets while Kynos calculates one over the identity
-/// octets, and section 8.8.1 will not let one strong validator name both forms
-/// — so a client resuming a download it began encoded would splice identity
-/// bytes onto an encoded prefix and corrupt the file with no error anywhere.
+/// octets, and section 8.8.1 will not let one strong validator name both forms.
 ///
-/// **This costs real bandwidth**, on exactly the content most worth
-/// compressing: an [`AssetSet`](crate::router::assets::AssetSet) advertises
-/// ranges on every file it serves, so a stylesheet or a bundle under this
-/// interceptor ships uncompressed. Two ways out, both outside the encoder:
+/// **This costs real bandwidth**: an
+/// [`AssetSet`](crate::router::assets::AssetSet) advertises ranges on every
+/// file it serves, so a stylesheet or a bundle under this interceptor ships
+/// uncompressed. Two ways out:
 ///
 /// * mount `Compression` on a [`Group`](crate::router::group::Group) that does
 ///   not cover the asset set, so the API is encoded and the files are ranged;
 /// * let a reverse proxy or CDN encode them, which is sound only because it
 ///   owns the validator it sends as well as the coding.
 ///
-/// Encoding here and re-deriving the validator afterwards is not the third
-/// option it looks like: the range and its `ETag` are settled by the handler or
-/// the asset server before this interceptor is handed the response.
-///
 /// # A strong validator stops the encoder too
 ///
-/// The guard above reads `ETag` alongside `Content-Encoding`, `Accept-Ranges`,
-/// `Content-Range` and the 206/416 statuses. A response carrying a *strong*
-/// validator is left as it is, even a 200 that advertises no ranges: encoding
-/// it would keep a validator minted over the identity octets on a body that is
-/// no longer those octets — one strong validator naming two representations,
-/// against RFC 9110 section 8.8.1. That is what a client turns into corruption:
-/// validate the encoded body with `If-None-Match`, be answered 304 — which
-/// replays `ETag` and `Vary` and not `Content-Encoding` — and reuse those
-/// octets as the identity form.
-///
-/// A *weak* validator is the one HTTP already allows to name more than one
-/// representation, so it does not stop the encoder and the response still
-/// compresses. Weak is also the right validator for a representation that
-/// exists in several codings.
-///
-/// This covers every way a strong tag arrives. A
-/// [`Cache`](crate::middleware::cache::Cache) mounted inside this is the
-/// arrangement that reaches it most easily — the body is stored and tagged over
-/// identity octets, then handed out here — but no cache is needed, and a
-/// handler setting its own `ETag` is treated identically.
+/// A response carrying a *strong* `ETag` is left as it is, even a 200 that
+/// advertises no ranges: encoding it would make one strong validator name two
+/// representations, against RFC 9110 section 8.8.1. A *weak* validator does not
+/// stop the encoder, and is the right validator for a representation that
+/// exists in several codings. This applies however the tag arrives, from a
+/// [`Cache`](crate::middleware::cache::Cache) mounted inside this or from the
+/// handler.
 ///
 /// # Naming what the 406 is
 ///
 /// [`problem_type`](Compression::problem_type) puts an application's own URI on
-/// the refusal. A 406 from negotiation and a 406 from an `Accept` the handler
-/// could not satisfy are different problems, and only a `type` tells them
-/// apart.
+/// the refusal, telling it apart from a 406 a handler answers for `Accept`.
 pub struct Compression<T = ()> {
     /// The smallest response worth encoding, in bytes.
     min_size: u64,
@@ -521,19 +428,9 @@ pub struct Compression<T = ()> {
     problem_type: PhantomData<fn() -> T>,
 }
 
-/// The smallest body encoded by default: 2 KiB.
-///
-/// Encoding pays for itself on the wire by saving a packet, and a body under
-/// one Ethernet segment's payload — 1460 octets, a simplification of the wire
-/// that the docs spell out — goes out in the same number of packets either
-/// way. So the default is the smallest body at which every coding saves at
-/// least that much. `kynos-profile`'s compression sweep reads it off a JSON
-/// document every coding shrinks by more than 85%: at 988 octets each saves
-/// under 800, and at 1954 each saves over 1680. 2048 is the round number past
-/// that row, and it assumes a body shrinks by at least 71%, which is what a
-/// segment of 2048 is; a body that compresses worse should raise
-/// [`Compression::min_size`]. [`middleware.md`](../../../../docs/middleware.md)
-/// records the sweep.
+/// The smallest body encoded by default: 2 KiB, the smallest at which every
+/// coding saves an Ethernet segment on a body that shrinks by 71% or more.
+/// [`middleware.md`](../../../../docs/middleware.md) records the measurement.
 pub(crate) const DEFAULT_MIN_SIZE: u64 = 2_048;
 
 impl Compression<()> {
@@ -551,10 +448,9 @@ impl Compression<()> {
 
     /// Names the RFC 9457 problem type this interceptor's 406 carries.
     ///
-    /// Available only on a `Compression` that has not named one, so a chain
-    /// states the type at most once. See
+    /// Available only on a `Compression` that has not named one. See
     /// [`BodySize::problem_type`](crate::middleware::limits::body_size::BodySize::problem_type)
-    /// for the rule and its pass control.
+    /// for the rule.
     ///
     /// ```
     /// # #[cfg(feature = "compression")]
@@ -585,11 +481,11 @@ impl Compression<()> {
 impl<T> Compression<T> {
     /// Skips responses whose known length is smaller than `bytes`.
     ///
-    /// 2048 by default: under one Ethernet segment of saving, a response takes
-    /// the same packets encoded or not, and encoding it only spends CPU. Lower
-    /// it for a body that compresses unusually well or a link that charges by
-    /// the octet; `0` encodes every non-empty body. A body with no known length
-    /// is encoded as it streams whatever this says.
+    /// 2048 by default: below about one Ethernet segment of saving, encoding
+    /// sends the same packets and only spends CPU. Lower it for a body that
+    /// compresses unusually well or a link that charges by the octet; `0`
+    /// encodes every non-empty body. A body with no known length is encoded as
+    /// it streams whatever this says.
     #[must_use]
     pub fn min_size(mut self, bytes: u64) -> Self {
         self.min_size = bytes;
@@ -628,9 +524,7 @@ impl<T> Compression<T> {
     }
 }
 
-// The three derivable implementations, written out, for the reason
-// `NotAcceptable`'s four are: derived, a `Compression` naming a problem type
-// would lose them unless the application's marker derived them too.
+// Written out because `#[derive]` would bound each on the marker type.
 
 impl<T> Clone for Compression<T> {
     fn clone(&self) -> Self {
@@ -677,9 +571,8 @@ where
     type Reads = ();
     type Adds = ContentEncoding;
 
-    /// 406, and only for a request that refused every representation this
-    /// build can produce. Compression otherwise re-encodes a response rather
-    /// than replacing it.
+    /// 406, for a request that refused every representation this build can
+    /// produce.
     type Short = NotAcceptable<T>;
 
     async fn intercept(
@@ -691,58 +584,18 @@ where
     ) -> Result<Continued<ContentEncoding>, NotAcceptable<T>> {
         let _ = (reads, context);
 
-        // Negotiated before the chain runs, because the request is handed on and
-        // the answer depends only on what it arrived with.
         let negotiated = negotiate(request.headers());
 
-        // Nothing the client will accept, identity included. Section 12.4.1
-        // gives two lawful answers -- honour the field with a 406, or disregard
-        // it -- and Kynos honours it, because disregarding a `q=0` means
-        // sending octets the client said in as many words it cannot decode.
-        //
-        // Answered before the chain runs. The representation the handler would
-        // have produced is one no acceptable coding exists for, so producing it
-        // is work whose result cannot be sent.
+        // Refused before the chain runs: nothing it produced could be sent.
         if negotiated == Negotiated::Nothing {
             return Err(NotAcceptable::new());
         }
 
         let mut continued = next.run(request).await;
 
-        // A response that is already encoded stays as it is: `Content-Encoding`
-        // is one header, and something beneath has already spoken for it.
-        //
-        // So does anything a byte range is calculated against. RFC 9110 section
-        // 14.1.2 calculates a range with respect to the *encoded* sequence of
-        // bytes when a coding is applied, and Kynos calculates one against the
-        // identity octets -- so the two cannot both be true of one resource.
-        //
-        // A range already taken is the visible half. Encoding a 206 after its
-        // `Content-Range` was written makes the field describe octets the body
-        // no longer carries, and section 14.4 tells the recipient of an invalid
-        // `Content-Range` not to recombine -- which is the corruption a client
-        // that does recombine gets. The status is checked *and* the field, so a
-        // partial response reaching this from a `layer_unchecked` beneath is
-        // caught too.
-        //
-        // A range still to come is the quiet half, and `Accept-Ranges` is what
-        // announces it. Encoding that 200 leaves the sender's validator naming
-        // the identity octets while the body is encoded, and section 8.8.1
-        // requires a strong validator to change *whenever a change occurs to
-        // the representation data that would be observable in the content of a
-        // 200 response* -- a server whose representations differ only in
-        // metadata "needs to incorporate additional information in the
-        // validator to distinguish those representations". One tag over both
-        // forms does not, so section 13.1.5's `If-Range` passes where it exists
-        // to refuse, section 15.3.7.3 licenses the client to combine, and the
-        // 206 it is handed is sliced from the identity file.
-        //
-        // The alternative is to encode and re-derive the validator over what
-        // was sent, and that is not a capability this has: the range and its
-        // validator are decided by the handler or the asset server, before this
-        // interceptor is ever handed the response. Refusing to encode a
-        // range-advertising resource is what makes the two representations
-        // never both exist.
+        // Leave alone a response already encoded, or one a byte range is or may be
+        // calculated against: ranges and strong validators name the identity octets
+        // (RFC 9110 sections 14.1.2, 8.8.1), so re-encoding would make them lie.
         let leave_alone = continued
             .headers()
             .contains_key(http::header::CONTENT_ENCODING)
@@ -758,41 +611,22 @@ where
                 .headers()
                 .contains_key(http::header::CONTENT_RANGE);
 
-        // What the handler said about its own response, which outranks
-        // negotiation in both directions.
+        // The handler's own policy outranks negotiation in both directions.
         let policy = Encoding::of_extensions(continued.extensions());
 
         let refused = policy == Encoding::Disabled || leave_alone;
         let coding = match negotiated {
             Negotiated::Encode(coding) if !refused => coding,
-            // Nothing to encode to, or nothing that may be encoded. `Required`
-            // said identity is not an answer, so there is none left.
-            //
-            // `leave_alone` reaches here too, and deliberately: a handler
-            // demanding compression of a response that also advertises ranges
-            // has asked for two things that cannot both hold, and 406 is a
-            // better answer than quietly granting the one this file happens to
-            // check first.
+            // `Required` excludes identity, so nothing is left. `leave_alone`
+            // reaches here deliberately: its demands conflict, and 406 says so.
             _ if policy == Encoding::Required => return Err(NotAcceptable::new()),
             _ => return Ok(continued.with_headers(ContentEncoding::default())),
         };
 
         let body = continued.take_body();
 
-        // Zero bytes compress to a frame header and nothing else, and a body
-        // under `min_size` is one the service has judged not worth encoding;
-        // `DEFAULT_MIN_SIZE` records the measurement the default is read from.
-        //
-        // A body that cannot state its length is neither: it is one being
-        // produced as it goes, and `min_size` is a statement about a length
-        // nobody has. It takes the streaming path below instead of being
-        // skipped, which is what makes an event stream or a long export
-        // compressible at all.
-        //
-        // A body under `min_size` whose handler required an encoding is
-        // encoded all the same: the client accepted a coding, and honouring
-        // `min_size` over the response would read the service's own
-        // configuration as outranking the response's.
+        // An unknown length streams regardless of `min_size`; `Required`
+        // outranks `min_size` but not an empty body.
         let worth_encoding = match body.size_hint().exact() {
             Some(length) => length > 0 && (length >= self.min_size || policy == Encoding::Required),
             None => true,
@@ -802,15 +636,12 @@ where
             continued.set_body(body);
 
             if policy == Encoding::Required {
-                // Empty, so there is nothing to encode, and the handler said
-                // identity is not an answer.
                 return Err(NotAcceptable::new());
             }
 
             return Ok(continued.with_headers(ContentEncoding::default()));
         }
 
-        // A length nobody knows yet is encoded as it arrives.
         if body.size_hint().exact().is_none() {
             continued.set_body(crate::http::body::Body::from_body(Streamed::new(
                 body,
@@ -819,23 +650,18 @@ where
                 self.latency,
             )));
 
-            // A length the handler stated counts the identity octets. RFC 9110
-            // section 8.6 forbids forwarding one known to be incorrect, and the
-            // encoded length is not known until after the head has gone.
+            // A stated length counts identity octets (RFC 9110 section 8.6),
+            // and the encoded one is unknown until after the head has gone.
             continued.remove_declared::<ContentEncoding>(&http::header::CONTENT_LENGTH);
 
             return Ok(continued.with_headers(ContentEncoding {
                 coding: Some(coding),
-                // Not known until the encoding finishes, which is after the
-                // head has gone.
                 length: None,
             }));
         }
 
-        // Failing to encode leaves the response as the handler produced it,
-        // since that is not something this may answer with. Failing to read
-        // hands on a body that fails the same way: the octets are gone, and
-        // an empty body would read as a complete one.
+        // Failing to encode sends identity; failing to read hands on a failing
+        // body, since an empty one would read as complete.
         let encoded = match body.collect().await {
             Ok(collected) => {
                 let bytes = collected.to_bytes();

@@ -1,24 +1,18 @@
 //! Inputs describing the connection rather than the API.
 //!
-//! Everything here contributes nothing to the description, which is the point:
-//! these are properties of how a request arrived, not of the contract it is
-//! part of.
+//! Everything here contributes nothing to the description: these are
+//! properties of how a request arrived, not of the contract.
 //!
 //! # Where the values come from
 //!
-//! The server builds one [`Connection`] per accepted socket and puts a clone
-//! into [`Parts::extensions`](crate::http::Parts) for each request on it. The
-//! clone is a reference count rather than a copy, which is what keeps a peer
-//! certificate chain from being duplicated once per request on a busy mutual-TLS
-//! connection.
+//! The server builds one [`Connection`] per accepted socket and puts a
+//! reference-counted clone into [`Parts::extensions`](crate::http::Parts) for
+//! each request on it.
 //!
 //! A service driven directly — by [`TestClient`](crate::test), by
 //! [`Service::call`](crate::router::service::Service::call), or by a `tower`
-//! deployment — has no socket under it, and there is nothing to insert. Both
-//! extractors report that case rather than failing: a handler asking who
-//! connected is asking a question the transport answers, and a client cannot
-//! cause the transport to be absent, so a status for it would describe a
-//! response no request can provoke.
+//! deployment — has no socket under it. The extractors report that case rather
+//! than failing, since no request a client sends can cause it.
 
 use core::convert::Infallible;
 use std::{
@@ -32,10 +26,8 @@ use crate::{
     router::operation::OperationCx,
 };
 
-/// The address reported when no socket carried the request.
-///
-/// Port zero is never a peer port, so the value reads as "there was no
-/// connection" rather than as an address a reader might try to connect back to.
+/// The address reported when no socket carried the request; port zero is never
+/// a peer port.
 const IN_PROCESS: SocketAddr = SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
 
 /// The path template this request matched.
@@ -46,17 +38,12 @@ const IN_PROCESS: SocketAddr = SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::UN
 ///
 /// # Where the value comes from
 ///
-/// The router records the matched template in the request before any argument
-/// is built, together with the other facts routing establishes. Extracting one
-/// is reading that back, which is why it cannot fail: the record is made on the
-/// same code path as the match.
+/// The router records the matched template before any argument is built, so
+/// extracting it cannot fail.
 ///
 /// Read it through this extractor, or from
 /// [`Route::path`](crate::router::operation::Route::path) in an interceptor. It is
-/// not an entry of its own in
-/// [`Parts::extensions`](crate::http::Parts): each such entry is a heap
-/// allocation on every request, so the router makes one for everything it
-/// learned rather than one per fact.
+/// not an entry of its own in [`Parts::extensions`](crate::http::Parts).
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MatchedPath(pub &'static str);
 
@@ -65,19 +52,17 @@ pub struct MatchedPath(pub &'static str);
 /// A shorthand for [`Connection::peer_addr`], for a handler that wants the
 /// address and nothing else. Contributes nothing to the description.
 ///
-/// Reports [`Connection::is_in_process`]'s address — `0.0.0.0:0` — when no
-/// socket carried the request. Take a [`Connection`] instead where the
-/// difference matters, since that type can be asked.
+/// Reports `0.0.0.0:0` when no socket carried the request. Take a
+/// [`Connection`] instead where the difference matters: see
+/// [`Connection::is_in_process`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ConnectInfo(pub SocketAddr);
 
 /// What the TLS handshake settled, carried without naming the backend.
 ///
 /// Built by the listener — or by an embedding that terminates TLS in its own
-/// accept loop — and read back through [`Connection`]. No rustls type reaches
-/// this, which is what keeps the TLS backend contained to `server/tls/` as
-/// `docs/architecture.md` requires — and what lets the type exist in a build
-/// with no `tls` feature, where only an embedding's own handshake can fill one.
+/// accept loop — and read back through [`Connection`]. Available without the
+/// `tls` feature, for an embedding's own handshake.
 ///
 /// Starts empty; each `with_` method records one thing the handshake agreed.
 ///
@@ -128,9 +113,7 @@ impl TlsIdentity {
 
 /// The connection a request arrived on.
 ///
-/// Cloning is a reference-count bump: the server builds one of these per
-/// accepted socket and hands every request on it a clone, so a certificate
-/// chain is copied once per connection rather than once per request.
+/// Cloning is a reference-count bump.
 ///
 /// Contributes nothing to the description.
 #[derive(Clone, Debug)]
@@ -144,11 +127,8 @@ struct Inner {
     tls: Option<TlsIdentity>,
 }
 
-/// The one shared answer for every request that arrived on no socket.
-///
-/// A `static` rather than a fresh allocation per call, because the fallback is
-/// taken once per request by every handler that asks and the value is the same
-/// every time.
+/// The one shared answer for every request that arrived on no socket, so the
+/// fallback allocates nothing per request.
 static IN_PROCESS_CONNECTION: LazyLock<Connection> = LazyLock::new(|| {
     Connection(Arc::new(Inner {
         peer_addr: IN_PROCESS,
@@ -177,13 +157,9 @@ impl Connection {
 
     /// Records the same, for a connection that completed a TLS handshake.
     ///
-    /// A separate constructor rather than a builder on the one above, because
-    /// the listener knows both halves at the same moment and a builder would
-    /// mean allocating the connection twice to fill in the second.
-    ///
     /// Not gated on `tls`: an embedding that terminates TLS in its own accept
-    /// loop has a handshake to report without Kynos's listener, and this is
-    /// how [`PeerCertificates`](crate::security::carrier::PeerCertificates)
+    /// loop reports its handshake here, which is how
+    /// [`PeerCertificates`](crate::security::carrier::PeerCertificates)
     /// reaches it.
     ///
     /// ```
@@ -228,9 +204,8 @@ impl Connection {
 
     /// Whether no socket carried this request.
     ///
-    /// True for a service driven directly. Both addresses are `0.0.0.0:0` in
-    /// that case, which is what makes this the question to ask rather than
-    /// comparing an address against a sentinel.
+    /// True for a service driven directly, where both addresses are
+    /// `0.0.0.0:0`. Ask this rather than comparing against that sentinel.
     #[must_use]
     pub fn is_in_process(&self) -> bool {
         self.0.in_process
@@ -249,8 +224,7 @@ impl Connection {
 
     /// The protocol ALPN settled on.
     ///
-    /// `None` without TLS, since ALPN is negotiated during a handshake there is
-    /// no other way to have.
+    /// `None` without TLS.
     #[must_use]
     pub fn alpn_protocol(&self) -> Option<&[u8]> {
         self.0.tls.as_ref()?.alpn.as_deref()
@@ -280,9 +254,7 @@ impl Connection {
     }
 }
 
-/// Infallible because a route has already matched by the time an argument is
-/// built: the template that matched is what this returns, so there is no state
-/// in which it is absent.
+/// Infallible: a route has always matched before an argument is built.
 impl<C: Sync> FromRequestParts<C> for MatchedPath {
     type Rejection = Infallible;
 
@@ -305,10 +277,8 @@ impl Describe for MatchedPath {
 /// [`Router::trusted_proxies`](crate::Router::trusted_proxies) lets its
 /// forwarding fields be believed.
 ///
-/// Infallible for the reason [`MatchedPath`] is: the router resolves this once,
-/// under its own trust policy, before any argument is built. Until a trust
-/// policy is set it is the socket peer, and nothing a client writes in a header
-/// changes it.
+/// Infallible: the router resolves it before any argument is built. Until a
+/// trust policy is set it is the socket peer.
 impl<C: Sync> FromRequestParts<C> for crate::http::forwarded::Forwarded {
     type Rejection = Infallible;
 
@@ -327,9 +297,8 @@ impl Describe for crate::http::forwarded::Forwarded {
     }
 }
 
-/// Infallible because the transport answers this question rather than the
-/// client, so there is no request a client could send that fails to produce an
-/// answer. A service with no socket under it reports the in-process address.
+/// Infallible: a service with no socket under it reports the in-process
+/// address.
 impl<C: Sync> FromRequestParts<C> for ConnectInfo {
     type Rejection = Infallible;
 
@@ -344,7 +313,7 @@ impl Describe for ConnectInfo {
     }
 }
 
-/// Infallible for the same reason [`ConnectInfo`] is.
+/// Infallible, as [`ConnectInfo`] is.
 impl<C: Sync> FromRequestParts<C> for Connection {
     type Rejection = Infallible;
 

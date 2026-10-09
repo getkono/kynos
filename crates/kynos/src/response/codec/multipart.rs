@@ -4,14 +4,9 @@
 //! in both directions, so a `MultipartForm<T>` returned from a handler
 //! describes the same parts it would accept.
 //!
-//! `multer` parses; nothing writes. So the body is rendered here, to RFC 7578
-//! over RFC 2046: a `Content-Disposition` naming the field and the part's own
-//! `Content-Type` when it declared one. The delimiters around them belong to
-//! RFC 2046 rather than to this subtype and come from `response::framing`,
-//! which the two multipart subtypes share. A plain `Serialize` bound
-//! would not do — a [`FilePart`]'s bytes would reach the wire as an array of
-//! numbers — so the writing half has a trait of its own, mirroring the reading
-//! one.
+//! The body is rendered to RFC 7578 over RFC 2046. Writing uses
+//! [`IntoMultipart`] rather than `Serialize`, under which a [`FilePart`]'s
+//! bytes would reach the wire as an array of numbers.
 
 use bytes::Bytes;
 use kynos_openapi::model::body::mime_names;
@@ -26,11 +21,7 @@ use crate::{
     schema::{Schema, registry::Registry},
 };
 
-// The framing is RFC 2046's rather than this subtype's, so the delimiter search
-// and the unfolding moved out with it and the byteranges writer under
-// `response::range` uses the same ones.
 use crate::response::framing::unfolded;
-// The search's own vocabulary, which only this file's tests still name.
 #[cfg(test)]
 use crate::response::framing::{BOUNDARY_PREFIX, contains};
 
@@ -39,8 +30,7 @@ use crate::response::framing::{BOUNDARY_PREFIX, contains};
 /// The counterpart of
 /// [`FromMultipart`](crate::extract::body::multipart::FromMultipart), yielding
 /// the same [`Part`]s it consumes. `#[derive(MultipartForm)]` writes both from
-/// one declaration, which is what makes "the same parts it would accept" true
-/// by construction.
+/// one declaration.
 ///
 /// ```
 /// use kynos::{
@@ -89,8 +79,7 @@ impl IntoPart for FilePart {
     }
 }
 
-/// Typeless bytes, which is the default RFC 7578 derives for a part whose
-/// schema states no type — the same default the describing half relies on.
+/// Typeless bytes, RFC 7578's default for a part whose schema states no type.
 impl IntoPart for Bytes {
     fn into_part(self, name: &str) -> Part {
         Part {
@@ -102,9 +91,8 @@ impl IntoPart for Bytes {
     }
 }
 
-/// The charset is stated rather than left to RFC 7578's `text/plain` default,
-/// because Kynos writes and reads UTF-8 and a recipient guessing otherwise
-/// would decode a different string than the one that was sent.
+/// UTF-8 text, with the charset stated rather than left to RFC 7578's
+/// `text/plain` default.
 impl IntoPart for String {
     fn into_part(self, name: &str) -> Part {
         Part {
@@ -148,9 +136,6 @@ fn render(parts: Vec<Part>, boundary: &str) -> Bytes {
 }
 
 /// The header lines one form-data part declares, CRLF-terminated.
-///
-/// RFC 7578's whole contribution to the framing: which field this part is, the
-/// file name if it had one, and the media type if it declared one.
 fn headers(part: &Part) -> Vec<u8> {
     let mut headers = Vec::with_capacity(128);
 
@@ -175,25 +160,9 @@ fn headers(part: &Part) -> Vec<u8> {
 
 /// A `Content-Disposition` parameter, as the quoted-string it travels in.
 ///
-/// RFC 7578 carries the field name and the file name as quoted-strings and says
-/// to send them as UTF-8, so the text itself is left alone and only what a
-/// quoted-string cannot hold is touched.
-///
-/// Three characters cannot be held. A `"` is escaped, because that is the one
-/// escape every reader of this format performs. A line ending would end the
-/// header rather than appear in it, so it is dropped: a name that spans two
-/// lines is a name that would inject a third party's header.
-///
-/// A `\` is dropped for the same reason as a line ending — it cannot be
-/// represented, only misread. Escaping it as `\\` produces a name readers
-/// return with both backslashes, including
-/// [`multer`](https://docs.rs/multer), the reader Kynos itself uses on the
-/// extracting half; and a name *ending* in one makes the whole header
-/// unparseable, since the scan for the closing quote treats the escape as
-/// covering it and runs off the end. Percent-encoding it, which is what the
-/// HTML form algorithm does for `"`, only moves the problem: nothing on the
-/// reading side percent-decodes. Dropping is the one option under which every
-/// name Kynos writes is a name Kynos reads back.
+/// UTF-8 text is kept (RFC 7578). `"` is escaped; line endings are dropped so a
+/// name cannot inject a header; `\` is dropped because readers, `multer`
+/// included, do not unescape `\\` and a trailing one breaks the header.
 fn quoted(value: &str) -> String {
     let mut quoted = String::with_capacity(value.len());
     for character in value.chars() {
@@ -210,9 +179,7 @@ fn quoted(value: &str) -> String {
 }
 
 impl<T: Schema> Responses for MultipartForm<T> {
-    // Taken from the extracting half rather than rebuilt, which is what makes
-    // "the same parts it would accept" true by construction instead of by
-    // agreement between two lists of parts and encodings.
+    // Taken from the extracting half so both directions describe the same parts.
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         let mut response = kynos_openapi::Response::new("OK");
         response.content = <Self as RequestContent>::request_body(registry).content;

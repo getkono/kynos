@@ -35,9 +35,8 @@ pub enum Http2FlowControl {
 ///
 /// A PING is sent once a connection has read nothing for `interval`, and the
 /// connection is closed if it is not acknowledged within `timeout`, so a busy
-/// connection is never pinged. This is what releases an HTTP/2 connection
-/// whose peer vanished with no stream open. A peer that answers every PING is
-/// alive by this measure, so what releases it is
+/// connection is never pinged. This releases a connection whose peer vanished;
+/// one whose peer answers every PING is released by
 /// [`Http2Config::idle_timeout`] instead.
 ///
 /// `#[non_exhaustive]`, so construct it with [`new`](Self::new):
@@ -72,9 +71,8 @@ impl Http2KeepAlive {
 
 /// HTTP/2 tuning.
 ///
-/// `#[non_exhaustive]`, so it grows without breaking callers — which also means
-/// a struct literal will not compile outside this crate, even with `..default()`.
-/// Start from [`default`](Self::default) and set what you need:
+/// `#[non_exhaustive]`, so a struct literal will not compile outside this
+/// crate. Start from [`default`](Self::default) and set what you need:
 ///
 /// ```
 /// # use kynos::server::protocol::http2::Http2Config;
@@ -168,7 +166,7 @@ impl Http2Config {
     /// sent a GOAWAY and closed.
     ///
     /// `None` leaves a connection whose peer answers every keep-alive PING open
-    /// for as long as the peer likes, which is a decision rather than a default.
+    /// for as long as the peer likes.
     ///
     /// [`Server::prepare`](crate::server::Server::prepare) refuses
     /// `Some(Duration::ZERO)`.
@@ -221,8 +219,7 @@ impl Http2Config {
     /// request head, in a build with no HTTP/1 header-read timeout to count.
     ///
     /// `None` when the idle timeout is disabled or would overflow the clock.
-    /// Compiled for tests in every build, so the all-features build that
-    /// mutation testing runs reaches it.
+    /// Compiled for tests in every build so mutation testing reaches it.
     #[cfg(any(test, not(feature = "http1")))]
     pub(in crate::server) fn first_head_deadline(
         &self,
@@ -235,16 +232,13 @@ impl Http2Config {
 
 /// The HTTP/2 streams one connection has in flight.
 ///
-/// Two monotonic counters rather than one that rises and falls, so the idle
-/// wait can tell a connection that stayed quiet from one that opened and
-/// finished a stream while it slept: both end with nothing in flight, and only
-/// the first is idle.
+/// Two monotonic counters, so the idle wait can tell a connection that stayed
+/// quiet from one that opened and finished a stream while it slept.
 #[derive(Debug, Default)]
 pub(in crate::server) struct Streams {
     opened: AtomicUsize,
     closed: AtomicUsize,
-    /// Woken by each close that leaves none in flight. An open wakes nothing:
-    /// the idle wait has nothing to do until that stream closes.
+    /// Woken by each close that leaves none in flight.
     quiet: Notify,
 }
 

@@ -1,12 +1,6 @@
 //! Checking one observed response against what the description promised.
 //!
-//! Private, and named by no path a user can write: everything here is reached
-//! through [`TestClient::assert_conformance`](super::TestClient::assert_conformance)
-//! and [`TestClient::assert_declared_responses_covered`](super::TestClient::assert_declared_responses_covered),
-//! which are the two assertions this module exists to answer.
-//!
-//! `jsonschema` is named here and nowhere else, which is the allowance
-//! `docs/architecture.md` gives it.
+//! `jsonschema` is named here and nowhere else, per `docs/architecture.md`.
 
 use kynos_openapi::{
     Document, Method, RefOr, Responses, StatusPattern,
@@ -20,9 +14,6 @@ use crate::{
 };
 
 /// Every way one observed response fails to match the description.
-///
-/// A list rather than the first failure, so that one run reports everything a
-/// response got wrong instead of one thing per run.
 pub(super) fn conformance(document: &Document, record: &Observed) -> Vec<String> {
     let Some(template) = matched_template(document, &record.path) else {
         return vec!["no declared path matches this request".to_owned()];
@@ -61,8 +52,7 @@ pub(super) fn conformance(document: &Document, record: &Observed) -> Vec<String>
     let mut reasons = Vec::new();
 
     for (name, declared) in &response.headers {
-        // A `Content-Type` entry is ignored by the specification: `content`
-        // already states it.
+        // The specification ignores a `Content-Type` entry.
         if is_ignored_header(name) {
             continue;
         }
@@ -88,45 +78,9 @@ pub(super) fn conformance(document: &Document, record: &Observed) -> Vec<String>
 
 /// Whether the body matches the representation declared for it.
 ///
-/// # Declaring nothing is a claim too
-///
-/// A response with no `content` says the exchange carried no representation,
-/// which is checked against what was sent rather than taken as nothing to
-/// check. Keyed on the exchange in both directions: octets are a
-/// representation whatever the headers said, and a `Content-Type` names one
-/// whether or not any octets followed.
-///
-/// Six shapes Kynos ships legitimately declare nothing, and every one of them
-/// sends neither, so none reaches the report below: `NoContent`'s 204 and every
-/// `Redirect<CODE>` build a `Body::empty()`; the conditional 304 copies a
-/// replayed field list that deliberately omits `Content-Type`; the ranged 304
-/// guards its media type behind the status; the asset 304 writes only `ETag`,
-/// `Cache-Control`, `Content-Encoding` and `Vary`; and a HEAD keeps its
-/// `Content-Type` on statuses that *do* declare a representation, so it never
-/// takes this branch. `tests/conformance.rs`'s
-/// `observed_responses_match_the_description` holds that: it drives a HEAD
-/// answered from a `get` through `assert_conformance` on a status that declares
-/// a representation.
-///
-/// The CORS preflight 204 is not among them although it also sends neither. It
-/// is never *described* -- `middleware::cors` answers `OPTIONS` by routing
-/// rather than by intercepting, and an operation that cannot answer a preflight
-/// should not describe one -- so there is no declaration for this branch to
-/// read and no exchange that can arrive at it.
-///
-/// One composition does reach the report, and rightly.
-/// `Created<T>`/`Accepted<T>` carry the body's representation onto the
-/// wrapper's status where the body declares exactly one; where it declares
-/// several and no 200, the wrapper declares nothing while the wire still
-/// carries one of them. That is a disagreement rather than an exemption, and
-/// reporting it is what this branch is for.
-///
-/// # A HEAD
-///
-/// Read against the operation that answered it -- its own `head`, or the `get`
-/// the router answers it from -- and never carrying content (RFC 9110 section
-/// 9.3.2), so where a representation is declared only its `Content-Type` is
-/// held to the declaration, and any octets at all are reported.
+/// A response declaring no `content` is a claim too: any octets or any
+/// `Content-Type` under it is reported. A HEAD carries no content (RFC 9110
+/// section 9.3.2), so only its `Content-Type` is held to the declaration.
 fn body_conformance(
     document: &Document,
     response: &kynos_openapi::Response,
@@ -171,8 +125,7 @@ fn body_conformance(
         )];
     };
 
-    // RFC 9110 section 9.3.2: a HEAD's content is never sent, so there is no
-    // instance to validate -- and any octets at all are the violation.
+    // RFC 9110 section 9.3.2: a HEAD's content is never sent.
     if record.method == crate::http::Method::HEAD {
         if record.body.is_empty() {
             return Vec::new();
@@ -186,10 +139,7 @@ fn body_conformance(
     let Some(schema) = representation.schema.as_ref() else {
         return Vec::new();
     };
-    // Only a JSON-based representation has an instance a JSON Schema can be
-    // applied to. Anything else is declared with a schema describing a shape
-    // this module has no decoder for, and asserting nothing beats asserting
-    // something wrong.
+    // Only a JSON-based representation can be validated against its schema.
     if media_type != mime_names::APPLICATION_JSON && !media_type.ends_with("+json") {
         return Vec::new();
     }
@@ -204,17 +154,13 @@ fn body_conformance(
 
 /// Validates one instance against one declared schema.
 ///
-/// The schema is lifted into a document of its own carrying the description's
-/// `components`, so that a `$ref` such as `#/components/schemas/User` resolves
-/// against the description rather than against nothing — without which every
-/// referenced schema would silently accept every body.
+/// The schema carries the description's `components`, so a `$ref` resolves
+/// rather than silently accepting every body.
 fn validate(document: &Document, schema: &kynos_openapi::Schema, instance: &Value) -> Vec<String> {
     let mut root = serde_json::to_value(schema).expect("a schema in a document is serializable");
 
     if let Value::Object(members) = &mut root {
-        // The OAS dialect is not a meta-schema this validator knows, and
-        // retrieving one is off: OpenAPI 3.1 and 3.2 schemas are JSON Schema
-        // 2020-12, which is what the validator is built for below.
+        // The validator does not know the OAS dialect; it is 2020-12 anyway.
         members.remove("$schema");
         members.insert(
             "components".to_owned(),
@@ -237,9 +183,8 @@ fn validate(document: &Document, schema: &kynos_openapi::Schema, instance: &Valu
 /// The `paths` key this request matched, or `None` when the description
 /// declares no path it could have reached.
 ///
-/// The most literal template wins, and document order breaks a tie — the same
-/// order of preference the matcher applies, restated here because a response
-/// carries no record of the route that produced it.
+/// The most literal template wins, and document order breaks a tie, as in the
+/// router's matcher.
 pub(super) fn matched_template<'d>(document: &'d Document, path: &str) -> Option<&'d str> {
     let path = path.split(['?', '#']).next().unwrap_or(path);
 
@@ -262,9 +207,8 @@ pub(super) fn matched_template<'d>(document: &'d Document, path: &str) -> Option
 
 /// Whether a concrete path is an instance of a template.
 ///
-/// A template expression always spans a whole segment — the path grammar
-/// [`PathTemplate`](kynos_openapi::PathTemplate) accepts allows nothing else —
-/// so this compares segment by segment.
+/// Segment by segment, since a [`PathTemplate`](kynos_openapi::PathTemplate)
+/// expression always spans a whole segment.
 fn template_matches(template: &str, path: &str) -> bool {
     let mut expected = template.split('/');
     let mut actual = path.split('/');
@@ -274,8 +218,7 @@ fn template_matches(template: &str, path: &str) -> bool {
             (None, None) => return true,
             (Some(expected), Some(actual)) => {
                 if is_variable(expected) {
-                    // A variable stands for a segment, and a segment holds at
-                    // least one character.
+                    // A variable matches a non-empty segment.
                     if actual.is_empty() {
                         return false;
                     }
@@ -345,17 +288,11 @@ fn resolve_response<'d>(
     }
 }
 
-/// The media type a response stated, lowercased and without its parameters.
 /// The representation declared for `media_type`, if one is.
 ///
-/// An exact match first, then one ignoring the declared key's parameters. Both
-/// halves are needed. A description may declare two representations differing
-/// only by parameter -- `text/plain; charset=utf-8` beside a legacy charset --
-/// and stripping first would hand back whichever came first in the map. But a
-/// `Content-Type` is compared with its own parameters already stripped, so
-/// without the fallback a declared `text/html; charset=utf-8` could never
-/// match anything, and every parameterized media type in the document would
-/// read as undeclared.
+/// An exact match first, so two keys differing only by parameter stay
+/// distinct, then one ignoring the declared key's parameters, since
+/// `media_type` arrives with its own already stripped.
 fn declared_representation<'a>(
     content: &'a kynos_openapi::Map<kynos_openapi::MediaType>,
     media_type: &str,
@@ -372,6 +309,7 @@ fn declared_representation<'a>(
         .map(|(_, representation)| representation)
 }
 
+/// The media type a response stated, lowercased and without its parameters.
 fn media_type(headers: &HeaderMap) -> Option<String> {
     let value = headers.get(header::CONTENT_TYPE)?.to_str().ok()?;
     let (media_type, _) = value.split_once(';').unwrap_or((value, ""));

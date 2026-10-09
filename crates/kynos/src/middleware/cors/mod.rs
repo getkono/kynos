@@ -1,9 +1,7 @@
 //! Cross-origin resource sharing.
 //!
-//! The list-taking builders accept anything iterable of anything string-like,
-//! rather than a `&'static [&'static str]`: an allow-list read from the
-//! environment at startup is the common deployment, and the borrowed form
-//! would force it through `Vec::leak`.
+//! The list-taking builders accept any iterable of string-like values, so an
+//! allow-list read from the environment at startup needs no leaking.
 //!
 //! Out-of-document: a preflight `OPTIONS` is a browser protocol detail, not an
 //! operation of the API, so it contributes nothing. Use
@@ -24,11 +22,10 @@ use crate::{
 ///
 /// `DESCRIBED` is what [`Cors`]'s type-state selects. Either way the names are
 /// declared, so a second interceptor touching `Access-Control-Allow-Origin`
-/// fails to compile whichever state this is in.
+/// fails to compile.
 ///
-/// A field left empty is a header left off rather than one sent empty: the CORS
-/// protocol reads an absent header as a refusal, and a request from no origin
-/// at all is not a cross-origin request to answer.
+/// An empty field is a header left off, which the CORS protocol reads as a
+/// refusal.
 #[derive(Clone, Debug, Default)]
 pub struct CorsHeaders<const DESCRIBED: bool = true> {
     /// What `Access-Control-Allow-Origin` carries, when the origin is permitted.
@@ -41,10 +38,6 @@ pub struct CorsHeaders<const DESCRIBED: bool = true> {
 
 impl<const DESCRIBED: bool> CorsHeaders<DESCRIBED> {
     /// The same headers, declared by the other type-state.
-    ///
-    /// Whether these headers are described is a property of the [`Cors`] that
-    /// computed them, and computing them twice to say the same thing differently
-    /// is the duplication this whole module avoids.
     fn relabel<const OTHER: bool>(self) -> CorsHeaders<OTHER> {
         CorsHeaders {
             origin: self.origin,
@@ -61,27 +54,21 @@ impl<const DESCRIBED: bool> HeaderParams for CorsHeaders<DESCRIBED> {
         "access-control-expose-headers",
     ];
     const DESCRIBED: bool = DESCRIBED;
-    // The answer depends on which origin asked, whenever the allow-list holds
-    // more than one — and a shared cache that did not know would hand one
-    // origin's `Access-Control-Allow-Origin` to another, which is the whole of
-    // the CORS check defeated. Declared unconditionally rather than only for a
-    // multi-origin configuration, because the header a cache keys on must not
-    // depend on a builder call the cache cannot see.
+    // The answer depends on which origin asked, so a shared cache must key on
+    // it. Unconditional, so it cannot depend on builder calls a cache can't see.
     const VARIES: &'static [&'static str] = &["origin"];
 }
 
 impl<const DESCRIBED: bool> EncodeHeaders for CorsHeaders<DESCRIBED> {
     fn encode(&self) -> Vec<(http::HeaderName, http::HeaderValue)> {
         let Some(origin) = self.origin.clone() else {
-            // Nothing was permitted, and a CORS header the protocol did not
-            // call for is one a browser reads as permission.
+            // Nothing permitted: an uncalled-for CORS header reads as permission.
             return Vec::new();
         };
 
         let mut headers = vec![(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, origin)];
 
-        // Only ever `true`: the protocol reads any other value as a refusal, so
-        // there is nothing for `false` to say that omitting it does not.
+        // Only ever `true`; the protocol reads any other value as a refusal.
         if self.credentials {
             headers.push((
                 http::header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
@@ -97,16 +84,11 @@ impl<const DESCRIBED: bool> EncodeHeaders for CorsHeaders<DESCRIBED> {
     }
 }
 
-/// What closes the set of documentation states.
-///
-/// Sealed so that [`Cors`] has exactly two instantiations. The router reads a
-/// `Cors` back out of a type-erased chain by identity — see
-/// [`ErasedInterceptor::as_any`](crate::middleware::erased) — and a downcast
-/// enumerates the concrete types it is willing to recognise. An open state
-/// parameter would make that set unbounded, so a third state would silently
-/// stop being seen rather than fail to compile.
+/// Closes the set of documentation states, since the router downcasts a
+/// `Cors` by its two concrete types (see
+/// [`ErasedInterceptor::as_any`](crate::middleware::erased)).
 mod sealed {
-    /// The private supertrait. Deliberately empty.
+    /// The private supertrait.
     pub trait Sealed {}
 }
 
@@ -115,21 +97,13 @@ impl sealed::Sealed for Documented {}
 
 /// Maps [`Cors`]'s type-state onto the header group it declares.
 ///
-/// A trait rather than a `bool` on `Cors` for the reason the state is a type at
-/// all: what an interceptor declares is read from its type, and a field cannot
-/// be read from one.
-///
-/// Sealed: the two states below are the whole set, and
-/// `every_cors_documentation_state_is_one_of_the_two_the_router_recognises`
-/// fails if a third is ever added.
+/// Sealed: [`Undocumented`] and [`Documented`] are the whole set.
 pub trait CorsDocumentation: sealed::Sealed + Send + Sync + 'static {
     /// The header group this state declares.
     type Headers: EncodeHeaders;
 
-    /// Labels computed headers as the group this state declares.
-    ///
-    /// The values are the same in both states, and so is the behaviour they
-    /// produce; the only difference is whether the description mentions them.
+    /// Labels computed headers as the group this state declares; the values
+    /// are the same in both states.
     fn label(headers: CorsHeaders<true>) -> Self::Headers;
 }
 
@@ -158,10 +132,7 @@ pub struct Undocumented;
 
 /// A [`Cors`] that declares its response headers.
 ///
-/// Reached only through [`Cors::document_response_headers`], which is why the
-/// choice is a type rather than a flag: what an interceptor declares is read
-/// while the router is built, and a `bool` set at run time is not something a
-/// description can be derived from.
+/// Reached through [`Cors::document_response_headers`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Documented;
 
@@ -176,14 +147,8 @@ pub struct Cors<D = Undocumented> {
     _documented: PhantomData<fn() -> D>,
 }
 
-/// Everything a [`Cors`] was configured with, without its type-state.
-///
-/// Split out because the router reads a configuration back out of a type-erased
-/// chain, and a non-generic type is one the downcast can name once rather than
-/// once per state. It is also what makes
-/// [`document_response_headers`](Cors::document_response_headers) a two-field
-/// move rather than a ten-field reconstruction that a new option could silently
-/// be left out of.
+/// Everything a [`Cors`] was configured with, without its type-state, so the
+/// router's downcast can read it whatever the state.
 #[derive(Clone, Default)]
 pub(crate) struct CorsConfig {
     /// The permitted origins, matched case-insensitively.
@@ -196,9 +161,7 @@ pub(crate) struct CorsConfig {
     pub(crate) credentials: bool,
     /// The response headers a client may read.
     pub(crate) expose: Vec<Cow<'static, str>>,
-    // What follows is answered on preflight, and a preflight is an `OPTIONS`
-    // request routed rather than intercepted -- so it is configured here and
-    // read where that request is answered.
+    // The rest is read only by the router's preflight answer.
     /// Overrides the methods preflight advertises.
     pub(crate) methods: Option<Vec<kynos_openapi::Method>>,
     /// The request headers preflight permits.
@@ -207,12 +170,8 @@ pub(crate) struct CorsConfig {
     pub(crate) max_age: Option<Duration>,
 }
 
-/// The three places a CORS configuration can say "any".
-///
-/// One struct rather than three `bool` fields on [`CorsConfig`]: each is the
-/// same decision about a different list, and each stands in the same relation
-/// to [`allow_credentials`](Cors::allow_credentials) — the protocol reads `*`
-/// as a literal field value on a credentialed response.
+/// The three places a CORS configuration can say "any"; on a credentialed
+/// response the protocol reads `*` literally.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Wildcards {
     /// Whether every origin is permitted.
@@ -223,16 +182,10 @@ pub(crate) struct Wildcards {
     pub(crate) expose: bool,
 }
 
-/// A test an origin passes to be permitted.
-///
-/// Shared rather than owned because a `Cors` is cloned onto every route it
-/// covers, and a predicate is configuration rather than per-request state.
+/// A test an origin passes to be permitted; shared across every covered route.
 pub(crate) type OriginPredicate = std::sync::Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
-/// Hand-written because a predicate has nothing to print.
-///
-/// The count is printed instead of the closures: what a reader needs from a
-/// `{:?}` of a CORS configuration is whether one is there at all.
+/// Hand-written because a predicate has nothing to print; the count stands in.
 impl std::fmt::Debug for CorsConfig {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -258,11 +211,7 @@ impl Cors<Undocumented> {
 }
 
 impl<D> Cors<D> {
-    /// What this was configured with.
-    ///
-    /// Crate-internal: the router reads it to check the configuration and to
-    /// answer a preflight, and neither is something an application needs a
-    /// second way to reach.
+    /// What this was configured with, for the router's check and preflight.
     pub(crate) fn config(&self) -> &CorsConfig {
         &self.config
     }
@@ -380,11 +329,9 @@ impl<D> Cors<D> {
     /// [`expose_headers`](Cors::expose_headers) named.
     ///
     /// Incompatible with [`allow_credentials`](Cors::allow_credentials): on a
-    /// credentialed response the CORS protocol reads `*` as the literal field
-    /// name rather than as a wildcard, so the pair exposes nothing at all. It
-    /// is refused while the router is built —
-    /// [`Error::Middleware`](crate::Error::Middleware) — rather than shipped as
-    /// a header that silently does the opposite of what it says.
+    /// credentialed response the CORS protocol reads `*` as a literal field
+    /// name, so the pair is refused while the router is built —
+    /// [`Error::Middleware`](crate::Error::Middleware).
     #[must_use]
     pub fn expose_any_header(mut self) -> Self {
         self.config.any.expose = true;
@@ -408,12 +355,7 @@ impl<D> Cors<D> {
 
 impl CorsConfig {
     /// The combination this configuration cannot honour, if it selected one.
-    ///
-    /// Read while the router is built. There is nothing here a type could have
-    /// caught: both halves are set by `mut self -> Self` builders, deliberately,
-    /// so that an allow-list read from the environment at startup can be applied
-    /// conditionally — and a value a builder decides is not one a `const` can
-    /// see.
+    /// Checked at router build, since builders apply values a type cannot see.
     pub(crate) fn conflict(&self) -> Option<crate::middleware::MiddlewareError> {
         if self.any.origin && self.credentials {
             return Some(crate::middleware::MiddlewareError::CredentialedWildcardOrigin);
@@ -432,9 +374,8 @@ impl CorsConfig {
             return true;
         }
 
-        // An origin is ASCII, and the scheme and host it is built from are
-        // compared case-insensitively. A value that is not a string is not an
-        // origin, so no predicate is asked about it either.
+        // Scheme and host compare case-insensitively; a non-string value is no
+        // origin, so no predicate sees it.
         origin.to_str().is_ok_and(|origin| {
             self.origins
                 .iter()
@@ -445,9 +386,7 @@ impl CorsConfig {
 
     /// The headers this configuration adds to a response to `request`.
     pub(crate) fn headers_for(&self, request: &http::HeaderMap) -> CorsHeaders<true> {
-        // No `Origin` is not a cross-origin request, and answering one that was
-        // never asked is how a permissive header reaches a client that never
-        // needed it.
+        // No `Origin`: not a cross-origin request, so nothing to answer.
         let Some(origin) = request.get(http::header::ORIGIN) else {
             return CorsHeaders::default();
         };
@@ -456,9 +395,8 @@ impl CorsConfig {
             return CorsHeaders::default();
         }
 
-        // `*` is refused by every browser on a credentialed response. The pair
-        // cannot reach here -- `conflict` refuses it while the router is built --
-        // so the second arm is what a named allow-list produces, not a fallback.
+        // `conflict` already refused `*` with credentials, so the echo arm is
+        // the named allow-list's answer, not a fallback.
         let allowed = if self.any.origin && !self.credentials {
             http::HeaderValue::from_static("*")
         } else {
@@ -474,9 +412,7 @@ impl CorsConfig {
 
     /// The exposed response headers, as one field value.
     pub(crate) fn exposed(&self) -> Option<http::HeaderValue> {
-        // A wildcard subsumes any name that could be listed beside it. The
-        // pair with credentials cannot reach here -- `conflict` refuses it
-        // while the router is built -- so this is never the literal name.
+        // A wildcard subsumes any listed name; `conflict` keeps credentials out.
         if self.any.expose {
             return Some(http::HeaderValue::from_static("*"));
         }
@@ -500,8 +436,6 @@ impl Cors<Undocumented> {
     /// Also declares the CORS response headers in the description.
     ///
     /// Changes the type, because it changes what every covered operation says.
-    /// A `bool` here would be a claim the description is derived from and that
-    /// nothing checks; a type is one the compiler carries.
     #[must_use]
     pub fn document_response_headers(self) -> Cors<Documented> {
         Cors {
@@ -515,13 +449,8 @@ impl<C: Sync + 'static, D: CorsDocumentation> Interceptor<C> for Cors<D> {
     type Reads = ();
     type Adds = D::Headers;
 
-    /// CORS never answers here.
-    ///
-    /// A preflight answers `OPTIONS`, which is a different request from the
-    /// operation this chain is serving -- so it is routed rather than
-    /// intercepted, the way an unmatched method is already answered before any
-    /// chain runs. An operation that cannot answer a preflight should not
-    /// describe one.
+    /// CORS never answers here: a preflight is a separate `OPTIONS` request,
+    /// answered by the router.
     type Short = Infallible;
 
     async fn intercept(
@@ -533,9 +462,7 @@ impl<C: Sync + 'static, D: CorsDocumentation> Interceptor<C> for Cors<D> {
     ) -> Result<Continued<D::Headers>, Infallible> {
         let _ = (reads, context);
 
-        // `Origin` is read from the request rather than declared in `Reads`:
-        // it is set by the browser and never by the caller, so a parameter
-        // declaring it would describe something no consumer can supply.
+        // Not in `Reads`: the browser sets `Origin`, so no consumer can supply it.
         let headers = self.config.headers_for(request.headers());
 
         Ok(next.run(request).await.with_headers(D::label(headers)))

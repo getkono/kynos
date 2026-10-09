@@ -17,7 +17,7 @@ use crate::{
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Text(pub String);
 
-/// One spelling, read by both halves: what is decoded and what is described.
+/// The media type decoded and described.
 const MEDIA_TYPE: &str = mime_names::TEXT_PLAIN;
 
 impl<C: Sync> FromRequest<C> for Text {
@@ -26,8 +26,7 @@ impl<C: Sync> FromRequest<C> for Text {
     async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
         let bytes = super::read_body(request, MEDIA_TYPE).await?;
 
-        // The body was accepted as UTF-8 or as unparameterized `text/plain`, so
-        // bytes that are not UTF-8 are a body that does not say what it claims.
+        // Only UTF-8 is accepted, so other bytes are a 400.
         String::from_utf8(bytes.into())
             .map(Self)
             .map_err(|error| BodyRejection::Syntax {
@@ -48,8 +47,6 @@ impl RequestContent for Text {
         vec![MEDIA_TYPE]
     }
 
-    // The body is a string, so it is described by the schema `String` already
-    // carries rather than by a second, hand-written one.
     fn request_body(registry: &mut Registry) -> kynos_openapi::RequestBody {
         kynos_openapi::RequestBody::new(
             MEDIA_TYPE,

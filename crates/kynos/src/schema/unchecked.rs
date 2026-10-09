@@ -22,11 +22,8 @@ use crate::schema::{
 ///
 /// `Router::deny_unchecked_schemas` turns the resulting warning into a build
 /// error, for teams that want to forbid it outright.
-/// Transparent to serde, because the annotation is a fact about the
-/// description and not about the encoding. `Unchecked<T>` and `T` are the same
-/// bytes, so wrapping a field costs a consumer nothing — and a wrapper that did
-/// reach the wire would make the only sanctioned way to carry an arbitrary
-/// payload the one way that changes its shape.
+///
+/// Transparent to serde: `Unchecked<T>` and `T` are the same bytes.
 ///
 /// # Flattening
 ///
@@ -52,10 +49,9 @@ use crate::schema::{
 /// open::<kynos::schema::unchecked::Unchecked<u64>>();
 /// ```
 ///
-/// It is never [`Flatten`](crate::schema::flatten::Flatten). The permissive
-/// schema names no member it contributes, so beside an open map those members
-/// stay unevaluated and the map's `unevaluatedProperties` would refuse what
-/// serde writes:
+/// It is never [`Flatten`](crate::schema::flatten::Flatten): the permissive
+/// schema names no member it contributes, so beside an open map the map's
+/// `unevaluatedProperties` would refuse them:
 ///
 /// ```compile_fail
 /// fn flattenable<T: kynos::schema::flatten::Flatten>() {}
@@ -88,10 +84,8 @@ impl<T> Unchecked<T> {
 impl<T> Schema for Unchecked<T> {
     /// The permissive schema, carrying the annotation.
     ///
-    /// Written with keywords rather than as `true`, because a boolean schema
-    /// has nowhere to put one — and a keyword set that constrains nothing is
-    /// the same schema `true` is. `T` is not consulted: whatever it is, the
-    /// point of this wrapper is that the description does not claim its shape.
+    /// Written with keywords rather than as `true`, which has nowhere to put
+    /// the annotation. `T` is not consulted.
     fn schema(_registry: &mut Registry) -> OpenApiSchema {
         let mut object = SchemaObject::default();
         object
@@ -101,10 +95,8 @@ impl<T> Schema for Unchecked<T> {
     }
 }
 
-/// Flattened open beside the members an object declares: the schema is written
-/// in place and carries no `additionalProperties`, so the hoist moves nothing
-/// and the object is left open. Bounded by `T`'s own `OpenMap`, because serde
-/// flattens only structs and maps.
+/// The hoist moves nothing and leaves the object open. Bounded by `T`'s own
+/// `OpenMap`, because serde flattens only structs and maps.
 impl<T: OpenMap> OpenMap for Unchecked<T> {}
 
 /// `serde_json::Map` has no [`Schema`] of its own, so it reaches [`OpenMap`] only
@@ -112,6 +104,5 @@ impl<T: OpenMap> OpenMap for Unchecked<T> {}
 impl OpenMap for Unchecked<serde_json::Map<String, serde_json::Value>> {}
 
 /// Hoists nothing wherever it is an [`OpenMap`], since the permissive schema has
-/// no `additionalProperties`, so a field serde writes and never reads may sit
-/// beside it.
+/// no `additionalProperties`.
 impl<T> AdmitsAny for Unchecked<T> where Self: OpenMap {}

@@ -302,15 +302,21 @@ modules, one codec each, over a shared harness gated on their disjunction, and
 [`cost/codec.rs`](../crates/kynos/cost/codec.rs), the fixture
 [`performance.md`](performance.md#the-taxonomy)'s codec sweep weighs, is
 measured at the same sets. [`mise run lint:codecs`](../mise.toml) lints the six
-`openapi31 + macros + F` sets; why those sets, and why Clippy rather than a
-test run, is argued in its comment there.
+`openapi31 + macros + F` sets. No other task builds them: `features:targets`
+adds one flag at a time, so `macros` and a codec never meet, and every other
+test build is the default set or every feature. What a gate gets wrong there is
+a dead item or an unused import — a compile-time finding, hence Clippy rather
+than a test run.
 
 A fourth shape is a *dependency's* feature forced on: one no manifest in the
 workspace asks for, and that Cargo unifies in anyway from whatever graph a
 downstream program builds. [`mise run test:arbitrary-precision`](../mise.toml)
-runs `kynos-openapi`'s suite with `serde_json/arbitrary_precision` on; its
-comment there says what the switch changes, which two oracles it excludes and
-why the feature is forced per invocation rather than by a dev-dependency.
+runs `kynos-openapi`'s suite with `serde_json/arbitrary_precision` on, under
+which every `serde_json::Number` serializes as a one-field struct. It excludes
+by exact name the two oracles holding `to_yaml` to `serde_yaml_ng`, which
+differ by design under the switch, and forces the feature per invocation: a
+dev-dependency would unify it into every `--all-targets` build and leave the
+default number path untested.
 
 **A gap [`nfr.md`](nfr.md) documents is characterized.** Excluding a known-lossy
 shape from a generator keeps the property honest, but on its own it leaves the

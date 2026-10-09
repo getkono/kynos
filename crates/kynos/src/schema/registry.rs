@@ -21,11 +21,9 @@ pub struct Registry {
 
     /// Which Rust type defined each component name.
     ///
-    /// Identity is [`std::any::type_name`], the only per-type key available
-    /// here: [`Schema`] carries no `'static` bound, so [`std::any::TypeId`] is
-    /// out of reach. It is what lets the same type resolve twice without being
-    /// described twice, and what makes a *second* type claiming the name
-    /// describe itself so the two bodies can be compared.
+    /// Identity is [`std::any::type_name`], since [`Schema`] carries no
+    /// `'static` bound for [`std::any::TypeId`]. It lets the same type resolve
+    /// twice without being described twice.
     origins: HashMap<String, &'static str>,
 
     /// The descents that have not finished, outermost first.
@@ -65,25 +63,19 @@ impl Registry {
 
     /// Returns a schema for `T`, registering it if it is named and new.
     ///
-    /// This is where naming happens, not in [`Schema::schema`]. A named type is
-    /// registered under [`Schema::name`] and the caller gets a `$ref`; an
-    /// anonymous one is inlined. Registration precedes the descent into `T`'s
-    /// own fields, which is what makes a self-referential type produce a `$ref`
-    /// rather than recurse forever.
+    /// A named type is registered under [`Schema::name`] and the caller gets a
+    /// `$ref`; an anonymous one is inlined. Registration precedes the descent
+    /// into `T`'s own fields, so a self-referential type produces a `$ref`.
     ///
     /// A name claimed by two structurally different types is recorded rather
-    /// than returned, because this method hands back a schema and a
-    /// [`Schema`] implementation has no way to fail; the router reports what
-    /// accumulated when it is built.
+    /// than returned; the router reports what accumulated when it is built.
     ///
     /// # Panics
     ///
     /// When an anonymous type reaches itself with no named type between: a
     /// hand implementation doing so, or generic derived types referring to one
-    /// another. Nothing can stand in for an inlined body still being built, so
-    /// its description has no end; the alternative is overflowing the stack.
-    /// `#[derive(Schema)]` refuses the direct case, a generic type naming
-    /// itself, at compile time.
+    /// another, whose description would have no end. `#[derive(Schema)]`
+    /// refuses the direct case, a generic type naming itself, at compile time.
     pub fn resolve<T: Schema>(&mut self) -> OpenApiSchema {
         let Some(name) = T::name() else {
             return self.inline::<T>();
@@ -93,9 +85,8 @@ impl Registry {
         let reference = OpenApiSchema::component(&key);
         let origin = std::any::type_name::<T>();
 
-        // Mid-descent into this very type: the body under this name is still
-        // being built, so the reference stands in for it. Short-circuiting
-        // here is what terminates a cycle.
+        // Mid-descent into this very type: the reference stands in for the
+        // body still being built, which terminates a cycle.
         if self
             .reserved
             .iter()
@@ -119,11 +110,8 @@ impl Registry {
             unreachable!("the reservation pushed above is the innermost one");
         };
 
-        // A different type reached a name another descent still holds -- a
-        // second `Item` from another module, or `Box<T>` inside `T`, which
-        // shares the name and not the `type_name`. Neither can be told apart
-        // until the holder's body exists, so the body is kept for it to be
-        // compared against then.
+        // A different type (another `Item`, or `Box<T>` inside `T`) reached a
+        // name another descent holds; keep the body to compare once it exists.
         if let Some(holder) = self
             .reserved
             .iter_mut()
@@ -200,11 +188,9 @@ impl Registry {
     /// name.
     ///
     /// Idempotent for the same scheme; a different scheme under one name is
-    /// recorded for [`scheme_conflicts`](Registry::scheme_conflicts) rather
-    /// than returned, because a
-    /// [`Describe`](crate::extract::describe::Describe) implementation cannot
-    /// fail. Keeping the first claim is what leaves every requirement naming it
-    /// resolvable while the conflict is reported.
+    /// recorded for [`scheme_conflicts`](Registry::scheme_conflicts), since
+    /// `Describe` cannot fail. Keeping the first claim leaves every requirement
+    /// naming it resolvable.
     pub(crate) fn declare_security_scheme(
         &mut self,
         name: ComponentName,
@@ -298,10 +284,8 @@ struct Reservation {
 
 /// Two different types claimed the same component name.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-// The remedy has to name something that exists. `#[derive(Schema)]` takes a
-// component name from the Rust type's identifier and offers no attribute to
-// override it, so advising one would send a reader looking for a key the
-// grammar rejects.
+// `#[derive(Schema)]` has no attribute overriding the component name, so the
+// remedy must not suggest one.
 #[error(
     "component name `{name}` is claimed by two structurally different schemas; \
      rename one of the Rust types, or implement `Schema` by hand for one and \

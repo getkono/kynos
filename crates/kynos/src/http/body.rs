@@ -1,8 +1,6 @@
 //! The request and response body.
 //!
-//! Opaque by design, and the one place the erased body type is named. A body is
-//! consumed through a typed extractor, so nothing above this file needs to know
-//! what it is erased into.
+//! Opaque by design: a body is consumed through a typed extractor.
 
 use std::{
     error::Error as StdError,
@@ -49,11 +47,8 @@ impl Body {
 
     /// A body that yields `arrived` and then fails with `error`.
     ///
-    /// What an interceptor that buffers a request body hands on when reading
-    /// it failed part-way: the extractor beneath sees the read fail after the
-    /// same bytes it would have seen with nothing buffering, and refuses it as
-    /// it would then. Rebuilding what arrived as a whole body would hand a
-    /// truncated payload to an extractor that parses nothing.
+    /// For a buffering interceptor whose read failed part-way, so the extractor
+    /// beneath sees the same failure rather than a truncated whole body.
     pub(crate) fn failed_after(arrived: Bytes, error: BoxError) -> Self {
         Self::from_body(FailedAfter {
             // No empty data frame: nothing arrived, so nothing is replayed.
@@ -63,10 +58,6 @@ impl Body {
     }
 
     /// A body whose bytes arrive as a stream.
-    ///
-    /// The one place a stream becomes a body, which is what keeps
-    /// [`response::stream`](crate::response::stream) clear of the body trait:
-    /// each module there frames its items into `Bytes` and hands them over.
     #[cfg(feature = "openapi32")]
     pub(crate) fn from_stream<S, E>(stream: S) -> Self
     where
@@ -83,16 +74,8 @@ impl Body {
         }
     }
 
-    /// A body that is another body, already erased.
-    ///
-    /// The one constructor an adapter needs: a body that wraps another -- a
-    /// compressing one, a counting one, a ranged one reading spans -- is still
-    /// a body, and this is how it becomes the erased kind without going through
-    /// bytes or a stream.
-    ///
-    /// Ungated: `response::range` is behind no feature and produces one, so a
-    /// `compression` gate here would make ranged delivery depend on an
-    /// unrelated flag.
+    /// Erases a wrapping body (compressing, counting, ranged). Ungated, since
+    /// `response::range` is.
     pub(crate) fn from_body<B>(body: B) -> Self
     where
         B: HttpBody<Data = Bytes, Error = BoxError> + Send + 'static,
@@ -104,9 +87,8 @@ impl Body {
 
     /// A body whose read fails with `error`, having yielded nothing.
     ///
-    /// What an interceptor that buffers a body hands on when reading it
-    /// failed: the failure reaches the connection driver, which aborts the
-    /// message rather than framing a short one as complete.
+    /// For a buffering interceptor whose read failed, so the connection driver
+    /// aborts the message rather than framing a short one as complete.
     #[cfg(any(feature = "cache", feature = "compression"))]
     pub(crate) fn failed(error: BoxError) -> Self {
         Self {
@@ -123,10 +105,7 @@ impl Body {
 
     /// Reports how this body ends, exactly once.
     ///
-    /// The report runs from whichever of the two ends comes first: the poll
-    /// that exhausts the body, or its drop. Exactly once and never zero times
-    /// is the whole property -- it is what makes the report usable as "did the
-    /// peer receive this", where a signal that can be missed is worse than none.
+    /// From whichever comes first: the poll that exhausts the body, or its drop.
     pub(crate) fn watching<F>(self, report: F) -> Self
     where
         F: FnOnce(Delivery) + Send + 'static,
@@ -155,17 +134,14 @@ pub(crate) enum Delivery {
     Complete,
     /// The body was dropped before its end.
     ///
-    /// Ordinarily a peer that went away mid-response. A stream that failed
-    /// part-way ends the same way and cannot be told apart from here, which is
-    /// the honest reading anyway: in both cases what was announced was not
-    /// delivered.
+    /// A peer that went away mid-response, or a stream that failed part-way.
     Interrupted,
 }
 
 /// A body that fails once and yields nothing else.
 ///
-/// Never reports its end, not even after the error: a body that failed was not
-/// delivered, and [`Watched`](watched::Watched) reads an ended body as a complete one.
+/// Never reports its end, or [`Watched`](watched::Watched) would read it as
+/// complete.
 #[cfg(any(feature = "cache", feature = "compression"))]
 struct Failed {
     error: Option<BoxError>,
@@ -186,8 +162,7 @@ impl HttpBody for Failed {
 
 /// A stream of chunks, seen as a body: one data frame per chunk.
 ///
-/// Boxed so that it can be polled without a projection: `Pin<Box<S>>` is
-/// `Unpin` whatever `S` is, and `unsafe` is forbidden here.
+/// Boxed so it is `Unpin` and needs no projection.
 #[cfg(feature = "openapi32")]
 struct Streamed<S> {
     chunks: Pin<Box<S>>,
@@ -241,8 +216,7 @@ impl HttpBody for FailedAfter {
         Poll::Ready(this.error.take().map(Err))
     }
 
-    // Never, not even once the error is taken: a body that failed was not
-    // delivered, and a `Watched` that finds it ended reports it as complete.
+    // Never, or a `Watched` would report the failed body as complete.
     fn is_end_stream(&self) -> bool {
         false
     }

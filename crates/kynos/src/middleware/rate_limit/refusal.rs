@@ -34,8 +34,7 @@ pub struct RateLimited<T = ()> {
     pub retry_after: Duration,
     /// The ceiling that was exceeded.
     pub limit: u64,
-    /// Carries `T` without storing one. `fn() -> T` rather than `T`, so a
-    /// refusal is `Send` and `Sync` whatever the marker is.
+    /// Carries `T`; `fn() -> T` keeps a refusal `Send` and `Sync`.
     problem_type: PhantomData<fn() -> T>,
 }
 
@@ -58,8 +57,7 @@ impl<T: ProblemType> IntoResponse for RateLimited<T> {
             .into_response();
         set_retry_after(&mut response, self.retry_after);
 
-        // The same three a success carries. A denial's reset *is* its retry
-        // delay, so reporting it lands no new obligation on the policy.
+        // A denial's reset is its retry delay.
         write_group(
             &mut response,
             &RateLimitHeaders {
@@ -145,10 +143,7 @@ impl<T: ProblemType> Responses for RateLimitedFields<T> {
 
 /// The 429's description, plus whichever header group produced it.
 ///
-/// The narrowing is [`refusal_response`]'s, so the type named here is a
-/// `const` in the declared schema rather than an example beside it — which is
-/// what makes a refusal contradicting its own declaration a conformance
-/// failure rather than a document nobody validates against.
+/// [`refusal_response`] makes the named type a `const` in the declared schema.
 fn described_refusal<T: ProblemType>(
     registry: &mut Registry,
     group: kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>>,
@@ -173,18 +168,13 @@ fn set_retry_after(response: &mut http::Response, retry_after: Duration) {
     }
 }
 
-/// Writes a group onto a short-circuit response.
-///
-/// Through the one writer, so a short circuit and a forwarded response spell a
-/// group the same way.
+/// Writes a group onto a short-circuit response, through the same writer a
+/// forwarded response uses.
 fn write_group<G: EncodeHeaders>(response: &mut http::Response, group: &G) {
     crate::extract::params::header::write(response.headers_mut(), group);
 }
 
-// The four derivable implementations, written out: `#[derive]` would bound each
-// on `T`, and the marker is a name rather than a value -- it is never cloned,
-// printed or compared, and requiring it to be would make naming a problem type
-// cost four derives on the application's own marker.
+// Written out because `#[derive]` would bound the phantom marker `T`.
 
 impl<T> Clone for RateLimited<T> {
     fn clone(&self) -> Self {
@@ -194,9 +184,7 @@ impl<T> Clone for RateLimited<T> {
 
 impl<T> fmt::Debug for RateLimited<T> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Destructured rather than read member by member: `new` and `clone`
-        // stop compiling when a field is added, and this makes the two that
-        // would otherwise ignore it stop too.
+        // Destructured here and in `eq`, so a new field is a compile error.
         let Self {
             retry_after,
             limit,

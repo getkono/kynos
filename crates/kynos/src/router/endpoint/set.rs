@@ -9,10 +9,8 @@ use crate::{
 
 /// A set of operations waiting to be mounted.
 ///
-/// What `routes![..]` produces, and what [`IntoEndpoints`] fills in. Opaque and
-/// append-only: the prefix, the panic policy and the interceptors belong to
-/// whatever is mounting, not to the endpoints, so there is nothing here for a
-/// caller to reach into.
+/// What [`IntoEndpoints`] fills in. Opaque and append-only: the prefix, the
+/// panic policy and the interceptors belong to whatever is mounting.
 pub struct Endpoints<C> {
     endpoints: Vec<Arc<dyn DynEndpoint<C>>>,
 }
@@ -67,10 +65,6 @@ impl<C> Endpoints<C> {
     }
 
     /// Hands the collected operations to whatever is mounting them.
-    ///
-    /// The counterpart of [`push`](Endpoints::push), and the only way out: a
-    /// router needs each operation individually so that it can apply a prefix,
-    /// a tag and an interceptor chain to it.
     pub(crate) fn into_inner(self) -> Vec<Arc<dyn DynEndpoint<C>>> {
         self.endpoints
     }
@@ -82,12 +76,9 @@ impl<C> Endpoints<C> {
 /// arrays and vectors of those — which is what lets `routes![a, b, c]` be one
 /// argument.
 ///
-/// There is deliberately no blanket implementation over [`Endpoint`]: it would
-/// conflict with every one of the container implementations, because a
-/// downstream crate may implement `Endpoint` for a tuple of its own types and
-/// coherence has to assume it will. A hand-written endpoint is mounted with one
-/// line — `sink.push(self)` — which is a small price for `routes!` working at
-/// all.
+/// There is no blanket implementation over [`Endpoint`], which would conflict
+/// with the container implementations; a hand-written endpoint implements this
+/// with one line, `sink.push(self)`.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not something a router can mount",
     label = "not mountable",
@@ -97,9 +88,8 @@ impl<C> Endpoints<C> {
 pub trait IntoEndpoints<C> {
     /// The interceptors these operations carry, as a type-level list.
     ///
-    /// `()` for anything already erased. `routes!` expands to a tuple rather
-    /// than a collection precisely so this survives to the mount site, where it
-    /// is checked against the router's own stack.
+    /// `()` for anything already erased. Checked at the mount site against the
+    /// router's own stack.
     type Stacks;
 
     /// Appends these operations to `sink`.
@@ -107,8 +97,7 @@ pub trait IntoEndpoints<C> {
 }
 
 impl<C> IntoEndpoints<C> for Endpoints<C> {
-    /// Already erased: an `Endpoints` cannot say what its members carry, which
-    /// is why `routes!` does not build one.
+    /// Already erased: an `Endpoints` cannot say what its members carry.
     type Stacks = ();
 
     fn into_endpoints(self, sink: &mut Endpoints<C>) {
@@ -153,9 +142,7 @@ macro_rules! tuple_endpoints {
         impl<C, $head: IntoEndpoints<C>, $($tail: IntoEndpoints<C>),+> IntoEndpoints<C>
             for ($head, $($tail,)+)
         {
-            // `Both` rather than a concatenation: two operations cannot collide
-            // with each other, because no request reaches both. Only each one
-            // against the router's own stack is worth checking.
+            // `Both`, not a concatenation: no request reaches two operations.
             type Stacks = Both<$head::Stacks, <($($tail,)+) as IntoEndpoints<C>>::Stacks>;
 
             #[allow(non_snake_case)]

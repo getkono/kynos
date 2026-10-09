@@ -1,8 +1,6 @@
 //! Which pairs of body representations may be offered as alternatives.
 //!
-//! The `#[cfg]` attributes stay at item level here, and cannot be lifted to a
-//! module declaration: each impl names two codecs, so a cross-codec pair such
-//! as JSON-or-form needs both features and no single gate covers a group.
+//! Gated per item: a cross-codec pair needs both codecs' features.
 
 use crate::extract::describe::RequestContent;
 
@@ -49,14 +47,8 @@ where
 {
 }
 
-// Text and raw bytes, which is the pair that needs no codec feature at all.
-//
-// Note what is *not* here: `Binary<A>` beside `Binary<B>`. Every other pair has
-// at least one side whose media type is fixed by the type, so an implementation
-// can be written per pair and reviewed; two `Binary`s are both chosen by a
-// marker, and `OneOf<Binary<Pdf>, Binary<Pdf>>` would satisfy any
-// implementation general enough to admit the useful case. A provable overlap is
-// not the same risk as a possible one.
+// No `Binary<A>`/`Binary<B>` pair: any impl admitting it would also admit
+// `OneOf<Binary<Pdf>, Binary<Pdf>>`.
 impl<M: MediaType> Alternative<Binary<M>> for Text {}
 impl<M: MediaType> Alternative<Text> for Binary<M> {}
 
@@ -126,10 +118,8 @@ impl<T: Schema, U: Schema> Alternative<Protobuf<U>> for MultipartForm<T> {}
 #[cfg(all(feature = "multipart", feature = "protobuf"))]
 impl<T: Schema, U: Schema> Alternative<MultipartForm<U>> for Protobuf<T> {}
 
-// The streamed JSON bodies. Each carries one media type fixed by its own type,
-// exactly as `Json<T>` does, so every pair below is provably disjoint -- and
-// the pair of them is disjoint too, because NDJSON and RFC 7464 are two
-// spellings a client chooses between rather than two names for one framing.
+// The streamed JSON bodies: each has a fixed media type, NDJSON and RFC 7464
+// distinct from each other.
 #[cfg(all(feature = "json", feature = "openapi32"))]
 impl<T: Schema> Alternative<Text> for JsonLines<Records<T>> {}
 #[cfg(all(feature = "json", feature = "openapi32"))]

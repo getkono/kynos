@@ -2,11 +2,8 @@
 //! [`ParamValue`](crate::schema::ParamValue) beside it for each scalar a
 //! parameter can carry.
 //!
-//! Private, and deliberately so: it declares no item, only implementations, so
-//! there is nothing here for a canonical path to point at. Which types get an
-//! implementation is public API all the same — a type that gains one later is
-//! additive, a type that loses one is not — so the set is chosen in
-//! [`schema`](crate::schema), where the rejections are documented beside it.
+//! Private, since it declares only implementations. Which types get one is
+//! still public API, documented in [`schema`](crate::schema).
 
 mod collection;
 mod net;
@@ -35,8 +32,8 @@ fn formatted(ty: SchemaType, format: &str) -> OpenApiSchema {
 
 /// Applies `edit` to a schema's keywords, promoting a boolean schema first.
 ///
-/// Every caller here builds its own schema, so the boolean case is unreachable
-/// in practice; handling it rather than asserting keeps the helper total.
+/// The boolean case is unreachable from callers here; handling it keeps the
+/// helper total.
 fn with_object(schema: OpenApiSchema, edit: impl FnOnce(&mut SchemaObject)) -> OpenApiSchema {
     let mut object = match schema {
         OpenApiSchema::Object(object) => object,
@@ -60,10 +57,8 @@ fn integer(format: &str, minimum: Option<f64>, maximum: Option<f64>) -> OpenApiS
 
 /// Reaching the helpers from the module's tests.
 ///
-/// A composite implementation reaches its members through
-/// [`Registry::resolve`](crate::schema::registry::Registry::resolve), so a test
-/// written against one asserts the registry's answer as much as the shape these
-/// produce. Exposing them keeps the two separable.
+/// Testing them directly keeps their shape separable from what
+/// [`Registry::resolve`](crate::schema::registry::Registry::resolve) answers.
 #[cfg(test)]
 pub(crate) mod testing {
     pub(crate) use super::wrapper::nullable;

@@ -18,9 +18,7 @@ use crate::{
 /// Supplies identifiers for requests that arrive without one.
 ///
 /// Kynos owns the header and the contribution; the identifier *format* stays
-/// the application's, because prescribing one would mean prescribing a UUID or
-/// trace-context dependency that most applications already have their own
-/// opinion about.
+/// the application's.
 pub trait RequestIdSource: Send + Sync + 'static {
     /// Produces an identifier for a request that carried none.
     fn next_id(&self) -> http::HeaderValue;
@@ -28,9 +26,8 @@ pub trait RequestIdSource: Send + Sync + 'static {
 
 /// A dependency-free source: a per-process counter.
 ///
-/// Unique within one process and no further. Enough to correlate a request
-/// across its own logs, which is what the default is for; reach for a real
-/// identifier scheme when correlation has to cross a process boundary.
+/// Unique within one process and no further; replace it when correlation has
+/// to cross a process boundary.
 #[derive(Debug, Default)]
 pub struct Counter {
     next: AtomicU64,
@@ -38,26 +35,18 @@ pub struct Counter {
 
 impl RequestIdSource for Counter {
     fn next_id(&self) -> http::HeaderValue {
-        // `Relaxed` is enough: what matters is that no two requests are handed
-        // the same number, and nothing else is ordered against this.
+        // Only uniqueness matters; nothing is ordered against this.
         let id = self.next.fetch_add(1, Ordering::Relaxed);
 
-        // Decimal digits are always a valid field value, so this conversion is
-        // total -- which is why the identifier is a number rather than
-        // something that would need a dependency to render.
         http::HeaderValue::from(id)
     }
 }
 
 /// A header group that can carry a correlation identifier.
 ///
-/// [`RequestId`] has to produce a value of the group it declares, and a header
-/// group is reached only through its own constructor. Decoding is not that
-/// constructor, and a correlation group has no decoder to be one:
-/// [`Adds`](crate::middleware::Interceptor::Adds) is by definition a group an
-/// interceptor only writes, so it implements `EncodeHeaders` and not
-/// `DecodeHeaders`. This is
-/// what supplies the value instead.
+/// [`RequestId`] builds the group it declares from an identifier through
+/// this, since an [`Adds`](crate::middleware::Interceptor::Adds) group need
+/// not implement `DecodeHeaders`.
 ///
 /// ```
 /// use kynos::{
@@ -95,9 +84,8 @@ pub trait CorrelationHeaders: EncodeHeaders {
 
 /// The header [`RequestId`] uses unless told otherwise.
 ///
-/// A [`HeaderParams`] group rather than a name in a field, because the
-/// description is built while the router is: `NAMES` is a `const`, and a name
-/// chosen at run time is a name no document could have printed.
+/// A [`HeaderParams`] group rather than a runtime name, so the description
+/// can print it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct XRequestId(
     /// The identifier carried by this request.
@@ -160,30 +148,23 @@ impl CorrelationHeaders for XRequestId {
     }
 }
 
-/// The schema of an identifier: a string, whatever minted it.
-///
-/// The format stays the application's, so nothing narrower than `string` can be
-/// claimed here without claiming something a replaced
-/// [`RequestIdSource`] would break.
+/// The schema of an identifier: a string, since a replaced
+/// [`RequestIdSource`] chooses the format.
 fn identifier_schema() -> kynos_openapi::Schema {
     kynos_openapi::Schema::of_type(kynos_openapi::model::schema::types::SchemaType::String)
 }
 
 /// Assigns each request an identifier and echoes it back.
 ///
-/// This is an interceptor because it adds a response header. Its contribution
-/// keeps that wire-visible behavior in every covered operation's description,
-/// and `H` is what makes the two the same fact: the header the description
-/// names is the header the response carries, because there is only one place
-/// the name is written.
+/// The header group `H` is both what every covered operation documents and
+/// what the response carries.
 pub struct RequestId<S = Counter, H = XRequestId> {
     source: S,
     trust_client: bool,
     _header: PhantomData<fn() -> H>,
 }
 
-// Hand-written for the reason `UncheckedInner`'s are: `PhantomData<fn() -> H>`
-// needs nothing of `H`, and the source is what actually decides these.
+// Hand-written so `H` needs no `Clone` bound.
 impl<S: Clone, H> Clone for RequestId<S, H> {
     fn clone(&self) -> Self {
         Self {
@@ -225,14 +206,11 @@ impl RequestId<Counter, XRequestId> {
 impl<S: RequestIdSource, H: HeaderParams> RequestId<S, H> {
     /// Uses a different header group.
     ///
-    /// Takes the group as a type parameter rather than a name, so that changing
-    /// the header changes what every covered operation declares. A group
-    /// naming more than one header sets and documents all of them.
+    /// Changing the group changes what every covered operation declares. A
+    /// group naming more than one header sets and documents all of them.
     ///
-    /// The group must be able to *be built from* an identifier, which is what
-    /// [`CorrelationHeaders`] says. `#[derive(HeaderParams)]` does not supply
-    /// it: a group is free to decide what carrying one identifier means for
-    /// the names it declares.
+    /// The group must implement [`CorrelationHeaders`], which
+    /// `#[derive(HeaderParams)]` does not supply.
     #[must_use]
     pub fn header<G: CorrelationHeaders>(self) -> RequestId<S, G> {
         RequestId {
@@ -244,9 +222,7 @@ impl<S: RequestIdSource, H: HeaderParams> RequestId<S, H> {
 
     /// Echoes a client-supplied identifier instead of always generating one.
     ///
-    /// Off by default. An inbound header is attacker-controlled, so letting it
-    /// into logs and downstream requests is a decision worth making explicitly
-    /// rather than a default worth inheriting.
+    /// Off by default, since an inbound header is attacker-controlled.
     #[must_use]
     pub fn trust_client(mut self, trust: bool) -> Self {
         self.trust_client = trust;
@@ -285,9 +261,7 @@ where
     ) -> Result<Continued<H>, Infallible> {
         let _ = (reads, context);
 
-        // An inbound identifier is attacker-controlled, so it is read only when
-        // the application asked for it. The first declared name wins: a group
-        // naming several carries one identifier under all of them.
+        // The first declared name wins: one identifier is carried under all.
         let inbound = if self.trust_client {
             H::NAMES
                 .iter()
@@ -298,14 +272,10 @@ where
 
         let id = inbound.unwrap_or_else(|| self.source.next_id());
 
-        // The group is built from the identifier rather than read back out of a
-        // header map: `Adds` is by definition a group an interceptor only adds,
-        // and `HeaderParams::decode` is optional for exactly those.
         let headers = H::from_id(id);
 
-        // Set on the request as well as the response, from the group's own
-        // encoding: a handler, an observer and the client then correlate on the
-        // same value under the same names, with one place deciding both.
+        // Set on the request too, so handler, observer and client correlate on
+        // one value under the same names.
         for (name, value) in headers.encode() {
             request.headers_mut().insert(name, value);
         }

@@ -1,17 +1,12 @@
 //! Reading `Accept-Encoding`.
 //!
-//! One place, because two parts of Kynos choose a content coding from the same
-//! field and must agree about what it says.
-//! [`Compression`](crate::middleware::compression) picks among the codings it
-//! can *produce*; [`assets`](crate::router::assets) picks among the codings it
-//! has *stored*. The question differs; RFC 9110 section 12.5.3's answer does
-//! not, and a second copy of the qvalue rules is a second place they can drift.
+//! Shared by [`Compression`](crate::middleware::compression) and
+//! [`assets`](crate::router::assets) so both read RFC 9110 section 12.5.3 alike.
 
 /// The deprecated spellings a recipient must treat as `token`.
 ///
-/// RFC 9110 sections 8.4.1.1 and 8.4.1.3: "A recipient SHOULD consider
-/// `x-compress` to be equivalent to `compress`" and the same for `x-gzip`.
-/// Only `gzip` has one among the codings Kynos names.
+/// RFC 9110 sections 8.4.1.1 and 8.4.1.3; only `gzip` has one among the
+/// codings Kynos names.
 fn aliases(token: &str) -> &'static [&'static str] {
     match token {
         "gzip" => &["x-gzip"],
@@ -21,27 +16,15 @@ fn aliases(token: &str) -> &'static [&'static str] {
 
 /// The quality `accept` assigns `token`, honouring `*`, in thousandths.
 ///
-/// A weight is `0..=1000`: RFC 9110 section 12.4.2 bounds a qvalue at three
-/// decimal places, so thousandths state every one exactly. A weight the
-/// grammar cannot express is `0`, a refusal. `None` when neither the token nor
-/// a wildcard appears, which is what distinguishes "not mentioned" from
-/// "mentioned and refused" — the difference between the two is the whole of
-/// `q=0`.
+/// `0..=1000` (RFC 9110 section 12.4.2). `None` when neither the token nor a
+/// wildcard appears, as distinct from `Some(0)`, refused.
 ///
-/// This reads the weight the field gives a coding, `identity` included; it does
-/// not say whether identity is acceptable, which is RFC 9110 section 12.5.3
-/// rule 2's question and [`identity_quality`]'s. The two differ where a weight
-/// is not a qvalue: `quality("identity;q=1.5", "identity")` and
-/// `quality("*;q=1.5", "identity")` are `Some(0)`, yet neither field states the
-/// `identity;q=0` or `*;q=0` that excludes identity, so `identity_quality`
-/// reads both as 1000. They differ where the field is silent too: `None` here,
-/// 1000 there.
+/// Whether identity is acceptable is [`identity_quality`]'s question, which
+/// reads a malformed or absent weight differently.
 #[must_use]
 pub(crate) fn quality(accept: &str, token: &str) -> Option<u16> {
-    // A malformed weight is a refusal rather than a default: a client that
-    // wrote something RFC 9110 section 12.4.2 cannot express did not ask for
-    // this coding. That includes a value above 1, which read literally would
-    // let `gzip;q=1.5` outrank a legitimate `q=1`.
+    // A malformed weight (including `q=1.5`) refuses rather than outranking
+    // a legitimate `q=1`.
     weight(accept, token).map(|weight| match weight {
         Weight::Qvalue(thousandths) => thousandths,
         Weight::Malformed => 0,
@@ -52,8 +35,7 @@ pub(crate) fn quality(accept: &str, token: &str) -> Option<u16> {
 enum Weight {
     /// A qvalue, in thousandths.
     Qvalue(u16),
-    /// Something RFC 9110 section 12.4.2 cannot express, which each caller
-    /// reads by its own rule.
+    /// Not a qvalue; each caller reads it by its own rule.
     Malformed,
 }
 
@@ -95,17 +77,11 @@ fn weight(accept: &str, token: &str) -> Option<Weight> {
 
 /// The acceptable coding `available` offers that the client prefers most.
 ///
-/// `None` means send the identity representation — either because nothing
-/// encoded was acceptable, or because the client preferred identity to
-/// everything on offer. A caller that must distinguish "identity is fine" from
-/// "identity was refused too" reads [`identity_quality`] as well; the asset
-/// server does not, because it always holds the identity octets and a stored
-/// representation is never the only one it can send.
+/// `None` means send identity; whether identity was itself refused is
+/// [`identity_quality`]'s to say.
 ///
-/// Ties go to the encoded coding, which is what makes a plain
-/// `Accept-Encoding: gzip` mean what everybody writes it to mean. Among encoded
-/// codings a tie goes to the earlier entry in `available`, so a caller states
-/// its own preference by ordering that list.
+/// A tie with identity goes to the encoded coding; among encoded codings, to
+/// the earlier entry in `available`.
 #[must_use]
 #[cfg_attr(
     not(any(test, feature = "assets")),
@@ -132,13 +108,8 @@ pub(crate) fn preferred<'a>(accept: &str, available: &[&'a str]) -> Option<&'a s
 
 /// What the client thinks of the unencoded representation, in thousandths.
 ///
-/// RFC 9110 section 12.5.3 rule 2: identity "is acceptable by default unless
-/// specifically excluded by the Accept-Encoding header field stating either
-/// `identity;q=0` or `*;q=0` without a more specific entry for `identity`".
-/// Both spellings read as `0`. A weight that is not a qvalue, such as
-/// `identity;q=1.5` or `*;q=1.5`, states neither, so it leaves identity at its
-/// default of 1000 — even though the same wildcard refuses every coding it
-/// speaks for.
+/// RFC 9110 section 12.5.3 rule 2: acceptable unless `identity;q=0` or `*;q=0`
+/// excludes it. A malformed weight states neither, so leaves the default 1000.
 #[must_use]
 pub(crate) fn identity_quality(accept: &str) -> u16 {
     match weight(accept, "identity") {

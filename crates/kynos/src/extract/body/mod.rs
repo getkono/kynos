@@ -1,14 +1,8 @@
 //! Inputs that consume the request body, each describing itself as an OpenAPI
 //! Request Body Object.
 //!
-//! One module per codec. Adding a codec is a new file, one `pub mod` line here
-//! gated on its feature, and its entries in [`alternative`] — rather than a new
-//! `#[cfg]` threaded through a shared file at every impl site.
-//!
-//! [`OneOf`] and `Option<T>` are the two combinators over those codecs, and
-//! live here because they are generic over any [`RequestContent`]. [`limit`]
-//! is the one thing every buffering codec shares beyond media types: how much
-//! of a body it will hold.
+//! One module per codec, each gated on its feature. [`OneOf`] and `Option<T>`
+//! combine them; [`limit`] bounds how much of a body a buffering codec holds.
 
 pub mod alternative;
 pub mod binary;
@@ -50,8 +44,8 @@ use crate::{
 
 /// The media type a request declares, split from its parameters.
 ///
-/// `None` when the header is absent or is not text a media type can be read out
-/// of, which every codec here treats the way it treats an unacceptable one.
+/// `None` when the header is absent or not text, which codecs treat as
+/// unacceptable.
 fn content_type(headers: &HeaderMap) -> Option<(&str, &str)> {
     let value = headers.get(header::CONTENT_TYPE)?.to_str().ok()?;
     let (media_type, parameters) = value.split_once(';').unwrap_or((value, ""));
@@ -60,17 +54,15 @@ fn content_type(headers: &HeaderMap) -> Option<(&str, &str)> {
 
 /// The parameters each codec reads beyond `charset`, keyed by its media type.
 ///
-/// A codec absent here reads none. The table is what lets a `OneOf` select a
-/// side by the same rule that side decodes by, since all it holds of a side is
-/// that side's media types.
+/// A codec absent here reads none. A table, so `OneOf` selects a side by the
+/// same rule that side decodes by.
 const CODEC_PARAMETERS: &[(&str, &[&str])] = &[
     #[cfg(feature = "multipart")]
     (multipart::MEDIA_TYPE, multipart::PARAMETERS),
 ];
 
-/// One `name=value` parameter, its name trimmed and its value unquoted.
-///
-/// `None` for a parameter with no `=`, which names nothing a codec can read.
+/// One `name=value` parameter, its name trimmed and its value unquoted; `None`
+/// without `=`.
 fn parameter(parameter: &str) -> Option<(&str, &str)> {
     let (name, value) = parameter.split_once('=')?;
     Some((name.trim(), value.trim().trim_matches('"')))
@@ -78,14 +70,9 @@ fn parameter(parameter: &str) -> Option<(&str, &str)> {
 
 /// Whether the parameters trailing `media_type` are ones its codec accepts.
 ///
-/// Every codec accepts none at all, or `charset=utf-8`: Kynos decodes every
-/// text format as UTF-8, so another charset names something it would misread
-/// rather than something it can decline to notice. Beyond that, a codec
-/// accepts the parameters [`CODEC_PARAMETERS`] lists for it, with any value,
-/// because it reads them itself, and the parameters its declared media type
-/// spells out in `declared`, with exactly the declared value, because those
-/// are what its description advertises. Any other parameter is a media type
-/// no [`media_types`](RequestContent::media_types) claims.
+/// Accepted: `charset=utf-8` (every text format is decoded as UTF-8), the
+/// parameters [`CODEC_PARAMETERS`] lists with any value, and those `declared`
+/// spells out with exactly the declared value. Anything else is refused.
 fn parameters_are_acceptable(media_type: &str, declared: &str, parameters: &str) -> bool {
     let read = CODEC_PARAMETERS
         .iter()
@@ -110,15 +97,9 @@ fn parameters_are_acceptable(media_type: &str, declared: &str, parameters: &str)
 
 /// Whether the request offers `media_type`, compared by type and subtype.
 ///
-/// Parameters on either side are not part of the comparison: a marker such as
-/// [`Html`](crate::http::media::Html) spells its charset into its constant, and
-/// a multipart request always carries a `boundary`. The request's parameters
-/// are then held to what the codec accepts, which includes those the declared
-/// media type spells out, though the request need not repeat them.
-///
-/// The comparison is on the media type itself, never on a structured suffix: an
-/// operation accepts what its description claims, and `application/vnd.x+json`
-/// is not `application/json`.
+/// Parameters are then held to [`parameters_are_acceptable`]; the request need
+/// not repeat declared ones. A structured suffix never matches:
+/// `application/vnd.x+json` is not `application/json`.
 pub(crate) fn offers(headers: &HeaderMap, media_type: &str) -> bool {
     let (essence, declared) = media_type.split_once(';').unwrap_or((media_type, ""));
     let essence = essence.trim();
@@ -148,9 +129,8 @@ fn unsupported_media_type(headers: &HeaderMap) -> BodyRejection {
 /// Enforces `media_type`, then reads the whole body into memory, up to the
 /// operation's [limit](limit::DEFAULT_LIMIT).
 ///
-/// This is the first half of every codec in this module. Enforcing the content
-/// type first is what keeps an operation from accepting one its description
-/// never claimed, and only then is a byte of the body read.
+/// The first half of every buffering codec; no byte is read before the content
+/// type is enforced.
 async fn read_body(request: Request, media_type: &str) -> Result<Bytes, BodyRejection> {
     if !offers(request.headers(), media_type) {
         return Err(unsupported_media_type(request.headers()));
@@ -162,12 +142,7 @@ async fn read_body(request: Request, media_type: &str) -> Result<Bytes, BodyReje
 }
 
 /// Holds a decoded body, or the record of one sitting at `at`, to the bounds
-/// its schema declares, which is the second half of every codec here that
-/// decodes a [`Schema`] type.
-///
-/// A broken bound is a 422 keyed by where it was broken, the same rejection
-/// serde's own type mismatches are, since both are well-formed input that
-/// does not fit the declared schema.
+/// its [`Schema`] declares: a broken bound is a 422 keyed by where it broke.
 #[cfg(any(feature = "json", feature = "form", feature = "multipart"))]
 fn checked<T: Schema>(value: T, at: Pointer<'_>) -> Result<T, BodyRejection> {
     let mut violations = Violations::new();
@@ -220,10 +195,8 @@ fn checked<T: Schema>(value: T, at: Pointer<'_>) -> Result<T, BodyRejection> {
 /// body::<OneOf<Text, Text>>();
 /// ```
 ///
-/// Two [`Binary`](binary::Binary)s are refused for the same reason, even when
-/// the markers differ. Both media types come from a marker, so nothing at the
-/// implementation site can tell this pair from `Binary<Pdf>` beside itself —
-/// unlike the pair above, where one side's media type is fixed by its type:
+/// Two [`Binary`](binary::Binary)s are refused even when the markers differ,
+/// since the implementation cannot tell them from `Binary<Pdf>` beside itself:
 ///
 /// ```compile_fail
 /// use kynos::{extract::body::{OneOf, binary::Binary}, http::media::{Pdf, Png}};
@@ -232,9 +205,7 @@ fn checked<T: Schema>(value: T, at: Pointer<'_>) -> Result<T, BodyRejection> {
 /// body::<OneOf<Binary<Pdf>, Binary<Png>>>();
 /// ```
 ///
-/// Two streamed JSON bodies are the same overlap seen once more: the item type
-/// differs and the media type does not, so nothing but dispatch order could
-/// choose between them.
+/// Nor are two streamed JSON bodies, whose media type is the same:
 ///
 /// ```compile_fail
 /// use kynos::extract::body::{OneOf, json_lines::{JsonLines, records::Records}};
@@ -252,12 +223,10 @@ pub enum OneOf<L, R> {
 
 /// An optional body is absent when the request declares no `Content-Type`.
 ///
-/// That is the whole rule, and it is decided from the head alone. A request
-/// that names no media type is stating it sent no representation; one that
-/// names a media type is answered by `T` exactly as if the `Option` were not
-/// there, so an unsupported type is still 415 and an empty JSON body is still
-/// 400. Emptiness is deliberately not the test: an empty [`Text`](text::Text)
-/// body is the empty string, and `Option` must not swallow it.
+/// A request that names a media type is answered by `T` exactly as if the
+/// `Option` were not there, so an unsupported type is still 415 and an empty
+/// JSON body is still 400. Emptiness is not the test: an empty
+/// [`Text`](text::Text) body is the empty string.
 impl<C, T> FromRequest<C> for Option<T>
 where
     C: Sync,
@@ -290,9 +259,8 @@ where
     type Rejection = BodyRejection;
 
     async fn from_request(request: Request, context: &C) -> Result<Self, Self::Rejection> {
-        // The alternative is chosen before either side reads a byte, so a
-        // malformed representation still fails as that representation rather
-        // than falling through to the other one.
+        // Chosen from the head, so a malformed body fails as its own
+        // representation rather than falling through.
         if offers_any(request.headers(), &L::media_types()) {
             L::from_request(request, context).await.map(Self::Left)
         } else if offers_any(request.headers(), &R::media_types()) {

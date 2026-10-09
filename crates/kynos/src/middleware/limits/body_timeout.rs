@@ -15,12 +15,9 @@ use crate::{
 
 /// The error a body bounded by [`BodyTimeout`] ends with.
 ///
-/// Reaches a client as a truncated response and nothing else: the status and
-/// the headers left before the timer did, so there is no status left to send.
+/// Reaches a client as a truncated response, since the head has already left.
 /// It is an error rather than a clean end so that the protocol driver resets
-/// the stream instead of framing the truncation as a complete body — a
-/// consumer that reads a length or a terminating chunk has to be able to tell
-/// the two apart.
+/// the stream instead of framing the truncation as a complete body.
 ///
 /// A caller reads it back out of [`Body::Error`](http_body::Body::Error) by
 /// downcasting the boxed error.
@@ -52,28 +49,18 @@ impl std::error::Error for BodyTimedOut {}
 /// Caps how long a response body may take.
 ///
 /// Declares no status, and cannot: by the time a body is streaming, the status
-/// and the headers have already left. What this bounds is the part of a
-/// response [`Timeout`](super::timeout::Timeout) cannot see.
-///
-/// # Why `Timeout` does not already cover this
-///
-/// `Timeout` wraps the chain's future, and that future completes when the
-/// *head* is ready. A handler returning a stream — Server-Sent Events, JSON
-/// Lines, a large body read from elsewhere — returns immediately and then
-/// emits for as long as it likes. Its timer has already stopped by then, so a
-/// handler that never finishes streaming is bounded by nothing.
+/// and the headers have already left. [`Timeout`](super::timeout::Timeout)
+/// stops once the head is ready, so a streamed body (Server-Sent Events, JSON
+/// Lines) is bounded only by this.
 ///
 /// # Idle, or a deadline
 ///
 /// [`idle`](BodyTimeout::idle) restarts the clock on every frame, so it bounds
-/// the *gap* between frames and catches a peer or an upstream that stopped
-/// producing. [`deadline`](BodyTimeout::deadline) never restarts it, so it
-/// bounds the total time a body may take however steadily it arrives.
+/// the *gap* between frames. [`deadline`](BodyTimeout::deadline) never restarts
+/// it, so it bounds the total time a body may take.
 ///
-/// Idle is the one to reach for by default. A deadline over a long-lived
-/// stream ends a healthy response for being long, which is rarely what an
-/// operator means; it earns its place over a body with a bounded size, where
-/// exceeding a wall-clock budget really is a fault.
+/// Idle is the default choice: a deadline ends a healthy long-lived stream, and
+/// suits a body of bounded size.
 ///
 /// # Where it sits around a buffering interceptor
 ///
@@ -93,17 +80,13 @@ impl std::error::Error for BodyTimedOut {}
 /// - `Timeout` outside the interceptor bounds the chain's future, which is
 ///   where the buffered read runs, so it bounds that read too.
 ///
-/// Nothing checks the placement: `CompatibleWith` compares sets, and a set has
-/// no positions.
+/// Nothing checks the placement.
 ///
 /// # Server-Sent Events reset an idle timer
 ///
-/// A keep-alive is a real frame, so it restarts an idle clock exactly as an
-/// event does. An event stream with keep-alive enabled and an interval shorter
-/// than `limit` therefore never trips one, which is the intended reading — the
-/// connection is demonstrably alive — but it does mean `idle` bounds the
-/// transport rather than the application there. Use `deadline` to bound how
-/// long such a stream may run at all.
+/// A keep-alive is a real frame, so an event stream whose keep-alive interval
+/// is shorter than `limit` never trips `idle`. Use `deadline` to bound how long
+/// such a stream may run at all.
 #[derive(Clone, Copy, Debug)]
 pub struct BodyTimeout {
     /// The maximum gap, or the maximum total, depending on `reset_each_frame`.
@@ -135,9 +118,7 @@ impl BodyTimeout {
 impl<C: Sync + 'static> Interceptor<C> for BodyTimeout {
     type Reads = ();
     type Adds = ();
-    // No status: the head is already gone when this fires, so there is nothing
-    // for an operation to describe and nothing for `statuses_disjoint` to
-    // collide with.
+    // No status: the head is already gone when this fires.
     type Short = std::convert::Infallible;
 
     async fn intercept(
@@ -166,18 +147,14 @@ impl<C: Sync + 'static> Interceptor<C> for BodyTimeout {
 
 /// A body that ends if its timer does first.
 ///
-/// The timer is boxed so this needs no projection: `Pin<Box<Sleep>>` is
-/// [`Unpin`] whatever `Sleep` is, and `unsafe` is forbidden here. That is the
-/// same reason the streamed body boxes its stream.
+/// The timer is boxed so this is [`Unpin`] and needs no projection.
 struct Bounded {
     inner: http::body::Body,
     timer: Pin<Box<tokio::time::Sleep>>,
     limit: Duration,
     /// Whether a frame restarts the clock.
     reset_each_frame: bool,
-    /// Set once the timer has fired, so the error is yielded exactly once and
-    /// a driver that polls again gets the end of the body rather than a second
-    /// copy of it.
+    /// Set once the timer has fired, so the error is yielded exactly once.
     spent: bool,
 }
 
@@ -196,27 +173,18 @@ impl http_body::Body for Bounded {
         }
 
         // A body that has already ended was delivered, whatever the clock says.
-        // Without this a deadline landing in the window between the last frame
-        // and the poll that observes the end would reset a complete response.
         if this.inner.is_end_stream() {
             return Poll::Ready(None);
         }
 
         if this.reset_each_frame {
-            // The inner body first, and the timer only when it has nothing.
-            //
-            // An idle limit bounds the *producer*, and the gap this timer
-            // measures is between polls rather than between frames. A driver
-            // that stops asking -- an HTTP/1 write buffer that is full, an
-            // HTTP/2 window that is closed, a saturated executor -- stretches
-            // the first without the second moving at all, so consulting the
-            // clock first would end a body that had a frame ready and report a
-            // slow reader as a stalled writer.
+            // The inner body first: an idle limit bounds the producer, and a
+            // slow reader stretches the gap between polls without the producer
+            // stalling.
             let polled = Pin::new(&mut this.inner).poll_frame(context);
 
             if matches!(polled, Poll::Ready(Some(Ok(_)))) {
-                // `checked_add` because `Instant + Duration` panics where
-                // `sleep` saturates, and the limit is the caller's number.
+                // `Instant + Duration` panics where `sleep` saturates.
                 if let Some(next) = tokio::time::Instant::now().checked_add(this.limit) {
                     this.timer.as_mut().reset(next);
                 }
@@ -232,8 +200,7 @@ impl http_body::Body for Bounded {
             return polled;
         }
 
-        // A deadline is consulted first, because a body still producing
-        // steadily is exactly the case it exists to end.
+        // A deadline goes first: a steadily producing body is what it ends.
         if this.timer.as_mut().poll(context).is_ready() {
             this.spent = true;
             return Poll::Ready(Some(Err(Box::new(BodyTimedOut { after: this.limit }))));
@@ -242,20 +209,14 @@ impl http_body::Body for Bounded {
         Pin::new(&mut this.inner).poll_frame(context)
     }
 
-    // Deliberately *not* `self.spent || ..`. A body this timer destroyed did
-    // not end, and saying otherwise is not a cosmetic difference: `Watched`
-    // decides `Delivery::Complete` against `Interrupted` by asking exactly this
-    // question when it is dropped, so a `true` here would report a killed
-    // response as delivered and `Observer::on_disconnect` would never fire for
-    // the one event this interceptor exists to produce.
+    // Not `self.spent || ..`: `Watched` reads this to tell `Complete` from
+    // `Interrupted`, and a timed-out body did not complete.
     fn is_end_stream(&self) -> bool {
         self.inner.is_end_stream()
     }
 
     fn size_hint(&self) -> http_body::SizeHint {
-        // The inner hint stands: a body that may be cut short still declares
-        // what it would have sent, and a driver that trusted a shorter hint
-        // would frame the truncation as a complete body.
+        // The inner hint stands, so a truncation is never framed as complete.
         self.inner.size_hint()
     }
 }

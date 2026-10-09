@@ -1,14 +1,7 @@
 //! Decoding base64, for the one credential whose wire form needs it.
 //!
-//! Private, and decode-only. HTTP basic authentication is the only thing in
-//! Kynos that meets base64, it only ever reads, and RFC 7617 fixes exactly one
-//! alphabet — so what a dependency would buy here is an encoder nothing calls,
-//! a URL-safe alphabet nothing sends, and a streaming interface for a string
-//! that is already in memory.
-//!
-//! `docs/architecture.md` records the refusal: a new dependency arrives
-//! feature-gated and additive, and basic authentication is in the default
-//! build, so `base64` could not have been gated.
+//! Private and decode-only: RFC 7617 fixes one alphabet. `docs/security.md`
+//! says why `base64` is not a dependency.
 
 /// The value of one alphabet character, per RFC 4648 section 4.
 const fn sextet(byte: u8) -> Option<u8> {
@@ -28,10 +21,8 @@ const fn sextet(byte: u8) -> Option<u8> {
 /// four, a character outside the alphabet, padding anywhere but the end, more
 /// than two padding characters, or bits set past the end of the last byte.
 ///
-/// Strict on every count, deliberately. A lenient decoder accepts several
-/// encodings of one credential, and a credential with more than one spelling is
-/// one an allow-list can be walked past. Whitespace is refused for the same
-/// reason: RFC 7617 does not permit it inside the token.
+/// Strict, so a credential has one spelling an allow-list cannot be walked
+/// past; whitespace is refused too, as RFC 7617 does not permit it.
 pub(super) fn decode(input: &str) -> Option<Vec<u8>> {
     let bytes = input.as_bytes();
     if bytes.is_empty() {
@@ -63,9 +54,8 @@ pub(super) fn decode(input: &str) -> Option<Vec<u8>> {
             held += 6;
         }
 
-        // The bits a partial group leaves over belong to no byte, and RFC 4648
-        // section 3.5 requires them to be zero. A decoder that ignored them
-        // would give one credential several spellings.
+        // RFC 4648 section 3.5: leftover bits must be zero, or one credential
+        // would have several spellings.
         let whole = held / 8;
         let leftover = held % 8;
         if leftover != 0 && accumulated & ((1 << leftover) - 1) != 0 {

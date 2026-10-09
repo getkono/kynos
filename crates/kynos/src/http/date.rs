@@ -1,28 +1,9 @@
 //! HTTP dates, rendered and read.
 //!
-//! RFC 9110 section 5.6.7. A sender writes IMF-fixdate and nothing else; a
-//! recipient "MUST accept all three HTTP-date formats", which is why the two
-//! obsolete ones are parsed here and never produced.
-//!
-//! # Why this is code rather than a dependency
-//!
-//! [`architecture.md`](https://github.com/getkono/kynos/blob/master/docs/architecture.md) refuses an HTTP-date
-//! *crate*, and still does. What it refuses is a database that only sampling
-//! can verify; an HTTP-date is a fixed-width grammar with a closed set of
-//! month and day names, which is the shape this project writes down and tests
-//! as a table.
-//!
-//! The refusal's other half was conditional: "sending a date obliges honouring
-//! a request that carries one back. Sending neither half is consistent; sending
-//! one is not." Both halves are here.
-//!
-//! # What a date is not
-//!
-//! A validator to prefer. RFC 9110 section 8.8.2 gives `Last-Modified` one-second
-//! resolution, so a representation that changes twice within a second is
-//! indistinguishable from one that changed once — which is why section 13.1.3
-//! ranks `If-None-Match` above `If-Modified-Since`, and why a strong entity tag
-//! remains what Kynos reaches for first.
+//! RFC 9110 section 5.6.7: IMF-fixdate is the only format produced; all three
+//! are parsed. Hand-written, since `docs/architecture.md` refuses an HTTP-date
+//! crate. A date's one-second resolution makes it a weaker validator than a
+//! strong entity tag (sections 8.8.2, 13.1.3).
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -47,9 +28,7 @@ const MONTHS: [&str; 12] = [
 
 /// Renders `time` as an IMF-fixdate.
 ///
-/// `Sun, 06 Nov 1994 08:49:37 GMT` — the one format section 5.6.7 allows a
-/// sender to produce. `None` for a time before the epoch, which no filesystem
-/// this serves reports and which has no representation in the grammar anyway.
+/// `Sun, 06 Nov 1994 08:49:37 GMT`; `None` for a time before the epoch.
 #[must_use]
 pub(crate) fn format(time: SystemTime) -> Option<String> {
     let seconds = time.duration_since(UNIX_EPOCH).ok()?.as_secs();
@@ -73,10 +52,8 @@ pub(crate) fn format(time: SystemTime) -> Option<String> {
 
 /// Reads any of the three formats section 5.6.7 names.
 ///
-/// `None` for anything else, which a recipient treats as no condition at all
-/// rather than as a failure: section 13.1.3 says an `If-Modified-Since` whose
-/// value "is not a valid HTTP-date" must be ignored, and a 400 for one would
-/// refuse a request the specification says to serve.
+/// `None` for anything else, which callers ignore rather than refuse (section
+/// 13.1.3).
 #[must_use]
 pub(crate) fn parse(value: &str) -> Option<SystemTime> {
     let value = value.trim();
@@ -117,11 +94,8 @@ fn rfc850(value: &str) -> Option<u64> {
     let rest = rest.strip_prefix('-')?;
     let (year, rest) = (rest.get(..2)?, rest.get(2..)?);
 
-    // Section 5.6.7: a recipient of a two-digit year "that appears to be more
-    // than 50 years in the future" reads it as the past century. Anchored on
-    // the format's own era rather than on today's clock, so the same input
-    // always parses to the same instant -- a sliding window would make this
-    // function's result depend on when it ran.
+    // Section 5.6.7's two-digit year rule, anchored on a fixed pivot rather
+    // than today's clock so parsing is deterministic.
     let year = digits(year, 2)?;
     let year = if year >= 70 { 1900 + year } else { 2000 + year };
 
@@ -140,8 +114,7 @@ fn asctime(value: &str) -> Option<u64> {
         .strip_prefix(' ')?;
     let (month, rest) = (rest.get(..3)?, rest.get(3..)?);
     let rest = rest.strip_prefix(' ')?;
-    // The day is `( 2DIGIT / ( SP DIGIT ) )`: space-padded rather than
-    // zero-padded in this form alone, and only ever padded on the left.
+    // The day is `( 2DIGIT / ( SP DIGIT ) )`: space-padded in this form alone.
     let (day, rest) = (rest.get(..2)?, rest.get(2..)?);
     let day = match day.strip_prefix(' ') {
         Some(digit) => digits(digit, 1)?,
@@ -150,8 +123,7 @@ fn asctime(value: &str) -> Option<u64> {
     let rest = rest.strip_prefix(' ')?;
     let (time, year) = (rest.get(..8)?, rest.get(8..)?.strip_prefix(' ')?);
 
-    // The one form with no zone: section 5.6.7's asctime "is assumed to be
-    // UTC", which is what the other two say outright.
+    // No zone: section 5.6.7's asctime "is assumed to be UTC".
     let midnight = midnight(
         digits(year, 4)?,
         month_number(month)?,
@@ -162,9 +134,7 @@ fn asctime(value: &str) -> Option<u64> {
 
 /// The value of `text` where it is exactly `width` ASCII digits.
 ///
-/// Every numeral in section 5.6.7 is a fixed count of `DIGIT`, and
-/// [`str::parse`] bounds neither the count nor the sign: it reads `+6` as a
-/// day and the whole of `19944` as a year IMF-fixdate cannot spell.
+/// [`str::parse`] alone would accept a sign (`+6`) or extra digits (`19944`).
 fn digits(text: &str, width: usize) -> Option<u16> {
     (text.len() == width && text.bytes().all(|byte| byte.is_ascii_digit()))
         .then(|| text.parse().ok())
@@ -186,10 +156,7 @@ fn month_number(name: &str) -> Option<u8> {
 
 /// Seconds since the epoch for a civil date and a `HH:MM:SS GMT` remainder.
 ///
-/// The zone is required rather than tolerated. Both formats that reach here
-/// spell it in their grammar, and accepting a value without it would read
-/// `Sun, 06 Nov 1994 08:49:37` — which is not an HTTP-date in any of the three
-/// forms — as though it were one.
+/// The zone is required: both formats reaching here spell it.
 fn zoned(year: u16, month: u8, day: u8, time: &str) -> Option<u64> {
     let time = time.strip_suffix(" GMT")?;
     midnight(year, month, day)?.checked_add(time_of_day(time)?)
@@ -207,17 +174,13 @@ fn time_of_day(time: &str) -> Option<u64> {
     let minutes = u64::from(digits(parts.next()?, 2)?);
     let seconds = u64::from(digits(parts.next()?, 2)?);
 
-    // A leap second is 60, which the grammar permits and which collapses onto
-    // the following minute rather than being refused.
+    // A leap second (60) is permitted and collapses onto the next minute.
     (parts.next().is_none() && hours < 24 && minutes < 60 && seconds <= 60)
         .then_some(hours * 3600 + minutes * 60 + seconds)
 }
 
-/// Days from 1970-01-01 to a civil date, by Howard Hinnant's algorithm.
-///
-/// Chosen because it is branch-free over the proleptic Gregorian calendar and
-/// its inverse below is exact, which is what makes the round-trip property in
-/// `tests.rs` worth asserting.
+/// Days from 1970-01-01 to a civil date, by Howard Hinnant's algorithm, whose
+/// inverse below is exact.
 fn days_from_civil(year: u16, month: u8, day: u8) -> Option<i64> {
     if !(1..=12).contains(&month) || day == 0 || day > days_in_month(year, month) {
         return None;

@@ -24,8 +24,7 @@ use crate::{
 pub struct BodySizeExceeded<T = ()> {
     /// The maximum body size, in bytes.
     pub limit: u64,
-    /// Carries `T` without storing one. `fn() -> T` rather than `T`, so a
-    /// refusal is `Send` and `Sync` whatever the marker is.
+    /// Carries `T` without storing one; `fn() -> T` keeps it `Send` and `Sync`.
     problem_type: PhantomData<fn() -> T>,
 }
 
@@ -67,9 +66,8 @@ impl<T: ProblemType> Responses for BodySizeExceeded<T> {
 
 /// Caps the size of a request body.
 ///
-/// Contributes 413 to every covered operation — which is the point.
-/// Configuring a limit and documenting that the limit exists are the same
-/// action, so an API cannot quietly reject payloads it claims to accept.
+/// Contributes 413 to every covered operation, so configuring a limit also
+/// documents it.
 ///
 /// # Replacing the default
 ///
@@ -88,18 +86,9 @@ impl<T: ProblemType> Responses for BodySizeExceeded<T> {
 /// [`Records`](crate::extract::body::json_lines::records::Records) still receives it a
 /// frame at a time. A chunked request declares no length, so the running count
 /// is the only bound there is and the whole body is materialised here before
-/// the handler is entered. Records then still arrive one at a time, but the
-/// memory the streaming was for has already been spent.
-///
-/// That follows from what the declared 413 promises, not from what [`Body`] can
-/// be built from. A count that runs while the handler reads reaches its verdict
-/// only after the handler has acted on the bytes it was given, so streaming
-/// here would not restore the cap — it would move the refusal behind whatever
-/// an oversized payload had already caused. The alternatives are a 413 sent
-/// after those side effects, or a 411 refusing every length-less body and with
-/// it every chunked upload; both are worse trades than the buffer.
-/// `docs/nfr.md` records the same conclusion, and there is no missing
-/// constructor to write.
+/// the handler is entered, so the 413 precedes any side effect of the payload.
+/// Records then still arrive one at a time, but the memory the streaming was
+/// for has already been spent.
 ///
 /// # Naming what the 413 is
 ///
@@ -115,10 +104,6 @@ pub struct BodySize<T = ()> {
 
 impl BodySize<()> {
     /// Caps bodies at `bytes`.
-    ///
-    /// Declared on the concrete type rather than on the generic one so that
-    /// this still infers without a turbofish: a default type parameter does not
-    /// participate in inference from an associated function.
     #[must_use]
     pub fn new(bytes: u64) -> Self {
         Self {
@@ -130,11 +115,10 @@ impl BodySize<()> {
     /// Names the RFC 9457 problem type this limit's 413 carries.
     ///
     /// Changes the type, because it changes what every covered operation
-    /// declares. Stated once, and read by both the response body and the
-    /// description.
+    /// declares; both the response body and the description read it.
     ///
     /// Available only on a limit that has not named one, so a chain states the
-    /// type at most once and a reader never has to find the last call that won.
+    /// type at most once.
     ///
     /// ```
     /// use kynos::{error::problem::ProblemType, middleware::limits::body_size::BodySize};
@@ -149,10 +133,7 @@ impl BodySize<()> {
     /// # let _ = limit;
     /// ```
     ///
-    /// Naming a second one does not compile — the `impl` block is on
-    /// `BodySize<()>`, so the method is simply not there once `T` is a type.
-    /// The block above is this rule's pass control: the two differ only in the
-    /// second call.
+    /// Naming a second one does not compile:
     ///
     /// ```compile_fail
     /// use kynos::{error::problem::ProblemType, middleware::limits::body_size::BodySize};
@@ -180,17 +161,11 @@ impl BodySize<()> {
     }
 }
 
-/// Reads `body` while the running total stays within `limit`, returning the
-/// body to hand on.
+/// Reads `body` while the running total stays within `limit`; `None` on the
+/// frame that passes it.
 ///
-/// `None` once the limit is passed, which is decided on the frame that passes
-/// it rather than after the whole body has arrived — a chunked body declares no
-/// length, so the count is the only bound there is.
-///
-/// A read that fails is handed on as it failed — the bytes that arrived, then
-/// the same error — so the extractor beneath refuses it with the status it
-/// already describes, whatever that extractor parses. Swallowing the error
-/// would hand a truncated payload to one that parses nothing.
+/// A failed read is handed on as it failed (bytes so far, then the error), so
+/// the extractor beneath refuses it rather than parsing a truncated payload.
 async fn read_capped(mut body: Body, limit: u64) -> Option<Body> {
     let mut collected = BytesMut::new();
 
@@ -235,29 +210,19 @@ where
     ) -> Result<Continued<()>, BodySizeExceeded<T>> {
         let _ = (reads, context);
 
-        // This limit replaces the extractor's default for every operation it
-        // covers, upward as well as downward: an extractor beneath reads the
-        // body under the same figure this enforces, so it never refuses what
-        // was let through here.
+        // Replaces the extractor's default in both directions, so an extractor
+        // beneath never refuses what was let through here.
         request.extensions_mut().insert(BodyLimit(self.limit));
 
-        // A declared length is the cheapest answer: an oversized upload is
-        // refused before a byte of it is read.
         if let Some(declared) = declared_length(request.headers()) {
             if declared > self.limit {
                 return Err(BodySizeExceeded::new(self.limit));
             }
 
-            // The protocol driver delivers no more than the length it was told,
-            // so the body passes through untouched and a streaming upload stays
-            // one.
+            // The protocol driver delivers no more than the declared length.
             return Ok(next.run(request).await);
         }
 
-        // No declared length, so the count is the only bound: the body is read
-        // frame by frame and abandoned the moment it passes the limit. What
-        // arrives within it is handed on verbatim — a failure included — since
-        // the only body Kynos can rebuild is one built from what was read.
         let (parts, body) = request.into_parts();
         let Some(body) = read_capped(body, self.limit).await else {
             return Err(BodySizeExceeded::new(self.limit));
@@ -268,14 +233,8 @@ where
     }
 }
 
-// --- The derivable implementations, written out ---------------------------
-//
-// `#[derive]` would bound each on the marker, and a marker is a name rather
-// than a value: it is never cloned, printed or compared, and requiring it to be
-// would make naming a problem type cost four derives on the application's own
-// marker. Every one destructures `self`, so a field added to a refusal is a
-// compile error here rather than a member these silently stop reading. The
-// other limits that carry a marker write theirs out for the same reason.
+// Not derived: a derive would bound each on the marker. Each destructures
+// `self`, so a new field is a compile error here.
 
 impl<T> Clone for BodySizeExceeded<T> {
     fn clone(&self) -> Self {
@@ -311,10 +270,6 @@ impl<T> PartialEq for BodySizeExceeded<T> {
 }
 
 impl<T> Eq for BodySizeExceeded<T> {}
-
-// The interceptor carries the same parameter for the same reason: derived, a
-// limit naming a problem type would lose `Clone` and `Debug` unless the
-// application's marker derived them too.
 
 impl<T> Clone for BodySize<T> {
     fn clone(&self) -> Self {

@@ -1,13 +1,7 @@
 //! The runtime half of a built router: the match table, and what one request
 //! does to it.
 //!
-//! Private, and named by no path a user can write. Everything here is machinery
-//! [`Router::build`](crate::Router::build) assembles and
-//! [`Service`](crate::router::service::Service) drives, so there is no item for
-//! a canonical path to point at.
-//!
-//! `matchit` is named here and in [`super`], which is the allowance
-//! `docs/architecture.md` gives it.
+//! `matchit` may be named here and in [`super`] (`docs/architecture.md`).
 
 pub(crate) mod recovery;
 
@@ -59,9 +53,8 @@ impl<C: Send + Sync + 'static> ErasedTerminal<C> for EndpointTerminal<C> {
 
 /// A CORS preflight, as the end of a chain that has no interceptors in it.
 ///
-/// Registered on a path while the service is built, after `describe` has
-/// finished — which is what makes it out-of-document by construction rather
-/// than by a filter someone has to remember.
+/// Registered after `describe` has finished, so it is out-of-document by
+/// construction.
 pub(crate) struct PreflightTerminal {
     preflight: crate::middleware::cors::preflight::Preflight,
 }
@@ -94,57 +87,30 @@ pub(crate) struct Served<C> {
     /// ones stay inside the endpoint, which is what runs them.
     pub(crate) interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
     pub(crate) catch_panics: bool,
-    /// Whether the described operation declares a security requirement. False
-    /// for what no description covers: an unchecked route and a synthesized
-    /// preflight.
+    /// Whether the described operation declares a security requirement; false
+    /// for an unchecked route and a synthesized preflight.
     pub(crate) secured: bool,
     /// Layers of undeclared effect covering this operation, outermost first.
-    /// Empty for every operation no waiver reached, which is the usual case.
     #[cfg(feature = "unchecked")]
     pub(crate) unchecked_layers: Vec<Arc<dyn crate::unchecked::ErasedLayer>>,
 }
 
 /// What routing learned about one request, for whatever reads it afterwards.
 ///
-/// Inserted once per matched request, and the one extension routing adds; an
-/// unchecked layer adds its own continuation, and only where one is mounted.
-/// Each insertion into [`http::Extensions`](crate::http::Extensions) boxes its
-/// value, so three facts inserted separately cost three allocations; carried
-/// together they cost one. Every field is filled at the same point in
-/// [`Dispatch::serve`] the separate insertions ran at, so each reader sees
-/// exactly what it saw before. Inserting a `MatchedPath` or `Forwarded` into
-/// the extensions, by contrast, no longer has any effect: every reader goes
-/// through this record, and code holding a `&Request` borrows the origin with
-/// [`Forwarded::of`](crate::http::forwarded::Forwarded::of).
-///
-/// Read through the extractors and keys that expose each fact —
-/// [`MatchedPath`](crate::extract::connection::MatchedPath),
-/// [`Path`](crate::extract::params::path::Path),
-/// [`Forwarded`](crate::http::forwarded::Forwarded),
-/// [`captured`](crate::unchecked::captured) and
-/// [`ByClientAddress`](crate::middleware::rate_limit::key::ByClientAddress) —
-/// never by name outside the crate.
+/// One extension rather than several, since each insertion allocates. Read
+/// only through the extractors and keys that expose each fact.
 #[derive(Clone, Debug)]
 pub(crate) struct Routed {
     /// The `paths` key that matched.
     pub(crate) matched: crate::extract::connection::MatchedPath,
     /// What the match captured, when the template has variables.
     pub(crate) captures: Option<PathCaptures>,
-    /// Where the request came from, resolved under the router's trust policy
-    /// before any interceptor runs.
-    ///
-    /// Resolved once, by the dispatcher, rather than by each reader. Two
-    /// interceptors parsing `Forwarded` for themselves would be two answers to
-    /// one security question, and the policy that governs it is the router's.
+    /// Where the request came from, resolved once under the router's trust
+    /// policy before any interceptor runs, so every reader gets one answer.
     pub(crate) forwarded: crate::http::forwarded::Forwarded,
     /// Whether the matched operation declares a security requirement, true
-    /// also for one admitting anonymous access beside it.
-    ///
-    /// Here rather than on [`Route`], because the record reaches the router's
-    /// chain and an endpoint's own alike, and a `Route` an endpoint builds for
-    /// its own chain would have to describe its handler again to know.
-    /// `Cache` is the reader: a hit is served before the operation's guard
-    /// runs.
+    /// also for one admitting anonymous access beside it. Read by `Cache`,
+    /// whose hit is served before the operation's guard runs.
     #[cfg_attr(
         not(feature = "cache"),
         expect(dead_code, reason = "the cache is the one reader")
@@ -158,22 +124,12 @@ pub(crate) struct PathEntry<C> {
     pub(crate) template: String,
     /// The same key, interned so that
     /// [`MatchedPath`](crate::extract::connection::MatchedPath) can hold it.
-    ///
-    /// That extractor is infallible and reads the template back out of the
-    /// request extensions, so the value has to outlive the request and cannot
-    /// borrow `template`. Interned once per
-    /// [`Router::build`](crate::Router::build), like the variable names below.
     pub(crate) matched: crate::extract::connection::MatchedPath,
-    /// The template's variable names, in declaration order.
-    ///
-    /// `&'static str` because [`PathCaptures`] stores them, so that a capture
-    /// costs one allocation for the vector and none per variable. The names are
-    /// interned once per [`Router::build`](crate::Router::build) — a set
-    /// bounded by the route table, which a program builds at startup.
+    /// The template's variable names, in declaration order, interned because
+    /// [`PathCaptures`] stores `&'static str`.
     pub(crate) variables: Vec<&'static str>,
     /// The `Allow` header a 405 on this path carries, derived from the
-    /// operations below rather than restated beside them: their methods, and
-    /// `HEAD` wherever `GET` is one of them.
+    /// operations below plus `HEAD` wherever `GET` is one of them.
     pub(crate) allow: HeaderValue,
     pub(crate) operations: Vec<Served<C>>,
 }
@@ -181,12 +137,8 @@ pub(crate) struct PathEntry<C> {
 impl<C> PathEntry<C> {
     /// Where the operation answering `method` sits, if one does.
     ///
-    /// The one declaring `method`, and for a `HEAD` no operation declares, the
-    /// `GET`: RFC 9110 section 9.3.2 defines a HEAD as that GET without
-    /// content, so the GET operation describes it. A declared `head` wins.
-    ///
-    /// A position rather than a reference, because an operation wrapped in an
-    /// unchecked layer is re-entered by index once the layer calls through.
+    /// An undeclared `HEAD` falls back to the `GET` (RFC 9110 section 9.3.2).
+    /// A position, because an unchecked layer re-enters the table by index.
     fn position(&self, method: Method) -> Option<usize> {
         let declared = |method| {
             self.operations
@@ -219,11 +171,8 @@ pub(crate) struct Dispatch<C> {
     pub(crate) implemented: Vec<Method>,
 }
 
-/// Where in the table an operation sits.
-///
-/// Indices rather than a [`Route`], because a route borrows the table and the
-/// response body outlives every such borrow: the driver holds it after
-/// [`serve`](Dispatch::serve) has returned.
+/// Where in the table an operation sits; indices because the response body
+/// outlives any borrow of the table.
 #[derive(Clone, Copy, Debug)]
 struct Location {
     path: usize,
@@ -233,19 +182,15 @@ struct Location {
 impl<C: Send + Sync + 'static> Dispatch<C> {
     /// Serves one request.
     ///
-    /// Takes the handle rather than a borrow of it so that an unchecked layer,
-    /// whose future has no lifetime to borrow through, can be handed a
-    /// continuation that re-enters the table.
+    /// Takes the `Arc` so an unchecked layer can be handed a continuation that
+    /// re-enters the table.
     pub(crate) async fn serve(self: Arc<Self>, mut request: Request) -> Response {
         let started = Instant::now();
-        // Whatever answers a HEAD -- an operation, a fallback, a redirect --
-        // sends no content, so this is read before anything can answer.
+        // Whatever answers a HEAD sends no content.
         let head = request.method() == crate::http::Method::HEAD;
         let method = Method::from_wire_str(request.method().as_str());
 
-        // The captures are taken here, while the match still holds them, and
-        // are ranges rather than borrows -- which is what lets the request be
-        // mutated below without re-matching.
+        // Captures are ranges rather than borrows, so the request stays mutable.
         let (index, captures) = {
             let path = request.uri().path();
             let Ok(matched) = self.matcher.at(path) else {
@@ -290,9 +235,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
 
         let forwarded = self.forwarded(&request);
         request.extensions_mut().insert(Routed {
-            // The template rather than the request's own path: `MatchedPath`
-            // is documented as the `paths` key, which is what keeps a metric
-            // label or a log field from having unbounded cardinality.
+            // The template, not the request path, to bound label cardinality.
             matched: entry.matched.clone(),
             captures,
             forwarded,
@@ -303,8 +246,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
             observer.on_request(&request, Some(route), &self.context);
         }
 
-        // A layer is outside the description, so it wraps the operation from
-        // outside too -- after routing, exactly where an interceptor runs.
+        // A layer wraps the operation after routing, where an interceptor runs.
         #[cfg(feature = "unchecked")]
         if !operation.unchecked_layers.is_empty() {
             let response = crate::unchecked::through_layers(
@@ -382,10 +324,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
     }
 
     /// Re-enters the table at an operation an unchecked layer has called
-    /// through to.
-    ///
-    /// By index because the continuation a layer carries outlives every borrow
-    /// of the table -- a `tower` service's future has no lifetime parameter.
+    /// through to, by index since a `tower` future cannot borrow the table.
     #[cfg(feature = "unchecked")]
     pub(crate) fn resume(
         self: Arc<Self>,
@@ -411,14 +350,9 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
 
     /// Notifies every observer and hands the response on.
     ///
-    /// The response leaves here wearing a watch on its body, so that a peer
-    /// that goes away mid-response is reported rather than silently counted as
-    /// served. Only when there is an observer to tell: a router with none pays
-    /// nothing, which keeps the watch off the path of every service that never
-    /// asked to observe anything.
-    ///
-    /// A response to a HEAD sheds its content first, so an observer sees what
-    /// the peer will.
+    /// With observers, the body is watched so a peer leaving mid-response is
+    /// reported; without, nothing is added. A HEAD response sheds its content
+    /// first, so an observer sees what the peer will.
     fn finish(
         self: &Arc<Self>,
         response: Response,
@@ -442,10 +376,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
             observer.on_response(&response, route, elapsed);
         }
 
-        // The route is rebuilt inside the watch rather than captured: it
-        // borrows the table, and the body outlives every borrow taken here --
-        // it is handed to the protocol driver and dropped whenever that driver
-        // is done with it.
+        // Rebuilt inside the watch: the body outlives any borrow of the table.
         let watcher = Arc::clone(self);
         let (parts, body) = response.into_parts();
         let body = body.watching(move |delivery| {
@@ -465,11 +396,8 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
 
     /// What a request that matched no route gets.
     ///
-    /// Under [`TrailingSlashPolicy::Redirect`] a path that reaches an exactly
-    /// declared one by adding or removing its final slash is redirected there
-    /// with 308, so the method and the body survive the replay. Nothing else
-    /// about the path is touched: no casing, no normalization, and no per-route
-    /// exception.
+    /// Under [`TrailingSlashPolicy::Redirect`], a path one final slash away
+    /// from a declared one gets a 308 there; otherwise the 404 fallback.
     fn unmatched(&self, request: &Request) -> Response {
         if self.trailing_slashes == TrailingSlashPolicy::Redirect {
             if let Some(target) = self.flipped(request.uri().path()) {
@@ -491,13 +419,8 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
 
 /// The same path with its final slash added or removed.
 ///
-/// `None` for `/`, which has no shorter form: stripping its slash would leave
-/// no path at all.
-///
-/// Shared deliberately. [`TrailingSlashPolicy::Redirect`] flips a request
-/// target here at request time and [`TrailingSlashPolicy::Lenient`] flips a
-/// declared template at build time, and the two policies would be incoherent if
-/// they disagreed about what the other spelling of a path is.
+/// `None` for `/`. Shared by `Redirect` (request time) and `Lenient` (build
+/// time) so the two policies agree on a path's other spelling.
 pub(crate) fn flip_trailing_slash(path: &str) -> Option<String> {
     match path.strip_suffix('/') {
         Some("") => None,
@@ -521,12 +444,9 @@ fn fallback(status: StatusCode, policy: &FallbackPolicy) -> Response {
 
 /// What a request whose method no operation on its path answers gets.
 ///
-/// RFC 9110 section 9.1 splits the two cases. With `allow`, the method is one
-/// the service implements elsewhere: a 405 carrying the path's `Allow`, which
-/// section 15.5.6 requires on one. Without, nothing implements it: a 501, with
-/// no `Allow` to offer. Either takes the router's method-not-allowed policy's
-/// shape, and the CORS preflight answers a plain `OPTIONS` through here too, so
-/// mounting CORS changes neither.
+/// With `allow`, a 405 carrying it (RFC 9110 section 15.5.6); without, a 501,
+/// since nothing in the service implements the method (section 9.1). Also the
+/// CORS preflight's answer to a plain `OPTIONS`.
 pub(crate) fn method_refusal(allow: Option<&HeaderValue>, policy: &FallbackPolicy) -> Response {
     let Some(allow) = allow else {
         return fallback(StatusCode::NOT_IMPLEMENTED, policy);
@@ -540,16 +460,9 @@ pub(crate) fn method_refusal(allow: Option<&HeaderValue>, policy: &FallbackPolic
 /// `response` as the answer to a HEAD: the same status and fields, and no
 /// content.
 ///
-/// RFC 9110 section 9.3.2: the server "MUST NOT send content" in response to a
-/// HEAD. HTTP/1.1 would drop the body on the wire, but hyper's HTTP/2 server
-/// sends whatever body it is handed, so it is dropped here.
-///
-/// `Content-Length` is stated first where the body knows a non-zero length:
-/// section 8.6 lets a HEAD carry the length the GET would have sent and forbids
-/// any other. An empty body is no evidence of an empty GET -- a declared `head`
-/// answers with none -- so a zero is never stated, the rule hyper's HTTP/1.1
-/// encoder keeps. A length the response already carries is left alone, and a
-/// status that never carries content gets none.
+/// RFC 9110 section 9.3.2 forbids content, and hyper's HTTP/2 server would
+/// send it. A known non-zero length becomes `Content-Length` (section 8.6); a
+/// zero is never stated, since an empty body is no evidence of an empty GET.
 fn without_content(response: Response) -> Response {
     use http_body::Body as _;
 
@@ -587,9 +500,8 @@ fn redirect(path: &str, query: Option<&str>) -> Response {
 
 /// The `Allow` header value for a set of declared methods.
 ///
-/// Derived from the operations actually declared, which is what stops it
-/// disagreeing with the description, plus the `HEAD` a declared `GET` answers
-/// where no `head` is declared, named right after it.
+/// Plus the `HEAD` a declared `GET` answers where no `head` is declared, named
+/// right after it.
 pub(crate) fn allow_header(methods: &[Method]) -> HeaderValue {
     let derives_head = !methods.contains(&Method::Head);
     let joined = methods
@@ -608,9 +520,8 @@ pub(crate) fn allow_header(methods: &[Method]) -> HeaderValue {
 /// Every method some operation in `paths` answers: each declared one, and
 /// `HEAD` wherever a `GET` is declared.
 ///
-/// Read before the CORS preflights are installed, so the `OPTIONS` one answers
-/// is not counted: a preflight is not an operation, and counting it would turn
-/// a plain `OPTIONS` from a 501 into a 405 the moment CORS was mounted.
+/// Read before CORS preflights are installed: counting their `OPTIONS` would
+/// turn a plain `OPTIONS` 501 into a 405 once CORS is mounted.
 pub(crate) fn implemented<C>(paths: &[PathEntry<C>]) -> Vec<Method> {
     let mut methods: Vec<Method> = Vec::new();
 
@@ -626,12 +537,8 @@ pub(crate) fn implemented<C>(paths: &[PathEntry<C>]) -> Vec<Method> {
     methods
 }
 
-/// Interns a path variable name for the life of the process.
-///
-/// [`PathCaptures`] stores names as `&'static str` so that a capture borrows
-/// the request path rather than owning a copy of it. Nothing shorter-lived can
-/// satisfy that, and the set is bounded by the route table, so the router
-/// interns each name once while it is built.
+/// Interns a path variable name for the life of the process. Leaks once per
+/// name per build, a set bounded by the route table.
 pub(crate) fn intern(name: &str) -> &'static str {
     Box::leak(name.to_owned().into_boxed_str())
 }

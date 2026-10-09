@@ -29,10 +29,6 @@ impl<T> Inject<T> {
 }
 
 /// Injection cannot fail, so it contributes no response.
-///
-/// It is an ordinary extractor rather than a second kind of handler argument:
-/// having one way for a value to reach a handler is what keeps the rule
-/// "every argument describes itself" true without exceptions.
 impl<C, T> FromRequestParts<C> for Inject<T>
 where
     C: Provides<T> + Sync,
@@ -47,10 +43,6 @@ where
 }
 
 /// Application state is not part of the contract, so this contributes nothing.
-///
-/// A no-op here is a claim, not an omission: it says this argument is invisible
-/// to a consumer. `MatchedPath`, `ConnectInfo` and `Forwarded` make the same
-/// claim.
 impl<T> Describe for Inject<T> {
     fn describe(operation: &mut OperationCx<'_>) {
         let _ = operation;

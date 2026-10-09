@@ -1,17 +1,7 @@
 //! RFC 2046 multipart framing, which every multipart body Kynos writes shares.
 //!
-//! Two subtypes are written in this crate and they agree on nothing above the
-//! framing: `multipart/form-data` names each part with a
-//! `Content-Disposition`, and `multipart/byteranges` names each with a
-//! `Content-Range`. What they do share is the part a reader's parser depends
-//! on — the delimiter line, the CRLF that ends every header line, the blank
-//! line before the content and the closing delimiter — so that is what lives
-//! here, and a part is handed over as *its header block and its octets*.
-//!
-//! Private to [`response`](crate::response) rather than public, and gated on
-//! the *disjunction* of its two callers rather than on either: the form-data
-//! writer is behind `multipart` and the byteranges writer behind `openapi32`,
-//! so a home under either would leave the other writing its own delimiters.
+//! Shared by `multipart/form-data` (`multipart`) and `multipart/byteranges`
+//! (`openapi32`), hence gated on either; a part is its header block and octets.
 
 use bytes::Bytes;
 
@@ -20,19 +10,14 @@ use bytes::Bytes;
 /// Long enough that a body containing it is a body that meant to.
 pub(crate) const BOUNDARY_PREFIX: &str = "kynos-boundary-";
 
-/// CRLF, which frames every line of a multipart body. RFC 2046 admits no other
-/// line ending here, whatever the parts themselves contain.
+/// CRLF, the only line ending RFC 2046 admits in the framing.
 pub(crate) const CRLF: &[u8] = b"\r\n";
 
 /// A delimiter no part contains.
 ///
-/// RFC 2046 requires exactly that, and Kynos has no source of randomness to
-/// make it overwhelmingly likely with — so the delimiter is chosen by looking:
-/// a fixed prefix and a counter, raised until nothing encapsulates it. The
-/// first candidate wins for every body that was not written to defeat it, so
-/// this is one pass over the parts.
-// Owned because the search clones the iterator once per candidate. A shared
-// reference to an iterator can be neither cloned into one nor advanced.
+/// Kynos has no source of randomness, so a counter after a fixed prefix is
+/// raised until no part contains it; usually the first candidate wins.
+// Owned because the search clones the iterator once per candidate.
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn boundary<'a>(bodies: impl Iterator<Item = &'a [u8]> + Clone) -> String {
     let mut counter: u64 = 0;
@@ -58,12 +43,8 @@ pub(crate) fn contains(haystack: &[u8], needle: &[u8]) -> bool {
 
 /// The body: one encapsulation per part, then the closing delimiter.
 ///
-/// Each part arrives as the header lines it declares — already CRLF-terminated
-/// by whoever wrote them, because only the subtype knows which fields it owes —
-/// and the octets they describe.
-///
-/// No preamble and no epilogue. Both are legal and both are ignored, so writing
-/// either would be bytes every recipient discards.
+/// Each part is its CRLF-terminated header lines and its octets. No preamble or
+/// epilogue, which recipients ignore.
 pub(crate) fn render(parts: Vec<(Vec<u8>, Bytes)>, boundary: &str) -> Bytes {
     let capacity = parts
         .iter()
@@ -93,8 +74,7 @@ pub(crate) fn render(parts: Vec<(Vec<u8>, Bytes)>, boundary: &str) -> Bytes {
 
 /// A header value with its line endings removed.
 ///
-/// A value that spans two lines is a value that would inject a third party's
-/// header, so what cannot be represented is dropped rather than escaped.
+/// Dropped rather than escaped, so a value cannot inject a header.
 pub(crate) fn unfolded(value: &str) -> String {
     value.replace(['\r', '\n'], "")
 }

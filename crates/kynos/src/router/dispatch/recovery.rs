@@ -21,10 +21,9 @@ use crate::{
 
 /// Runs `future` with a panic recovery branch installed.
 ///
-/// No `unsafe`, and no runtime is named: the future is pinned on the heap so
-/// that `Pin::as_mut` supplies the projection, and each poll is wrapped in
-/// [`catch_unwind`](std::panic::catch_unwind). A future that unwound is
-/// reported once and then dropped, never polled again.
+/// Each poll of the boxed future is wrapped in
+/// [`catch_unwind`](std::panic::catch_unwind); one that unwound is never
+/// polled again.
 pub(crate) async fn recover<F>(future: F) -> Result<Response, Box<dyn Any + Send>>
 where
     F: Future<Output = Response>,
@@ -41,21 +40,15 @@ where
     .await
 }
 
-/// The response a recovered panic becomes.
-///
-/// Deliberately says nothing about what panicked: the payload is a message the
-/// service's author wrote for themselves, and a client is not its audience.
+/// The response a recovered panic becomes; it never exposes the payload.
 pub(crate) fn panic_response() -> Response {
     Problem::new(StatusCode::INTERNAL_SERVER_ERROR).into_response()
 }
 
 /// The payload of a panic an endpoint recovered, on its way to the dispatcher.
 ///
-/// Carried on the 500's extensions because `Endpoint::call` has no other way
-/// out, and reported where the route and the observers already are. Behind a
-/// lock because an extension must be `Clone + Sync` and a payload is only
-/// `Send`. Visible to the dispatcher alone, so nothing between the endpoint and
-/// it can name it.
+/// Carried on the 500's extensions, the only way out of `Endpoint::call`.
+/// Locked because an extension must be `Clone + Sync` and a payload is `Send`.
 #[derive(Clone)]
 pub(super) struct Recovered(Arc<Mutex<Option<Box<dyn Any + Send>>>>);
 

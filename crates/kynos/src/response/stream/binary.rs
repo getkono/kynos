@@ -47,8 +47,6 @@ where
     E: Into<Box<dyn std::error::Error + Send + Sync>> + 'static,
 {
     fn into_response(self) -> Response {
-        // The chunks are already the bytes to send, so nothing here frames
-        // them: the stream reaches the body unchanged.
         let mut response = Response::new(Body::from_stream(self.stream));
         response.headers_mut().insert(
             header::CONTENT_TYPE,
@@ -63,11 +61,8 @@ where
     S: futures_core::Stream,
     M: MediaType,
 {
-    // `itemSchema` rather than `schema`, which is what 3.2 added the field for:
-    // an item is described independently of the rest so a consumer can process
-    // one as it arrives. Each item is the empty Schema Object for the reason a
-    // non-streamed `Binary<M>` body is -- raw bytes sit outside the type system
-    // JSON Schema describes, and calling them a `string` would be a lie.
+    // Each item is the empty Schema Object, as for `Binary<M>`: raw bytes are
+    // outside what JSON Schema describes.
     fn responses(_registry: &mut Registry) -> kynos_openapi::Responses {
         kynos_openapi::Responses::new().with(
             200,

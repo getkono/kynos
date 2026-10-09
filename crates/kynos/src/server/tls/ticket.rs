@@ -47,16 +47,14 @@ const MAX_LIFETIME: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// One generation of session-ticket key, derived from a secret every replica
 /// is given.
 ///
-/// Two keys from the same secret are the same key, in this process or another:
-/// a ticket one seals, the other opens. The secret itself is not kept — what is
-/// held is what HKDF extracted from it.
+/// Two keys from the same secret are the same key, in this process or another.
+/// The secret itself is not kept, only what HKDF extracted from it.
 ///
 /// Tickets are sealed with AES-256-GCM under a per-ticket key derived by
 /// HKDF-SHA384, both performed by the process's crypto provider: the one the
 /// binary installed as rustls's default if it installed one, and `aws-lc-rs`
 /// otherwise. The construction is fixed, so replicas on different providers
-/// still resume one another's sessions, and a FIPS or hardware-backed provider
-/// performs every operation on the ticket.
+/// still resume one another's sessions.
 #[derive(Clone)]
 pub struct TicketKey {
     name: [u8; NAME_LEN],
@@ -83,9 +81,8 @@ impl TicketKey {
         Self::derive(&crypto_provider(), secret)
     }
 
-    /// The AEAD is reached through the provider's QUIC packet protection,
-    /// which is the one place rustls's provider interface seals bytes under
-    /// caller-supplied associated data rather than a TLS record header.
+    /// The AEAD is reached through the provider's QUIC packet protection, the
+    /// one rustls interface that seals under caller-supplied associated data.
     pub(in crate::server) fn derive(
         provider: &CryptoProvider,
         secret: &[u8; 32],
@@ -184,14 +181,12 @@ struct Generations {
 /// Replicas do not rotate at the same instant, so a fleet rotates in two
 /// steps: every replica first accepts the next key while still issuing the
 /// current one, and only then does each start issuing it. Skipping the first
-/// step costs full handshakes, not correctness: a replica that cannot open a
-/// ticket falls back to one.
+/// step costs full handshakes, not correctness.
 ///
 /// # What a key exposes
 ///
-/// These keys do not die with a process. They live wherever the operator
-/// stores and distributes them, for as long as they are kept, and Kynos
-/// rotates nothing.
+/// These keys outlive the process, wherever the operator stores them, and
+/// Kynos rotates nothing.
 ///
 /// * **Forward secrecy.** A TLS 1.2 ticket carries the session's master
 ///   secret, so a key that leaks decrypts every recorded TLS 1.2 session whose

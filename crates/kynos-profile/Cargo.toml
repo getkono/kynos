@@ -3,27 +3,16 @@ name = "kynos-profile"
 description = "Instruction and heap counts over Kynos's in-process request path."
 version = "0.0.0"
 edition.workspace = true
-# No `rust-version`. The floor is gungraun's 1.88, above the workspace's 1.85,
-# and stating it would set this package against `clippy.toml`'s `msrv`, which
-# Clippy reports as a warning on every lint run. This package is never
-# published and nothing depends on it, so a floor would bind only the machine
-# running the profile -- which is why `msrv:check` excludes it rather than the
-# workspace floor moving for a measurement harness.
+# No `rust-version`: gungraun needs 1.88, and stating it would conflict with
+# `clippy.toml`'s `msrv`. `msrv:check` excludes this unpublished package.
 license.workspace = true
 repository.workspace = true
-# A measurement harness rather than a library anyone depends on. Keeping it out
-# of every archive is also what keeps gungraun out of `kynos`'s dev-dependency
-# graph, its MSRV resolution and its tarball.
+# Keeps gungraun out of `kynos`'s dev-dependencies and tarball.
 publish = false
 
 [dependencies]
-# The default feature set, because that is the build an application gets
-# without asking and so the one a request-path number should describe, plus
-# `compression` for the sweep that weighs encoding against the octets it saves.
-# The catalog's scenarios mount no `Compression`, and a feature that is never
-# mounted never reaches the request path. Because Cargo unifies it into any
-# build that selects this package, `test:baseline` and `lint:baseline` exclude
-# this package so `kynos` is still built with it off.
+# Default features, plus `compression` for the encoding sweep. Cargo unifies it,
+# so the `*:baseline` tasks exclude this package.
 kynos = { path = "../kynos", features = ["compression"] }
 bytes = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
@@ -35,8 +24,7 @@ serde_json = { workspace = true }
 gungraun = { workspace = true }
 http-body-util = { workspace = true }
 
-# `harness = false` because gungraun brings its own: each benchmark runs under
-# Valgrind in a process gungraun-runner spawns, not in a libtest one.
+# gungraun-runner spawns each benchmark under Valgrind.
 [[bench]]
 name = "requests"
 harness = false

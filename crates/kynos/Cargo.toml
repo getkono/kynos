@@ -7,18 +7,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
-# crates.io renders this file as the crate page, and it is the only thing a
-# reader sees before deciding to `cargo add`. It is its own file rather than a
-# symlink to the repository README because crates.io resolves relative links
-# against the package's path in the repository, so every `docs/...` link in the
-# root README would resolve to `crates/kynos/docs/...` and 404. Naming it
-# explicitly rather than relying on Cargo's auto-detection makes a deleted README
-# a manifest error instead of a silently blank crate page.
+# Not a symlink: crates.io resolves relative links against this directory.
+# Named, so a deleted README is a manifest error.
 readme = "README.md"
-# Five is crates.io's limit on each. `swagger` is deliberately absent despite
-# being the highest-traffic search term in this space: the README puts OpenAPI
-# 3.0 and older permanently out of scope, so claiming it would be exactly the
-# misdescription this framework exists to prevent.
+# No `swagger`: OpenAPI 3.0 and older are out of scope.
 keywords = ["openapi", "rest", "api", "http", "framework"]
 categories = [
   "web-programming::http-server",
@@ -26,28 +18,9 @@ categories = [
   "asynchronous",
 ]
 
-# The two targets whose oracle is not in this package, and so cannot travel
-# with it. `cargo package` copies a package directory and nothing above it:
-# `metaschema.rs` reads the OAI's own schemas from `references/`, vendored above
-# this root and deliberately outside the workspace, and `ledger.rs` reads
-# `kynos-macros/src/lib.rs` to count what that crate declares. Shipping either
-# would ship a test that can only fail, for everyone who runs `cargo test` on
-# the tarball.
-#
-# Both are auto-discovered rather than declared. Cargo rejects a `[[test]]`
-# whose `path` is absent, so a declared target and an excluded file cannot both
-# exist; `metaschema.rs` keeps its feature requirements in its own `#![cfg]`,
-# which holds in both trees.
-#
-# The three cost baselines go for the same reason. Their oracle is
-# `scripts/cost_features.py` and the `cost:*` tasks in `mise.toml`, both above
-# this root, and what they record is a sweep of *this workspace's* features on a
-# pinned toolchain, which nobody receiving the tarball can reproduce.
-#
-# `cost/fixture.rs` and `cost/codec.rs` stay, and must: each is a declared
-# `[[example]]`, and the rule above applies to them in the other direction -- a
-# declared target whose path is excluded is a manifest error, so the files the
-# sweeps measure travel even though the numbers they produced do not.
+# Files whose oracle lives above this package (`references/`, `kynos-macros`,
+# `scripts/`), so they would only fail from the tarball. The two tests are
+# auto-discovered, since a declared target cannot have its path excluded.
 exclude = [
   "cost/binary.tsv",
   "cost/codec.tsv",
@@ -60,8 +33,7 @@ exclude = [
 name = "ui"
 path = "tests/ui.rs"
 
-# The fixture directory `assets!` walks lives beside this target, so the target
-# has to be declared or `tests/assets/` would be taken for one.
+# Declared, or the `tests/assets/` fixture directory would be taken for a target.
 [[test]]
 name = "assets"
 path = "tests/assets.rs"
@@ -180,10 +152,7 @@ required-features = [
 
 [[example]]
 name = "docs_ui"
-# `docs` sits in the list rather than beside it: the wiring has to compile in
-# both profiles, and `debug_assertions` decides only whether this deployment
-# mounts it. `json` is for the handlers' own payloads -- the description route
-# is the framework's and states its own media type.
+# `debug_assertions` decides only whether to mount the docs; both profiles build.
 required-features = ["openapi31", "macros", "server", "http1", "json", "docs"]
 
 [[example]]
@@ -198,19 +167,13 @@ required-features = ["openapi31", "macros", "server", "http1", "json"]
 name = "rate_limit"
 required-features = ["openapi31", "macros", "server", "http1", "json"]
 
-# The other half of the rate-limiting pair: `rate_limit` replaces the store,
-# this replaces the algorithm. No dev-dependency, which is the point -- a
-# process-local bucket is `std` and arithmetic.
+# `rate_limit` replaces the store; this replaces the algorithm.
 [[example]]
 name = "token_bucket"
 required-features = ["openapi31", "macros", "server", "http1", "json"]
-# An example is `test = false` by default, so the bucket's unit tests would
-# compile under `--all-targets` and never run. They are the evidence for the
-# claim the file makes about its injected clock, so they have to run.
+# Runs the bucket's unit tests, which examples skip by default.
 test = true
 
-# Ranged delivery over a source that is not a filesystem, which is the case
-# `assets` cannot cover: it serves files.
 [[example]]
 name = "ranged"
 required-features = ["openapi31", "macros", "server", "http1", "json"]
@@ -221,20 +184,16 @@ required-features = ["openapi31", "macros", "server", "http1", "json", "cache"]
 
 [[example]]
 name = "assets"
-# No `json`: nothing here has a JSON body. `assets-fs` implies `assets` and
-# `unchecked`, which is the point the example is making.
 required-features = ["openapi31", "macros", "server", "http1", "assets-fs"]
 
 [[example]]
 name = "cors"
-# No `server`: this example drives a built `Service` directly, because what it
-# demonstrates is the two exchanges a browser makes rather than a socket.
+# No `server`: drives a built `Service` directly.
 required-features = ["openapi31", "macros", "json"]
 
 [[example]]
 name = "csrf"
-# No `server`, for the same reason `cors` has none: what this demonstrates is
-# which requests are refused, which is a question about header combinations.
+# No `server`: drives a built `Service` directly.
 required-features = ["openapi31", "macros", "json", "cookie"]
 
 [[example]]
@@ -277,42 +236,20 @@ required-features = [
 
 [[example]]
 name = "testing"
-# No `server` and no `http1`: this example drives a built `Service` directly,
-# which is the whole point of it.
+# No `server`: drives a built `Service` directly.
 required-features = ["openapi31", "macros", "json", "test-util"]
 
 [[example]]
 name = "tls"
 required-features = ["openapi31", "server", "http1", "http2", "tls"]
 
-# The fixed fixture the two cost sweeps build. Declared with a `path` rather
-# than dropped in `examples/` because `examples/README.md` is a catalogue of
-# teaching examples and this is an instrument: it is here so it sits beside the
-# baselines it produces, in `cost/`.
-#
-# Deliberately no `required-features`. The sweep builds the *same* program at
-# every feature it visits, so a difference between two builds is attributable
-# to the feature; a target that changed shape with the flag would measure two
-# programs. That also puts it inside `features:targets` (`--all-targets`),
-# which is what keeps it compiling at every feature without a gate of its own.
+# The cost sweeps' fixed fixture (docs/performance.md). No `required-features`,
+# so every feature builds the same program.
 [[example]]
 name = "cost_fixture"
 path = "cost/fixture.rs"
 
-# The second cost fixture, and the one that *mounts* each codec. It is here for
-# the question the one above structurally cannot answer: `fixture.rs` names no
-# codec, so a `json` or `protobuf` row of `cost/binary.tsv` measures the linker
-# stripping what nothing called. `docs/performance.md` bills an opt-in payload
-# codec a binary delta "on a route that mounts it", and a route that mounts one
-# cannot exist in a program that also builds with the flag off -- so the two
-# questions need two fixtures rather than one.
-#
-# `required-features` where `cost_fixture` deliberately has none, and for a
-# reason that does not weaken it: an operation is declared with an attribute
-# macro, so `macros` is not optional here. The sweep pins `openapi31,macros` at
-# every point it visits, and those six points are exactly the sets
-# `mise run lint:codecs` lints every target at, so this file is Clippy-checked
-# at each set it is measured at.
+# The fixture that mounts each codec, measured at `lint:codecs`' sets.
 [[example]]
 name = "cost_codec"
 path = "cost/codec.rs"
@@ -330,24 +267,19 @@ default = [
 ]
 
 # --- Specification version -------------------------------------------------
-# `openapi31` is the baseline and `openapi32` a strict superset; the repository
-# README's "Feature flags" section says what enabling it does to a downstream
-# build.
+# `openapi32` is a strict superset of the `openapi31` baseline.
 openapi31 = ["kynos-openapi/openapi31"]
 openapi32 = [
   "openapi31",
   "kynos-openapi/openapi32",
   "kynos-macros?/openapi32",
-  # `response::stream` is the only thing that names a stream, and 3.1 has no
-  # `itemSchema` to describe one with, so the whole subtree is 3.2-only.
+  # Streams need 3.2's `itemSchema`.
   "dep:futures-core",
 ]
 
 # --- Core ------------------------------------------------------------------
 macros = ["dep:kynos-macros"]
-# Enforces `#[schema(pattern = "...")]`, which the derive refuses without it:
-# the check runs a regular expression engine on the request path, and a
-# dependency arrives off by default rather than widening the default build.
+# Enforces `#[schema(pattern = "...")]`, which the derive refuses without it.
 pattern = ["macros", "kynos-macros/pattern", "kynos-openapi/pattern", "dep:regex"]
 
 # --- Runtime ---------------------------------------------------------------
@@ -371,29 +303,20 @@ json = []
 form = ["dep:serde_html_form"]
 multipart = ["dep:multer"]
 protobuf = ["dep:prost"]
-# Kynos owns the RFC 6265 this needs: the `cookie` crate would put
-# `cookie::Cookie` in a public signature, which `docs/architecture.md`'s
-# re-export rule forbids.
+# No `cookie` crate: it would put a foreign type in a public signature.
 cookie = []
 compression = ["dep:async-compression"]
 
 # --- Scalar formats --------------------------------------------------------
-# A type from outside `std` whose whole contribution is a JSON Schema `format`.
-# Each is additive and off by default; the mapping is normative in
-# `docs/schema.md`.
+# The mapping to JSON Schema `format` is normative in `docs/schema.md`.
 uuid = ["dep:uuid"]
 
-# `time` is an umbrella, not a library: it carries the shapes both backends map
-# onto, so `date-time-local` is defined once and cannot change with a flag. It
-# names no crate, and on its own it does not compile. Note it is unrelated to
-# the `time` crate, which is not a backend and reaches the tree only through
-# `rcgen`, a dev-dependency of the TLS example.
+# Umbrellas holding the shapes their backends share; neither compiles alone.
+# `time` is unrelated to the `time` crate.
 time = []
 time-chrono = ["time", "dep:chrono"]
 time-jiff = ["time", "dep:jiff"]
 
-# The same shape for decimals. Both backends write a JSON string, which is the
-# only representation that keeps the precision a decimal exists for.
 decimal = []
 decimal-rust = ["decimal", "dep:rust_decimal"]
 decimal-big = ["decimal", "dep:bigdecimal"]
@@ -403,55 +326,30 @@ decimal-big = ["decimal", "dep:bigdecimal"]
 trace = ["dep:tracing"]
 
 # --- Document emission -----------------------------------------------------
-# A passthrough: `Error::Yaml` converts from `kynos_openapi::emit::YamlError`,
-# which owns the YAML library, so the facade never names that library itself.
 yaml = ["kynos-openapi/yaml"]
 
 # --- Testing ---------------------------------------------------------------
-# The JSON Schema validator is pulled in here rather than unconditionally: a
-# normal build never checks a response against a schema, so it never carries
-# one.
 test-util = ["dep:jsonschema"]
 
 # --- Response cache --------------------------------------------------------
-# The store half (`Cache`) and the validator half (`Conditional`). The store
-# itself is the application's, which is the line `rate_limit` already draws:
-# prescribing one would mean prescribing a dependency.
+# `Cache` and `Conditional`; the store is the application's.
 cache = []
 
 # --- Static assets ---------------------------------------------------------
-# `assets` compiles a directory into the binary as one described operation per
-# file: every path is a literal, so nothing is waived. `assets-fs` serves a
-# directory whose membership is not fixed, which no path template can express --
-# so it implies `unchecked` and is recorded at the document root.
+# `assets` embeds a directory as one described operation per file. `assets-fs`
+# serves a directory no template can express, so it implies `unchecked`.
 assets = ["kynos-macros?/assets"]
-# `io-util` is what lets a range be read rather than sliced: a seek and one
-# sized read cost the part, where reading the file and slicing costs the whole.
+# `io-util` reads a range rather than the whole file.
 assets-fs = ["assets", "unchecked", "tokio/fs", "tokio/io-util"]
 
 # --- API reference ---------------------------------------------------------
-# Mounts the page a human opens and the description it fetches, as two ordinary
-# described operations. Off by default because turning it on widens the
-# published contract by two `paths` keys: a client generated from a
-# docs-enabled deployment carries two operations a docs-disabled one does not,
-# and that is a deployment's decision rather than the framework's. Hiding the
-# pair behind `unchecked` instead would stamp the whole document
-# non-authoritative in order to conceal routes Kynos itself mounted.
-#
-# It names no crate. `serde_json` is already unconditional, and a renderer is a
-# string -- each built-in page is a script tag, so a third is `Docs::custom`
-# rather than a pull request here. Note it does not imply `json`, which is
-# about application payloads: the description route states its own media type
-# rather than reaching for the `media::Json` marker that feature gates.
+# Mounts the reference page and the description as two described operations.
+# Off by default: it adds two `paths` keys to the published contract.
 docs = []
 
 # --- Escape hatch ----------------------------------------------------------
-# Unlocks `layer_unchecked`, `into_tower_unchecked`, `route_unchecked` and
-# `upgrade_unchecked`. What
-# they reach is recorded and flagged rather than dropped -- an operation stays
-# in `paths` marked opaque, a route with no expressible template is listed at
-# the document root -- and the document is stamped non-authoritative.
-# Documented anti-pattern.
+# The `*_unchecked` methods. What they reach is recorded and the document is
+# stamped non-authoritative. Documented anti-pattern.
 unchecked = ["dep:tower-layer", "dep:tower-service"]
 
 full = [
@@ -524,77 +422,38 @@ tracing = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
-# `multer`'s reader takes a `Stream`, so the test that reparses a rendered
-# multipart body with an independent reader has to name one. It is a
-# dev-dependency rather than an edge on the `multipart` feature because only
-# the test wants it: `futures-core` reaches the library through `openapi32`
-# alone, and widening that to `multipart` would put a dependency in a 3.1 build
-# for a type no shipped code names. It adds nothing to the graph either --
-# `multer` already pulls it in through `futures-util` -- so, like `bytes` and
-# `http-body-util` below, it cannot perturb the `.stderr` snapshots.
+# A dev-dependency adding a crate to the graph can reword the `ui` `.stderr`
+# snapshots' "other types implement" lists; these add none.
 futures-core = { workspace = true }
 jsonwebtoken = { workspace = true }
 moka = { workspace = true }
-# An integration target drives `Service::call` and then has to read the
-# response, which means naming the body's own crates. Both are already
-# dependencies of the library, so this adds nothing to the graph -- and unlike
-# a genuinely new dev-dependency it cannot perturb the `.stderr` snapshots that
-# embed rustc's "the following other types implement" list.
 bytes = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true, features = ["client", "http1", "http2"] }
-# Applications derive serde alongside `kynos::Schema`, and the schema derive
-# reads those attributes, so the tests have to be able to write them.
 serde = { workspace = true, features = ["derive"] }
 alloc_counter = { workspace = true }
-# `test-util` pauses the clock, so the HTTP/2 idle wait is timed to the instant
-# rather than against a wall clock a loaded runner can stretch.
+# `test-util` pauses the clock for exact timeouts.
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
-# The UI suite hands `Router::intercept` a real `tower::Layer`, so the negative
-# and its control differ only in whether the middleware declares itself.
 tower = { workspace = true }
 trybuild = { workspace = true }
-# A scalar format claims a wire form, and the claim is only worth as much as a
-# test that serializes the type and looks. That needs the serde integration the
-# library itself does not.
 bigdecimal = { workspace = true, features = ["serde"] }
-# `clock` is what makes `Local` exist. Kynos's own dependency does not enable
-# it, but chrono's defaults do, so an application almost always has it -- and
-# the UI case proving `DateTime<Local>` is refused has to fail for that reason
-# rather than because the type is missing.
+# `clock` makes `Local` exist, so the UI case refusing `DateTime<Local>` fails
+# for the right reason.
 chrono = { workspace = true, features = ["alloc", "clock", "serde"] }
-# `tzdb-bundle-always` rather than the platform database, so a test that names a
-# zone does not depend on what the host has installed.
+# The bundled zone database, so tests do not depend on the host's.
 jiff = { workspace = true, features = [
   "std",
   "serde",
   "tzdb-bundle-always",
 ] }
-# The TLS example mints its own certificate at startup, so it runs with nothing
-# prepared and nothing committed -- no PEM in the repository to expire, and no
-# reader blocked on generating one first.
 rcgen = { workspace = true }
-# Named by nothing, and that is the point: asking `rustls` for `ring` unifies
-# both provider features onto the one copy `tokio-rustls` resolved, which is the
-# graph every implicit rustls constructor panics in and the graph `server/tls/`
-# survives by naming its provider. Declaring it here puts the whole suite
-# under that graph, so the defect cannot come back unobserved -- a reproduction
-# living outside the repository catches no regression. `std` because `ring`
-# does not imply it and a build with `tls` off has no `tokio-rustls` to supply
-# it.
+# Named by nothing: puts the suite under the graph with both rustls providers,
+# which `server/tls/` must survive.
 rustls = { workspace = true, features = ["ring", "std"] }
-# The auto-reload example inherits a socket from `systemfd`. Reading a file
-# descriptor out of the environment is the supervisor's protocol rather than the
-# framework's, so the crate that speaks it stays a dev-dependency.
 listenfd = { workspace = true }
 rust_decimal = { workspace = true, features = ["serde"] }
-# Kynos depends on the `tracing` facade and deliberately never on a subscriber,
-# so the tracing example has to install one itself -- otherwise the feature's
-# whole output would be invisible to the reader it exists for.
+# Examples install a subscriber and exporter; Kynos depends on neither.
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
-# The same argument one layer further out: the OpenTelemetry example wires a
-# real exporter, and the crates that speak OTLP stay here rather than becoming
-# something the framework binds every application to.
 opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = ["rt-tokio"] }
 opentelemetry-otlp = { workspace = true, features = ["grpc-tonic", "trace"] }
@@ -602,31 +461,15 @@ opentelemetry-semantic-conventions = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 uuid = { workspace = true, features = ["serde"] }
 
-# `connection_adversarial.rs` lowers its own `RLIMIT_NOFILE` to run a listener
-# out of descriptors, and `unsafe_code` is forbidden, so the call needs a safe
-# wrapper. `process` is the feature that carries `setrlimit`.
+# `setrlimit` for `connection_adversarial.rs`.
 [target.'cfg(unix)'.dev-dependencies]
 rustix = { workspace = true, features = ["process"] }
 
 [lints]
 workspace = true
 
-# docs.rs builds with default features unless told otherwise, which for Kynos
-# would publish a framework with no TLS, no codec beyond JSON, no scalar format,
-# no static assets and no escape hatch -- most of the surface `docs/` describes.
-# `all-features` rather than a list because a list is a second copy of the
-# feature table that drifts, and because this is exactly what
-# `mise run docs:check` already builds with warnings denied: what docs.rs
-# publishes is what CI proved.
-#
-# `--cfg docsrs` turns on `#![cfg_attr(docsrs, feature(doc_cfg))]` in each
-# crate root, which badges every feature-gated item "available on crate
-# feature X only". docs.rs always builds on nightly, and stable builds -- this
-# crate's MSRV and `docs:check` -- never set the cfg, so nothing here depends
-# on nightly. Cargo already declares `docsrs` to the `unexpected_cfgs` lint.
-# Use `doc_cfg` alone: the older `feature(doc_auto_cfg)` was removed in rustc
-# 1.92.0, merged into `doc_cfg` (rust-lang/rust#138907), so writing it would
-# fail the docs.rs build outright with E0557.
+# What `docs:check` builds. `docsrs` enables `feature(doc_cfg)` to badge gated
+# items; not `doc_auto_cfg`, which rustc 1.92 removed.
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]

@@ -149,6 +149,11 @@ page's link true of the path the route actually got.
 It follows rule 11 rather than bending it: what is served is `openapi`'s own
 output, not a document patched on the way past.
 
+The two routes are not hidden from `paths`, though that widens the published
+contract. A described route missing from the document is what the conformance
+harness catches, and hiding one through `unchecked` would stamp the whole
+document non-authoritative.
+
 ## `validate`, `openapi`, `build`
 
 | Method | Consumes | Returns | Fails when |
@@ -330,6 +335,15 @@ The general principle: the model's job is to be true of OpenAPI, and the
 router's job is to be true of what Kynos can serve. Where those differ, the
 narrower rule goes in the narrower layer. A parser that enforces a consumer's
 policy is a parser that cannot be reused by a second consumer.
+
+### Why route attributes do not restate the signature
+
+An attribute DSL such as utoipa's `#[utoipa::path(responses(...))]` is written
+by hand beside the code it describes, and nothing keeps the two in step — the
+most common way a generated document ends up wrong. So `#[get]` and its siblings
+carry only what the types cannot: the method, the path and prose. What they add
+over the builder form is compile-time checking, chiefly that a path template's
+variables match the handler's path parameters.
 
 ### Why fallbacks are not routes
 

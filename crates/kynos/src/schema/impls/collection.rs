@@ -29,11 +29,8 @@ fn array<T: Schema>(registry: &mut Registry, unique: bool) -> OpenApiSchema {
 
 /// An object schema whose values are `V` and whose keys are `K`.
 ///
-/// `propertyNames` is built here as a string schema plus `K`'s constraints,
-/// rather than taken from `K`'s own schema — so a key type cannot describe
-/// itself as something a JSON object key could never be. It is omitted when
-/// `K` constrains nothing, since `{"type": "string"}` says no more than
-/// `type: object` already does.
+/// `propertyNames` is a string schema plus `K`'s constraints, not `K`'s own
+/// schema, and is omitted when `K` constrains nothing.
 ///
 /// A key `pattern` that no check could enforce is recorded on the registry,
 /// which the router refuses while it is built.
@@ -82,16 +79,10 @@ fn check_members<'a, T: Schema + 'a>(
 /// Checks each entry of a map: its key against the `propertyNames` that `K`
 /// declares, then its value under the key.
 ///
-/// A key has no location of its own, since a pointer to it names its value,
-/// so a key is reported at the map, the key in the detail. A key is a string,
-/// so its length bounds and its `pattern` are what can fail; `pattern` only
-/// under the `pattern` feature, without which the router refuses a key type
-/// declaring one. A key that cannot say what member name it is is not checked,
-/// and its value is reported at the map.
-///
-/// `K::key_constraints` is built once the first key to check needs it, and
-/// only its enforced bounds are kept, so an empty map, or one whose keys
-/// cannot be checked, builds nothing.
+/// A pointer to a key names its value, so a key is reported at the map. Its
+/// length bounds are checked, and its `pattern` under the `pattern` feature. A
+/// key with no `as_member` is not checked, and its value is reported at the
+/// map. `K::key_constraints` is built lazily.
 fn check_entries<'a, K: MapKey + 'a, V: Schema + 'a>(
     entries: impl Iterator<Item = (&'a K, &'a V)>,
     at: Pointer<'_>,
@@ -247,12 +238,8 @@ impl<K: MapKey, V: Schema, S> OpenMap for HashMap<K, V, S> {}
 
 impl<K: MapKey, V: Schema> OpenMap for BTreeMap<K, V> {}
 
-// The hoisted `additionalProperties` is the value schema, so a map constrains
-// no member exactly when that schema admits every value. `Unchecked`'s is the
-// permissive one whatever it wraps, so the map is bounded by its value's type
-// rather than by a marker a value type could claim while describing itself
-// with a constraint. The key needs no bound beyond `MapKey`: the hoist drops
-// `propertyNames`, so no key constraint reaches the object.
+// The hoisted value schema admits every value only for `Unchecked` values; the
+// key needs no bound beyond `MapKey`, since the hoist drops `propertyNames`.
 impl<K: MapKey, V, S> AdmitsAny for HashMap<K, Unchecked<V>, S> {}
 
 impl<K: MapKey, V> AdmitsAny for BTreeMap<K, Unchecked<V>> {}

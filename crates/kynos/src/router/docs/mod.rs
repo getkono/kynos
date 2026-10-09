@@ -1,14 +1,8 @@
 //! A rendered API reference, and the description it fetches.
 //!
-//! # Why this is not ninety lines of application code
-//!
-//! The page must fetch a description, and that description must describe the
-//! two routes that serve it -- so the bytes cannot exist when
-//! [`Router::docs`](crate::Router::docs) is called. Doing it by hand means
-//! rendering after mounting, carrying the result through the application
-//! context, and writing two handlers that read it back out. That ordering is
-//! the only genuinely hard part, it is a property of the router, and it is the
-//! whole of what this module owns.
+//! The description describes the two routes that serve it, so both are
+//! rendered when the router is built, never when
+//! [`Router::docs`](crate::Router::docs) is called.
 //!
 //! ```no_run
 //! use kynos::{Router, router::docs::Docs};
@@ -19,20 +13,17 @@
 //!
 //! # Kynos ships the wiring, not the UI
 //!
-//! A renderer is a string. The two built-in pages are a script tag apiece
-//! naming a CDN, and [`Docs::custom`] takes any other -- so adding a third, or
-//! vendoring a bundle for an air-gapped deployment, is a `const` rather than a
-//! change here. No JavaScript is compiled into this crate and no dependency is
-//! added for one.
+//! A renderer is a string: the two built-in pages are a script tag apiece
+//! naming a CDN, and [`Docs::custom`] takes any other. No JavaScript is
+//! compiled into this crate.
 //!
 //! **The browser fetches the bundle, not the process.** Both built-in pages
 //! load from a CDN, so a client behind a proxy that blocks it sees an empty
 //! page. Each pins one exact version with an integrity hash and is served
 //! under a `Content-Security-Policy` admitting that bundle and its boot script
-//! alone, so an upstream publish cannot run on this origin. An air-gapped
-//! deployment, or one that must not trust a CDN at all, serves its own bundle
-//! with [`assets`](crate::router::assets)'s embedded set and points a
-//! [`Docs::custom`] page at it.
+//! alone. An air-gapped deployment, or one that must not trust a CDN at all,
+//! serves its own bundle with [`assets`](crate::router::assets)'s embedded set
+//! and points a [`Docs::custom`] page at it.
 //!
 //! # Mounting a reference widens the published contract
 //!
@@ -40,25 +31,14 @@
 //! publishes two `paths` keys a deployment without them does not, and a client
 //! generated from the one carries two operations the other does not.
 //!
-//! That is not an oversight to route around. A route answering 200 while
-//! missing from the document is exactly what the conformance harness exists to
-//! catch, and the only sanctioned way to serve one is
-//! [`unchecked`](crate::unchecked) -- which would stamp the whole document
-//! non-authoritative in order to conceal two operations Kynos itself mounted.
-//! Rendering the description *before* the mount would buy a stable contract by
-//! lying about the service.
-//!
 //! Where the contract must not move, run a second `Router` and `Server` on an
 //! internal port, and let the two documents differ because the two services do.
 //!
 //! # A built service's own edits reach the served bytes
 //!
-//! `Server::prepare` adds a `mutualTLS` scheme once the router is built, and
-//! `Service::into_tower_unchecked` flags every operation, so the document a
-//! reference was first rendered from is not always the one the service ends
-//! up reporting. Both edits go through the one method that edits a built
-//! service's document, and it renders the reference again before it returns,
-//! so the bytes served always equal what `Service::openapi` reports.
+//! `Server::prepare` and `Service::into_tower_unchecked` edit a built
+//! service's document, and each edit renders the reference again, so the bytes
+//! served always equal what `Service::openapi` reports.
 
 mod endpoint;
 mod page;
@@ -163,8 +143,7 @@ impl Docs {
     /// Where the page is served. `/docs` by default.
     ///
     /// A path that is not a legal template is recorded as a violation and
-    /// surfaces from [`Router::validate`](crate::router::Router::validate),
-    /// which is where every other malformed path in a description surfaces.
+    /// surfaces from [`Router::validate`](crate::router::Router::validate).
     #[must_use]
     pub fn at(mut self, path: &str) -> Self {
         self.at = template(path, &mut self.violations);
@@ -198,10 +177,8 @@ impl Docs {
 
     /// The prefix both `operationId`s take. `docs` by default.
     ///
-    /// Each identifier is derived from the path it serves, so two references in
-    /// one router collide only where they are nested under different prefixes
-    /// -- the identifier is fixed before any prefix exists. This is how that
-    /// one case is resolved.
+    /// Each identifier is derived from the unprefixed path it serves, so two
+    /// references nested under different prefixes need different prefixes here.
     #[must_use]
     pub fn operation_id_prefix(mut self, prefix: impl Into<Cow<'static, str>>) -> Self {
         self.operation_id_prefix = prefix.into();
@@ -237,23 +214,8 @@ impl Docs {
     }
 }
 
-/// A docs path, checked where it was written.
-///
-/// Panics rather than recording a violation: this is a literal at a mount site,
-/// which is the case [`AssetEndpoint`](crate::router::assets::endpoint::AssetEndpoint)
-/// already answers the same way. A template carrying a *variable* parses fine
-/// and is refused later by the validator, which reports it as the undeclared
-/// path parameter it is.
-/// Parses a mount-site path literal, recording a malformed one.
-///
-/// A `Violation` rather than a panic, and rather than the `assert!`
-/// [`assets_directory`](crate::router::assets::fs) used to use. All three are
-/// the same situation — a path literal written at a mount site — and answered
-/// it three different ways, two of which carried arguments that contradicted
-/// each other. `Group::new` is the one this follows: it keeps
-/// [`Router::validate`](crate::router::Router::validate) the single place a
-/// malformed description surfaces, and a builder method that returned a
-/// `Result` would make every mount two lines.
+/// Parses a mount-site path literal, recording a malformed one as a violation
+/// (as `Group::new` does) so `Router::validate` reports it.
 fn template(path: &str, violations: &mut Vec<Violation>) -> PathTemplate {
     match PathTemplate::parse(path) {
         Ok(template) => template,
@@ -266,22 +228,13 @@ fn template(path: &str, violations: &mut Vec<Violation>) -> PathTemplate {
                     reason,
                 },
             });
-            // A template the router will not mount. The violation is what the
-            // caller is told; this only has to be a value.
+            // A placeholder; the violation fails the build.
             PathTemplate::parse("/").expect("a root path is always a legal template")
         }
     }
 }
 
 /// Which half of one reference a mounted entry is.
-///
-/// Carried on [`Mounted`] rather than in a list of its own, so that by the time
-/// this is read every enclosing prefix has already been applied to that entry's
-/// path -- the page fetches the URL the document declares rather than one
-/// derived a second time beside it. An entry a violation dropped takes its half
-/// of the mount with it, instead of leaving a page pointed at nothing.
-///
-/// [`Mounted`]: crate::router::Mounted
 #[derive(Clone, Debug)]
 pub(crate) enum Role {
     /// Carries no state: the description's half names the reference, and the
@@ -293,9 +246,7 @@ pub(crate) enum Role {
 /// What the two halves share, filled once the document exists.
 #[derive(Debug)]
 pub(crate) struct State {
-    /// Replaced whenever the built service's document is edited. Every such
-    /// edit takes the service by `&mut` or by value, so no request is in
-    /// flight while it lands.
+    /// Replaced whenever the built service's document is edited.
     rendered: RwLock<Option<Rendered>>,
     /// The `paths` key the description ended up at, written by its own mount.
     description_path: OnceLock<String>,
@@ -312,13 +263,8 @@ struct Rendered {
     description: Bytes,
 }
 
-/// Read where a rendered reference cannot be missing.
-///
-/// `Service::new` is private to the crate and [`Router::build`] is its only
-/// caller, so a request reaching either endpoint has already been through
-/// [`render::render`]. A build that failed produced no service to route to.
-///
-/// [`Router::build`]: crate::Router::build
+/// Read where a rendered reference cannot be missing: only `Router::build`
+/// makes a `Service`, and it renders first.
 const UNRENDERED: &str =
     "an API reference is rendered by `Router::build`, which is the only way to obtain a `Service`";
 
@@ -340,8 +286,7 @@ impl State {
         let rendered = self
             .rendered
             .read()
-            // Only an assignment runs under the write lock, and it cannot
-            // panic, so a poisoned lock still holds a whole rendering.
+            // Only a non-panicking assignment runs under the write lock.
             .unwrap_or_else(PoisonError::into_inner);
         half(rendered.as_ref().expect(UNRENDERED)).clone()
     }

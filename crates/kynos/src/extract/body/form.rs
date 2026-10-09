@@ -41,22 +41,19 @@ use crate::{
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Form<T>(pub T);
 
-/// One spelling, read by both halves: what is decoded and what is described.
+/// The media type decoded and described.
 const MEDIA_TYPE: &str = mime_names::APPLICATION_FORM_URLENCODED;
 
-/// `T: Schema` for the reason [`Json`](super::json::Json)'s is: the bounds a
-/// derived field declares are checked once `T` is deserialized.
+/// `T: Schema` because the bounds a derived field declares are checked once `T`
+/// is deserialized.
 impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send> FromRequest<C> for Form<T> {
     type Rejection = BodyRejection;
 
     async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
         let bytes = super::read_body(request, MEDIA_TYPE).await?;
 
-        // A pair is text once decoded, and `serde_html_form` would replace
-        // octets that are not UTF-8 rather than refuse them, so they are
-        // refused here first: a 400, as `Query<T>` answers the same pair. The
-        // pairs are read through the reading `Query<T>` shares, so the two
-        // cannot disagree about which pair that is.
+        // `serde_html_form` would replace non-UTF-8 octets, so refuse them
+        // first with the 400 `Query<T>` gives, through the same pair reader.
         let text = std::str::from_utf8(&bytes).map_err(|error| BodyRejection::Syntax {
             detail: format!("the form body is not valid UTF-8: {error}"),
         })?;
@@ -68,13 +65,8 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send> FromRequest<C> for
             }
         }
 
-        // Past that, form syntax admits no malformed input -- an unpaired key
-        // is a key with an empty value, and a malformed escape is a literal
-        // `%` -- so every way this fails is a pair that does not fit `T`,
-        // which is a 422 rather than a 400. A scalar field repeated is one of
-        // those: the description gives it one pair. The failure is keyed by
-        // the root JSON Pointer because serde reports which field only inside
-        // its message.
+        // Form syntax has no malformed input, so any failure is a 422. Keyed
+        // at the root: serde names the field only inside its message.
         let value = serde_html_form::from_str(text).map_err(|error| BodyRejection::Schema {
             failures: BTreeMap::from([(String::new(), error.to_string())]),
         })?;

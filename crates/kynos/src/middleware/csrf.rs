@@ -3,15 +3,8 @@
 //! The scheme is the one the W3C's Fetch Metadata Request Headers make
 //! possible and Go 1.25 shipped in its standard library: a browser sets
 //! `Sec-Fetch-Site` itself and script cannot forge it, so an unsafe request
-//! that says it came from another site can be refused on that alone.
-//!
-//! That matters here beyond convenience.
-//! [`middleware.md`](https://github.com/getkono/kynos/blob/master/docs/middleware.md)
-//! rules out signed cookies because they arrive with a crypto stack the
-//! dependency table has no row for, in a default build no feature gate could
-//! contain. A synchroniser-token CSRF defence needs the same stack plus a
-//! session to keep the token in. This needs neither: no token, no session, no
-//! randomness, no HMAC — four header comparisons.
+//! that says it came from another site can be refused on that alone. It needs
+//! no token, session, randomness or HMAC.
 
 use std::{borrow::Cow, fmt, marker::PhantomData};
 
@@ -52,31 +45,25 @@ const SEC_FETCH_SITE: http::HeaderName = http::HeaderName::from_static("sec-fetc
 ///    request's own — its target's, else its `Host` — the fallback for a
 ///    browser too old to send it.
 /// 5. **Neither field present.** A browser always sends at least one on an
-///    unsafe request; something that sends neither is `curl`, a mobile client
-///    or a server, none of which is subject to CSRF because none carries
-///    ambient credentials on another site's behalf.
+///    unsafe request, so this is not a browser and carries no ambient
+///    credentials.
 ///
 /// Anything else is refused with 403.
 ///
 /// # What this does not defend
 ///
-/// A request whose credentials are *not* ambient — a bearer token a script had
-/// to read and attach — was never forgeable this way, and this interceptor adds
-/// nothing to it. The scheme protects cookies, and Kynos ships no session, so
-/// it is worth being clear that mounting this does not make a cookie-based
-/// login safe on its own.
+/// Non-ambient credentials, such as a bearer token, were never forgeable this
+/// way. The scheme protects cookies, but mounting it does not by itself make a
+/// cookie-based login safe.
 ///
-/// It also trusts what reaches it. A reverse proxy that rewrites `Host` or
-/// strips `Origin` moves the ground this stands on — the same class of
-/// dependency that any check reading a forwarded field has, and worth knowing
-/// before mounting this behind one.
+/// It also trusts what reaches it: a reverse proxy that rewrites `Host` or
+/// strips `Origin` changes what it decides.
 ///
 /// # Naming what the 403 is
 ///
 /// [`problem_type`](Csrf::problem_type) puts an application's own URI on the
 /// refusal, so a client can tell a cross-site refusal from every other 403 the
-/// service sends — which matters here more than most, since a browser that
-/// forged the request is not the party reading the document.
+/// service sends.
 pub struct Csrf<T = ()> {
     trusted: Vec<Cow<'static, str>>,
     /// Names the refusal's problem type without holding one.
@@ -93,9 +80,7 @@ impl Csrf<()> {
     /// Names the RFC 9457 problem type this refusal's 403 carries.
     ///
     /// Available only on a `Csrf` that has not named one, so a chain states the
-    /// type at most once. See
-    /// [`BodySize::problem_type`](crate::middleware::limits::body_size::BodySize::problem_type)
-    /// for the rule and its pass control.
+    /// type at most once.
     ///
     /// ```
     /// use kynos::{error::problem::ProblemType, middleware::csrf::Csrf};
@@ -121,10 +106,8 @@ impl Csrf<()> {
 impl<T> Csrf<T> {
     /// Also allows unsafe requests from this exact origin.
     ///
-    /// Compared byte for byte after ASCII-lowercasing, because an origin is a
-    /// scheme, host and port rather than a name to pattern-match. There is no
-    /// wildcard: a CSRF allow-list that admits a subdomain admits whoever takes
-    /// that subdomain over.
+    /// Compared ASCII case-insensitively, with no wildcard: an allow-list that
+    /// admits a subdomain admits whoever takes that subdomain over.
     #[must_use]
     pub fn trusting_origin(mut self, origin: impl Into<Cow<'static, str>>) -> Self {
         self.trusted.push(origin.into());
@@ -147,24 +130,18 @@ impl<T> Csrf<T> {
             .get(http::header::ORIGIN)
             .and_then(|value| value.to_str().ok());
 
-        // A trusted origin first. A front end served from elsewhere is
-        // `cross-site` to every current browser, so tried after the line below
-        // it would never be reached; and script can no more set `Origin` than
-        // `Sec-Fetch-Site`, so admitting it here forges nothing.
+        // A trusted origin first: a front end served from elsewhere is
+        // `cross-site`, so it would never pass the check below.
         if origin.is_some_and(|origin| self.trusts(origin)) {
             return true;
         }
 
-        // The browser's own statement, and the reason this works at all: script
-        // cannot set `Sec-Fetch-Site`, so `same-origin` is a fact rather than a
-        // claim. `none` means no page caused the request -- a bookmark, an
-        // address bar -- which is likewise not a forgery.
+        // `none` means no page caused the request (a bookmark, the address bar).
         if let Some(site) = site {
             return matches!(site.trim(), "same-origin" | "none");
         }
 
-        // No `Sec-Fetch-Site`. Either an older browser, which still sends
-        // `Origin` on an unsafe request, or something that is not a browser.
+        // An older browser still sends `Origin` on an unsafe request.
         match origin {
             Some(origin) => {
                 own_authority(headers, authority).is_some_and(|host| host == authority_of(origin))
@@ -184,8 +161,7 @@ impl<T> Csrf<T> {
 
 /// Whether the method is one RFC 9110 section 9.2.1 calls safe.
 ///
-/// `OPTIONS` is included: a preflight carries no credentials and reaches no
-/// operation, and refusing one would break CORS for every operation on the path.
+/// `OPTIONS` is included: refusing a preflight would break CORS on the path.
 fn is_safe(method: &http::Method) -> bool {
     matches!(
         *method,
@@ -204,17 +180,10 @@ fn authority_of(origin: &str) -> String {
 
 /// The request's own authority, from the target or from `Host`.
 ///
-/// Both, because only HTTP/1.1 carries it in a field. RFC 9113 section 8.3.1
-/// replaces `Host` with the `:authority` pseudo-header, which `http` puts on
-/// the request URI rather than in the map -- so a version-2 request read
-/// through `Host` alone has no authority at all, and every `Origin` it carries
-/// would fail to match one.
-///
-/// The target's authority wins where both are present. An HTTP/1.1 request
-/// carries one there only in absolute form, and RFC 9112 section 3.2.2 says an
-/// origin server receiving that form "MUST ignore the received Host header
-/// field"; a version-2 request's `:authority` is the field section 8.3.1 makes
-/// authoritative.
+/// HTTP/2's `:authority` (RFC 9113 section 8.3.1) lands on the URI, not in the
+/// map. The target wins where both are present: RFC 9112 section 3.2.2 says an
+/// absolute-form target means the server "MUST ignore the received Host header
+/// field".
 pub(crate) fn own_authority(headers: &HeaderMap, authority: Option<&str>) -> Option<String> {
     authority
         .or_else(|| {
@@ -231,8 +200,7 @@ pub(crate) fn own_authority(headers: &HeaderMap, authority: Option<&str>) -> Opt
 /// `T` names the problem type the body carries; `()` leaves `about:blank`. Set
 /// it with [`Csrf::problem_type`].
 pub struct CrossSite<T = ()> {
-    /// Carries `T` without storing one. `fn() -> T` rather than `T`, so a
-    /// refusal is `Send` and `Sync` whatever the marker is.
+    /// Carries `T` without storing one; `fn() -> T` keeps it `Send` and `Sync`.
     problem_type: PhantomData<fn() -> T>,
 }
 
@@ -278,11 +246,7 @@ where
     C: Sync + 'static,
     T: ProblemType,
 {
-    /// `()` rather than a declared group.
-    ///
-    /// `Sec-Fetch-Site`, `Origin` and `Host` are read directly, for the reason
-    /// `Cors` reads `Origin` the same way: none is a parameter of the operation,
-    /// and a browser-set field is not one a client may be told to send.
+    /// `()`: the fields read are browser-set, not operation parameters.
     type Reads = ();
     type Adds = ();
     type Short = CrossSite<T>;
@@ -311,9 +275,8 @@ where
     }
 }
 
-// The derivable implementations, written out: `#[derive]` would bound each on
-// the marker, and a marker is a name rather than a value. Destructured, so a
-// field added to either type is a compile error here.
+// Not derived: a derive would bound each on the marker. Destructured, so a new
+// field is a compile error here.
 
 impl<T> Clone for CrossSite<T> {
     fn clone(&self) -> Self {

@@ -1,17 +1,13 @@
 //! The `pattern` check, behind the `pattern` feature.
 //!
 //! The derive translates each field's pattern from ECMA-262 to the `regex`
-//! dialect and compiles it when it expands, so a pattern reaching here is one
-//! the engine compiles. Each field's pattern is a `static` the expansion
-//! declares, and is compiled the first time a value is checked against it
-//! rather than per request.
+//! dialect and compiles it when it expands. Each is a `static`, compiled on
+//! first check.
 //!
 //! A map key's pattern is a run-time value of `MapKey::key_constraints`, and
-//! Rust has no generic statics to hold one per key type, so `key` translates
-//! and compiles each distinct pattern once per process and keeps it under its
-//! source. The router calls it while it is built, which refuses a pattern that
-//! does not translate and leaves the compiled one in place for the first
-//! request.
+//! Rust has no generic statics, so `key` translates and compiles each distinct
+//! pattern once per process, kept under its source. The router calls it while
+//! it is built, which refuses a pattern that does not translate.
 
 use std::{
     collections::HashMap,
@@ -50,8 +46,7 @@ impl Pattern {
     fn is_match(&self, text: &str) -> bool {
         self.compiled
             .get_or_init(|| {
-                // The derive compiled this same string with this same engine
-                // version and configuration, so this cannot fail.
+                // The derive already compiled this string with this engine.
                 Regex::new(self.translated).expect("the derive compiled this pattern")
             })
             .is_match(text)

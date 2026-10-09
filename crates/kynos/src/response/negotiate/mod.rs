@@ -101,14 +101,8 @@ impl<T> Accept<T> {
     /// Chooses one offered representation or returns a documented 406.
     ///
     /// `producers` is a tuple of closures, one per alternative and in the same
-    /// order, each handed `source`. Exactly one runs: an alternative the client
-    /// did not ask for is never built, so rendering a PDF for a request that
-    /// wanted JSON is work that does not happen rather than work that is thrown
-    /// away.
-    ///
-    /// Passing the source separately is what lets every closure see it. Three
-    /// closures cannot each own one value, and making them borrow a captured
-    /// one would put the same lifetime problem in every handler.
+    /// order, each handed `source`. Only the chosen one runs, so an alternative
+    /// the client did not ask for is never built.
     ///
     /// # Errors
     ///
@@ -131,11 +125,8 @@ impl<T> Accept<T> {
         })
     }
 
-    /// The index of the best alternative, or the 406.
-    ///
-    /// Split from `respond_with` so the ranking can be asserted without
-    /// producing a response: what is worth testing is which arm wins, and
-    /// building one would drag in every codec's writer.
+    /// The index of the best alternative, or the 406; testable without
+    /// producing a response.
     pub(crate) fn choose<O: representation::Representations>(
         &self,
     ) -> Result<usize, NegotiationRejection> {
@@ -202,15 +193,13 @@ impl<C: Sync, T: Send> FromRequestParts<C> for Accept<T> {
     async fn from_request_parts(parts: &mut Parts, _context: &C) -> Result<Self, Self::Rejection> {
         let mut values = parts.headers.get_all(crate::http::header::ACCEPT).iter();
 
-        // RFC 9110 12.5.1: a request with no `Accept` accepts any media type.
-        // A field that is *present* and empty is a different claim, and reaches
-        // `parse` so that it is answered as the malformed value it is.
+        // RFC 9110 12.5.1: no `Accept` accepts anything; a present but empty
+        // field is malformed.
         let Some(first) = values.next() else {
             return Self::parse("*/*");
         };
 
-        // A field that may appear more than once is equivalent to one field
-        // holding the comma-separated list, which is the form `parse` reads.
+        // Repeated field lines are one comma-separated list.
         let mut field = String::new();
         for value in std::iter::once(first).chain(values) {
             let value = value.to_str().map_err(|_| invalid_accept())?;
@@ -235,29 +224,15 @@ impl<T> Describe for Accept<T> {
 /// header.
 ///
 /// `T` is a tuple of response types, each contributing one entry to the
-/// operation's `content` map. Note that `Accept` itself is never declared as a
-/// parameter — the specification says such a declaration is ignored, and the
-/// `content` map is what actually describes the negotiation.
+/// operation's `content` map.
 ///
-/// Every response this produces carries `Vary: accept`, merged into whatever
-/// `Vary` is already there, on every arm and when the client sent no `Accept`
-/// at all. Like the `Vary` of a
-/// [`ContentLanguage`](crate::response::language::headers::ContentLanguage),
-/// it is never described: a shared cache reads it, and a client generator has
-/// no use for it.
-// A response is neither `Clone` nor `PartialEq` -- a body is a stream, not a
-// value -- so `Negotiated` cannot be either now that it holds one rather than
-// the alternatives it might have built.
+/// Every response this produces carries `Vary: accept`, merged into any `Vary`
+/// already present; it is not described.
 #[derive(Debug)]
 pub struct Negotiated<T> {
     response: Response,
 
-    /// The offer, kept at the type level.
-    ///
-    /// `Responses` reads it and nothing else does: the chosen representation is
-    /// already a response by the time this exists, and the alternatives were
-    /// never built. Keeping `T` is what stops the description losing an arm the
-    /// handler could have served.
+    /// The offer, kept so `Responses` describes every alternative.
     offer: std::marker::PhantomData<fn() -> T>,
 }
 

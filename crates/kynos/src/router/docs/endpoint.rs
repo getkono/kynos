@@ -1,8 +1,5 @@
-//! The two operations a reference mounts.
-//!
-//! Neither is special. Each is an ordinary [`Endpoint`] with one status, one
-//! media type and a payload rendered from the finished document -- which is the
-//! only thing about them the rest of the router has to know.
+//! The two operations a reference mounts, each an ordinary [`Endpoint`] with
+//! one status, one media type and a payload rendered from the finished document.
 
 use std::sync::Arc;
 
@@ -13,15 +10,12 @@ use crate::{
     router::{docs::State, endpoint::Endpoint, operation::OperationCx},
 };
 
-/// The charset is part of the constant rather than left to the recipient to
-/// sniff, which is the call [`media::Html`](crate::http::media::Html) already
-/// makes for the same bytes.
+/// HTML with an explicit charset, as [`media::Html`](crate::http::media::Html)
+/// sends.
 const HTML: &str = "text/html; charset=utf-8";
 
-/// Taken from the ungated `mime_names` rather than from
-/// [`media::Json`](crate::http::media::Json), which is behind the `json`
-/// feature. That feature is about *application* payloads, and a reference that
-/// implied it would tie the page a human opens to a codec it never uses.
+/// From the ungated `mime_names`, so a reference does not require the `json`
+/// feature.
 const JSON: &str = mime_names::APPLICATION_JSON;
 
 /// The page a human opens.
@@ -82,17 +76,14 @@ impl<C: Send + Sync + 'static> Endpoint<C> for DocsPage {
             kynos_openapi::Response::with_content(
                 "the reference page",
                 HTML,
-                // The same unconstrained object every non-JSON payload
-                // describes: HTML has no JSON Schema, and one claiming
-                // otherwise would claim more than it can check.
+                // Unconstrained, as every non-JSON payload is described.
                 kynos_openapi::MediaType::new(kynos_openapi::Schema::Object(Box::default())),
             ),
         ));
     }
 
     async fn call(&self, request: Request, context: &C) -> Response {
-        // The page is the same for every caller: nothing here reads the
-        // request, which is why the operation declares no parameter.
+        // Nothing reads the request, so no parameter is declared.
         let _ = (request, context);
         let mut response = answer(self.state.page(), HTML);
 
@@ -127,9 +118,7 @@ impl<C: Send + Sync + 'static> Endpoint<C> for DocsDescription {
             kynos_openapi::Response::with_content(
                 "the OpenAPI description",
                 JSON,
-                // An OpenAPI document has no `Schema` implementation and will
-                // not get one: modelling the meta-schema is a thing this
-                // framework deliberately does not do.
+                // Unconstrained: the OpenAPI meta-schema is deliberately not modelled.
                 kynos_openapi::MediaType::new(kynos_openapi::Schema::Object(Box::default())),
             ),
         ));
@@ -142,12 +131,7 @@ impl<C: Send + Sync + 'static> Endpoint<C> for DocsDescription {
 }
 
 /// One payload rendered from the finished document, with the media type it was
-/// rendered as.
-///
-/// Built directly rather than through
-/// [`Binary<M>`](crate::extract::body::binary::Binary): the marker for
-/// `application/json` is behind the `json` feature, and a reference must not
-/// imply an application codec.
+/// rendered as. Built directly, since `Binary<Json>` needs the `json` feature.
 fn answer(bytes: bytes::Bytes, media_type: &'static str) -> Response {
     let mut response = Response::new(Body::from_bytes(bytes));
     response
@@ -156,13 +140,7 @@ fn answer(bytes: bytes::Bytes, media_type: &'static str) -> Response {
     response
 }
 
-/// The headers a shipped page is served with.
-///
-/// The policy confines script to the pinned bundle and its boot script, and
-/// `nosniff` keeps the browser from reading the page as anything but the HTML
-/// it is declared as. A custom page gets neither: see [`Docs::custom`].
-///
-/// [`Docs::custom`]: crate::router::docs::Docs::custom
+/// The headers a shipped page is served with: its script policy and `nosniff`.
 fn secure(headers: &mut HeaderMap, policy: &'static str) {
     headers.insert(
         header::CONTENT_SECURITY_POLICY,

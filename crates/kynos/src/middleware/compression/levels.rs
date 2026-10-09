@@ -1,14 +1,8 @@
 //! Compression levels, one type per algorithm.
 //!
-//! Not abstracted into a shared `Fastest`/`Best` scale, deliberately. The three
-//! algorithms number their levels differently, mean different things by them,
-//! and have their knee in a different place — brotli 11 is roughly a thousand
-//! times slower than brotli 4 for a few per cent of size, while gzip 9 is
-//! perhaps twice gzip 6. A shared scale hides exactly the fact an operator
-//! needs, and makes "level 5" mean three unrelated things.
-//!
-//! So each is its own type, each refuses a number its own format does not
-//! define, and none of them converts into another.
+//! The three algorithms number their levels differently and have their knee in
+//! a different place, so each is its own type, each refuses a number its own
+//! format does not define, and none of them converts into another.
 
 /// The level gzip is asked for, in the range DEFLATE defines.
 ///
@@ -19,15 +13,14 @@ pub struct GzipLevel(u32);
 impl GzipLevel {
     /// The level used unless one is chosen: 6.
     ///
-    /// zlib's own default, and the level essentially every HTTP stack has
-    /// shipped for thirty years. The curve is flat above it — 9 costs roughly
-    /// twice the CPU of 6 for about one per cent of size — and steep below 4.
+    /// zlib's own default. The curve is flat above it — 9 costs roughly twice
+    /// the CPU of 6 for about one per cent of size — and steep below 4.
     pub const DEFAULT: Self = Self(6);
 
     /// The lowest level that still compresses.
     ///
-    /// What nginx ships as `gzip_comp_level` and what a service under CPU
-    /// pressure should reach for before it reaches for turning compression off.
+    /// What a service under CPU pressure should reach for before turning
+    /// compression off.
     pub const FASTEST: Self = Self(1);
 
     /// The highest level DEFLATE defines.
@@ -61,16 +54,10 @@ pub struct BrotliLevel(u32);
 impl BrotliLevel {
     /// The quality used unless one is chosen: 4.
     ///
-    /// **Not** the encoder's own default, and that is the point. Brotli's
-    /// reference default is 11, which is meant for content compressed once and
-    /// served a million times — a font, a bundle, anything with a build step.
-    /// Applied to a response generated per request it is catastrophic: quality
-    /// 11 encodes at roughly one megabyte a second, so a 200 KB JSON document
-    /// spends a fifth of a second of CPU before a byte of it is sent.
-    ///
-    /// 4 is what large edge networks serve dynamic content at. It beats gzip 6
-    /// on size while costing less CPU, which is the whole reason to prefer
-    /// brotli for a response nobody cached.
+    /// **Not** the encoder's own default of 11, which is meant for content
+    /// compressed once and served many times: it encodes at roughly one
+    /// megabyte a second, a fifth of a second of CPU for a 200 KB document.
+    /// 4 beats gzip 6 on size while costing less CPU.
     ///
     /// Raise it for content you generate once. Do not raise it for an API.
     pub const DEFAULT: Self = Self(4);
@@ -105,19 +92,16 @@ impl Default for BrotliLevel {
 
 /// The level zstd is asked for, in the range the reference encoder defines.
 ///
-/// 1 to 22. The negative "fast" levels are deliberately not reachable: they
-/// trade ratio for speed past the point where the coding is worth negotiating
-/// at all, and a response that compresses that badly should be sent as it is.
+/// 1 to 22. The negative "fast" levels are not reachable: a response that
+/// compresses that badly should be sent as it is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ZstdLevel(i32);
 
 impl ZstdLevel {
     /// The level used unless one is chosen: 3.
     ///
-    /// zstd's own default, and unusually one that suits a server: it beats
-    /// gzip 6 on both size and speed, which is why zstd is worth offering at
-    /// all. RFC 9659 fixes the window at 8 MB for HTTP, and every level here
-    /// stays inside it.
+    /// zstd's own default; it beats gzip 6 on both size and speed. RFC 9659
+    /// fixes the window at 8 MB for HTTP, and every level here stays inside it.
     pub const DEFAULT: Self = Self(3);
 
     /// The lowest level reachable here.

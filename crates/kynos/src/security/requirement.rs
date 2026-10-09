@@ -28,7 +28,7 @@ use crate::{
 
 /// What closes the set of requirements.
 mod sealed {
-    /// The private supertrait. Deliberately empty.
+    /// The private supertrait.
     pub trait Sealed {}
 }
 
@@ -36,17 +36,15 @@ mod sealed {
 /// [`AllOf`].
 ///
 /// Sealed. Every scheme is one through a blanket implementation, and the two
-/// combinators are the only other shapes, because a requirement Kynos did not
-/// write is one whose description it could not vouch for.
+/// combinators are the only other shapes.
 pub trait Requirement: sealed::Sealed + Send + Sync + 'static {
     /// What satisfying the requirement yields the handler.
     type Credential: Send;
 
     /// The `WWW-Authenticate` challenge a 401 refusing this requirement sends.
     ///
-    /// The first scheme's that has one, in declaration order, since a field
-    /// value is one string and a 401 needs only one challenge a client can
-    /// answer.
+    /// The first scheme's that has one, in declaration order: a 401 needs only
+    /// one challenge a client can answer.
     fn challenge() -> Option<&'static str>;
 
     /// Registers every scheme named, and returns the alternatives in the order
@@ -90,8 +88,7 @@ where
     C: Authenticates<S>,
 {
     async fn check(parts: &Parts, context: &C) -> Result<Option<S::Credential>, AuthRejection> {
-        // Three states, and only one reaches the verifier: absent is the
-        // caller's to interpret, and malformed is already a refusal.
+        // Only a presented credential reaches the verifier.
         let Some(presented) = S::present(parts)? else {
             return Ok(None);
         };
@@ -197,8 +194,7 @@ macro_rules! any_of {
             }
 
             fn declare(operation: &mut OperationCx<'_>) -> Vec<SecurityRequirement> {
-                // Once each: two schemes registered under one key are one
-                // alternative to a reader, and a repeat would add only noise.
+                // Two schemes registered under one key are one alternative.
                 let mut alternatives = Vec::new();
                 $(
                     let requirement = require::<$scheme>(operation, $scheme::scopes().to_vec());
@@ -268,9 +264,8 @@ macro_rules! all_of {
                 parts: &Parts,
                 context: &C,
             ) -> Result<Option<Self::Credential>, AuthRejection> {
-                // Every carrier before any verifier: a malformed or missing
-                // credential is decided without spending a verification on the
-                // ones beside it.
+                // Every carrier before any verifier, so a malformed or missing
+                // credential costs no verification of the others.
                 $( let $scheme = <$scheme as Carries>::present(parts)?; )+
                 if [$($scheme.is_none()),+].into_iter().all(std::convert::identity) {
                     return Ok(None);
@@ -301,8 +296,7 @@ all_of!(A, B, D, E);
 
 /// Registers scheme `S` and returns the requirement naming it with `scopes`.
 ///
-/// One name for both halves, so the scheme the requirement demands and the
-/// scheme the document defines cannot be different keys.
+/// One name for both, so the requirement and the definition share a key.
 pub(crate) fn require<S: SecurityScheme>(
     operation: &mut OperationCx<'_>,
     scopes: Vec<&'static str>,
@@ -315,13 +309,9 @@ pub(crate) fn require<S: SecurityScheme>(
 
 /// The component key scheme `S` is both registered and required under.
 ///
-/// [`SecurityScheme::NAME`] is an ordinary `&'static str`, so it need not be a
-/// legal component key, and [`Describe`](crate::extract::describe::Describe)
-/// has no way to report that it was not. Sanitizing rather than refusing is
-/// what keeps the requirement and the registration naming one string, which is
-/// the disagreement [`OperationCx::add_security_scheme`] exists to prevent.
-/// Only an empty name fails to sanitize, and the scheme's own type name stands
-/// in for it.
+/// [`SecurityScheme::NAME`] need not be a legal component key and `Describe`
+/// cannot report an error, so it is sanitized. An empty name falls back to the
+/// scheme's type name.
 pub(crate) fn component_name<S: SecurityScheme>() -> ComponentName {
     ComponentName::sanitized(S::NAME).unwrap_or_else(|_| {
         ComponentName::sanitized(std::any::type_name::<S>())

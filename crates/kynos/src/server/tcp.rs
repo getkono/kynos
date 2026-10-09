@@ -21,22 +21,18 @@ use crate::server::error::ServerError;
 /// the connection permit
 /// [`Server::max_connections`](crate::server::Server::max_connections) caps.
 ///
-/// It bounds only a connection with nothing in flight: the kernel sends no
-/// probe while data it sent is unacknowledged, so a peer that vanished
-/// mid-response is released by retransmission timeouts instead — some fifteen
+/// It bounds only a connection with nothing in flight: a peer that vanished
+/// mid-response is released by retransmission timeouts instead, some fifteen
 /// minutes at Linux's defaults. HTTP/2's
 /// [`keep_alive`](crate::server::protocol::http2::Http2Config::keep_alive) bounds that
 /// case for an HTTP/2 connection; nothing Kynos sets bounds it for HTTP/1.
 ///
 /// Both durations are whole seconds on the wire, from one to Linux's ceiling of
-/// 32767.
-/// The probe count is the operating system's rather than a field here, because
-/// not every platform lets a socket set it. `interval` is applied where the
-/// platform lets a socket set that — Linux, Android, the Apple platforms,
-/// FreeBSD, NetBSD, illumos, Fuchsia and Windows among them — and is
-/// the operating system's default elsewhere. `idle` is ignored on Haiku,
-/// OpenBSD, QNX Neutrino and Vita, which do not let a socket set it either, so
-/// the operating system's default applies there.
+/// 32767. The probe count is the operating system's. `interval` is applied
+/// where the platform lets a socket set it — Linux, Android, the Apple
+/// platforms, FreeBSD, NetBSD, illumos, Fuchsia and Windows among them — and
+/// `idle` is ignored on Haiku, OpenBSD, QNX Neutrino and Vita; the operating
+/// system's default applies otherwise.
 ///
 /// `#[non_exhaustive]`, so start from [`default`](Self::default):
 ///
@@ -90,18 +86,16 @@ const MAX_KEEPALIVE_SECONDS: u64 = 32_767;
 
 /// Refuses a keepalive the kernel would refuse.
 ///
-/// The socket options carry whole seconds, and `socket2` truncates, so half a
-/// second reaches the kernel as zero; Linux caps both at 32767 seconds. It
-/// refuses either only after it has turned `SO_KEEPALIVE` on, which leaves the
-/// socket probing at the system's two-hour default rather than failing.
+/// `socket2` truncates to whole seconds, so half a second reaches the kernel as
+/// zero, and Linux caps both at 32767. The kernel refuses either only after
+/// enabling `SO_KEEPALIVE`, silently leaving the two-hour default.
 pub(in crate::server) fn validate_tcp_keepalive(
     keepalive: Option<TcpKeepAlive>,
 ) -> std::result::Result<(), ServerError> {
     let accepted = |duration: Duration| (1..=MAX_KEEPALIVE_SECONDS).contains(&duration.as_secs());
     if keepalive.is_some_and(|keepalive| !accepted(keepalive.idle) || !accepted(keepalive.interval))
     {
-        // `InvalidConfiguration` carries a `&'static str`, so the ceiling is
-        // spelled out below; this keeps the two from parting company.
+        // Keeps the literal in the message in step with the constant.
         const _: () = assert!(
             MAX_KEEPALIVE_SECONDS == 32_767,
             "MAX_KEEPALIVE_SECONDS moved; the message below still says 32767"
@@ -125,8 +119,7 @@ impl SocketOptions {
         Self {
             keepalive: keepalive.map(|keepalive| {
                 let params = socket2::TcpKeepalive::new().with_time(keepalive.idle);
-                // `socket2`'s own list for `with_interval`, copied so the call
-                // compiles wherever the method exists and nowhere it does not.
+                // `socket2`'s own platform list for `with_interval`.
                 #[cfg(any(
                     target_os = "android",
                     target_os = "dragonfly",
@@ -154,8 +147,7 @@ impl SocketOptions {
 
     /// Applies every option to `stream`.
     ///
-    /// A failure is logged and the connection is served anyway: an option the
-    /// socket refused degrades it, and refusing the client would not restore it.
+    /// A failure is logged and the connection is served anyway.
     pub(in crate::server) fn apply(
         &self,
         stream: &TcpStream,

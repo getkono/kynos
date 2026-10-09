@@ -19,21 +19,11 @@ use crate::{
     schema::{Schema, constraints::Pointer},
 };
 
-/// The record separator RFC 7464 puts before each JSON text.
-///
-/// It cannot occur inside a JSON text, which is the whole reason the framing
-/// exists: a value holding a newline stays one record.
-///
-/// One spelling, read by both halves: the byte this decoder scans for is the
-/// byte the responding half of this codec writes in
-/// front of every record it emits.
+/// The record separator RFC 7464 puts before each JSON text; shared with the
+/// responding half of this codec.
 pub(crate) const RECORD_SEPARATOR: u8 = 0x1e;
 
 /// Which bytes separate one record from the next.
-///
-/// Carried as a field rather than as a type parameter, because the two framings
-/// differ in a delimiter and in where it sits — not in anything a caller of
-/// [`Records`] can observe.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Framing {
     /// A newline *after* each record, which NDJSON writes.
@@ -61,24 +51,15 @@ enum State {
 /// handler as soon as the head does.
 ///
 /// Read it with [`next`](Records::next) or [`read_all`](Records::read_all), or
-/// as a `futures_core::Stream`. The inherent methods are there so that reading
-/// needs no combinator crate: Kynos depends on `futures-core`, not on
-/// `futures-util`.
+/// as a `futures_core::Stream`; the inherent methods need no combinator crate.
 ///
 /// # What a failure costs
 ///
-/// The item type is `Result<T, BodyRejection>`, and the rejection is the one
-/// every body codec already raises. That is the whole soundness argument: an
-/// extractor's `Rejection` is already merged into the operation's responses, so
-/// every status a mid-stream failure can produce is already declared and a
-/// handler answers with one by returning it.
-///
-/// Unlike the response half, nothing is committed when a record fails. A
-/// handler returns a `Response` *value* and nothing reaches the socket until
-/// its future resolves, so a 422 raised on the last record of a long body is
-/// still a 422. The asymmetry is the reason the two halves behave differently
-/// at all: a response stream has spent its status by the time it meets a bad
-/// item, and a request stream has not.
+/// The item type is `Result<T, BodyRejection>`, the rejection every body codec
+/// raises, so every status a mid-stream failure can produce is already in the
+/// operation's description and a handler answers with one by returning it.
+/// Nothing reaches the socket until the handler returns, so a 422 on the last
+/// record of a long body is still a 422.
 ///
 /// | The record | Answer | Afterwards |
 /// | --- | --- | --- |
@@ -89,42 +70,34 @@ enum State {
 /// | opens a `json-seq` body without a record separator | 400 | the stream ends |
 /// | is longer than the operation's body limit | 413 | the stream ends — the rest of the record was never read, so nothing after it can be framed |
 ///
-/// The pointer is the record's index in the body, which OpenAPI 3.2 makes well
-/// defined: an implementation reads a sequential media type as if the values
-/// were an array in the same order, so `/3` names the fourth record.
+/// The pointer is the record's index in the body, as OpenAPI 3.2 reads a
+/// sequential media type as an array: `/3` names the fourth record.
 ///
-/// [`BodyRejection`] is deliberately not `Serialize`, so `JsonLines<Records<T>>`
-/// is not [`IntoResponse`](crate::response::IntoResponse) and piping a request
-/// stream straight into a streaming response does not typecheck. That is the
-/// one arrangement where a failed record genuinely would have no status left to
-/// spend.
+/// [`BodyRejection`] is not `Serialize`, so `JsonLines<Records<T>>` is not
+/// [`IntoResponse`](crate::response::IntoResponse): a request stream cannot be
+/// piped into a streaming response, where a failed record would have no status
+/// left to spend.
 ///
 /// # Empty records are skipped
 ///
 /// A blank line, or two adjacent record separators, produce no item and no
-/// rejection. This is forced rather than chosen: reading forwards, a decoder
-/// cannot tell the trailing separator a writer is permitted to emit — and which
-/// Kynos's own [`JsonLines`](super::JsonLines) response does emit — from an interior blank,
-/// without buffering past it and giving up the streaming it exists for.
+/// rejection: a streaming decoder cannot tell a permitted trailing separator
+/// from an interior blank.
 ///
 /// # What a chunked body costs
 ///
-/// [`BodySize`](crate::middleware::limits::body_size::BodySize) and streaming do not
-/// compose all the way. A request declaring a `Content-Length` passes the limit
-/// untouched and streams. A chunked request declares no length, so a running
-/// count is the only bound there is — and the limit materialises the whole body
-/// before the handler is entered. Records still arrive one at a time, but
-/// nothing is saved. `docs/nfr.md` records the limit beside HTTP/2 flow
-/// control, which is the same family of fact.
+/// A request declaring a `Content-Length` passes
+/// [`BodySize`](crate::middleware::limits::body_size::BodySize) untouched and
+/// streams. A chunked request is materialised whole by that limit before the
+/// handler is entered, so records still arrive one at a time but nothing is
+/// saved.
 ///
 /// # What one record may cost
 ///
-/// The body as a whole is unbounded here, which is what streaming it is for,
-/// but a record is held whole before it is decoded. So the operation's body
-/// limit — [`DEFAULT_LIMIT`](crate::extract::body::limit::DEFAULT_LIMIT), or the
-/// figure a covering `BodySize` names — bounds each record instead, and a
-/// record passing it is the 413 every buffering codec raises. Without it, a
-/// body with no delimiter in it would be buffered without end.
+/// The body as a whole is unbounded, but each record is held whole before
+/// decoding, so the operation's body limit —
+/// [`DEFAULT_LIMIT`](crate::extract::body::limit::DEFAULT_LIMIT), or the figure
+/// a covering `BodySize` names — bounds each record, with a 413.
 pub struct Records<T> {
     /// The undecoded body, as the frames it arrives in.
     body: BodyDataStream<Body>,
@@ -132,16 +105,14 @@ pub struct Records<T> {
     limit: u64,
     /// Bytes read but not yet framed into a record.
     buffer: BytesMut,
-    /// How far into `buffer` the search for a delimiter has already reached, so
-    /// a record spanning many frames is scanned once rather than once a frame.
+    /// How far into `buffer` the delimiter search has reached, so a record
+    /// spanning many frames is scanned once.
     scanned: usize,
-    /// How many records have been decoded, which is the JSON Pointer a schema
-    /// failure is reported at.
+    /// How many records have been decoded: the JSON Pointer of a failure.
     index: usize,
     framing: Framing,
     state: State,
-    /// `fn() -> T` rather than `T`, so that `Records<T>` is `Send` whatever `T`
-    /// is: the decoder produces a `T` and never holds one.
+    /// `fn() -> T` so `Records<T>` is `Send` whatever `T` is.
     item: PhantomData<fn() -> T>,
 }
 
@@ -157,11 +128,7 @@ impl<T> fmt::Debug for Records<T> {
 }
 
 impl<T> Records<T> {
-    /// Enforces the content type, then takes the body unread.
-    ///
-    /// The check happens before a byte is read, which is what keeps an
-    /// operation from accepting a media type its description never claimed —
-    /// the same 415 every other codec produces, from the same two helpers.
+    /// Enforces the content type (the shared 415), then takes the body unread.
     pub(super) fn new(
         request: Request,
         media_type: &str,
@@ -185,10 +152,8 @@ impl<T> Records<T> {
         })
     }
 
-    /// The bytes of the next record, or `None` when the buffer holds none.
-    ///
-    /// Empty records are consumed here rather than reported, so what this
-    /// returns is always something to decode.
+    /// The bytes of the next non-empty record, or `None` when the buffer holds
+    /// none.
     fn next_frame(&mut self) -> Option<Result<Bytes, BodyRejection>> {
         let (prefix, delimiter) = match self.framing {
             Framing::Lines => (0, b'\n'),
@@ -200,8 +165,7 @@ impl<T> Records<T> {
                 return None;
             }
 
-            // RFC 7464 makes the separator a prefix, so a body that does not
-            // open with one is not a sequence and nothing after this point can
+            // RFC 7464 makes the separator a prefix; without one nothing can
             // be framed.
             if self.framing == Framing::Sequence && self.buffer[0] != RECORD_SEPARATOR {
                 self.state = State::Fused;
@@ -218,9 +182,7 @@ impl<T> Records<T> {
                 .position(|byte| *byte == delimiter)
                 .map(|position| from + position);
 
-            // The record so far, framing excluded: whole when a delimiter was
-            // found, and still arriving when none was — in which case it is
-            // refused as soon as what has arrived already passes the limit.
+            // A record still arriving is refused as soon as it passes the limit.
             let held = found.unwrap_or(self.buffer.len()).saturating_sub(prefix);
             if u64::try_from(held).unwrap_or(u64::MAX) > self.limit {
                 self.state = State::Fused;
@@ -228,8 +190,7 @@ impl<T> Records<T> {
             }
 
             let mut frame = match found {
-                // The delimiter belongs to the framing rather than to the
-                // record: a newline ends this one, a separator begins the next.
+                // A newline ends this record; a separator begins the next.
                 Some(end) => {
                     let taken = match self.framing {
                         Framing::Lines => end + 1,
@@ -250,7 +211,6 @@ impl<T> Records<T> {
                 }
             };
 
-            // Whatever the framing put in front of the record is not part of it.
             let _ = frame.split_to(prefix.min(frame.len()));
 
             let record = trimmed(&frame.freeze());
@@ -266,9 +226,6 @@ impl<T> Records<T> {
 /// as a [`Json`](crate::extract::body::json::Json) body is.
 impl<T: serde::de::DeserializeOwned + Schema> Records<T> {
     /// The next record, or `None` once the body has no more to give.
-    ///
-    /// An inherent method rather than a combinator, so that reading a body
-    /// needs no dependency an application would not otherwise have.
     pub async fn next(&mut self) -> Option<Result<T, BodyRejection>> {
         std::future::poll_fn(|context| self.poll_record(context)).await
     }
@@ -304,9 +261,7 @@ impl<T: serde::de::DeserializeOwned + Schema> Records<T> {
             match Pin::new(&mut self.body).poll_next(context) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Some(Ok(chunk))) => self.buffer.extend_from_slice(&chunk),
-                // What arrived is not the body the client meant to send, which
-                // is the 400 a whole-body read answers with for the same
-                // reason. Nothing after the break is a record.
+                // A transport failure is a 400, as for a whole-body read.
                 Poll::Ready(Some(Err(error))) => {
                     self.state = State::Fused;
                     return Poll::Ready(Some(Err(BodyRejection::Syntax {
@@ -326,8 +281,8 @@ impl<T: serde::de::DeserializeOwned + Schema> Records<T> {
 
         let value = serde_json::from_slice(record).map_err(|error| {
             if crate::extract::body::json::is_schema_failure(&error) {
-                // The record was a record; only its shape was wrong. The
-                // boundaries held, so reading continues.
+                // Only the shape was wrong; the boundaries held, so reading
+                // continues.
                 BodyRejection::Schema {
                     failures: BTreeMap::from([(format!("/{index}"), error.to_string())]),
                 }
@@ -346,8 +301,7 @@ impl<T: serde::de::DeserializeOwned + Schema> Records<T> {
 
 /// The record inside a frame, without the whitespace around it.
 ///
-/// Trimming is what makes a `\r\n` line ending and RFC 7464's trailing newline
-/// the same non-event, and it is what decides a record is empty.
+/// Absorbs a `\r\n` line ending and RFC 7464's trailing newline.
 fn trimmed(frame: &Bytes) -> Bytes {
     let start = frame
         .iter()
@@ -361,10 +315,7 @@ fn trimmed(frame: &Bytes) -> Bytes {
     frame.slice(start..end)
 }
 
-/// The one hand-rolled `Stream` in the crate.
-///
-/// Every field is `Unpin` — the body is, and so is the buffer — so this needs
-/// no projection and no `unsafe`, which is forbidden here.
+/// Every field is `Unpin`, so this needs no projection and no `unsafe`.
 impl<T: serde::de::DeserializeOwned + Schema> Stream for Records<T> {
     type Item = Result<T, BodyRejection>;
 

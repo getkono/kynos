@@ -6,17 +6,12 @@
 //! In exchange, `Router::validate` reports every unchecked construct, and the
 //! operations a waiver reaches are emitted and flagged rather than dropped.
 //! `x-kynos-document-not-authoritative` follows from that, stamped on the
-//! document when any operation is flagged.
+//! document when any operation is flagged. If Kynos cannot describe something,
+//! it says so in the artifact rather than quietly leaving a hole.
 //!
-//! That cost is deliberate and visible. A description that silently omits part
-//! of the service is worse than no description, because consumers trust it. If
-//! Kynos cannot describe something, it says so in the artifact rather than
-//! quietly leaving a hole.
-//!
-//! The exception is [`Router::upgrade_unchecked`], because a connection that
-//! has left HTTP has no vocabulary in any version of the specification — an
-//! entry no consumer could act on would be worse than the honest absence, which
-//! `Router::validate` reports either way.
+//! The exception is [`Router::upgrade_unchecked`]: a connection that has left
+//! HTTP has no vocabulary in any version of the specification, so it gets no
+//! entry, though `Router::validate` still reports it.
 //!
 //! # When these are the right answer
 //!
@@ -58,14 +53,9 @@ use crate::{
 
 /// What the router captured for `name`, percent-decoded.
 ///
-/// The one way an unchecked handler reads a wildcard. A described operation
-/// takes a [`Path<T>`](crate::extract::params::path::Path) and gets a typed
-/// value; there is no type here to decode into, because the whole point of the
-/// waiver is that the route has no template — so this hands back the text.
-///
-/// Decoded, and bounded to the matched path, which is what makes it safe to
-/// join onto anything: the value is a segment the matcher took apart rather
-/// than a substring a handler sliced out of the URL by eye. `None` when the
+/// The unchecked counterpart of
+/// [`Path<T>`](crate::extract::params::path::Path): an undescribed route has
+/// no template to decode into, so this hands back the text. `None` when the
 /// pattern declares no such variable, or when the capture is not UTF-8.
 ///
 /// ```no_run
@@ -88,19 +78,14 @@ pub fn captured<'r>(request: &'r Request, name: &str) -> Option<std::borrow::Cow
     crate::__private::uri::decode_path_value(raw).ok()
 }
 
-/// A boxed response future.
-///
-/// The one place in the framework where a boxed future is sanctioned, and it is
-/// confined to this module: `tower`'s `Service::Future` is an associated type,
-/// so a service composed out of layers this crate cannot name has no other
-/// shape to take.
+/// A boxed response future, sanctioned only here: a service composed of layers
+/// this crate cannot name has no other `Service::Future` shape.
 type BoxResponse = Pin<Box<dyn Future<Output = Response> + Send>>;
 
 /// A handler for a route Kynos does not describe.
 ///
-/// Deliberately not [`Handler`](crate::handler::Handler): a described handler
-/// takes described inputs, and the point of this hatch is that there are none.
-/// It gets the request; it must produce a response.
+/// Unlike a [`Handler`](crate::handler::Handler), it takes no described inputs:
+/// it gets the request and must produce a response.
 pub trait UncheckedHandler<C>: Send + Sync + 'static {
     /// Handles a request that matched an undescribed route.
     fn call(
@@ -128,10 +113,9 @@ where
 
 /// The rest of a request's path through Kynos, carried in its extensions.
 ///
-/// A `tower::Layer` composes with a service *value*, and the only value Kynos
-/// can hand it is an [`UncheckedInner`] built long before any request exists —
-/// so the stand-in holds nothing and the continuation travels with the request
-/// instead. [`UncheckedInner::call`] takes it back out.
+/// The [`UncheckedInner`] a layer wraps is built before any request exists, so
+/// the continuation travels with the request and `UncheckedInner::call` takes
+/// it back out.
 #[derive(Clone)]
 pub(crate) struct Continuation(Arc<dyn Fn(Request) -> BoxResponse + Send + Sync>);
 
@@ -159,11 +143,8 @@ impl Continuation {
     }
 }
 
-/// A `tower` layer applied to [`UncheckedInner`], with its type erased.
-///
-/// A router holds these beside the interceptors it can name. Nothing in the
-/// description is derived from one — that is what the waiver waives — so the
-/// trait needs only the ability to run.
+/// A `tower` layer applied to [`UncheckedInner`], with its type erased. Nothing
+/// in the description derives from one, so it only needs to run.
 pub(crate) trait ErasedLayer: Send + Sync + 'static {
     /// Drives one request through the layered service.
     ///
@@ -184,8 +165,7 @@ where
     S::Future: Send + 'static,
 {
     fn run(&self, request: Request) -> BoxResponse {
-        // Cloned per request because `tower` drives a service through `&mut
-        // self`, while the router holds one shared instance of it.
+        // `tower` drives a service through `&mut self`; the router holds one.
         let mut service = self.0.clone();
 
         Box::pin(async move {
@@ -251,11 +231,8 @@ pub(crate) struct UncheckedRoute<C> {
 }
 
 impl<C> UncheckedRoute<C> {
-    /// Moves this route under `prefix`, keeping its record in step.
-    ///
-    /// A plain join, because the pattern is the router's matching syntax rather
-    /// than a path template — there is nothing here to normalize beyond the one
-    /// slash both halves would otherwise contribute.
+    /// Moves this route under `prefix`, keeping its record in step. A plain
+    /// join: the pattern is matching syntax, not a path template.
     fn reprefix(&mut self, prefix: &str) {
         let prefix = prefix.strip_suffix('/').unwrap_or(prefix);
         if prefix.is_empty() {
@@ -276,8 +253,7 @@ pub(crate) struct Unchecked<C> {
     pub(crate) layers: Vec<Arc<dyn ErasedLayer>>,
 }
 
-// Hand-written for the reason `UncheckedInner`'s `Clone` is: a derive would
-// bound it on `C`, and neither field needs anything of it.
+// Hand-written so it is not bounded on `C`.
 impl<C> Default for Unchecked<C> {
     fn default() -> Self {
         Self {
@@ -295,9 +271,8 @@ impl<C> Unchecked<C> {
 
     /// Takes over another scope's waivers, under `prefix`.
     ///
-    /// The absorbed scope's layers covered exactly its own routes, so they
-    /// become part of what each route carries rather than of what this scope
-    /// applies to everything — the same rule interceptors follow.
+    /// The absorbed scope's layers become part of each of its routes, since
+    /// they covered exactly those.
     pub(crate) fn absorb(&mut self, other: Self, prefix: &str) {
         let Self { routes, layers } = other;
 
@@ -312,9 +287,6 @@ impl<C> Unchecked<C> {
 }
 
 /// The literal prefix a pattern is anchored at, when it has variables past it.
-///
-/// A pattern with no variable at all is its own prefix, and restating it would
-/// be noise rather than a second fact.
 fn anchor(pattern: &str) -> Option<String> {
     let literal: Vec<&str> = pattern
         .split('/')
@@ -328,20 +300,15 @@ fn anchor(pattern: &str) -> Option<String> {
 
 /// Whether a pattern could have been a path template after all.
 ///
-/// A catch-all cannot, and neither can a segment carrying two variables — the
-/// two shapes `docs/routing.md` records the router as declining. Anything else
-/// reaching this module is undescribable because of its *handler*, which is a
-/// different reason and is recorded as one.
+/// A catch-all cannot, and neither can a segment carrying two variables.
 fn expressible(pattern: &str) -> bool {
     pattern
         .split('/')
         .all(|segment| !segment.contains("{*") && segment.matches('{').count() <= 1)
 }
 
-/// The methods a route serves, and the ones OpenAPI has no field for.
-///
-/// A method in the second list is neither served nor claimed: the description
-/// says only what the service honours, and the note on the record says the rest.
+/// The methods a route serves, and the ones OpenAPI has no field for (which
+/// are not served).
 fn wire_methods<I: IntoIterator<Item = crate::http::Method>>(
     methods: I,
 ) -> (Vec<Method>, Vec<String>) {
@@ -370,8 +337,7 @@ pub(crate) async fn through_layers<C>(
 where
     C: Send + Sync + 'static,
 {
-    // Built inside out, so that the outermost layer is the one called first and
-    // the innermost is the one holding the operation.
+    // Built inside out, so the outermost layer is called first.
     let mut next = Continuation::operation(dispatch, path, position);
     for layer in layers.iter().rev() {
         next = Continuation::through(Arc::clone(layer), next);
@@ -380,18 +346,13 @@ where
     next.call(request).await
 }
 
-/// What a layer that discarded the request gets in place of a response.
-///
-/// Deliberately a 500: the layer is outside the description, so answering as
-/// though the handler had run would be inventing an outcome.
+/// The 500 a layer that discarded the request gets in place of a response.
 fn lost_continuation() -> Response {
     Problem::new(StatusCode::INTERNAL_SERVER_ERROR).into_response()
 }
 
-/// The service an unchecked `tower` layer wraps.
-///
-/// Opaque on purpose: a layer may compose with it, but nothing in an
-/// application may name a field of it or construct one.
+/// The service an unchecked `tower` layer wraps. Opaque: a layer may compose
+/// with it, but an application cannot construct one.
 pub struct UncheckedInner<C> {
     _private: std::marker::PhantomData<fn() -> C>,
 }
@@ -405,10 +366,8 @@ impl<C> UncheckedInner<C> {
     }
 }
 
-// Hand-written: a derive would bound each on `C`, and `PhantomData<fn() -> C>`
-// needs nothing of it. Most tower layers implement `Clone` for their service
-// only when the inner one is, so a derived bound here would shut an
-// application whose context is not `Clone` out of the hatch for no reason.
+// Hand-written so they are not bounded on `C`: tower layers are usually `Clone`
+// only when their inner service is, which must not require `C: Clone`.
 impl<C> Clone for UncheckedInner<C> {
     fn clone(&self) -> Self {
         *self
@@ -437,9 +396,7 @@ where
     }
 
     fn call(&mut self, mut request: crate::http::Request) -> Self::Future {
-        // The continuation is put in place immediately before the layer is
-        // invoked, so its absence means the layer answered with a request of
-        // its own making and the rest of the chain is unreachable from here.
+        // Absent only if the layer forwarded a request of its own making.
         let Some(continuation) = request.extensions_mut().remove::<Continuation>() else {
             return Box::pin(std::future::ready(Ok(lost_continuation())));
         };
@@ -462,10 +419,8 @@ impl<C> Service<C> {
     /// Converts this service into an explicitly unchecked Tower service.
     ///
     /// Every operation in the document is flagged
-    /// [`OpaqueReason::UntypedLayer`]
-    /// at conversion time, because whatever ends up wrapping the returned
-    /// service is outside the description and there is no way to know what it
-    /// does.
+    /// [`OpaqueReason::UntypedLayer`] at conversion time, because whatever
+    /// wraps the returned service is outside the description.
     ///
     /// ```no_run
     /// # use kynos::{router::service::Service, unchecked::UncheckedService};
@@ -505,21 +460,16 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// Wraps the router in an arbitrary `tower` layer.
     ///
     /// A `Layer` may change the status, rewrite the body, add headers, or
-    /// refuse the request, and nothing in its type says which — so every
-    /// operation underneath becomes a claim Kynos can no longer stand behind.
+    /// refuse the request, and nothing in its type says which. Every operation
+    /// in this router's subtree is flagged [`OpaqueReason::UntypedLayer`], and
+    /// nothing outside it is.
     ///
-    /// Prefer writing an [`Interceptor`](crate::middleware::Interceptor). It is
-    /// barely more work: name the responses it can answer with, the headers it
-    /// adds and the headers it reads as its three associated types, and in
-    /// return every covered operation documents it correctly and automatically
-    /// — and two interceptors that would collide stop compiling.
-    /// Every operation in this router's subtree is flagged
-    /// [`OpaqueReason::UntypedLayer`],
-    /// and nothing outside it is.
+    /// Prefer writing an [`Interceptor`](crate::middleware::Interceptor), which
+    /// names its responses and headers as associated types so every covered
+    /// operation documents it.
     ///
     /// The layer runs per-operation, after routing, exactly as an interceptor
-    /// does — so a request that matched no route never reaches it, and there is
-    /// no described operation for it to have invalidated.
+    /// does, so a request that matched no route never reaches it.
     #[must_use]
     pub fn layer_unchecked<L>(mut self, layer: L) -> Self
     where
@@ -542,25 +492,16 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// Adds a route whose path Kynos cannot express.
     ///
     /// Chiefly wildcards. A path parameter value must not contain an unescaped
-    /// `/`, so `/assets/{*path}` has no OpenAPI equivalent — which is also why
-    /// serving a directory tree, or an SPA fallback, is out of scope for the
-    /// core.
-    ///
-    /// For anything beyond a handful of files, a reverse proxy or CDN is the
-    /// better answer, and leaves the description intact.
+    /// `/`, so `/assets/{*path}` has no OpenAPI equivalent. For anything beyond
+    /// a handful of files, a reverse proxy or CDN is the better answer.
     ///
     /// The route is recorded under
-    /// [`OPAQUE_ROUTES_ANNOTATION`](kynos_openapi::annotation::OPAQUE_ROUTES_ANNOTATION)
-    /// and the document is stamped non-authoritative. It gets no `paths` entry:
-    /// no path template is true of a catch-all, so every key that could be
-    /// minted would be a claim about either the path or a parameter that the
-    /// service does not honour.
+    /// [`OPAQUE_ROUTES_ANNOTATION`](kynos_openapi::annotation::OPAQUE_ROUTES_ANNOTATION),
+    /// gets no `paths` entry, and the document is stamped non-authoritative.
     ///
-    /// The pattern is the router's own matching syntax, and the route is served
-    /// from the same table as every described one — including the interceptors
-    /// mounted on this router, which run here as they do everywhere else. Only
-    /// a method OpenAPI has a field for can be served: one it does not is
-    /// neither routed nor claimed, and the record says which were dropped.
+    /// The pattern is the router's own matching syntax, and the route runs the
+    /// interceptors mounted on this router like any other. A method OpenAPI
+    /// has no field for is not served, and the record says which were dropped.
     #[must_use]
     pub fn route_unchecked<M, H>(mut self, methods: M, pattern: &str, handler: H) -> Self
     where
@@ -570,8 +511,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     {
         let (methods, unmodelled) = wire_methods(methods);
         let reason = if expressible(pattern) {
-            // The pattern is a legal template, so what is undescribable here is
-            // the handler rather than the path.
+            // A legal template: the handler, not the path, is undescribable.
             OpaqueReason::UntypedHandler
         } else {
             OpaqueReason::UntypedRoute
@@ -604,14 +544,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
     /// Records one route with a reason of Kynos's own choosing.
     ///
-    /// The seam `assets_directory` is built on. Not public: the reason has to
-    /// come from the closed set in [`OpaqueReason`], and a caller free to
-    /// invent one could describe a waiver the validator has no rule for.
-    /// `route_unchecked` is the public door, and it derives the reason from the
-    /// pattern.
-    // Gated to the caller rather than to `unchecked`, which is the wider door:
-    // `assets-fs` implies `unchecked`, so a build that takes the escape hatch
-    // without the directory server carries this for nothing.
+    /// The seam `assets_directory` is built on; `route_unchecked` is the public
+    /// door, deriving the reason from the pattern.
     #[cfg(feature = "assets-fs")]
     #[must_use]
     pub(crate) fn record_unchecked_route<H>(
@@ -639,16 +573,13 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
     /// Adds a route that upgrades the connection away from HTTP.
     ///
-    /// WebSockets chiefly, and WebTransport for the same reason. This is not a
-    /// temporary gap: OpenAPI describes HTTP request/response semantics, and a
-    /// stream that stops being either is outside what any version of the
-    /// specification can express. `AsyncAPI` covers this ground, and Kynos
-    /// would rather point at it than pretend.
+    /// WebSockets chiefly, and WebTransport. OpenAPI describes HTTP
+    /// request/response semantics, so this is not a temporary gap; `AsyncAPI`
+    /// covers this ground.
     ///
-    /// Served on `GET`, which is the only method [RFC 9110][] leaves an upgrade
-    /// handshake — and the only one RFC 6455 permits — and recorded with
-    /// [`OpaqueReason::ProtocolUpgrade`], which is a different reason from a
-    /// catch-all's and not one that will stop applying.
+    /// Served on `GET`, the only method [RFC 9110][] leaves an upgrade handshake
+    /// and the only one RFC 6455 permits, and recorded with
+    /// [`OpaqueReason::ProtocolUpgrade`].
     ///
     /// [RFC 9110]: https://www.rfc-editor.org/rfc/rfc9110
     #[must_use]
@@ -682,11 +613,9 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// When true, the emitted document carries
     /// `x-kynos-document-not-authoritative`.
     ///
-    /// [`examples/unchecked.rs`] presents `assert!(!router.has_unchecked())` as
-    /// the line a CI job asserts on, and that is what it is for. Reach for
-    /// [`unchecked_reasons`](Self::unchecked_reasons) where a service takes one
-    /// waiver deliberately and wants the gate to keep holding for everything
-    /// else.
+    /// [`examples/unchecked.rs`] asserts `!router.has_unchecked()` in CI. Reach
+    /// for [`unchecked_reasons`](Self::unchecked_reasons) where a service takes
+    /// one waiver deliberately.
     ///
     /// [`examples/unchecked.rs`]: https://github.com/getkono/kynos/blob/master/crates/kynos/examples/unchecked.rs
     #[must_use]
@@ -700,11 +629,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
     /// Every reason a waiver has been taken in this router, deduplicated.
     ///
-    /// The gate [`has_unchecked`](Self::has_unchecked) cannot be. A service
-    /// that serves a directory of static files has taken one waiver on purpose;
-    /// asserting `!has_unchecked()` there means deleting the assertion for
-    /// *everything*, which is how a check meant to catch an accidental
-    /// `layer_unchecked` stops catching one.
+    /// Lets a service that takes one waiver on purpose keep gating the rest,
+    /// which [`has_unchecked`](Self::has_unchecked) cannot.
     ///
     /// ```no_run
     /// # use kynos::{Router, openapi::OpaqueReason};
@@ -744,9 +670,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
     /// Wraps this group in an arbitrary `tower` layer.
     ///
-    /// Flags exactly this group's operations, and nothing else. One unchecked
-    /// layer on one subtree must not taint three hundred operations it never
-    /// touches.
+    /// Flags exactly this group's operations, and nothing else.
     #[must_use]
     pub fn layer_unchecked<L>(mut self, layer: L) -> Self
     where

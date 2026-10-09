@@ -28,8 +28,7 @@ macro_rules! tuples {
                     })
                 }
 
-                // Each member is bound under its type parameter's name, which
-                // is what lets one repetition both name and count it.
+                // Members are bound under their type parameters' names.
                 #[allow(non_snake_case)]
                 fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
                     let ($($member,)+) = self;
@@ -61,9 +60,6 @@ tuples! {
 }
 
 /// The empty tuple, which serde writes as `null`.
-///
-/// This is what a handler returning nothing describes its body as, so it is not
-/// merely an oddity for completeness.
 impl Schema for () {
     fn schema(_registry: &mut Registry) -> OpenApiSchema {
         OpenApiSchema::of_type(SchemaType::Null)

@@ -7,18 +7,9 @@
 //! # What is here and what is not
 //!
 //! A [`Cookie`] and a way to send it. Not a signed jar, not an encrypted one,
-//! and not a session store.
-//!
-//! A cookie carrying a credential is a
-//! [`SecurityScheme`](crate::security::SecurityScheme) rather than a parameter,
-//! and signing or encrypting one is how that credential is protected — which
-//! makes it authentication policy, and puts it on the wrong side of the line
-//! `docs/security.md` draws. It would also arrive with a crypto stack
-//! (`hmac`, `sha2`, `aes-gcm`, a source of randomness) that
-//! `docs/architecture.md`'s dependency table has no row for.
-//!
-//! Sessions are named in that document's third invariant as the example of what
-//! a layer above Kynos owns.
+//! and not a session store: a cookie carrying a credential is a
+//! [`SecurityScheme`](crate::security::SecurityScheme), and sessions belong to
+//! a layer above Kynos.
 
 use std::{borrow::Cow, time::Duration};
 
@@ -27,9 +18,7 @@ use crate::http::HeaderValue;
 /// When a cookie may accompany a cross-site request.
 ///
 /// RFC 6265bis section 5.5.7.1. `None` requires `Secure`, which
-/// [`Cookie::encode`] enforces rather than leaving to the caller: a
-/// `SameSite=None` cookie without it is rejected by every current browser, and
-/// silently — which is the worst way to learn.
+/// [`Cookie::encode`] adds, since browsers silently reject the cookie without it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum SameSite {
@@ -102,18 +91,9 @@ impl Cookie {
 
     /// A cookie that deletes the one of the same name.
     ///
-    /// `Max-Age=0` rather than an `Expires` in the past. The two are equivalent
-    /// to a browser, and the second would need a date to render — which means a
-    /// temporal crate, every one of which is optional and off by default here.
-    ///
-    /// `0` is outside the ABNF, and deliberately. RFC 6265bis section 4.1.1
-    /// writes `max-age-av = "Max-Age" BWS "=" BWS non-zero-digit *DIGIT`, so no
-    /// spelling of "expire now" is inside it — a leading `-` is no better, since
-    /// the rule admits neither. What every user agent implements is the parsing
-    /// algorithm in section 5.2.2, whose step 7 reads any `delta-seconds` "less
-    /// than or equal to zero" as the earliest representable date. Emitting the
-    /// value the algorithm defines beats emitting one the grammar also rejects
-    /// and no algorithm mentions.
+    /// Sends `Max-Age=0`. RFC 6265bis section 4.1.1's grammar has no spelling
+    /// of "expire now", but every user agent follows section 5.2.2, which reads
+    /// a non-positive `Max-Age` as the earliest representable date.
     ///
     /// The `path` and `domain` have to match the cookie being deleted, because
     /// a browser keys on all three.
@@ -182,41 +162,27 @@ impl Cookie {
 
     /// Renders the field value.
     ///
-    /// `None` where the name or the value cannot appear in one: RFC 6265
-    /// section 4.1.1 gives `cookie-name` the token grammar and `cookie-value`
-    /// a narrower one still, and a value carrying `;` would silently become an
-    /// attribute rather than part of the value.
-    ///
-    /// Refusing rather than escaping, because there is nothing to escape *to*:
-    /// percent-encoding a cookie value is a convention a server and its own
-    /// reader share, not something the grammar defines, and encoding one here
-    /// would mean [`http::cookie`](crate::http::cookie) had to guess whether to
-    /// decode.
+    /// `None` where the name or the value is outside RFC 6265 section 4.1.1's
+    /// grammar (the grammar defines no escaping, so nothing is escaped), where
+    /// they exceed 4096 octets together, where an attribute is unrepresentable,
+    /// or where a `__Host-` cookie names a `Domain` or a `Path` other than `/`.
     #[must_use]
     pub fn encode(&self) -> Option<HeaderValue> {
         if !crate::http::is_token(&self.name) || !is_cookie_value(&self.value) {
             return None;
         }
 
-        // RFC 6265bis section 5.6 step 5: a user agent ignores a
-        // `set-cookie-string` whose name and value together exceed 4096 octets.
-        // The field as a whole is not what is measured, so the attributes do
-        // not count towards it.
+        // RFC 6265bis section 5.6 step 5 measures name and value only.
         if self.name.len().saturating_add(self.value.len()) > MAX_NAME_AND_VALUE {
             return None;
         }
 
-        // Sections 4.1.3.1 and 4.1.3.2. Both prefixes are enforced by the user
-        // agent, which discards the whole field when its requirements are
-        // unmet -- so ignoring them here means believing a cookie was set that
-        // the client never stored.
+        // Sections 4.1.3.1 and 4.1.3.2: a user agent discards a cookie whose
+        // prefix requirements are unmet, so they are enforced here.
         let host_prefixed = self.name.starts_with(HOST_PREFIX);
         if host_prefixed {
-            // A `Domain` contradicts the prefix outright, and a `Path` naming
-            // anything but `/` contradicts it too. Neither is completed:
-            // dropping the first would widen the cookie past one host and
-            // rewriting the second would widen it past one subtree, and
-            // silently widening a cookie's scope is worse than not setting it.
+            // Refused rather than corrected: dropping either would silently
+            // widen the cookie's scope.
             if self.domain.is_some() {
                 return None;
             }
@@ -228,10 +194,8 @@ impl Cookie {
         let mut rendered = format!("{}={}", self.name, self.value);
 
         if host_prefixed {
-            // Supplied rather than required, because `/` is what the prefix
-            // means and it narrows nothing the caller asked for. Without it the
-            // user agent derives a default path from the request URI, which is
-            // not `/` and would fail the check.
+            // Supplied, since the default path derived from the request URI
+            // would fail the prefix check.
             rendered.push_str("; Path=/");
         } else if let Some(path) = &self.path {
             if !is_attribute_value(path) {
@@ -251,10 +215,8 @@ impl Cookie {
             rendered.push_str("; Max-Age=");
             rendered.push_str(&age.as_secs().to_string());
         }
-        // `SameSite=None` without `Secure` is rejected by every current browser,
-        // and silently. Sending it anyway would be a cookie the service believes
-        // it set and the client never stored. Both name prefixes require
-        // `Secure` for the same reason and get the same treatment.
+        // `SameSite=None` and both name prefixes are silently dropped without
+        // `Secure`, so it is added for them.
         if self.secure
             || self.same_site == Some(SameSite::None)
             || host_prefixed
@@ -289,10 +251,7 @@ const SECURE_PREFIX: &str = "__Secure-";
 /// RFC 6265 section 4.1.1 `domain-value`, which is a `<subdomain>` per RFC 1034
 /// section 3.5 as updated by RFC 1123 section 2.1.
 ///
-/// Narrower than [`is_attribute_value`], which is right for `Path` — a path may
-/// carry a space — and wrong here: a host may not. A leading `.` is tolerated
-/// because RFC 6265 section 5.2.3 strips one rather than refusing it, and
-/// refusing what every user agent accepts would be stricter than the protocol.
+/// A leading `.` is tolerated because RFC 6265 section 5.2.3 strips one.
 fn is_domain_value(text: &str) -> bool {
     let text = text.strip_prefix('.').unwrap_or(text);
 

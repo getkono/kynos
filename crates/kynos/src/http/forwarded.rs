@@ -1,14 +1,9 @@
 //! Who sent a request that reached the service through a proxy.
 //!
-//! RFC 7239 defines `Forwarded`, and section 8.1 is blunt about what it is
-//! worth: the field "cannot be relied upon to be correct, as it may be
-//! modified, whether mistakenly or for malicious reasons, by every node on the
-//! way to the server, including the client making the request."
-//!
-//! So nothing here reads it unless the application has said which hops it
-//! trusts and which field they write. [`TrustedProxies`] is that statement, it
-//! is empty by default, and an empty one resolves every request to the socket
-//! peer — the one address no header can forge.
+//! Forwarding fields are client-forgeable (RFC 7239 section 8.1), so nothing
+//! here reads one unless [`TrustedProxies`] names the hops trusted and the
+//! field they write. The default trusts nobody and resolves every request to
+//! the socket peer.
 
 use std::net::{IpAddr, SocketAddr};
 
@@ -25,12 +20,9 @@ const X_FORWARDED_PROTO: HeaderName = HeaderName::from_static("x-forwarded-proto
 
 /// The field a trusted proxy writes, and so the only one read.
 ///
-/// A proxy appends to one of the two and passes the other through as the client
-/// sent it — an AWS ALB or a typical nginx appends to `X-Forwarded-For` and
-/// leaves a client's `Forwarded` alone. Whichever field the proxy does not
-/// write is the client's own word, so reading it lets the client choose its
-/// address. That is why no field is read by default, and why the choice is the
-/// deployment's rather than the request's.
+/// A proxy appends to one field and passes the other through from the client
+/// (an AWS ALB or typical nginx appends to `X-Forwarded-For`), so reading the
+/// wrong one lets the client choose its address.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ProxyHeader {
     /// `Forwarded`, per RFC 7239, which carries each hop's address and scheme
@@ -45,14 +37,10 @@ pub enum ProxyHeader {
 /// field.
 ///
 /// Empty by default, which means "believe nobody": the socket peer is the
-/// client, and every forwarding field is ignored. That is the only safe default
-/// — the fields are attacker-controlled — and it is the same rule
-/// [`Cors::new`](crate::middleware::cors::Cors::new) follows, where every
-/// widening is a call a reviewer can see.
+/// client, and every forwarding field is ignored.
 ///
 /// Every constructor that believes anyone names the [`ProxyHeader`] those hops
-/// write, and only that field is read. Neither field is a safe guess: the one
-/// the proxy does not write is passed through from the client.
+/// write, and only that field is read.
 ///
 /// # Which constructor
 ///
@@ -102,9 +90,8 @@ impl TrustedProxies {
 
     /// Trusts the `count` hops nearest the service, which write `header`.
     ///
-    /// Counted from the right, because the rightmost element was written by the
-    /// hop closest to Kynos and each step left is one step further from anything
-    /// this deployment controls.
+    /// Counted from the right: the rightmost element was written by the hop
+    /// closest to the service.
     #[must_use]
     pub fn hops(header: ProxyHeader, count: usize) -> Self {
         Self {
@@ -179,10 +166,7 @@ impl TrustedProxies {
 
 /// Whether `address` falls inside `network`/`prefix`.
 ///
-/// Hand-rolled rather than taken from a crate, for the reason
-/// [`base64`](crate::security) is: this is reachable in the default build, and
-/// `architecture.md` admits no dependency there. Comparing whole octets and
-/// then the partial one is the whole of it.
+/// Hand-rolled: the default build admits no dependency for it.
 fn within(address: IpAddr, network: IpAddr, prefix: u8) -> bool {
     fn matches(address: &[u8], network: &[u8], prefix: u8) -> bool {
         let prefix = usize::from(prefix);
@@ -209,9 +193,7 @@ fn within(address: IpAddr, network: IpAddr, prefix: u8) -> bool {
         (IpAddr::V6(address), IpAddr::V6(network)) => {
             matches(&address.octets(), &network.octets(), prefix)
         }
-        // A v4 address is never inside a v6 network or the reverse. Mapping one
-        // onto the other would make `::ffff:10.0.0.1` match a `10.0.0.0/8` rule
-        // its author never wrote.
+        // No v4/v6 mapping: `::ffff:10.0.0.1` must not match a `10.0.0.0/8` rule.
         _ => false,
     }
 }
@@ -219,9 +201,8 @@ fn within(address: IpAddr, network: IpAddr, prefix: u8) -> bool {
 /// What a request's forwarding fields say, once the trust policy has been
 /// applied.
 ///
-/// Built once per request and read by anything that needs to know who is
-/// calling — the rate limiter's [`ByClientAddress`] key, or a handler taking it
-/// as an argument.
+/// Built once per request; read by the rate limiter's [`ByClientAddress`] key,
+/// or by a handler taking it as an argument.
 ///
 /// [`ByClientAddress`]: crate::middleware::rate_limit::key::ByClientAddress
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -273,28 +254,18 @@ impl Forwarded {
 
         let (chain, peer_proto) = elements(headers, header);
 
-        // Whether the hop that wrote the fields may be believed at all. The
-        // socket peer is the only sender this process observed rather than was
-        // told about, so nothing in the request is worth reading unless that
-        // peer is named -- either outright, or by `hops` budgeting a first step
-        // of trust. It is what decides `peer_proto`, which names no hop of its
-        // own and so has only the immediate sender's word behind it.
+        // `peer_proto` names no hop, so only the socket peer's trust backs it.
         let peer_is_trusted =
             trusted.hops > 0 || peer_ip.is_some_and(|address| trusted.names(address));
 
-        // Walk right to left. The rightmost element was written by the hop
-        // nearest Kynos, and its immediate sender is the socket peer; each step
-        // left moves one hop further out, and stops the moment a sender is one
-        // this deployment does not trust. Section 8.1's first weakness -- "the
-        // chain of IP addresses listed before the request came to the proxy
-        // cannot be trusted" -- is exactly what stopping there respects.
+        // Walk right to left from the socket peer, stopping at the first
+        // untrusted sender (RFC 7239 section 8.1).
         let mut client = peer_ip;
         let mut sender = peer_ip;
         let mut stop = None;
 
-        // `believed` counts the elements already taken, so it is the index the
-        // walk is at -- and it is what `hops` is spent against. One naming no
-        // address spends its hop too, or the client's own would slide into it.
+        // An element naming no address still spends a hop, or the client's own
+        // element would slide into the trusted budget.
         for (believed, hop) in chain.iter().rev().enumerate() {
             let trusted_sender =
                 sender.is_some_and(|sender| trusted.names(sender)) || (believed < trusted.hops);
@@ -307,10 +278,8 @@ impl Forwarded {
             stop = Some(hop);
         }
 
-        // The scheme sits beside the client's address, in the element the walk
-        // stopped at: one hop wrote both. A `proto=` nearer the service names a
-        // connection between proxies, and one further out an untrusted
-        // sender's word, so neither stands in for a stop that states none.
+        // Only the stop element's `proto=` describes the client's connection;
+        // nearer ones name inter-proxy hops, further ones are untrusted.
         let proto = stop
             .and_then(|hop| hop.proto)
             .or(peer_proto.filter(|_| peer_is_trusted));
@@ -341,10 +310,7 @@ impl Forwarded {
     /// Whether the client's own connection was secure.
     ///
     /// `Some(false)` is a trusted hop saying it was not; `None` is nobody
-    /// having said. The three are kept apart because RFC 6797 section 7.2 turns
-    /// on the difference: an HSTS host must not send the field over non-secure
-    /// transport, so "unknown" and "no" have to lead to the same silence for
-    /// different reasons.
+    /// having said (a distinction RFC 6797 section 7.2 turns on).
     #[must_use]
     pub fn client_is_secure(&self) -> Option<bool> {
         self.proto.as_deref().map(|proto| proto == "https")
@@ -362,15 +328,9 @@ struct Hop<'a> {
 }
 
 /// Every non-empty element in `header`, left to right, and the scheme the
-/// immediate sender stated outside any element.
+/// immediate sender stated outside any element (`X-Forwarded-Proto` only).
 ///
-/// Only `Forwarded` gives an element a scheme of its own; only
-/// `X-Forwarded-Proto` states one apart from the elements, as its rightmost
-/// value. Each kind is `None` from the other field.
-///
-/// Only `header` is read. The other field is whatever the client sent, and a
-/// fallback to it where `header` is absent would hand the client the address
-/// whenever the proxy wrote nothing.
+/// Never falls back to the other field: that one is the client's.
 fn elements(headers: &HeaderMap, header: ProxyHeader) -> (Vec<Hop<'_>>, Option<&str>) {
     match header {
         ProxyHeader::Forwarded => (forwarded_elements(headers), None),
@@ -409,13 +369,9 @@ fn forwarded_elements(headers: &HeaderMap) -> Vec<Hop<'_>> {
 
 /// [`elements`] from the `X-Forwarded-For` and `X-Forwarded-Proto` pair.
 ///
-/// `X-Forwarded-Proto` is one list across its lines, like any list field (RFC
-/// 9110 section 5.3), and its rightmost value is the one the immediate sender
-/// wrote: a proxy that appends rather than replaces leaves a client's own value
-/// to its left. A blank value or line is an empty list element, which adds
-/// nothing to the list (RFC 9110 section 5.6.1), so the value before it is
-/// still the rightmost. A rightmost line that is not text yields no scheme
-/// rather than handing the answer to an earlier, further-out line.
+/// The scheme is `X-Forwarded-Proto`'s rightmost non-empty list element (RFC
+/// 9110 sections 5.3, 5.6.1); a non-text rightmost line yields none rather
+/// than an earlier, further-out line's.
 fn x_forwarded_elements(headers: &HeaderMap) -> (Vec<Hop<'_>>, Option<&str>) {
     let mut hops = Vec::new();
     for value in headers.get_all(X_FORWARDED_FOR) {
@@ -474,10 +430,7 @@ fn unquote(text: &str) -> &str {
 
 /// The address a `node` identifier names, where it names one.
 ///
-/// RFC 7239 section 6: `nodename = IPv4address / "[" IPv6address "]" /
-/// "unknown" / obfnode`, each optionally followed by `":" node-port`. Only the
-/// first two are addresses; `unknown` and an `obfnode` deliberately are not,
-/// and yield `None` rather than a guess.
+/// RFC 7239 section 6; `unknown` and an `obfnode` yield `None`.
 fn node_address(node: &str) -> Option<IpAddr> {
     let node = node.trim();
 
@@ -486,9 +439,8 @@ fn node_address(node: &str) -> Option<IpAddr> {
         return address.parse().ok();
     }
 
-    // A bare IPv6 address is outside the grammar -- ":" is not a `token`
-    // character, so it must be bracketed -- but `X-Forwarded-For` has no
-    // grammar and proxies do send one, so try it before splitting on a colon.
+    // Bare IPv6 is ungrammatical but `X-Forwarded-For` proxies send it, so try
+    // it before splitting off a port.
     if let Ok(address) = node.parse::<IpAddr>() {
         return Some(address);
     }

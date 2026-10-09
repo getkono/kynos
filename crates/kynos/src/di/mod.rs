@@ -1,14 +1,6 @@
 //! Dependency injection.
 //!
-//! Application state has no effect on the wire, so this is the one part of
-//! Kynos where the describability constraint does not apply — and therefore the
-//! one part where Kynos can be more capable than its peers at no cost to the
-//! thesis.
-//!
-//! The design goal is that a missing dependency is a **compile error**. axum's
-//! `State<S>` already is one; its `Extension<T>`, actix-web's `Data<T>` and
-//! poem's `Data<&T>` resolve erased state at runtime and answer 500 when it is
-//! absent; salvo's `Depot` is a stringly-typed map. Here, a handler asking for
+//! A missing dependency is a **compile error**: a handler asking for
 //! `Inject<Db>` where the context provides no `Db` fails to typecheck.
 //!
 //! ```compile_fail
@@ -23,11 +15,9 @@
 //!
 //! # The context is a type, not a map
 //!
-//! There is no container to register into and no builder to assemble. The
-//! application's own struct *is* the context: it is handed to
+//! The application's own struct *is* the context: it is handed to
 //! [`Router::build`](crate::Router::build) once, and a handler's requirements
-//! are bounds on it. Resolution is therefore a trait selection the compiler
-//! performs, and there is nowhere for a lookup to fail at run time.
+//! are bounds on it, resolved by the compiler.
 //!
 //! ```no_run
 //! # use kynos::di::Provides;
@@ -48,57 +38,33 @@
 //!
 //! # What is *not* a dependency
 //!
-//! A value read from the request is not a dependency, however convenient it
-//! would be to treat it as one. `CurrentUser` derived from an `Authorization`
-//! header is a [`SecurityScheme`](crate::security::SecurityScheme), and reaches
-//! a handler through [`Auth`](crate::security::auth::Auth), so that requiring it
-//! also documents it. Injecting it would make the requirement invisible.
+//! A value read from the request is not a dependency. `CurrentUser` derived
+//! from an `Authorization` header is a
+//! [`SecurityScheme`](crate::security::SecurityScheme), and reaches a handler
+//! through [`Auth`](crate::security::auth::Auth), so that requiring it also
+//! documents it.
 //!
-//! # Why resolution is synchronous and cannot fail
+//! # Resolution is synchronous and cannot fail
 //!
-//! An injected value contributes nothing to the description — that is what
-//! makes injection free of the describability constraint. It follows that
-//! injection must not be able to *produce* anything a consumer could observe,
-//! and a failure is observable: it becomes a response.
-//!
-//! So acquisition that can fail or block is not injection. Inject the *handle*
-//! — a pool, a client, a channel — and perform the acquisition in the handler
-//! body, where its failure lands in the return type and therefore in the
-//! description. This is not a limitation working around a missing feature; a
-//! fallible provider would produce responses no operation declares, which is
-//! the one thing this framework exists to prevent.
+//! A failure would become a response no operation declares. Inject the
+//! *handle* — a pool, a client, a channel — and perform fallible or blocking
+//! acquisition in the handler body, where its failure lands in the return type
+//! and therefore in the description.
 //!
 //! # Scope
 //!
 //! Every provider is a singleton for the life of the process: one context
 //! exists, and [`Provides::provide`] hands out a value from it per request.
+//! There is no per-request memoization; inject the pool and open the
+//! transaction where it is used.
 //!
-//! Per-request memoization — one database transaction shared by two injected
-//! repositories — is deliberately absent rather than pending. The 90% case
-//! needs nothing from Kynos: inject the pool and open the transaction where it
-//! is used. If a first-class version is ever wanted it is purely additive, and
-//! costs no signature change today: a `ProvidesScoped<T>` capability plus a new
-//! extractor, with the memo living in the request's own extensions, which
-//! [`FromRequestParts`](crate::extract::FromRequestParts) already hands every
-//! extractor mutably. A miss there is a cold cache rather than a missing
-//! dependency, so it still cannot panic and the compile-time guarantee still
-//! comes from the bound on the context.
+//! # A provider hands out a value rather than lending one
 //!
-//! # Why a provider hands out a value rather than lending one
-//!
-//! [`Provides::provide`] returns `T` and cannot return `&T`:
+//! [`Provides::provide`] returns `T`, not `&T`, because
 //! [`FromRequestParts::from_request_parts`](crate::extract::FromRequestParts::from_request_parts)
-//! returns `Self` with no lifetime tying it to the context, so nothing a
-//! handler receives can borrow from application state.
-//!
-//! That is a decision rather than an oversight, and it is the one part of this
-//! design that could not be changed later — lending would put a lifetime
-//! parameter on `FromRequestParts`, on `FromRequest`, and so on every extractor
-//! and every [`Handler`](crate::handler::Handler) implementation. What it costs
-//! is one clone of a handle per injected argument per request, which for the
-//! `Arc` this module tells you to inject is one atomic increment. See
-//! [`docs/state.md`] for what that increment has to do with cache locality, and
-//! for the per-core shape the rest of the surface is kept compatible with.
+//! returns `Self` with no lifetime tying it to the context. The cost is one
+//! clone of a handle per injected argument per request — one atomic increment
+//! for an `Arc`. See [`docs/state.md`] for the reasoning.
 //!
 //! [`docs/state.md`]: https://github.com/getkono/kynos/blob/master/docs/state.md
 //!
@@ -114,9 +80,6 @@ pub mod inject;
 /// Normally derived by `#[derive(Provider)]`, which emits one implementation
 /// per field. Implementations are expected to be cheap — typically a clone of a
 /// handle — because one runs per injected argument per request.
-///
-/// This is the capability-trait shape: a handler names what it needs, and the
-/// context proves it can supply it. Nothing is registered, looked up or erased.
 #[diagnostic::on_unimplemented(
     message = "the context `{Self}` provides no `{T}`",
     label = "cannot supply `{T}`",

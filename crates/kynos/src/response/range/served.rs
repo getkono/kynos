@@ -5,19 +5,11 @@
 //! then `If-None-Match`, else `If-Modified-Since`; then `If-Range` and the
 //! `Range` field it guards; then send.
 //!
-//! # Why the order is not a detail
+//! `Range` is evaluated only where a 200 was otherwise owed (section 14.2), so
+//! a 304 wins over a 206.
 //!
-//! Section 14.2 makes the `Range` field conditional on everything before it —
-//! it is evaluated "only if the result in absence of the Range header field
-//! would be a 200". A 304 therefore wins over a 206, and section 13.1.5's
-//! `If-Range` is compared against the validator of the representation being
-//! sent rather than against whatever the resource had most recently.
-//!
-//! # What it does not decide
-//!
-//! What a failed read means. A source that cannot answer is handed back to the
-//! caller, because the application knows whether a missing object is a 404, a
-//! 410 or a 500 and Kynos does not.
+//! A source that cannot answer is handed back to the caller, which knows
+//! whether a missing object is a 404, a 410 or a 500.
 
 use std::{sync::Arc, time::SystemTime};
 
@@ -73,10 +65,8 @@ pub struct Served<S: ByteSource, M: MediaType> {
 impl<S: ByteSource, M: MediaType> Served<S, M> {
     /// A representation read from `source`, sent as `M`.
     ///
-    /// The media type is a type parameter rather than a string because
-    /// [`Delivery`] has to describe itself without a value to look at --
-    /// `Responses` is a static method. It is the same reason
-    /// [`Binary<M>`](crate::extract::body::binary::Binary) carries one.
+    /// `M` is a type parameter so that [`Delivery`] can describe itself
+    /// statically.
     #[must_use]
     pub fn new(source: S) -> Self {
         Self {
@@ -91,10 +81,8 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
 
     /// The validator this representation is known by.
     ///
-    /// Without one, `If-Range` cannot be evaluated and section 13.1.5 says a
-    /// resume must be answered with the whole representation — so a resumable
-    /// download wants a strong tag, and a source that cannot produce one is
-    /// telling you it cannot support resumption.
+    /// A resumable download needs a strong tag: without one, `If-Range` cannot
+    /// hold and a resume gets the whole representation (section 13.1.5).
     #[must_use]
     pub fn etag(mut self, etag: ETag) -> Self {
         self.etag = Some(etag);
@@ -103,10 +91,8 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
 
     /// When the representation last changed.
     ///
-    /// The weaker validator, and section 13.1.3 ranks it below `ETag`
-    /// accordingly: a one-second resolution cannot distinguish a
-    /// representation that changed twice within a second from one that changed
-    /// once.
+    /// The weaker validator, at one-second resolution; section 13.1.3 ranks it
+    /// below `ETag`.
     #[must_use]
     pub fn last_modified(mut self, at: SystemTime) -> Self {
         self.last_modified = Some(at);
@@ -122,9 +108,8 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
 
     /// Sends the representation as a download named `filename`.
     ///
-    /// The name is encoded by [`ContentDisposition`], which already owns RFC
-    /// 6266 and RFC 8187 — so a filename with a comma, a quote or a non-ASCII
-    /// character is safe here rather than being the caller's problem.
+    /// The name is encoded by [`ContentDisposition`] (RFC 6266, RFC 8187), so
+    /// any filename is safe.
     #[must_use]
     pub fn attachment(mut self, filename: impl Into<String>) -> Self {
         self.disposition = Some(ContentDisposition::attachment().filename(filename));
@@ -143,30 +128,20 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
     /// # Errors
     ///
     /// Returns the source's own error if the length cannot be read. A failed
-    /// *span* read surfaces on the body stream instead, because by then the
-    /// status and the fields have been sent and there is nothing left to turn
-    /// into a different response. So does a source that stops short of the
-    /// length it reported: the `Content-Length` here is sized from
-    /// `complete_length`, so a representation truncated after it was measured
-    /// fails the body with [`Truncated`](super::source::Truncated) rather than
-    /// ending it under a 200 or a 206 that names more octets than arrived.
+    /// span read, or a source that stops short of the length it reported
+    /// ([`Truncated`](super::source::Truncated)), fails the body stream instead,
+    /// since the head has already been sent.
     pub async fn deliver(self, conditions: &Conditions) -> Result<Delivery<M>, S::Error> {
         let complete_length = self.source.complete_length().await?;
 
-        // Section 13.2.2 steps 1 and 2: the lost-update preconditions before
-        // anything else, so a resume against a representation that has since
-        // changed is refused outright rather than answered with a part of the
-        // new one.
+        // Section 13.2.2 steps 1 and 2: the lost-update preconditions first.
         if self.precondition_failed(conditions) {
             let mut response = Response::new(crate::http::body::Body::empty());
             *response.status_mut() = StatusCode::PRECONDITION_FAILED;
             return Ok(Delivery::new(response));
         }
 
-        // Steps 3 and 4: the cache validations, and `If-None-Match` before
-        // `If-Modified-Since` -- section 13.1.3 says the date is not evaluated
-        // at all when the resource has an entity tag and the request carries
-        // one.
+        // Steps 3 and 4: the cache validations.
         if self.unmodified(conditions) {
             return Ok(Delivery::new(self.head(
                 StatusCode::NOT_MODIFIED,
@@ -175,8 +150,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
             )));
         }
 
-        // Section 14.2: the field is read only where a 200 was owed, which is
-        // why this sits after the 304 above.
+        // Section 14.2: the field is read only where a 200 was owed.
         let requested = spec::read(
             &conditions.method,
             &conditions.fields,
@@ -194,10 +168,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
 
         let mut response = self.head(selection.status(), Some(selection), complete_length);
 
-        // Section 9.3.2: a HEAD is "identical to GET except that the server
-        // MUST NOT send content" -- and every field above is sent unchanged,
-        // which is what makes a HEAD usable to discover a length before
-        // downloading.
+        // Section 9.3.2: a HEAD sends every field above but no content.
         if conditions.method != Method::HEAD && complete_length > 0 {
             *response.body_mut() = crate::http::body::Body::from_body(Spans::new(
                 Arc::clone(&self.source),
@@ -220,10 +191,8 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
         *response.status_mut() = status;
         let fields = response.headers_mut();
 
-        // Section 14.3: a resource that supports ranges says so on every
-        // response that carries a representation, which is what lets a client
-        // discover resumability without trying it. Not on a 304, which carries
-        // none.
+        // Section 14.3: advertised on every response carrying a representation,
+        // which a 304 does not.
         if status != StatusCode::NOT_MODIFIED {
             crate::extract::params::header::write(fields, &AcceptRanges);
             if let Ok(value) = HeaderValue::from_str(M::MEDIA_TYPE) {
@@ -291,18 +260,16 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
 
     /// Whether section 13.2.2's first two steps refuse the request.
     ///
-    /// `If-Match` if the request carries one, and `If-Unmodified-Since` only
-    /// where it does not: section 13.1.4 says a recipient *MUST ignore
-    /// If-Unmodified-Since if the request contains an If-Match header field*.
+    /// `If-Unmodified-Since` is ignored when `If-Match` is present (section
+    /// 13.1.4).
     fn precondition_failed(&self, conditions: &Conditions) -> bool {
         // Section 13.1.1, the same evaluation an asset makes.
         if let Some(holds) = crate::http::etag::if_match(&conditions.fields, || self.tag()) {
             return !holds;
         }
 
-        // Section 13.1.4: ignored where the value is not one HTTP-date --
-        // including a list of them, which two field lines are -- and where the
-        // representation has no modification date to compare.
+        // Section 13.1.4: ignored unless exactly one HTTP-date and a
+        // modification date to compare.
         let mut lines = conditions
             .fields
             .get_all(header::IF_UNMODIFIED_SINCE)
@@ -317,24 +284,19 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
             return false;
         };
 
-        // The condition holds where the last change is at or before the date
-        // sent, at the field's one-second resolution.
         seconds(modified) > seconds(since)
     }
 
     /// Whether section 13.1's preconditions say the client's copy is current.
     fn unmodified(&self, conditions: &Conditions) -> bool {
-        // Section 13.1.3: "A recipient MUST ignore If-Modified-Since if the
-        // request contains an If-None-Match header field", so the tag is
-        // consulted first and the date only in its absence.
+        // Section 13.1.3: `If-None-Match` overrides `If-Modified-Since`.
         if let Some(field) = conditions.fields.get(header::IF_NONE_MATCH) {
             return self
                 .tag()
                 .is_some_and(|current| crate::http::etag::matches(field, &current));
         }
 
-        // Section 13.1.3 again: the date condition applies to GET and HEAD
-        // alone.
+        // Section 13.1.3: the date applies to GET and HEAD alone.
         if conditions.method != Method::GET && conditions.method != Method::HEAD {
             return false;
         }
@@ -350,9 +312,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
             return false;
         };
 
-        // Compared at one-second resolution, because that is all the field
-        // has: a representation whose `Last-Modified` equals the date sent is
-        // one the client already has.
+        // At the field's one-second resolution.
         seconds(modified) <= seconds(since)
     }
 }
@@ -366,16 +326,9 @@ fn seconds(time: SystemTime) -> u64 {
 
 /// A delivery, ready to be sent.
 ///
-/// Carries the media type at the type level so it can describe itself:
-/// [`Responses`] is a static method, so a `String` field would be invisible to
-/// it and the emitted description would have to guess.
-///
-/// [`Served`] itself is deliberately neither [`IntoResponse`] nor [`Responses`].
-/// A delivery is decided *from the request head*, which `into_response` does not
-/// have, so a `Served` returned from a handler would answer with the whole
-/// representation and ignore every condition the client sent. Leaving the traits
-/// unimplemented makes that a compile error rather than a silent wrong answer --
-/// the same reason `Rangeable` refuses a `Text`.
+/// [`Served`] is deliberately neither [`IntoResponse`] nor [`Responses`]: a
+/// delivery is decided from the request head, so returning a `Served` without
+/// calling [`deliver`](Served::deliver) is a compile error.
 ///
 /// [`Responses`]: crate::response::Responses
 #[derive(Debug)]
@@ -413,16 +366,12 @@ impl<M: MediaType> crate::response::Responses for Delivery<M> {
 
 /// The request fields a ranged delivery reads.
 ///
-/// One extractor rather than six, because the six are evaluated together and
-/// in an order the specification fixes — a handler that took them separately
-/// could apply them in the wrong one. Taking this argument is also what puts
-/// `Range`, `If-Range`, `If-Match`, `If-Unmodified-Since`, `If-None-Match` and
-/// `If-Modified-Since` in the emitted description, so an operation that answers
-/// a resume says so.
+/// One extractor rather than six, because the specification fixes the order
+/// they are evaluated in. Taking it declares `Range`, `If-Range`, `If-Match`,
+/// `If-Unmodified-Since`, `If-None-Match` and `If-Modified-Since`.
 #[derive(Clone, Debug)]
 pub struct Conditions {
-    /// The method, which decides whether a `Range` is defined at all and
-    /// whether content is sent.
+    /// The method.
     pub(super) method: Method,
     /// The request head, read by `spec::read` and the precondition checks.
     pub(super) fields: crate::http::HeaderMap,
@@ -431,11 +380,8 @@ pub struct Conditions {
 impl<C: Sync> crate::extract::FromRequestParts<C> for Conditions {
     type Rejection = std::convert::Infallible;
 
-    /// Infallible. Every unusable value among these six is one the
-    /// specification answers by ignoring or by a failed condition — section
-    /// 14.2 for `Range` and `If-Range`, sections 13.1.3 and 13.1.4 for a
-    /// malformed date, and section 13.1.1 for an `If-Match` naming no tag — so
-    /// there is no request a client can send that fails to produce a value.
+    /// Infallible: every unusable value among the six is ignored or fails its
+    /// condition (RFC 9110 sections 13.1, 14.2).
     async fn from_request_parts(parts: &mut Parts, _context: &C) -> Result<Self, Self::Rejection> {
         Ok(Self {
             method: parts.method.clone(),
