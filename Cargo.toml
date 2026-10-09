@@ -97,7 +97,7 @@ rustix = { version = "1.1.4", default-features = false }
 # the implicit constructors panic. `default-features = false` so the feature
 # list is only what the graph is being put into.
 rustls = { version = "0.23.43", default-features = false }
-serde = "1.0.219"
+serde = "1.0.221"
 # `serde_urlencoded`'s fork that reads a repeated key as a sequence, which is
 # what the `form` style with `explode` describes for an array property.
 serde_html_form = "0.4.1"
@@ -126,8 +126,8 @@ tokio-rustls = { version = "0.26.4", default-features = false, features = [
 tower = "0.5.2"
 tower-layer = "0.3.3"
 tower-service = "0.3.3"
-tracing = "0.1.41"
-tracing-subscriber = "0.3.20"
+tracing = "0.1.43"
+tracing-subscriber = "0.3.22"
 # OpenTelemetry reaches Kynos only through the `Observer`/`Interceptor` seams,
 # so none of these is a dependency of the framework -- they exist for the
 # example that shows the wiring. See `crates/kynos/examples/opentelemetry.rs`.
