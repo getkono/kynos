@@ -1036,6 +1036,46 @@ mod checking {
         assert!(failures(&BTreeMap::from([(OpaqueShort, NonZero(1))])).is_empty());
     }
 
+    std::thread_local! {
+        /// How often `Counted::key_constraints` has been built on this thread.
+        static BUILT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    /// A key whose constraints carry a `pattern`, which building allocates,
+    /// counting each build.
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+    struct Counted(&'static str);
+
+    impl Schema for Counted {
+        fn schema(registry: &mut Registry) -> kynos_openapi::Schema {
+            String::schema(registry)
+        }
+    }
+
+    impl MapKey for Counted {
+        fn key_constraints() -> crate::schema::constraints::Constraints {
+            BUILT.set(BUILT.get() + 1);
+            crate::schema::constraints::Constraints {
+                pattern: Some("^[a-z]+$".to_owned()),
+                ..short()
+            }
+        }
+
+        fn as_member(&self) -> Option<&str> {
+            Some(self.0)
+        }
+    }
+
+    #[test]
+    fn a_map_builds_its_key_constraints_only_for_a_key_to_check() {
+        assert!(failures(&BTreeMap::<Counted, NonZero>::new()).is_empty());
+        assert_eq!(BUILT.get(), 0, "an empty map has no key to check");
+
+        let two = BTreeMap::from([(Counted("ab"), NonZero(1)), (Counted("cd"), NonZero(1))]);
+        assert!(failures(&two).is_empty());
+        assert_eq!(BUILT.get(), 1, "the keys of one map share one build");
+    }
+
     #[test]
     fn an_absent_option_breaks_no_bound() {
         assert!(failures(&None::<NonZero>).is_empty());
