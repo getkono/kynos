@@ -32,6 +32,14 @@ pub struct Registry {
     /// [`std::any::type_name`] [`origins`](Registry::origins) uses.
     reserved: Vec<Reservation>,
 
+    /// The inlinings that have not finished, outermost first: each anonymous
+    /// type's [`std::any::type_name`], beside how many reservations were held
+    /// when it began.
+    ///
+    /// The same type again under the same count reached itself with no named
+    /// type between, which nothing can stand in for.
+    inlining: Vec<(&'static str, usize)>,
+
     /// Conflicts [`Registry::resolve`] found, which it cannot return.
     conflicts: Vec<SchemaConflict>,
 
@@ -61,9 +69,18 @@ impl Registry {
     /// than returned, because this method hands back a schema and a
     /// [`Schema`] implementation has no way to fail; the router reports what
     /// accumulated when it is built.
+    ///
+    /// # Panics
+    ///
+    /// When an anonymous type reaches itself with no named type between: a
+    /// hand implementation doing so, or generic derived types referring to one
+    /// another. Nothing can stand in for an inlined body still being built, so
+    /// its description has no end; the alternative is overflowing the stack.
+    /// `#[derive(Schema)]` refuses the direct case, a generic type naming
+    /// itself, at compile time.
     pub fn resolve<T: Schema>(&mut self) -> OpenApiSchema {
         let Some(name) = T::name() else {
-            return T::schema(self);
+            return self.inline::<T>();
         };
 
         let key = name.as_str().to_owned();
@@ -125,6 +142,28 @@ impl Registry {
             }
         }
         reference
+    }
+
+    /// Describes an anonymous `T` in place.
+    ///
+    /// Between two inlinings of one type at the same reservation count, every
+    /// enclosing descent is an inlining too, and an inlining always descends,
+    /// so the inner one would repeat the outer one without end.
+    fn inline<T: Schema>(&mut self) -> OpenApiSchema {
+        let entry = (std::any::type_name::<T>(), self.reserved.len());
+        assert!(
+            !self.inlining.contains(&entry),
+            "`{}` refers to itself through no type with a component name, so its schema \
+             would never end. A generic `#[derive(Schema)]` type is inlined rather than \
+             named: make the recursive type concrete, or implement `Schema` for it by hand \
+             returning a `name()`",
+            entry.0
+        );
+
+        self.inlining.push(entry);
+        let schema = T::schema(self);
+        self.inlining.pop();
+        schema
     }
 
     /// Registers a schema under an explicit name and returns a `$ref` to it.
