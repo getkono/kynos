@@ -25,36 +25,69 @@ use crate::{
 };
 
 const ACCEPT_RETRY_INITIAL: Duration = Duration::from_millis(10);
-const MAX_CONSECUTIVE_ACCEPT_FAILURES: u32 = 5;
+const ACCEPT_RETRY_MAX: Duration = Duration::from_secs(1);
 
-/// The consecutive failed accepts a listener has seen, and the retry schedule
-/// they put it on.
+/// What the accept loop does after a failed accept.
+#[derive(Debug, PartialEq, Eq)]
+pub(in crate::server) enum AcceptRetry {
+    /// Accept again at once: the failure belonged to one queued connection.
+    Now,
+    /// Wait this long, then accept again.
+    After(Duration),
+    /// Stop accepting: the listener reports [`ServerError::Accept`].
+    Never,
+}
+
+/// Where a listener stands in its retry schedule: the wait its next failed
+/// accept would bring.
 ///
-/// The wait doubles from 10 ms, and the fifth consecutive failure gives up, so
-/// the longest wait is 80 ms and a listener retries for 150 ms in all before
-/// it reports [`ServerError::Accept`]. A transient failure the loop does not
-/// count — an interrupted or aborted connection — never reaches this.
-#[derive(Debug, Default)]
+/// A failure that belonged to one queued connection — an interrupted, aborted
+/// or reset connection, or on Linux a network error `accept(2)` says to retry
+/// like `EAGAIN` — retries at once. A listener that is no longer listening
+/// (`EINVAL`) cannot be waited back into service and ends at once. Every other
+/// failure, running out of file descriptors (`EMFILE`, `ENFILE`) or memory
+/// included, waits and retries without limit: the wait doubles from 10 ms to
+/// a one-second cap, holding nothing while it waits, so a descriptor freed by a
+/// closing connection is taken up within a second.
+#[derive(Debug)]
 pub(in crate::server) struct AcceptBackoff {
-    failures: u32,
+    next: Duration,
+}
+
+impl Default for AcceptBackoff {
+    fn default() -> Self {
+        Self {
+            next: ACCEPT_RETRY_INITIAL,
+        }
+    }
 }
 
 impl AcceptBackoff {
-    /// Records one more failed accept, and returns how long to wait before
-    /// accepting again, or `None` when this failure ends the listener.
-    pub(in crate::server) fn fail(&mut self) -> Option<Duration> {
-        if self.failures >= MAX_CONSECUTIVE_ACCEPT_FAILURES - 1 {
-            return None;
+    /// Records one more failed accept, and returns what the loop does next.
+    pub(in crate::server) fn fail(&mut self, error: &io::Error) -> AcceptRetry {
+        match error.kind() {
+            io::ErrorKind::Interrupted
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionReset => AcceptRetry::Now,
+            // Only Linux's accept(2) reports these for the dequeued connection;
+            // Windows' `WSAENETDOWN` means its network subsystem has failed.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            io::ErrorKind::NetworkDown
+            | io::ErrorKind::NetworkUnreachable
+            | io::ErrorKind::HostUnreachable => AcceptRetry::Now,
+            io::ErrorKind::InvalidInput => AcceptRetry::Never,
+            _ => {
+                let delay = self.next;
+                self.next = (delay * 2).min(ACCEPT_RETRY_MAX);
+                AcceptRetry::After(delay)
+            }
         }
-        let delay = ACCEPT_RETRY_INITIAL * (1 << self.failures);
-        self.failures += 1;
-        Some(delay)
     }
 
     /// Forgets the failures before a successful accept, so the next failure
     /// starts the schedule over.
     pub(in crate::server) fn succeed(&mut self) {
-        self.failures = 0;
+        self.next = ACCEPT_RETRY_INITIAL;
     }
 }
 
@@ -125,24 +158,20 @@ pub(in crate::server) async fn accept_loop<C: 'static>(
                     .await;
                 });
             }
-            Err(source)
-                if matches!(
-                    source.kind(),
-                    io::ErrorKind::Interrupted | io::ErrorKind::ConnectionAborted
-                ) =>
-            {
-                drop(permit);
-            }
             Err(source) => {
                 drop(permit);
-                let Some(delay) = backoff.fail() else {
-                    // A send fails only once the server stopped listening, and
-                    // then nobody is left to tell.
-                    let _ = failures.send(ServerError::Accept {
-                        address: local_addr,
-                        source,
-                    });
-                    break;
+                let delay = match backoff.fail(&source) {
+                    AcceptRetry::Now => continue,
+                    AcceptRetry::After(delay) => delay,
+                    AcceptRetry::Never => {
+                        // A send fails only once the server stopped listening,
+                        // and then nobody is left to tell.
+                        let _ = failures.send(ServerError::Accept {
+                            address: local_addr,
+                            source,
+                        });
+                        break;
+                    }
                 };
                 tracing::warn!(%source, %local_addr, ?delay, "retrying failed accept");
                 tokio::select! {

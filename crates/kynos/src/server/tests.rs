@@ -87,44 +87,159 @@ fn http2_setters_write_their_own_fields() {
     );
 }
 
-/// The whole retry schedule: four doubling waits, then the fifth consecutive
-/// failure ends the listener, and every failure past it does too.
+/// The whole retry schedule: the wait doubles from 10 ms to a one-second cap,
+/// and a listener never gives up on a failure waiting can clear.
 #[test]
-fn a_failing_accept_backs_off_by_doubling_and_gives_up_at_the_fifth() {
-    use std::time::Duration;
+fn a_failing_accept_backs_off_by_doubling_to_a_cap_and_never_gives_up() {
+    use std::{io, time::Duration};
 
-    use crate::server::accept::AcceptBackoff;
+    use crate::server::accept::{AcceptBackoff, AcceptRetry};
 
+    let error = io::Error::other("accept failed");
     let mut backoff = AcceptBackoff::default();
-    let schedule = (0..6).map(|_| backoff.fail()).collect::<Vec<_>>();
+    let schedule = (0..10).map(|_| backoff.fail(&error)).collect::<Vec<_>>();
 
     assert_eq!(
         schedule,
-        [
-            Some(Duration::from_millis(10)),
-            Some(Duration::from_millis(20)),
-            Some(Duration::from_millis(40)),
-            Some(Duration::from_millis(80)),
-            None,
-            None,
-        ]
+        [10, 20, 40, 80, 160, 320, 640, 1000, 1000, 1000]
+            .map(|millis| AcceptRetry::After(Duration::from_millis(millis)))
     );
 }
 
-/// A successful accept starts the schedule over, so failures separated by a
-/// success never add up to the limit.
+/// Running out of file descriptors, for the process (EMFILE) or the system
+/// (ENFILE), is not a listener failure: a client holding enough idle
+/// connections open must not stop the server. Both numbers are the same on
+/// every Unix.
+#[cfg(unix)]
 #[test]
-fn a_successful_accept_restarts_the_backoff() {
-    use std::time::Duration;
+fn running_out_of_file_descriptors_never_ends_the_listener() {
+    use std::{io, time::Duration};
 
-    use crate::server::accept::AcceptBackoff;
+    use crate::server::accept::{AcceptBackoff, AcceptRetry};
+
+    for (name, errno) in [("EMFILE", 24), ("ENFILE", 23)] {
+        let error = io::Error::from_raw_os_error(errno);
+        let mut backoff = AcceptBackoff::default();
+        let last = (0..100).map(|_| backoff.fail(&error)).last();
+
+        assert_eq!(
+            last,
+            Some(AcceptRetry::After(Duration::from_secs(1))),
+            "{name}"
+        );
+    }
+}
+
+/// A listener that is no longer listening cannot be waited back into
+/// service, so the first such failure ends it.
+#[test]
+fn a_listener_that_is_not_listening_ends_at_once() {
+    use std::io;
+
+    use crate::server::accept::{AcceptBackoff, AcceptRetry};
+
+    let error = io::Error::from(io::ErrorKind::InvalidInput);
+
+    assert_eq!(AcceptBackoff::default().fail(&error), AcceptRetry::Never);
+}
+
+/// A failure that belonged to one queued connection retries at once and does
+/// not advance the schedule.
+#[test]
+fn a_failure_of_one_queued_connection_retries_at_once() {
+    use std::{io, time::Duration};
+
+    use crate::server::accept::{AcceptBackoff, AcceptRetry};
 
     let mut backoff = AcceptBackoff::default();
-    backoff.fail();
-    backoff.fail();
+    for kind in [
+        io::ErrorKind::Interrupted,
+        io::ErrorKind::ConnectionAborted,
+        io::ErrorKind::ConnectionReset,
+    ] {
+        assert_eq!(
+            backoff.fail(&io::Error::from(kind)),
+            AcceptRetry::Now,
+            "{kind:?}"
+        );
+    }
+
+    assert_eq!(
+        backoff.fail(&io::Error::other("accept failed")),
+        AcceptRetry::After(Duration::from_millis(10))
+    );
+}
+
+/// Linux's accept(2) reports a network error of the dequeued connection and
+/// says to retry it like EAGAIN, so it retries at once.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn a_network_error_of_one_queued_connection_retries_at_once() {
+    use std::{io, time::Duration};
+
+    use crate::server::accept::{AcceptBackoff, AcceptRetry};
+
+    let mut backoff = AcceptBackoff::default();
+    for kind in [
+        io::ErrorKind::NetworkDown,
+        io::ErrorKind::NetworkUnreachable,
+        io::ErrorKind::HostUnreachable,
+    ] {
+        assert_eq!(
+            backoff.fail(&io::Error::from(kind)),
+            AcceptRetry::Now,
+            "{kind:?}"
+        );
+    }
+
+    assert_eq!(
+        backoff.fail(&io::Error::other("accept failed")),
+        AcceptRetry::After(Duration::from_millis(10))
+    );
+}
+
+/// Elsewhere a network error from accept is the listener's: Windows reports
+/// `WSAENETDOWN` when the network subsystem has failed. Retrying it at once
+/// would spin the accept loop, so it waits like any other failure.
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+#[test]
+fn a_network_error_of_the_listener_waits() {
+    use std::{io, time::Duration};
+
+    use crate::server::accept::{AcceptBackoff, AcceptRetry};
+
+    let mut backoff = AcceptBackoff::default();
+    for (kind, millis) in [
+        (io::ErrorKind::NetworkDown, 10),
+        (io::ErrorKind::NetworkUnreachable, 20),
+        (io::ErrorKind::HostUnreachable, 40),
+    ] {
+        assert_eq!(
+            backoff.fail(&io::Error::from(kind)),
+            AcceptRetry::After(Duration::from_millis(millis)),
+            "{kind:?}"
+        );
+    }
+}
+
+/// A successful accept starts the schedule over, so the next failure waits
+/// 10 ms again.
+#[test]
+fn a_successful_accept_restarts_the_backoff() {
+    use std::{io, time::Duration};
+
+    use crate::server::accept::{AcceptBackoff, AcceptRetry};
+
+    let error = io::Error::other("accept failed");
+    let mut backoff = AcceptBackoff::default();
+    backoff.fail(&error);
+    backoff.fail(&error);
     backoff.succeed();
 
-    assert_eq!(backoff.fail(), Some(Duration::from_millis(10)));
+    assert_eq!(
+        backoff.fail(&error),
+        AcceptRetry::After(Duration::from_millis(10))
+    );
 }
 
 #[test]
@@ -775,10 +890,11 @@ async fn repeated_shutdown_trigger_forces_an_incomplete_drain() {
     client.await.expect("client task joins");
 }
 
-/// Makes every later `accept` on `listener` fail the way an exhausted backoff
-/// needs: on Linux, shutting a listening socket down for reading leaves it
-/// refusing `accept` with `EINVAL`, an error the loop counts. `listener` is a
-/// duplicate of the one the server holds, so it reaches the same socket.
+/// Makes every later `accept` on `listener` fail the way that ends its loop:
+/// on Linux, shutting a listening socket down for reading leaves it refusing
+/// `accept` with `EINVAL`, an error the backoff gives up on at once.
+/// `listener` is a duplicate of the one the server holds, so it reaches the
+/// same socket.
 #[cfg(all(target_os = "linux", feature = "http1"))]
 fn break_listener(listener: &std::net::TcpListener) {
     socket2::SockRef::from(listener)
@@ -821,8 +937,8 @@ async fn a_listener_that_stops_accepting_drains_what_it_accepted() {
         .await
         .expect("the request reaches the handler");
     break_listener(&listener);
-    // The backoff gives up after 150 ms; this outlasts it with margin, so the
-    // listener has certainly failed before the request is let go.
+    // The backoff gives up on the first `EINVAL`; this outlasts it with
+    // margin, so the listener has certainly failed before the request is let go.
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     assert!(
         !server.is_finished(),
