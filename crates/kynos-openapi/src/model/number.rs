@@ -1,14 +1,9 @@
 //! Reading a JSON number into an `f64`, whatever `serde_json` features the
 //! build unifies.
 //!
-//! An untagged enum, such as `Schema` or `RefOr`, buffers its input into
-//! serde's private `Content` before choosing a variant. With
-//! `serde_json/arbitrary_precision` on anywhere in the graph, `serde_json`
-//! hands that buffer every number that is not an in-range integer as a
-//! one-entry map keyed by its private token, and `f64`'s own `Deserialize`
-//! cannot read a map. [`serde_json::Number`] recognises its own token, so
-//! [`float`] reads one and converts it; without the feature the buffer holds a
-//! plain number and the same path reads that.
+//! Under `serde_json/arbitrary_precision`, an untagged enum's buffered input
+//! holds non-integer numbers as a token map `f64` cannot read;
+//! [`serde_json::Number`] reads both forms, so [`float`] goes through it.
 
 use serde::{Deserialize, Deserializer, de::Error};
 

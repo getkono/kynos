@@ -6,9 +6,7 @@ use crate::{Map, model::extensions::Extensions};
 
 /// A server hosting the API.
 ///
-/// Kynos never infers this from a bind address. The description states the
-/// public URL clients use, which is frequently not the socket the process
-/// listens on.
+/// Never inferred from a bind address: it states the public URL clients use.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Server {
     /// A URL to the target host, optionally templated with `{variable}`.

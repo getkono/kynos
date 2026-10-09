@@ -16,15 +16,12 @@ use crate::{
 /// exclusive.
 ///
 /// 3.2 adds `dataValue` and `serializedValue`, and deprecates `value` for
-/// non-JSON serialization targets — for those, `value` has
-/// implementation-defined behaviour, which is exactly the kind of ambiguity
-/// Kynos avoids. Prefer [`data`](Example::data) (the example as data, before
-/// serialization) and [`serialized`](Example::serialized) (the example as it
-/// appears on the wire) whenever `openapi32` is available and the target is not
-/// JSON.
+/// non-JSON serialization targets. Prefer [`data`](Example::data) (before
+/// serialization) and [`serialized`](Example::serialized) (on the wire) when
+/// `openapi32` is available and the target is not JSON.
 ///
-/// The exclusions between those four fields are not a plain one-of, which is
-/// why they live in [`ExampleValue`] rather than in four `Option`s.
+/// The legal combinations of the four fields are the variants of
+/// [`ExampleValue`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "RawExample", into = "RawExample")]
 pub struct Example {
@@ -44,37 +41,25 @@ pub struct Example {
 
 /// The example itself, in whichever form carries it.
 ///
-/// The specification's exclusions are asymmetric, so this is not a one-of over
-/// four fields. `value` excludes all three others; `serializedValue` and
-/// `externalValue` exclude each other; but `dataValue` pairs with *either* of
-/// them, which is how the specification's own worked examples are written. The
-/// variants below are exactly the combinations that leaves.
-/// `#[non_exhaustive]` because OpenAPI 3.2 adds to this and the addition is
-/// `#[cfg]`-gated. Cargo unifies features across a dependency graph, so any
-/// crate enabling `openapi32` enables it for every crate in the build -- and
-/// without this attribute that would turn a downstream exhaustive `match` into
-/// a compile error, which is not what "purely additive" is supposed to mean.
+/// `value` excludes all three others; `serializedValue` and `externalValue`
+/// exclude each other; `dataValue` pairs with either of those two.
+///
+/// `#[non_exhaustive]` because `openapi32` adds variants and Cargo unifies
+/// features.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExampleValue {
     /// An embedded literal example, written to `value`.
     ///
     /// Exclusive with every other form. Deprecated by 3.2 for non-JSON
-    /// serialization targets; see the type-level documentation.
-    ///
-    /// Named for what it is rather than for its field: a variant called `Value`
-    /// would collide with [`serde_json::Value`] in rustc's shortest-path table
-    /// and lengthen that type's name in every diagnostic mentioning it, this
-    /// crate's or anyone else's.
+    /// serialization targets.
     Embedded(Value),
 
     /// A URI identifying the serialized example, written to `externalValue`.
     ///
     /// For payloads that cannot be embedded in JSON or YAML.
     ///
-    /// `#[non_exhaustive]` on the *variant*, because 3.2 adds `data` to it.
-    /// The attribute on the enum covers a variant being added and says nothing
-    /// about this one's field list; see the type's own documentation.
+    /// `#[non_exhaustive]` on the variant, because 3.2 adds `data` to it.
     #[non_exhaustive]
     External {
         /// The URI identifying the example.
@@ -264,8 +249,7 @@ impl TryFrom<RawExample> for Example {
     type Error = ExampleConflict;
 
     fn try_from(raw: RawExample) -> Result<Self, Self::Error> {
-        // One total match rather than guards and a fallthrough, so that the
-        // compiler is the thing checking these combinations are exhaustive.
+        // One total match, so the compiler checks the combinations exhaustively.
         #[cfg(feature = "openapi32")]
         let value = match (
             raw.value,
@@ -337,14 +321,9 @@ impl From<Example> for RawExample {
 /// The examples an object shows its value with, in whichever form it uses.
 ///
 /// A Parameter, Header or Media Type Object may carry one inline `example` or a
-/// map of named `examples`, and the specification makes the two mutually
-/// exclusive. An enum rather than two `Option` fields, for the reason
-/// [`SecurityScheme`](crate::model::security::SecurityScheme) is one: an
-/// unusable combination that cannot be spelled needs no rule to reject it.
+/// map of named `examples`; the specification makes the two mutually exclusive.
 ///
-/// Note that the singular form is not an [`Example`]: `example` is the value
-/// itself, written inline, while `examples` maps names to Example Objects that
-/// can also carry a summary, a description or an external payload.
+/// The singular form is the value itself, not an [`Example`].
 #[derive(Clone, Debug, PartialEq)]
 pub enum Examples {
     /// One example of the value, written to `example`.
@@ -393,8 +372,7 @@ pub(crate) fn examples_into(
 
 /// Adds a named example to whatever an object carries already.
 ///
-/// An inline example is dropped rather than kept beside the named one: the two
-/// forms exclude each other, so there is no state that holds both.
+/// An inline example is dropped; the two forms exclude each other.
 pub(crate) fn examples_with_named(
     examples: Option<Examples>,
     name: String,

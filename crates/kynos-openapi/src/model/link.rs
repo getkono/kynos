@@ -13,8 +13,7 @@ use crate::{
 /// A design-time link from one response to another operation.
 ///
 /// A link says "the value at this location in my response is the `id` parameter
-/// of *that* operation". It is the one construct in OpenAPI that expresses the
-/// relationship between operations, and no mainstream Rust framework emits it.
+/// of *that* operation".
 ///
 /// The target is a [`LinkTarget`], which is `operationRef` or `operationId`
 /// and never both or neither.
@@ -46,18 +45,11 @@ pub struct Link {
 
 /// How a link identifies the operation it points at.
 ///
-/// An enum rather than two `Option` fields, for the reason
-/// [`SecurityScheme`](crate::model::security::SecurityScheme) is one: an
-/// unusable combination that cannot be spelled needs no rule to reject it. A
-/// link naming neither target points nowhere, and one naming both points at two
-/// operations without saying which wins.
+/// Exactly one of `operationRef` or `operationId`, as the specification
+/// requires.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LinkTarget {
     /// A URI reference to the target operation, written to `operationRef`.
-    ///
-    /// Named for what it holds rather than for its field: a variant called
-    /// `Ref` would read as the [`Ref`](crate::Ref) this crate already has, which
-    /// is a Reference Object and something else entirely.
     Uri(String),
 
     /// The [`operation_id`](crate::Operation::operation_id) of the target,

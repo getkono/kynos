@@ -30,9 +30,8 @@ pub struct InvalidComponentName(pub String);
 
 /// A key under one of the [`Components`] maps.
 ///
-/// The specification restricts these to `^[a-zA-Z0-9.\-_]+$`, which is narrower
-/// than most Rust type names allow — `Vec<User>` cannot be a component name, so
-/// generic types have to be mangled into one.
+/// The specification restricts these to `^[a-zA-Z0-9.\-_]+$`, so a generic
+/// type name such as `Vec<User>` must be [`sanitized`](Self::sanitized).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct ComponentName(String);
