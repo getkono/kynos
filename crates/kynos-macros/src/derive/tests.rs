@@ -1300,6 +1300,29 @@ mod schema {
         }
     }
 
+    /// A tuple variant of an internally tagged enum is serde's diagnostic to
+    /// raise: serde refuses the tag there, so its first member is no payload
+    /// written beside the tag and `as` on it is not refused as one.
+    #[test]
+    fn as_on_an_internally_tagged_tuple_variant_is_left_to_serde() {
+        let input: syn::DeriveInput = syn::parse2(quote::quote!(
+            #[serde(tag = "kind")]
+            enum Event {
+                Paired(#[schema(as = Summary)] Record, u8),
+            }
+        ))
+        .expect("the case itself must parse");
+
+        let Err(error) = expand_inner(&input) else {
+            return;
+        };
+
+        assert!(
+            !error.to_string().contains("newtype variant's payload"),
+            "a tuple variant's member was refused as a newtype payload: {error}"
+        );
+    }
+
     /// `#[serde(untagged)]` on a struct is serde's diagnostic to raise, not ours.
     ///
     /// The refusal exists because an untagged *enum* has no describable
