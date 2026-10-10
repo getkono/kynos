@@ -48,8 +48,24 @@ fn member(expr: &Expr) -> syn::Result<TokenStream2> {
         receiver = &call.receiver;
     }
 
+    // syn attaches a member's leading attributes to its outermost call, or to
+    // the path when there is none; none of them would reach the expansion.
+    let attrs = calls
+        .iter()
+        .flat_map(|call| &call.attrs)
+        .chain(match receiver {
+            Expr::Path(path) => path.attrs.as_slice(),
+            _ => &[],
+        });
+    if let Some(attr) = attrs.into_iter().next() {
+        return Err(syn::Error::new(
+            attr.span(),
+            "a `routes!` member takes no attributes; gate the handler or the whole `routes!` call",
+        ));
+    }
+
     let path = match receiver {
-        Expr::Path(path) if path.qself.is_none() && path.attrs.is_empty() => &path.path,
+        Expr::Path(path) if path.qself.is_none() => &path.path,
         other => {
             return Err(syn::Error::new(
                 other.span(),
