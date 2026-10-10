@@ -33,7 +33,8 @@
 //!   arrives rather than after half the sockets are live. It is also the only
 //!   way to learn which port the operating system chose when you asked for zero.
 //! * **An incomplete drain is an error, but not a failure.** `serve` reports a
-//!   drain cut short as an `Err`, so nothing it abandoned goes unnoticed;
+//!   drain it was not allowed to complete as an `Err`, so no abandoned work
+//!   goes unnoticed;
 //!   [`ServerError::is_requested_shutdown`] is how `main` exits cleanly anyway.
 //!
 //! [`ServerError::ShutdownTimeout`]: kynos::server::error::ServerError::ShutdownTimeout
@@ -108,7 +109,7 @@ async fn main() -> kynos::Result<()> {
     }
 
     match bound.serve().await {
-        // A drain cut short by its deadline or a second signal is still the
+        // A drain ended by its deadline or a second signal is still the
         // stop this process asked for. Exiting non-zero for it would have a
         // supervisor that restarts on failure restart a service told to stop.
         Err(kynos::Error::Server(error)) if error.is_requested_shutdown() => {

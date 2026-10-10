@@ -356,7 +356,8 @@ impl<C: 'static> BoundServer<C> {
     /// [`Error::Server`](crate::error::Error::Server), carrying:
     ///
     /// - [`ServerError::ShutdownTimeout`] or [`ServerError::ShutdownForced`]
-    ///   when shutdown was requested and the drain did not finish;
+    ///   when shutdown was requested and the drain was not allowed to complete,
+    ///   whether or not work was in flight;
     ///   [`ServerError::is_requested_shutdown`] tells these apart from a
     ///   failure.
     /// - [`ServerError::Signal`] when the shutdown signal could not be

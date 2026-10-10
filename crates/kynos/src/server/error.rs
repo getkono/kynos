@@ -79,9 +79,12 @@ pub enum ServerError {
 }
 
 impl ServerError {
-    /// Whether serving ended because shutdown was requested and the drain then
-    /// cut in-flight work short: [`ShutdownTimeout`](Self::ShutdownTimeout) or
-    /// [`ShutdownForced`](Self::ShutdownForced).
+    /// Whether serving ended because shutdown was requested and the drain was
+    /// then not allowed to complete: [`ShutdownTimeout`](Self::ShutdownTimeout)
+    /// or [`ShutdownForced`](Self::ShutdownForced).
+    ///
+    /// Neither says work was abandoned: a zero `shutdown_timeout` reports
+    /// `ShutdownTimeout` even when no request was in flight.
     ///
     /// Such an error is the end a process asked for, not a server failure, so a
     /// caller that maps errors to a failing exit status should exempt it; a
