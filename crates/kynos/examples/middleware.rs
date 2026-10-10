@@ -60,6 +60,7 @@ use kynos::{
             decision::{Decision, QuotaPolicy, QuotaUnit, RateLimitPolicy, ServiceLimit},
         },
         request_id::{CorrelationHeaders, Counter, RequestId, RequestIdSource},
+        security_headers::{SecurityHeaders, StrictTransportSecurity},
         trace::Trace,
     },
     openapi::Method,
@@ -298,6 +299,17 @@ impl RateLimitPolicy<()> for PerProcess {
 #[tokio::main]
 async fn main() -> kynos::Result<()> {
     let router = Router::<()>::new()
+        // The fields every API response should carry, each documented as the
+        // one value it sends. Outermost, so a cache inside it still stores.
+        // HSTS is withheld here, since this server listens on plain HTTP and
+        // RFC 6797 forbids sending it there.
+        .intercept(
+            SecurityHeaders::new()
+                .strict_transport_security(StrictTransportSecurity::max_age(Duration::from_secs(
+                    31_536_000,
+                )))
+                .deny_framing(),
+        )
         // Browsers only. A preflight is answered before any handler runs, and
         // `document_response_headers` is opt-in because CORS headers are a
         // property of the deployment rather than of the API — most descriptions
