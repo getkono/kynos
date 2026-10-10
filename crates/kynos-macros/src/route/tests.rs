@@ -807,6 +807,21 @@ mod routes {
         }
     }
 
+    /// A qualified path names an associated item, never a route-attributed
+    /// handler's endpoint type, so it is refused like any other non-handler.
+    #[test]
+    fn a_qualified_path_names_no_handler() {
+        let Err(error) = expand(quote!(<Users as Resource>::list)) else {
+            panic!("a qualified path must be rejected");
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("expected the name of a route-attributed handler"),
+            "got {error}"
+        );
+    }
+
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         for (description, tokens, expected) in cases() {
