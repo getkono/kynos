@@ -278,8 +278,9 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// the field's bounds, and its check converts the value through
 /// `T: From<&F>`, then holds that `T` to the field's bounds and to `T`'s own.
 /// Whether the field is required is still `F`'s. A newtype over such a member
-/// takes no kind from it, and `as` is refused on a flattened field, on a
-/// `PhantomData` and twice on one field. The parameter derives describe a
+/// takes no kind from it, and `as` is refused on a flattened field, on an
+/// internally tagged newtype variant's payload, on a `PhantomData` and twice
+/// on one field. The parameter derives describe a
 /// field by its own type, the one `FromStr` reads, and ignore it.
 ///
 /// ```ignore

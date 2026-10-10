@@ -5,9 +5,9 @@ use proc_macro2::Span;
 use syn::{DeriveInput, Field, Fields, Lit, LitStr, Type};
 
 use crate::derive::schema::{
-    COUNTS, NUMERIC,
+    COUNTS, Container, NUMERIC,
     attributes::{described_as_keys, is_flattened, is_phantom, open_span},
-    field_groups,
+    field_groups, internally_tagged_payloads,
 };
 
 /// Keys written alone, with no value.
@@ -16,6 +16,7 @@ const FLAGS: &[&str] = &["unique_items", "open"];
 /// Validates every `#[schema(...)]` in the input, before any code is emitted,
 /// so [`constraints`](crate::derive::schema::attributes::constraints) need not.
 pub(super) fn check_constraints(input: &DeriveInput) -> syn::Result<()> {
+    let payloads = internally_tagged_payloads(input, &Container::read(input));
     for group in field_groups(input) {
         let named = match group {
             Fields::Named(named) => &named.named,
@@ -32,7 +33,8 @@ pub(super) fn check_constraints(input: &DeriveInput) -> syn::Result<()> {
                     attr.parse_nested_meta(|meta| check_constraint(&meta))?;
                 }
             }
-            check_described_as(field)?;
+            let payload = payloads.iter().any(|payload| std::ptr::eq(*payload, field));
+            check_described_as(field, payload)?;
 
             let Some(span) = open_span(field) else {
                 continue;
@@ -65,8 +67,9 @@ pub(super) fn check_constraints(input: &DeriveInput) -> syn::Result<()> {
 }
 
 /// A field's `as`: written once, and never where serde does not write the
-/// field as one value of its type.
-fn check_described_as(field: &Field) -> syn::Result<()> {
+/// field as one value of its type. `payload` marks an internally tagged
+/// newtype variant's payload, whose members serde writes beside the tag.
+fn check_described_as(field: &Field, payload: bool) -> syn::Result<()> {
     let keys = described_as_keys(field);
     let Some((span, _)) = keys.first() else {
         return Ok(());
@@ -86,6 +89,15 @@ fn check_described_as(field: &Field) -> syn::Result<()> {
             "`as` describes a field as one value of another type, and a flattened field is no \
              one value: serde writes its members into the object carrying it. Describe the \
              flattened type itself, or drop `#[serde(flatten)]`",
+        ));
+    }
+
+    if payload {
+        return Err(syn::Error::new(
+            *span,
+            "`as` describes a field as one value of another type, and an internally tagged \
+             newtype variant's payload is no one value: serde writes its members beside the \
+             tag, as it does a flattened field's. Describe the payload type itself",
         ));
     }
 

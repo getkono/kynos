@@ -191,6 +191,16 @@ mod schema {
                 "a flattened field is no one value",
             ),
             case(
+                "`as` on an internally tagged newtype variant's payload, written beside the tag",
+                quote::quote!(
+                    #[serde(tag = "kind")]
+                    enum Event {
+                        Created(#[schema(as = Summary)] Record),
+                    }
+                ),
+                "an internally tagged newtype variant's payload is no one value",
+            ),
+            case(
                 "`as` on a `PhantomData`, which serde writes as `null` whatever it is described as",
                 quote::quote!(
                     struct Marker<T> {

@@ -192,21 +192,11 @@ fn flatten_witnesses(
         .filter(|field| is_flattened(field))
         .map(|field| (field, closing));
 
-    let payloads: Vec<&Field> = match (&input.data, &container.tag, &container.content) {
-        (Data::Enum(data), Some(_), None) => described_variants(data)
-            .into_iter()
-            .filter(|variant| !is_unit_like(&variant.fields))
-            .filter_map(|variant| match &variant.fields {
-                Fields::Unnamed(unnamed) if unnamed.unnamed.len() == 1 => unnamed.unnamed.first(),
-                _ => None,
-            })
-            .collect(),
-        _ => Vec::new(),
-    };
-
     let admitting = open_fields_beside_unread_fields(input, container);
 
-    let payloads = payloads.into_iter().map(|field| (field, false));
+    let payloads = internally_tagged_payloads(input, container)
+        .into_iter()
+        .map(|field| (field, false));
     let witnesses = flattened.chain(payloads).map(|(field, closed)| {
         let ty = &field.ty;
         // Spanned at the field's type, so the refusal points at what was written.
@@ -262,6 +252,22 @@ fn flatten_witnesses(
     });
 
     quote!(#(#witnesses)*)
+}
+
+/// The payload of each described newtype variant of an internally tagged enum:
+/// serde writes its members beside the tag, as it does a flattened field's.
+fn internally_tagged_payloads<'a>(input: &'a DeriveInput, container: &Container) -> Vec<&'a Field> {
+    match (&input.data, &container.tag, &container.content) {
+        (Data::Enum(data), Some(_), None) => described_variants(data)
+            .into_iter()
+            .filter(|variant| !is_unit_like(&variant.fields))
+            .filter_map(|variant| match &variant.fields {
+                Fields::Unnamed(unnamed) if unnamed.unnamed.len() == 1 => unnamed.unnamed.first(),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// The open flattened fields that sit beside a named field serde writes and
