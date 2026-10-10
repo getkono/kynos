@@ -2738,6 +2738,104 @@ fn a_newtype_member_publishes_its_prose_and_deprecation() {
     );
 }
 
+// --- A field described as another type --------------------------------------
+//
+// `#[schema(as = T)]` describes a field as `T`, under the field's own bounds,
+// for a type whose own serde writes `T`'s form. These pin the emitted shape;
+// `constraints.rs` holds the check to the description.
+
+/// Two bytes serde writes as four hex digits.
+struct Hash([u8; 2]);
+
+impl From<&Hash> for String {
+    fn from(hash: &Hash) -> Self {
+        format!("{:02x}{:02x}", hash.0[0], hash.0[1])
+    }
+}
+
+impl serde::Serialize for Hash {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&String::from(self))
+    }
+}
+
+#[derive(Schema, serde::Serialize)]
+struct HashHex(#[schema(as = String, min_length = 4, max_length = 4)] Hash);
+
+/// Lines serde writes as an array of strings.
+struct Lines(String);
+
+impl From<&Lines> for Vec<String> {
+    fn from(lines: &Lines) -> Self {
+        lines.0.lines().map(str::to_owned).collect()
+    }
+}
+
+/// Whoever serde writes as the `Label` they hold.
+struct Owner(Label);
+
+impl From<&Owner> for Label {
+    fn from(owner: &Owner) -> Self {
+        Label(owner.0.0.clone())
+    }
+}
+
+#[derive(Schema)]
+struct Submission {
+    #[schema(as = Vec<String>, min_items = 1)]
+    lines: Lines,
+    #[schema(as = Label)]
+    owner: Owner,
+    digest: HashHex,
+}
+
+/// A newtype over a field described as another type is that type under the
+/// field's bounds, which is the value serde writes.
+#[test]
+fn a_newtype_member_is_described_as_the_type_it_names() {
+    assert_eq!(
+        emitted::<HashHex>(),
+        serde_json::json!({
+            "type": "string",
+            "minLength": 4,
+            "maxLength": 4,
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(HashHex(Hash([0xab, 0x01]))).expect("a newtype serializes"),
+        serde_json::json!("ab01")
+    );
+}
+
+/// A named field is the type it names, a named one by `$ref`, with the bounds
+/// written after the type still read; whether it is required is its own
+/// type's, which is what serde reads.
+#[test]
+fn a_named_field_is_described_as_the_type_it_names() {
+    let schema = emitted::<Submission>();
+
+    assert_eq!(
+        schema["properties"]["lines"]["minItems"],
+        serde_json::json!(1)
+    );
+    assert_eq!(
+        schema["properties"]["lines"]["items"],
+        serde_json::json!({"type": "string"})
+    );
+    assert_eq!(
+        schema["properties"]["owner"],
+        serde_json::json!({"$ref": "#/components/schemas/Label"})
+    );
+    assert_eq!(
+        schema["properties"]["digest"],
+        serde_json::json!({"$ref": "#/components/schemas/HashHex"})
+    );
+    assert_eq!(
+        schema["required"],
+        serde_json::json!(["lines", "owner", "digest"])
+    );
+}
+
 // --- A variant serde skips in one direction ---------------------------------
 //
 // serde reads a `skip_serializing` variant and never writes it, so it is

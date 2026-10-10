@@ -265,13 +265,36 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// pattern the engine cannot run — a lookaround or a backreference — or one
 /// the two dialects read apart, such as `(?i)` or `\A`.
 ///
-/// `open` is the one member of `#[schema(...)]` that is not a constraint. It
-/// goes on a `#[serde(flatten)]` field to say that the object admits members
-/// nothing names. The
+/// `open` and `as` are the members of `#[schema(...)]` that are not
+/// constraints. `open` goes on a `#[serde(flatten)]` field to say that the
+/// object admits members nothing names. The
 /// field's type must implement
 /// [`OpenMap`](https://docs.rs/kynos/latest/kynos/schema/flatten/trait.OpenMap.html)
 /// — a `HashMap`, a `BTreeMap` or an `Unchecked` over a map, not a type that
 /// refers to one — and a key type's `propertyNames` does not survive it.
+///
+/// `as = T` describes a field of type `F` as `T`, for an `F` whose own
+/// `Serialize` and `Deserialize` carry `T`'s form: its schema is `T`'s, under
+/// the field's bounds, and its check converts the value through
+/// `T: From<&F>`, then holds that `T` to the field's bounds and to `T`'s own.
+/// Whether the field is required is still `F`'s. A newtype over such a member
+/// takes no kind from it, and `as` is refused on a flattened field, on a
+/// `PhantomData` and twice on one field. The parameter derives describe a
+/// field by its own type, the one `FromStr` reads, and ignore it.
+///
+/// ```ignore
+/// /// Twenty bytes, which serde writes as forty hex digits.
+/// struct InfoHash([u8; 20]);
+///
+/// impl From<&InfoHash> for String {
+///     fn from(hash: &InfoHash) -> Self {
+///         hash.0.iter().map(|byte| format!("{byte:02x}")).collect()
+///     }
+/// }
+///
+/// #[derive(kynos::Schema)]
+/// struct InfoHashHex(#[schema(as = String, min_length = 40, max_length = 40)] InfoHash);
+/// ```
 ///
 /// A concrete type takes its identifier as its component name, and a field
 /// referring back to it is a `$ref`. A generic type takes none, since every
@@ -301,7 +324,9 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   direction: `with` and `serialize_with` on the one field it writes through,
 ///   `with` and `deserialize_with` on the one field it reads through, and
 ///   nothing for a direction with no single candidate, since serde then refuses
-///   that direction's derive.
+///   that direction's derive. `#[schema(as = T)]` does not lift the refusal:
+///   its check converts through `From`, which says nothing of what serde's
+///   function writes.
 /// - `#[serde(untagged)]` enums. `anyOf` with no discriminator is ambiguous to
 ///   decode, and the tie-break is inexpressible. Use an internally or
 ///   adjacently tagged enum, which becomes a `discriminator`. The same holds for

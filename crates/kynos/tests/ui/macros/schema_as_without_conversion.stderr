@@ -1,0 +1,21 @@
+error[E0277]: the trait bound `std::string::String: From<&Hash>` is not satisfied
+ --> tests/ui/macros/schema_as_without_conversion.rs:8:29
+  |
+8 | struct Digest(#[schema(as = String, min_length = 4)] Hash);
+  |                             ^^^^^^ the trait `From<&Hash>` is not implemented for `std::string::String`
+  |
+  = help: `std::string::String` implements trait `From<T>`:
+            From<&mut str>
+            From<&std::string::String>
+            From<&str>
+            From<Box<str>>
+            From<ComponentName>
+            From<Cow<'_, str>>
+            From<PathTemplate>
+            From<char>
+            From<email_address::EmailAddress>
+            From<fluent_uri::imp::Iri<std::string::String>>
+            From<fluent_uri::imp::IriRef<std::string::String>>
+            From<fluent_uri::imp::Uri<std::string::String>>
+            From<fluent_uri::imp::UriRef<std::string::String>>
+            From<uuid::Uuid>

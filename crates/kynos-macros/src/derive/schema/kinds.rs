@@ -2,6 +2,7 @@
 
 use super::{
     Container, DeriveInput, Fields, TokenStream2,
+    attributes::described_as,
     check::{is_checked, member_access},
     quote, transparent_member,
 };
@@ -13,7 +14,8 @@ use syn::Data;
 ///
 /// The `for<'__kynos>` binder keeps a bound naming no parameter from being
 /// refused as trivially false; a member of another kind just leaves the impl
-/// inapplicable.
+/// inapplicable. A member under `#[schema(as = T)]` lends none: its value is
+/// not the `T` it is described as, and a kind lends what it reads by reference.
 pub(super) fn newtype(
     input: &DeriveInput,
     container: &Container,
@@ -27,7 +29,8 @@ pub(super) fn newtype(
         Fields::Unnamed(unnamed) if unnamed.unnamed.len() == 1 => unnamed.unnamed.first(),
         _ => None,
     };
-    let Some(member) = member.filter(|member| is_checked(member)) else {
+    let Some(member) = member.filter(|member| is_checked(member) && described_as(member).is_none())
+    else {
         return TokenStream2::new();
     };
 

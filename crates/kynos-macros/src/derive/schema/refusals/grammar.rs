@@ -2,11 +2,11 @@
 //! takes.
 
 use proc_macro2::Span;
-use syn::{DeriveInput, Fields, Lit, LitStr};
+use syn::{DeriveInput, Field, Fields, Lit, LitStr, Type};
 
 use crate::derive::schema::{
     COUNTS, NUMERIC,
-    attributes::{is_flattened, open_span},
+    attributes::{described_as_keys, is_flattened, is_phantom, open_span},
     field_groups,
 };
 
@@ -32,6 +32,7 @@ pub(super) fn check_constraints(input: &DeriveInput) -> syn::Result<()> {
                     attr.parse_nested_meta(|meta| check_constraint(&meta))?;
                 }
             }
+            check_described_as(field)?;
 
             let Some(span) = open_span(field) else {
                 continue;
@@ -60,6 +61,42 @@ pub(super) fn check_constraints(input: &DeriveInput) -> syn::Result<()> {
             opened = Some(span);
         }
     }
+    Ok(())
+}
+
+/// A field's `as`: written once, and never where serde does not write the
+/// field as one value of its type.
+fn check_described_as(field: &Field) -> syn::Result<()> {
+    let keys = described_as_keys(field);
+    let Some((span, _)) = keys.first() else {
+        return Ok(());
+    };
+
+    if let Some((again, _)) = keys.get(1) {
+        return Err(syn::Error::new(
+            *again,
+            "`as` may appear once per field: a field is described as one type, so a second \
+             `as` could only overwrite the first. Keep the one the wire carries",
+        ));
+    }
+
+    if is_flattened(field) {
+        return Err(syn::Error::new(
+            *span,
+            "`as` describes a field as one value of another type, and a flattened field is no \
+             one value: serde writes its members into the object carrying it. Describe the \
+             flattened type itself, or drop `#[serde(flatten)]`",
+        ));
+    }
+
+    if is_phantom(&field.ty) {
+        return Err(syn::Error::new(
+            *span,
+            "`as` describes a field as another type, and a `PhantomData` is the `null` serde \
+             writes and reads for it, whatever it is described as. Drop the key",
+        ));
+    }
+
     Ok(())
 }
 
@@ -139,6 +176,11 @@ fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
         return enforceable(&pattern).map_err(|reason| syn::Error::new(pattern.span(), reason));
     }
 
+    if name == "as" {
+        let _: Type = meta.value()?.parse()?;
+        return Ok(());
+    }
+
     Err(syn::Error::new(
         key.span(),
         format!(
@@ -146,7 +188,8 @@ fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
              `kynos::schema::constraints::Constraints`: `minimum`, `maximum`, \
              `exclusive_minimum`, `exclusive_maximum`, `multiple_of`, `min_length`, \
              `max_length`, `pattern`, `min_items`, `max_items` and `unique_items`; plus \
-             `open`, which says a flattened field's members are not named"
+             `open`, which says a flattened field's members are not named, and `as = T`, \
+             which describes a field as the type `T`"
         ),
     ))
 }

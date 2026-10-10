@@ -6,7 +6,7 @@
 //! ```text
 //! #[schema( <member> [, <member>]* )]             on a field, optional
 //!
-//! member := <constraint> | open
+//! member := <constraint> | open | as = <type>
 //!
 //! constraint := minimum = <number> | maximum = <number>
 //!             | exclusive_minimum = <number> | exclusive_maximum = <number>
@@ -22,6 +22,9 @@
 //!
 //! `open` is not a constraint: it says how a `#[serde(flatten)]` field composes
 //! (bounded by `OpenMap` rather than `Flatten`; see `flatten_witnesses`).
+//!
+//! Nor is `as`: it resolves the field's schema from another type, and its
+//! check runs on that type's value, converted through `From<&F>`.
 
 mod aliases;
 pub(crate) mod attributes;
