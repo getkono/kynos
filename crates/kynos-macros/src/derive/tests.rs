@@ -164,6 +164,55 @@ mod schema {
         ]
     }
 
+    /// Where `#[schema(as = T)]` cannot describe a field; a function of its
+    /// own for the reason `serde_ledger` gives.
+    fn described_as_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "`as` written twice on one field, in two lists",
+                quote::quote!(
+                    struct Digest {
+                        #[schema(as = String)]
+                        #[schema(min_length = 1, as = Vec<u8>)]
+                        hash: Hash,
+                    }
+                ),
+                "may appear once per field",
+            ),
+            case(
+                "`as` on a flattened field, which is no one value",
+                quote::quote!(
+                    struct Order {
+                        #[serde(flatten)]
+                        #[schema(as = Line)]
+                        line: Item,
+                    }
+                ),
+                "a flattened field is no one value",
+            ),
+            case(
+                "`as` on an internally tagged newtype variant's payload, written beside the tag",
+                quote::quote!(
+                    #[serde(tag = "kind")]
+                    enum Event {
+                        Created(#[schema(as = Summary)] Record),
+                    }
+                ),
+                "an internally tagged newtype variant's payload is no one value",
+            ),
+            case(
+                "`as` on a `PhantomData`, which serde writes as `null` whatever it is described as",
+                quote::quote!(
+                    struct Marker<T> {
+                        #[schema(as = String)]
+                        marker: PhantomData<T>,
+                    }
+                ),
+                "a `PhantomData` is the `null`",
+            ),
+        ]
+    }
+
     /// The serde attributes whose wire form the schema could not follow.
     ///
     /// A second function rather than more rows in the first, for the reason
@@ -450,6 +499,7 @@ mod schema {
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
+        each_case_is_refused(described_as_ledger(), expand_inner);
         each_case_is_refused(serde_ledger(), expand_inner);
         each_case_is_refused(variant_ledger(), expand_inner);
         each_case_is_refused(field_ledger(), expand_inner);
@@ -475,6 +525,7 @@ mod schema {
             ]
             .concat(),
             ledger().len()
+                + described_as_ledger().len()
                 + serde_ledger().len()
                 + variant_ledger().len()
                 + field_ledger().len()
@@ -504,6 +555,41 @@ mod schema {
         assert!(
             error.to_string().contains("refers to itself"),
             "refused with another diagnostic: {error}"
+        );
+    }
+
+    /// A member's `#[schema(as = T)]` is what its schema resolves, so a generic
+    /// type naming itself there recurses as surely as through the member's own
+    /// type, and a member described as something else no longer does.
+    #[test]
+    fn a_generic_type_is_judged_by_what_its_members_are_described_as() {
+        let input: syn::DeriveInput = syn::parse2(quote::quote!(
+            struct Node<T> {
+                value: T,
+                #[schema(as = Vec<Node<T>>)]
+                children: Children,
+            }
+        ))
+        .expect("the case itself must parse");
+        let Err(error) = expand_inner(&input) else {
+            panic!("a generic type described as itself must be refused");
+        };
+        assert!(
+            error.to_string().contains("refers to itself"),
+            "refused with another diagnostic: {error}"
+        );
+
+        let input: syn::DeriveInput = syn::parse2(quote::quote!(
+            struct Node<T> {
+                value: T,
+                #[schema(as = Vec<String>)]
+                children: Vec<Node<T>>,
+            }
+        ))
+        .expect("the case itself must parse");
+        assert!(
+            expand_inner(&input).is_ok(),
+            "a member described as another type was judged by its own"
         );
     }
 
@@ -1212,6 +1298,29 @@ mod schema {
                 "a struct serde refuses the tag on was refused for the tag: {reported}"
             );
         }
+    }
+
+    /// A tuple variant of an internally tagged enum is serde's diagnostic to
+    /// raise: serde refuses the tag there, so its first member is no payload
+    /// written beside the tag and `as` on it is not refused as one.
+    #[test]
+    fn as_on_an_internally_tagged_tuple_variant_is_left_to_serde() {
+        let input: syn::DeriveInput = syn::parse2(quote::quote!(
+            #[serde(tag = "kind")]
+            enum Event {
+                Paired(#[schema(as = Summary)] Record, u8),
+            }
+        ))
+        .expect("the case itself must parse");
+
+        let Err(error) = expand_inner(&input) else {
+            return;
+        };
+
+        assert!(
+            !error.to_string().contains("newtype variant's payload"),
+            "a tuple variant's member was refused as a newtype payload: {error}"
+        );
     }
 
     /// `#[serde(untagged)]` on a struct is serde's diagnostic to raise, not ours.

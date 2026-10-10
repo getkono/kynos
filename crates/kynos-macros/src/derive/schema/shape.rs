@@ -1,6 +1,7 @@
 use super::{
     Comma, Container, DataEnum, Field, Fields, Punctuated, TokenStream2, Variant,
     aliases::{keyed, named_string, property, variants_read_names},
+    attributes::described_type,
     closed, constraints, deprecate, described, described_variants, doc_string, is_deprecated,
     is_described, is_flattened, is_open, is_phantom, is_unit_like, min_items, positional_members,
     quote, transparent_member,
@@ -156,14 +157,15 @@ pub(super) fn object_body(
 /// prose and deprecation.
 ///
 /// Prose beside a `$ref` is legal from 3.1, which applies its siblings. A
-/// `PhantomData` is resolved as `()`, the `null` serde uses for it.
+/// field's `#[schema(as = T)]` is resolved as `T`, and a `PhantomData`, which
+/// cannot carry one, as `()`, the `null` serde uses for it.
 pub(super) fn member_schema(field: &Field) -> TokenStream2 {
-    let ty = &field.ty;
     let constrained =
         constraints(field).map(|constraints| quote!(let schema = #constraints.apply(schema);));
-    let ty = if is_phantom(ty) {
+    let ty = if is_phantom(&field.ty) {
         quote!(())
     } else {
+        let ty = described_type(field);
         quote!(#ty)
     };
     let resolved = quote! {
