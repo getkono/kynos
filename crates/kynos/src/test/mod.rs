@@ -8,6 +8,9 @@
 
 mod conformance;
 
+#[cfg(test)]
+mod tests;
+
 use std::{
     collections::BTreeSet,
     fmt,
