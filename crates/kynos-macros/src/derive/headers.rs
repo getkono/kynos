@@ -95,6 +95,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         &params,
         &quote!(::kynos::openapi::ParameterIn::Header),
         false,
+        false,
     );
     let response_headers = response_headers_body(&params);
     let encode = header_encode_body(&params);

@@ -554,6 +554,12 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// with the group's `QueryRejection`, naming it, as a value that fails to parse
 /// is; a parameter the group does not declare is ignored, whatever its octets.
 ///
+/// A field's `#[schema(...)]` bounds, which the [`Schema`](macro@Schema)
+/// derive reads, are written into its parameter's schema, beside a named
+/// type's `$ref`, and checked on the value `FromStr` read, with the bounds its
+/// type declares: one it breaks is refused as `QueryRejection::Schema`, naming
+/// the parameter.
+///
 /// # Rejected, because a parameter has one name
 ///
 /// - `#[serde(alias = "...")]` on any field: serde would read the field under

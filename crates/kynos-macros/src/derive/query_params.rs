@@ -6,7 +6,10 @@ use syn::{DeriveInput, parse_macro_input};
 
 use crate::derive::{
     common::{NameCase, named_fields, reject_duplicate_names, wire_names},
-    params::{Param, construct, decode_field, parameters_body, query_encode_body, query_pairs},
+    params::{
+        Param, check_field, construct, decode_field, parameters_body, query_encode_body,
+        query_pairs,
+    },
 };
 
 pub(crate) fn expand(item: TokenStream) -> TokenStream {
@@ -53,7 +56,9 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                 ::core::option::Option::None => ::core::option::Option::None,
             }
         };
-        decode_field(param, &rejection, &found, "the parameter is required")
+        let decoded = decode_field(param, &rejection, &found, "the parameter is required");
+        let checked = check_field(param, &rejection);
+        quote!(#decoded #checked)
     });
     let value = construct(&params);
 
@@ -61,6 +66,7 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         &params,
         &quote!(::kynos::openapi::ParameterIn::Query),
         false,
+        true,
     );
     let encode = query_encode_body(&params);
 

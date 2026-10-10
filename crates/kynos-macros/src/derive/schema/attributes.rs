@@ -413,7 +413,7 @@ impl quote::ToTokens for BoundValue {
 }
 
 /// A field's `#[schema(...)]` constraints, in the order written; shared by
-/// [`constraints`] and `check::member` so both read the attribute alike.
+/// [`constraints`] and `check::value_checks` so both read the attribute alike.
 pub(super) fn bounds(field: &Field) -> Vec<Bound> {
     let mut bounds = Vec::new();
 
@@ -476,7 +476,7 @@ pub(super) fn bounds(field: &Field) -> Vec<Bound> {
 
 /// A field's `#[schema(...)]` constraints, as a `Constraints` expression.
 /// Built from `default` and assigned into, as `Constraints` is `#[non_exhaustive]`.
-pub(super) fn constraints(field: &Field) -> Option<TokenStream2> {
+pub(crate) fn constraints(field: &Field) -> Option<TokenStream2> {
     let assignments: Vec<TokenStream2> = bounds(field)
         .into_iter()
         .map(|Bound { key, value }| match value {
