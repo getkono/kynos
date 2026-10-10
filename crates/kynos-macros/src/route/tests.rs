@@ -768,7 +768,43 @@ mod routes {
                 quote!(list.operation_id("listAll")),
                 "accepts only `.intercept(..)`",
             ),
+            (
+                "an attribute syn attaches to the outermost call",
+                quote!(
+                    #[cfg(any())]
+                    list.intercept(timeout)
+                ),
+                "takes no attributes",
+            ),
         ]
+    }
+
+    /// An attribute is refused wherever syn attaches it, so a `#[cfg]` is never
+    /// silently dropped from a member it was written on.
+    #[test]
+    fn an_attribute_is_refused_on_every_member_form() {
+        for tokens in [
+            quote!(
+                #[cfg(any())]
+                list
+            ),
+            quote!(
+                #[cfg(any())]
+                list.intercept(timeout)
+            ),
+            quote!(
+                #[cfg(any())]
+                list.intercept(outer).intercept(inner)
+            ),
+        ] {
+            let Err(error) = expand(tokens.clone()) else {
+                panic!("`{tokens}` must be rejected");
+            };
+            assert!(
+                error.to_string().contains("takes no attributes"),
+                "`{tokens}`: got {error}"
+            );
+        }
     }
 
     #[test]
