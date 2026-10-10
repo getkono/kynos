@@ -2909,6 +2909,23 @@ enum SharedLookupError<T: std::fmt::Debug> {
     TenantUnknown,
 }
 
+/// `LookupError`'s `TenantUnknown` under a `base` a `macro_rules!` forwards,
+/// which arrives as an `$base:expr` fragment wrapped in an invisible group.
+macro_rules! forwarded_base {
+    ($name:ident, $base:expr) => {
+        #[derive(Debug, thiserror::Error, ApiError)]
+        #[problem(base = $base)]
+        enum $name {
+            #[error("no tenant with that slug")]
+            #[problem(status = 404, title = "Tenant unknown")]
+            TenantUnknown,
+        }
+    };
+}
+
+forwarded_base!(ForwardedLiteralError, "https://errors.example.com/");
+forwarded_base!(ForwardedConstError, PROBLEM_BASE);
+
 /// Two failures answering with one status, neither naming a type and the enum
 /// declaring no `base`, so both publish `about:blank`. The schema is one
 /// branch — a `oneOf` repeating a `const` is satisfied by two at once — but
@@ -3222,6 +3239,23 @@ fn a_base_naming_a_const_publishes_what_the_literal_does() {
         emitted_responses::<SharedLookupError<u8>>(),
         emitted_responses::<LookupError>()
     );
+}
+
+/// A `base` forwarded through a `macro_rules!` fragment, literal or path, is
+/// read as the one written directly.
+#[test]
+fn a_base_forwarded_through_a_macro_is_read_as_written() {
+    use kynos::error::problem::IntoProblem;
+
+    for problem in [
+        ForwardedLiteralError::TenantUnknown.into_problem(),
+        ForwardedConstError::TenantUnknown.into_problem(),
+    ] {
+        assert_eq!(
+            problem.type_uri,
+            "https://errors.example.com/tenant-unknown"
+        );
+    }
 }
 
 /// A problem's `detail` is the error's `Display` sentence for that occurrence,

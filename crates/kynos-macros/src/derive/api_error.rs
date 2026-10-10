@@ -469,7 +469,13 @@ fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Result<Problem
                 "title" => args.title = Some(meta.value()?.parse::<LitStr>()?.value()),
                 "type" => args.type_uri = Some(meta.value()?.parse::<LitStr>()?.value()),
                 "base" if position == Position::Type => {
-                    args.base = Some(match meta.value()?.parse::<Expr>()? {
+                    let mut base = meta.value()?.parse::<Expr>()?;
+                    // A `macro_rules!` fragment arrives wrapped in an
+                    // invisible group; a forwarded literal or path is still one.
+                    while let Expr::Group(group) = base {
+                        base = *group.expr;
+                    }
+                    args.base = Some(match base {
                         Expr::Lit(ExprLit {
                             lit: Lit::Str(literal),
                             ..
