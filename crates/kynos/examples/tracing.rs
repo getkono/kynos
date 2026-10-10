@@ -55,7 +55,11 @@ use std::{any::Any, collections::HashMap, net::Ipv4Addr, time::Duration};
 
 use kynos::{
     http,
-    middleware::{Observer, request_id::RequestId, trace::Trace},
+    middleware::{
+        Observer,
+        request_id::{Random, RequestId},
+        trace::Trace,
+    },
     prelude::*,
     router::operation::Route,
     server::Server,
@@ -197,11 +201,11 @@ async fn main() -> kynos::Result<()> {
     let router = Router::<()>::new()
         // Mounted first so a response carries an identifier at all. Where it
         // lands is worth seeing: `trust_client(false)` means an inbound header
-        // is not believed, so `request_id` is empty on the arrival event and
-        // carries the minted value on the departure one. It rides on whichever
-        // end the header is present at, and with this setting that is the end
-        // Kynos wrote it to.
-        .intercept(RequestId::new().trust_client(false))
+        // is not believed, so `request_id` is empty on the arrival event even
+        // when the client sent one, and carries the minted value on the
+        // departure one. `Random` mints identifiers that stay unique across
+        // restarts and a fleet, so a log aggregator can join on them.
+        .intercept(RequestId::new().trust_client(false).source(Random::new()))
         // What Kynos ships: two events per request -- one on arrival and one
         // on departure -- carrying `method`, `matched_path`, `operation_id` and
         // `request_id`, with `status` and `latency` on the closing one.

@@ -105,11 +105,11 @@ impl CorrelationHeaders for CorrelationId {
 
 /// Identifiers minted from a monotonic clock rather than a counter.
 ///
-/// `Counter` is unique within one process and no further, which is enough to
-/// correlate a request across its own logs and not enough to correlate it
-/// across a fleet. Replacing it is one trait with one method — Kynos ships no
-/// UUID-based source, because that would mean choosing a UUID version for
-/// everybody.
+/// `Counter` is unique within one process and no further; `Random` is unique
+/// across a fleet, and is what the `tracing` example mounts. A fleet that
+/// already has an identifier format replaces either with one trait and one
+/// method — Kynos ships no UUID-based source, because that would mean choosing
+/// a UUID version for everybody.
 struct Monotonic;
 
 impl RequestIdSource for Monotonic {
