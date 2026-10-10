@@ -618,7 +618,7 @@ fails the build when a crate is named outside the module that owns it.
 | compatibility | `async-compression` is named only under `middleware/compression/` and `middleware/decompression/` | `mise run containment:check` | `enforced` |
 | compatibility | `serde_html_form` is named only in `extract/body/form.rs`, `response/codec/form.rs` and `test/mod.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `tracing` is named only under `server/` and in `middleware/trace.rs` | `mise run containment:check` | `enforced` |
-| compatibility | `futures-core` is named only under `response/stream/` and `extract/body/json_lines/` and in `http/body.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `futures-core` is named only under `response/stream/` and `extract/body/json_lines/` and in `http/body.rs` and `test/mod.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `multer` is named only in `extract/body/multipart.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `prost` is named only in `extract/body/protobuf.rs` and `response/codec/protobuf.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `uuid` is named only in `schema/impls/identifier.rs` | `mise run containment:check` | `enforced` |
