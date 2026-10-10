@@ -72,15 +72,12 @@ impl Random {
         Self::default()
     }
 
-    /// The 128 bits identifier `n` maps to.
-    fn bits(&self, n: u64) -> u128 {
+    /// The high and low 64-bit halves of the identifier `n` maps to.
+    fn halves(&self, n: u64) -> [u64; 2] {
         use std::hash::BuildHasher;
 
         // Two halves of one keyed hash, told apart by the second tuple member.
-        let high = self.key.hash_one((n, 0_u8));
-        let low = self.key.hash_one((n, 1_u8));
-
-        (u128::from(high) << 64) | u128::from(low)
+        [self.key.hash_one((n, 0_u8)), self.key.hash_one((n, 1_u8))]
     }
 }
 
@@ -88,8 +85,9 @@ impl RequestIdSource for Random {
     fn next_id(&self) -> http::HeaderValue {
         // Only uniqueness matters; nothing is ordered against this.
         let n = self.next.fetch_add(1, Ordering::Relaxed);
+        let [high, low] = self.halves(n);
 
-        http::HeaderValue::from_str(&format!("{:032x}", self.bits(n)))
+        http::HeaderValue::from_str(&format!("{high:016x}{low:016x}"))
             .expect("hex digits are a field value")
     }
 }

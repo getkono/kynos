@@ -40,7 +40,7 @@ fn successive_random_identifiers_differ() {
 fn two_random_sources_map_one_count_apart() {
     let (first, second) = (Random::new(), Random::new());
 
-    assert_ne!(first.bits(0), second.bits(0));
+    assert_ne!(first.halves(0), second.halves(0));
     assert_ne!(first.next_id(), second.next_id());
 }
 
@@ -48,7 +48,7 @@ fn two_random_sources_map_one_count_apart() {
 #[test]
 fn a_random_identifier_does_not_repeat_its_half() {
     let source = Random::new();
-    let bits = source.bits(7);
+    let [high, low] = source.halves(7);
 
-    assert_ne!(bits >> 64, bits & u128::from(u64::MAX));
+    assert_ne!(high, low);
 }
