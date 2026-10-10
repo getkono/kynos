@@ -15,6 +15,12 @@ use crate::{http, middleware::Observer, router::operation::Route};
 /// empty otherwise, since an identifier `RequestId` replaces is not the
 /// request's. The closing event carries the identifier the response does.
 ///
+/// The two agree only on operations that `RequestId` covers and reaches. The
+/// opening event cannot know whether it will: where a trusting `RequestId` is
+/// mounted on a group the operation is outside of, or an earlier interceptor
+/// answers first, the opening event names the client's identifier and the
+/// closing one is empty.
+///
 /// `matched_path` is exactly the `paths` key from the description, so it is a
 /// bounded-cardinality metric label.
 ///
@@ -81,7 +87,9 @@ impl Trace {
     ///
     /// Pass the [`RequestId`](super::request_id::RequestId) the router mounts:
     /// the header names and whether an inbound identifier is echoed are read
-    /// from it, so the two cannot disagree. Without this, `Trace` assumes
+    /// from it, so the two cannot disagree on either setting. Which operations
+    /// it covers is not read: `Trace` observes every one, so see [`Trace`] for
+    /// where the two events can still differ. Without this, `Trace` assumes
     /// [`RequestId::new`](super::request_id::RequestId::new).
     ///
     /// ```
