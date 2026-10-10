@@ -1,6 +1,6 @@
 use std::net::{IpAddr, SocketAddr};
 
-use super::{Forwarded, ProxyHeader, TrustedProxies, node_address, within};
+use super::{Forwarded, InvalidNetwork, Network, ProxyHeader, TrustedProxies, node_address};
 use crate::http::{HeaderMap, HeaderValue, Request, body::Body};
 
 /// A header map from pairs, appending so a repeated name stays repeated.
@@ -17,6 +17,10 @@ fn map(fields: &[(&str, &str)]) -> HeaderMap {
 
 fn ip(text: &str) -> IpAddr {
     text.parse().expect("an address")
+}
+
+fn net(text: &str) -> Network {
+    text.parse().expect("a network")
 }
 
 fn peer(text: &str) -> SocketAddr {
@@ -56,7 +60,7 @@ fn a_policy_naming_no_field_believes_no_forwarding_field() {
     ]);
     let trusted = TrustedProxies::none()
         .and_addresses([ip("10.0.0.1")])
-        .and_networks([(ip("10.0.0.0"), 8)]);
+        .and_networks([net("10.0.0.0/8")]);
 
     let resolved = Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &trusted);
 
@@ -123,7 +127,7 @@ fn a_forged_chain_cannot_outrun_the_configured_trust() {
 #[test]
 fn a_trusted_network_reads_the_element_its_member_wrote() {
     let headers = map(&[("forwarded", "for=203.0.113.7")]);
-    let trusted = TrustedProxies::networks(ProxyHeader::Forwarded, [(ip("10.0.0.0"), 8)]);
+    let trusted = TrustedProxies::networks(ProxyHeader::Forwarded, [net("10.0.0.0/8")]);
 
     let resolved = Forwarded::resolve(&headers, Some(peer("10.4.5.6")), &trusted);
 
@@ -134,7 +138,7 @@ fn a_trusted_network_reads_the_element_its_member_wrote() {
 #[test]
 fn a_sender_outside_the_trusted_networks_is_not_believed() {
     let headers = map(&[("forwarded", "for=203.0.113.7")]);
-    let trusted = TrustedProxies::networks(ProxyHeader::Forwarded, [(ip("10.0.0.0"), 8)]);
+    let trusted = TrustedProxies::networks(ProxyHeader::Forwarded, [net("10.0.0.0/8")]);
 
     let resolved = Forwarded::resolve(&headers, Some(peer("192.0.2.5")), &trusted);
 
@@ -561,31 +565,32 @@ fn every_node_identifier_form_is_read_the_way_the_grammar_defines_it() {
 /// Prefix matching, over the boundaries a hand-rolled one gets wrong.
 #[test]
 fn a_network_contains_exactly_the_addresses_its_prefix_names() {
-    let cases: &[(&str, &str, u8, bool)] = &[
-        ("10.4.5.6", "10.0.0.0", 8, true),
-        ("11.4.5.6", "10.0.0.0", 8, false),
+    let cases: &[(&str, &str, bool)] = &[
+        ("10.4.5.6", "10.0.0.0/8", true),
+        ("11.4.5.6", "10.0.0.0/8", false),
         // A partial octet, which is where an off-by-one lands.
-        ("10.127.0.1", "10.0.0.0", 9, true),
-        ("10.128.0.1", "10.0.0.0", 9, false),
+        ("10.127.0.1", "10.0.0.0/9", true),
+        ("10.128.0.1", "10.0.0.0/9", false),
         // A whole-octet boundary.
-        ("192.168.1.1", "192.168.0.0", 16, true),
-        ("192.169.1.1", "192.168.0.0", 16, false),
-        // /0 matches everything of the same family.
-        ("203.0.113.1", "0.0.0.0", 0, true),
+        ("192.168.1.1", "192.168.0.0/16", true),
+        ("192.169.1.1", "192.168.0.0/16", false),
+        // /1 is the widest a `Network` can be.
+        ("127.255.255.255", "0.0.0.0/1", true),
+        ("128.0.0.0", "0.0.0.0/1", false),
         // /32 is one address.
-        ("203.0.113.1", "203.0.113.1", 32, true),
-        ("203.0.113.2", "203.0.113.1", 32, false),
-        // A prefix longer than the address has bits for matches nothing.
-        ("203.0.113.1", "203.0.113.1", 33, false),
-        ("2001:db8::1", "2001:db8::", 32, true),
-        ("2001:db9::1", "2001:db8::", 32, false),
+        ("203.0.113.1", "203.0.113.1/32", true),
+        ("203.0.113.2", "203.0.113.1/32", false),
+        ("2001:db8::1", "2001:db8::/32", true),
+        ("2001:db9::1", "2001:db8::/32", false),
+        ("2001:db8::1", "2001:db8::1/128", true),
+        ("2001:db8::2", "2001:db8::1/128", false),
     ];
 
-    for (address, network, prefix, expected) in cases {
+    for (address, network, expected) in cases {
         assert_eq!(
-            within(ip(address), ip(network), *prefix),
+            net(network).contains(ip(address)),
             *expected,
-            "{address} in {network}/{prefix}"
+            "{address} in {network}"
         );
     }
 }
@@ -596,8 +601,156 @@ fn a_network_contains_exactly_the_addresses_its_prefix_names() {
 /// rule its author never wrote.
 #[test]
 fn a_network_never_matches_across_address_families() {
-    assert!(!within(ip("::ffff:10.0.0.1"), ip("10.0.0.0"), 8));
-    assert!(!within(ip("10.0.0.1"), ip("::"), 0));
+    assert!(!net("10.0.0.0/8").contains(ip("::ffff:10.0.0.1")));
+    assert!(!net("::/1").contains(ip("10.0.0.1")));
+    assert!(!net("::ffff:0.0.0.0/96").contains(ip("10.0.0.1")));
+}
+
+/// A network is the block, whichever of its addresses it was written with.
+#[test]
+fn a_network_clears_the_bits_past_its_prefix() {
+    let cases: &[(&str, &str)] = &[
+        ("10.1.2.3/8", "10.0.0.0/8"),
+        ("10.255.255.255/9", "10.128.0.0/9"),
+        ("203.0.113.7/32", "203.0.113.7/32"),
+        ("2001:db8:ffff::1/32", "2001:db8::/32"),
+        ("2001:db8::1/128", "2001:db8::1/128"),
+    ];
+
+    for (written, normalised) in cases {
+        let network = net(written);
+        assert_eq!(network.to_string(), *normalised, "{written}");
+        assert_eq!(network, net(normalised), "{written}");
+    }
+    assert_eq!(net("10.1.2.3/8").address(), ip("10.0.0.0"));
+    assert_eq!(net("10.1.2.3/8").prefix(), 8);
+}
+
+/// What a network is refused for, which is what a startup log shows.
+///
+/// `/0` trusts every peer, so `Network` never holds one and
+/// `TrustedProxies::everyone` is the only way to say it. A prefix past the
+/// address would match nothing, silently.
+#[test]
+fn a_network_refuses_what_could_only_be_a_mistake() {
+    let cases: &[(&str, InvalidNetwork)] = &[
+        ("0.0.0.0/0", InvalidNetwork::EveryAddress),
+        ("10.0.0.0/0", InvalidNetwork::EveryAddress),
+        ("::/0", InvalidNetwork::EveryAddress),
+        ("10.0.0.0/33", InvalidNetwork::PrefixTooLong { bits: 32 }),
+        ("10.0.0.0/255", InvalidNetwork::PrefixTooLong { bits: 32 }),
+        ("10.0.0.0/256", InvalidNetwork::PrefixTooLong { bits: 32 }),
+        (
+            "10.0.0.0/99999999999",
+            InvalidNetwork::PrefixTooLong { bits: 32 },
+        ),
+        ("::/129", InvalidNetwork::PrefixTooLong { bits: 128 }),
+        ("10.0.0.1", InvalidNetwork::NoPrefix),
+        ("", InvalidNetwork::NoPrefix),
+        ("10.0.0/8", InvalidNetwork::Address),
+        ("[::1]/128", InvalidNetwork::Address),
+        (" 10.0.0.0/8", InvalidNetwork::Address),
+        ("/8", InvalidNetwork::Address),
+        ("10.0.0.0/", InvalidNetwork::Prefix),
+        ("10.0.0.0/+8", InvalidNetwork::Prefix),
+        ("10.0.0.0/-1", InvalidNetwork::Prefix),
+        ("10.0.0.0/08", InvalidNetwork::Prefix),
+        ("10.0.0.0/8 ", InvalidNetwork::Prefix),
+        ("10.0.0.0/8/8", InvalidNetwork::Prefix),
+    ];
+
+    for (text, error) in cases {
+        assert_eq!(text.parse::<Network>(), Err(*error), "{text:?}");
+    }
+    assert_eq!(
+        Network::new(ip("10.0.0.0"), 0),
+        Err(InvalidNetwork::EveryAddress)
+    );
+    assert_eq!(
+        Network::new(ip("::"), 129),
+        Err(InvalidNetwork::PrefixTooLong { bits: 128 })
+    );
+    assert_eq!(Network::new(ip("10.9.9.9"), 8), Ok(net("10.0.0.0/8")));
+}
+
+/// A configured list is read entry by entry, and the first refusal names its
+/// entry, so a startup failure says which line of the configuration is wrong.
+#[test]
+fn a_configured_network_list_is_parsed_or_refused_by_entry() {
+    let entries = vec![String::from("10.1.2.3/8"), String::from("2001:db8::/32")];
+    let trusted =
+        TrustedProxies::parse_networks(ProxyHeader::Forwarded, &entries).expect("two networks");
+    let headers = map(&[("forwarded", "for=203.0.113.7")]);
+
+    let resolved = Forwarded::resolve(&headers, Some(peer("10.4.5.6")), &trusted);
+    assert_eq!(resolved.client(), Some(ip("203.0.113.7")));
+    let resolved = Forwarded::resolve(&headers, Some(peer("2001:db8::9")), &trusted);
+    assert_eq!(resolved.client(), Some(ip("203.0.113.7")));
+
+    let refused = TrustedProxies::parse_networks(
+        ProxyHeader::Forwarded,
+        ["10.0.0.0/8", "::/0", "10.0.0.0/33"],
+    )
+    .expect_err("a /0 entry");
+    assert_eq!(refused.entry(), "::/0");
+    assert_eq!(refused.reason(), InvalidNetwork::EveryAddress);
+    assert_eq!(
+        refused.to_string(),
+        "\"::/0\" is not a network to trust: a `/0` network holds every address of its family; \
+         `TrustedProxies::everyone` trusts every peer explicitly"
+    );
+}
+
+/// A policy prints whom it believes and through which field, and a policy
+/// believing nobody prints as nobody whatever it was widened by.
+#[test]
+fn a_policy_prints_whom_it_believes() {
+    let cases: &[(TrustedProxies, &str)] = &[
+        (TrustedProxies::none(), "nobody"),
+        (
+            TrustedProxies::none().and_addresses([ip("10.0.0.1")]),
+            "nobody",
+        ),
+        (TrustedProxies::hops(ProxyHeader::Forwarded, 0), "nobody"),
+        (
+            TrustedProxies::hops(ProxyHeader::Forwarded, 1),
+            "Forwarded from the nearest hop",
+        ),
+        (
+            TrustedProxies::hops(ProxyHeader::XForwarded, 3),
+            "X-Forwarded-For from the 3 nearest hops",
+        ),
+        (
+            TrustedProxies::addresses(ProxyHeader::XForwarded, [ip("10.0.0.1"), ip("::1")])
+                .and_networks([net("2001:db8::1/32")]),
+            "X-Forwarded-For from 10.0.0.1, ::1, 2001:db8::/32",
+        ),
+        (
+            TrustedProxies::networks(ProxyHeader::Forwarded, [net("10.0.0.0/8")]),
+            "Forwarded from 10.0.0.0/8",
+        ),
+        (
+            TrustedProxies::everyone(ProxyHeader::Forwarded),
+            "Forwarded from 0.0.0.0/0, ::/0",
+        ),
+    ];
+
+    for (trusted, printed) in cases {
+        assert_eq!(trusted.to_string(), *printed, "{trusted:?}");
+    }
+}
+
+/// Trusting everyone is said outright, and it believes the leftmost element of
+/// either family's chain.
+#[test]
+fn trusting_everyone_believes_every_element() {
+    let headers = map(&[("x-forwarded-for", "198.51.100.1, 2001:db8::7, 192.0.2.9")]);
+    let trusted = TrustedProxies::everyone(ProxyHeader::XForwarded);
+
+    for socket in ["10.0.0.1", "2001:db8::1"] {
+        let resolved = Forwarded::resolve(&headers, Some(peer(socket)), &trusted);
+        assert_eq!(resolved.client(), Some(ip("198.51.100.1")), "via {socket}");
+    }
 }
 
 /// A scheme claimed by a sender nothing trusts is not believed.

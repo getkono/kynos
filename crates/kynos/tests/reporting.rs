@@ -50,6 +50,14 @@ fn a_tls_failure_is_reportable() {
     reportable::<kynos::server::tls::error::TlsError>();
 }
 
+/// `InvalidNetwork` is returned where a trusted proxy is read from
+/// configuration, which is startup.
+#[test]
+fn a_network_refusal_is_reportable() {
+    reportable::<kynos::http::forwarded::InvalidNetwork>();
+    reportable::<kynos::http::forwarded::InvalidNetworkEntry>();
+}
+
 /// `InvalidAsset` is returned at startup, where a hand-built asset set is
 /// assembled, so it travels to `main` the way a build failure does.
 #[cfg(feature = "assets")]

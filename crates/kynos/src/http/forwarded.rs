@@ -5,7 +5,9 @@
 //! field they write. The default trusts nobody and resolves every request to
 //! the socket peer.
 
-use std::net::{IpAddr, SocketAddr};
+use std::fmt;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::str::FromStr;
 
 use crate::http::{HeaderMap, HeaderName};
 
@@ -47,8 +49,11 @@ pub enum ProxyHeader {
 /// [`hops`](Self::hops) is right when the number of proxies is fixed and their
 /// addresses are not — a managed load balancer whose pool changes under you.
 /// [`addresses`](Self::addresses) and [`networks`](Self::networks) are right
-/// when you know where the proxies are. They compose: a hop is only counted
-/// from an element whose immediate sender was trusted.
+/// when you know where the proxies are, and
+/// [`parse_networks`](Self::parse_networks) reads the networks from
+/// configuration. They compose: a hop is only counted from an element whose
+/// immediate sender was trusted. [`everyone`](Self::everyone) is right only
+/// where nothing but your proxies can reach the service.
 ///
 /// ```
 /// use kynos::http::forwarded::{ProxyHeader, TrustedProxies};
@@ -58,9 +63,9 @@ pub enum ProxyHeader {
 /// let trusted = TrustedProxies::hops(ProxyHeader::XForwarded, 1);
 ///
 /// // Or a known private range writing `Forwarded`.
-/// let trusted =
-///     TrustedProxies::networks(ProxyHeader::Forwarded, [("10.0.0.0".parse().unwrap(), 8)]);
+/// let trusted = TrustedProxies::networks(ProxyHeader::Forwarded, ["10.0.0.0/8".parse()?]);
 /// # let _ = trusted;
+/// # Ok::<(), kynos::http::forwarded::InvalidNetwork>(())
 /// ```
 #[derive(Clone, Debug, Default)]
 pub struct TrustedProxies {
@@ -70,8 +75,8 @@ pub struct TrustedProxies {
     hops: usize,
     /// Exact addresses that may be believed, whatever their position.
     addresses: Vec<IpAddr>,
-    /// Networks that may be believed, as an address and a prefix length.
-    networks: Vec<(IpAddr, u8)>,
+    /// Networks that may be believed.
+    networks: Vec<Network>,
 }
 
 impl TrustedProxies {
@@ -111,13 +116,68 @@ impl TrustedProxies {
         }
     }
 
-    /// Trusts every address in these networks, each an address and a prefix
-    /// length, which write `header`.
+    /// Trusts every address in these networks, which write `header`.
     #[must_use]
-    pub fn networks(header: ProxyHeader, networks: impl IntoIterator<Item = (IpAddr, u8)>) -> Self {
+    pub fn networks(header: ProxyHeader, networks: impl IntoIterator<Item = Network>) -> Self {
         Self {
             header: Some(header),
             networks: networks.into_iter().collect(),
+            ..Self::default()
+        }
+    }
+
+    /// Trusts every address in the networks `entries` write as
+    /// `address/prefix`, which write `header`.
+    ///
+    /// For a list read from configuration. Each entry is read as [`Network`]
+    /// reads it, so `/0` is refused here too: say
+    /// [`everyone`](Self::everyone) instead.
+    ///
+    /// ```
+    /// use kynos::http::forwarded::{ProxyHeader, TrustedProxies};
+    ///
+    /// let configured = ["10.0.0.0/8", "2001:db8::/32"];
+    /// let trusted = TrustedProxies::parse_networks(ProxyHeader::XForwarded, configured)?;
+    /// assert_eq!(trusted.to_string(), "X-Forwarded-For from 10.0.0.0/8, 2001:db8::/32");
+    ///
+    /// let refused = TrustedProxies::parse_networks(ProxyHeader::XForwarded, ["0.0.0.0/0"]);
+    /// assert_eq!(refused.unwrap_err().entry(), "0.0.0.0/0");
+    /// # Ok::<(), kynos::http::forwarded::InvalidNetworkEntry>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// The first entry that is not a [`Network`], and why.
+    pub fn parse_networks<I>(header: ProxyHeader, entries: I) -> Result<Self, InvalidNetworkEntry>
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        let networks = entries
+            .into_iter()
+            .map(|entry| {
+                let entry = entry.as_ref();
+                entry.parse().map_err(|reason| InvalidNetworkEntry {
+                    entry: entry.to_owned(),
+                    reason,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self::networks(header, networks))
+    }
+
+    /// Trusts every peer, IPv4 and IPv6, which writes `header`.
+    ///
+    /// Every element of the field is then believed, the leftmost one included,
+    /// and the client writes that one: only right where nothing but trusted
+    /// proxies can reach the service. [`Network`] refuses `/0` so that this is
+    /// never said by accident.
+    #[must_use]
+    pub fn everyone(header: ProxyHeader) -> Self {
+        let every = [Ipv4Addr::UNSPECIFIED.into(), Ipv6Addr::UNSPECIFIED.into()];
+        Self {
+            header: Some(header),
+            networks: every.map(Network::every).into(),
             ..Self::default()
         }
     }
@@ -137,7 +197,7 @@ impl TrustedProxies {
     /// Adds nothing to a policy that names no [`ProxyHeader`], such as
     /// [`none`](Self::none): that policy still trusts nobody.
     #[must_use]
-    pub fn and_networks(mut self, networks: impl IntoIterator<Item = (IpAddr, u8)>) -> Self {
+    pub fn and_networks(mut self, networks: impl IntoIterator<Item = Network>) -> Self {
         self.networks.extend(networks);
         self
     }
@@ -160,41 +220,230 @@ impl TrustedProxies {
             || self
                 .networks
                 .iter()
-                .any(|(network, prefix)| within(address, *network, *prefix))
+                .any(|network| network.contains(address))
     }
 }
 
-/// Whether `address` falls inside `network`/`prefix`.
+/// What a startup log needs: whom the policy believes, and through which
+/// field.
 ///
-/// Hand-rolled: the default build admits no dependency for it.
-fn within(address: IpAddr, network: IpAddr, prefix: u8) -> bool {
-    fn matches(address: &[u8], network: &[u8], prefix: u8) -> bool {
-        let prefix = usize::from(prefix);
-        if prefix > address.len() * 8 {
-            return false;
+/// `nobody` where it believes nobody; otherwise the field, then the nearest
+/// hops it counts, the exact addresses and the networks, in that order.
+/// [`everyone`](TrustedProxies::everyone) prints as its two `/0` networks.
+///
+/// ```
+/// use kynos::http::forwarded::{ProxyHeader, TrustedProxies};
+///
+/// let trusted = TrustedProxies::hops(ProxyHeader::Forwarded, 2)
+///     .and_addresses(["192.0.2.1".parse()?])
+///     .and_networks(["10.9.9.9/8".parse()?]);
+/// assert_eq!(
+///     trusted.to_string(),
+///     "Forwarded from the 2 nearest hops, 192.0.2.1, 10.0.0.0/8",
+/// );
+/// assert_eq!(TrustedProxies::none().to_string(), "nobody");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+impl fmt::Display for TrustedProxies {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Some(header) = self.header() else {
+            return f.write_str("nobody");
+        };
+        f.write_str(match header {
+            ProxyHeader::Forwarded => "Forwarded from ",
+            ProxyHeader::XForwarded => "X-Forwarded-For from ",
+        })?;
+
+        match self.hops {
+            0 => {}
+            1 => f.write_str("the nearest hop")?,
+            hops => write!(f, "the {hops} nearest hops")?,
         }
 
-        let (whole, bits) = (prefix / 8, prefix % 8);
-        if address[..whole] != network[..whole] {
-            return false;
+        let addresses = self
+            .addresses
+            .iter()
+            .map(|address| address as &dyn fmt::Display);
+        let networks = self
+            .networks
+            .iter()
+            .map(|network| network as &dyn fmt::Display);
+        let mut separator = if self.hops == 0 { "" } else { ", " };
+        for named in addresses.chain(networks) {
+            write!(f, "{separator}{named}")?;
+            separator = ", ";
         }
-        if bits == 0 {
-            return true;
-        }
+        Ok(())
+    }
+}
 
-        let mask = 0xffu8 << (8 - bits);
-        address[whole] & mask == network[whole] & mask
+/// A block of addresses sharing their leading `prefix` bits, written
+/// `address/prefix` (RFC 4632 section 3.1, RFC 4291 section 2.3).
+///
+/// Never `/0`, and never a prefix longer than its address: the first trusts
+/// every peer there is, which [`TrustedProxies::everyone`] says outright, and
+/// the second matches nothing. Bits past the prefix are cleared, so
+/// `10.1.2.3/8` is `10.0.0.0/8`, and that is what [`Display`](fmt::Display)
+/// prints.
+///
+/// A network matches addresses of its own family only: `::ffff:10.0.0.1` is
+/// not in `10.0.0.0/8`.
+///
+/// ```
+/// use kynos::http::forwarded::{InvalidNetwork, Network};
+///
+/// let network: Network = "10.1.2.3/8".parse()?;
+/// assert_eq!(network.to_string(), "10.0.0.0/8");
+/// assert!(network.contains("10.200.0.1".parse()?));
+///
+/// assert_eq!("0.0.0.0/0".parse::<Network>(), Err(InvalidNetwork::EveryAddress));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Network {
+    /// The first address of the block, its host bits cleared.
+    address: IpAddr,
+    /// How many leading bits every member shares; never `0` once public.
+    prefix: u8,
+}
+
+impl Network {
+    /// The block of addresses sharing `address`'s leading `prefix` bits.
+    ///
+    /// # Errors
+    ///
+    /// [`InvalidNetwork::EveryAddress`] for a `prefix` of `0`, and
+    /// [`InvalidNetwork::PrefixTooLong`] for one past the address's 32 or 128
+    /// bits.
+    pub fn new(address: IpAddr, prefix: u8) -> Result<Self, InvalidNetwork> {
+        let bits = if address.is_ipv4() { 32 } else { 128 };
+        if prefix == 0 {
+            return Err(InvalidNetwork::EveryAddress);
+        }
+        if prefix > bits {
+            return Err(InvalidNetwork::PrefixTooLong { bits });
+        }
+        Ok(Self::masked(address, prefix))
     }
 
-    match (address, network) {
-        (IpAddr::V4(address), IpAddr::V4(network)) => {
-            matches(&address.octets(), &network.octets(), prefix)
+    /// Every address of `address`'s family, which only
+    /// [`TrustedProxies::everyone`] holds.
+    fn every(address: IpAddr) -> Self {
+        Self::masked(address, 0)
+    }
+
+    /// `address`/`prefix` with the bits past `prefix` cleared; `prefix` is at
+    /// most `address`'s width.
+    fn masked(address: IpAddr, prefix: u8) -> Self {
+        let address = match address {
+            IpAddr::V4(address) => {
+                let mask = u32::MAX.checked_shl(32 - u32::from(prefix)).unwrap_or(0);
+                IpAddr::V4((address.to_bits() & mask).into())
+            }
+            IpAddr::V6(address) => {
+                let mask = u128::MAX.checked_shl(128 - u32::from(prefix)).unwrap_or(0);
+                IpAddr::V6((address.to_bits() & mask).into())
+            }
+        };
+        Self { address, prefix }
+    }
+
+    /// The first address of the block.
+    #[must_use]
+    pub fn address(&self) -> IpAddr {
+        self.address
+    }
+
+    /// How many leading bits every address in the block shares.
+    #[must_use]
+    pub fn prefix(&self) -> u8 {
+        self.prefix
+    }
+
+    /// Whether `address` is in this block.
+    #[must_use]
+    pub fn contains(&self, address: IpAddr) -> bool {
+        // No v4/v6 mapping, and a v6 prefix is no mask for a v4 address.
+        address.is_ipv4() == self.address.is_ipv4()
+            && Self::masked(address, self.prefix).address == self.address
+    }
+}
+
+impl FromStr for Network {
+    type Err = InvalidNetwork;
+
+    /// Reads `address/prefix`, with no surrounding whitespace, the prefix in
+    /// decimal digits and no leading zero.
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let (address, prefix) = text.split_once('/').ok_or(InvalidNetwork::NoPrefix)?;
+        let address = address
+            .parse::<IpAddr>()
+            .map_err(|_| InvalidNetwork::Address)?;
+
+        let digits = prefix.bytes().all(|byte| byte.is_ascii_digit());
+        if prefix.is_empty() || !digits || (prefix.len() > 1 && prefix.starts_with('0')) {
+            return Err(InvalidNetwork::Prefix);
         }
-        (IpAddr::V6(address), IpAddr::V6(network)) => {
-            matches(&address.octets(), &network.octets(), prefix)
-        }
-        // No v4/v6 mapping: `::ffff:10.0.0.1` must not match a `10.0.0.0/8` rule.
-        _ => false,
+        let prefix = prefix.parse::<u8>().unwrap_or(u8::MAX);
+
+        Self::new(address, prefix)
+    }
+}
+
+impl fmt::Display for Network {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}/{}", self.address, self.prefix)
+    }
+}
+
+/// Why a [`Network`] was refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum InvalidNetwork {
+    /// No `/prefix` follows the address.
+    #[error("no `/prefix` follows the address")]
+    NoPrefix,
+    /// The text before `/` is not an IPv4 or IPv6 address.
+    #[error("the text before `/` is not an IPv4 or IPv6 address")]
+    Address,
+    /// The text after `/` is not a decimal number without a leading zero.
+    #[error("the text after `/` is not a decimal number without a leading zero")]
+    Prefix,
+    /// The prefix is longer than the address, so the block holds nothing.
+    #[error("the prefix is longer than the address's {bits} bits")]
+    PrefixTooLong {
+        /// How many bits the address has: 32 or 128.
+        bits: u8,
+    },
+    /// The prefix is `0`, so the block holds every address of its family.
+    #[error(
+        "a `/0` network holds every address of its family; `TrustedProxies::everyone` trusts \
+         every peer explicitly"
+    )]
+    EveryAddress,
+}
+
+/// An entry [`TrustedProxies::parse_networks`] refused, and why.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{entry:?} is not a network to trust: {reason}")]
+pub struct InvalidNetworkEntry {
+    /// The entry as given.
+    entry: String,
+    /// Why it is not a [`Network`].
+    reason: InvalidNetwork,
+}
+
+impl InvalidNetworkEntry {
+    /// The entry as given.
+    #[must_use]
+    pub fn entry(&self) -> &str {
+        &self.entry
+    }
+
+    /// Why it is not a [`Network`].
+    #[must_use]
+    pub fn reason(&self) -> InvalidNetwork {
+        self.reason
     }
 }
 
