@@ -42,6 +42,56 @@ impl RequestIdSource for Counter {
     }
 }
 
+/// A dependency-free source of 128-bit identifiers, written as 32 lowercase
+/// hex digits.
+///
+/// Each identifier is a per-process counter passed through a keyed hash whose
+/// key the process draws at random when the source is built. An identifier
+/// therefore names one request across restarts and across a fleet, and reveals
+/// neither how many requests came before it nor which process minted it.
+///
+/// Unpredictable only as far as the standard library's keyed hasher is, so it
+/// is a correlation handle and never a secret: do not authorize anything by it.
+///
+/// ```
+/// use kynos::middleware::request_id::{Random, RequestId};
+///
+/// let request_id = RequestId::new().source(Random::new());
+/// # let _ = request_id;
+/// ```
+#[derive(Debug, Default)]
+pub struct Random {
+    key: std::hash::RandomState,
+    next: AtomicU64,
+}
+
+impl Random {
+    /// A source keyed afresh from the operating system's randomness.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The high and low 64-bit halves of the identifier `n` maps to.
+    fn halves(&self, n: u64) -> [u64; 2] {
+        use std::hash::BuildHasher;
+
+        // Two halves of one keyed hash, told apart by the second tuple member.
+        [self.key.hash_one((n, 0_u8)), self.key.hash_one((n, 1_u8))]
+    }
+}
+
+impl RequestIdSource for Random {
+    fn next_id(&self) -> http::HeaderValue {
+        // Only uniqueness matters; nothing is ordered against this.
+        let n = self.next.fetch_add(1, Ordering::Relaxed);
+        let [high, low] = self.halves(n);
+
+        http::HeaderValue::from_str(&format!("{high:016x}{low:016x}"))
+            .expect("hex digits are a field value")
+    }
+}
+
 /// A header group that can carry a correlation identifier.
 ///
 /// [`RequestId`] builds the group it declares from an identifier through
@@ -160,7 +210,8 @@ fn identifier_schema() -> kynos_openapi::Schema {
 /// what the response carries.
 pub struct RequestId<S = Counter, H = XRequestId> {
     source: S,
-    trust_client: bool,
+    // Read by `Trace`, which logs an inbound identifier only where this echoes it.
+    pub(super) trust_client: bool,
     _header: PhantomData<fn() -> H>,
 }
 
@@ -283,3 +334,6 @@ where
         Ok(next.run(request).await.with_headers(headers))
     }
 }
+
+#[cfg(test)]
+mod tests;
