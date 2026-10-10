@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/getkono/kynos/compare/kynos-openapi-v0.3.0...kynos-openapi-v0.4.0) - 2026-10-10
+
+### Added
+
+- *(schema)* [**breaking**] enforce a map key's pattern ([#528](https://github.com/getkono/kynos/pull/528))
+
+### Documentation
+
+- badge every feature-gated item with its feature on docs.rs ([#518](https://github.com/getkono/kynos/pull/518))
+- *(features)* drop the manifests' copies of the openapi32 rationale
+- *(openapi)* document the edge-underscore trim in ComponentName::sanitized
+- *(openapi)* state what the facade and Paths::is_empty actually cover
+
+### Fixed
+
+- *(validate)* check each reusable parameter once, where it is defined ([#519](https://github.com/getkono/kynos/pull/519))
+- *(validate)* resolve a $ref'd parameter before path correspondence and uniqueness ([#486](https://github.com/getkono/kynos/pull/486))
+- *(validate)* enforce the in: querystring parameter rules ([#496](https://github.com/getkono/kynos/pull/496))
+- *(validate)* walk the operations inside an operation's inline callbacks ([#509](https://github.com/getkono/kynos/pull/509))
+- *(emit)* refuse a 3.1 emission carrying unrecognised fields ([#491](https://github.com/getkono/kynos/pull/491))
+- *(validate)* check document-level security requirements ([#494](https://github.com/getkono/kynos/pull/494))
+- *(router)* report match-table refusals accurately, from every entry point
+- *(openapi)* report a duplicate operation as SpecError::DuplicateOperation
+- *(openapi)* [**breaking**] refuse non-canonical response status keys
+
+### Other
+
+- *(openapi)* [**breaking**] return an owned YamlError from Document::to_yaml
+- *(openapi)* [**breaking**] gate the http conversions on one module line
+
 ## [0.2.0](https://github.com/getkono/kynos/compare/kynos-openapi-v0.1.0...kynos-openapi-v0.2.0) - 2026-09-24
 
 ### Added
