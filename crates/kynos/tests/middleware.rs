@@ -416,6 +416,80 @@ async fn an_unnamed_cross_site_refusal_publishes_about_blank_on_both_halves() {
     );
 }
 
+// --- HSTS over plain transport ----------------------------------------------
+
+mod security_headers {
+    use std::time::Duration;
+
+    use kynos::{
+        Router,
+        extract::params::header::{EncodeHeaders, HeaderParams},
+        http::{HeaderName, HeaderValue, header},
+        middleware::security_headers::{SecurityHeaders, StrictTransportSecurity},
+        response::{headers::WithHeaders, status::NoContent},
+    };
+
+    use super::support::get;
+
+    /// A policy the handler sets on its own response.
+    #[derive(Clone, Copy, Debug)]
+    struct OwnPolicy;
+
+    impl HeaderParams for OwnPolicy {
+        const NAMES: &'static [&'static str] = &["strict-transport-security"];
+        const DESCRIBED: bool = false;
+    }
+
+    impl EncodeHeaders for OwnPolicy {
+        fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
+            vec![(
+                header::STRICT_TRANSPORT_SECURITY,
+                HeaderValue::from_static("max-age=60"),
+            )]
+        }
+    }
+
+    #[kynos::get("/plain")]
+    async fn plain() -> NoContent {
+        NoContent
+    }
+
+    #[kynos::get("/pinned")]
+    async fn pinned() -> WithHeaders<NoContent, OwnPolicy> {
+        WithHeaders::new(NoContent, OwnPolicy)
+    }
+
+    /// RFC 6797 section 7.2: an in-process request has no socket, so nothing
+    /// conveyed it securely and no `Strict-Transport-Security` may go out —
+    /// neither the interceptor's policy nor one the handler set, since the
+    /// field is the interceptor's to replace.
+    #[tokio::test]
+    async fn hsts_never_reaches_a_request_no_secure_transport_conveyed() {
+        let service = Router::<()>::new()
+            .mount(kynos::routes![plain, pinned])
+            .intercept(SecurityHeaders::new().strict_transport_security(
+                StrictTransportSecurity::max_age(Duration::from_secs(31_536_000)),
+            ))
+            .build(())
+            .expect("a describable router");
+
+        for path in ["/plain", "/pinned"] {
+            let reply = get(&service, path).call().await;
+
+            assert_eq!(
+                reply.field("cache-control").as_deref(),
+                Some("no-store"),
+                "{path}"
+            );
+            assert_eq!(
+                reply.field(header::STRICT_TRANSPORT_SECURITY.as_str()),
+                None,
+                "{path}"
+            );
+        }
+    }
+}
+
 /// Compression must not re-encode anything a byte range is calculated against.
 ///
 /// Two rules, one reason. RFC 9110 section 14.1.2: when a content coding is
