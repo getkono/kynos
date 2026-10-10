@@ -1220,7 +1220,8 @@ otherwise, so it is sent only where a trusted hop's
 `Forwarded` scheme says `https`, or, where no hop stated one, where the socket
 the client itself connected on completed a TLS handshake. Behind a proxy that
 terminates TLS, `Router::trusted_proxies` is what makes it reach the wire at
-all. It is described as optional for the same reason, and as an unconstrained
+all. Withheld means removed: a policy a handler set is replaced by nothing, as
+every other field is replaced by its value. It is described as optional for the same reason, and as an unconstrained
 string, since its `max-age` is configured at run time.
 
 **Where it sits.** Outermost: before `Conditional`, so a 304 carries the

@@ -87,7 +87,7 @@ impl<const HSTS: bool, const DENY_FRAMING: bool> SecurityHeaders<HSTS, DENY_FRAM
     /// client connected on completed a TLS handshake. Behind a proxy that
     /// terminates TLS, configure
     /// [`Router::trusted_proxies`](crate::Router::trusted_proxies) or it is
-    /// never sent.
+    /// never sent. Where it is withheld, a policy the chain set is removed.
     #[must_use]
     pub fn strict_transport_security(
         self,
@@ -326,9 +326,18 @@ where
             )
         });
 
-        Ok(next
+        let withheld = HSTS && transport.is_none();
+        let mut continued = next
             .run(request)
             .await
-            .with_headers(SecurityFields { transport }))
+            .with_headers(SecurityFields { transport });
+
+        // A policy the chain set is replaced like every other field, and
+        // where none may be sent, replaced by nothing.
+        if withheld {
+            continued.remove_declared::<Self::Adds>(&header::STRICT_TRANSPORT_SECURITY);
+        }
+
+        Ok(continued)
     }
 }
