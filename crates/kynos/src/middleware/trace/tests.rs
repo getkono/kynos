@@ -2,7 +2,10 @@ use super::{DEFAULT_CORRELATION, REDACTED, Trace};
 use crate::{
     extract::params::header::{EncodeHeaders, HeaderParams},
     http::{HeaderMap, HeaderValue},
-    middleware::request_id::{CorrelationHeaders, RequestId, XRequestId},
+    middleware::{
+        Observer,
+        request_id::{CorrelationHeaders, RequestId, XRequestId},
+    },
 };
 
 /// A header map from pairs.
@@ -119,6 +122,71 @@ fn the_assigned_identifier_is_logged_on_departure() {
     let response = map(&[("x-request-id", "minted")]);
 
     assert_eq!(Trace::new().assigned(&response), "minted");
+}
+
+/// The lines a `fmt` subscriber writes while `emitting` runs on this thread.
+fn captured(emitting: impl FnOnce()) -> String {
+    #[derive(Clone, Default)]
+    struct Sink(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Sink {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .expect("an unpoisoned sink")
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let sink = Sink::default();
+    let writer = sink.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .with_ansi(false)
+        .without_time()
+        .with_writer(move || writer.clone())
+        .finish();
+    tracing::subscriber::with_default(subscriber, emitting);
+
+    let bytes = sink.0.lock().expect("an unpoisoned sink").clone();
+    String::from_utf8(bytes).expect("UTF-8 log lines")
+}
+
+/// The opening event carries the identifier `inbound` reads, at the level set.
+#[test]
+fn the_opening_event_carries_the_echoed_identifier() {
+    let trace = Trace::new()
+        .level(tracing::Level::DEBUG)
+        .correlating(&RequestId::new().trust_client(true));
+    let mut request = crate::http::Request::new(crate::http::body::Body::empty());
+    *request.headers_mut() = map(&[("x-request-id", "echoed")]);
+
+    let lines = captured(|| Observer::<()>::on_request(&trace, &request, None, &()));
+
+    assert!(lines.contains("DEBUG"), "{lines}");
+    assert!(lines.contains("request received"), "{lines}");
+    assert!(lines.contains("request_id=\"echoed\""), "{lines}");
+}
+
+/// The closing event carries the identifier the response does, and its status.
+#[test]
+fn the_closing_event_carries_the_assigned_identifier() {
+    let mut response = crate::http::Response::new(crate::http::body::Body::empty());
+    *response.headers_mut() = map(&[("x-request-id", "minted")]);
+
+    let lines = captured(|| {
+        Observer::<()>::on_response(&Trace::new(), &response, None, std::time::Duration::ZERO);
+    });
+
+    assert!(lines.contains("INFO"), "{lines}");
+    assert!(lines.contains("response sent"), "{lines}");
+    assert!(lines.contains("status=200"), "{lines}");
+    assert!(lines.contains("request_id=\"minted\""), "{lines}");
 }
 
 /// A group of two names, to tell the first declared from the first present.
