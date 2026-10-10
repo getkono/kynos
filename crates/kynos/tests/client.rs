@@ -217,6 +217,87 @@ async fn a_form_body_is_sent_as_a_form() {
     assert_eq!(seen.query.as_deref(), Some("weekly"));
 }
 
+// --- A body sent in parts -------------------------------------------------
+
+/// Yields each chunk in turn, then ends.
+struct Chunks(std::slice::Iter<'static, &'static str>);
+
+impl futures_core::Stream for Chunks {
+    type Item = bytes::Bytes;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<bytes::Bytes>> {
+        std::task::Poll::Ready(
+            self.get_mut()
+                .0
+                .next()
+                .map(|part| bytes::Bytes::from_static(part.as_bytes())),
+        )
+    }
+}
+
+fn chunks(parts: &'static [&'static str]) -> Chunks {
+    Chunks(parts.iter())
+}
+
+/// A streamed body arrives whole, under the media type `Text` accepts; an
+/// empty chunk is no frame and ends nothing.
+#[tokio::test]
+async fn a_streamed_body_arrives_whole() {
+    let seen: Seen = client()
+        .post("/echo")
+        .body_stream("text/plain; charset=utf-8", chunks(&["hel", "", "lo"]))
+        .send()
+        .await
+        .json();
+
+    assert_eq!(seen.body, "hello");
+}
+
+/// A declared length ends the body where it says, across a chunk boundary and
+/// whether the body was streamed or whole.
+#[tokio::test]
+async fn a_declared_length_ends_the_body_there() {
+    let streamed: Seen = client()
+        .post("/echo")
+        .body_stream("text/plain; charset=utf-8", chunks(&["hel", "lo world"]))
+        .content_length(5)
+        .send()
+        .await
+        .json();
+    assert_eq!(streamed.body, "hello");
+
+    let whole: Seen = client()
+        .post("/echo")
+        .text("hello world")
+        .content_length(5)
+        .send()
+        .await
+        .json();
+    assert_eq!(whole.body, "hello");
+}
+
+/// A body that ends short of its declared length fails the read, as a
+/// connection closed mid-message does, rather than arriving as a shorter body.
+#[tokio::test]
+async fn a_body_short_of_its_declared_length_is_refused() {
+    let reply = client()
+        .post("/echo")
+        .body_stream("text/plain; charset=utf-8", chunks(&["hi"]))
+        .content_length(5)
+        .send()
+        .await;
+
+    reply.assert_status(StatusCode::BAD_REQUEST);
+    assert!(
+        reply.text().contains("3 octet(s) short"),
+        "{}",
+        reply.text()
+    );
+}
+
 /// A query string appends rather than replacing what the path already carries.
 #[tokio::test]
 async fn a_query_appends_to_a_path_that_has_one() {

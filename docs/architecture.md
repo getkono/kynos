@@ -201,7 +201,7 @@ by naming the row X displaces rather than by arguing that X is good.
 | Percent-encoding | `percent-encoding` | [`__private/uri.rs`](../crates/kynos/src/__private/uri.rs) | built |
 | Errors | `thiserror` | ambient | built |
 | Observability facade | `tracing` | [`server/`](../crates/kynos/src/server/), [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) | built |
-| Streaming bodies | `futures-core` | [`response/stream/`](../crates/kynos/src/response/stream/), [`extract/body/json_lines/`](../crates/kynos/src/extract/body/json_lines/), [`http/body.rs`](../crates/kynos/src/http/body.rs), gated on `openapi32` | built |
+| Streaming bodies | `futures-core` | [`response/stream/`](../crates/kynos/src/response/stream/), [`extract/body/json_lines/`](../crates/kynos/src/extract/body/json_lines/), [`http/body.rs`](../crates/kynos/src/http/body.rs), gated on `openapi32`; [`test/mod.rs`](../crates/kynos/src/test/mod.rs), whose request body a test may stream, gated on `test-util` | built |
 | JSON | `serde_json` | ambient with `serde` | built |
 | Form codec | `serde_html_form` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs), [`test/mod.rs`](../crates/kynos/src/test/mod.rs) | built |
 | Multipart codec | `multer` | [`extract/body/multipart.rs`](../crates/kynos/src/extract/body/multipart.rs) | built |
