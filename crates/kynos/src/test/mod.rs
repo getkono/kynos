@@ -230,16 +230,8 @@ impl<C> TestClient<C> {
 /// built with authentication and one without, or with an optional subsystem
 /// present and absent. Each of those clients is built
 /// [`with_coverage`](TestClient::with_coverage) over the same `Coverage`, and
-/// the declared responses are asserted once, after all of them ran.
-///
-/// ```ignore
-/// let coverage = Coverage::new();
-/// let document = guarded_service.openapi().clone();
-/// let open = TestClient::new(open_service).with_coverage(&coverage);
-/// let guarded = TestClient::new(guarded_service).with_coverage(&coverage);
-/// // ... requests through both ...
-/// coverage.assert_declared_responses_covered(&document);
-/// ```
+/// the declared responses are asserted once, after all of them ran, against
+/// the description that declares them all.
 #[derive(Debug, Default)]
 pub struct Coverage {
     exchanges: Arc<Mutex<Vec<Exchange>>>,
