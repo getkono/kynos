@@ -4031,6 +4031,14 @@ mod api_error {
                 "belongs on the type",
             ),
             case(
+                "a `base` that is neither a prefix nor a `const` holding one",
+                quote::quote!(
+                    #[problem(status = 404, base = 42)]
+                    struct StoreError;
+                ),
+                "`base` is a string literal, or the path to a `const`",
+            ),
+            case(
                 "`extension` on the type, when it marks a field",
                 quote::quote!(
                     #[problem(status = 404, extension)]

@@ -4,10 +4,22 @@ use crate::{http, middleware::Observer, router::operation::Route};
 
 /// Emits a `tracing` event for each end of an operation.
 ///
-/// Both carry `method`, `matched_path` and `operation_id`; the closing one adds
-/// `status` and `latency`, and `request_id` rides on whichever end the header is
-/// present at. Handler bodies use plain `tracing::info!` and inherit whatever
-/// span the application established.
+/// Both carry `method`, `matched_path`, `operation_id` and `request_id`; the
+/// closing one adds `status` and `latency`. Handler bodies use plain
+/// `tracing::info!` and inherit whatever span the application established.
+///
+/// Observers run before any interceptor, so the opening event precedes
+/// [`RequestId`](super::request_id::RequestId) assigning an identifier. Its
+/// `request_id` is the one the client sent where
+/// [`correlating`](Trace::correlating) names a `RequestId` that echoes it, and
+/// empty otherwise, since an identifier `RequestId` replaces is not the
+/// request's. The closing event carries the identifier the response does.
+///
+/// The two agree only on operations that `RequestId` covers and reaches. The
+/// opening event cannot know whether it will: where a trusting `RequestId` is
+/// mounted on a group the operation is outside of, or an earlier interceptor
+/// answers first, the opening event names the client's identifier and the
+/// closing one is empty.
 ///
 /// `matched_path` is exactly the `paths` key from the description, so it is a
 /// bounded-cardinality metric label.
@@ -20,7 +32,8 @@ use crate::{http, middleware::Observer, router::operation::Route};
 pub struct Trace {
     level: tracing::Level,
     recorded: &'static [&'static str],
-    correlation: &'static str,
+    correlation: &'static [&'static str],
+    trust_client: bool,
 }
 
 /// Emits an event at a level chosen at run time.
@@ -42,9 +55,9 @@ macro_rules! emit {
 /// has the same shape.
 const UNMATCHED: &str = "<unmatched>";
 
-/// The correlation field name [`Trace`] reads unless told another; the one
+/// The correlation field names [`Trace`] reads unless told others; the ones
 /// [`XRequestId`](super::request_id::XRequestId) declares.
-const DEFAULT_CORRELATION: &str = "x-request-id";
+const DEFAULT_CORRELATION: &[&str] = &["x-request-id"];
 
 /// Header names recorded as present and never by value.
 ///
@@ -66,26 +79,60 @@ impl Trace {
             level: tracing::Level::INFO,
             recorded: &[],
             correlation: DEFAULT_CORRELATION,
+            trust_client: false,
         }
     }
 
-    /// Reads the correlation identifier from the group `G` declares.
+    /// Correlates by the identifier `request_id` assigns.
     ///
-    /// Pass the same group [`RequestId`](super::request_id::RequestId) uses;
-    /// the name is read from `G::NAMES`, so the two cannot disagree.
+    /// Pass the [`RequestId`](super::request_id::RequestId) the router mounts:
+    /// the header names and whether an inbound identifier is echoed are read
+    /// from it, so the two cannot disagree on either setting. Which operations
+    /// it covers is not read: `Trace` observes every one, so see [`Trace`] for
+    /// where the two events can still differ. Without this, `Trace` assumes
+    /// [`RequestId::new`](super::request_id::RequestId::new).
     ///
     /// ```
-    /// use kynos::middleware::{request_id::XRequestId, trace::Trace};
+    /// use kynos::middleware::{request_id::RequestId, trace::Trace};
     ///
+    /// let request_id = RequestId::new().trust_client(true);
     /// let trace = Trace::new()
     ///     .level(tracing::Level::DEBUG)
-    ///     .correlating::<XRequestId>();
+    ///     .correlating(&request_id);
     /// # let _ = trace;
     /// ```
     #[must_use]
-    pub fn correlating<G: super::request_id::CorrelationHeaders>(mut self) -> Self {
-        self.correlation = G::NAMES.first().copied().unwrap_or(DEFAULT_CORRELATION);
+    pub fn correlating<S, G: super::request_id::CorrelationHeaders>(
+        mut self,
+        request_id: &super::request_id::RequestId<S, G>,
+    ) -> Self {
+        self.correlation = G::NAMES;
+        self.trust_client = request_id.trust_client;
         self
+    }
+
+    /// The identifier the opening event carries: the inbound one `RequestId`
+    /// echoes, under the first declared name present as it reads it, or none.
+    fn inbound<'a>(&self, headers: &'a http::HeaderMap) -> &'a str {
+        if !self.trust_client {
+            return "";
+        }
+
+        self.correlation
+            .iter()
+            .find_map(|name| headers.get(*name))
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+    }
+
+    /// The identifier the closing event carries: the one the response does,
+    /// which `RequestId` writes under every declared name.
+    fn assigned<'a>(&self, headers: &'a http::HeaderMap) -> &'a str {
+        self.correlation
+            .first()
+            .and_then(|name| headers.get(*name))
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
     }
 
     /// Sets the level events are emitted at.
@@ -143,14 +190,6 @@ impl Default for Trace {
     }
 }
 
-/// The correlation identifier a request or response carries, if any.
-fn request_id<'a>(headers: &'a http::HeaderMap, name: &str) -> &'a str {
-    headers
-        .get(name)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-}
-
 impl<C> Observer<C> for Trace {
     fn on_request(&self, request: &http::Request, route: Option<Route<'_>>, context: &C) {
         let _ = context;
@@ -160,7 +199,7 @@ impl<C> Observer<C> for Trace {
             method = %request.method(),
             matched_path = route.map_or(UNMATCHED, |route| route.path()),
             operation_id = route.map_or(UNMATCHED, |route| route.operation_id()),
-            request_id = request_id(request.headers(), self.correlation),
+            request_id = self.inbound(request.headers()),
             headers = self.recorded(request.headers()),
             "request received",
         );
@@ -178,7 +217,7 @@ impl<C> Observer<C> for Trace {
             operation_id = route.map_or(UNMATCHED, |route| route.operation_id()),
             status = response.status().as_u16(),
             latency = ?elapsed,
-            request_id = request_id(response.headers(), self.correlation),
+            request_id = self.assigned(response.headers()),
             "response sent",
         );
     }

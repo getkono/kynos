@@ -467,7 +467,9 @@ pub fn derive_schema(item: TokenStream) -> TokenStream {
 ///
 /// `status` is required on every variant and must be between 400 and 599. A
 /// struct declares its one status on the type instead; `base` always belongs on
-/// the type, since it is the prefix every variant's type URI shares.
+/// the type, since it is the prefix every variant's type URI shares. It is a
+/// string literal or, where several types share one prefix, a path to a
+/// `const` of type `&str`: `#[problem(base = crate::PROBLEM_BASE)]`.
 ///
 /// The error's `Display` supplies each problem's `detail`, so `thiserror`'s `#[error("...")]` is the sentence an API consumer receives.
 /// A type without a `Display` is rejected at the derive.
@@ -563,6 +565,12 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// A declared parameter whose percent-decoded value is not UTF-8 is refused
 /// with the group's `QueryRejection`, naming it, as a value that fails to parse
 /// is; a parameter the group does not declare is ignored, whatever its octets.
+///
+/// A field's `#[schema(...)]` bounds, which the [`Schema`](macro@Schema)
+/// derive reads, are written into its parameter's schema, beside a named
+/// type's `$ref`, and checked on the value `FromStr` read, with the bounds its
+/// type declares: one it breaks is refused as `QueryRejection::Schema`, naming
+/// the parameter.
 ///
 /// # Rejected, because a parameter has one name
 ///

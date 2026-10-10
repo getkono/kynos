@@ -41,6 +41,7 @@ pub mod csrf;
 pub mod limits;
 pub mod rate_limit;
 pub mod request_id;
+pub mod security_headers;
 pub mod stack;
 
 // Never `pub`, so `Pin<Box<dyn Future>>` reaches no user signature.
@@ -303,8 +304,8 @@ impl<H> Continued<H> {
     /// Removes a field the declared group `G` names.
     ///
     /// For a field the interceptor owns that has stopped being true, such as
-    /// `Content-Length` over a streamed encode.
-    #[cfg(feature = "compression")]
+    /// `Content-Length` over a streamed encode, or `Strict-Transport-Security`
+    /// over plain transport.
     pub(crate) fn remove_declared<G: crate::extract::params::header::HeaderParams>(
         &mut self,
         name: &crate::http::HeaderName,

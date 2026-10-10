@@ -24,8 +24,8 @@
 //! (bounded by `OpenMap` rather than `Flatten`; see `flatten_witnesses`).
 
 mod aliases;
-mod attributes;
-mod check;
+pub(crate) mod attributes;
+pub(crate) mod check;
 mod kinds;
 #[cfg(feature = "pattern")]
 mod pattern;

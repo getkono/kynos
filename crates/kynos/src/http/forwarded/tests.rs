@@ -608,14 +608,9 @@ fn a_network_never_matches_across_address_families() {
 /// therefore been told nothing it may act on.
 ///
 /// The consequence reaches further than the field. `client_is_secure` is what
-/// anything sending HSTS has to consult first, and RFC 6797 section 7.2 forbids
-/// that field over non-secure transport -- so believing this claim would put the
-/// header on exactly the connection the specification rules out.
-///
-/// Stated in the conditional because Kynos ships no security-header middleware.
-/// This used to link `crate::middleware::security_headers::SecurityHeaders`, a
-/// path that resolves to nothing; the link survived only because `cargo doc`
-/// does not build a `#[cfg(test)]` module.
+/// `SecurityHeaders` consults before sending HSTS, and RFC 6797 section 7.2
+/// forbids that field over non-secure transport -- so believing this claim would
+/// put the header on exactly the connection the specification rules out.
 #[test]
 fn a_scheme_claimed_by_an_untrusted_sender_is_not_believed() {
     let headers = map(&[

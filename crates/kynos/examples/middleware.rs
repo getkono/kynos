@@ -60,6 +60,7 @@ use kynos::{
             decision::{Decision, QuotaPolicy, QuotaUnit, RateLimitPolicy, ServiceLimit},
         },
         request_id::{CorrelationHeaders, Counter, RequestId, RequestIdSource},
+        security_headers::{SecurityHeaders, StrictTransportSecurity},
         trace::Trace,
     },
     openapi::Method,
@@ -105,11 +106,11 @@ impl CorrelationHeaders for CorrelationId {
 
 /// Identifiers minted from a monotonic clock rather than a counter.
 ///
-/// `Counter` is unique within one process and no further, which is enough to
-/// correlate a request across its own logs and not enough to correlate it
-/// across a fleet. Replacing it is one trait with one method — Kynos ships no
-/// UUID-based source, because that would mean choosing a UUID version for
-/// everybody.
+/// `Counter` is unique within one process and no further; `Random` is unique
+/// across a fleet, and is what the `tracing` example mounts. A fleet that
+/// already has an identifier format replaces either with one trait and one
+/// method — Kynos ships no UUID-based source, because that would mean choosing
+/// a UUID version for everybody.
 struct Monotonic;
 
 impl RequestIdSource for Monotonic {
@@ -298,6 +299,17 @@ impl RateLimitPolicy<()> for PerProcess {
 #[tokio::main]
 async fn main() -> kynos::Result<()> {
     let router = Router::<()>::new()
+        // The fields every API response should carry, each documented as the
+        // one value it sends. Outermost, so a cache inside it still stores.
+        // HSTS is withheld here, since this server listens on plain HTTP and
+        // RFC 6797 forbids sending it there.
+        .intercept(
+            SecurityHeaders::new()
+                .strict_transport_security(StrictTransportSecurity::max_age(Duration::from_secs(
+                    31_536_000,
+                )))
+                .deny_framing(),
+        )
         // Browsers only. A preflight is answered before any handler runs, and
         // `document_response_headers` is opt-in because CORS headers are a
         // property of the deployment rather than of the API — most descriptions
