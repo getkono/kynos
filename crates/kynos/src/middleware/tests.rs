@@ -558,11 +558,10 @@ mod security_headers {
             ("X-Frame-Options", "DENY"),
         ] {
             let header = described(name);
+            let schema = &header["content"]["text/plain"]["schema"];
             assert_eq!(header["required"], true, "{name}");
-            assert_eq!(
-                header["content"]["text/plain"]["schema"]["const"], value,
-                "{name}"
-            );
+            assert_eq!(schema["type"], "string", "{name}");
+            assert_eq!(schema["const"], value, "{name}");
         }
 
         let hsts = described("Strict-Transport-Security");
