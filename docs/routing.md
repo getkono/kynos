@@ -88,6 +88,7 @@ feature. It serves the route and gets no `paths` entry, recording it under
 | [`Router::nest`](../crates/kynos/src/router/mod.rs) | another router under a prefix | the prefix joins every path beneath |
 | [`Router::merge`](../crates/kynos/src/router/mod.rs) | another router at the same level | the two operation sets union |
 | [`Router::intercept`](../crates/kynos/src/router/mod.rs) | every operation in the router | every one of their descriptions |
+| `routes![op.intercept(..)]` | that one operation | its description alone |
 | [`Router::observe`](../crates/kynos/src/router/mod.rs) | every operation in the router | nothing — observers change nothing |
 | [`Router::docs`](../crates/kynos/src/router/docs/) | two operations, at the paths the `Docs` names | two `paths` entries, rendered from the very document that describes them |
 
@@ -120,7 +121,10 @@ document does not declare.
 Scope in the document matches scope in the router, exactly. A group is the
 recommended unit of API structure — one per resource — because attaching
 authentication to a group documents it on every operation underneath, correctly,
-without anyone maintaining that by hand.
+without anyone maintaining that by hand. An interceptor only some of a
+resource's operations need — a larger body limit on its one upload — goes on
+those operations inside `routes!`, so groups stay one per resource rather than
+one per limit.
 
 What reaches a router is an
 [`Endpoints<C>`](../crates/kynos/src/router/endpoint/), produced by
@@ -168,6 +172,17 @@ that only appear across a whole API — a duplicated `operationId`, two paths th
 differ only in variable name, a security requirement naming a scheme nobody
 declared. `build` runs the same structural checks, so an API that cannot be
 described correctly fails at startup rather than at documentation time.
+
+### One router value, described and built
+
+The three readers borrow and `build` consumes, so a context that needs the
+document — to serve a post-processed copy of it, say — is built between
+`openapi` and `build` on the same value. A function returning that value
+leaves the type parameters `intercept` keeps changing opaque:
+`-> Router<C, impl PanicPolicy, impl Sized, impl Sized>`. No type-erased router
+and no describe-then-finish split ships, because the language already expresses
+this; an opaque stack cannot be checked against another interceptor, so a
+router returned that way is finished, which is what such a function means.
 
 ### Which version `openapi` emits
 
