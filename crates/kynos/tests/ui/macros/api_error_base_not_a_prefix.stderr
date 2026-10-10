@@ -1,0 +1,5 @@
+error: `base` is a string literal, or the path to a `const` of type `&str` holding one
+ --> tests/ui/macros/api_error_base_not_a_prefix.rs:7:18
+  |
+7 | #[problem(base = 42)]
+  |                  ^^

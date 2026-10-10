@@ -123,7 +123,7 @@ enum StoreError {
 
 | Position | Key | Meaning |
 | --- | --- | --- |
-| type | `base` | URI prefix; `type` defaults to it plus the kebab-cased variant name |
+| type | `base` | URI prefix, as a string literal or a path to a `const` of type `&str`; `type` defaults to it plus the kebab-cased variant name |
 | variant | `status` | required, 400–599 |
 | variant | `title` | the problem's `title`, and what the response's description is composed from. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
 | variant | `type` | an absolute URI, overriding `base` |
@@ -149,8 +149,16 @@ one that can drift from it.
 opt-in because a variant carries whatever the error site had to hand, and the
 default must not be to publish it. `trace` above stays internal.
 
+**One namespace is one `const`.** Several error types sharing a prefix name it
+as `#[problem(base = crate::PROBLEM_BASE)]` rather than repeating the literal,
+so the compiler holds them to one value. The prefix and each slug are joined
+in `const` items, so the type URI is still a `&'static str` and no response
+allocates for it. A framework-level default was rejected: the prefix stays
+visible on the type that publishes under it.
+
 **What the grammar refuses.** A missing or out-of-range `status`, a member the
-grammar does not define, a `base` on a variant, an `extension` on a field with
+grammar does not define, a `base` that is neither a string literal nor a path,
+a `base` on a variant, an `extension` on a field with
 no name, and a type with no `Display` are all compile errors, each with a case
 in [`tests/ui/macros`](../crates/kynos/tests/ui/macros). What `base`, `title`,
 `type` and `extension` *do* is checked at run time by the conformance harness,
