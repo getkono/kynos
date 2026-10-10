@@ -7,6 +7,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/getkono/kynos/compare/kynos-v0.3.0...kynos-v0.4.0) - 2026-10-10
+
+### Added
+
+- *(middleware)* [**breaking**] log only the identifier RequestId keeps on Trace's arrival event
+- *(middleware)* ship a random request id source
+- *(schema)* [**breaking**] enforce a map key's pattern ([#528](https://github.com/getkono/kynos/pull/528))
+- *(schema)* [**breaking**] enforce the pattern field constraint ([#526](https://github.com/getkono/kynos/pull/526))
+- *(server)* answer a request body that stalls between frames with 408 ([#488](https://github.com/getkono/kynos/pull/488))
+- *(assets)* offer a fallible Asset::try_embedded constructor ([#398](https://github.com/getkono/kynos/pull/398))
+- *(connection)* let an embedding accept loop supply a TLS identity ([#399](https://github.com/getkono/kynos/pull/399))
+- *(body)* convert Bytes, Vec<u8>, String and &'static str into Body ([#396](https://github.com/getkono/kynos/pull/396))
+- *(tls)* share session-ticket keys across replicas ([#315](https://github.com/getkono/kynos/pull/315))
+- *(http)* borrow the resolved Forwarded from a request
+- *(extract)* extract Forwarded from a request
+
+### Documentation
+
+- *(examples)* mount Random in the tracing example and drop the stale source comments
+- *(middleware)* state where Trace's two request_id fields can still differ
+- correct claims about other frameworks and about enforcement ([#523](https://github.com/getkono/kynos/pull/523))
+- badge every feature-gated item with its feature on docs.rs ([#518](https://github.com/getkono/kynos/pull/518))
+- add contributing, code of conduct and getting-started guides ([#500](https://github.com/getkono/kynos/pull/500))
+- *(querystring)* name the allOf condition admits_null over-requires
+- *(querystring)* name the Option shape admits_null over-requires
+- *(server)* name the HTTP/2 window upper bound prepare refuses
+- *(server)* tighten Server::prepare's refusal list
+- *(observer)* state that on_disconnect follows the body's release
+- *(middleware)* name CompatibleWith where prose named its const helpers
+- cut history narration to the intent it carries
+- *(features)* drop the manifests' copies of the openapi32 rationale
+- *(testing)* name the fixed-sentence rung of the Reply description fallback
+- *(examples)* cap each payload body at its own operation ([#273](https://github.com/getkono/kynos/pull/273))
+- correct documentation claims the code contradicts ([#290](https://github.com/getkono/kynos/pull/290))
+- *(tls)* scope the shared session store to one server's listeners
+- *(http)* drop the HSTS reader Forwarded never had
+- *(router)* say an inserted MatchedPath or Forwarded is now ignored
+- *(test)* quote the five allocations a static match now records
+- *(test)* cite the test that drives a HEAD through assert_conformance
+
+### Fixed
+
+- *(middleware)* drop the runs of spaces inside the CredentialedWildcardExposure message ([#541](https://github.com/getkono/kynos/pull/541))
+- *(schema)* refuse a recursive generic type instead of overflowing the stack ([#516](https://github.com/getkono/kynos/pull/516))
+- *(extract)* [**breaking**] cap buffered request bodies at 2 MiB by default ([#520](https://github.com/getkono/kynos/pull/520))
+- *(extract)* [**breaking**] enforce declared bounds in JSON Lines, QueryString, map keys and multipart ([#517](https://github.com/getkono/kynos/pull/517))
+- *(server)* close an HTTP/2 connection that holds no stream for its idle timeout ([#512](https://github.com/getkono/kynos/pull/512))
+- *(http)* read the forwarded scheme from the trusted hop ([#507](https://github.com/getkono/kynos/pull/507))
+- *(schema)* [**breaking**] enforce derived field constraints in Json and Form ([#456](https://github.com/getkono/kynos/pull/456))
+- *(docs)* pin the reference bundles with SRI and serve them under a CSP ([#487](https://github.com/getkono/kynos/pull/487))
+- *(cache)* keep a guarded operation's response to the caller it answered ([#514](https://github.com/getkono/kynos/pull/514))
+- *(cache)* refuse a wildcard on any Vary line, not only the first ([#508](https://github.com/getkono/kynos/pull/508))
+- *(server)* keep accepting through file-descriptor exhaustion ([#448](https://github.com/getkono/kynos/pull/448))
+- *(server)* drain a failed listener's connections before reporting it ([#506](https://github.com/getkono/kynos/pull/506))
+- *(docs)* serve the description a built service reports ([#505](https://github.com/getkono/kynos/pull/505))
+- *(emit)* refuse a 3.1 emission carrying unrecognised fields ([#491](https://github.com/getkono/kynos/pull/491))
+- *(assets)* honour If-Match before If-None-Match and Range ([#499](https://github.com/getkono/kynos/pull/499))
+- *(macros)* name both sides of a PathParams template mismatch ([#498](https://github.com/getkono/kynos/pull/498))
+- *(schema)* compare a rival component reached mid-descent ([#497](https://github.com/getkono/kynos/pull/497))
+- *(security)* challenge for a Bearer token from derived OAuth2 and OIDC schemes ([#493](https://github.com/getkono/kynos/pull/493))
+- *(cache)* [**breaking**] key a stored response on the request authority and honour request no-cache ([#492](https://github.com/getkono/kynos/pull/492))
+- *(form)* read and write an array field as one pair per item ([#490](https://github.com/getkono/kynos/pull/490))
+- *(cors)* refuse a preflight for a method no CORS configuration covers ([#484](https://github.com/getkono/kynos/pull/484))
+- *(macros)* validate header and cookie wire names ([#483](https://github.com/getkono/kynos/pull/483))
+- *(http)* [**breaking**] read only the forwarding field the trusted proxy writes ([#457](https://github.com/getkono/kynos/pull/457))
+- *(security)* [**breaking**] one guard per operation, with schemes combined in its type ([#446](https://github.com/getkono/kynos/pull/446))
+- *(middleware)* merge every Vary line in vary_on ([#482](https://github.com/getkono/kynos/pull/482))
+- *(csrf)* try the trusted origin list before Sec-Fetch-Site ([#481](https://github.com/getkono/kynos/pull/481))
+- *(assets)* refuse hidden segments and links below a served directory ([#471](https://github.com/getkono/kynos/pull/471))
+- *(range)* honour If-Match and If-Unmodified-Since before a range ([#453](https://github.com/getkono/kynos/pull/453))
+- *(extract)* select a multipart OneOf side by type and subtype ([#449](https://github.com/getkono/kynos/pull/449))
+- *(cookie)* describe a derived cookie as style: cookie under openapi32 ([#451](https://github.com/getkono/kynos/pull/451))
+- *(server)* close a connection that sends no request head within the header-read timeout ([#445](https://github.com/getkono/kynos/pull/445))
+- *(form)* refuse a form pair that is not UTF-8 with a 400 ([#447](https://github.com/getkono/kynos/pull/447))
+- *(assets)* derive a directory index only at a segment boundary ([#400](https://github.com/getkono/kynos/pull/400))
+- *(body)* release a watched body before reporting its departure
+- *(extract)* treat enum, allOf and not as unrecognised in admits_null
+- *(extract)* read an absent query string as null in QueryString
+- *(security)* [**breaking**] redact secrets from carried credentials' Debug output
+- *(server)* [**breaking**] refuse HTTP/2 windows above 2^31-1
+- *(sse)* [**breaking**] refuse a zero keep-alive interval
+- *(server)* gate peer_address_service on http1 like its only caller
+- *(cache)* hand on a body it declines to store instead of emptying it
+
+### Other
+
+- *(operation)* [**breaking**] take owned or borrowed strings in OperationCx setters
+- *(rate-limit)* [**breaking**] make the decision structs non_exhaustive with constructors
+- *(middleware)* [**breaking**] narrow stack's const helpers to the crate
+- *(response)* [**breaking**] narrow short_circuit_mismatch to the crate
+- *(limits)* [**breaking**] read BodyTimedOut's limit through an accessor
+- *(sse)* [**breaking**] remove the KeepAlive::text alias
+- *(server)* [**breaking**] gate HTTP/1 and HTTP/2 tuning on their module lines
+- *(http)* [**breaking**] make the coding and date modules private
+- *(http)* [**breaking**] narrow the entity-tag helpers to the crate
+- *(http)* [**breaking**] remove the unused ResponseParts alias
+
+### Performance
+
+- *(router)* [**breaking**] carry the route in one request extension
+- *(router)* await an uninterposed handler in place
+
 ## [0.3.0](https://github.com/getkono/kynos/compare/kynos-v0.2.0...kynos-v0.3.0) - 2026-09-27
 
 ### Documentation

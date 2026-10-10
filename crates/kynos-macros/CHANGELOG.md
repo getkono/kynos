@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/getkono/kynos/compare/kynos-macros-v0.3.0...kynos-macros-v0.4.0) - 2026-10-10
+
+### Added
+
+- *(schema)* [**breaking**] enforce a map key's pattern ([#528](https://github.com/getkono/kynos/pull/528))
+- *(schema)* [**breaking**] enforce the pattern field constraint ([#526](https://github.com/getkono/kynos/pull/526))
+
+### Documentation
+
+- badge every feature-gated item with its feature on docs.rs ([#518](https://github.com/getkono/kynos/pull/518))
+- *(agents)* state the runtime and placeholder rules the gates enforce
+- *(schema)* state how a member is named, and the split rename refusal
+
+### Fixed
+
+- *(macros)* read a `#[problem(base)]` forwarded through a `macro_rules!` fragment
+- *(params)* carry a QueryParams field's #[schema] bounds into its parameter ([#548](https://github.com/getkono/kynos/pull/548))
+- *(macros)* drop the run of spaces inside two SecurityScheme refusals ([#540](https://github.com/getkono/kynos/pull/540))
+- *(schema)* refuse a recursive generic type instead of overflowing the stack ([#516](https://github.com/getkono/kynos/pull/516))
+- *(extract)* [**breaking**] enforce declared bounds in JSON Lines, QueryString, map keys and multipart ([#517](https://github.com/getkono/kynos/pull/517))
+- *(schema)* [**breaking**] enforce derived field constraints in Json and Form ([#456](https://github.com/getkono/kynos/pull/456))
+- *(macros)* name both sides of a PathParams template mismatch ([#498](https://github.com/getkono/kynos/pull/498))
+- *(security)* challenge for a Bearer token from derived OAuth2 and OIDC schemes ([#493](https://github.com/getkono/kynos/pull/493))
+- *(macros)* validate header and cookie wire names ([#483](https://github.com/getkono/kynos/pull/483))
+- *(cookie)* describe a derived cookie as style: cookie under openapi32 ([#451](https://github.com/getkono/kynos/pull/451))
+- *(macros)* accept a split rename whose written side serde also reads
+- *(macros)* [**breaking**] refuse a split rename whose sides differ in MultipartForm
+- *(macros)* [**breaking**] name a raw identifier and a split rename as serde does, and refuse a rename no schema is true of
+
+### Other
+
+- *(extract)* [**breaking**] move QueryString into its own querystring module
+- *(security)* [**breaking**] move basic-auth Credentials into security::carrier
+
 ## [0.3.0](https://github.com/getkono/kynos/compare/kynos-macros-v0.2.0...kynos-macros-v0.3.0) - 2026-09-27
 
 ### Documentation
