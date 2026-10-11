@@ -141,13 +141,11 @@ pub(crate) fn union_from(
     held: &kynos_openapi::Responses,
 ) {
     // Each status both declare, with the headers this side declared on it.
-    let shared: Vec<(String, Map<RefOr<Header>>)> = responses
+    let shared: Vec<(String, Map<RefOr<Header>>)> = held
         .responses
-        .iter()
-        .filter_map(|(key, response)| match response {
-            RefOr::Item(response) if held.responses.contains_key(key) => {
-                Some((key.clone(), response.headers.clone()))
-            }
+        .keys()
+        .filter_map(|key| match responses.responses.get(key) {
+            Some(RefOr::Item(response)) => Some((key.clone(), response.headers.clone())),
             _ => None,
         })
         .collect();
