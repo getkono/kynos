@@ -108,7 +108,8 @@ same status carrying none.
 
 `Created` and `Redirect` both carry a
 [`Location`](../crates/kynos/src/response/status.rs), which exists because a
-route attribute's `relative_uri` returns an `http::Uri` and neither that type
+route attribute's `relative_uri` and a `Link`'s `uri` return an `http::Uri`,
+and neither that type
 nor `String` is Kynos's to write a conversion between. Naming the concept is
 what lets a typed URI and a string literal both arrive without a call-site
 conversion. It validates nothing: a `Location` field value is a URI reference,

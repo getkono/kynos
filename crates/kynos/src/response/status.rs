@@ -11,7 +11,8 @@ use crate::{
 /// Where a response points a client next.
 ///
 /// The value of a `Location` header, converted from a string or from the
-/// [`http::Uri`] a route attribute's `relative_uri` returns.
+/// [`http::Uri`] a route attribute's `relative_uri` or a [`Link`]'s `uri`
+/// returns.
 ///
 /// ```
 /// use kynos::response::status::Location;
@@ -24,6 +25,7 @@ use crate::{
 /// ```
 ///
 /// [`http::Uri`]: crate::http::Uri
+/// [`Link`]: crate::extract::link::Link
 ///
 /// Not validated: a `Location` value is a URI reference, relative forms
 /// included.
@@ -86,7 +88,7 @@ pub struct Created<T> {
 impl<T> Created<T> {
     /// Creates a 201 response for a resource at `location`.
     ///
-    /// Takes a string, or a route attribute's `relative_uri` directly.
+    /// Takes a string, a route attribute's `relative_uri`, or a `Link`'s `uri`.
     #[must_use]
     pub fn at(location: impl Into<Location>, body: T) -> Self {
         Self {
@@ -130,7 +132,7 @@ pub struct Redirect<const CODE: u16> {
 impl<const CODE: u16> Redirect<CODE> {
     /// Redirects to `location`.
     ///
-    /// Takes a string, or a route attribute's `relative_uri` directly.
+    /// Takes a string, a route attribute's `relative_uri`, or a `Link`'s `uri`.
     #[must_use]
     pub fn to(location: impl Into<Location>) -> Self {
         Self {
