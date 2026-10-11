@@ -55,8 +55,9 @@ enum Shape {
     Square { side: f64 },
 }
 
-/// A generic type still mangles to one component name, so the derive must
-/// carry the generics through rather than assuming there are none.
+/// A generic type mangles each instantiation's component name from its
+/// arguments', so the derive must carry the generics through rather than
+/// assuming there are none.
 #[derive(Schema)]
 struct Page<T> {
     items: Vec<T>,
@@ -2484,8 +2485,118 @@ struct Wrapped<T> {
     value: T,
 }
 
-/// A generic transparent struct claims no component name, which every
-/// instantiation would otherwise share.
+/// An instantiation whose arguments all have component names is registered
+/// under the name they mangle to and referred to by it, one per
+/// instantiation; one whose argument has none is inlined.
+#[test]
+fn a_generic_instantiation_is_named_from_its_arguments() {
+    fn name_of<T: SchemaTrait>() -> Option<String> {
+        T::name().map(|name| name.to_string())
+    }
+
+    assert_eq!(name_of::<Page<User>>().as_deref(), Some("Page_User"));
+    assert_eq!(
+        name_of::<Page<Page<User>>>().as_deref(),
+        Some("Page_Page_User")
+    );
+    assert_eq!(name_of::<Page<u32>>(), None);
+    assert_eq!(name_of::<Page<Vec<User>>>(), None);
+
+    let mut registry = kynos::schema::registry::Registry::new();
+    let users = registry.resolve::<Page<User>>();
+    let shapes = registry.resolve::<Page<Shape>>();
+    let counts = registry.resolve::<Page<u32>>();
+    assert_eq!(users, kynos::openapi::Schema::component("Page_User"));
+    assert_eq!(shapes, kynos::openapi::Schema::component("Page_Shape"));
+    assert!(
+        counts
+            .as_object()
+            .is_some_and(|page| page.properties.contains_key("items")),
+        "`Page<u32>` is inlined"
+    );
+
+    let components = registry.into_components();
+    let mut names: Vec<&str> = components.schemas.keys().map(String::as_str).collect();
+    names.sort_unstable();
+    assert_eq!(names, ["Page_Shape", "Page_User", "Shape", "User"]);
+}
+
+// No doc comments, which would become the components' descriptions.
+#[derive(Schema)]
+struct Chunk<T, const N: usize> {
+    items: [T; N],
+}
+
+#[derive(Schema)]
+struct Fixed<const N: usize> {
+    bytes: [u8; N],
+}
+
+/// A const argument names itself by its value, so instantiations differing
+/// only in it, whose arrays differ in length, are two components rather than
+/// one name claimed by two schemas.
+#[test]
+fn a_const_argument_names_its_instantiation_by_its_value() {
+    fn name_of<T: SchemaTrait>() -> Option<String> {
+        T::name().map(|name| name.to_string())
+    }
+
+    assert_eq!(name_of::<Chunk<User, 2>>().as_deref(), Some("Chunk_User_2"));
+    assert_eq!(name_of::<Chunk<u8, 2>>(), None);
+    assert_eq!(name_of::<Fixed<16>>().as_deref(), Some("Fixed_16"));
+
+    let mut registry = kynos::schema::registry::Registry::new();
+    registry.resolve::<Chunk<User, 2>>();
+    registry.resolve::<Chunk<User, 3>>();
+    registry.resolve::<Fixed<16>>();
+    registry.resolve::<Fixed<32>>();
+    let components = registry.into_components();
+    let bounds = |name: &str| {
+        let items = &serde_json::to_value(&components.schemas[name])
+            .expect("a component serializes")["properties"]
+            .as_object()
+            .expect("an object component")
+            .values()
+            .next()
+            .expect("one property")
+            .clone();
+        (items["minItems"].clone(), items["maxItems"].clone())
+    };
+    assert_eq!(bounds("Chunk_User_2"), (2.into(), 2.into()));
+    assert_eq!(bounds("Chunk_User_3"), (3.into(), 3.into()));
+    assert_eq!(bounds("Fixed_16"), (16.into(), 16.into()));
+    assert_eq!(bounds("Fixed_32"), (32.into(), 32.into()));
+}
+
+// Named instantiations reaching each other, refused by nothing.
+#[derive(Schema)]
+struct Ping<T> {
+    value: T,
+    pong: Option<Box<Pong<T>>>,
+}
+
+#[derive(Schema)]
+struct Pong<T> {
+    ping: Option<Box<Ping<T>>>,
+}
+
+/// Generic types reaching each other through named instantiations are
+/// `$ref`s to each other's components, so the description ends.
+#[test]
+fn named_instantiations_reaching_each_other_refer_to_each_other() {
+    let mut registry = kynos::schema::registry::Registry::new();
+    assert_eq!(
+        registry.resolve::<Ping<User>>(),
+        kynos::openapi::Schema::component("Ping_User")
+    );
+    let components = registry.into_components();
+    let mut names: Vec<&str> = components.schemas.keys().map(String::as_str).collect();
+    names.sort_unstable();
+    assert_eq!(names, ["Ping_User", "Pong_User", "User"]);
+}
+
+/// A generic transparent struct whose argument has no component name claims
+/// none either.
 #[test]
 fn a_generic_transparent_struct_claims_no_component_name() {
     assert!(

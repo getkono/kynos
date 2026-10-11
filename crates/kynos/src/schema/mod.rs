@@ -153,7 +153,9 @@ pub trait Schema {
     /// The component name this type is registered under, if it has one.
     ///
     /// Anonymous types — tuples, `Option<T>`, `Vec<T>` — return `None` and are
-    /// inlined. Named structs and enums return a name and are `$ref`'d.
+    /// inlined. Named structs and enums return a name and are `$ref`'d; a
+    /// generic one takes the name [`instantiation_name`] mangles for each
+    /// instantiation.
     #[must_use]
     fn name() -> Option<ComponentName> {
         None
@@ -177,6 +179,38 @@ pub trait Schema {
         reason = "the names are what rustdoc shows an implementor"
     )]
     fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {}
+}
+
+/// The component name of one instantiation of a generic type: `base`, then each
+/// type argument's own component name in declaration order, joined by `_`.
+///
+/// `None` where any argument has no name, so the instantiation is inlined:
+/// `Page<User>` is `Page_User`, while `Page<u64>` and `Page<Vec<User>>` have no
+/// name to give their argument. `#[derive(Schema)]` names every generic type
+/// this way, passing a const argument as its value's name, so `Batch<User, 2>`
+/// is `Batch_User_2`, and a hand implementation over a generic type may do the
+/// same. Two types mangling to one name are caught as a
+/// [`SchemaConflict`](registry::SchemaConflict) when their schemas differ.
+///
+/// ```
+/// use kynos::{openapi::ComponentName, schema::instantiation_name};
+///
+/// let user = ComponentName::new("User").ok();
+/// let named = instantiation_name("Page", &[user.clone()]);
+/// assert_eq!(named.as_ref().map(ComponentName::as_str), Some("Page_User"));
+/// assert_eq!(instantiation_name("Page", &[user, None]), None);
+/// ```
+#[must_use]
+pub fn instantiation_name(
+    base: &str,
+    arguments: &[Option<ComponentName>],
+) -> Option<ComponentName> {
+    let mut mangled = String::from(base);
+    for argument in arguments {
+        mangled.push('_');
+        mangled.push_str(argument.as_ref()?.as_str());
+    }
+    ComponentName::sanitized(&mangled).ok()
 }
 
 /// A type usable as a JSON object key.

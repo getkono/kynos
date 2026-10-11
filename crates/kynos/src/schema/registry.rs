@@ -73,8 +73,9 @@ impl Registry {
     /// # Panics
     ///
     /// When an anonymous type reaches itself with no named type between: a
-    /// hand implementation doing so, or generic derived types referring to one
-    /// another, whose description would have no end. `#[derive(Schema)]`
+    /// hand implementation doing so, or inlined instantiations of generic
+    /// derived types referring to one another, whose description would have no
+    /// end; named instantiations are `$ref`s to each other. `#[derive(Schema)]`
     /// refuses the direct case, a generic type naming itself, at compile time.
     pub fn resolve<T: Schema>(&mut self) -> OpenApiSchema {
         let Some(name) = T::name() else {
@@ -149,8 +150,9 @@ impl Registry {
             !self.inlining.contains(&entry),
             "`{}` refers to itself through no type with a component name, so its schema \
              would never end. A generic `#[derive(Schema)]` type is inlined rather than \
-             named: make the recursive type concrete, or implement `Schema` for it by hand \
-             returning a `name()`",
+             named where one of its type arguments has no component name: make the \
+             recursive type concrete, or implement `Schema` for it by hand returning a \
+             `name()`",
             entry.0
         );
 
