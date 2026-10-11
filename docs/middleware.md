@@ -791,6 +791,13 @@ what chooses between them. Neither is a default, because guessing wrong is the
 same spoof: an AWS ALB appends to `X-Forwarded-For`, and a service reading
 `Forwarded` behind it lets the client write its own address.
 
+An IPv4-mapped address (`::ffff:10.0.0.1`) is read as the IPv4 host it embeds
+everywhere — the peer a dual-stack `[::]` listener reports, a forwarded hop, a
+trusted address or network — so `10.0.0.0/8` trusts an IPv4 proxy on either
+listener. Matching families strictly instead would ignore every forwarding field
+on a dual-stack listener, silently. `::ffff:0.0.0.0/96` is refused like `/0`,
+since it is every IPv4 address.
+
 ### A response no type predicts
 
 The soundness invariant is *emitted ⊇ observable responses* for the responses
