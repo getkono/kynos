@@ -34,7 +34,8 @@
 //!   declares them on the *scheme*, which is what OAuth 2.0 publishes as the set
 //!   an authorization server can grant. `ReadReports` declares them on the
 //!   *operation* through `Scoped`, which is what this particular endpoint
-//!   demands. Both are checked, neither is a string a handler passes.
+//!   demands. Both are values of `Grant`, the scope type each scheme names
+//!   once, so neither is a string a handler passes or an authorizer parses.
 //! * **A context declares what it can verify.** One `App`, seven
 //!   implementations, so the set of schemes an application supports is visible
 //!   in one place rather than spread across the handlers requiring them. Only
@@ -69,7 +70,7 @@ use kynos::{
     error::rejection::AuthRejection,
     prelude::*,
     security::{
-        Authenticates, Authenticator,
+        Authenticates, Authenticator, Scope,
         auth::{Auth, MaybeAuth, Scoped, Scopes},
         carrier::{BearerToken, Carries, Credentials},
         requirement::{AllOf, AnyOf, Either2},
@@ -96,8 +97,28 @@ struct Claims {
 /// that claimed to know it would be claiming more than it can check.
 #[derive(SecurityScheme)]
 #[security(bearer(format = "JWT"))]
-#[security(credential = Claims, description = "A short-lived access token")]
+#[security(credential = Claims, scope = Grant, description = "A short-lived access token")]
 struct AccessToken;
+
+/// Every scope this service's tokens can carry.
+///
+/// The scope type `AccessToken` and `DelegatedAccess` each name once. A scope
+/// set or a scheme default spelling one wrong is an unknown variant, and
+/// `name` is the one place a scope becomes the string a token carries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Grant {
+    ReadReports,
+    ReadUsers,
+}
+
+impl Scope for Grant {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::ReadReports => "reports:read",
+            Self::ReadUsers => "users:read",
+        }
+    }
+}
 
 /// A machine key, in a header of this service's choosing.
 ///
@@ -144,7 +165,8 @@ struct PartnerCertificate;
 /// scope the description an authorization server shows on its consent screen;
 /// a bare `"users:write"` names one with none. The scheme-level `scopes(..)`
 /// below is a different thing again — what this scheme demands by default
-/// rather than what the server publishes.
+/// rather than what the server publishes — and so takes values of its
+/// `scope = Grant` rather than strings.
 #[derive(SecurityScheme)]
 #[security(oauth2(authorization_code(
     authorization_url = "https://auth.example.com/authorize",
@@ -152,7 +174,7 @@ struct PartnerCertificate;
     refresh_url = "https://auth.example.com/token",
     scopes("users:read" = "Read a user's profile", "users:write"),
 ),))]
-#[security(name = "DelegatedAccess", scopes("users:read"))]
+#[security(name = "DelegatedAccess", scope = Grant, scopes(Grant::ReadUsers))]
 struct DelegatedAccess;
 
 /// An identity provider that publishes its own metadata.
@@ -226,7 +248,7 @@ impl<C: Sync> Authenticator<AccessToken, C> for Tokens {
     async fn authorize(
         &self,
         credential: &Claims,
-        scopes: &'static [&'static str],
+        scopes: &[Grant],
         context: &C,
     ) -> Result<(), AuthRejection> {
         let _ = context;
@@ -239,7 +261,7 @@ impl<C: Sync> Authenticator<AccessToken, C> for Tokens {
         // reading this one learns which refusal it met and what to do about it.
         if scopes
             .iter()
-            .all(|demanded| credential.scopes.iter().any(|held| held == demanded))
+            .all(|demanded| credential.scopes.iter().any(|held| held == demanded.name()))
         {
             Ok(())
         } else {
@@ -277,7 +299,7 @@ where
     async fn authorize(
         &self,
         credential: &S::Credential,
-        scopes: &'static [&'static str],
+        scopes: &[S::Scope],
         context: &C,
     ) -> Result<(), AuthRejection> {
         let _ = (credential, scopes, context);
@@ -409,7 +431,8 @@ async fn federated_me(auth: Auth<Federated>) -> NoContent {
 struct ReadReports;
 
 impl Scopes for ReadReports {
-    const SCOPES: &'static [&'static str] = &["reports:read"];
+    type Scope = Grant;
+    const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
 
     // The same URI `Tokens::authorize` refuses with, said once more where a
     // description can read it. `/reports` therefore declares a 403 publishing

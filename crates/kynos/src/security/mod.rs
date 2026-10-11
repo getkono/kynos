@@ -59,7 +59,7 @@ mod sealed {
 /// #     async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
 /// #         Err(AuthRejection::unauthenticated())
 /// #     }
-/// #     async fn authorize(&self, _: &String, _: &'static [&'static str], _: &C) -> Result<(), AuthRejection> {
+/// #     async fn authorize(&self, _: &String, _: &[kynos::security::Unscoped], _: &C) -> Result<(), AuthRejection> {
 /// #         Ok(())
 /// #     }
 /// # }
@@ -89,7 +89,7 @@ mod sealed {
 /// #     async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
 /// #         Err(AuthRejection::unauthenticated())
 /// #     }
-/// #     async fn authorize(&self, _: &String, _: &'static [&'static str], _: &C) -> Result<(), AuthRejection> {
+/// #     async fn authorize(&self, _: &String, _: &[kynos::security::Unscoped], _: &C) -> Result<(), AuthRejection> {
 /// #         Ok(())
 /// #     }
 /// # }
@@ -119,7 +119,7 @@ mod sealed {
 /// #     async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
 /// #         Err(AuthRejection::unauthenticated())
 /// #     }
-/// #     async fn authorize(&self, _: &String, _: &'static [&'static str], _: &C) -> Result<(), AuthRejection> {
+/// #     async fn authorize(&self, _: &String, _: &[kynos::security::Unscoped], _: &C) -> Result<(), AuthRejection> {
 /// #         Ok(())
 /// #     }
 /// # }
@@ -196,6 +196,7 @@ pub fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 /// # impl SecurityScheme for Bearer {
 /// #     const NAME: &'static str = "Bearer";
 /// #     type Credential = String;
+/// #     type Scope = kynos::security::Unscoped;
 /// #     fn describe() -> kynos::openapi::SecurityScheme {
 /// #         kynos::openapi::SecurityScheme::bearer(None)
 /// #     }
@@ -212,14 +213,26 @@ pub trait SecurityScheme: Send + Sync + 'static {
     /// What a successful authentication yields to the handler.
     type Credential: Send;
 
+    /// What one scope of this scheme is, as a value.
+    ///
+    /// Named once, here, so every [`Scopes`](auth::Scopes) set a
+    /// [`Scoped`](auth::Scoped) argument pairs with this scheme is checked
+    /// against it at compile time, and
+    /// [`Authenticator::authorize`] receives the demanded scopes as this type
+    /// rather than as strings to parse back. [`Unscoped`] where the scheme
+    /// demands none.
+    type Scope: Scope;
+
     /// The scheme's description.
     fn describe() -> kynos_openapi::SecurityScheme;
 
     /// The scopes this scheme requires by default.
     ///
-    /// Meaningful only for OAuth 2.0 and OpenID Connect.
+    /// Declared on every requirement naming the scheme. OAuth 2.0 and OpenID
+    /// Connect call them scopes; OpenAPI lets any other scheme list role names
+    /// here instead.
     #[must_use]
-    fn scopes() -> &'static [&'static str] {
+    fn scopes() -> &'static [Self::Scope] {
         &[]
     }
 
@@ -231,6 +244,54 @@ pub trait SecurityScheme: Send + Sync + 'static {
     #[must_use]
     fn challenge() -> Option<&'static str> {
         None
+    }
+}
+
+/// One scope a [`SecurityScheme`] can demand, as a value.
+///
+/// A scheme names its scope type once, as
+/// [`SecurityScheme::Scope`], and a [`Scoped`](auth::Scoped) argument pairing
+/// it with a [`Scopes`](auth::Scopes) set of another type does not compile. A
+/// misspelt scope is an unknown variant rather than a string no authorizer
+/// recognises; [`name`](Scope::name) is the one place it becomes a string,
+/// for the description and for comparing against what a token carries.
+///
+/// ```
+/// use kynos::security::Scope;
+///
+/// #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// enum Grant {
+///     ReadReports,
+///     Admin,
+/// }
+///
+/// impl Scope for Grant {
+///     fn name(&self) -> &'static str {
+///         match self {
+///             Self::ReadReports => "reports:read",
+///             Self::Admin => "admin",
+///         }
+///     }
+/// }
+///
+/// assert_eq!(Grant::ReadReports.name(), "reports:read");
+/// ```
+pub trait Scope: Send + Sync + 'static {
+    /// The scope as a description and a token spell it.
+    fn name(&self) -> &'static str;
+}
+
+/// The [`Scope`] of a scheme that demands none.
+///
+/// Uninhabited, so a scope set over it is empty and a scheme declaring it has
+/// no scope to name. The scope type of [`schemes`]' built-ins by default, and
+/// of a derived scheme that names no `scope = Type`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Unscoped {}
+
+impl Scope for Unscoped {
+    fn name(&self) -> &'static str {
+        match *self {}
     }
 }
 
@@ -270,13 +331,17 @@ pub trait Authenticator<S: carrier::Carries, C: Sync>: Send + Sync + 'static {
 
     /// Checks that an authenticated credential has every requested scope.
     ///
+    /// `scopes` are the scheme's own [`Scope`](SecurityScheme::Scope) values,
+    /// so a scope this method does not handle is a non-exhaustive `match`
+    /// rather than a string it silently skips.
+    ///
     /// A refusal is [`AuthRejection::forbidden`], or
     /// [`AuthRejection::forbidden_as`] where the application has a problem type
     /// for the rule that refused.
     fn authorize(
         &self,
         credential: &S::Credential,
-        scopes: &'static [&'static str],
+        scopes: &[S::Scope],
         context: &C,
     ) -> impl Future<Output = Result<(), AuthRejection>> + Send;
 }

@@ -1352,8 +1352,8 @@ struct Claims;
 /// which is the whole reason `FORBIDDEN_TYPE` is a const on the scope set.
 struct Tokens;
 
-impl<C: Sync> kynos::security::Authenticator<kynos::security::schemes::Bearer<Claims>, C>
-    for Tokens
+impl<C: Sync, P: kynos::security::Scope>
+    kynos::security::Authenticator<kynos::security::schemes::Bearer<Claims, P>, C> for Tokens
 {
     async fn authenticate(
         &self,
@@ -1367,7 +1367,7 @@ impl<C: Sync> kynos::security::Authenticator<kynos::security::schemes::Bearer<Cl
     async fn authorize(
         &self,
         credential: &Claims,
-        scopes: &'static [&'static str],
+        scopes: &[P],
         context: &C,
     ) -> Result<(), kynos::error::rejection::AuthRejection> {
         let _ = (credential, scopes, context);
@@ -1380,7 +1380,9 @@ impl<C: Sync> kynos::security::Authenticator<kynos::security::schemes::Bearer<Cl
 /// The application context the guarded operations below describe against.
 struct Guarded;
 
-impl kynos::security::Authenticates<kynos::security::schemes::Bearer<Claims>> for Guarded {
+impl<P: kynos::security::Scope>
+    kynos::security::Authenticates<kynos::security::schemes::Bearer<Claims, P>> for Guarded
+{
     type Authenticator = Tokens;
 
     fn authenticator(&self) -> &Self::Authenticator {
@@ -1391,11 +1393,31 @@ impl kynos::security::Authenticates<kynos::security::schemes::Bearer<Claims>> fo
 /// The refusal `Staff` names, and the one `Tokens` publishes.
 const INSUFFICIENT_SCOPE: &str = "https://errors.example.com/insufficient-scope";
 
+/// The scopes the operations below demand.
+#[derive(Clone, Copy)]
+enum Grant {
+    Admin,
+    ReadReports,
+}
+
+impl kynos::security::Scope for Grant {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Admin => "admin",
+            Self::ReadReports => "reports:read",
+        }
+    }
+}
+
+/// A bearer token whose operations may demand a `Grant`.
+type Granted = kynos::security::schemes::Bearer<Claims, Grant>;
+
 /// A scope set that names the refusal it can produce.
 struct Staff;
 
 impl kynos::security::auth::Scopes for Staff {
-    const SCOPES: &'static [&'static str] = &["admin"];
+    type Scope = Grant;
+    const REQUIRED: &'static [Grant] = &[Grant::Admin];
     const FORBIDDEN_TYPE: Option<&'static str> = Some(INSUFFICIENT_SCOPE);
 }
 
@@ -1404,21 +1426,18 @@ impl kynos::security::auth::Scopes for Staff {
 struct ReadReports;
 
 impl kynos::security::auth::Scopes for ReadReports {
-    const SCOPES: &'static [&'static str] = &["reports:read"];
+    type Scope = Grant;
+    const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
 }
 
 #[kynos::get("/admin/audit")]
-async fn audit(
-    caller: kynos::security::auth::Scoped<kynos::security::schemes::Bearer<Claims>, Staff>,
-) -> NoContent {
+async fn audit(caller: kynos::security::auth::Scoped<Granted, Staff>) -> NoContent {
     let _ = caller.into_inner();
     NoContent
 }
 
 #[kynos::get("/reports")]
-async fn reports(
-    caller: kynos::security::auth::Scoped<kynos::security::schemes::Bearer<Claims>, ReadReports>,
-) -> NoContent {
+async fn reports(caller: kynos::security::auth::Scoped<Granted, ReadReports>) -> NoContent {
     let _ = caller.into_inner();
     NoContent
 }
@@ -1456,7 +1475,7 @@ async fn audited_review(
 
 #[kynos::get("/admin/sealed")]
 async fn sealed(
-    caller: kynos::security::auth::Scoped<kynos::security::schemes::Bearer<Claims>, Staff>,
+    caller: kynos::security::auth::Scoped<Granted, Staff>,
 ) -> Result<NoContent, AuditError> {
     let _ = caller.into_inner();
     Err(AuditError::Sealed)

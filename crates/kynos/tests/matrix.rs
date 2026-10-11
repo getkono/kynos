@@ -53,7 +53,7 @@ use kynos::{
     },
     router::operation::Route,
     security::{
-        Authenticates, Authenticator,
+        Authenticates, Authenticator, Scope,
         auth::{Auth, MaybeAuth, Scoped, Scopes},
         carrier::{ApiKey, BearerToken},
         requirement::{AllOf, AnyOf, Either2},
@@ -162,11 +162,26 @@ const INSUFFICIENT_SCOPE: &str = "https://example.test/problems/insufficient-sco
 struct ReadReports;
 
 impl Scopes for ReadReports {
-    const SCOPES: &'static [&'static str] = &["reports:read"];
+    type Scope = Grant;
+    const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
     const FORBIDDEN_TYPE: Option<&'static str> = Some(INSUFFICIENT_SCOPE);
 }
 
-impl<C: Sync> Authenticator<Bearer<Caller>, C> for Tokens {
+/// The scopes an operation here may demand of a bearer token.
+#[derive(Clone, Copy)]
+enum Grant {
+    ReadReports,
+}
+
+impl Scope for Grant {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::ReadReports => "reports:read",
+        }
+    }
+}
+
+impl<C: Sync, P: Scope> Authenticator<Bearer<Caller, P>, C> for Tokens {
     async fn authenticate(&self, presented: BearerToken, _: &C) -> Result<Caller, AuthRejection> {
         // No `strip_prefix("Bearer ")` here, and that is the point: the scheme
         // said where its credential travels, so this only says what the token
@@ -198,12 +213,7 @@ impl<C: Sync> Authenticator<Bearer<Caller>, C> for Tokens {
     /// refuses one caller with each. `assert_conformance` checks both bodies
     /// against that one entry, so a declaration narrowed to either alone fails
     /// against the other.
-    async fn authorize(
-        &self,
-        credential: &Caller,
-        _: &'static [&'static str],
-        _: &C,
-    ) -> Result<(), AuthRejection> {
+    async fn authorize(&self, credential: &Caller, _: &[P], _: &C) -> Result<(), AuthRejection> {
         match credential.subject.as_str() {
             "user-unscoped" => Err(AuthRejection::forbidden_as(INSUFFICIENT_SCOPE)),
             "user-denied" => Err(AuthRejection::forbidden()),
@@ -215,7 +225,7 @@ impl<C: Sync> Authenticator<Bearer<Caller>, C> for Tokens {
 /// The application context.
 struct App;
 
-impl Authenticates<Bearer<Caller>> for App {
+impl<P: Scope> Authenticates<Bearer<Caller, P>> for App {
     type Authenticator = Tokens;
 
     fn authenticator(&self) -> &Self::Authenticator {
@@ -263,7 +273,7 @@ impl<C: Sync> Authenticator<ServiceKey, C> for Keys {
     async fn authorize(
         &self,
         _: &Caller,
-        _: &'static [&'static str],
+        _: &[kynos::security::Unscoped],
         _: &C,
     ) -> Result<(), AuthRejection> {
         Ok(())
@@ -408,7 +418,7 @@ async fn feed(caller: MaybeAuth<Bearer<Caller>>) -> Json<User> {
 /// what a description assembled from types can read of a URI an authorizer
 /// chooses at run time.
 #[kynos::get("/reports")]
-async fn reports(caller: Scoped<Bearer<Caller>, ReadReports>) -> Json<User> {
+async fn reports(caller: Scoped<Bearer<Caller, Grant>, ReadReports>) -> Json<User> {
     Json(User {
         id: 4,
         name: caller.into_inner().subject,

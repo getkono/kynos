@@ -23,9 +23,9 @@
 //!         | device_authorization( device_authorization_url = "..", token_url = "..",
 //!                                 [refresh_url = ".."], [scopes(..)] )   // 3.2
 //!
-//! option := name = "<ComponentName>" | credential = <Type>
+//! option := name = "<ComponentName>" | credential = <Type> | scope = <Type>
 //!         | description = "<CommonMark>" | challenge = "<WWW-Authenticate>"
-//!         | scopes("a", "b") | deprecated | carrier = manual | carrier = optional
+//!         | scopes(<expr>, ..) | deprecated | carrier = manual | carrier = optional
 //! ```
 //!
 //! The kind writes both `describe` and `Carries`, so the documented and the
@@ -33,12 +33,14 @@
 //! `carrier = optional` presents `Option<_>`, so an absent credential reaches
 //! the authenticator rather than answering `Ok(None)`.
 //!
-//! A flow's `scopes` takes `"a"` or `"a" = "Read a"`; the scheme-level
-//! `scopes(..)` is what an operation demands, and takes names only.
+//! A flow's `scopes` takes `"a"` or `"a" = "Read a"`, the strings an
+//! authorization server publishes. The scheme-level `scopes(..)` is what an
+//! operation demands, and takes values of `scope = Type`, which is
+//! `Unscoped` when omitted; a value of any other type fails to typecheck.
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{DeriveInput, Ident, LitStr, Token, Type, parse_macro_input, parse_quote};
+use syn::{DeriveInput, Expr, Ident, LitStr, Token, Type, parse_macro_input, parse_quote};
 
 use crate::derive::common::{doc_string, non_token_message, skip_value, unit_struct};
 
@@ -131,12 +133,15 @@ struct SchemeArgs {
     kind: Option<Ident>,
     name: Option<LitStr>,
     credential: Option<Type>,
+    /// `scope = Type`: the scheme's `SecurityScheme::Scope`.
+    scope: Option<Type>,
     challenge: Option<LitStr>,
     description: Option<LitStr>,
     deprecated: bool,
     /// What `carrier = ...` said, if it was written.
     carrier: Option<Carrier>,
-    scopes: Vec<LitStr>,
+    /// The scheme-level `scopes(..)`: values of `scope`.
+    scopes: Vec<Expr>,
     nested: Nested,
 }
 
@@ -194,11 +199,14 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let scopes = (!args.scopes.is_empty()).then(|| {
         let scopes = &args.scopes;
         quote! {
-            fn scopes() -> &'static [&'static str] {
+            fn scopes() -> &'static [Self::Scope] {
                 &[#(#scopes),*]
             }
         }
     });
+    let scope: Type = args
+        .scope
+        .unwrap_or_else(|| parse_quote!(::kynos::security::Unscoped));
 
     let declared = args
         .name
@@ -242,6 +250,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
             const NAME: &'static str = #declared;
 
             type Credential = #credential;
+
+            type Scope = #scope;
 
             fn describe() -> ::kynos::openapi::SecurityScheme {
                 #description
@@ -501,6 +511,7 @@ fn parse_args(input: &DeriveInput) -> syn::Result<SchemeArgs> {
             match key.to_string().as_str() {
                 "name" => args.name = Some(meta.value()?.parse()?),
                 "credential" => args.credential = Some(meta.value()?.parse()?),
+                "scope" => args.scope = Some(meta.value()?.parse()?),
                 "challenge" => args.challenge = Some(meta.value()?.parse()?),
                 "description" => args.description = Some(meta.value()?.parse()?),
                 // A 3.2-only key is refused under 3.1 rather than dropped.
@@ -538,8 +549,7 @@ fn parse_args(input: &DeriveInput) -> syn::Result<SchemeArgs> {
                     let content;
                     syn::parenthesized!(content in meta.input);
                     args.scopes.extend(
-                        content
-                            .parse_terminated(<LitStr as syn::parse::Parse>::parse, Token![,])?,
+                        content.parse_terminated(<Expr as syn::parse::Parse>::parse, Token![,])?,
                     );
                 }
                 kind if is_kind(kind) => {

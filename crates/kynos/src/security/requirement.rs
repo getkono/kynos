@@ -23,7 +23,7 @@ use crate::{
     error::rejection::AuthRejection,
     http::Parts,
     router::operation::OperationCx,
-    security::{Authenticates, Authenticator, SecurityScheme, carrier::Carries},
+    security::{Authenticates, Authenticator, Scope, SecurityScheme, carrier::Carries},
 };
 
 /// What closes the set of requirements.
@@ -78,7 +78,7 @@ impl<S: SecurityScheme> Requirement for S {
     }
 
     fn declare(operation: &mut OperationCx<'_>) -> Vec<SecurityRequirement> {
-        vec![require::<S>(operation, S::scopes().to_vec())]
+        vec![require::<S>(operation, defaults::<S>())]
     }
 }
 
@@ -197,7 +197,7 @@ macro_rules! any_of {
                 // Two schemes registered under one key are one alternative.
                 let mut alternatives = Vec::new();
                 $(
-                    let requirement = require::<$scheme>(operation, $scheme::scopes().to_vec());
+                    let requirement = require::<$scheme>(operation, defaults::<$scheme>());
                     if !alternatives.contains(&requirement) {
                         alternatives.push(requirement);
                     }
@@ -248,7 +248,7 @@ macro_rules! all_of {
                 $(
                     together
                         .0
-                        .extend(require::<$scheme>(operation, $scheme::scopes().to_vec()).0);
+                        .extend(require::<$scheme>(operation, defaults::<$scheme>()).0);
                 )+
                 vec![together]
             }
@@ -305,6 +305,11 @@ pub(crate) fn require<S: SecurityScheme>(
     let requirement = SecurityRequirement::scoped(name.as_str(), scopes);
     operation.add_security_scheme(name, S::describe());
     requirement
+}
+
+/// The names of the scopes scheme `S` demands by default.
+pub(crate) fn defaults<S: SecurityScheme>() -> Vec<&'static str> {
+    S::scopes().iter().map(Scope::name).collect()
 }
 
 /// The component key scheme `S` is both registered and required under.

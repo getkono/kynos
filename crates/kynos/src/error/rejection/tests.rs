@@ -952,8 +952,10 @@ fn a_scope_set_that_names_its_refusal_narrows_the_403_to_a_choice() {
     /// Names one.
     struct Named;
 
+    // The scopes themselves are not what a rejection describes.
     impl crate::security::auth::Scopes for Named {
-        const SCOPES: &'static [&'static str] = &["reports:read"];
+        type Scope = crate::security::Unscoped;
+        const REQUIRED: &'static [Self::Scope] = &[];
         const FORBIDDEN_TYPE: Option<&'static str> = Some("https://errors.example.com/no-scope");
     }
 
@@ -961,7 +963,8 @@ fn a_scope_set_that_names_its_refusal_narrows_the_403_to_a_choice() {
     struct Unnamed;
 
     impl crate::security::auth::Scopes for Unnamed {
-        const SCOPES: &'static [&'static str] = &["reports:read"];
+        type Scope = crate::security::Unscoped;
+        const REQUIRED: &'static [Self::Scope] = &[];
     }
 
     let mut registry = crate::schema::registry::Registry::new();
