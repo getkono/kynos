@@ -90,7 +90,7 @@ feature. It serves the route and gets no `paths` entry, recording it under
 | [`Router::intercept`](../crates/kynos/src/router/mod.rs) | every operation in the router | every one of their descriptions |
 | `routes![op.intercept(..)]` | that one operation | its description alone |
 | [`Router::observe`](../crates/kynos/src/router/mod.rs) | every operation in the router | nothing — observers change nothing |
-| [`Router::docs`](../crates/kynos/src/router/docs/) | two operations, at the paths the `Docs` names | two `paths` entries, rendered from the very document that describes them |
+| [`Router::docs`](../crates/kynos/src/router/docs/) | two operations, at the paths the `Docs` names — one, the description, for `Docs::description_only` | one `paths` entry per operation, rendered from the very document that describes them |
 
 A route attribute also emits `relative_uri`, taking exactly the path and query
 types that route extracts — so a link that no longer matches its target is a
@@ -149,7 +149,7 @@ nothing there for a caller to reach into.
 ### The description a router serves is the one it emits
 
 `Router::docs` is the only mount whose *payload* is the document. The bytes
-cannot exist before `build`, because the two operations it registers are in the
+cannot exist before `build`, because the operations it registers are in the
 document they serve — and the page's pointer cannot be settled earlier either,
 since a `nest` prefix is applied while the outer router is built, after the
 `Docs` value was constructed. Both halves are therefore rendered at `build`,
@@ -159,7 +159,15 @@ page's link true of the path the route actually got.
 It follows rule 11 rather than bending it: what is served is `openapi`'s own
 output, not a document patched on the way past.
 
-The two routes are not hidden from `paths`, though that widens the published
+That is also why a service no browser reads mounts `Docs::description_only()`
+rather than serving the document from a handler of its own: the handler's bytes
+are a second rendering, and the description it serves cannot describe the
+handler's own route as `build` does. The page half — its template, its policy
+and the CDN it loads from — is then never mounted, described or rendered, and
+`at` and `title` do not exist on that `Docs`, so a page setting cannot be
+written where there is no page.
+
+The routes are not hidden from `paths`, though that widens the published
 contract. A described route missing from the document is what the conformance
 harness catches, and hiding one through `unchecked` would stamp the whole
 document non-authoritative.
