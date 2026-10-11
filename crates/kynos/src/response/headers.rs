@@ -1,5 +1,7 @@
 //! Declaring response headers as part of the return type.
 
+use kynos_openapi::{Header, Map, RefOr};
+
 use crate::{
     extract::params::header::{EncodeHeaders, HeaderParams},
     http::Response,
@@ -11,6 +13,12 @@ use crate::{
 ///
 /// `H` derives `HeaderParams`, so each header appears in `Response.headers` with
 /// own schema.
+///
+/// The headers are declared on every response `T` describes, so this suits a
+/// group every status sends. A header only one failure sends, such as
+/// `Retry-After` on a 429, belongs on that failure's field as
+/// `#[problem(headers)]`, which `#[derive(ApiError)]` declares under that
+/// failure's status alone.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WithHeaders<T, H> {
     /// The response body.
@@ -76,6 +84,81 @@ where
         }
 
         responses
+    }
+}
+
+/// The headers `H` declares on a response, or none where
+/// [`DESCRIBED`](HeaderParams::DESCRIBED) is `false`.
+pub(crate) fn described<H: HeaderParams>(registry: &mut Registry) -> Map<RefOr<Header>> {
+    if H::DESCRIBED {
+        H::response_headers(registry)
+    } else {
+        Map::new()
+    }
+}
+
+/// Declares on `response` the headers its failures send, one group per
+/// failure answering with its status, an empty one where a failure sends none.
+///
+/// A header is `required` only where every group requires it; the first group
+/// naming it, compared case-insensitively as RFC 9110 section 5.1 compares
+/// field names, describes it.
+pub(crate) fn declare_per_failure(
+    response: &mut kynos_openapi::Response,
+    groups: &[Map<RefOr<Header>>],
+) {
+    for (index, group) in groups.iter().enumerate() {
+        for (name, header) in group {
+            let names = |other: &Map<RefOr<Header>>| {
+                other.keys().any(|other| other.eq_ignore_ascii_case(name))
+            };
+            if groups[..index].iter().any(names) {
+                continue;
+            }
+
+            let requires = |other: &Map<RefOr<Header>>| {
+                other.iter().any(|(other, header)| {
+                    other.eq_ignore_ascii_case(name)
+                        && matches!(header, RefOr::Item(header) if header.required == Some(true))
+                })
+            };
+            let mut header = header.clone();
+            if let RefOr::Item(header) = &mut header {
+                if !groups.iter().all(requires) {
+                    header.required = None;
+                }
+            }
+            response.headers.insert(name.clone(), header);
+        }
+    }
+}
+
+/// [`Responses::union_from`](kynos_openapi::Responses::union_from), the
+/// headers of a status both sides declare unioned as [`declare_per_failure`]
+/// unions one status's groups, rather than the incoming side's dropped.
+pub(crate) fn union_from(
+    responses: &mut kynos_openapi::Responses,
+    held: &kynos_openapi::Responses,
+) {
+    // Each status both declare, with the headers this side declared on it.
+    let shared: Vec<(String, Map<RefOr<Header>>)> = held
+        .responses
+        .keys()
+        .filter_map(|key| match responses.responses.get(key) {
+            Some(RefOr::Item(response)) => Some((key.clone(), response.headers.clone())),
+            _ => None,
+        })
+        .collect();
+
+    responses.union_from(held);
+
+    for (key, declared) in shared {
+        if let (Some(RefOr::Item(response)), Some(RefOr::Item(incoming))) =
+            (responses.responses.get_mut(&key), held.responses.get(&key))
+        {
+            response.headers.clear();
+            declare_per_failure(response, &[declared, incoming.headers.clone()]);
+        }
     }
 }
 

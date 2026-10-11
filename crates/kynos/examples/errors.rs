@@ -7,7 +7,7 @@
 //! Five things are worth noticing, because together they are the whole error
 //! model:
 //!
-//! * **Nothing lists the statuses.** `StoreError` says 404, 409 and 507 by
+//! * **Nothing lists the statuses.** `StoreError` says 404, 409, 429 and 507 by
 //!   deriving them, and 422 by holding `Invalid`, a failure declared once for
 //!   every operation that can meet it; `Path<UserPath>` says 400 by being
 //!   fallible; the operation's `responses` is the union. There is no
@@ -109,6 +109,14 @@ struct Invalid {
     field: &'static str,
 }
 
+/// How long a client should wait before trying again.
+#[derive(Debug, HeaderParams)]
+struct RetryAfter {
+    /// Seconds until the store accepts writes again.
+    #[header(rename = "Retry-After")]
+    retry_after: u64,
+}
+
 /// What the API says when the store cannot do what was asked.
 ///
 /// One variant per failure a consumer should be able to tell apart. The
@@ -157,6 +165,15 @@ enum StoreError {
         /// Not published. A field is on the wire only when it says so, since a
         /// variant carries whatever the error site had to hand.
         shard: String,
+    },
+
+    /// Sends `Retry-After`, which the description declares on the 429 alone:
+    /// no other status sends it, so no other status says it might.
+    #[error("the store is busy; retry in {}s", retry.retry_after)]
+    #[problem(status = 429, title = "Store busy")]
+    Busy {
+        #[problem(headers)]
+        retry: RetryAfter,
     },
 }
 
@@ -255,6 +272,12 @@ fn insert(user: User) -> Result<User, StoreError> {
         return Err(StoreError::EmailTaken);
     }
 
+    if user.id == 1 {
+        return Err(StoreError::Busy {
+            retry: RetryAfter { retry_after: 5 },
+        });
+    }
+
     Err(StoreError::OverQuota {
         limit: 10_000,
         shard: "eu-west-1".to_owned(),
@@ -275,9 +298,9 @@ async fn main() -> kynos::Result<()> {
         .mount(kynos::routes![get_user, list_users, create_user]);
 
     // Every status any of this can answer with is in here, and none of them was
-    // written down twice: 404, 409, 422 and 507 from `StoreError`, 400 from the
-    // fallible extractors, 503 from the interceptor, and 500 from the recovery
-    // boundary on `list_users`.
+    // written down twice: 404, 409, 422, 429 and 507 from `StoreError`, 400
+    // from the fallible extractors, 503 from the interceptor, and 500 from the
+    // recovery boundary on `list_users`.
     let document = router.openapi()?;
     println!("{}", document.to_json()?);
 

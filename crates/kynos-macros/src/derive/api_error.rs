@@ -5,6 +5,7 @@
 //! #[problem( <member> [, <member>]* )]             on each variant, or on a struct
 //! #[problem(transparent)]                          on a one-field variant, instead
 //! #[problem(extension)]                            on a named field, optional
+//! #[problem(headers)]                              on one field, optional
 //!
 //! prefix := "<URI prefix>"
 //!         | <path to a `const` of type `&str`>
@@ -18,9 +19,14 @@
 //! its own `type` hangs its slug under; a literal is joined here, a `const`
 //! in the expansion's own `const` items. `detail` comes from `Display`.
 //!
+//! A `headers` field holds a header group, its type implementing
+//! `EncodeHeaders`: `into_response` writes it onto that failure's problem, and
+//! `Responses` declares it under that failure's status alone.
+//!
 //! A transparent variant answers as the `ApiError` it holds: its problem is
 //! that type's, and its statuses and responses join the enum's, the statuses
-//! in `const` items of the expansion's own.
+//! in `const` items of the expansion's own. Its response is that type's too,
+//! so the headers the held error sends reach the wire.
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2, TokenTree};
@@ -85,6 +91,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
     };
 
     let problem = into_problem(&failures, &delegates);
+    let response = into_response(&failures, &delegates);
     let responses = responses(&failures, &statuses, &delegates);
 
     // `Responses` and `into_problem` come from the same declarations.
@@ -119,9 +126,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
 
         impl #impl_generics ::kynos::response::IntoResponse for #name #ty_generics #where_clause {
             fn into_response(self) -> ::kynos::http::Response {
-                ::kynos::response::IntoResponse::into_response(
-                    ::kynos::error::problem::IntoProblem::into_problem(self),
-                )
+                #response
             }
         }
 
@@ -198,13 +203,15 @@ fn codes(outcomes: &[Outcome], statuses: &[u16]) -> TokenStream2 {
 
 /// One way the type can fail: a pattern that matches it, and what it says.
 struct Failure {
-    /// The pattern `into_problem` matches this failure with, already carrying
-    /// bindings for every published extension member.
-    pattern: TokenStream2,
+    /// `Self::Variant`, or `Self` for a struct.
+    path: TokenStream2,
 
     /// The extension members, as the name each is published under and the
-    /// binding the pattern gave it.
+    /// binding the pattern gives it.
     extensions: Vec<(String, Ident)>,
+
+    /// The `#[problem(headers)]` field, if this failure sends a header group.
+    headers: Option<Box<HeaderField>>,
 
     status: u16,
     type_uri: Option<TypeUri>,
@@ -214,41 +221,44 @@ struct Failure {
     doc: Option<String>,
 }
 
+/// A `#[problem(headers)]` field: where the group sits, and its type.
+struct HeaderField {
+    member: Member,
+    ty: Type,
+}
+
+/// What `into_response` binds a failure's header group to.
+const HEADERS_BINDING: &str = "__kynos_problem_headers";
+
+impl Failure {
+    /// The pattern binding every published extension member.
+    fn pattern(&self) -> TokenStream2 {
+        let path = &self.path;
+        let bindings = self.extensions.iter().map(|(_, binding)| binding);
+        quote!(#path { #(#bindings,)* .. })
+    }
+
+    /// [`pattern`](Self::pattern), binding the header group too.
+    fn response_pattern(&self) -> TokenStream2 {
+        let path = &self.path;
+        let bindings = self.extensions.iter().map(|(_, binding)| binding);
+        let headers = self.headers.as_ref().map(|field| {
+            let member = &field.member;
+            let binding = Ident::new(HEADERS_BINDING, Span::call_site());
+            quote!(#member: #binding,)
+        });
+        quote!(#path { #(#bindings,)* #headers .. })
+    }
+}
+
 /// The `into_problem` body; `detail` is taken from `Display` before the
 /// extension members are moved out, and only where this type declares the
 /// failure, since a transparent variant's problem is its field's.
 fn into_problem(failures: &[&Failure], delegates: &[&Transparent]) -> TokenStream2 {
     let arms = failures.iter().map(|failure| {
-        let pattern = &failure.pattern;
-        let status = failure.status;
-
-        let with_type = failure
-            .type_uri
-            .as_ref()
-            .map(|uri| quote!(problem.type_uri = ::std::borrow::Cow::Borrowed(#uri);));
-        let with_title = failure
-            .title
-            .as_ref()
-            .map(|title| quote!(problem.title = ::std::borrow::Cow::Borrowed(#title);));
-        let with_extensions = failure
-            .extensions
-            .iter()
-            .map(|(name, binding)| quote!(problem = problem.with_extension(#name, #binding);));
-
-        quote! {
-            #pattern => {
-                let status = ::kynos::http::StatusCode::from_u16(#status)
-                    .expect("the derive checked this code");
-                // `new` titles it with the reason phrase, as RFC 9457 asks of
-                // `about:blank`.
-                let mut problem = ::kynos::Problem::new(status);
-                #with_type
-                #with_title
-                problem.detail = detail;
-                #(#with_extensions)*
-                problem
-            }
-        }
+        let pattern = failure.pattern();
+        let problem = problem(failure);
+        quote!(#pattern => #problem)
     });
 
     let handed_over = delegates.iter().map(|delegate| {
@@ -262,8 +272,80 @@ fn into_problem(failures: &[&Failure], delegates: &[&Transparent]) -> TokenStrea
         }
     });
 
-    // Rendered only where a declared arm reads it.
-    let detail = if failures.is_empty() {
+    let detail = detail(failures, delegates);
+
+    quote! {
+        #detail
+        match self {
+            #(#arms)*
+            #(#handed_over)*
+        }
+    }
+}
+
+/// The `into_response` body: the problem rendered, then the failure's header
+/// group written onto it, and a transparent variant answering as its field
+/// answers, so the headers that error sends are sent.
+///
+/// Where nothing sends a header group, the problem rendered alone.
+fn into_response(failures: &[&Failure], delegates: &[&Transparent]) -> TokenStream2 {
+    if delegates.is_empty() && failures.iter().all(|failure| failure.headers.is_none()) {
+        return quote! {
+            ::kynos::response::IntoResponse::into_response(
+                ::kynos::error::problem::IntoProblem::into_problem(self),
+            )
+        };
+    }
+
+    let arms = failures.iter().map(|failure| {
+        let problem = problem(failure);
+        let Some(field) = &failure.headers else {
+            let pattern = failure.pattern();
+            return quote! {
+                #pattern => ::kynos::response::IntoResponse::into_response(#problem),
+            };
+        };
+
+        let pattern = failure.response_pattern();
+        let ty = &field.ty;
+        let binding = Ident::new(HEADERS_BINDING, Span::call_site());
+        // Spanned to the field, so a type that is no header group is reported
+        // where it is named.
+        let write = quote_spanned!(ty.span()=> ::kynos::__private::problem::write_headers::<#ty>);
+        quote! {
+            #pattern => {
+                let mut response = ::kynos::response::IntoResponse::into_response(#problem);
+                #write(&mut response, &#binding);
+                response
+            }
+        }
+    });
+
+    let handed_over = delegates.iter().map(|delegate| {
+        let variant = &delegate.variant;
+        let member = &delegate.member;
+        let ty = &delegate.ty;
+        let delegate =
+            quote_spanned!(ty.span()=> <#ty as ::kynos::response::IntoResponse>::into_response);
+        quote! {
+            Self::#variant { #member: inner } => #delegate(inner),
+        }
+    });
+
+    let detail = detail(failures, delegates);
+
+    quote! {
+        #detail
+        match self {
+            #(#arms)*
+            #(#handed_over)*
+        }
+    }
+}
+
+/// The `let detail` an arm of [`problem`] reads, rendered only where one does.
+fn detail(failures: &[&Failure], delegates: &[&Transparent]) -> TokenStream2 {
+    if failures.is_empty() {
         TokenStream2::new()
     } else if delegates.is_empty() {
         quote! {
@@ -278,15 +360,39 @@ fn into_problem(failures: &[&Failure], delegates: &[&Transparent]) -> TokenStrea
                 ::core::option::Option::Some(::std::string::ToString::to_string(&self))
             };
         }
-    };
-
-    quote! {
-        #detail
-        match self {
-            #(#arms)*
-            #(#handed_over)*
-        }
     }
+}
+
+/// The block building one declared failure's problem, from `detail` and the
+/// extension members its pattern bound.
+fn problem(failure: &Failure) -> TokenStream2 {
+    let status = failure.status;
+
+    let with_type = failure
+        .type_uri
+        .as_ref()
+        .map(|uri| quote!(problem.type_uri = ::std::borrow::Cow::Borrowed(#uri);));
+    let with_title = failure
+        .title
+        .as_ref()
+        .map(|title| quote!(problem.title = ::std::borrow::Cow::Borrowed(#title);));
+    let with_extensions = failure
+        .extensions
+        .iter()
+        .map(|(name, binding)| quote!(problem = problem.with_extension(#name, #binding);));
+
+    quote! {{
+        let status = ::kynos::http::StatusCode::from_u16(#status)
+            .expect("the derive checked this code");
+        // `new` titles it with the reason phrase, as RFC 9457 asks of
+        // `about:blank`.
+        let mut problem = ::kynos::Problem::new(status);
+        #with_type
+        #with_title
+        problem.detail = detail;
+        #(#with_extensions)*
+        problem
+    }}
 }
 
 /// The `responses` body: one response per distinct status, over the `Problem`
@@ -296,27 +402,50 @@ fn into_problem(failures: &[&Failure], delegates: &[&Transparent]) -> TokenStrea
 fn responses(failures: &[&Failure], statuses: &[u16], delegates: &[&Transparent]) -> TokenStream2 {
     let entries = statuses.iter().map(|status| {
         // Every failure declaring this status, in declaration order.
-        let branches = failures
+        let declaring: Vec<&&Failure> = failures
             .iter()
             .filter(|failure| failure.status == *status)
-            .map(|failure| {
-                let uri = optional(failure.type_uri.as_ref());
-                let summary = optional(failure.title.as_deref().or(failure.doc.as_deref()));
-                quote!((#uri, #summary))
-            });
+            .collect();
+        let branches = declaring.iter().map(|failure| {
+            let uri = optional(failure.type_uri.as_ref());
+            let summary = optional(failure.title.as_deref().or(failure.doc.as_deref()));
+            quote!((#uri, #summary))
+        });
+        let response =
+            quote!(::kynos::__private::problem::response(&schema, #status, &[#(#branches),*]));
+
+        if declaring.iter().all(|failure| failure.headers.is_none()) {
+            return quote! {
+                responses = responses.with(#status, #response);
+            };
+        }
+
+        // One group per failure, `()` where it sends none, so a header only
+        // some of them send is declared without being required.
+        let groups = declaring.iter().map(|failure| {
+            failure.headers.as_ref().map_or_else(
+                || quote!(::kynos::__private::problem::headers::<()>(registry)),
+                |field| {
+                    let ty = &field.ty;
+                    quote_spanned!(ty.span()=> ::kynos::__private::problem::headers::<#ty>(registry))
+                },
+            )
+        });
 
         quote! {
-            responses = responses.with(
-                #status,
-                ::kynos::__private::problem::response(&schema, #status, &[#(#branches),*]),
-            );
+            responses = responses.with(#status, {
+                let mut response = #response;
+                ::kynos::__private::problem::declare_headers(&mut response, &[#(#groups),*]);
+                response
+            });
         }
     });
 
     let handed_over = delegates.iter().map(|delegate| {
         let ty = &delegate.ty;
         quote_spanned! {ty.span()=>
-            responses.union_from(
+            ::kynos::__private::problem::union_responses(
+                &mut responses,
                 &<#ty as ::kynos::response::Responses>::responses(registry),
             );
         }
@@ -398,13 +527,12 @@ fn outcomes(input: &DeriveInput) -> syn::Result<Vec<Outcome>> {
                         ));
                     };
 
-                    let extensions = extensions(&variant.fields);
-                    let bindings = extensions.iter().map(|(_, binding)| binding);
                     let name = &variant.ident;
 
                     Ok(Outcome::Declared(Failure {
-                        pattern: quote!(Self::#name { #(#bindings,)* .. }),
-                        extensions,
+                        path: quote!(Self::#name),
+                        extensions: extensions(&variant.fields),
+                        headers: header_field(&variant.fields)?,
                         status,
                         type_uri: type_uri(&args, base.as_ref(), &variant.ident),
                         title: args.title,
@@ -426,12 +554,10 @@ fn outcomes(input: &DeriveInput) -> syn::Result<Vec<Outcome>> {
                 ));
             };
 
-            let extensions = extensions(&data.fields);
-            let bindings = extensions.iter().map(|(_, binding)| binding);
-
             Ok(vec![Outcome::Declared(Failure {
-                pattern: quote!(Self { #(#bindings,)* .. }),
-                extensions,
+                path: quote!(Self),
+                extensions: extensions(&data.fields),
+                headers: header_field(&data.fields)?,
                 status,
                 type_uri: type_uri(&args, base.as_ref(), &input.ident),
                 title: args.title,
@@ -475,6 +601,14 @@ fn transparent(
             attr.span(),
             "a transparent variant publishes the extension members of the error it holds, not \
              the field holding it",
+        ));
+    }
+
+    if let Some(attr) = field.attrs.iter().find(|attr| is_headers(attr)) {
+        return Err(syn::Error::new(
+            attr.span(),
+            "a transparent variant sends the headers of the error it holds, which is not a \
+             header group itself",
         ));
     }
 
@@ -627,14 +761,70 @@ fn extensions(fields: &Fields) -> Vec<(String, Ident)> {
         .collect()
 }
 
+/// The one field marked `#[problem(headers)]`, refusing a second and one also
+/// published as an extension member.
+fn header_field(fields: &Fields) -> syn::Result<Option<Box<HeaderField>>> {
+    let mut found: Option<(HeaderField, String)> = None;
+
+    for (index, field) in fields.iter().enumerate() {
+        let Some(attr) = field.attrs.iter().find(|attr| is_headers(attr)) else {
+            continue;
+        };
+
+        if field.attrs.iter().any(is_extension) {
+            return Err(syn::Error::new(
+                attr.span(),
+                "a header group is sent as response fields, not published in the body. Mark this \
+                 field `extension` or `headers`, not both",
+            ));
+        }
+
+        let member = field
+            .ident
+            .clone()
+            .map_or_else(|| Member::Unnamed(Index::from(index)), Member::Named);
+        if let Some((_, first)) = &found {
+            return Err(syn::Error::new(
+                attr.span(),
+                format!(
+                    "this failure already sends the header group in `{first}`; one group holds \
+                     every header it sends"
+                ),
+            ));
+        }
+
+        let name = member.to_token_stream().to_string();
+        found = Some((
+            HeaderField {
+                member,
+                ty: field.ty.clone(),
+            },
+            name,
+        ));
+    }
+
+    Ok(found.map(|(field, _)| Box::new(field)))
+}
+
 /// Whether one attribute is `#[problem(extension)]`.
 fn is_extension(attr: &Attribute) -> bool {
+    marks(attr, "extension")
+}
+
+/// Whether one attribute is `#[problem(headers)]`.
+fn is_headers(attr: &Attribute) -> bool {
+    marks(attr, "headers")
+}
+
+/// Whether one attribute is a `#[problem(...)]` list naming the field marker
+/// `key`.
+fn marks(attr: &Attribute, key: &str) -> bool {
     if !attr.path().is_ident("problem") {
         return false;
     }
     let mut found = false;
     let _ = attr.parse_nested_meta(|meta| {
-        if meta.path.is_ident("extension") {
+        if meta.path.is_ident(key) {
             found = true;
             return Ok(());
         }
@@ -741,6 +931,13 @@ fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Result<Problem
                     return Err(syn::Error::new(
                         key.span(),
                         "`extension` marks a field to publish, so it belongs on a field",
+                    ));
+                }
+                "headers" => {
+                    return Err(syn::Error::new(
+                        key.span(),
+                        "`headers` marks the field holding the header group a failure sends, so \
+                         it belongs on that field, whose type is the group",
                     ));
                 }
                 other => {

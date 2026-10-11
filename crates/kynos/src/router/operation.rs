@@ -166,9 +166,11 @@ impl OperationCx<'_> {
     /// it does keeps its entry, unless both are problem documents narrowed to
     /// the types they publish, which
     /// [`union_from`](kynos_openapi::Responses::union_from) joins into a choice
-    /// over both rather than letting contribution order decide.
+    /// over both rather than letting contribution order decide. Either way the
+    /// status declares every header either side sends there, `required` only
+    /// where both require it.
     pub fn add_responses(&mut self, responses: &kynos_openapi::Responses) {
-        self.operation.responses.union_from(responses);
+        crate::response::headers::union_from(&mut self.operation.responses, responses);
     }
 
     /// Declares a header this input causes the operation to send.

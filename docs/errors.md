@@ -129,6 +129,7 @@ enum StoreError {
 | variant | `type` | an absolute URI, overriding `base` |
 | variant | `transparent` | answer as the `ApiError` the variant's one field holds, instead of `status`, `title` and `type` |
 | field | `extension` | serialize this field as an extension member under its own name |
+| field | `headers` | send this field, a header group, on this failure's response, and declare it under this failure's status alone |
 
 **`title` is read twice, and its absence is answered differently each time.**
 On the wire it is the problem's `title`, and a variant that declares none
@@ -149,6 +150,14 @@ one that can drift from it.
 **A field is not serialized unless it says so.** `#[problem(extension)]` is
 opt-in because a variant carries whatever the error site had to hand, and the
 default must not be to publish it. `trace` above stays internal.
+
+**A header one failure sends is that failure's.** `Retry-After` on a 429 is
+`#[problem(headers)]` on a field of the 429's variant, holding a group deriving
+`HeaderParams`. `WithHeaders<E, H>` would declare it on every status `E`
+describes and make every other failure build a value for it. A status several
+failures share declares each group any of them sends, required only where all
+of them require it, and a transparent variant's held error sends and declares
+its own the same way. `WithHeaders` stays for a group every status sends.
 
 **One namespace is one `const`.** Several error types sharing a prefix name it
 as `#[problem(base = crate::PROBLEM_BASE)]` rather than repeating the literal,
@@ -171,9 +180,13 @@ grammar does not define, a `base` that is neither a string literal nor a path,
 a `base` on a variant, an `extension` on a field with
 no name, a `transparent` on a struct, beside a `status`, `title` or `type`, over
 other than one field, over a field marked `extension`, over a field naming the
-enum's generic parameters or holding no `ApiError`, and a type with no
+enum's generic parameters or holding no `ApiError`, a `headers` field whose
+type is no header group, and a type with no
 `Display` are all compile errors, each with a case
-in [`tests/ui/macros`](../crates/kynos/tests/ui/macros). What `base`, `title`,
+in [`tests/ui/macros`](../crates/kynos/tests/ui/macros). So are `headers` on a
+variant or type, beside `extension` on one field, twice on one failure, and
+over a transparent variant's field, each with a case in the derive's own
+diagnostic ledger. What `base`, `title`,
 `type` and `extension` *do* is checked at run time by the conformance harness,
 which compares each problem document a service produced against what the
 description declared for that operation and status.
@@ -227,8 +240,11 @@ side's branches are flattened, a `type` already published is dropped, and what
 survives is rebuilt as a single `allOf` or a `oneOf` of them; the descriptions
 join the way a shared status already joins its variants. A `Path<T>` capture's
 400 beside a handler error's 400 is therefore a choice between `about:blank` and
-the type the variant declared, described as both. `Responses::union_from` is the
-rule, and [Where the union happens](#where-the-union-happens) is where it is
+the type the variant declared, described as both. Its headers join the same
+way whatever the bodies: each header either side sends is declared, required
+only where both require it, so a rejection contributed first neither hides a
+variant's `#[problem(headers)]` group nor keeps one required that the variant
+omits. `Responses::union_from` is the rule, and [Where the union happens](#where-the-union-happens) is where it is
 applied.
 
 That works only because the rejection side narrows too, and it does: every

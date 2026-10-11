@@ -504,6 +504,36 @@ pub fn derive_schema(item: TokenStream) -> TokenStream {
 /// `#[problem(extension)]`, so error-site context stays off the wire by
 /// default.
 ///
+/// A header only one failure sends lives on that failure: one field of a
+/// variant, or of a struct, may say `#[problem(headers)]`, its type a header
+/// group deriving `HeaderParams`:
+///
+/// ```ignore
+/// #[derive(HeaderParams)]
+/// struct RetryAfter {
+///     #[header(rename = "Retry-After")]
+///     retry_after: u64,
+/// }
+///
+/// #[derive(Debug, thiserror::Error, ApiError)]
+/// enum CreateSessionError {
+///     #[error("too many sessions")]
+///     #[problem(status = 429)]
+///     Throttled {
+///         #[problem(headers)]
+///         retry: RetryAfter,
+///     },
+///
+///     #[error("that session already exists")]
+///     #[problem(status = 409)]
+///     Exists,
+/// }
+/// ```
+///
+/// The group is written onto that failure's response and declared under its
+/// status alone, required only where every failure answering with that status
+/// sends it. `WithHeaders` stays for a group every status sends.
+///
 /// A variant holding one field of another `ApiError` type may say
 /// `#[problem(transparent)]` instead of declaring a status, so failures many
 /// operations share are declared once:
@@ -522,9 +552,10 @@ pub fn derive_schema(item: TokenStream) -> TokenStream {
 /// ```
 ///
 /// Its problem is the held error's, `detail` and extension members included,
-/// and that type's statuses and responses join the enum's; a status both
-/// declare is described once, naming every type that reaches it. It declares
-/// no `status`, `title` or `type` of its own, publishes no `extension`, and
+/// its response is, header groups included, and that type's statuses and
+/// responses join the enum's; a status both declare is described once, naming
+/// every type that reaches it. It declares no `status`, `title` or `type` of
+/// its own, publishes no `extension`, sends no `headers` of its own, and
 /// its field's type cannot name the enum's generic parameters, since the
 /// statuses are a `const`.
 ///
