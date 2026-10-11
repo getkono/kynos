@@ -437,12 +437,14 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     }
 
     /// Mounts an API reference: the page a human opens, and the description it
-    /// fetches.
+    /// fetches -- or, from [`Docs::description_only`](docs::Docs::description_only),
+    /// the description alone.
     ///
-    /// Both are ordinary described operations, so the document gains two
-    /// `paths` keys and says so. See [`router::docs`](docs) for what that costs.
+    /// Each is an ordinary described operation, so the document gains a
+    /// `paths` key per route and says so. See [`router::docs`](docs) for what
+    /// that costs.
     ///
-    /// The description is serialized while this router is built, and the page
+    /// The description is serialized while this router is built, and a page
     /// points at the path the description actually got, so nesting moves both
     /// halves together.
     ///
@@ -461,7 +463,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// ```
     #[cfg(feature = "docs")]
     #[must_use]
-    pub fn docs(mut self, mut docs: docs::Docs) -> Self
+    pub fn docs<M>(mut self, mut docs: docs::Docs<M>) -> Self
     where
         C: Send + Sync + 'static,
     {

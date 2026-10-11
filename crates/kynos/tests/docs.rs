@@ -82,6 +82,89 @@ fn the_page_is_described_as_html_and_the_description_as_json() {
     }
 }
 
+#[test]
+fn a_description_only_reference_describes_the_description_alone() {
+    let document = support::router()
+        .docs(Docs::description_only())
+        .openapi()
+        .expect("a describable router");
+
+    assert!(
+        document.paths.items["/openapi.json"].get.is_some(),
+        "the description route declares no GET",
+    );
+    assert!(
+        !document.paths.items.contains_key("/docs"),
+        "a description-only reference describes a page",
+    );
+}
+
+#[tokio::test]
+async fn a_description_only_reference_serves_the_emitted_document_and_no_page() {
+    // The guarantee a hand-written handler loses: the served bytes are this
+    // router's own `openapi` output, which here describes no page route.
+    let router = support::router()
+        .info(Info::new("Example API", "1.0.0"))
+        .docs(Docs::description_only().description_at("/v1/openapi.json"));
+    let expected = router
+        .openapi()
+        .expect("a describable router")
+        .to_json()
+        .expect("a serializable document");
+
+    let service = router.build(App::new()).expect("a describable router");
+    let reply = get(&service, "/v1/openapi.json").call().await;
+
+    assert_eq!(reply.status, StatusCode::OK);
+    assert_eq!(
+        reply.field("content-type").as_deref(),
+        Some("application/json"),
+    );
+    assert_eq!(reply.text(), expected);
+
+    for absent in ["/docs", "/openapi.json"] {
+        assert_eq!(
+            get(&service, absent).call().await.status,
+            StatusCode::NOT_FOUND,
+            "{absent} is served",
+        );
+    }
+}
+
+/// Filed under the router's tag, as any other operation it mounts is.
+#[derive(kynos::Tag)]
+#[tag(name = "operations", description = "Running this service")]
+struct Operations;
+
+#[test]
+fn a_description_only_route_takes_the_router_tag() {
+    let document = Router::<App>::new()
+        .tag::<Operations>()
+        .docs(Docs::description_only())
+        .openapi()
+        .expect("a describable router");
+
+    let operation = document.paths.items["/openapi.json"]
+        .get
+        .as_ref()
+        .expect("a GET");
+    assert_eq!(operation.tags, ["operations"]);
+}
+
+#[tokio::test]
+async fn nesting_moves_a_description_only_route() {
+    let service = Router::<App>::new()
+        .info(Info::new("Example API", "1.0.0"))
+        .nest("/api", support::router().docs(Docs::description_only()))
+        .build(App::new())
+        .expect("a describable router");
+
+    let described = get(&service, "/api/openapi.json").call().await.json();
+    let paths = described["paths"].as_object().expect("a paths object");
+    assert!(paths.contains_key("/api/openapi.json"));
+    assert!(!paths.contains_key("/api/docs"));
+}
+
 #[tokio::test]
 async fn every_shipped_reference_is_served_as_html() {
     // Each constructor carries its own marker, so one wired to the other's page

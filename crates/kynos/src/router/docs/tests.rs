@@ -173,10 +173,15 @@ fn every_shipped_page_runs_nothing_its_policy_does_not_name() {
 #[test]
 fn only_a_shipped_page_carries_a_policy() {
     // A custom page's loads are the application's to know, so it gets none.
-    assert_eq!(Docs::scalar().policy, Some(page::SCALAR.policy));
-    assert_eq!(Docs::redoc().policy, Some(page::REDOC.policy));
-    assert_eq!(Docs::custom("<!doctype html>").policy, None);
-    assert_eq!(Docs::custom(page::SCALAR.template).policy, None);
+    assert_eq!(policy(Docs::scalar()), Some(page::SCALAR.policy));
+    assert_eq!(policy(Docs::redoc()), Some(page::REDOC.policy));
+    assert_eq!(policy(Docs::custom("<!doctype html>")), None);
+    assert_eq!(policy(Docs::custom(page::SCALAR.template)), None);
+}
+
+/// The policy a page-carrying reference's page is served under.
+fn policy(docs: Docs) -> Option<&'static str> {
+    docs.page.expect("a page constructor").template.policy
 }
 
 #[test]
@@ -278,9 +283,17 @@ fn a_custom_page_gets_the_same_substitution_the_shipped_ones_do() {
 fn the_defaults_are_the_documented_ones() {
     // A default stated only in rustdoc is a default nothing checks.
     let docs = Docs::scalar();
+    let page = docs.page.as_ref().expect("a page constructor");
 
-    assert_eq!(docs.at.as_str(), "/docs");
+    assert_eq!(page.at.as_str(), "/docs");
+    assert_eq!(page.template.title, None);
     assert_eq!(docs.description_at.as_str(), "/openapi.json");
     assert_eq!(docs.operation_id_prefix, "docs");
-    assert_eq!(docs.title, None);
+
+    // A description alone shares the description's defaults and has no page.
+    let alone = Docs::description_only();
+
+    assert!(alone.page.is_none());
+    assert_eq!(alone.description_at.as_str(), "/openapi.json");
+    assert_eq!(alone.operation_id_prefix, "docs");
 }
