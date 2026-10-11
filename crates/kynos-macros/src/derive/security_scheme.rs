@@ -25,11 +25,13 @@
 //!
 //! option := name = "<ComponentName>" | credential = <Type>
 //!         | description = "<CommonMark>" | challenge = "<WWW-Authenticate>"
-//!         | scopes("a", "b") | deprecated | carrier = manual
+//!         | scopes("a", "b") | deprecated | carrier = manual | carrier = optional
 //! ```
 //!
 //! The kind writes both `describe` and `Carries`, so the documented and the
-//! enforced carrier agree; `carrier = manual` suppresses `Carries`.
+//! enforced carrier agree; `carrier = manual` suppresses `Carries`, and
+//! `carrier = optional` presents `Option<_>`, so an absent credential reaches
+//! the authenticator rather than answering `Ok(None)`.
 //!
 //! A flow's `scopes` takes `"a"` or `"a" = "Read a"`; the scheme-level
 //! `scopes(..)` is what an operation demands, and takes names only.
@@ -132,10 +134,20 @@ struct SchemeArgs {
     challenge: Option<LitStr>,
     description: Option<LitStr>,
     deprecated: bool,
-    /// Whether the carrier is the application's to write.
-    manual_carrier: bool,
+    /// What `carrier = ...` said, if it was written.
+    carrier: Option<Carrier>,
     scopes: Vec<LitStr>,
     nested: Nested,
+}
+
+/// What `carrier = ...` asks of the derived `Carries`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Carrier {
+    /// None at all: the application implements it.
+    Manual,
+    /// The kind's reader, presenting `Option<_>` so absence is the
+    /// authenticator's to decide.
+    Optional,
 }
 
 /// The options written inside a kind, whichever kind it was; one flat set,
@@ -198,8 +210,13 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         |value| quote!(::core::option::Option::Some(#value)),
     );
 
-    let carrier = (!args.manual_carrier).then(|| {
-        let (presented, read) = carrier_of(&args.nested, kind);
+    let carrier = (args.carrier != Some(Carrier::Manual)).then(|| {
+        let (mut presented, mut read) = carrier_of(&args.nested, kind);
+        // A malformed credential stays an `Err`; only absence becomes a value.
+        if args.carrier == Some(Carrier::Optional) {
+            presented = quote!(::core::option::Option<#presented>);
+            read = quote!(#read.map(::core::option::Option::Some));
+        }
         quote! {
             impl #impl_generics ::kynos::security::carrier::Carries
                 for #name #ty_generics #where_clause
@@ -497,15 +514,25 @@ fn parse_args(input: &DeriveInput) -> syn::Result<SchemeArgs> {
                 }
                 "deprecated" => args.deprecated = true,
                 "carrier" => {
-                    let value: Ident = meta.value()?.parse()?;
-                    if value != "manual" {
+                    if args.carrier.is_some() {
                         return Err(syn::Error::new(
-                            value.span(),
-                            "`carrier` takes only `manual`, which leaves the `Carries` \
-                             implementation to you; every other carrier follows from the kind",
+                            key.span(),
+                            "`carrier` is already set, and a scheme has exactly one carrier",
                         ));
                     }
-                    args.manual_carrier = true;
+                    let value: Ident = meta.value()?.parse()?;
+                    args.carrier = Some(if value == "manual" {
+                        Carrier::Manual
+                    } else if value == "optional" {
+                        Carrier::Optional
+                    } else {
+                        return Err(syn::Error::new(
+                            value.span(),
+                            "`carrier` takes `manual`, which leaves the `Carries` implementation \
+                             to you, or `optional`, which hands an absent credential to the \
+                             authenticator; every other carrier follows from the kind",
+                        ));
+                    });
                 }
                 "scopes" => {
                     let content;

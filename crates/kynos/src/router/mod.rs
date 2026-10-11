@@ -27,7 +27,7 @@ pub(crate) mod dispatch;
 use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 use kynos_openapi::{
-    Document, Info, Paths, Severity, SpecError, SpecVersion, Violation,
+    Document, ExternalDocumentation, Info, Paths, Severity, SpecError, SpecVersion, Violation,
     model::paths::item::PathItem,
 };
 
@@ -127,6 +127,7 @@ pub struct Router<C, P = Propagate, I = (), S = ()> {
     pub(crate) short_circuit_checks: Vec<ShortCircuitCheck>,
     pub(crate) observers: Vec<Arc<dyn Observer<C>>>,
     pub(crate) info: Option<Info>,
+    pub(crate) external_docs: Option<ExternalDocumentation>,
     pub(crate) servers: Vec<kynos_openapi::Server>,
     pub(crate) tags: Vec<DeclaredTag>,
     /// Tag metadata declared at this router's own scope; separate from `tags`
@@ -185,6 +186,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
             short_circuit_checks: Vec::new(),
             observers: Vec::new(),
             info: None,
+            external_docs: None,
             servers: Vec::new(),
             tags: Vec::new(),
             tag_metadata: Vec::new(),
@@ -213,6 +215,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
             short_circuit_checks: self.short_circuit_checks,
             observers: self.observers,
             info: self.info,
+            external_docs: self.external_docs,
             servers: self.servers,
             tags: self.tags,
             tag_metadata: self.tag_metadata,
@@ -341,6 +344,9 @@ impl<C, P, I, S> Router<C, P, I, S> {
         if self.info.is_none() {
             self.info = other.info;
         }
+        if self.external_docs.is_none() {
+            self.external_docs = other.external_docs;
+        }
     }
 }
 
@@ -375,6 +381,17 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     #[must_use]
     pub fn info(mut self, info: Info) -> Self {
         self.info = Some(info);
+        self
+    }
+
+    /// Sets the description's document-level `externalDocs`.
+    ///
+    /// Like [`info`](Router::info), a later call replaces an earlier one, and a
+    /// router that `nest`s or `merge`s another publishes its own value when it
+    /// sets one, and otherwise the first absorbed router's.
+    #[must_use]
+    pub fn external_docs(mut self, external_docs: ExternalDocumentation) -> Self {
+        self.external_docs = Some(external_docs);
         self
     }
 

@@ -1,0 +1,5 @@
+error: `carrier` is already set, and a scheme has exactly one carrier
+ --> tests/ui/macros/security_scheme_carrier_set_twice.rs:2:38
+  |
+2 | #[security(bearer, carrier = manual, carrier = optional)]
+  |                                      ^^^^^^^

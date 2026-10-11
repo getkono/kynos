@@ -128,7 +128,9 @@ where
 /// `MaybeAuth<AnyOf<(A, B)>>` declares `[{}, {A: []}, {B: []}]`.
 ///
 /// A credential that is present and wrong is still a 401. Only *absence* is
-/// anonymity.
+/// anonymity — and a scheme derived with `carrier = optional` reports none, so
+/// under it the authenticator decides every request and what it admits is
+/// always `Some`.
 ///
 /// ```no_run
 /// # use kynos::security::auth::MaybeAuth;

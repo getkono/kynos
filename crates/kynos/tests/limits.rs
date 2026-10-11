@@ -5,10 +5,10 @@
 //! could be false without the compiler noticing — `STATUSES` is a constant, and
 //! nothing checks it against what `into_response` writes.
 //!
-//! Real durations in the 10–50 ms band rather than `tokio::time::pause()`,
-//! which needs `tokio/test-util` — not a feature this workspace enables. The
-//! nextest profile's `slow-timeout` is 30 s, so the band has three orders of
-//! magnitude of headroom.
+//! Real durations in the 10–50 ms band, except where a body stalls for good:
+//! those cases pause the clock, so the wait they assert never ends costs no
+//! real time. The nextest profile's `slow-timeout` is 30 s, so the band has
+//! three orders of magnitude of headroom.
 
 #![cfg(all(feature = "macros", feature = "json"))]
 
@@ -504,9 +504,9 @@ async fn a_body_limit_below_the_default_still_governs() {
 /// test does not check that.** It sends no request, and what it asserts is
 /// true in either mounting order.
 ///
-/// The name used to say otherwise. Pinning the read needs a client that dribbles
-/// a chunked body over a real socket, which this harness cannot express;
-/// `docs/middleware.md` is where the rule is stated and says nothing checks it.
+/// The name used to say otherwise. The read is pinned by
+/// `stalled_body::a_timeout_outside_a_body_limit_ends_a_body_that_stalls` and
+/// its inverse below, which send a body that stops through the `TestClient`.
 #[tokio::test]
 async fn a_timeout_over_a_body_limit_declares_both_statuses() {
     let service = support::router()
@@ -528,6 +528,124 @@ async fn a_timeout_over_a_body_limit_declares_both_statuses() {
         "the timeout contributes its status to the operation it covers"
     );
     assert!(operation.responses.responses.contains_key("413"));
+}
+
+// --- A body that stalls, in-process ----------------------------------------
+
+/// The slow-body rule, read through a body that stops: the `TestClient` sends
+/// 10 octets and never another, and the clock is paused so the runtime
+/// advances it only once nothing else can run.
+#[cfg(feature = "test-util")]
+mod stalled_body {
+    use std::{
+        pin::Pin,
+        task::{Context, Poll},
+        time::Duration,
+    };
+
+    use bytes::Bytes;
+    use kynos::{
+        http::StatusCode,
+        middleware::limits::{body_size::BodySize, timeout::Timeout},
+        router::service::Service,
+        test::TestClient,
+    };
+
+    use super::support::{self, App};
+
+    /// Yields its one chunk, then waits for good.
+    struct Stalls(Option<Bytes>);
+
+    impl futures_core::Stream for Stalls {
+        type Item = Bytes;
+
+        fn poll_next(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Bytes>> {
+            match self.get_mut().0.take() {
+                Some(chunk) => Poll::Ready(Some(chunk)),
+                None => Poll::Pending,
+            }
+        }
+    }
+
+    /// Ten octets of a JSON document that never finishes.
+    fn stalled() -> Stalls {
+        Stalls(Some(Bytes::from_static(b"{\"id\": 1, ")))
+    }
+
+    /// The exchange, or `None` when nothing answered within a minute of
+    /// paused time. `declared` is the length the body claims, if any.
+    async fn answer(service: Service<App>, declared: Option<u64>) -> Option<StatusCode> {
+        let client = TestClient::new(service);
+        let mut request = client
+            .post("/users")
+            .body_stream("application/json", stalled());
+        if let Some(declared) = declared {
+            request = request.content_length(declared);
+        }
+        tokio::time::timeout(Duration::from_secs(60), request.send())
+            .await
+            .ok()
+            .map(|reply| reply.status())
+    }
+
+    /// A length-less body is counted by `BodySize` before the chain beneath it
+    /// runs, so only a timeout outside it bounds the wait.
+    #[tokio::test(start_paused = true)]
+    async fn a_timeout_outside_a_body_limit_ends_a_body_that_stalls() {
+        let service = support::router()
+            .intercept(Timeout::new(Duration::from_millis(30)))
+            .intercept(BodySize::new(4096))
+            .build(App::new())
+            .expect("a describable router");
+
+        assert_eq!(
+            answer(service, None).await,
+            Some(StatusCode::REQUEST_TIMEOUT)
+        );
+    }
+
+    /// The inverse, and why the rule is one: nothing ends the wait.
+    #[tokio::test(start_paused = true)]
+    async fn a_timeout_inside_a_body_limit_leaves_a_stalled_body_waiting() {
+        let service = support::router()
+            .intercept(BodySize::new(4096))
+            .intercept(Timeout::new(Duration::from_millis(30)))
+            .build(App::new())
+            .expect("a describable router");
+
+        assert_eq!(answer(service, None).await, None);
+    }
+
+    /// A declared length within the limit is left to the extractor to read, so
+    /// a timeout bounds that read in either order: 64 octets declared, 10 sent.
+    #[tokio::test(start_paused = true)]
+    async fn a_declared_body_that_stalls_is_ended_by_a_timeout_inside_the_limit() {
+        let service = support::router()
+            .intercept(BodySize::new(4096))
+            .intercept(Timeout::new(Duration::from_millis(30)))
+            .build(App::new())
+            .expect("a describable router");
+
+        assert_eq!(
+            answer(service, Some(64)).await,
+            Some(StatusCode::REQUEST_TIMEOUT)
+        );
+    }
+
+    /// A declared length past the limit is refused from the head: the body
+    /// stalls after its first chunk, so a limit that read it would not answer.
+    #[tokio::test(start_paused = true)]
+    async fn a_declared_length_past_the_limit_is_refused_without_waiting_for_the_body() {
+        let service = support::router()
+            .intercept(BodySize::new(8))
+            .build(App::new())
+            .expect("a describable router");
+
+        assert_eq!(
+            answer(service, Some(64)).await,
+            Some(StatusCode::PAYLOAD_TOO_LARGE)
+        );
+    }
 }
 
 // --- Concurrency scope ----------------------------------------------------

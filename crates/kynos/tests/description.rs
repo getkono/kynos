@@ -38,7 +38,8 @@
 //! on the feature would still produce a document that validates.
 //!
 //! The seventh is what a router declares about itself rather than its
-//! operations: its servers, and which router's `info` a nest publishes.
+//! operations: its servers, and which router's `info` and `externalDocs` a nest
+//! publishes.
 
 #![cfg(all(feature = "macros", feature = "json"))]
 
@@ -1811,5 +1812,51 @@ fn a_nested_routers_info_is_used_only_when_the_outer_declares_none() {
     assert_eq!(
         info(Router::<()>::new().mount(kynos::routes![alpha])),
         Info::new("API", "0.0.0")
+    );
+}
+
+/// `externalDocs` follows `info`'s rule: the outer router's when it declares
+/// one, the first absorbed router's when only that one does, and absent when
+/// none does.
+#[test]
+fn a_nested_routers_external_docs_are_used_only_when_the_outer_declares_none() {
+    use kynos::openapi::ExternalDocumentation;
+
+    let docs = |url: &str| ExternalDocumentation::new(url);
+    let inner = |url: &str| {
+        Router::<()>::new()
+            .external_docs(docs(url))
+            .mount(kynos::routes![beta])
+    };
+    let external_docs = |router: Router<()>| {
+        router
+            .openapi()
+            .expect("a describable router")
+            .external_docs
+    };
+
+    assert_eq!(
+        external_docs(
+            Router::<()>::new()
+                .external_docs(docs("https://outer.example.com"))
+                .nest("/v2", inner("https://inner.example.com"))
+        ),
+        Some(docs("https://outer.example.com"))
+    );
+    assert_eq!(
+        external_docs(
+            Router::<()>::new()
+                .merge(inner("https://first.example.com"))
+                .merge(
+                    Router::<()>::new()
+                        .external_docs(docs("https://second.example.com"))
+                        .mount(kynos::routes![alpha])
+                )
+        ),
+        Some(docs("https://first.example.com"))
+    );
+    assert_eq!(
+        external_docs(Router::<()>::new().mount(kynos::routes![alpha])),
+        None
     );
 }

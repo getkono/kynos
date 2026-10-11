@@ -66,7 +66,6 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         &params,
         &quote!(::kynos::openapi::ParameterIn::Query),
         false,
-        true,
     );
     let encode = query_encode_body(&params);
 

@@ -129,6 +129,12 @@ struct DigestLogin;
 #[security(mutual_tls)]
 struct PartnerCertificate;
 
+/// A deployment that may run with no credentials configured hands absence to
+/// its authenticator rather than answering 401 before asking it.
+#[derive(SecurityScheme)]
+#[security(bearer, carrier = optional)]
+struct OptionalBearer;
+
 #[derive(SecurityScheme)]
 #[security(oauth2(client_credentials(token_url = "https://auth.example.com/token")))]
 struct Delegated;
@@ -213,6 +219,7 @@ fn each_scheme_kind_presents_its_own_credential() {
     presents::<BasicLogin, Credentials>();
     presents::<DigestLogin, SchemeCredentials>();
     presents::<PartnerCertificate, PeerCertificates>();
+    presents::<OptionalBearer, Option<BearerToken>>();
 }
 
 #[test]
@@ -1458,6 +1465,242 @@ fn a_query_value_that_breaks_a_bound_is_refused_naming_its_parameter() {
             }
             Err(rejection) => panic!("{query}: refused: {rejection}"),
         }
+    }
+}
+
+// --- Path, header and cookie parameters keep their fields' bounds -----------
+//
+// The same recorded exception as the query parameter's: each other parameter
+// derive writes a field's `#[schema(...)]` bounds into its description and
+// refuses a decoded value that breaks one, or one its type declares.
+
+#[derive(Schema, PathParams)]
+struct BoundedPath {
+    #[schema(minimum = 1)]
+    #[param(rename = "id")]
+    user_id: u64,
+    #[schema(minimum = 1)]
+    score: Score,
+}
+
+#[derive(Schema, HeaderParams)]
+struct BoundedHeaders {
+    #[schema(max_length = 8)]
+    #[header(rename = "X-Request-Id")]
+    request_id: String,
+    #[schema(minimum = 1)]
+    #[header(rename = "X-Score")]
+    score: Option<Score>,
+}
+
+#[cfg(feature = "cookie")]
+#[derive(Schema, kynos::CookieParams)]
+struct BoundedCookies {
+    #[schema(min_length = 4)]
+    session: String,
+    #[schema(minimum = 1)]
+    score: Option<Score>,
+}
+
+/// `parameters` as JSON.
+fn described(parameters: &[kynos::openapi::Parameter]) -> serde_json::Value {
+    serde_json::to_value(parameters).expect("parameters serialize")
+}
+
+/// One failure at the value's own pointer, as a parameter's check reports it.
+fn at_the_value(detail: &str) -> std::collections::BTreeMap<String, String> {
+    std::collections::BTreeMap::from([(String::new(), detail.to_owned())])
+}
+
+/// A path parameter's schema is its type's under the field's bounds, beside
+/// the `$ref` for a named type.
+#[test]
+fn a_path_parameter_carries_its_fields_bounds() {
+    let mut registry = kynos::schema::registry::Registry::new();
+    assert_eq!(
+        described(&BoundedPath::parameters(&mut registry)),
+        serde_json::json!([
+            {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": bounded(resolved::<u64>(), &serde_json::json!({"minimum": 1.0})),
+            },
+            {
+                "name": "score",
+                "in": "path",
+                "required": true,
+                "schema": bounded(resolved::<Score>(), &serde_json::json!({"minimum": 1.0})),
+            },
+        ])
+    );
+}
+
+/// A captured value that breaks its field's bound, or its type's, is refused
+/// as `Schema`, naming the parameter by its wire name.
+#[test]
+fn a_path_value_that_breaks_a_bound_is_refused_naming_its_parameter() {
+    use kynos::{error::rejection::PathRejection, extract::params::path::DecodePath};
+
+    for (values, parameter, detail) in [
+        ([("id", "0"), ("score", "1")], "id", "must be at least 1"),
+        ([("id", "1"), ("score", "0")], "score", "must be at least 1"),
+        (
+            [("id", "1"), ("score", "101")],
+            "score",
+            "must be at most 100",
+        ),
+    ] {
+        match BoundedPath::decode(&values) {
+            Err(PathRejection::Schema { name, failures }) => {
+                assert_eq!(name, parameter, "{values:?}");
+                assert_eq!(failures, at_the_value(detail), "{values:?}");
+            }
+            Err(other) => panic!("{values:?}: refused for another reason: {other}"),
+            Ok(decoded) => panic!("{values:?}: accepted as {}", decoded.user_id),
+        }
+    }
+
+    let decoded = BoundedPath::decode(&[("id", "1"), ("score", "100")])
+        .expect("values within their bounds are read");
+    assert_eq!((decoded.user_id, decoded.score), (1, Score(100)));
+}
+
+/// A header's schema carries its field's bounds, as a request parameter and as
+/// a response header alike.
+#[test]
+fn a_header_carries_its_fields_bounds_in_either_direction() {
+    let request_id = bounded(resolved::<String>(), &serde_json::json!({"maxLength": 8}));
+    let score = bounded(
+        resolved::<Option<Score>>(),
+        &serde_json::json!({"minimum": 1.0}),
+    );
+
+    let mut registry = kynos::schema::registry::Registry::new();
+    assert_eq!(
+        described(&BoundedHeaders::parameters(&mut registry)),
+        serde_json::json!([
+            {"name": "X-Request-Id", "in": "header", "required": true, "schema": request_id},
+            {"name": "X-Score", "in": "header", "required": false, "schema": score},
+        ])
+    );
+    assert_eq!(
+        serde_json::to_value(BoundedHeaders::response_headers(&mut registry))
+            .expect("headers serialize"),
+        serde_json::json!({
+            "X-Request-Id": {"required": true, "schema": request_id},
+            "X-Score": {"required": false, "schema": score},
+        })
+    );
+}
+
+/// A header value that breaks its field's bound, or its type's, is refused as
+/// `Schema`, naming the header; an absent optional header breaks nothing.
+#[test]
+fn a_header_value_that_breaks_a_bound_is_refused_naming_it() {
+    use kynos::{error::rejection::HeaderRejection, extract::params::header::DecodeHeaders};
+
+    for (fields, header, detail) in [
+        (
+            &[("x-request-id", b"r-123456789".as_slice())][..],
+            "X-Request-Id",
+            "must be at most 8 characters long",
+        ),
+        (
+            &[("x-request-id", b"r-1"), ("x-score", b"0")],
+            "X-Score",
+            "must be at least 1",
+        ),
+        (
+            &[("x-request-id", b"r-1"), ("x-score", b"101")],
+            "X-Score",
+            "must be at most 100",
+        ),
+    ] {
+        match BoundedHeaders::decode(&header_map(fields)) {
+            Err(HeaderRejection::Schema { name, failures }) => {
+                assert_eq!(name, header, "{fields:?}");
+                assert_eq!(failures, at_the_value(detail), "{fields:?}");
+            }
+            Err(other) => panic!("{fields:?}: refused for another reason: {other}"),
+            Ok(decoded) => panic!("{fields:?}: accepted as {:?}", decoded.request_id),
+        }
+    }
+
+    for (fields, score) in [
+        (&[("x-request-id", b"r-1".as_slice())][..], None),
+        (
+            &[("x-request-id", b"r-1"), ("x-score", b"100")],
+            Some(Score(100)),
+        ),
+    ] {
+        let decoded = BoundedHeaders::decode(&header_map(fields))
+            .expect("values within their bounds are read");
+        assert_eq!(decoded.score, score, "{fields:?}");
+    }
+}
+
+/// A cookie's schema carries its field's bounds, and a value that breaks one,
+/// or its type's, is refused as `Schema`, naming the cookie.
+#[cfg(feature = "cookie")]
+#[test]
+fn a_cookie_carries_its_fields_bounds_and_refuses_a_value_breaking_one() {
+    use kynos::{
+        error::rejection::CookieRejection,
+        extract::params::cookie::CookieParams,
+        http::{HeaderMap, HeaderValue, header::COOKIE},
+    };
+
+    let mut registry = kynos::schema::registry::Registry::new();
+    let schemas: Vec<_> = described(&BoundedCookies::parameters(&mut registry))
+        .as_array()
+        .expect("parameters are a list")
+        .iter()
+        .map(|parameter| parameter["schema"].clone())
+        .collect();
+    assert_eq!(
+        schemas,
+        [
+            bounded(resolved::<String>(), &serde_json::json!({"minLength": 4})),
+            bounded(
+                resolved::<Option<Score>>(),
+                &serde_json::json!({"minimum": 1.0}),
+            ),
+        ]
+    );
+
+    let jar = |field: &'static str| {
+        let mut headers = HeaderMap::new();
+        headers.append(COOKIE, HeaderValue::from_static(field));
+        headers
+    };
+
+    for (field, cookie, detail) in [
+        (
+            "session=s-1",
+            "session",
+            "must be at least 4 characters long",
+        ),
+        ("session=s-12; score=0", "score", "must be at least 1"),
+        ("session=s-12; score=101", "score", "must be at most 100"),
+    ] {
+        match BoundedCookies::decode(&jar(field)) {
+            Err(CookieRejection::Schema { name, failures }) => {
+                assert_eq!(name, cookie, "{field}");
+                assert_eq!(failures, at_the_value(detail), "{field}");
+            }
+            Err(other) => panic!("{field}: refused for another reason: {other}"),
+            Ok(decoded) => panic!("{field}: accepted as {}", decoded.session),
+        }
+    }
+
+    for (field, score) in [
+        ("session=s-12", None),
+        ("session=s-12; score=100", Some(Score(100))),
+    ] {
+        let decoded =
+            BoundedCookies::decode(&jar(field)).expect("values within their bounds are read");
+        assert_eq!(decoded.score, score, "{field}");
     }
 }
 
@@ -2735,6 +2978,104 @@ fn a_newtype_member_publishes_its_prose_and_deprecation() {
             "description": "What the team says.",
             "deprecated": true
         })
+    );
+}
+
+// --- A field described as another type --------------------------------------
+//
+// `#[schema(as = T)]` describes a field as `T`, under the field's own bounds,
+// for a type whose own serde writes `T`'s form. These pin the emitted shape;
+// `constraints.rs` holds the check to the description.
+
+/// Two bytes serde writes as four hex digits.
+struct Hash([u8; 2]);
+
+impl From<&Hash> for String {
+    fn from(hash: &Hash) -> Self {
+        format!("{:02x}{:02x}", hash.0[0], hash.0[1])
+    }
+}
+
+impl serde::Serialize for Hash {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&String::from(self))
+    }
+}
+
+#[derive(Schema, serde::Serialize)]
+struct HashHex(#[schema(as = String, min_length = 4, max_length = 4)] Hash);
+
+/// Lines serde writes as an array of strings.
+struct Lines(String);
+
+impl From<&Lines> for Vec<String> {
+    fn from(lines: &Lines) -> Self {
+        lines.0.lines().map(str::to_owned).collect()
+    }
+}
+
+/// Whoever serde writes as the `Label` they hold.
+struct Owner(Label);
+
+impl From<&Owner> for Label {
+    fn from(owner: &Owner) -> Self {
+        Label(owner.0.0.clone())
+    }
+}
+
+#[derive(Schema)]
+struct Submission {
+    #[schema(as = Vec<String>, min_items = 1)]
+    lines: Lines,
+    #[schema(as = Label)]
+    owner: Owner,
+    digest: HashHex,
+}
+
+/// A newtype over a field described as another type is that type under the
+/// field's bounds, which is the value serde writes.
+#[test]
+fn a_newtype_member_is_described_as_the_type_it_names() {
+    assert_eq!(
+        emitted::<HashHex>(),
+        serde_json::json!({
+            "type": "string",
+            "minLength": 4,
+            "maxLength": 4,
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(HashHex(Hash([0xab, 0x01]))).expect("a newtype serializes"),
+        serde_json::json!("ab01")
+    );
+}
+
+/// A named field is the type it names, a named one by `$ref`, with the bounds
+/// written after the type still read; whether it is required is its own
+/// type's, which is what serde reads.
+#[test]
+fn a_named_field_is_described_as_the_type_it_names() {
+    let schema = emitted::<Submission>();
+
+    assert_eq!(
+        schema["properties"]["lines"]["minItems"],
+        serde_json::json!(1)
+    );
+    assert_eq!(
+        schema["properties"]["lines"]["items"],
+        serde_json::json!({"type": "string"})
+    );
+    assert_eq!(
+        schema["properties"]["owner"],
+        serde_json::json!({"$ref": "#/components/schemas/Label"})
+    );
+    assert_eq!(
+        schema["properties"]["digest"],
+        serde_json::json!({"$ref": "#/components/schemas/HashHex"})
+    );
+    assert_eq!(
+        schema["required"],
+        serde_json::json!(["lines", "owner", "digest"])
     );
 }
 

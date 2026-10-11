@@ -329,7 +329,8 @@ trace = ["dep:tracing"]
 yaml = ["kynos-openapi/yaml"]
 
 # --- Testing ---------------------------------------------------------------
-test-util = ["dep:jsonschema"]
+# `futures-core` for `TestRequest::body_stream`.
+test-util = ["dep:jsonschema", "dep:futures-core"]
 
 # --- Response cache --------------------------------------------------------
 # `Cache` and `Conditional`; the store is the application's.

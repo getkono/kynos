@@ -164,6 +164,55 @@ mod schema {
         ]
     }
 
+    /// Where `#[schema(as = T)]` cannot describe a field; a function of its
+    /// own for the reason `serde_ledger` gives.
+    fn described_as_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "`as` written twice on one field, in two lists",
+                quote::quote!(
+                    struct Digest {
+                        #[schema(as = String)]
+                        #[schema(min_length = 1, as = Vec<u8>)]
+                        hash: Hash,
+                    }
+                ),
+                "may appear once per field",
+            ),
+            case(
+                "`as` on a flattened field, which is no one value",
+                quote::quote!(
+                    struct Order {
+                        #[serde(flatten)]
+                        #[schema(as = Line)]
+                        line: Item,
+                    }
+                ),
+                "a flattened field is no one value",
+            ),
+            case(
+                "`as` on an internally tagged newtype variant's payload, written beside the tag",
+                quote::quote!(
+                    #[serde(tag = "kind")]
+                    enum Event {
+                        Created(#[schema(as = Summary)] Record),
+                    }
+                ),
+                "an internally tagged newtype variant's payload is no one value",
+            ),
+            case(
+                "`as` on a `PhantomData`, which serde writes as `null` whatever it is described as",
+                quote::quote!(
+                    struct Marker<T> {
+                        #[schema(as = String)]
+                        marker: PhantomData<T>,
+                    }
+                ),
+                "a `PhantomData` is the `null`",
+            ),
+        ]
+    }
+
     /// The serde attributes whose wire form the schema could not follow.
     ///
     /// A second function rather than more rows in the first, for the reason
@@ -450,6 +499,7 @@ mod schema {
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
+        each_case_is_refused(described_as_ledger(), expand_inner);
         each_case_is_refused(serde_ledger(), expand_inner);
         each_case_is_refused(variant_ledger(), expand_inner);
         each_case_is_refused(field_ledger(), expand_inner);
@@ -475,6 +525,7 @@ mod schema {
             ]
             .concat(),
             ledger().len()
+                + described_as_ledger().len()
                 + serde_ledger().len()
                 + variant_ledger().len()
                 + field_ledger().len()
@@ -504,6 +555,41 @@ mod schema {
         assert!(
             error.to_string().contains("refers to itself"),
             "refused with another diagnostic: {error}"
+        );
+    }
+
+    /// A member's `#[schema(as = T)]` is what its schema resolves, so a generic
+    /// type naming itself there recurses as surely as through the member's own
+    /// type, and a member described as something else no longer does.
+    #[test]
+    fn a_generic_type_is_judged_by_what_its_members_are_described_as() {
+        let input: syn::DeriveInput = syn::parse2(quote::quote!(
+            struct Node<T> {
+                value: T,
+                #[schema(as = Vec<Node<T>>)]
+                children: Children,
+            }
+        ))
+        .expect("the case itself must parse");
+        let Err(error) = expand_inner(&input) else {
+            panic!("a generic type described as itself must be refused");
+        };
+        assert!(
+            error.to_string().contains("refers to itself"),
+            "refused with another diagnostic: {error}"
+        );
+
+        let input: syn::DeriveInput = syn::parse2(quote::quote!(
+            struct Node<T> {
+                value: T,
+                #[schema(as = Vec<String>)]
+                children: Vec<Node<T>>,
+            }
+        ))
+        .expect("the case itself must parse");
+        assert!(
+            expand_inner(&input).is_ok(),
+            "a member described as another type was judged by its own"
         );
     }
 
@@ -1212,6 +1298,29 @@ mod schema {
                 "a struct serde refuses the tag on was refused for the tag: {reported}"
             );
         }
+    }
+
+    /// A tuple variant of an internally tagged enum is serde's diagnostic to
+    /// raise: serde refuses the tag there, so its first member is no payload
+    /// written beside the tag and `as` on it is not refused as one.
+    #[test]
+    fn as_on_an_internally_tagged_tuple_variant_is_left_to_serde() {
+        let input: syn::DeriveInput = syn::parse2(quote::quote!(
+            #[serde(tag = "kind")]
+            enum Event {
+                Paired(#[schema(as = Summary)] Record, u8),
+            }
+        ))
+        .expect("the case itself must parse");
+
+        let Err(error) = expand_inner(&input) else {
+            return;
+        };
+
+        assert!(
+            !error.to_string().contains("newtype variant's payload"),
+            "a tuple variant's member was refused as a newtype payload: {error}"
+        );
     }
 
     /// `#[serde(untagged)]` on a struct is serde's diagnostic to raise, not ours.
@@ -4406,7 +4515,17 @@ mod security_scheme {
                     #[security(carrier = automatic)]
                     struct Bearer;
                 ),
-                "takes only `manual`",
+                "takes `manual`",
+            ),
+            case(
+                "a carrier set twice, which could only disagree with itself",
+                quote::quote!(
+                    #[security(bearer)]
+                    #[security(carrier = optional)]
+                    #[security(carrier = manual)]
+                    struct Bearer;
+                ),
+                "`carrier` is already set",
             ),
             case(
                 "one flow declared twice",
@@ -4546,6 +4665,61 @@ mod security_scheme {
             );
             assert_eq!(expand_inner(&input).is_err(), token_only, "{location}");
         }
+    }
+
+    /// `carrier = optional` wraps the kind's own reader rather than replacing
+    /// it, so a malformed credential is still the reader's `Err` and only
+    /// absence becomes a value; `carrier = manual` writes no carrier at all.
+    #[test]
+    fn an_optional_carrier_wraps_the_kind_reader_in_some() {
+        let carrier = |mode: Option<&str>| {
+            let mode = mode.map(|mode| syn::Ident::new(mode, proc_macro2::Span::call_site()));
+            let setting = mode.map(|mode| quote::quote!(#[security(carrier = #mode)]));
+            let input: syn::DeriveInput = syn::parse_quote!(
+                #[security(bearer)]
+                #setting
+                struct Bearer;
+            );
+            let expanded = expand_inner(&input).expect("a well-formed bearer scheme");
+            let file: syn::File = syn::parse2(expanded).expect("the expansion parses");
+            file.items.into_iter().find_map(|item| match item {
+                syn::Item::Impl(implementation)
+                    if implementation.trait_.as_ref().is_some_and(|(_, path, _)| {
+                        path.segments
+                            .last()
+                            .is_some_and(|last| last.ident == "Carries")
+                    }) =>
+                {
+                    Some(quote::quote!(#implementation).to_string())
+                }
+                _ => None,
+            })
+        };
+
+        let derived = carrier(None).expect("a derived carrier");
+        assert!(
+            derived.contains("type Presented = :: kynos :: security :: carrier :: BearerToken ;"),
+            "{derived}"
+        );
+        assert!(!derived.contains("Option :: Some"), "{derived}");
+
+        let optional = carrier(Some("optional")).expect("an optional carrier");
+        assert!(
+            optional.contains(
+                "type Presented = :: core :: option :: Option < :: kynos :: security :: carrier :: \
+                 BearerToken > ;"
+            ),
+            "{optional}"
+        );
+        assert!(
+            optional.contains(
+                ":: kynos :: security :: carrier :: bearer (parts) . map (:: core :: option :: \
+                 Option :: Some)"
+            ),
+            "{optional}"
+        );
+
+        assert_eq!(carrier(Some("manual")), None);
     }
 
     /// A declared flow reaches the expansion.

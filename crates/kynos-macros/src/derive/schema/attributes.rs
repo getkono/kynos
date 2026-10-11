@@ -286,10 +286,50 @@ pub(super) fn open_span(field: &Field) -> Option<Span> {
                 found = Some(meta.path.span());
                 return Ok(());
             }
-            skip_value(&meta)
+            skip_schema_value(&meta)
         });
     }
     found
+}
+
+/// Each `as = T` a field's `#[schema(...)]` lists, at its key, in the order
+/// written; `check_constraints` refuses a second one.
+pub(super) fn described_as_keys(field: &Field) -> Vec<(Span, Type)> {
+    let mut found = Vec::new();
+    for attr in &field.attrs {
+        if !attr.path().is_ident("schema") {
+            continue;
+        }
+        // Shape errors in the list are `check_constraints`' to report.
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("as") {
+                found.push((meta.path.span(), meta.value()?.parse()?));
+                return Ok(());
+            }
+            skip_schema_value(&meta)
+        });
+    }
+    found
+}
+
+/// The type a field's `#[schema(as = T)]` describes it as, if it names one.
+pub(super) fn described_as(field: &Field) -> Option<Type> {
+    described_as_keys(field).pop().map(|(_, ty)| ty)
+}
+
+/// The type a field's schema is resolved from: its `as`, else its own.
+pub(super) fn described_type(field: &Field) -> Type {
+    described_as(field).unwrap_or_else(|| field.ty.clone())
+}
+
+/// Skips one `#[schema(...)]` member: `as` takes a type, which `skip_value`'s
+/// expression parse would refuse once it has generic arguments.
+fn skip_schema_value(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
+    if meta.path.is_ident("as") {
+        let _: Type = meta.value()?.parse()?;
+        return Ok(());
+    }
+    skip_value(meta)
 }
 
 /// The first of `keys` a `#[serde(...)]` list names, at the key.
@@ -428,9 +468,13 @@ pub(super) fn bounds(field: &Field) -> Vec<Bound> {
             };
             let name = key.to_string();
 
-            // `open` is not a constraint; `object_body` reads it.
+            // Neither is a constraint: `object_body` reads `open`, and
+            // `described_as` reads `as`.
             if name == "open" {
                 return Ok(());
+            }
+            if name == "as" {
+                return skip_schema_value(&meta);
             }
 
             if name == "unique_items" {

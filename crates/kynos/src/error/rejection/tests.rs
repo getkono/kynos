@@ -147,6 +147,54 @@ fn a_query_schema_failure_travels_as_one_errors_entry_per_pointer() {
     );
 }
 
+/// A path parameter, header or cookie that breaks a bound travels as a query
+/// parameter does: its 400, its sentence naming it, and one `errors` entry at
+/// the pointer into its value.
+#[test]
+fn a_path_header_or_cookie_schema_failure_travels_as_an_errors_entry() {
+    let failures = || [(String::new(), "must be at least 1".to_owned())].into();
+    let problems = [
+        (
+            PathRejection::Schema {
+                name: "id".into(),
+                failures: failures(),
+            }
+            .into_problem(),
+            "path parameter `id` does not satisfy its schema",
+        ),
+        (
+            HeaderRejection::Schema {
+                name: "X-Page".into(),
+                failures: failures(),
+            }
+            .into_problem(),
+            "header `X-Page` does not satisfy its schema",
+        ),
+        #[cfg(feature = "cookie")]
+        (
+            super::CookieRejection::Schema {
+                name: "page".into(),
+                failures: failures(),
+            }
+            .into_problem(),
+            "cookie `page` does not satisfy its schema",
+        ),
+    ];
+
+    for (problem, detail) in problems {
+        assert_eq!(
+            serde_json::to_value(problem).expect("a problem serializes"),
+            serde_json::json!({
+                "type": "about:blank",
+                "title": "Bad Request",
+                "status": 400,
+                "detail": detail,
+                "errors": [{ "pointer": "", "detail": "must be at least 1" }],
+            })
+        );
+    }
+}
+
 /// A 415 names the media type the client sent, or says it sent none, so a
 /// client can tell a wrong `Content-Type` from a missing one.
 #[test]
@@ -506,6 +554,7 @@ impl Row {
 fn path(expected: StatusCode, rejection: &PathRejection) -> Row {
     let name = match rejection {
         PathRejection::Invalid { .. } => "PathRejection::Invalid",
+        PathRejection::Schema { .. } => "PathRejection::Schema",
     };
     let statuses = (rejection.status(), PathRejection::statuses());
     Row::new(name, expected, statuses, rejection)
@@ -523,6 +572,7 @@ fn query(expected: StatusCode, rejection: &QueryRejection) -> Row {
 fn header(expected: StatusCode, rejection: &HeaderRejection) -> Row {
     let name = match rejection {
         HeaderRejection::Invalid { .. } => "HeaderRejection::Invalid",
+        HeaderRejection::Schema { .. } => "HeaderRejection::Schema",
     };
     let statuses = (rejection.status(), HeaderRejection::statuses());
     Row::new(name, expected, statuses, rejection)
@@ -534,6 +584,7 @@ fn cookie(expected: StatusCode, rejection: &super::CookieRejection) -> Row {
 
     let name = match rejection {
         CookieRejection::Invalid { .. } => "CookieRejection::Invalid",
+        CookieRejection::Schema { .. } => "CookieRejection::Schema",
     };
     let statuses = (rejection.status(), CookieRejection::statuses());
     Row::new(name, expected, statuses, rejection)
@@ -579,6 +630,13 @@ fn auth(expected: StatusCode, rejection: &AuthRejection) -> Row {
 /// Every variant of every rejection, each with the exact status it must
 /// produce.
 fn ledger() -> Vec<Row> {
+    let mut rows = parameter_ledger();
+    rows.extend(content_ledger());
+    rows
+}
+
+/// The rows of the four parameter locations' rejections.
+fn parameter_ledger() -> Vec<Row> {
     let text = |detail: &str| detail.to_owned();
 
     [
@@ -587,6 +645,15 @@ fn ledger() -> Vec<Row> {
             &PathRejection::Invalid {
                 name: text("id"),
                 detail: text("not a number"),
+            },
+        ),
+        path(
+            StatusCode::BAD_REQUEST,
+            &PathRejection::Schema {
+                name: text("id"),
+                failures: [(String::new(), text("must be at least 1"))]
+                    .into_iter()
+                    .collect(),
             },
         ),
         query(
@@ -612,6 +679,15 @@ fn ledger() -> Vec<Row> {
                 detail: text("not an entity tag"),
             },
         ),
+        header(
+            StatusCode::BAD_REQUEST,
+            &HeaderRejection::Schema {
+                name: text("x-request-id"),
+                failures: [(String::new(), text("must be at most 64 characters long"))]
+                    .into_iter()
+                    .collect(),
+            },
+        ),
         #[cfg(feature = "cookie")]
         cookie(
             StatusCode::BAD_REQUEST,
@@ -620,6 +696,25 @@ fn ledger() -> Vec<Row> {
                 detail: text("not base64"),
             },
         ),
+        #[cfg(feature = "cookie")]
+        cookie(
+            StatusCode::BAD_REQUEST,
+            &super::CookieRejection::Schema {
+                name: text("session"),
+                failures: [(String::new(), text("must be at least 16 characters long"))]
+                    .into_iter()
+                    .collect(),
+            },
+        ),
+    ]
+    .into()
+}
+
+/// The rows of every other rejection.
+fn content_ledger() -> Vec<Row> {
+    let text = |detail: &str| detail.to_owned();
+
+    [
         body(
             StatusCode::BAD_REQUEST,
             &BodyRejection::Syntax {
@@ -678,11 +773,15 @@ fn ledger() -> Vec<Row> {
 fn every_variant_produces_a_status_its_type_declares() {
     let witnessed = [
         "PathRejection::Invalid",
+        "PathRejection::Schema",
         "QueryRejection::Invalid",
         "QueryRejection::Schema",
         "HeaderRejection::Invalid",
+        "HeaderRejection::Schema",
         #[cfg(feature = "cookie")]
         "CookieRejection::Invalid",
+        #[cfg(feature = "cookie")]
+        "CookieRejection::Schema",
         "BodyRejection::Syntax",
         "BodyRejection::Schema",
         "BodyRejection::UnsupportedMediaType",

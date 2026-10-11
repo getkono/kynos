@@ -90,6 +90,20 @@ pub enum PathRejection {
         /// What was wrong with it.
         detail: String,
     },
+
+    /// The parameter decoded as a value that breaks a bound its schema
+    /// declares. Produces 400.
+    ///
+    /// Raised by a derived `PathParams` for a field's `#[schema(...)]` bound or
+    /// its type's. 400 rather than 422, as for a query parameter: a path is part
+    /// of the request's target, not its content.
+    #[error("path parameter `{name}` does not satisfy its schema")]
+    Schema {
+        /// The parameter that failed.
+        name: String,
+        /// The failures, keyed by JSON Pointer into the decoded parameter.
+        failures: BTreeMap<String, String>,
+    },
 }
 
 impl PathRejection {
@@ -97,7 +111,7 @@ impl PathRejection {
     #[must_use]
     pub fn status(&self) -> StatusCode {
         match self {
-            Self::Invalid { .. } => StatusCode::BAD_REQUEST,
+            Self::Invalid { .. } | Self::Schema { .. } => StatusCode::BAD_REQUEST,
         }
     }
 }
@@ -111,6 +125,10 @@ impl IntoProblem for PathRejection {
             Self::Invalid { detail, .. } => {
                 Problem::new(status).with_detail(format!("{summary}: {detail}"))
             }
+            // Pointers are relative to the parameter the detail names.
+            Self::Schema { failures, .. } => Problem::new(status)
+                .with_detail(summary)
+                .with_extension("errors", pointer_errors(failures)),
         }
     }
 
@@ -197,6 +215,20 @@ pub enum HeaderRejection {
         /// What was wrong with it.
         detail: String,
     },
+
+    /// The header decoded as a value that breaks a bound its schema
+    /// declares. Produces 400.
+    ///
+    /// Raised by a derived `HeaderParams` for a field's `#[schema(...)]` bound
+    /// or its type's. 400 rather than 422, since RFC 9110's 422 is about the
+    /// request's content and a header field is not part of it.
+    #[error("header `{name}` does not satisfy its schema")]
+    Schema {
+        /// The header that failed.
+        name: String,
+        /// The failures, keyed by JSON Pointer into the decoded header.
+        failures: BTreeMap<String, String>,
+    },
 }
 
 impl HeaderRejection {
@@ -204,7 +236,7 @@ impl HeaderRejection {
     #[must_use]
     pub fn status(&self) -> StatusCode {
         match self {
-            Self::Invalid { .. } => StatusCode::BAD_REQUEST,
+            Self::Invalid { .. } | Self::Schema { .. } => StatusCode::BAD_REQUEST,
         }
     }
 }
@@ -218,6 +250,10 @@ impl IntoProblem for HeaderRejection {
             Self::Invalid { detail, .. } => {
                 Problem::new(status).with_detail(format!("{summary}: {detail}"))
             }
+            // Pointers are relative to the header the detail names.
+            Self::Schema { failures, .. } => Problem::new(status)
+                .with_detail(summary)
+                .with_extension("errors", pointer_errors(failures)),
         }
     }
 
@@ -241,6 +277,20 @@ pub enum CookieRejection {
         /// What was wrong with it.
         detail: String,
     },
+
+    /// The cookie decoded as a value that breaks a bound its schema
+    /// declares. Produces 400.
+    ///
+    /// Raised by a derived `CookieParams` for a field's `#[schema(...)]` bound
+    /// or its type's. 400 rather than 422, since a cookie travels in a header
+    /// field rather than the request's content.
+    #[error("cookie `{name}` does not satisfy its schema")]
+    Schema {
+        /// The cookie that failed.
+        name: String,
+        /// The failures, keyed by JSON Pointer into the decoded cookie.
+        failures: BTreeMap<String, String>,
+    },
 }
 
 #[cfg(feature = "cookie")]
@@ -249,7 +299,7 @@ impl CookieRejection {
     #[must_use]
     pub fn status(&self) -> StatusCode {
         match self {
-            Self::Invalid { .. } => StatusCode::BAD_REQUEST,
+            Self::Invalid { .. } | Self::Schema { .. } => StatusCode::BAD_REQUEST,
         }
     }
 }
@@ -264,6 +314,10 @@ impl IntoProblem for CookieRejection {
             Self::Invalid { detail, .. } => {
                 Problem::new(status).with_detail(format!("{summary}: {detail}"))
             }
+            // Pointers are relative to the cookie the detail names.
+            Self::Schema { failures, .. } => Problem::new(status)
+                .with_detail(summary)
+                .with_extension("errors", pointer_errors(failures)),
         }
     }
 

@@ -6,7 +6,7 @@ use syn::{DeriveInput, parse_macro_input};
 
 use crate::derive::{
     common::{NameCase, named_fields, names_const, reject_duplicate_names, wire_names},
-    params::{Param, construct, decode_field, parameters_body, path_encode_body},
+    params::{Param, check_field, construct, decode_field, parameters_body, path_encode_body},
 };
 
 pub(crate) fn expand(item: TokenStream) -> TokenStream {
@@ -38,21 +38,18 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                 .iter()
                 .find_map(|&(name, value)| (name == #wire).then_some(value))
         };
-        decode_field(
+        let decoded = decode_field(
             param,
             &rejection,
             &found,
             "the path variable was not captured",
-        )
+        );
+        let checked = check_field(param, &rejection);
+        quote!(#decoded #checked)
     });
     let value = construct(&params);
 
-    let parameters = parameters_body(
-        &params,
-        &quote!(::kynos::openapi::ParameterIn::Path),
-        true,
-        false,
-    );
+    let parameters = parameters_body(&params, &quote!(::kynos::openapi::ParameterIn::Path), true);
     let encode = path_encode_body(&params);
 
     // Three implementations, one per direction plus the description.

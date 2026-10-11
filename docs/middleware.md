@@ -695,11 +695,12 @@ over it.
 A client that sends one byte every 29 seconds still passes. Bounding the
 *total* is `Timeout`'s job, and it bounds the read only when it is mounted
 *outside* the limit doing the reading — the earlier `intercept` call, per
-[the ordering rule](#the-order-a-chain-runs-in). The types do not enforce it,
-and neither does a test: `a_timeout_over_a_body_limit_declares_both_statuses`
-in [`tests/limits.rs`](../crates/kynos/tests/limits.rs) mounts the arrangement
-but asserts only on the emitted document, which is order-insensitive and passes
-either way.
+[the ordering rule](#the-order-a-chain-runs-in). The types do not enforce it;
+the `stalled_body` cases in [`tests/limits.rs`](../crates/kynos/tests/limits.rs)
+pin it in-process, with a `TestClient` body that stops: a length-less one is
+answered 408 under a `Timeout` outside `BodySize` and never inside it, while a
+declared length within the limit is read beneath `BodySize` and bounded in
+either order.
 
 **A response body is bounded by neither of the rows above.** `Timeout` wraps the
 chain's future, and that future completes when the *head* is ready. A handler
@@ -790,6 +791,13 @@ and passes the other through as the client sent it, so the request cannot be
 what chooses between them. Neither is a default, because guessing wrong is the
 same spoof: an AWS ALB appends to `X-Forwarded-For`, and a service reading
 `Forwarded` behind it lets the client write its own address.
+
+An IPv4-mapped address (`::ffff:10.0.0.1`) is read as the IPv4 host it embeds
+everywhere — the peer a dual-stack `[::]` listener reports, a forwarded hop, a
+trusted address or network — so `10.0.0.0/8` trusts an IPv4 proxy on either
+listener. Matching families strictly instead would ignore every forwarding field
+on a dual-stack listener, silently. `::ffff:0.0.0.0/96` is refused like `/0`,
+since it is every IPv4 address.
 
 ### A response no type predicts
 
