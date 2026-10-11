@@ -34,9 +34,8 @@
 //!   default limit would add a 413 the service never promised.
 //!
 //! Kynos ships no base64 wrapper, because binary in a *text* format is a
-//! property of the field rather than of the body. `Thumbnail` shows the
-//! hand-written form, which is a dozen lines and stays honest about what it
-//! encodes.
+//! property of the field rather than of the body. `Thumbnail` says so on its
+//! field, with `content_encoding` and `content_media_type`.
 
 use std::net::Ipv4Addr;
 
@@ -44,9 +43,7 @@ use kynos::{
     extract::body::{OneOf, binary::Binary, form::Form, multipart::MultipartForm, text::Text},
     http::media::{MediaType, Png},
     middleware::limits::body_size::BodySize,
-    openapi::{Schema as OpenApiSchema, model::schema::types::SchemaType},
     prelude::*,
-    schema::registry::Registry,
     server::Server,
 };
 use serde::{Deserialize, Serialize};
@@ -69,23 +66,18 @@ impl MediaType for Manifest {
 /// entirely.
 ///
 /// `contentMediaType` names what the *decoded* bytes are, which is a different
-/// question from what the enclosing body is.
-#[derive(Serialize, Deserialize)]
-struct Thumbnail(String);
-
-impl kynos::schema::Schema for Thumbnail {
-    fn schema(_registry: &mut Registry) -> OpenApiSchema {
-        let mut schema = OpenApiSchema::of_type(SchemaType::String);
-        if let OpenApiSchema::Object(object) = &mut schema {
-            object.content_encoding = Some("base64".to_owned());
-            object.content_media_type = Some("image/png".to_owned());
-            // Counted in characters, because this is the encoded form. For raw
-            // binary the same keyword counts octets.
-            object.max_length = Some(1_398_101);
-        }
-        schema
-    }
-}
+/// question from what the enclosing body is. The `maxLength` is counted in
+/// characters, because this is the encoded form; for raw binary the same
+/// keyword counts octets.
+#[derive(Schema, Serialize, Deserialize)]
+struct Thumbnail(
+    #[schema(
+        content_encoding = "base64",
+        content_media_type = "image/png",
+        max_length = 1_398_101
+    )]
+    String,
+);
 
 /// A product, as JSON.
 #[derive(Schema, Serialize, Deserialize)]
