@@ -445,6 +445,11 @@ fn a_derived_param_value_reads_and_writes_the_names_its_schema_lists() {
         ]))
     );
     assert!(serde_json::from_value::<Phase>(serde_json::Value::from("Checking")).is_err());
+
+    // `Display` honours the caller's width, fill and precision, as `str` does.
+    assert_eq!(format!("{:>10}", Phase::Checking), "  checking");
+    assert_eq!(format!("{:*<10}", Phase::Seeding), "SEEDING***");
+    assert_eq!(format!("{:.3}", Phase::Checking), "che");
 }
 
 /// A deprecated type says so, and says nothing about the note.
