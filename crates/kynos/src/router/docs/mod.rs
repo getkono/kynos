@@ -1,6 +1,6 @@
 //! A rendered API reference, and the description it fetches.
 //!
-//! The description describes the two routes that serve it, so both are
+//! The description describes the routes that serve it, so both halves are
 //! rendered when the router is built, never when
 //! [`Router::docs`](crate::Router::docs) is called.
 //!
@@ -10,6 +10,10 @@
 //! let router = Router::<()>::new().docs(Docs::scalar());
 //! # let _ = router;
 //! ```
+//!
+//! A service no browser reads mounts [`Docs::description_only`] instead: the
+//! description's route alone, rendered the same way, with no page, policy or
+//! CDN.
 //!
 //! # Kynos ships the wiring, not the UI
 //!
@@ -27,9 +31,10 @@
 //!
 //! # Mounting a reference widens the published contract
 //!
-//! Both routes are ordinary described operations, so a deployment serving them
-//! publishes two `paths` keys a deployment without them does not, and a client
-//! generated from the one carries two operations the other does not.
+//! Each route is an ordinary described operation, so a deployment serving a
+//! reference publishes `paths` keys a deployment without one does not -- two,
+//! or one for a description alone -- and a client generated from the one
+//! carries operations the other does not.
 //!
 //! Where the contract must not move, run a second `Router` and `Server` on an
 //! internal port, and let the two documents differ because the two services do.
@@ -49,6 +54,7 @@ mod tests;
 
 use std::{
     borrow::Cow,
+    marker::PhantomData,
     sync::{Arc, OnceLock, PoisonError, RwLock},
 };
 
@@ -65,6 +71,10 @@ use crate::router::{
 
 /// An API reference, ready to mount.
 ///
+/// `M` says whether a page is mounted beside the description: [`WithPage`] for
+/// every page constructor, [`DescriptionOnly`] for [`Docs::description_only`].
+/// Only the first has a page to place or title.
+///
 /// ```no_run
 /// use kynos::{Router, router::docs::Docs};
 ///
@@ -72,17 +82,42 @@ use crate::router::{
 /// # let _ = router;
 /// ```
 #[derive(Clone, Debug)]
-pub struct Docs {
-    page: Cow<'static, str>,
+pub struct Docs<M = WithPage> {
+    /// `Some` exactly when `M` is [`WithPage`]: only its constructors set it.
+    page: Option<PageMount>,
+    description_at: PathTemplate,
+    operation_id_prefix: Cow<'static, str>,
+    violations: Vec<Violation>,
+    mode: PhantomData<fn() -> M>,
+}
+
+/// The mode of a [`Docs`] that mounts a reference page beside the description.
+#[derive(Clone, Copy, Debug)]
+pub enum WithPage {}
+
+/// The mode of a [`Docs`] that mounts the description and nothing else.
+#[derive(Clone, Copy, Debug)]
+pub enum DescriptionOnly {}
+
+/// Where a page is mounted, and what is rendered there.
+#[derive(Clone, Debug)]
+struct PageMount {
+    at: PathTemplate,
+    template: PageTemplate,
+}
+
+/// What a page is rendered from: everything but its own path.
+#[derive(Clone, Debug)]
+pub(crate) struct PageTemplate {
+    source: Cow<'static, str>,
     /// The `Content-Security-Policy` a shipped page is served under. `None`
     /// for a custom page, whose loads Kynos cannot know.
     policy: Option<&'static str>,
-    at: PathTemplate,
-    description_at: PathTemplate,
     title: Option<String>,
-    operation_id_prefix: Cow<'static, str>,
-    violations: Vec<Violation>,
 }
+
+/// Read where only a page constructor's reference can be.
+const WITH_PAGE: &str = "every `Docs<WithPage>` constructor sets a page";
 
 impl Docs {
     /// The Scalar playground: a reference with a client built into it.
@@ -104,10 +139,9 @@ impl Docs {
     }
 
     fn shipped(page: &page::Shipped) -> Self {
-        Self {
-            policy: Some(page.policy),
-            ..Self::custom(page.template)
-        }
+        let mut docs = Self::custom(page.template);
+        docs.page_mut().template.policy = Some(page.policy);
+        docs
     }
 
     /// Any other page.
@@ -129,15 +163,18 @@ impl Docs {
     #[must_use]
     pub fn custom(page: impl Into<Cow<'static, str>>) -> Self {
         let mut violations = Vec::new();
-        Self {
-            page: page.into(),
-            policy: None,
-            at: template("/docs", &mut violations),
-            description_at: template("/openapi.json", &mut violations),
-            title: None,
-            operation_id_prefix: Cow::Borrowed("docs"),
+        let at = template("/docs", &mut violations);
+        Self::configured(
+            Some(PageMount {
+                at,
+                template: PageTemplate {
+                    source: page.into(),
+                    policy: None,
+                    title: None,
+                },
+            }),
             violations,
-        }
+        )
     }
 
     /// Where the page is served. `/docs` by default.
@@ -146,17 +183,77 @@ impl Docs {
     /// surfaces from [`Router::validate`](crate::router::Router::validate).
     #[must_use]
     pub fn at(mut self, path: &str) -> Self {
-        self.at = template(path, &mut self.violations);
+        let at = template(path, &mut self.violations);
+        self.page_mut().at = at;
         self
+    }
+
+    /// The page's title. The document's own `info.title` by default.
+    #[must_use]
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.page_mut().template.title = Some(title.into());
+        self
+    }
+
+    fn page_mut(&mut self) -> &mut PageMount {
+        self.page.as_mut().expect(WITH_PAGE)
+    }
+}
+
+impl Docs<DescriptionOnly> {
+    /// The description alone, with no page beside it.
+    ///
+    /// For a service no browser reads that still serves the document its
+    /// router emits. Only the description's route is mounted and described,
+    /// and nothing loads from a CDN, since there is no page to load it.
+    ///
+    /// ```no_run
+    /// use kynos::{Router, router::docs::Docs};
+    ///
+    /// let docs = Docs::description_only().description_at("/v1/openapi.json");
+    /// let router = Router::<()>::new().docs(docs);
+    /// # let _ = router;
+    /// ```
+    ///
+    /// There is no page to place, so placing one does not compile, where the
+    /// same call on a page constructor does:
+    ///
+    /// ```compile_fail
+    /// # use kynos::router::docs::Docs;
+    /// let _ = Docs::description_only().at("/reference");
+    /// ```
+    ///
+    /// ```
+    /// # use kynos::router::docs::Docs;
+    /// let _ = Docs::scalar().at("/reference");
+    /// ```
+    #[must_use]
+    pub fn description_only() -> Self {
+        Self::configured(None, Vec::new())
+    }
+}
+
+impl<M> Docs<M> {
+    /// A reference with every default but its page.
+    fn configured(page: Option<PageMount>, mut violations: Vec<Violation>) -> Self {
+        let description_at = template("/openapi.json", &mut violations);
+        Self {
+            page,
+            description_at,
+            operation_id_prefix: Cow::Borrowed("docs"),
+            violations,
+            mode: PhantomData,
+        }
     }
 
     /// Where the description is served. `/openapi.json` by default.
     ///
-    /// The page is pointed at the *final* URL, with every enclosing prefix
+    /// A page is pointed at the *final* URL, with every enclosing prefix
     /// applied, so nesting a router that carries a reference moves both halves
     /// together.
     ///
-    /// A malformed path is recorded, as [`at`](Self::at)'s is.
+    /// A path that is not a legal template is recorded as a violation and
+    /// surfaces from [`Router::validate`](crate::router::Router::validate).
     #[must_use]
     pub fn description_at(mut self, path: &str) -> Self {
         self.description_at = template(path, &mut self.violations);
@@ -168,14 +265,7 @@ impl Docs {
         std::mem::take(&mut self.violations)
     }
 
-    /// The page's title. The document's own `info.title` by default.
-    #[must_use]
-    pub fn title(mut self, title: impl Into<String>) -> Self {
-        self.title = Some(title.into());
-        self
-    }
-
-    /// The prefix both `operationId`s take. `docs` by default.
+    /// The prefix each `operationId` takes. `docs` by default.
     ///
     /// Each identifier is derived from the unprefixed path it serves, so two
     /// references nested under different prefixes need different prefixes here.
@@ -185,32 +275,38 @@ impl Docs {
         self
     }
 
-    /// Both halves, sharing one state, ready for the router to absorb.
+    /// The description half, then the page half where there is a page, sharing
+    /// one state, ready for the router to absorb.
     pub(super) fn into_halves<C: Send + Sync + 'static>(
         self,
-    ) -> [(Arc<dyn DynEndpoint<C>>, Role); 2] {
-        let page_id = operation_id(&self.operation_id_prefix, self.at.as_str());
+    ) -> Vec<(Arc<dyn DynEndpoint<C>>, Role)> {
         let description_id = operation_id(&self.operation_id_prefix, self.description_at.as_str());
+        let (at, page) = self
+            .page
+            .map(|PageMount { at, template }| (at, template))
+            .unzip();
 
         let state = Arc::new(State {
             rendered: RwLock::new(None),
             description_path: OnceLock::new(),
-            template: self.page,
-            policy: self.policy,
-            title: self.title,
+            page,
         });
 
-        [
-            (
-                Arc::new(DocsDescription::new(
-                    self.description_at,
-                    description_id,
-                    Arc::clone(&state),
-                )),
-                Role::Description(Arc::clone(&state)),
-            ),
-            (Arc::new(DocsPage::new(self.at, page_id, state)), Role::Page),
-        ]
+        let mut halves: Vec<(Arc<dyn DynEndpoint<C>>, Role)> = vec![(
+            Arc::new(DocsDescription::new(
+                self.description_at,
+                description_id,
+                Arc::clone(&state),
+            )),
+            Role::Description(Arc::clone(&state)),
+        )];
+
+        if let Some(at) = at {
+            let page_id = operation_id(&self.operation_id_prefix, at.as_str());
+            halves.push((Arc::new(DocsPage::new(at, page_id, state)), Role::Page));
+        }
+
+        halves
     }
 }
 
@@ -243,23 +339,24 @@ pub(crate) enum Role {
     Description(Arc<State>),
 }
 
-/// What the two halves share, filled once the document exists.
+/// What the halves share, filled once the document exists.
 #[derive(Debug)]
 pub(crate) struct State {
     /// Replaced whenever the built service's document is edited.
     rendered: RwLock<Option<Rendered>>,
     /// The `paths` key the description ended up at, written by its own mount.
     description_path: OnceLock<String>,
-    template: Cow<'static, str>,
-    policy: Option<&'static str>,
-    title: Option<String>,
+    /// `None` for a description-only reference, which renders no page.
+    page: Option<PageTemplate>,
 }
 
 /// Both halves' bytes, swapped together so no request sees a page from one
 /// rendering beside a description from another.
 #[derive(Debug)]
 struct Rendered {
-    page: Bytes,
+    /// `None` exactly when [`State::page`] is: no page half is mounted to
+    /// read it.
+    page: Option<Bytes>,
     description: Bytes,
 }
 
@@ -269,12 +366,13 @@ const UNRENDERED: &str =
     "an API reference is rendered by `Router::build`, which is the only way to obtain a `Service`";
 
 impl State {
+    /// Read only by a mounted page half, which exists only beside a page.
     pub(super) fn page(&self) -> Bytes {
-        self.read(|rendered| &rendered.page)
+        self.read(|rendered| rendered.page.as_ref().expect(WITH_PAGE))
     }
 
     pub(super) fn policy(&self) -> Option<&'static str> {
-        self.policy
+        self.page.as_ref().and_then(|page| page.policy)
     }
 
     pub(super) fn description(&self) -> Bytes {

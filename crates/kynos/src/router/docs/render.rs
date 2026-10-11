@@ -17,7 +17,7 @@ use crate::{
 };
 
 /// Fills every mounted reference from the finished document, and returns the
-/// handle that fills them again. The page's URL is the description mount's
+/// handle that fills them again. A page's URL is the description mount's
 /// fully prefixed path.
 pub(crate) fn render<C>(mounted: &[Mounted<C>], document: &Document) -> Result<Published> {
     let mut references = Vec::new();
@@ -53,14 +53,19 @@ impl Published {
         let description = Bytes::from(document.to_json()?);
 
         for state in &self.references {
-            let url = state
-                .description_path
-                .get()
-                .expect("`render` records every description's path before it publishes");
-            let title = state.title.as_deref().unwrap_or(&document.info.title);
+            // A description-only reference renders its description and nothing
+            // else.
+            let page = state.page.as_ref().map(|page| {
+                let url = state
+                    .description_path
+                    .get()
+                    .expect("`render` records every description's path before it publishes");
+                let title = page.title.as_deref().unwrap_or(&document.info.title);
+                Bytes::from(page::render(&page.source, url, title))
+            });
 
             state.publish(Rendered {
-                page: Bytes::from(page::render(&state.template, url, title)),
+                page,
                 description: description.clone(),
             });
         }
