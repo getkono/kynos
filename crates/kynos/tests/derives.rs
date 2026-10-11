@@ -362,6 +362,15 @@ struct RetiredShape {
     id: u64,
 }
 
+/// A parameter value retired whole, checked as `RetiredShape` is: it carries
+/// no `#[allow(deprecated)]` of its own, so the `ParamValue` derive's impls
+/// must allow naming it.
+#[deprecated(note = "a retired parameter value")]
+#[derive(Schema, ParamValue)]
+enum RetiredSort {
+    Oldest,
+}
+
 /// Carries one field nobody should send any more.
 #[derive(Schema, serde::Serialize)]
 struct PartlyRetired {
