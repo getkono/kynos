@@ -31,7 +31,7 @@
 //! Nor is `as`: it resolves the field's schema from another type, and its
 //! check runs on that type's value, converted through `From<&F>`.
 
-mod aliases;
+pub(crate) mod aliases;
 pub(crate) mod attributes;
 pub(crate) mod check;
 mod kinds;

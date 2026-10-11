@@ -11,8 +11,8 @@ use quote::{quote, quote_spanned};
 use syn::{Field, FieldsNamed, GenericArgument, Ident, PathArguments, Type, spanned::Spanned};
 
 use crate::derive::{
-    common::{doc_string, string_const},
-    schema::{attributes::constraints, check::value_checks},
+    common::doc_string,
+    schema::{aliases::named_string, attributes::constraints, check::value_checks},
 };
 
 /// One field of a parameter group, paired with the wire name it occupies.
@@ -226,9 +226,10 @@ fn bounds(param: &Param<'_>) -> Option<TokenStream2> {
 /// The field's type's schema, or a fixed parameter's `const`.
 fn schema(param: &Param<'_>) -> TokenStream2 {
     let ty = param.ty();
-    param
-        .fixed_value()
-        .map_or_else(|| quote!(registry.resolve::<#ty>()), string_const)
+    param.fixed.as_ref().map_or_else(
+        || quote!(registry.resolve::<#ty>()),
+        |value| named_string(std::slice::from_ref(value)),
+    )
 }
 
 /// The `parameters` body: one OpenAPI parameter per field, in declaration
