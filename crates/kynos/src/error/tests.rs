@@ -133,6 +133,7 @@ mod variants {
             Error::KeyPattern(_) => "KeyPattern",
             Error::Contribution(_) => "Contribution",
             Error::Middleware(_) => "Middleware",
+            Error::Link(_) => "Link",
             Error::Json(_) => "Json",
             #[cfg(feature = "yaml")]
             Error::Yaml(_) => "Yaml",
@@ -175,6 +176,13 @@ mod variants {
             (
                 Error::Middleware(crate::middleware::MiddlewareError::CredentialedWildcardOrigin),
                 "permits any origin and also permits credentials",
+            ),
+            (
+                Error::Link(Box::new(crate::extract::link::UnresolvedLink::Unmounted {
+                    from: "create_user".to_owned(),
+                    target: "get_user",
+                })),
+                "operation `create_user` links to `get_user`, which this router does not mount",
             ),
             (
                 Error::Json(
@@ -230,6 +238,7 @@ mod variants {
             "KeyPattern",
             "Contribution",
             "Middleware",
+            "Link",
             "Json",
             #[cfg(feature = "yaml")]
             "Yaml",

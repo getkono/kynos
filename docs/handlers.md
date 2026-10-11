@@ -15,6 +15,7 @@ An argument that contributes nothing to the contract says so, by implementing
 | [`MatchedPath`](../crates/kynos/src/extract/connection.rs) | nothing | it is the `paths` key, already in the document |
 | [`ConnectInfo`](../crates/kynos/src/extract/connection.rs) | nothing | it is a property of the connection, not the API |
 | [`Forwarded`](../crates/kynos/src/http/forwarded.rs) | nothing | it is what the deployment's proxies say about the connection, not the API |
+| [`Link<E>`](../crates/kynos/src/extract/link.rs) | nothing | it is another operation's `paths` key, already in the document |
 
 An empty body is a **claim**, not a skipped step: it asserts that a consumer
 cannot observe this argument. That distinction is the entire difference from
@@ -108,7 +109,8 @@ same status carrying none.
 
 `Created` and `Redirect` both carry a
 [`Location`](../crates/kynos/src/response/status.rs), which exists because a
-route attribute's `relative_uri` returns an `http::Uri` and neither that type
+route attribute's `relative_uri` and a `Link`'s `uri` return an `http::Uri`,
+and neither that type
 nor `String` is Kynos's to write a conversion between. Naming the concept is
 what lets a typed URI and a string literal both arrive without a call-site
 conversion. It validates nothing: a `Location` field value is a URI reference,

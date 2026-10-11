@@ -7,7 +7,7 @@
 //!   --features openapi31,macros,server,http1
 //! ```
 //!
-//! Four things are worth noticing:
+//! Six things are worth noticing:
 //!
 //! * **Scope in the document matches scope in the router, exactly.** A group's
 //!   prefix joins each path beneath it, its tag lands on each operation, and
@@ -29,6 +29,11 @@
 //! * **An interceptor can cover one operation.** `get_user.intercept(..)`
 //!   inside `routes!` gives that operation its own deadline without a group of
 //!   its own, so groups stay one per resource.
+//! * **A link knows where its target was mounted.** `suspend_user` extracts a
+//!   `Link<get_user>` and redirects through it, so the `/users` prefix only
+//!   the group names reaches the `Location`. A link to an operation the router
+//!   does not mount fails `validate` and `build`, which is also why the admin
+//!   router is only ever validated nested.
 //!
 //! `api` returns the finished router with its type parameters left opaque.
 //! Every `intercept` changes them, so they are not worth spelling out; `impl`
@@ -43,6 +48,7 @@
 use std::{net::Ipv4Addr, time::Duration};
 
 use kynos::{
+    extract::link::Link,
     middleware::{catch_panic::PanicPolicy, limits::timeout::Timeout},
     openapi::{Method, PathTemplate},
     prelude::*,
@@ -109,16 +115,17 @@ struct UserPath {
     id: u64,
 }
 
-/// Suspends a user.
+/// Suspends a user, and points the client at the user it suspended.
 ///
 /// `operation` is the attribute for a method with no dedicated one. `PATCH` is
 /// one of the eight OpenAPI 3.1 names, so it needs nothing further; a method
 /// outside them — `PROPFIND`, `LOCK` — emits into `additionalOperations` and
 /// therefore requires the `openapi32` feature.
 #[kynos::operation(method = "PATCH", path = "/{id}/suspension", tag = Admin)]
-async fn suspend_user(Path(path): Path<UserPath>) -> NoContent {
+async fn suspend_user(user: Link<get_user>, Path(path): Path<UserPath>) -> Redirect<303> {
     println!("suspending {}", path.id);
-    NoContent
+    // `/users/{id}`: this router never names `/users`, the group does.
+    Redirect::to(user.uri(path))
 }
 
 /// A router that knows nothing about where it will be mounted.

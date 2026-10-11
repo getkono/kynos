@@ -96,8 +96,9 @@ A route attribute also emits `relative_uri`, taking exactly the path and query
 types that route extracts — so a link that no longer matches its target is a
 compile error. It is *relative* because the attribute knows only its own path
 template: a `Group` or `nest` prefix is applied here, while the router is built,
-which is after the expansion and out of its reach. A route mounted at the router
-root needs no join; one under a prefix does.
+which is after the expansion and out of its reach. A handler that needs the URI
+a route is actually served at extracts a `Link` to it instead; see
+[Typed URIs](#typed-uris).
 
 Document-level members are set on the router, never patched onto `openapi`'s
 output (rule 11). The lists — `server`, `tag`, `security_scheme` — union across
@@ -245,6 +246,25 @@ declaration order — the last through a `const` assertion the attribute emits
 against `PathParams::NAMES`. Extracting `Path<T>` or `Query<T>` twice in one
 handler is also rejected, since neither the URI nor the description could say
 which one won.
+
+### Links to where a route is mounted
+
+[`Link<E>`](../crates/kynos/src/extract/link.rs) is a handler argument naming
+the route `E`, whose `uri` renders the same parameters into the template the
+built router mounted `E` at, every `Group` and `nest` prefix joined. Both go
+through the `EndpointUri` implementation the attribute emits, whose `Params` is
+`()`, `P`, `Q` or `(P, Q)` by the table above, so the two cannot render
+differently.
+
+The argument contributes nothing to the description, but describing it is how
+the router learns the link exists. `validate`, `openapi` and `build` all refuse
+a router holding a `Link` whose target it does not mount, or whose target sits
+under a prefix variable nothing `E` extracts could fill, with `Error::Link`.
+That makes `uri` infallible, and it means a router linking across a `nest`
+boundary validates only once nested. The target is found by `operationId`,
+which a built router holds unique, and confirmed by its method and template.
+A service where no operation links carries no link table, so a request pays for
+links only where one is extracted.
 
 `operationId` defaults to the handler's function name and is overridden with
 `operation_id = "..."` on the attribute. Override it only to keep a generated

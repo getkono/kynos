@@ -64,6 +64,7 @@ fn matched(path: &'static str, captures: &[(&'static str, &'static str)]) -> Req
             captures: Some(recorded),
             forwarded,
             secured: false,
+            links: None,
         });
 
     request

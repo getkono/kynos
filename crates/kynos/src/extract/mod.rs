@@ -30,11 +30,13 @@
 //! parameter location. [`body`] holds inputs that consume the body, one module
 //! per codec, typed by the media type markers in
 //! [`http::media`](crate::http::media). [`connection`] holds the two inputs
-//! that describe the connection rather than the contract.
+//! that describe the connection rather than the contract, and [`link`] the
+//! input that resolves another operation's URI against the built router.
 
 pub mod body;
 pub mod connection;
 pub mod describe;
+pub mod link;
 pub mod params;
 // Gated with `response::stream::sse`, its send half.
 #[cfg(feature = "openapi32")]

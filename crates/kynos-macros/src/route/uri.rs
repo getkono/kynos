@@ -1,4 +1,5 @@
-//! The typed `Endpoint::uri` constructor emitted alongside each handler.
+//! The typed URI an endpoint renders: its `EndpointUri` implementation, and
+//! the `relative_uri` constructor emitted alongside each handler.
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
@@ -49,41 +50,86 @@ pub(crate) fn endpoint_uri_impl(
                         A route attribute knows only its own path template. A `Group` prefix \
                         or a `nest` prefix is applied while the router is built, so a route \
                         under `Group::new(\"/users\")` renders `/{id}` here and not \
-                        `/users/{id}`; join the prefix yourself when the route is not mounted \
-                        at the router root.";
+                        `/users/{id}`. A handler extracting \
+                        `kynos::extract::link::Link<Self>` gets the URI with every prefix \
+                        joined.";
 
-    let uri = match (path_type, query_type) {
-        (None, None) => quote! {
-            impl #endpoint {
-                #[doc = #relative_doc]
-                pub fn relative_uri() -> ::kynos::http::Uri {
-                    ::kynos::__private::uri::endpoint_uri(#path)
-                }
+    let (params, render, relative) = shape(path, path_type, query_type);
+
+    Ok(quote! {
+        #path_assertion
+
+        impl ::kynos::router::endpoint::meta::EndpointUri for #endpoint {
+            type Params = #params;
+
+            fn render(template: &str, params: Self::Params) -> ::kynos::http::Uri {
+                #render
             }
-        },
-        (Some(path_type), None) => quote! {
-            impl #endpoint {
-                #[doc = #relative_doc]
+        }
+
+        impl #endpoint {
+            #[doc = #relative_doc]
+            #relative
+        }
+    })
+}
+
+/// `EndpointUri::Params`, the body of `EndpointUri::render`, and the
+/// `relative_uri` constructor, for what the handler extracts.
+///
+/// `relative_uri` is `render` against the attribute's own template; a `Link`
+/// calls `render` against the mounted one.
+fn shape(
+    path: &str,
+    path_type: Option<Type>,
+    query_type: Option<Type>,
+) -> (TokenStream2, TokenStream2, TokenStream2) {
+    match (path_type, query_type) {
+        (None, None) => (
+            quote!(()),
+            quote! {
+                let () = params;
+                ::kynos::__private::uri::endpoint_uri(template)
+            },
+            quote! {
+                pub fn relative_uri() -> ::kynos::http::Uri {
+                    <Self as ::kynos::router::endpoint::meta::EndpointUri>::render(#path, ())
+                }
+            },
+        ),
+        (Some(path_type), None) => (
+            quote!(#path_type),
+            quote!(::kynos::__private::uri::endpoint_uri_with_path(
+                template, &params
+            )),
+            quote! {
                 ///
                 /// Takes exactly the path parameters this route extracts.
                 pub fn relative_uri(path: #path_type) -> ::kynos::http::Uri {
-                    ::kynos::__private::uri::endpoint_uri_with_path(#path, &path)
+                    <Self as ::kynos::router::endpoint::meta::EndpointUri>::render(#path, path)
                 }
-            }
-        },
-        (None, Some(query_type)) => quote! {
-            impl #endpoint {
-                #[doc = #relative_doc]
+            },
+        ),
+        (None, Some(query_type)) => (
+            quote!(#query_type),
+            quote!(::kynos::__private::uri::endpoint_uri_with_query(
+                template, &params
+            )),
+            quote! {
                 ///
                 /// Takes exactly the query parameters this route extracts.
                 pub fn relative_uri(query: #query_type) -> ::kynos::http::Uri {
-                    ::kynos::__private::uri::endpoint_uri_with_query(#path, &query)
+                    <Self as ::kynos::router::endpoint::meta::EndpointUri>::render(#path, query)
                 }
-            }
-        },
-        (Some(path_type), Some(query_type)) => quote! {
-            impl #endpoint {
-                #[doc = #relative_doc]
+            },
+        ),
+        (Some(path_type), Some(query_type)) => (
+            quote!((#path_type, #query_type)),
+            quote! {
+                let (path, query) = params;
+                ::kynos::__private::uri::endpoint_uri_with_path_and_query(template, &path, &query)
+            },
+            quote! {
                 ///
                 /// Takes exactly the path and query parameters this route
                 /// extracts.
@@ -91,16 +137,14 @@ pub(crate) fn endpoint_uri_impl(
                     path: #path_type,
                     query: #query_type,
                 ) -> ::kynos::http::Uri {
-                    ::kynos::__private::uri::endpoint_uri_with_path_and_query(#path, &path, &query)
+                    <Self as ::kynos::router::endpoint::meta::EndpointUri>::render(
+                        #path,
+                        (path, query),
+                    )
                 }
-            }
-        },
-    };
-
-    Ok(quote! {
-        #path_assertion
-        #uri
-    })
+            },
+        ),
+    }
 }
 
 fn extractor_type(function: &ItemFn, extractor: &str) -> syn::Result<Option<Type>> {

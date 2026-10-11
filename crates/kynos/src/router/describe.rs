@@ -96,6 +96,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         C: Send + Sync + 'static,
     {
         let described = self.describe()?;
+        let linked = described.linked;
         let document = described.into_document()?;
 
         // After the document and every violation: the reference describes its
@@ -189,6 +190,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         let implemented = dispatch::implemented(&paths);
         install_preflight(&mut paths, &self.method_not_allowed, &implemented);
 
+        let links = linked.then(|| Arc::new(mounted_links(&paths)));
+
         let dispatch = Arc::new(Dispatch {
             matcher,
             paths,
@@ -201,6 +204,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             trailing_slashes: self.trailing_slashes,
             trusted_proxies: self.trusted_proxies.clone(),
             implemented,
+            links,
         });
 
         let service = Service::new(document, move |request| {
@@ -285,6 +289,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         // `unique_tags` and a tag covering no operation is still documented.
         let mut tag_metadata = self.tag_metadata.clone();
 
+        let mut links = crate::extract::link::Resolver::default();
+
         let mut paths = Paths::new();
         for mounted in &self.mounted {
             let key = mounted.path.as_str().to_owned();
@@ -303,6 +309,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
             let mut cx = OperationCx::new(&mut registry);
             mounted.endpoint.describe(&mut cx);
+
+            links.record(&operation_id, method, &mounted.path, cx.links());
 
             // Router's interceptors outermost, then the enclosing scopes'; the
             // endpoint described itself first, so its responses win.
@@ -345,6 +353,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 ));
             }
         }
+
+        let linked = links.resolve().map_err(Box::new)?;
 
         self.try_match_table(&mut violations);
 
@@ -403,6 +413,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         Ok(Described {
             document,
             violations,
+            linked,
         })
     }
 }
@@ -411,6 +422,9 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 struct Described {
     document: Document,
     violations: Vec<Violation>,
+    /// Whether any operation extracts a `Link`, so the service records where
+    /// each operation is mounted.
+    linked: bool,
 }
 
 impl Described {
@@ -502,6 +516,22 @@ pub(super) fn match_table_refusal(pattern: &str, error: matchit::InsertError) ->
             pattern: pattern.to_owned(),
         },
     }
+}
+
+/// Where each described operation is served, by `operationId`.
+///
+/// An operation without one, such as a synthesized preflight, is nothing a
+/// `Link` can name.
+fn mounted_links<C>(paths: &[PathEntry<C>]) -> crate::extract::link::Links {
+    let mut links = crate::extract::link::Links::default();
+    for entry in paths {
+        for operation in &entry.operations {
+            if !operation.operation_id.is_empty() {
+                links.insert(&operation.operation_id, entry.matched.0);
+            }
+        }
+    }
+    links
 }
 
 /// Whether `operation` declares a security requirement: a non-empty list does,

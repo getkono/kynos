@@ -1,8 +1,10 @@
 //! Compile and runtime checks for route-generated typed URIs.
 //!
-//! One reason: `relative_uri` is named for what it renders -- the route
-//! attribute's own path template, filled in. A `Group` or `nest` prefix is
-//! applied while the router is built and is not visible here.
+//! One reason: a route's URI is rendered from its typed parameters, into the
+//! template it is named for. `relative_uri` renders the route attribute's own
+//! template, since a `Group` or `nest` prefix is applied while the router is
+//! built and is not visible to it; a `Link` renders the template the built
+//! router mounted, and the router refuses to build one it cannot render.
 //!
 //! Both parameter types are hand-written, so the fixture is half of what is
 //! under test: a `Schema` that describes something other than what `encode`
@@ -17,14 +19,21 @@
 #![cfg(feature = "macros")]
 
 use kynos::{
-    extract::params::{
-        path::{DecodePath, EncodePath, Path, PathParams},
-        query::{DecodeQuery, EncodeQuery, Query, QueryParams},
+    Error, Router,
+    extract::{
+        link::{Link, UnresolvedLink},
+        params::{
+            path::{DecodePath, EncodePath, Path, PathParams},
+            query::{DecodeQuery, EncodeQuery, Query, QueryParams},
+        },
     },
+    http::{Method, Request, StatusCode, body::Body, header},
     openapi::{
         self,
         model::schema::types::{SchemaType, TypeSet},
     },
+    response::status::Redirect,
+    router::group::Group,
     schema::{Schema, registry::Registry},
 };
 
@@ -126,4 +135,89 @@ fn the_fixture_describes_the_query_it_encodes() {
     let emitted = format!("{document:?}");
 
     assert!(emitted.contains("download"), "{emitted}");
+}
+
+/// Points at `report`, wherever the router mounted it.
+#[kynos::post("/filed")]
+async fn file_report(report: Link<report>) -> Redirect<303> {
+    Redirect::to(report.uri((ReportPath, ReportQuery)))
+}
+
+/// Points at `report`'s mounted `paths` key rather than a rendered URI.
+#[kynos::post("/template")]
+async fn file_template(report: Link<report>) -> Redirect<303> {
+    Redirect::to(report.template())
+}
+
+/// `report` under `prefix` and a group, `file_report` at the root, so neither
+/// scope is the other's.
+fn linked(prefix: &str) -> Router<()> {
+    let reports = Router::<()>::new().group(Group::new("/archive").mount(kynos::routes![report]));
+    Router::<()>::new()
+        .nest(prefix, reports)
+        .mount(kynos::routes![file_report])
+}
+
+#[tokio::test]
+async fn a_link_renders_its_target_under_every_prefix() {
+    let service = linked("/v1").build(()).expect("a buildable router");
+
+    let mut request = Request::new(Body::empty());
+    *request.method_mut() = Method::POST;
+    *request.uri_mut() = "/filed".parse().expect("a usable request target");
+    let response = service.call(request).await;
+
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        response.headers()[header::LOCATION],
+        "/v1/archive/reports/annual%2F2026?download=true"
+    );
+
+    let service = linked("/v1")
+        .mount(kynos::routes![file_template])
+        .build(())
+        .expect("a buildable router");
+
+    let mut request = Request::new(Body::empty());
+    *request.method_mut() = Method::POST;
+    *request.uri_mut() = "/template".parse().expect("a usable request target");
+    let response = service.call(request).await;
+
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        response.headers()[header::LOCATION],
+        "/v1/archive/reports/{name}"
+    );
+}
+
+#[test]
+fn a_link_to_an_operation_the_router_does_not_mount_refuses_to_build() {
+    let router = Router::<()>::new().mount(kynos::routes![file_report]);
+
+    let Err(Error::Link(unresolved)) = router.build(()) else {
+        panic!("a router without the link's target built");
+    };
+    assert_eq!(
+        *unresolved,
+        UnresolvedLink::Unmounted {
+            from: "file_report".to_owned(),
+            target: "report",
+        }
+    );
+}
+
+/// Nothing `report` extracts names `tenant`, so no URI to it can be rendered.
+#[test]
+fn a_link_through_a_prefix_variable_refuses_to_build() {
+    let Err(Error::Link(unresolved)) = linked("/{tenant}").build(()) else {
+        panic!("a link through a prefix variable built");
+    };
+    assert_eq!(
+        *unresolved,
+        UnresolvedLink::PrefixVariable {
+            from: "file_report".to_owned(),
+            target: "report",
+            path: "/{tenant}/archive/reports/{name}".to_owned(),
+        }
+    );
 }
