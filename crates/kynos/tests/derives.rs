@@ -3283,6 +3283,161 @@ fn a_derived_problems_detail_is_its_display_sentence() {
     );
 }
 
+// --- A transparent variant answers as the error it holds ---------------------
+
+/// A failure several operations share, declared once.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[error("`{field}` is not a valid value")]
+#[problem(
+    base = "https://errors.example.com/",
+    status = 422,
+    title = "Validation failed"
+)]
+struct ValidationFailed {
+    #[problem(extension)]
+    field: String,
+}
+
+/// Two shared groups beside failures of its own, one of which shares 404 with
+/// `LookupError`, so a status is met from both sides. One group sits in a
+/// tuple variant and one in a named field.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum PauseError {
+    #[error(transparent)]
+    #[problem(transparent)]
+    Lookup(#[from] LookupError),
+
+    #[error("the torrent is already paused")]
+    #[problem(status = 409)]
+    AlreadyPaused,
+
+    #[error(transparent)]
+    #[problem(transparent)]
+    Invalid {
+        #[from]
+        source: ValidationFailed,
+    },
+
+    #[error("no profile with that name")]
+    #[problem(
+        status = 404,
+        type = "https://errors.example.com/profile-unknown",
+        title = "Profile unknown"
+    )]
+    ProfileUnknown,
+}
+
+/// Generic, so the `const` items joining the statuses are declared inside a
+/// generic `impl`; and nothing but shared groups, so no status is its own.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum SharedOnly<T: std::fmt::Debug> {
+    #[error(transparent)]
+    #[problem(transparent)]
+    Lookup(LookupError),
+
+    #[error(transparent)]
+    #[problem(transparent)]
+    Invalid(ValidationFailed),
+
+    #[error("never built")]
+    #[problem(status = 404, title = "Tenant unknown")]
+    Phantom(std::marker::PhantomData<T>),
+}
+
+/// The statuses are the union of the held errors' and the enum's own, in
+/// declaration order without repeats, and the `const`, `statuses()` and the
+/// described responses agree on them.
+#[test]
+fn a_transparent_variant_contributes_its_statuses() {
+    use kynos::{error::problem::IntoProblem, response::ShortCircuit};
+
+    fn agree<T: IntoProblem + ShortCircuit>(expected: &[u16]) {
+        assert_eq!(T::STATUSES, expected);
+        let codes: Vec<u16> = T::statuses()
+            .iter()
+            .map(kynos::http::StatusCode::as_u16)
+            .collect();
+        assert_eq!(codes, expected);
+
+        let responses = emitted_responses::<T>();
+        let mut described: Vec<u16> = responses
+            .as_object()
+            .expect("responses serialize as an object")
+            .keys()
+            .map(|key| key.parse().expect("every key is a status"))
+            .collect();
+        described.sort_unstable();
+        let mut declared = expected.to_vec();
+        declared.sort_unstable();
+        assert_eq!(described, declared, "{responses}");
+    }
+
+    agree::<PauseError>(&[404, 409, 422]);
+    agree::<SharedOnly<u8>>(&[404, 422]);
+}
+
+/// A transparent variant's problem is the held error's, `detail` and extension
+/// members included, and `#[from]` reaches it.
+#[test]
+fn a_transparent_variant_answers_as_the_error_it_holds() {
+    use kynos::error::problem::IntoProblem;
+
+    let invalid = || ValidationFailed {
+        field: "name".to_owned(),
+    };
+
+    assert_eq!(
+        PauseError::from(LookupError::TenantUnknown).into_problem(),
+        LookupError::TenantUnknown.into_problem()
+    );
+    assert_eq!(
+        PauseError::from(invalid()).into_problem(),
+        invalid().into_problem()
+    );
+    assert_eq!(
+        SharedOnly::<u8>::Invalid(invalid()).into_problem(),
+        invalid().into_problem()
+    );
+
+    let own = PauseError::AlreadyPaused.into_problem();
+    assert_eq!(own.status, 409);
+    assert_eq!(own.detail.as_deref(), Some("the torrent is already paused"));
+}
+
+/// A status met both in the enum and in a held error is one response naming
+/// every type that reaches it: the enum's own first, then the held error's.
+#[test]
+fn a_status_shared_with_a_transparent_variant_publishes_both_sides() {
+    let responses = emitted_responses::<PauseError>();
+    let schema = declared_problem(&responses, "404");
+    let published: Vec<&serde_json::Value> = schema["oneOf"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a shared status is a `oneOf`: {schema}"))
+        .iter()
+        .map(|branch| &branch["allOf"][1]["properties"]["type"]["const"])
+        .collect();
+
+    assert_eq!(
+        published,
+        vec![
+            &serde_json::json!("https://errors.example.com/profile-unknown"),
+            &serde_json::json!("https://errors.example.com/user-unknown"),
+            &serde_json::json!("https://errors.example.com/tenant-unknown"),
+        ],
+        "{schema}"
+    );
+    assert_eq!(
+        responses["404"]["description"],
+        serde_json::json!("Profile unknown; User unknown; Tenant unknown"),
+        "{responses}"
+    );
+    assert_eq!(
+        responses["422"],
+        emitted_responses::<ValidationFailed>()["422"],
+        "{responses}"
+    );
+}
+
 // --- A member is named as serde names it ------------------------------------
 //
 // serde names a raw identifier without its `r#`, and uses each side of a split

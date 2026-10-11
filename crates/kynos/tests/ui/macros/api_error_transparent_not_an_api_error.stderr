@@ -1,0 +1,55 @@
+error[E0277]: `std::io::Error` cannot be an interceptor's short circuit
+  --> tests/ui/macros/api_error_transparent_not_an_api_error.rs:10:16
+   |
+10 |     Io(#[from] std::io::Error),
+   |                ^^^^^^^^^^^^^^ not a short circuit
+   |
+   = help: the trait `ShortCircuit` is not implemented for `std::io::Error`
+   = note: an interceptor answers with a type that says which statuses it can produce; derive it with `#[derive(kynos::ApiError)]`
+   = note: use `std::convert::Infallible` for an interceptor that always reaches the handler
+   = help: the following other types implement trait `ShortCircuit`:
+             AtCapacity<T>
+             BodySizeExceeded<T>
+             CrossSite<T>
+             Infallible
+             NotModified
+             RateLimited<T>
+             RateLimitedFields<T>
+             StoreError
+           and $N others
+
+error[E0277]: the trait bound `std::io::Error: IntoProblem` is not satisfied
+  --> tests/ui/macros/api_error_transparent_not_an_api_error.rs:10:16
+   |
+10 |     Io(#[from] std::io::Error),
+   |                ^^^^^^^^^^^^^^ the trait `IntoProblem` is not implemented for `std::io::Error`
+   |
+   = help: the following other types implement trait `IntoProblem`:
+             AuthRejection
+             BodyRejection
+             CookieRejection
+             HeaderRejection
+             NegotiationRejection
+             PathRejection
+             QueryRejection
+             RangeRejection
+             StoreError
+
+error[E0277]: `std::io::Error` does not declare which responses it can produce
+  --> tests/ui/macros/api_error_transparent_not_an_api_error.rs:10:16
+   |
+10 |     Io(#[from] std::io::Error),
+   |                ^^^^^^^^^^^^^^ undeclared responses
+   |
+   = help: the trait `kynos::response::Responses` is not implemented for `std::io::Error`
+   = note: a handler's return type has to say what a consumer might receive; derive it with `#[derive(kynos::Reply)]`, or `#[derive(kynos::ApiError)]` for an error type
+   = help: the following other types implement trait `kynos::response::Responses`:
+             ()
+             Accepted<T>
+             AtCapacity<T>
+             AuthRejection
+             BinaryStream<S, M>
+             BodyRejection
+             BodySizeExceeded<T>
+             CookieRejection
+           and $N others

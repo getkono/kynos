@@ -3,6 +3,7 @@
 //! ```text
 //! #[problem( base = <prefix> )]                    on the type, optional
 //! #[problem( <member> [, <member>]* )]             on each variant, or on a struct
+//! #[problem(transparent)]                          on a one-field variant, instead
 //! #[problem(extension)]                            on a named field, optional
 //!
 //! prefix := "<URI prefix>"
@@ -16,13 +17,17 @@
 //! `Responses` keys, so the three agree. `base` is the prefix a variant without
 //! its own `type` hangs its slug under; a literal is joined here, a `const`
 //! in the expansion's own `const` items. `detail` comes from `Display`.
+//!
+//! A transparent variant answers as the `ApiError` it holds: its problem is
+//! that type's, and its statuses and responses join the enum's, the statuses
+//! in `const` items of the expansion's own.
 
 use proc_macro::TokenStream;
-use proc_macro2::{Span, TokenStream as TokenStream2};
+use proc_macro2::{Span, TokenStream as TokenStream2, TokenTree};
 use quote::{ToTokens, quote, quote_spanned};
 use syn::{
-    Attribute, Data, DeriveInput, Expr, ExprLit, ExprPath, Fields, Ident, Lit, LitInt, LitStr,
-    parse_macro_input, spanned::Spanned,
+    Attribute, Data, DeriveInput, Expr, ExprLit, ExprPath, Fields, GenericParam, Generics, Ident,
+    Index, Lit, LitInt, LitStr, Member, Type, Variant, parse_macro_input, spanned::Spanned,
 };
 
 use crate::derive::common::{doc_string, skip_value};
@@ -47,8 +52,23 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
         ));
     }
 
-    let failures = failures(input)?;
+    let outcomes = outcomes(input)?;
+    let failures: Vec<&Failure> = outcomes
+        .iter()
+        .filter_map(|outcome| match outcome {
+            Outcome::Declared(failure) => Some(failure),
+            Outcome::Transparent(_) => None,
+        })
+        .collect();
+    let delegates: Vec<&Transparent> = outcomes
+        .iter()
+        .filter_map(|outcome| match outcome {
+            Outcome::Transparent(delegate) => Some(delegate),
+            Outcome::Declared(_) => None,
+        })
+        .collect();
     let statuses = distinct_statuses(&failures);
+    let codes = codes(&outcomes, &statuses);
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
@@ -64,8 +84,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
         };
     };
 
-    let problem = into_problem(&failures);
-    let responses = responses(&failures, &statuses);
+    let problem = into_problem(&failures, &delegates);
+    let responses = responses(&failures, &statuses, &delegates);
 
     // `Responses` and `into_problem` come from the same declarations.
     Ok(quote! {
@@ -84,12 +104,14 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 static STATUSES: ::std::sync::LazyLock<
                     ::std::vec::Vec<::kynos::http::StatusCode>
                 > = ::std::sync::LazyLock::new(|| {
-                    ::std::vec![
-                        #(
-                            ::kynos::http::StatusCode::from_u16(#statuses)
+                    let codes: &'static [u16] = #codes;
+                    codes
+                        .iter()
+                        .map(|code| {
+                            ::kynos::http::StatusCode::from_u16(*code)
                                 .expect("the derive checked this code")
-                        ),*
-                    ]
+                        })
+                        .collect()
                 });
                 &STATUSES
             }
@@ -114,9 +136,64 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
         // The same list as a `const`, so two interceptors claiming one status
         // is a compile error.
         impl #impl_generics ::kynos::response::ShortCircuit for #name #ty_generics #where_clause {
-            const STATUSES: &'static [u16] = &[#(#statuses),*];
+            const STATUSES: &'static [u16] = #codes;
         }
     })
+}
+
+/// What one variant, or the struct, answers with.
+enum Outcome {
+    /// A failure its own `#[problem(...)]` declares.
+    Declared(Failure),
+
+    /// The `ApiError` its one field holds.
+    Transparent(Transparent),
+}
+
+/// A `#[problem(transparent)]` variant: the field it delegates to.
+struct Transparent {
+    variant: Ident,
+    member: Member,
+    ty: Type,
+}
+
+/// The statuses as a `&'static [u16]` expression, in declaration order without
+/// repeats.
+///
+/// A literal where every status is declared here. A transparent variant's are
+/// its type's `ShortCircuit::STATUSES`, joined with the rest in `const` items,
+/// since a `const` slice has no concatenation.
+fn codes(outcomes: &[Outcome], statuses: &[u16]) -> TokenStream2 {
+    if !outcomes
+        .iter()
+        .any(|outcome| matches!(outcome, Outcome::Transparent(_)))
+    {
+        return quote!(&[#(#statuses),*]);
+    }
+
+    let parts = outcomes.iter().map(|outcome| match outcome {
+        Outcome::Declared(failure) => {
+            let status = failure.status;
+            quote!(&[#status])
+        }
+        Outcome::Transparent(delegate) => {
+            let ty = &delegate.ty;
+            // Spanned to the field, so an inner type that is no `ApiError` is
+            // reported where it is named.
+            quote_spanned!(ty.span()=> <#ty as ::kynos::response::ShortCircuit>::STATUSES)
+        }
+    });
+
+    quote! {{
+        const __KYNOS_PROBLEM_PARTS: &[&[u16]] = &[#(#parts),*];
+        const __KYNOS_PROBLEM_UNION_LEN: usize =
+            ::kynos::__private::problem::union_len(__KYNOS_PROBLEM_PARTS);
+        const __KYNOS_PROBLEM_UNION: [u16; __KYNOS_PROBLEM_UNION_LEN] =
+            ::kynos::__private::problem::union::<__KYNOS_PROBLEM_UNION_LEN>(
+                __KYNOS_PROBLEM_PARTS,
+            );
+        &__KYNOS_PROBLEM_UNION
+    }}
 }
 
 /// One way the type can fail: a pattern that matches it, and what it says.
@@ -138,8 +215,9 @@ struct Failure {
 }
 
 /// The `into_problem` body; `detail` is taken from `Display` before the
-/// extension members are moved out.
-fn into_problem(failures: &[Failure]) -> TokenStream2 {
+/// extension members are moved out, and only where this type declares the
+/// failure, since a transparent variant's problem is its field's.
+fn into_problem(failures: &[&Failure], delegates: &[&Transparent]) -> TokenStream2 {
     let arms = failures.iter().map(|failure| {
         let pattern = &failure.pattern;
         let status = failure.status;
@@ -166,24 +244,56 @@ fn into_problem(failures: &[Failure]) -> TokenStream2 {
                 let mut problem = ::kynos::Problem::new(status);
                 #with_type
                 #with_title
-                problem.detail = ::core::option::Option::Some(detail);
+                problem.detail = detail;
                 #(#with_extensions)*
                 problem
             }
         }
     });
 
+    let handed_over = delegates.iter().map(|delegate| {
+        let variant = &delegate.variant;
+        let member = &delegate.member;
+        let ty = &delegate.ty;
+        let delegate =
+            quote_spanned!(ty.span()=> <#ty as ::kynos::error::problem::IntoProblem>::into_problem);
+        quote! {
+            Self::#variant { #member: inner } => #delegate(inner),
+        }
+    });
+
+    // Rendered only where a declared arm reads it.
+    let detail = if failures.is_empty() {
+        TokenStream2::new()
+    } else if delegates.is_empty() {
+        quote! {
+            let detail = ::core::option::Option::Some(::std::string::ToString::to_string(&self));
+        }
+    } else {
+        let variants = delegates.iter().map(|delegate| &delegate.variant);
+        quote! {
+            let detail = if ::core::matches!(self, #(Self::#variants { .. })|*) {
+                ::core::option::Option::None
+            } else {
+                ::core::option::Option::Some(::std::string::ToString::to_string(&self))
+            };
+        }
+    };
+
     quote! {
-        let detail = ::std::string::ToString::to_string(&self);
+        #detail
         match self {
             #(#arms)*
+            #(#handed_over)*
         }
     }
 }
 
 /// The `responses` body: one response per distinct status, over the `Problem`
-/// component, shaped by `kynos::__private::problem::response`.
-fn responses(failures: &[Failure], statuses: &[u16]) -> TokenStream2 {
+/// component, shaped by `kynos::__private::problem::response`, then each
+/// transparent variant's responses in declaration order, a status met twice
+/// unioned rather than replaced.
+fn responses(failures: &[&Failure], statuses: &[u16], delegates: &[&Transparent]) -> TokenStream2 {
     let entries = statuses.iter().map(|status| {
         // Every failure declaring this status, in declaration order.
         let branches = failures
@@ -203,10 +313,29 @@ fn responses(failures: &[Failure], statuses: &[u16]) -> TokenStream2 {
         }
     });
 
+    let handed_over = delegates.iter().map(|delegate| {
+        let ty = &delegate.ty;
+        quote_spanned! {ty.span()=>
+            responses.union_from(
+                &<#ty as ::kynos::response::Responses>::responses(registry),
+            );
+        }
+    });
+
+    // Resolved only where a declared status reads it.
+    let schema = if !statuses.is_empty() {
+        quote!(let schema = registry.resolve::<::kynos::Problem>();)
+    } else if delegates.is_empty() {
+        quote!(let _ = registry;)
+    } else {
+        TokenStream2::new()
+    };
+
     quote! {
-        let schema = registry.resolve::<::kynos::Problem>();
+        #schema
         let mut responses = ::kynos::openapi::Responses::new();
         #(#entries)*
+        #(#handed_over)*
         responses
     }
 }
@@ -222,7 +351,7 @@ fn optional(value: Option<impl ToTokens>) -> TokenStream2 {
 
 /// The statuses in declaration order, without repeats; two variants may share
 /// a status.
-fn distinct_statuses(failures: &[Failure]) -> Vec<u16> {
+fn distinct_statuses(failures: &[&Failure]) -> Vec<u16> {
     let mut seen: Vec<u16> = Vec::new();
     for failure in failures {
         if !seen.contains(&failure.status) {
@@ -233,7 +362,7 @@ fn distinct_statuses(failures: &[Failure]) -> Vec<u16> {
 }
 
 /// Every way the type can fail, read from the `#[problem(...)]` declarations.
-fn failures(input: &DeriveInput) -> syn::Result<Vec<Failure>> {
+fn outcomes(input: &DeriveInput) -> syn::Result<Vec<Outcome>> {
     let base = parse_problem(&input.attrs, Position::Type)?.base;
 
     match &input.data {
@@ -253,6 +382,11 @@ fn failures(input: &DeriveInput) -> syn::Result<Vec<Failure>> {
                     reject_unnamed_extensions(&variant.fields)?;
 
                     let args = parse_problem(&variant.attrs, Position::Variant)?;
+                    if let Some(span) = args.transparent {
+                        return transparent(variant, &args, span, &input.generics)
+                            .map(Outcome::Transparent);
+                    }
+
                     let Some((status, _)) = args.status else {
                         return Err(syn::Error::new(
                             variant.ident.span(),
@@ -268,14 +402,14 @@ fn failures(input: &DeriveInput) -> syn::Result<Vec<Failure>> {
                     let bindings = extensions.iter().map(|(_, binding)| binding);
                     let name = &variant.ident;
 
-                    Ok(Failure {
+                    Ok(Outcome::Declared(Failure {
                         pattern: quote!(Self::#name { #(#bindings,)* .. }),
                         extensions,
                         status,
                         type_uri: type_uri(&args, base.as_ref(), &variant.ident),
                         title: args.title,
                         doc: doc_string(&variant.attrs),
-                    })
+                    }))
                 })
                 .collect()
         }
@@ -295,18 +429,113 @@ fn failures(input: &DeriveInput) -> syn::Result<Vec<Failure>> {
             let extensions = extensions(&data.fields);
             let bindings = extensions.iter().map(|(_, binding)| binding);
 
-            Ok(vec![Failure {
+            Ok(vec![Outcome::Declared(Failure {
                 pattern: quote!(Self { #(#bindings,)* .. }),
                 extensions,
                 status,
                 type_uri: type_uri(&args, base.as_ref(), &input.ident),
                 title: args.title,
                 doc: doc_string(&input.attrs),
-            }])
+            })])
         }
 
         Data::Union(_) => unreachable!("rejected above"),
     }
+}
+
+/// Reads a `#[problem(transparent)]` variant, refusing what it cannot also
+/// say.
+fn transparent(
+    variant: &Variant,
+    args: &ProblemArgs,
+    span: Span,
+    generics: &Generics,
+) -> syn::Result<Transparent> {
+    if args.status.is_some() || args.title.is_some() || args.type_uri.is_some() {
+        return Err(syn::Error::new(
+            span,
+            "a transparent variant answers as the error it holds, so its status, title and type \
+             are that error's. Drop them, or drop `transparent`",
+        ));
+    }
+
+    let mut fields = variant.fields.iter();
+    let (Some(field), None) = (fields.next(), fields.next()) else {
+        return Err(syn::Error::new(
+            variant.ident.span(),
+            format!(
+                "transparent variant `{}` holds exactly one field, the error it answers as",
+                variant.ident
+            ),
+        ));
+    };
+
+    if let Some(attr) = field.attrs.iter().find(|attr| is_extension(attr)) {
+        return Err(syn::Error::new(
+            attr.span(),
+            "a transparent variant publishes the extension members of the error it holds, not \
+             the field holding it",
+        ));
+    }
+
+    if let Some(param) = generic_named_in(&field.ty, generics) {
+        return Err(syn::Error::new(
+            field.ty.span(),
+            format!(
+                "a transparent variant's statuses are a `const`, which cannot depend on the \
+                 type's generic parameter `{param}`; name a concrete error type"
+            ),
+        ));
+    }
+
+    Ok(Transparent {
+        variant: variant.ident.clone(),
+        member: field
+            .ident
+            .clone()
+            .map_or_else(|| Member::Unnamed(Index::from(0)), Member::Named),
+        ty: field.ty.clone(),
+    })
+}
+
+/// The first of `generics`' parameters `ty` names, if any.
+fn generic_named_in(ty: &Type, generics: &Generics) -> Option<String> {
+    let params: Vec<String> = generics
+        .params
+        .iter()
+        .map(|param| match param {
+            GenericParam::Type(param) => param.ident.to_string(),
+            GenericParam::Lifetime(param) => param.lifetime.to_string(),
+            GenericParam::Const(param) => param.ident.to_string(),
+        })
+        .collect();
+
+    first_named(ty.to_token_stream(), &params)
+}
+
+/// The first token in `tokens`, at any depth, spelling one of `params`.
+fn first_named(tokens: TokenStream2, params: &[String]) -> Option<String> {
+    let mut previous_was_apostrophe = false;
+    for token in tokens {
+        let named = match &token {
+            TokenTree::Group(group) => first_named(group.stream(), params),
+            TokenTree::Ident(ident) => {
+                let spelled = if previous_was_apostrophe {
+                    format!("'{ident}")
+                } else {
+                    ident.to_string()
+                };
+                params.contains(&spelled).then_some(spelled)
+            }
+            TokenTree::Punct(_) | TokenTree::Literal(_) => None,
+        };
+        if named.is_some() {
+            return named;
+        }
+        previous_was_apostrophe =
+            matches!(&token, TokenTree::Punct(punct) if punct.as_char() == '\'');
+    }
+    None
 }
 
 /// The URI identifying this failure's *type*, if the declaration gives one.
@@ -428,6 +657,7 @@ struct ProblemArgs {
     title: Option<String>,
     type_uri: Option<String>,
     base: Option<Base>,
+    transparent: Option<Span>,
 }
 
 /// Reads one item's `#[problem(...)]` lists, validating every member.
@@ -495,6 +725,16 @@ fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Result<Problem
                         key.span(),
                         "`base` is the prefix every type URI shares, so it belongs on the type \
                          rather than on one variant",
+                    ));
+                }
+                "transparent" if position == Position::Variant => {
+                    args.transparent = Some(key.span());
+                }
+                "transparent" => {
+                    return Err(syn::Error::new(
+                        key.span(),
+                        "`transparent` hands one variant to the error it holds, so it belongs on \
+                         a variant of an enum",
                     ));
                 }
                 "extension" => {

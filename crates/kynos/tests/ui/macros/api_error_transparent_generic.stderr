@@ -1,0 +1,5 @@
+error: a transparent variant's statuses are a `const`, which cannot depend on the type's generic parameter `E`; name a concrete error type
+  --> tests/ui/macros/api_error_transparent_generic.rs:10:12
+   |
+10 |     Lookup(E),
+   |            ^

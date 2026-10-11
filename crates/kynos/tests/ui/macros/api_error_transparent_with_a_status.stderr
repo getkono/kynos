@@ -1,0 +1,5 @@
+error: a transparent variant answers as the error it holds, so its status, title and type are that error's. Drop them, or drop `transparent`
+  --> tests/ui/macros/api_error_transparent_with_a_status.rs:14:15
+   |
+14 |     #[problem(transparent, status = 404)]
+   |               ^^^^^^^^^^^

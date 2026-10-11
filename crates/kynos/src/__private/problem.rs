@@ -1,5 +1,5 @@
-//! What `#[derive(ApiError)]` declares each status with, and joins a `const`
-//! type URI prefix with.
+//! What `#[derive(ApiError)]` declares each status with, joins a `const` type
+//! URI prefix with, and unions a transparent variant's statuses with.
 //!
 //! [`response`] forwards to [`error::problem`](crate::error::problem), where
 //! the shape is built; a `pub use` would give the builder a second path.
@@ -42,6 +42,75 @@ pub const fn join<const N: usize>(base: &str, slug: &str) -> [u8; N] {
         index += 1;
     }
     joined
+}
+
+/// How many distinct statuses `parts` holds: the length [`union`] is asked
+/// for.
+#[must_use]
+pub const fn union_len(parts: &[&[u16]]) -> usize {
+    let mut len = 0;
+    let mut part = 0;
+    while part < parts.len() {
+        let mut index = 0;
+        while index < parts[part].len() {
+            if first_sighting(parts, part, index) {
+                len += 1;
+            }
+            index += 1;
+        }
+        part += 1;
+    }
+    len
+}
+
+/// Every status `parts` holds, in order of first appearance and without
+/// repeats: how a `#[problem(transparent)]` variant's statuses join its
+/// enum's in a `const`.
+///
+/// # Panics
+///
+/// Where `N` is not [`union_len`] of `parts`, which in a `const` is a compile
+/// error.
+#[must_use]
+pub const fn union<const N: usize>(parts: &[&[u16]]) -> [u16; N] {
+    assert!(union_len(parts) == N, "`N` is the union's length");
+    let mut union = [0; N];
+    let mut len = 0;
+    let mut part = 0;
+    while part < parts.len() {
+        let mut index = 0;
+        while index < parts[part].len() {
+            if first_sighting(parts, part, index) {
+                union[len] = parts[part][index];
+                len += 1;
+            }
+            index += 1;
+        }
+        part += 1;
+    }
+    union
+}
+
+/// Whether `parts[part][index]` appears nowhere before that position.
+const fn first_sighting(parts: &[&[u16]], part: usize, index: usize) -> bool {
+    let status = parts[part][index];
+    let mut earlier = 0;
+    while earlier <= part {
+        let end = if earlier == part {
+            index
+        } else {
+            parts[earlier].len()
+        };
+        let mut seen = 0;
+        while seen < end {
+            if parts[earlier][seen] == status {
+                return false;
+            }
+            seen += 1;
+        }
+        earlier += 1;
+    }
+    true
 }
 
 /// The `&str` [`join`]'s bytes spell.
