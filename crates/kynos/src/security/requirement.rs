@@ -8,8 +8,11 @@
 //! | Parameter | `security` | Runs |
 //! | --- | --- | --- |
 //! | `S` | `[{S}]` | `S` |
-//! | [`AnyOf<(A, B)>`](AnyOf) | `[{A}, {B}]` | `A`, then `B`; the first that authenticates wins |
-//! | [`AllOf<(A, B)>`](AllOf) | `[{A, B}]` | both, and both must authenticate |
+//! | [`AnyOf<(A, B)>`](AnyOf) | `[{A}, {B}]` | `A`, then `B`; the first that is satisfied wins |
+//! | [`AllOf<(A, B)>`](AllOf) | `[{A, B}]` | both, and both must be satisfied |
+//!
+//! A scheme is satisfied once it authenticates and is authorized for its
+//! default scopes, [`SecurityScheme::scopes`], where it has any.
 //!
 //! [`MaybeAuth`](crate::security::auth::MaybeAuth) prepends `{}` to any of the
 //! three. A combinator takes schemes and not other combinators, so each shape
