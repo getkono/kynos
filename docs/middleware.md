@@ -695,11 +695,12 @@ over it.
 A client that sends one byte every 29 seconds still passes. Bounding the
 *total* is `Timeout`'s job, and it bounds the read only when it is mounted
 *outside* the limit doing the reading — the earlier `intercept` call, per
-[the ordering rule](#the-order-a-chain-runs-in). The types do not enforce it,
-and neither does a test: `a_timeout_over_a_body_limit_declares_both_statuses`
-in [`tests/limits.rs`](../crates/kynos/tests/limits.rs) mounts the arrangement
-but asserts only on the emitted document, which is order-insensitive and passes
-either way.
+[the ordering rule](#the-order-a-chain-runs-in). The types do not enforce it;
+the `stalled_body` cases in [`tests/limits.rs`](../crates/kynos/tests/limits.rs)
+pin it in-process, with a `TestClient` body that stops: a length-less one is
+answered 408 under a `Timeout` outside `BodySize` and never inside it, while a
+declared length within the limit is read beneath `BodySize` and bounded in
+either order.
 
 **A response body is bounded by neither of the rows above.** `Timeout` wraps the
 chain's future, and that future completes when the *head* is ready. A handler
