@@ -478,6 +478,30 @@ pub fn derive_schema(item: TokenStream) -> TokenStream {
 /// `#[problem(extension)]`, so error-site context stays off the wire by
 /// default.
 ///
+/// A variant holding one field of another `ApiError` type may say
+/// `#[problem(transparent)]` instead of declaring a status, so failures many
+/// operations share are declared once:
+///
+/// ```ignore
+/// #[derive(Debug, thiserror::Error, ApiError)]
+/// enum PauseError {
+///     #[error(transparent)]
+///     #[problem(transparent)]
+///     Lookup(#[from] LookupError),
+///
+///     #[error("the torrent is already paused")]
+///     #[problem(status = 409)]
+///     AlreadyPaused,
+/// }
+/// ```
+///
+/// Its problem is the held error's, `detail` and extension members included,
+/// and that type's statuses and responses join the enum's; a status both
+/// declare is described once, naming every type that reaches it. It declares
+/// no `status`, `title` or `type` of its own, publishes no `extension`, and
+/// its field's type cannot name the enum's generic parameters, since the
+/// statuses are a `const`.
+///
 /// Also emits the `IntoResponse` and `Responses` implementations, so the
 /// statuses the error produces and the description advertises cannot diverge.
 /// It is the only supported way to implement `IntoProblem`.

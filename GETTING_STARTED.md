@@ -90,6 +90,7 @@ The shapes are close; what moves is that each one must describe itself.
 | `State<T>`, `Extension<T>` | `Inject<T>` from a `#[derive(Provider)]` context, passed to `Router::build` |
 | `impl IntoResponse`, `(StatusCode, T)` | a status in the return type: `Created<T>`, `NoContent`, or a `#[derive(Reply)]` enum |
 | an error implementing `IntoResponse` | `#[derive(ApiError)]`, answered as an RFC 9457 problem |
+| a hand-written `From` into each error enum for a shared failure | a `#[problem(transparent)]` variant holding the shared `ApiError`, with `#[from]` |
 | `middleware::from_fn`, `tower::Layer` | an `Interceptor` via `Router::intercept`; see above |
 | `Router::nest`, `merge` | `nest` and `merge`, plus `Group`: one resource's operations under one prefix, tag and interceptor stack |
 | `/{*path}` wildcards, `fallback` SPA | none; `assets!` for a fixed file set, a reverse proxy otherwise |
