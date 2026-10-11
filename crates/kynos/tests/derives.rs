@@ -143,6 +143,27 @@ struct Delegated;
 #[security(openid_connect(url = "https://auth.example.com/.well-known/openid-configuration"))]
 struct Federated;
 
+/// The scopes `Audited` demands, named by a type rather than by strings.
+#[derive(Clone, Copy)]
+enum Grant {
+    Audit,
+    ReadReports,
+}
+
+impl kynos::security::Scope for Grant {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Audit => "audit",
+            Self::ReadReports => "reports:read",
+        }
+    }
+}
+
+/// A scheme naming its scope type once, and its default scopes as values of it.
+#[derive(SecurityScheme)]
+#[security(bearer, scope = Grant, scopes(Grant::Audit, Grant::ReadReports))]
+struct Audited;
+
 /// The whole `#[problem(...)]` grammar, so the expansion is exercised by a
 /// compiled use rather than only by compile-fail cases.
 ///
@@ -310,6 +331,31 @@ fn a_delegated_scheme_challenges_for_a_bearer_token() {
     assert_eq!(
         <Federated as SecuritySchemeTrait>::challenge(),
         Some("Bearer")
+    );
+}
+
+fn scoped_by<S: SecuritySchemeTrait<Scope = P>, P>() {}
+
+/// `scope = Type` names the scheme's scope type, a scheme naming none is
+/// `Unscoped`, and the scheme-level `scopes(..)` reach the requirement as the
+/// names `Scope::name` gives them, in the order written.
+#[test]
+fn a_derived_scheme_names_its_scope_type_and_demands_its_defaults_by_name() {
+    scoped_by::<Audited, Grant>();
+    scoped_by::<BearerAuth, kynos::security::Unscoped>();
+
+    let mut registry = kynos::schema::registry::Registry::new();
+    let mut operation = kynos::router::operation::OperationCx::new(&mut registry);
+    <kynos::security::auth::Auth<Audited> as kynos::extract::describe::Describe>::describe(
+        &mut operation,
+    );
+
+    assert_eq!(
+        operation.finish().security,
+        Some(vec![kynos::openapi::SecurityRequirement::scoped(
+            "Audited",
+            ["audit", "reports:read"],
+        )])
     );
 }
 
