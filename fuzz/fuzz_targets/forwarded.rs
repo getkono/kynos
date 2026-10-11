@@ -49,13 +49,7 @@ fuzz_target!(|data: &[u8]| {
                 TrustedProxies::hops(header, 1),
                 TrustedProxies::hops(header, 3),
                 TrustedProxies::hops(header, usize::MAX),
-                TrustedProxies::networks(
-                    header,
-                    [
-                        (IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
-                        (IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
-                    ],
-                ),
+                TrustedProxies::everyone(header),
             ];
             for trusted in &policies {
                 let resolved = Forwarded::resolve(&headers, peer, trusted);
