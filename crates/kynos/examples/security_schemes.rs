@@ -31,11 +31,12 @@
 //!   the `X-Api-Key`-shaped schemes; a credential in `Authorization` is `http`,
 //!   `bearer` or `basic`.
 //! * **Scopes are a type either way, and the two ways differ.** `DelegatedAccess`
-//!   declares them on the *scheme*, which is what OAuth 2.0 publishes as the set
-//!   an authorization server can grant. `ReadReports` declares them on the
-//!   *operation* through `Scoped`, which is what this particular endpoint
-//!   demands. Both are values of `Grant`, the scope type each scheme names
+//!   declares them on the *scheme*, which is what every operation it guards
+//!   demands. `ReadReports` declares them on the *operation* through `Scoped`,
+//!   which is what this particular endpoint demands on top. Both are values of `Grant`, the scope type each scheme names
 //!   once, so neither is a string a handler passes or an authorizer parses.
+//!   And both are checked: every guard naming `DelegatedAccess` hands its
+//!   scopes to `authorize`, exactly as `/reports` hands it `ReadReports`.
 //! * **A context declares what it can verify.** One `App`, seven
 //!   implementations, so the set of schemes an application supports is visible
 //!   in one place rather than spread across the handlers requiring them. Only
@@ -425,9 +426,10 @@ async fn federated_me(auth: Auth<Federated>) -> NoContent {
 
 /// The scopes one operation demands, as a type.
 ///
-/// Distinct from the scopes on `DelegatedAccess`: those are what the
-/// authorization server publishes it can grant, these are what this endpoint
-/// insists on. A scheme can offer more than any one operation needs.
+/// Distinct from the scopes on `DelegatedAccess`: those are what every
+/// operation guarded by that scheme demands, these are what this endpoint
+/// insists on besides. A `Scoped` guard on a scheme with default scopes
+/// demands both.
 struct ReadReports;
 
 impl Scopes for ReadReports {
@@ -458,7 +460,8 @@ async fn reports(caller: Scoped<AccessToken, ReadReports>) -> NoContent {
 ///
 /// `AnyOf` declares `security: [{ServiceKey: []}, {AccessToken: []}]`, which
 /// OpenAPI reads as "either", and checks them in that order: the first that
-/// authenticates wins, and the credential says which one it was.
+/// authenticates, and holds its scheme's default scopes, wins, and the
+/// credential says which one it was.
 #[kynos::get("/exports")]
 async fn exports(caller: Auth<AnyOf<(ServiceKey, AccessToken)>>) -> NoContent {
     match caller.into_inner() {

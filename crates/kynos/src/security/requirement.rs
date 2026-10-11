@@ -8,8 +8,11 @@
 //! | Parameter | `security` | Runs |
 //! | --- | --- | --- |
 //! | `S` | `[{S}]` | `S` |
-//! | [`AnyOf<(A, B)>`](AnyOf) | `[{A}, {B}]` | `A`, then `B`; the first that authenticates wins |
-//! | [`AllOf<(A, B)>`](AllOf) | `[{A, B}]` | both, and both must authenticate |
+//! | [`AnyOf<(A, B)>`](AnyOf) | `[{A}, {B}]` | `A`, then `B`; the first that is satisfied wins |
+//! | [`AllOf<(A, B)>`](AllOf) | `[{A, B}]` | both, and both must be satisfied |
+//!
+//! A scheme is satisfied once it authenticates and is authorized for its
+//! default scopes, [`SecurityScheme::scopes`], where it has any.
 //!
 //! [`MaybeAuth`](crate::security::auth::MaybeAuth) prepends `{}` to any of the
 //! three. A combinator takes schemes and not other combinators, so each shape
@@ -93,21 +96,17 @@ where
             return Ok(None);
         };
 
-        context
-            .authenticator()
-            .authenticate(presented, context)
-            .await
-            .map(Some)
+        verify::<S, C>(presented, context).await.map(Some)
     }
 }
 
 /// Any one of a tuple of schemes, tried in order.
 ///
 /// Declares one requirement per scheme, `[{A}, {B}]`, which is OpenAPI's
-/// "either". The first scheme that authenticates wins; a scheme whose
-/// credential is absent is skipped. When none authenticates, the first refusal
-/// in declaration order is the answer, and when nothing was presented at all
-/// the requirement is absent.
+/// "either". The first scheme that authenticates, and is authorized for its
+/// default scopes, wins; a scheme whose credential is absent is skipped. When
+/// none is satisfied, the first refusal in declaration order is the answer,
+/// and when nothing was presented at all the requirement is absent.
 ///
 /// Implemented for tuples of two to four schemes. The credential is an
 /// [`Either2`], [`Either3`] or [`Either4`] naming which one authenticated.
@@ -129,7 +128,10 @@ pub struct AnyOf<T>(PhantomData<fn() -> T>);
 /// Declares a single requirement naming all of them, `[{A, B}]`, which is
 /// OpenAPI's "both". Every credential is read before any is verified: when none
 /// was presented the requirement is absent, and when only some were it is a
-/// 401, because a partial set is not an anonymous request.
+/// 401, because a partial set is not an anonymous request. Every scheme is
+/// authenticated before any is authorized for its default scopes, so a
+/// credential that fails to authenticate is a 401 whatever another scheme's
+/// scopes would have answered.
 ///
 /// Implemented for tuples of two to four schemes. The credential is the tuple
 /// of theirs, in the same order.
@@ -275,11 +277,15 @@ macro_rules! all_of {
                         return Err(AuthRejection::unauthenticated());
                     };
                 )+
+                // Every authentication before any authorization, so a request
+                // one scheme cannot authenticate is a 401, never a 403, and is
+                // never authorized.
                 $(
                     let $scheme = <C as Authenticates<$scheme>>::authenticator(context)
                         .authenticate($scheme, context)
                         .await?;
                 )+
+                $( let $scheme = authorize_defaults::<$scheme, C>($scheme, context).await?; )+
                 Ok(Some(($($scheme,)+)))
             }
         }
@@ -293,6 +299,44 @@ any_of!(Either4; A => First, B => Second, D => Third, E => Fourth);
 all_of!(A, B);
 all_of!(A, B, D);
 all_of!(A, B, D, E);
+
+/// Authenticates `presented` as scheme `S`, then authorizes the scheme's
+/// default scopes, so a guard naming no scope set enforces what
+/// [`declare`](Requirement::declare) wrote for it.
+async fn verify<S, C>(presented: S::Presented, context: &C) -> Result<S::Credential, AuthRejection>
+where
+    S: Carries,
+    C: Authenticates<S>,
+{
+    let credential = context
+        .authenticator()
+        .authenticate(presented, context)
+        .await?;
+    authorize_defaults::<S, C>(credential, context).await
+}
+
+/// Authorizes `credential` for scheme `S`'s default scopes, and hands it back.
+///
+/// Owned rather than borrowed, so the future needs no `Sync` credential to be
+/// `Send`. A scheme with no default scopes is never authorized here: its
+/// requirement declares none, so there is nothing to check.
+async fn authorize_defaults<S, C>(
+    credential: S::Credential,
+    context: &C,
+) -> Result<S::Credential, AuthRejection>
+where
+    S: Carries,
+    C: Authenticates<S>,
+{
+    let defaults = S::scopes();
+    if !defaults.is_empty() {
+        context
+            .authenticator()
+            .authorize(&credential, defaults, context)
+            .await?;
+    }
+    Ok(credential)
+}
 
 /// Registers scheme `S` and returns the requirement naming it with `scopes`.
 ///

@@ -1,14 +1,18 @@
+use std::sync::Mutex;
+
 use kynos_openapi::SecurityRequirement;
 
 use super::{Auth, MaybeAuth, Scoped, Scopes};
 use crate::{
+    error::rejection::AuthRejection,
     extract::describe::Describe,
+    http::{HeaderValue, Parts, Request, StatusCode, body::Body, header::AUTHORIZATION},
     router::operation::OperationCx,
     schema::registry::Registry,
     security::{
-        Scope, SecurityScheme,
-        carrier::Credentials,
-        requirement::{AllOf, AnyOf, component_name},
+        Authenticates, Authenticator, Guard, Scope, SecurityScheme,
+        carrier::{self, BearerToken, Carries, Credentials},
+        requirement::{AllOf, AnyOf, Either2, component_name},
         schemes::{Basic, Bearer, MutualTls},
     },
 };
@@ -17,6 +21,7 @@ use crate::{
 #[derive(Clone, Copy)]
 enum Grant {
     ReadReports,
+    WriteReports,
     Audit,
 }
 
@@ -24,6 +29,7 @@ impl Scope for Grant {
     fn name(&self) -> &'static str {
         match self {
             Self::ReadReports => "reports:read",
+            Self::WriteReports => "reports:write",
             Self::Audit => "audit",
         }
     }
@@ -35,6 +41,15 @@ struct ReadReports;
 impl Scopes for ReadReports {
     type Scope = Grant;
     const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
+}
+
+/// A scope set naming one scope `Audited`'s defaults already name and one
+/// they do not.
+struct EditReports;
+
+impl Scopes for EditReports {
+    type Scope = Grant;
+    const REQUIRED: &'static [Grant] = &[Grant::ReadReports, Grant::WriteReports];
 }
 
 /// A scheme demanding `audit` and `reports:read` of every operation by default.
@@ -52,6 +67,144 @@ impl SecurityScheme for Audited {
     fn scopes() -> &'static [Grant] {
         &[Grant::Audit, Grant::ReadReports]
     }
+}
+
+impl Carries for Audited {
+    type Presented = BearerToken;
+
+    fn present(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
+        carrier::bearer(parts)
+    }
+}
+
+/// Authenticates every token and answers `authorize` with `admit`, keeping the
+/// scope names each `authorize` call was handed, in call order.
+struct Recorder {
+    admit: bool,
+    authorized: Mutex<Vec<Vec<&'static str>>>,
+}
+
+impl Recorder {
+    /// What `authorize` was handed so far.
+    fn authorized(&self) -> Vec<Vec<&'static str>> {
+        self.authorized.lock().expect("an unpoisoned lock").clone()
+    }
+
+    /// Records `scopes` and answers.
+    fn answer<P: Scope>(&self, scopes: &[P]) -> Result<(), AuthRejection> {
+        self.authorized
+            .lock()
+            .expect("an unpoisoned lock")
+            .push(scopes.iter().map(Scope::name).collect());
+        if self.admit {
+            Ok(())
+        } else {
+            Err(AuthRejection::forbidden())
+        }
+    }
+}
+
+impl<S, C> Authenticator<S, C> for Recorder
+where
+    S: Carries<Credential = String>,
+    C: Sync,
+{
+    async fn authenticate(&self, _: S::Presented, _: &C) -> Result<String, AuthRejection> {
+        Ok("caller".to_owned())
+    }
+
+    async fn authorize(&self, _: &String, scopes: &[S::Scope], _: &C) -> Result<(), AuthRejection> {
+        self.answer(scopes)
+    }
+}
+
+/// A context verifying `Audited` and the unscoped `Bearer` through one
+/// [`Recorder`].
+struct Recording(Recorder);
+
+impl Recording {
+    fn admitting() -> Self {
+        Self(Recorder {
+            admit: true,
+            authorized: Mutex::new(Vec::new()),
+        })
+    }
+
+    fn refusing() -> Self {
+        Self(Recorder {
+            admit: false,
+            authorized: Mutex::new(Vec::new()),
+        })
+    }
+}
+
+impl Authenticates<Audited> for Recording {
+    type Authenticator = Recorder;
+
+    fn authenticator(&self) -> &Recorder {
+        &self.0
+    }
+}
+
+impl Authenticates<Bearer> for Recording {
+    type Authenticator = Recorder;
+
+    fn authenticator(&self) -> &Recorder {
+        &self.0
+    }
+}
+
+/// A scheme reading the bearer token every request below presents, which its
+/// authenticator never accepts.
+struct Revoked;
+
+impl SecurityScheme for Revoked {
+    const NAME: &'static str = "Revoked";
+    type Credential = String;
+    type Scope = Grant;
+
+    fn describe() -> kynos_openapi::SecurityScheme {
+        kynos_openapi::SecurityScheme::bearer(None)
+    }
+}
+
+impl Carries for Revoked {
+    type Presented = BearerToken;
+
+    fn present(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
+        carrier::bearer(parts)
+    }
+}
+
+/// Refuses every credential as unauthenticated.
+struct Rejecting;
+
+impl<C: Sync> Authenticator<Revoked, C> for Rejecting {
+    async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
+        Err(AuthRejection::unauthenticated())
+    }
+
+    async fn authorize(&self, _: &String, _: &[Grant], _: &C) -> Result<(), AuthRejection> {
+        Ok(())
+    }
+}
+
+impl Authenticates<Revoked> for Recording {
+    type Authenticator = Rejecting;
+
+    fn authenticator(&self) -> &Rejecting {
+        &Rejecting
+    }
+}
+
+/// A request head presenting `Authorization: Bearer t`, which every scheme
+/// above reads.
+fn presenting_a_token() -> Parts {
+    let mut request = Request::new(Body::empty());
+    request
+        .headers_mut()
+        .insert(AUTHORIZATION, HeaderValue::from_static("Bearer t"));
+    request.into_parts().0
 }
 
 /// Describes one operation guarded by `D` and returns what it said.
@@ -317,4 +470,115 @@ fn a_second_guard_on_one_operation_is_refused() {
     let mut cx = OperationCx::new(&mut registry);
     Auth::<Bearer>::describe(&mut cx);
     Auth::<MutualTls>::describe(&mut cx);
+}
+
+/// What a guard declares of a scheme's default scopes it hands to
+/// `authorize`, so a caller lacking them is a 403 under every guard naming the
+/// scheme, alone or combined.
+#[tokio::test]
+async fn every_guard_authorizes_the_default_scopes_it_declares() {
+    let parts = presenting_a_token();
+    let defaults = vec![vec!["audit", "reports:read"]];
+
+    let refusing = Recording::refusing();
+    let refused = <Auth<Audited> as Guard<_>>::guard(&parts, &refusing).await;
+    assert_eq!(
+        refused.err().map(|r| r.status()),
+        Some(StatusCode::FORBIDDEN)
+    );
+    assert_eq!(refusing.0.authorized(), defaults);
+
+    let refusing = Recording::refusing();
+    let refused = <MaybeAuth<Audited> as Guard<_>>::guard(&parts, &refusing).await;
+    assert_eq!(
+        refused.err().map(|r| r.status()),
+        Some(StatusCode::FORBIDDEN)
+    );
+    assert_eq!(refusing.0.authorized(), defaults);
+
+    // Both schemes authenticate the one token; only `Audited` demands scopes.
+    let refusing = Recording::refusing();
+    let refused = <Auth<AllOf<(Audited, Bearer)>> as Guard<_>>::guard(&parts, &refusing).await;
+    assert_eq!(
+        refused.err().map(|r| r.status()),
+        Some(StatusCode::FORBIDDEN)
+    );
+    assert_eq!(refusing.0.authorized(), defaults);
+
+    let admitting = Recording::admitting();
+    let admitted = <Auth<AllOf<(Audited, Bearer)>> as Guard<_>>::guard(&parts, &admitting).await;
+    assert!(admitted.is_ok());
+    assert_eq!(admitting.0.authorized(), defaults);
+}
+
+/// `AllOf` authenticates every scheme before authorizing any, so a credential
+/// that fails to authenticate answers 401 even where an earlier scheme's
+/// default scopes would be refused, and `authorize` never runs for a request
+/// that is not authenticated.
+#[tokio::test]
+async fn all_of_authenticates_every_scheme_before_authorizing_any() {
+    let refusing = Recording::refusing();
+    let refused =
+        <Auth<AllOf<(Audited, Revoked)>> as Guard<_>>::guard(&presenting_a_token(), &refusing)
+            .await;
+
+    assert_eq!(
+        refused.err().map(|r| r.status()),
+        Some(StatusCode::UNAUTHORIZED)
+    );
+    assert!(refusing.0.authorized().is_empty());
+}
+
+/// An `AnyOf` alternative whose default scopes are refused is not satisfied,
+/// so the next alternative is tried rather than the refused one admitted.
+#[tokio::test]
+async fn any_of_moves_past_an_alternative_whose_default_scopes_are_refused() {
+    let refusing = Recording::refusing();
+    let guarded =
+        <Auth<AnyOf<(Audited, Bearer)>> as Guard<_>>::guard(&presenting_a_token(), &refusing).await;
+
+    assert!(
+        matches!(guarded.map(Auth::into_inner), Ok(Either2::Second(_))),
+        "`Audited` was admitted although its default scopes were refused"
+    );
+    assert_eq!(refusing.0.authorized(), [vec!["audit", "reports:read"]]);
+}
+
+/// A scheme demanding no default scopes is authenticated and never authorized
+/// under a guard naming no scope set, so such a guard's 403 surface stays
+/// `authenticate`'s alone.
+#[tokio::test]
+async fn a_scheme_with_no_default_scopes_is_not_authorized() {
+    let refusing = Recording::refusing();
+    let guarded = <Auth<Bearer> as Guard<_>>::guard(&presenting_a_token(), &refusing).await;
+
+    assert!(guarded.is_ok());
+    assert!(refusing.0.authorized().is_empty());
+}
+
+/// `Scoped` hands `authorize` the scopes it declares: the scheme's defaults
+/// first, then its own set's, each once, in one call.
+#[tokio::test]
+async fn scoped_authorizes_the_defaults_and_its_set_together() {
+    let admitting = Recording::admitting();
+    let guarded =
+        <Scoped<Audited, ReadReports> as Guard<_>>::guard(&presenting_a_token(), &admitting).await;
+
+    assert!(guarded.is_ok());
+    assert_eq!(admitting.0.authorized(), [vec!["audit", "reports:read"]]);
+}
+
+/// A `Scoped` set's scope the defaults do not name joins them, after the
+/// defaults and once, so `Scoped` still authorizes what its own set requires.
+#[tokio::test]
+async fn scoped_adds_its_own_scopes_to_the_defaults() {
+    let admitting = Recording::admitting();
+    let guarded =
+        <Scoped<Audited, EditReports> as Guard<_>>::guard(&presenting_a_token(), &admitting).await;
+
+    assert!(guarded.is_ok());
+    assert_eq!(
+        admitting.0.authorized(),
+        [vec!["audit", "reports:read", "reports:write"]]
+    );
 }

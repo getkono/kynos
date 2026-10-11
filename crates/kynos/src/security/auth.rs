@@ -4,6 +4,8 @@
 //! the operation's `security`, and adds 401 and 403 to its `responses`, as one
 //! act.
 
+use std::borrow::Cow;
+
 use kynos_openapi::{
     Header, Schema, SecurityRequirement, StatusPattern, model::schema::types::SchemaType,
 };
@@ -405,10 +407,9 @@ impl<S: SecurityScheme, R: Scopes<Scope = S::Scope>> Scoped<S, R> {
 
 impl<S: SecurityScheme, R: Scopes<Scope = S::Scope>> Describe for Scoped<S, R> {
     fn describe(operation: &mut OperationCx<'_>) {
-        // `R`'s scopes join the scheme's defaults rather than replacing them,
-        // without naming one twice.
+        // The scopes the guard authorizes, without naming one twice.
         let mut scopes = Vec::new();
-        for scope in S::scopes().iter().chain(R::REQUIRED).map(Scope::name) {
+        for scope in demanded::<S, R>().iter().map(Scope::name) {
             if !scopes.contains(&scope) {
                 scopes.push(scope);
             }
@@ -447,11 +448,35 @@ where
             .await
             .map_err(challenged)?;
         authenticator
-            .authorize(&credential, R::REQUIRED, context)
+            .authorize(&credential, &demanded::<S, R>(), context)
             .await
             .map_err(challenged)?;
         Ok(Self(credential, std::marker::PhantomData))
     }
+}
+
+/// The scopes a [`Scoped<S, R>`](Scoped) argument demands: `S`'s defaults,
+/// then each of `R`'s that the defaults do not already name.
+///
+/// `R`'s scopes join the defaults rather than replacing them, so the scheme's
+/// demand holds under every guard. Borrowed, and so free, when `S` has none.
+fn demanded<S, R>() -> Cow<'static, [S::Scope]>
+where
+    S: SecurityScheme,
+    R: Scopes<Scope = S::Scope>,
+{
+    let defaults = S::scopes();
+    if defaults.is_empty() {
+        return Cow::Borrowed(R::REQUIRED);
+    }
+
+    let mut union = defaults.to_vec();
+    for scope in R::REQUIRED {
+        if !union.iter().any(|held| held.name() == scope.name()) {
+            union.push(scope.clone());
+        }
+    }
+    Cow::Owned(union)
 }
 
 /// Sets the operation's `security` to the guard's, and declares how it refuses.
