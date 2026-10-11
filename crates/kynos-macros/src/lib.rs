@@ -328,15 +328,17 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///
 /// A concrete type takes its identifier as its component name, and a field
 /// referring back to it is a `$ref`. A generic type's instantiation takes its
-/// identifier joined by `_` to each type argument's component name, so
-/// `Page<User>` is `Page_User`, and is inlined where an argument has none, as
+/// identifier joined by `_` to each type argument's component name and each
+/// const argument's value, so `Page<User>` is `Page_User` and `Batch<User, 2>`
+/// is `Batch_User_2`, and is inlined where a type argument has none, as
 /// `Page<u64>`'s does; see `kynos::schema::instantiation_name`. Which one the
 /// derive cannot see, so a generic type naming itself — by its identifier or
 /// as `Self` — in a member its schema describes is a compile error: inlined,
 /// its description would never end. Make the recursive type concrete,
-/// or implement `Schema` by hand returning a `name()`. Generic types reaching
-/// each other are past what the derive sees, and building the document panics
-/// naming the type rather than overflowing the stack.
+/// or implement `Schema` by hand returning a `name()`. Named instantiations
+/// reaching each other are `$ref`s to each other; inlined ones are past what
+/// the derive sees, and building the document panics naming the type rather
+/// than overflowing the stack.
 ///
 /// # Rejected, because serde and the schema would disagree
 ///

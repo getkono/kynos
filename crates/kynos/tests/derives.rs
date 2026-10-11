@@ -2568,6 +2568,33 @@ fn a_const_argument_names_its_instantiation_by_its_value() {
     assert_eq!(bounds("Fixed_32"), (32.into(), 32.into()));
 }
 
+// Named instantiations reaching each other, refused by nothing.
+#[derive(Schema)]
+struct Ping<T> {
+    value: T,
+    pong: Option<Box<Pong<T>>>,
+}
+
+#[derive(Schema)]
+struct Pong<T> {
+    ping: Option<Box<Ping<T>>>,
+}
+
+/// Generic types reaching each other through named instantiations are
+/// `$ref`s to each other's components, so the description ends.
+#[test]
+fn named_instantiations_reaching_each_other_refer_to_each_other() {
+    let mut registry = kynos::schema::registry::Registry::new();
+    assert_eq!(
+        registry.resolve::<Ping<User>>(),
+        kynos::openapi::Schema::component("Ping_User")
+    );
+    let components = registry.into_components();
+    let mut names: Vec<&str> = components.schemas.keys().map(String::as_str).collect();
+    names.sort_unstable();
+    assert_eq!(names, ["Ping_User", "Pong_User", "User"]);
+}
+
 /// A generic transparent struct whose argument has no component name claims
 /// none either.
 #[test]

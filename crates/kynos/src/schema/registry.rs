@@ -73,8 +73,9 @@ impl Registry {
     /// # Panics
     ///
     /// When an anonymous type reaches itself with no named type between: a
-    /// hand implementation doing so, or generic derived types referring to one
-    /// another, whose description would have no end. `#[derive(Schema)]`
+    /// hand implementation doing so, or inlined instantiations of generic
+    /// derived types referring to one another, whose description would have no
+    /// end; named instantiations are `$ref`s to each other. `#[derive(Schema)]`
     /// refuses the direct case, a generic type naming itself, at compile time.
     pub fn resolve<T: Schema>(&mut self) -> OpenApiSchema {
         let Some(name) = T::name() else {
