@@ -252,7 +252,8 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// [`Constraints`](https://docs.rs/kynos/latest/kynos/schema/constraints/struct.Constraints.html):
 /// `minimum`, `maximum`, `exclusive_minimum`, `exclusive_maximum`,
 /// `multiple_of`, `min_length`, `max_length`, `pattern`, `min_items`,
-/// `max_items` and the `unique_items` flag. They become JSON Schema assertions
+/// `max_items`, the `unique_items` flag, `content_encoding` and
+/// `content_media_type`. Bar the last two, they become JSON Schema assertions
 /// *and* the parser's checks: the derive generates
 /// `Schema::check_constraints`, which every input decoding a `Schema` type
 /// runs on the value it decoded, refusing a broken bound by naming the member
@@ -276,6 +277,22 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// `\d`, `\w` and `\b` ASCII as ECMA-262 does, and refuses at compile time a
 /// pattern the engine cannot run — a lookaround or a backreference — or one
 /// the two dialects read apart, such as `(?i)` or `\A`.
+///
+/// `content_encoding` and `content_media_type` describe a string carrying
+/// encoded content, such as a file sent as base64 inside a JSON body, as
+/// `contentEncoding` and `contentMediaType`. JSON Schema makes both
+/// annotations, so nothing checks the value against them; they are held to a
+/// `Textual` field as a length bound is. The encoding is one of `base16`,
+/// `base32`, `base32hex`, `base64`, `base64url` and `quoted-printable`, and
+/// the media type is an RFC 9110 `media-type`; anything else is refused.
+///
+/// ```ignore
+/// #[derive(kynos::Schema, serde::Deserialize)]
+/// struct AddTorrent {
+///     #[schema(content_encoding = "base64", content_media_type = "application/x-bittorrent")]
+///     metainfo: String,
+/// }
+/// ```
 ///
 /// `open` and `as` are the members of `#[schema(...)]` that are not
 /// constraints. `open` goes on a `#[serde(flatten)]` field to say that the

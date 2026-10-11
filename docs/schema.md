@@ -245,6 +245,31 @@ Two further rules bind:
 `contentEncoding` is unrelated to HTTP's `Content-Encoding`, which is about
 compression and is applied after all of this.
 
+A `String` field that already carries encoded bytes, such as a file uploaded
+as base64 inside a JSON body, says so on the field:
+
+```rust,ignore
+#[derive(Schema, Deserialize)]
+struct AddTorrent {
+    #[schema(
+        content_encoding = "base64",
+        content_media_type = "application/x-bittorrent",
+        max_length = 1398101
+    )]
+    metainfo: String,
+}
+```
+
+Both keys are field annotations rather than type claims, since the same
+`String` holds whatever its field says it does; they are accepted where the
+field reaches `Textual`, as a length bound is, and refused elsewhere. An
+encoding is one of those JSON Schema points to — `base16`, `base32`,
+`base32hex`, `base64`, `base64url` and `quoted-printable` — and a media type is
+RFC 9110's `media-type`, parameters included. Neither is checked against the
+value: draft 2020-12 makes both annotations, so a validator admits a string
+that does not decode, and so does the derive's check. Decoding is the
+handler's, and `max_length` beside them still bounds the encoded text.
+
 ## Deliberately unmapped, and the remedy
 
 A type that cannot produce a *constraining* schema has no implementation. There
@@ -749,6 +774,9 @@ no response body is. `Protobuf<T>` is described by its message rather than by
   claim that it gives what serde writes, as `as` is; skipping the check
   instead would describe bounds nothing enforces. A newtype over such a
   member takes no kind, since a kind lends its value by reference.
+- **`content_encoding` and `content_media_type` are described and not
+  checked**, as JSON Schema's annotations are; they hold the field to
+  `Textual` and nothing else ([Binary content](#binary-content)).
 - **Lengths count code points**, not bytes, as JSON Schema does.
 - **`unique_items` sorts** through `PartialOrd`, so the check is `O(n log n)`
   rather than a pairwise scan a request could make quadratic.
@@ -847,6 +875,7 @@ thread that uses it.
 | 45 | Every `#[schema(...)]` bound that a described member declares — `pattern` only under the `pattern` feature, without which the key is refused, read as ECMA-262 reads it and refused at compile time where the engine cannot run it or reads it otherwise — and every `MapKey::key_constraints` length, and `pattern` under the same feature, of a key that names itself through `as_member`, a key `pattern` no check could enforce refusing the router as `Error::KeyPattern`, is enforced after decoding by `Json<T>`, `Form<T>`, `MultipartForm<T>`, each record of `JsonLines<Records<T>>` and `JsonSeq<Records<T>>`, and `QueryString<T, Json>` — a 422, or a 400 for the query string — keyed by the member's JSON Pointer on the wire (by its object's, for a member read under an `alias`; by its map's, for a key; under `/{index}`, for a record), and agrees with the emitted keyword on whether a document is admitted, but for a value sent for a defaulted member whose filled value breaks the same bound; a derived `QueryParams`, `PathParams`, `HeaderParams` or `CookieParams` field's bounds are its parameter's schema keywords — and a `HeaderParams` field's its response header's — and are enforced on the decoded request value with the type's own, a 400 naming the parameter | [`tests/constraints.rs`](../crates/kynos/tests/constraints.rs), against a draft 2020-12 validator over the emitted schema for the JSON inputs; the locations no derived type reaches in [`schema/tests.rs`](../crates/kynos/src/schema/tests.rs); a pattern's translation against what ECMA-262 says of each construct the dialects read apart, and each of its refusals, in `kynos-openapi`'s [`pattern/tests.rs`](../crates/kynos-openapi/src/pattern/tests.rs); the derive's ledger for the refusal, and `tests/ui/macros/schema_pattern_lookaround.rs` for its wording; a key pattern's refusal, with and without the feature, in [`schema/registry/tests.rs`](../crates/kynos/src/schema/registry/tests.rs), and through a router in `tests/constraints.rs`; and each parameter location's, described and refused, in `a_query_parameter_carries_its_fields_bounds`, `a_path_parameter_carries_its_fields_bounds`, `a_header_carries_its_fields_bounds_in_either_direction`, `a_cookie_carries_its_fields_bounds_and_refuses_a_value_breaking_one` and the `…_that_breaks_a_bound_is_refused_naming_…` tests in [`tests/derives.rs`](../crates/kynos/tests/derives.rs) |
 | 46 | A generic type has no component name and is inlined, so one naming itself, by its identifier or as `Self`, in a member its schema describes is refused at compile time; an inlined type reaching itself with no named type between, as generic types referring to each other do, panics naming the type when the document is built rather than overflowing the stack | the derive's ledger in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs), `tests/ui/macros/schema_recursive_generic.rs` for the wording and `schema_recursive_concrete.rs` in the pass suite; [`registry/tests.rs`](../crates/kynos/src/schema/registry/tests.rs) for the panic |
 | 47 | A described field carrying `#[schema(as = T)]` is `T`'s schema under the field's bounds, prose and `#[deprecated]`, beside a `$ref` where `T` names a component, and is checked by converting its value through `T: From<&F>` and holding the `T` to the field's bounds and `T`'s own, at the field's pointer; it is required as its own type `F` decides, a newtype over it takes no kind, a generic type naming itself in `T` is refused under rule 46, and the parameter derives ignore it; `as` written twice on one field, on a flattened field, on an internally tagged newtype variant's payload or on a `PhantomData` is refused | `a_newtype_member_is_described_as_the_type_it_names` and `a_named_field_is_described_as_the_type_it_names` in [`tests/derives.rs`](../crates/kynos/tests/derives.rs); `a_field_described_as_another_type_is_held_to_what_that_type_states` and `a_member_described_as_another_type_lends_no_kind` in [`tests/constraints.rs`](../crates/kynos/tests/constraints.rs), against the `jsonschema` validator; the derive's ledger and `a_generic_type_is_judged_by_what_its_members_are_described_as` in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); and `tests/ui/macros/schema_as_without_conversion.rs` for the missing conversion's wording |
+| 48 | A field's `content_encoding` and `content_media_type` are its `contentEncoding` and `contentMediaType`, beside its other keywords and beside a `$ref`, accepted only on a field whose type, or `as` type, implements `Textual`, and asserted by neither the check nor a draft 2020-12 validator; an encoding outside `base16`, `base32`, `base32hex`, `base64`, `base64url` and `quoted-printable`, and a media type outside RFC 9110's `media-type` grammar, are refused | `a_content_annotation_is_described_and_asserted_by_neither_side` in [`tests/constraints.rs`](../crates/kynos/tests/constraints.rs), against the `jsonschema` validator; the derive's ledger and `a_content_annotation_is_held_to_its_grammar` in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); and `tests/ui/macros/schema_content_encoding_on_bytes.rs`, `schema_content_encoding_unknown.rs` and `schema_content_media_type_malformed.rs` for the wording |
 
 ## Rationale
 
