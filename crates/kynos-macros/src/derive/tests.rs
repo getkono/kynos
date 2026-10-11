@@ -4176,14 +4176,109 @@ mod api_error {
         ]
     }
 
+    /// A second function rather than more rows in the first, for the reason
+    /// `security_scheme`'s `oauth2_ledger` gives. These are the refusals of
+    /// `#[problem(transparent)]`.
+    fn transparent_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "`transparent` on the type, when it hands over one variant",
+                quote::quote!(
+                    #[problem(transparent)]
+                    struct StoreError(LookupError);
+                ),
+                "belongs on a variant of an enum",
+            ),
+            case(
+                "a transparent variant that also declares a status",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(transparent, status = 404)]
+                        Lookup(LookupError),
+                    }
+                ),
+                "answers as the error it holds",
+            ),
+            case(
+                "a transparent variant holding more than one field",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(transparent)]
+                        Lookup(LookupError, u64),
+                    }
+                ),
+                "holds exactly one field",
+            ),
+            case(
+                "an extension on a transparent variant's field",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(transparent)]
+                        Lookup {
+                            #[problem(extension)]
+                            source: LookupError,
+                        },
+                    }
+                ),
+                "publishes the extension members of the error it holds",
+            ),
+            case(
+                "a transparent variant naming the type's generic parameter",
+                quote::quote!(
+                    enum StoreError<'a, E> {
+                        #[problem(transparent)]
+                        Lookup(Wrapped<&'a E>),
+                    }
+                ),
+                "cannot depend on the type's generic parameter `'a`",
+            ),
+        ]
+    }
+
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
+        each_case_is_refused(transparent_ledger(), expand_inner);
+    }
+
+    /// One diagnostic site refuses three keys, so the ledger's single row per
+    /// site leaves `title` and `type` unwitnessed; each must fire alone.
+    #[test]
+    fn a_transparent_variant_refuses_each_key_it_would_contradict_alone() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "a transparent variant that also declares a title",
+                    quote::quote!(
+                        enum StoreError {
+                            #[problem(transparent, title = "User not found")]
+                            Lookup(LookupError),
+                        }
+                    ),
+                    "answers as the error it holds",
+                ),
+                case(
+                    "a transparent variant that also declares a type",
+                    quote::quote!(
+                        enum StoreError {
+                            #[problem(transparent, type = "https://errors.example.com/lookup")]
+                            Lookup(LookupError),
+                        }
+                    ),
+                    "answers as the error it holds",
+                ),
+            ],
+            expand_inner,
+        );
     }
 
     #[test]
     fn every_api_error_diagnostic_has_a_case() {
-        every_diagnostic_has_a_case("api_error.rs", include_str!("api_error.rs"), ledger().len());
+        every_diagnostic_has_a_case(
+            "api_error.rs",
+            include_str!("api_error.rs"),
+            ledger().len() + transparent_ledger().len(),
+        );
     }
 
     /// Every URI a declaration resolves reaches the emitted responses.

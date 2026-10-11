@@ -1,10 +1,22 @@
 use crate::{
     __private::{
         path::path_parameter_mismatch,
+        problem::{union, union_len},
         uri::{decode_path_value, encode_ext_value, endpoint_uri_with_path, query_pairs},
     },
     extract::params::path::{EncodePath, PathParams},
 };
+
+/// A status repeated within one part, as a hand-written `ShortCircuit` may
+/// list it, and across parts, keeps its first position only; an empty part
+/// contributes nothing.
+#[test]
+fn a_status_union_keeps_each_status_once_in_first_order() {
+    const PARTS: &[&[u16]] = &[&[404, 410, 404], &[], &[409, 410], &[422, 409]];
+    const LEN: usize = union_len(PARTS);
+
+    assert_eq!(union::<LEN>(PARTS), [404, 410, 409, 422]);
+}
 
 struct Params;
 

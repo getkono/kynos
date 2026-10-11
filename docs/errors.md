@@ -127,6 +127,7 @@ enum StoreError {
 | variant | `status` | required, 400–599 |
 | variant | `title` | the problem's `title`, and what the response's description is composed from. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
 | variant | `type` | an absolute URI, overriding `base` |
+| variant | `transparent` | answer as the `ApiError` the variant's one field holds, instead of `status`, `title` and `type` |
 | field | `extension` | serialize this field as an extension member under its own name |
 
 **`title` is read twice, and its absence is answered differently each time.**
@@ -156,10 +157,22 @@ in `const` items, so the type URI is still a `&'static str` and no response
 allocates for it. A framework-level default was rejected: the prefix stays
 visible on the type that publishes under it.
 
+**A shared failure is declared once.** A variant marked `transparent` holds
+another `ApiError` — failures many operations share, such as validation or a
+missing parent resource — and `thiserror`'s `#[from]` converts into it. Its
+problem is the held error's, and that type's statuses and responses join the
+enum's: the `const` is the union in declaration order, and a status both sides
+declare is unioned rather than replaced, so the description names every type
+reaching it, the enum's own first. The union is built in `const` items, so the
+held type cannot name the enum's generic parameters.
+
 **What the grammar refuses.** A missing or out-of-range `status`, a member the
 grammar does not define, a `base` that is neither a string literal nor a path,
 a `base` on a variant, an `extension` on a field with
-no name, and a type with no `Display` are all compile errors, each with a case
+no name, a `transparent` on a struct, beside a `status`, `title` or `type`, over
+other than one field, over a field marked `extension`, over a field naming the
+enum's generic parameters or holding no `ApiError`, and a type with no
+`Display` are all compile errors, each with a case
 in [`tests/ui/macros`](../crates/kynos/tests/ui/macros). What `base`, `title`,
 `type` and `extension` *do* is checked at run time by the conformance harness,
 which compares each problem document a service produced against what the

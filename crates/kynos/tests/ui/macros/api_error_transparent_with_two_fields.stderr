@@ -1,0 +1,5 @@
+error: transparent variant `Lookup` holds exactly one field, the error it answers as
+  --> tests/ui/macros/api_error_transparent_with_two_fields.rs:15:5
+   |
+15 |     Lookup(LookupError, u64),
+   |     ^^^^^^

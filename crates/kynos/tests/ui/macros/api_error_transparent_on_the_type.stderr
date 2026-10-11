@@ -1,0 +1,5 @@
+error: `transparent` hands one variant to the error it holds, so it belongs on a variant of an enum
+  --> tests/ui/macros/api_error_transparent_on_the_type.rs:13:11
+   |
+13 | #[problem(transparent)]
+   |           ^^^^^^^^^^^

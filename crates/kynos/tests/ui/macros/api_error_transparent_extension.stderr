@@ -1,0 +1,5 @@
+error: a transparent variant publishes the extension members of the error it holds, not the field holding it
+  --> tests/ui/macros/api_error_transparent_extension.rs:16:9
+   |
+16 |         #[problem(extension)]
+   |         ^

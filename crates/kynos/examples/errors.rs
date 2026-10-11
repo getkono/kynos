@@ -8,10 +8,11 @@
 //! model:
 //!
 //! * **Nothing lists the statuses.** `StoreError` says 404, 409 and 507 by
-//!   deriving them; `Path<UserPath>` says 400 by being fallible; the
-//!   operation's `responses` is the union. There is no `responses(...)`
-//!   attribute to keep in step with the code, because there is nothing to keep
-//!   in step.
+//!   deriving them, and 422 by holding `Invalid`, a failure declared once for
+//!   every operation that can meet it; `Path<UserPath>` says 400 by being
+//!   fallible; the operation's `responses` is the union. There is no
+//!   `responses(...)` attribute to keep in step with the code, because there
+//!   is nothing to keep in step.
 //! * **`?` works the way it does everywhere else.** `RowMissing` is the store's
 //!   own failure and knows nothing about HTTP. `#[from]` turns it into the
 //!   variant that does.
@@ -93,6 +94,21 @@ struct Page {
 #[error("no row with id {0}")]
 struct RowMissing(u64);
 
+/// A failure many operations share, declared once rather than as a variant of
+/// every error enum that can meet it.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[error("`{field}` is not a valid value")]
+#[problem(
+    base = "https://errors.example.com/",
+    status = 422,
+    title = "Validation failed"
+)]
+struct Invalid {
+    /// The member a client should correct.
+    #[problem(extension)]
+    field: &'static str,
+}
+
 /// What the API says when the store cannot do what was asked.
 ///
 /// One variant per failure a consumer should be able to tell apart. The
@@ -126,6 +142,11 @@ enum StoreError {
     #[error("that email is already registered")]
     #[problem(status = 409)]
     EmailTaken,
+
+    /// Answers as `Invalid` does, and its 422 joins this enum's statuses.
+    #[error(transparent)]
+    #[problem(transparent)]
+    Invalid(#[from] Invalid),
 
     #[error("the store is over its {limit} row budget")]
     #[problem(status = 507, title = "Quota exceeded")]
@@ -226,6 +247,10 @@ fn load(id: u64) -> Result<User, RowMissing> {
 // parameter to fit the stub would make the example misleading.
 #[allow(clippy::needless_pass_by_value)]
 fn insert(user: User) -> Result<User, StoreError> {
+    if user.name.is_empty() {
+        return Err(Invalid { field: "name" }.into());
+    }
+
     if user.id == 0 {
         return Err(StoreError::EmailTaken);
     }
@@ -250,7 +275,7 @@ async fn main() -> kynos::Result<()> {
         .mount(kynos::routes![get_user, list_users, create_user]);
 
     // Every status any of this can answer with is in here, and none of them was
-    // written down twice: 404, 409 and 507 from `StoreError`, 400 from the
+    // written down twice: 404, 409, 422 and 507 from `StoreError`, 400 from the
     // fallible extractors, 503 from the interceptor, and 500 from the recovery
     // boundary on `list_users`.
     let document = router.openapi()?;
