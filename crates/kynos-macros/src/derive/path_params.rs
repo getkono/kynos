@@ -47,7 +47,12 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     });
     let value = construct(&params);
 
-    let parameters = parameters_body(&params, &quote!(::kynos::openapi::ParameterIn::Path), true);
+    let parameters = parameters_body(
+        &params,
+        &quote!(::kynos::openapi::ParameterIn::Path),
+        true,
+        false,
+    );
     let encode = path_encode_body(&params);
 
     // Three implementations, one per direction plus the description.

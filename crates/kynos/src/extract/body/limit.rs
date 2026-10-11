@@ -23,7 +23,7 @@ use crate::{
 /// the `compression` feature's `Decompression`, replaces this figure for that
 /// operation, upward or downward. Mount one on a single operation to raise the
 /// cap for one large upload; an attribute route reaches the same method through
-/// `kynos::routes![upload].0`.
+/// `kynos::routes![upload.intercept(..)]`.
 ///
 /// ```no_run
 /// use kynos::{

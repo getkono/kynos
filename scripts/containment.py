@@ -986,9 +986,9 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
          "`tracing` is named only under `server/` and in `middleware/trace.rs`"),
         (("futures_core",), ONLY_IN,
          {"crates/kynos/src/response/stream/", "crates/kynos/src/extract/body/json_lines/",
-          "crates/kynos/src/http/body.rs"},
+          "crates/kynos/src/http/body.rs", "crates/kynos/src/test/mod.rs"},
          "`futures-core` is named only under `response/stream/` and `extract/body/json_lines/` "
-         "and in `http/body.rs`"),
+         "and in `http/body.rs` and `test/mod.rs`"),
         (("multer",), ONLY_IN, {"crates/kynos/src/extract/body/multipart.rs"},
          "`multer` is named only in `extract/body/multipart.rs`"),
         (("prost",), ONLY_IN,

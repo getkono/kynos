@@ -57,6 +57,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         &params,
         &quote!(::kynos::openapi::ParameterIn::Cookie),
         false,
+        false,
     );
     // `value_of` removes no percent-encoding, which OpenAPI 3.2's `cookie` style
     // states (the default `form` would not); 3.1 has no such style.

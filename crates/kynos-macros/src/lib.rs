@@ -131,6 +131,18 @@ pub fn operation(attribute: TokenStream, item: TokenStream) -> TokenStream {
 /// ```ignore
 /// Router::new().mount(routes![users::list, users::create, users::get]);
 /// ```
+///
+/// `.intercept(..)` after an operation scopes an interceptor to that operation
+/// alone, as `EndpointBuilder::intercept` does: the first call is the
+/// outermost, and every enclosing scope wraps it. One resource's operations
+/// can then differ in limits and still be mounted together.
+///
+/// ```ignore
+/// routes![users::list, users::create.intercept(BodySize::new(64 * 1024))]
+/// ```
+///
+/// No other builder method is accepted; what else describes an operation is
+/// the route attribute's to declare.
 #[proc_macro]
 pub fn routes(input: TokenStream) -> TokenStream {
     route::routes::expand_routes(input)
@@ -265,13 +277,37 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// pattern the engine cannot run — a lookaround or a backreference — or one
 /// the two dialects read apart, such as `(?i)` or `\A`.
 ///
-/// `open` is the one member of `#[schema(...)]` that is not a constraint. It
-/// goes on a `#[serde(flatten)]` field to say that the object admits members
-/// nothing names. The
+/// `open` and `as` are the members of `#[schema(...)]` that are not
+/// constraints. `open` goes on a `#[serde(flatten)]` field to say that the
+/// object admits members nothing names. The
 /// field's type must implement
 /// [`OpenMap`](https://docs.rs/kynos/latest/kynos/schema/flatten/trait.OpenMap.html)
 /// — a `HashMap`, a `BTreeMap` or an `Unchecked` over a map, not a type that
 /// refers to one — and a key type's `propertyNames` does not survive it.
+///
+/// `as = T` describes a field of type `F` as `T`, for an `F` whose own
+/// `Serialize` and `Deserialize` carry `T`'s form: its schema is `T`'s, under
+/// the field's bounds, and its check converts the value through
+/// `T: From<&F>`, then holds that `T` to the field's bounds and to `T`'s own.
+/// Whether the field is required is still `F`'s. A newtype over such a member
+/// takes no kind from it, and `as` is refused on a flattened field, on an
+/// internally tagged newtype variant's payload, on a `PhantomData` and twice
+/// on one field. The parameter derives describe a
+/// field by its own type, the one `FromStr` reads, and ignore it.
+///
+/// ```ignore
+/// /// Twenty bytes, which serde writes as forty hex digits.
+/// struct InfoHash([u8; 20]);
+///
+/// impl From<&InfoHash> for String {
+///     fn from(hash: &InfoHash) -> Self {
+///         hash.0.iter().map(|byte| format!("{byte:02x}")).collect()
+///     }
+/// }
+///
+/// #[derive(kynos::Schema)]
+/// struct InfoHashHex(#[schema(as = String, min_length = 40, max_length = 40)] InfoHash);
+/// ```
 ///
 /// A concrete type takes its identifier as its component name, and a field
 /// referring back to it is a `$ref`. A generic type takes none, since every
@@ -301,7 +337,9 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   direction: `with` and `serialize_with` on the one field it writes through,
 ///   `with` and `deserialize_with` on the one field it reads through, and
 ///   nothing for a direction with no single candidate, since serde then refuses
-///   that direction's derive.
+///   that direction's derive. `#[schema(as = T)]` does not lift the refusal:
+///   its check converts through `From`, which says nothing of what serde's
+///   function writes.
 /// - `#[serde(untagged)]` enums. `anyOf` with no discriminator is ambiguous to
 ///   decode, and the tie-break is inexpressible. Use an internally or
 ///   adjacently tagged enum, which becomes a `discriminator`. The same holds for
@@ -455,7 +493,9 @@ pub fn derive_schema(item: TokenStream) -> TokenStream {
 ///
 /// `status` is required on every variant and must be between 400 and 599. A
 /// struct declares its one status on the type instead; `base` always belongs on
-/// the type, since it is the prefix every variant's type URI shares.
+/// the type, since it is the prefix every variant's type URI shares. It is a
+/// string literal or, where several types share one prefix, a path to a
+/// `const` of type `&str`: `#[problem(base = crate::PROBLEM_BASE)]`.
 ///
 /// The error's `Display` supplies each problem's `detail`, so `thiserror`'s `#[error("...")]` is the sentence an API consumer receives.
 /// A type without a `Display` is rejected at the derive.
@@ -551,6 +591,12 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// A declared parameter whose percent-decoded value is not UTF-8 is refused
 /// with the group's `QueryRejection`, naming it, as a value that fails to parse
 /// is; a parameter the group does not declare is ignored, whatever its octets.
+///
+/// A field's `#[schema(...)]` bounds, which the [`Schema`](macro@Schema)
+/// derive reads, are written into its parameter's schema, beside a named
+/// type's `$ref`, and checked on the value `FromStr` read, with the bounds its
+/// type declares: one it breaks is refused as `QueryRejection::Schema`, naming
+/// the parameter.
 ///
 /// # Rejected, because a parameter has one name
 ///

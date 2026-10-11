@@ -4,11 +4,12 @@ use proc_macro2::Span;
 use syn::{DeriveInput, GenericArgument, Ident, Path, PathArguments, Type};
 
 use crate::derive::schema::{
-    attributes::{is_described, is_phantom},
+    attributes::{described_type, is_described, is_phantom},
     described_groups,
 };
 
-/// A generic type naming itself in a member its schema describes is refused.
+/// A generic type naming itself in a member its schema describes, through the
+/// member's type or the `#[schema(as = T)]` it is described as, is refused.
 ///
 /// A generic type is inlined, so it would recurse without end. Only the direct
 /// case (bare identifier or `Self`) is visible here; indirect cycles are
@@ -22,7 +23,7 @@ pub(super) fn reject_recursive_generic(input: &DeriveInput) -> syn::Result<()> {
         .into_iter()
         .flatten()
         .filter(|field| is_described(field) && !is_phantom(&field.ty))
-        .find_map(|field| self_reference(&field.ty, &input.ident));
+        .find_map(|field| self_reference(&described_type(field), &input.ident));
     let Some(span) = site else {
         return Ok(());
     };

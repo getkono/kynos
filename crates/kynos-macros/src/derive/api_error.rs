@@ -1,10 +1,12 @@
 //! `#[derive(ApiError)]`.
 //!
 //! ```text
-//! #[problem( base = "<URI prefix>" )]              on the type, optional
+//! #[problem( base = <prefix> )]                    on the type, optional
 //! #[problem( <member> [, <member>]* )]             on each variant, or on a struct
 //! #[problem(extension)]                            on a named field, optional
 //!
+//! prefix := "<URI prefix>"
+//!         | <path to a `const` of type `&str`>
 //! member := status = <400..=599>                   required, exactly once
 //!         | title = "<human-readable summary>"
 //!         | type = "<absolute URI>"
@@ -12,14 +14,15 @@
 //!
 //! `status` is read once into `statuses()`, the `ShortCircuit` const and the
 //! `Responses` keys, so the three agree. `base` is the prefix a variant without
-//! its own `type` hangs its slug under. `detail` comes from `Display`.
+//! its own `type` hangs its slug under; a literal is joined here, a `const`
+//! in the expansion's own `const` items. `detail` comes from `Display`.
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
-use quote::quote;
+use quote::{ToTokens, quote, quote_spanned};
 use syn::{
-    Attribute, Data, DeriveInput, Fields, Ident, LitInt, LitStr, parse_macro_input,
-    spanned::Spanned,
+    Attribute, Data, DeriveInput, Expr, ExprLit, ExprPath, Fields, Ident, Lit, LitInt, LitStr,
+    parse_macro_input, spanned::Spanned,
 };
 
 use crate::derive::common::{doc_string, skip_value};
@@ -127,7 +130,7 @@ struct Failure {
     extensions: Vec<(String, Ident)>,
 
     status: u16,
-    type_uri: Option<String>,
+    type_uri: Option<TypeUri>,
     title: Option<String>,
 
     /// The prose a reader already wrote, used where no `title` was given.
@@ -187,7 +190,7 @@ fn responses(failures: &[Failure], statuses: &[u16]) -> TokenStream2 {
             .iter()
             .filter(|failure| failure.status == *status)
             .map(|failure| {
-                let uri = optional(failure.type_uri.as_deref());
+                let uri = optional(failure.type_uri.as_ref());
                 let summary = optional(failure.title.as_deref().or(failure.doc.as_deref()));
                 quote!((#uri, #summary))
             });
@@ -210,7 +213,7 @@ fn responses(failures: &[Failure], statuses: &[u16]) -> TokenStream2 {
 
 /// A string the declaration may not have given, as the `Option` the helper
 /// reads it as.
-fn optional(value: Option<&str>) -> TokenStream2 {
+fn optional(value: Option<impl ToTokens>) -> TokenStream2 {
     value.map_or_else(
         || quote!(::core::option::Option::None),
         |value| quote!(::core::option::Option::Some(#value)),
@@ -269,7 +272,7 @@ fn failures(input: &DeriveInput) -> syn::Result<Vec<Failure>> {
                         pattern: quote!(Self::#name { #(#bindings,)* .. }),
                         extensions,
                         status,
-                        type_uri: type_uri(&args, base.as_deref(), &variant.ident),
+                        type_uri: type_uri(&args, base.as_ref(), &variant.ident),
                         title: args.title,
                         doc: doc_string(&variant.attrs),
                     })
@@ -296,7 +299,7 @@ fn failures(input: &DeriveInput) -> syn::Result<Vec<Failure>> {
                 pattern: quote!(Self { #(#bindings,)* .. }),
                 extensions,
                 status,
-                type_uri: type_uri(&args, base.as_deref(), &input.ident),
+                type_uri: type_uri(&args, base.as_ref(), &input.ident),
                 title: args.title,
                 doc: doc_string(&input.attrs),
             }])
@@ -310,11 +313,62 @@ fn failures(input: &DeriveInput) -> syn::Result<Vec<Failure>> {
 ///
 /// An explicit `type` wins, else `base` plus the name as a slug; with neither,
 /// the problem keeps RFC 9457's `about:blank`.
-fn type_uri(args: &ProblemArgs, base: Option<&str>, name: &Ident) -> Option<String> {
+fn type_uri(args: &ProblemArgs, base: Option<&Base>, name: &Ident) -> Option<TypeUri> {
     if let Some(uri) = &args.type_uri {
-        return Some(uri.clone());
+        return Some(TypeUri::Literal(uri.clone()));
     }
-    base.map(|base| format!("{base}{}", kebab(&name.to_string())))
+    let slug = kebab(&name.to_string());
+    base.map(|base| match base {
+        Base::Literal(base) => TypeUri::Literal(format!("{base}{slug}")),
+        Base::Const(path) => TypeUri::Joined {
+            base: path.clone(),
+            slug,
+        },
+    })
+}
+
+/// What `base` named: a prefix written out, or a `const` holding one.
+enum Base {
+    Literal(String),
+    Const(ExprPath),
+}
+
+/// A failure's type URI, as the `&'static str` expression the expansion
+/// writes.
+enum TypeUri {
+    /// Known here, so emitted as a literal.
+    Literal(String),
+
+    /// A `const` prefix and a slug, joined at compile time by `const` items
+    /// the expansion declares, so the URI stays a borrowed `&'static str`.
+    Joined { base: ExprPath, slug: String },
+}
+
+impl ToTokens for TypeUri {
+    fn to_tokens(&self, tokens: &mut TokenStream2) {
+        match self {
+            Self::Literal(uri) => uri.to_tokens(tokens),
+            Self::Joined { base, slug } => {
+                // Spanned to the path, so a `const` that is not a `&str`
+                // is reported where `base` names it. The names are prefixed
+                // because these items shadow the module's: a user `const
+                // BASE` would otherwise be defined as itself.
+                let prefix =
+                    quote_spanned!(base.span()=> const __KYNOS_PROBLEM_BASE: &str = #base;);
+                tokens.extend(quote! {{
+                    #prefix
+                    const __KYNOS_PROBLEM_LEN: usize = __KYNOS_PROBLEM_BASE.len() + #slug.len();
+                    const __KYNOS_PROBLEM_BYTES: &[u8] = &::kynos::__private::problem::join::<
+                        __KYNOS_PROBLEM_LEN,
+                    >(__KYNOS_PROBLEM_BASE, #slug);
+                    // A `const`, so the UTF-8 check runs once, at compile time.
+                    const __KYNOS_PROBLEM_URI: &str =
+                        ::kynos::__private::problem::utf8(__KYNOS_PROBLEM_BYTES);
+                    __KYNOS_PROBLEM_URI
+                }});
+            }
+        }
+    }
 }
 
 /// A Rust type or variant name as a URI slug.
@@ -373,7 +427,7 @@ struct ProblemArgs {
     status: Option<(u16, Span)>,
     title: Option<String>,
     type_uri: Option<String>,
-    base: Option<String>,
+    base: Option<Base>,
 }
 
 /// Reads one item's `#[problem(...)]` lists, validating every member.
@@ -415,7 +469,26 @@ fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Result<Problem
                 "title" => args.title = Some(meta.value()?.parse::<LitStr>()?.value()),
                 "type" => args.type_uri = Some(meta.value()?.parse::<LitStr>()?.value()),
                 "base" if position == Position::Type => {
-                    args.base = Some(meta.value()?.parse::<LitStr>()?.value());
+                    let mut base = meta.value()?.parse::<Expr>()?;
+                    // A `macro_rules!` fragment arrives wrapped in an
+                    // invisible group; a forwarded literal or path is still one.
+                    while let Expr::Group(group) = base {
+                        base = *group.expr;
+                    }
+                    args.base = Some(match base {
+                        Expr::Lit(ExprLit {
+                            lit: Lit::Str(literal),
+                            ..
+                        }) => Base::Literal(literal.value()),
+                        Expr::Path(path) => Base::Const(path),
+                        other => {
+                            return Err(syn::Error::new(
+                                other.span(),
+                                "`base` is a string literal, or the path to a `const` of type \
+                                 `&str` holding one",
+                            ));
+                        }
+                    });
                 }
                 "base" => {
                     return Err(syn::Error::new(

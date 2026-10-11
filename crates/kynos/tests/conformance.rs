@@ -15,7 +15,12 @@
 
 #![cfg(all(feature = "macros", feature = "json", feature = "test-util"))]
 
-use kynos::{http::StatusCode, prelude::*, router::service::Service, test::TestClient};
+use kynos::{
+    http::StatusCode,
+    prelude::*,
+    router::service::Service,
+    test::{Coverage, TestClient},
+};
 use serde::{Deserialize, Serialize};
 
 /// A user of the service.
@@ -150,6 +155,14 @@ async fn a_head_exercises_none_of_the_get_responses() {
 async fn every_declared_response_is_exercised() {
     let client = TestClient::new(service().expect("a describable router"));
 
+    exercise_reads(&client).await;
+    exercise_writes(&client).await;
+
+    client.assert_declared_responses_covered();
+}
+
+/// Every response `GET /users/{id}` declares.
+async fn exercise_reads(client: &TestClient<()>) {
     client
         .get("/users/42")
         .send()
@@ -161,7 +174,10 @@ async fn every_declared_response_is_exercised() {
         .send()
         .await
         .assert_status(StatusCode::BAD_REQUEST);
+}
 
+/// Every response `POST /users` declares.
+async fn exercise_writes(client: &TestClient<()>) {
     client
         .post("/users")
         .json(&User {
@@ -217,6 +233,38 @@ async fn every_declared_response_is_exercised() {
         .send()
         .await
         .assert_status(StatusCode::PAYLOAD_TOO_LARGE);
+}
 
-    client.assert_declared_responses_covered();
+/// Responses exercised through two clients are covered by the two together,
+/// for a description no one client's service can produce all of.
+#[tokio::test]
+async fn coverage_shared_by_two_clients_covers_what_both_exercised() {
+    let coverage = Coverage::new();
+    let reads = TestClient::new(service().expect("a describable router")).with_coverage(&coverage);
+    let writes = TestClient::new(service().expect("a describable router")).with_coverage(&coverage);
+
+    exercise_reads(&reads).await;
+    exercise_writes(&writes).await;
+
+    let document = service().expect("a describable router").openapi().clone();
+    coverage.assert_declared_responses_covered(&document);
+}
+
+/// A client not built over the coverage records nothing into it, so what it
+/// exercised is still reported missing, and only that.
+#[tokio::test]
+#[should_panic(expected = "6 responses declared but never exercised:\n  \
+                           POST /users -> 400\n  POST /users -> 413\n  \
+                           POST /users -> 415\n  POST /users -> 422\n  \
+                           POST /users -> 201\n  POST /users -> 409")]
+async fn a_client_without_the_coverage_does_not_count_toward_it() {
+    let coverage = Coverage::new();
+    let reads = TestClient::new(service().expect("a describable router")).with_coverage(&coverage);
+    let writes = TestClient::new(service().expect("a describable router"));
+
+    exercise_reads(&reads).await;
+    exercise_writes(&writes).await;
+
+    let document = service().expect("a describable router").openapi().clone();
+    coverage.assert_declared_responses_covered(&document);
 }

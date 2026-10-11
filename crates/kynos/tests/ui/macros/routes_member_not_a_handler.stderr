@@ -1,0 +1,5 @@
+error: expected the name of a route-attributed handler, as in `routes![get_user]`
+ --> tests/ui/macros/routes_member_not_a_handler.rs:5:34
+  |
+5 |     let _ = kynos::routes![list, "/orders"];
+  |                                  ^^^^^^^^^

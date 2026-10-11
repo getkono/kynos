@@ -10,7 +10,10 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
 use syn::{Field, FieldsNamed, GenericArgument, Ident, PathArguments, Type, spanned::Spanned};
 
-use crate::derive::common::doc_string;
+use crate::derive::{
+    common::doc_string,
+    schema::{attributes::constraints, check::value_checks},
+};
 
 /// One field of a parameter group, paired with the wire name it occupies.
 pub(crate) struct Param<'a> {
@@ -145,6 +148,34 @@ pub(crate) fn decode_field(
     }
 }
 
+/// Refuses a decoded field that breaks one of its `#[schema(...)]` bounds, or
+/// one its type declares, as `Schema`, naming the parameter, each failure at a
+/// pointer into its value. Runs after [`decode_field`] has bound the field.
+pub(crate) fn check_field(param: &Param<'_>, rejection: &TokenStream2) -> TokenStream2 {
+    let ident = param.ident();
+    let ty = param.ty();
+    let name = &param.name;
+    let checks = value_checks(param.field);
+
+    quote! {
+        {
+            let value: &#ty = &#ident;
+            let at = ::kynos::schema::constraints::Pointer::root();
+            let mut __kynos_violations = ::kynos::schema::constraints::Violations::new();
+            {
+                let violations = &mut __kynos_violations;
+                #checks
+            }
+            if !__kynos_violations.is_empty() {
+                return ::core::result::Result::Err(#rejection::Schema {
+                    name: ::std::string::String::from(#name),
+                    failures: __kynos_violations.into_failures(),
+                });
+            }
+        }
+    }
+}
+
 /// The struct literal a `decode` body ends with.
 pub(crate) fn construct(params: &[Param<'_>]) -> TokenStream2 {
     let idents = params.iter().map(Param::ident);
@@ -174,16 +205,23 @@ fn render(param: &Param<'_>) -> TokenStream2 {
 /// order, each schema resolved through the registry.
 ///
 /// `always_required` is the path location's, which the OpenAPI Parameter Object
-/// requires to be `required: true` whatever the Rust type says.
+/// requires to be `required: true` whatever the Rust type says. `bounded` puts
+/// each field's `#[schema(...)]` bounds on its schema, as the `Schema` derive
+/// puts them on a property, for a derive whose decoder runs [`check_field`].
 pub(crate) fn parameters_body(
     params: &[Param<'_>],
     location: &TokenStream2,
     always_required: bool,
+    bounded: bool,
 ) -> TokenStream2 {
     let entries = params.iter().map(|param| {
         let ty = param.ty();
         let name = &param.name;
         let required = always_required || param.optional().is_none();
+        let constrained = bounded
+            .then(|| constraints(param.field))
+            .flatten()
+            .map(|constraints| quote!(let schema = #constraints.apply(schema);));
         let described = doc_string(&param.field.attrs).map(|text| {
             quote!(parameter.description = ::core::option::Option::Some(
                 ::std::string::String::from(#text)
@@ -193,6 +231,7 @@ pub(crate) fn parameters_body(
         quote! {
             parameters.push({
                 let schema = registry.resolve::<#ty>();
+                #constrained
                 let mut parameter =
                     ::kynos::openapi::Parameter::new(#name, #location, schema);
                 parameter.required = ::core::option::Option::Some(#required);

@@ -26,6 +26,7 @@ use kynos::{
             store::{CacheStore, PrimaryKey, StoredResponse},
         },
         conditional::Conditional,
+        security_headers::SecurityHeaders,
     },
     prelude::*,
     response::{headers::WithHeaders, status::NoContent},
@@ -1068,4 +1069,83 @@ fn a_cache_and_a_conditional_declare_disjoint_fields() {
     statuses.sort_unstable();
 
     assert_eq!(statuses, ["200", "304"]);
+}
+
+// --- Security headers around a cache ---------------------------------------
+
+/// `SecurityHeaders` outside `Conditional` and `Cache`: the cache reads the
+/// handler's own `max-age` and stores, while every response, the hit and the
+/// 304 included, says `no-store` to the client.
+#[tokio::test]
+async fn security_headers_over_a_cache_leave_it_storing_and_cover_every_answer() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![reports])
+        .intercept(SecurityHeaders::new())
+        .intercept(Conditional::new())
+        .intercept(
+            Cache::new(Stored::default())
+                .namespace("test")
+                .deriving_etags(),
+        )
+        .build(())
+        .expect("a describable router");
+    let before = CALLS.load(Ordering::SeqCst);
+
+    let miss = get(&service, "/reports").call().await;
+    let hit = get(&service, "/reports").call().await;
+    let etag = hit.field(header::ETAG.as_str()).expect("a derived tag");
+    let not_modified = get(&service, "/reports")
+        .header("if-none-match", &etag)
+        .call()
+        .await;
+
+    assert_eq!(
+        calls_during(before),
+        1,
+        "the cache stored nothing, so it read the interceptor's `no-store` rather than the handler's lifetime"
+    );
+    assert_eq!(not_modified.status, StatusCode::NOT_MODIFIED);
+
+    for (answer, response) in [("miss", &miss), ("hit", &hit), ("304", &not_modified)] {
+        assert_eq!(
+            response.field("cache-control").as_deref(),
+            Some("no-store"),
+            "{answer}"
+        );
+        assert_eq!(
+            response.field("x-content-type-options").as_deref(),
+            Some("nosniff"),
+            "{answer}"
+        );
+        assert_eq!(
+            response.field("referrer-policy").as_deref(),
+            Some("no-referrer"),
+            "{answer}"
+        );
+    }
+}
+
+/// The other way round, the cache reads `no-store` and RFC 9111 section 3
+/// forbids storing: correct, and the reason the order above is the one
+/// `docs/middleware.md` gives.
+#[tokio::test]
+async fn security_headers_inside_a_cache_leave_it_nothing_to_store() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![reports])
+        .intercept(Cache::new(Stored::default()).namespace("test"))
+        .intercept(SecurityHeaders::new())
+        .build(())
+        .expect("a describable router");
+    let before = CALLS.load(Ordering::SeqCst);
+
+    for _ in 0..2 {
+        let response = get(&service, "/reports").call().await;
+        assert_eq!(response.field("cache-control").as_deref(), Some("no-store"));
+    }
+
+    assert_eq!(
+        calls_during(before),
+        2,
+        "a response saying `no-store` was stored"
+    );
 }

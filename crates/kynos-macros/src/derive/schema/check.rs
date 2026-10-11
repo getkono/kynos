@@ -9,13 +9,15 @@ use super::{
     Container, DataEnum, DeriveInput, Field, Fields, TokenStream2, Variant,
     aliases::{read_names, variants_read_names},
     attributes::{
-        Bound, DefaultFrom, bounds, is_described, is_phantom, is_unit_like, serde_default,
+        Bound, DefaultFrom, bounds, described_as, is_described, is_phantom, is_unit_like,
+        serde_default,
     },
     described_variants, is_flattened, positional_members, quote, transparent_member,
 };
 
 use proc_macro2::Span;
-use syn::{Data, Ident, Index, LitStr};
+use quote::quote_spanned;
+use syn::{Data, Ident, Index, LitStr, Type, spanned::Spanned};
 
 /// The body of `check_constraints`, which reads `self`, `at` and `violations`.
 pub(super) fn body(input: &DeriveInput, container: &Container) -> TokenStream2 {
@@ -302,7 +304,7 @@ fn located(step: &Step, checks: &TokenStream2) -> TokenStream2 {
     }
 }
 
-/// One member's checks: each of its own bounds, then its value's.
+/// One member's checks: [`value_checks`], located by `step`.
 ///
 /// A defaulted member that fails is rechecked on its filled value, and its
 /// violations are reported unless the filled value breaks exactly the same
@@ -314,25 +316,7 @@ fn member(
     filled: Option<&Filled>,
 ) -> TokenStream2 {
     let ty = &field.ty;
-    let keywords = bounds(field)
-        .into_iter()
-        .map(|Bound { key, value: bound }| match bound {
-            // Without the feature, `refusals` refuses every `pattern`.
-            #[cfg(feature = "pattern")]
-            Some(super::attributes::BoundValue::Pattern(pattern)) => {
-                super::pattern::check(ty, &pattern)
-            }
-            bound => {
-                let bound = bound.map(|bound| quote!(#bound,));
-                quote! {
-                    ::kynos::__private::constraints::#key::<#ty>(value, #bound at, violations);
-                }
-            }
-        });
-    let check = quote! {
-        #(#keywords)*
-        ::kynos::schema::Schema::check_constraints(value, at, violations);
-    };
+    let check = described_checks(field);
 
     let checks = match filled {
         None => quote! {
@@ -371,4 +355,46 @@ fn member(
     };
 
     located(step, &checks)
+}
+
+/// [`value_checks`], or under `#[schema(as = T)]` the same on the `T` converted
+/// through `From<&F>`, spanned at `T` so a missing conversion is reported there.
+fn described_checks(field: &Field) -> TokenStream2 {
+    let Some(described) = described_as(field) else {
+        return value_checks(field);
+    };
+    let (ty, checks) = (&field.ty, checks_on(field, &described));
+    quote_spanned! {described.span()=>
+        let value: &#described = &<#described as ::core::convert::From<&#ty>>::from(value);
+        #checks
+    }
+}
+
+/// The checks on one value of `field`'s type: its bounds, then its type's.
+/// Reads `value`, `at` and `violations`; a query parameter's decoder runs them.
+pub(crate) fn value_checks(field: &Field) -> TokenStream2 {
+    checks_on(field, &field.ty)
+}
+
+/// `field`'s bounds, then `ty`'s own, on `value`, a `&#ty`.
+fn checks_on(field: &Field, ty: &Type) -> TokenStream2 {
+    let keywords = bounds(field)
+        .into_iter()
+        .map(|Bound { key, value: bound }| match bound {
+            // Without the feature, `refusals` refuses every `pattern`.
+            #[cfg(feature = "pattern")]
+            Some(super::attributes::BoundValue::Pattern(pattern)) => {
+                super::pattern::check(ty, &pattern)
+            }
+            bound => {
+                let bound = bound.map(|bound| quote!(#bound,));
+                quote! {
+                    ::kynos::__private::constraints::#key::<#ty>(value, #bound at, violations);
+                }
+            }
+        });
+    quote! {
+        #(#keywords)*
+        ::kynos::schema::Schema::check_constraints(value, at, violations);
+    }
 }

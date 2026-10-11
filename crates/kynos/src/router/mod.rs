@@ -82,6 +82,45 @@ pub(crate) struct Mounted<C> {
 /// container — nothing is registered into it and nothing is looked up — so a
 /// handler asking for something the context does not provide is a compile
 /// error rather than a runtime panic.
+///
+/// # Returning one from a function
+///
+/// `P`, `I` and `S` change with every `catch_panics`, `intercept`, `group`,
+/// `nest` and `merge`, so a function returning a finished router leaves them
+/// opaque. [`validate`](Router::validate), [`openapi`](Router::openapi) and
+/// [`build`](Router::build) need only `P: PanicPolicy`, so the caller
+/// describes and builds the one value:
+///
+/// ```no_run
+/// use kynos::{Router, middleware::{catch_panic::PanicPolicy, limits::body_size::BodySize}};
+///
+/// fn api() -> Router<(), impl PanicPolicy, impl Sized, impl Sized> {
+///     Router::<()>::new().catch_panics().intercept(BodySize::new(64 * 1024))
+/// }
+///
+/// # fn main() -> kynos::Result<()> {
+/// let router = api();
+/// let document = router.openapi()?;
+/// let service = router.build(())?;
+/// # let _ = (document, service);
+/// # Ok(())
+/// # }
+/// ```
+///
+/// An opaque `I` or `S` cannot be checked against another interceptor, so
+/// neither `intercept` on such a router nor `nest` or `merge` of it into
+/// another compiles. Return a router that is still being composed with all four
+/// parameters named.
+///
+/// ```compile_fail
+/// use kynos::{Router, middleware::{catch_panic::PanicPolicy, limits::body_size::BodySize}};
+///
+/// fn api() -> Router<(), impl PanicPolicy, impl Sized, impl Sized> {
+///     Router::<()>::new().catch_panics()
+/// }
+///
+/// let router = api().intercept(BodySize::new(64 * 1024));
+/// ```
 pub struct Router<C, P = Propagate, I = (), S = ()> {
     pub(crate) mounted: Vec<Mounted<C>>,
     pub(crate) interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,

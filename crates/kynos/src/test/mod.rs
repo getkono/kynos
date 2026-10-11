@@ -2,21 +2,34 @@
 //!
 //! The client also checks that the responses a test observed match what the
 //! description promises, so a suite exercising every operation proves the
-//! document truthful — see [`TestClient::assert_conformance`].
+//! document truthful — see [`TestClient::assert_conformance`]. Where the
+//! declared responses need several differently built services to produce, a
+//! [`Coverage`] shared between their clients checks them together.
 
 mod conformance;
 
-use std::{collections::BTreeSet, sync::Mutex};
+#[cfg(test)]
+mod tests;
+
+use std::{
+    collections::BTreeSet,
+    fmt,
+    pin::Pin,
+    sync::{Arc, Mutex},
+    task::{Context, Poll},
+};
 
 use bytes::Bytes;
+use http_body::{Body as HttpBody, Frame, SizeHint};
 use http_body_util::BodyExt;
-use kynos_openapi::Method;
+use kynos_openapi::{Document, Method};
 use serde_json::Value;
 
 use crate::{
     http::{
         HeaderMap, HeaderName, HeaderValue, Method as HttpMethod, Request, Response, StatusCode,
-        Uri, body::Body,
+        Uri,
+        body::{Body, BoxError},
     },
     router::service::Service,
     test::conformance::{conformance, declared_keys, declared_response, matched_template},
@@ -39,6 +52,8 @@ pub struct TestClient<C> {
     service: Service<C>,
     /// Behind a lock because [`TestRequest::send`] borrows the client shared.
     observed: Mutex<Vec<Observed>>,
+    /// Where every exchange is also recorded, when the client shares one.
+    coverage: Option<Arc<Mutex<Vec<Exchange>>>>,
 }
 
 impl<C> TestClient<C> {
@@ -48,7 +63,19 @@ impl<C> TestClient<C> {
         Self {
             service,
             observed: Mutex::new(Vec::new()),
+            coverage: None,
         }
+    }
+
+    /// Records every response this client receives into `coverage` as well.
+    ///
+    /// The client's own assertions still read only what it received; the
+    /// shared record is read by [`Coverage::assert_declared_responses_covered`].
+    /// A second call replaces the first.
+    #[must_use]
+    pub fn with_coverage(mut self, coverage: &Coverage) -> Self {
+        self.coverage = Some(Arc::clone(&coverage.exchanges));
+        self
     }
 
     /// Begins a `GET` request.
@@ -124,7 +151,8 @@ impl<C> TestClient<C> {
             method,
             path: path.to_owned(),
             headers: HeaderMap::new(),
-            body: Bytes::new(),
+            body: RequestBody::Whole(Bytes::new()),
+            content_length: None,
             peer: None,
             cookies: Vec::new(),
         }
@@ -188,37 +216,193 @@ impl<C> TestClient<C> {
     ///
     /// Panics listing every declared response that was never seen.
     pub fn assert_declared_responses_covered(&self) {
-        let document = self.service.openapi();
+        let recorded = self.recorded();
+        assert_covered(
+            self.service.openapi(),
+            recorded
+                .iter()
+                .map(|record| (&record.method, record.path.as_str(), record.status)),
+        );
+    }
+}
 
-        let exercised: BTreeSet<(&str, Method, String)> = self
-            .recorded()
-            .iter()
-            .filter_map(|record| {
-                let template = matched_template(document, &record.path)?;
-                let method = Method::from_wire_str(record.method.as_str())?;
-                let operation = document.paths.items.get(template)?.operation(method)?;
-                let (key, _) = declared_response(&operation.responses, record.status.as_u16())?;
-                Some((template, method, key))
-            })
-            .collect();
+/// The responses any number of [`TestClient`]s received, checked together
+/// against one description.
+///
+/// A description may declare responses no single service can produce: one
+/// built with authentication and one without, or with an optional subsystem
+/// present and absent. Each of those clients is built
+/// [`with_coverage`](TestClient::with_coverage) over the same `Coverage`, and
+/// the declared responses are asserted once, after all of them ran, against
+/// the description that declares them all.
+#[derive(Debug, Default)]
+pub struct Coverage {
+    exchanges: Arc<Mutex<Vec<Exchange>>>,
+}
 
-        let mut missing = Vec::new();
-        for (template, item) in &document.paths.items {
-            for (method, operation) in item.operations() {
-                for key in declared_keys(&operation.responses) {
-                    if !exercised.contains(&(template.as_str(), method, key.clone())) {
-                        missing.push(format!("  {} {template} -> {key}", method.as_wire_str()));
-                    }
+impl Coverage {
+    /// A record no client has written to yet.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Asserts that every response `document` declares was exercised by at
+    /// least one client recording here.
+    ///
+    /// A response is matched against `document` by its method, path and
+    /// status, whichever client received it, so `document` may be any one
+    /// service's description or one built for the purpose. As with
+    /// [`TestClient::assert_declared_responses_covered`], a `HEAD` answered by
+    /// a path's `get` does not count toward that operation.
+    ///
+    /// # Panics
+    ///
+    /// Panics listing every declared response that was never seen.
+    pub fn assert_declared_responses_covered(&self, document: &Document) {
+        let exchanges = self
+            .exchanges
+            .lock()
+            .expect("a coverage record whose recorder panicked cannot be asserted on");
+        assert_covered(
+            document,
+            exchanges
+                .iter()
+                .map(|exchange| (&exchange.method, exchange.path.as_str(), exchange.status)),
+        );
+    }
+}
+
+/// What a [`Coverage`] keeps of one exchange: enough to match it against a
+/// description later.
+#[derive(Debug)]
+struct Exchange {
+    method: HttpMethod,
+    path: String,
+    status: StatusCode,
+}
+
+/// Asserts that every response `document` declares is among `received`.
+fn assert_covered<'r>(
+    document: &Document,
+    received: impl Iterator<Item = (&'r HttpMethod, &'r str, StatusCode)>,
+) {
+    let exercised: BTreeSet<(&str, Method, String)> = received
+        .filter_map(|(method, path, status)| {
+            let template = matched_template(document, path)?;
+            let method = Method::from_wire_str(method.as_str())?;
+            let operation = document.paths.items.get(template)?.operation(method)?;
+            let (key, _) = declared_response(&operation.responses, status.as_u16())?;
+            Some((template, method, key))
+        })
+        .collect();
+
+    let mut missing = Vec::new();
+    for (template, item) in &document.paths.items {
+        for (method, operation) in item.operations() {
+            for key in declared_keys(&operation.responses) {
+                if !exercised.contains(&(template.as_str(), method, key.clone())) {
+                    missing.push(format!("  {} {template} -> {key}", method.as_wire_str()));
                 }
             }
         }
+    }
 
-        assert!(
-            missing.is_empty(),
-            "{} declared but never exercised:\n{}",
-            responses(missing.len()),
-            missing.join("\n")
-        );
+    assert!(
+        missing.is_empty(),
+        "{} declared but never exercised:\n{}",
+        responses(missing.len()),
+        missing.join("\n")
+    );
+}
+
+/// What a [`TestRequest`] sends as its body.
+enum RequestBody {
+    /// Every octet at once; empty once sent.
+    Whole(Bytes),
+    /// Chunks as a stream yields them.
+    Streamed(Pin<Box<dyn futures_core::Stream<Item = Bytes> + Send>>),
+}
+
+impl RequestBody {
+    /// The next chunk, empty or not.
+    fn poll_chunk(&mut self, context: &mut Context<'_>) -> Poll<Option<Bytes>> {
+        match self {
+            Self::Whole(bytes) if bytes.is_empty() => Poll::Ready(None),
+            Self::Whole(bytes) => Poll::Ready(Some(std::mem::take(bytes))),
+            Self::Streamed(chunks) => chunks.as_mut().poll_next(context),
+        }
+    }
+}
+
+impl fmt::Debug for RequestBody {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Whole(bytes) => formatter.debug_tuple("Whole").field(bytes).finish(),
+            Self::Streamed(_) => formatter.debug_tuple("Streamed").finish_non_exhaustive(),
+        }
+    }
+}
+
+/// A request body read as hyper reads one: frame by frame, and under a
+/// declared length exactly that many octets end it, nothing past them is read,
+/// and an end before them fails the read.
+struct Framed {
+    body: RequestBody,
+    /// Octets still owed; `None` when no length was declared.
+    remaining: Option<u64>,
+    /// Set once a short end has been reported.
+    failed: bool,
+}
+
+impl HttpBody for Framed {
+    type Data = Bytes;
+    type Error = BoxError;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        let this = self.get_mut();
+        if this.failed || this.remaining == Some(0) {
+            return Poll::Ready(None);
+        }
+
+        loop {
+            let Some(mut chunk) = std::task::ready!(this.body.poll_chunk(context)) else {
+                let Some(owed) = this.remaining else {
+                    return Poll::Ready(None);
+                };
+                this.failed = true;
+                let short = std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    format!(
+                        "the body ended {owed} octet(s) short of its declared `Content-Length`"
+                    ),
+                );
+                return Poll::Ready(Some(Err(short.into())));
+            };
+
+            // A server yields no empty data frame.
+            if chunk.is_empty() {
+                continue;
+            }
+            if let Some(remaining) = &mut this.remaining {
+                chunk.truncate(usize::try_from(*remaining).unwrap_or(usize::MAX));
+                *remaining -= chunk.len() as u64;
+            }
+            return Poll::Ready(Some(Ok(Frame::data(chunk))));
+        }
+    }
+
+    // Never after a short end, which is a failure rather than an end.
+    fn is_end_stream(&self) -> bool {
+        self.remaining == Some(0)
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        self.remaining
+            .map_or_else(SizeHint::default, SizeHint::with_exact)
     }
 }
 
@@ -229,7 +413,9 @@ pub struct TestRequest<'a, C> {
     method: HttpMethod,
     path: String,
     headers: HeaderMap,
-    body: Bytes,
+    body: RequestBody,
+    /// The length the body is framed by, when the test declared one.
+    content_length: Option<u64>,
     /// Who the request came from, for a service that reads one.
     peer: Option<std::net::SocketAddr>,
     /// Cookies, accumulated so several become one `Cookie` field.
@@ -263,7 +449,9 @@ impl<C> TestRequest<'_, C> {
     #[cfg(feature = "json")]
     #[must_use]
     pub fn json<T: serde::Serialize>(mut self, body: &T) -> Self {
-        self.body = Bytes::from(serde_json::to_vec(body).expect("a serializable request body"));
+        self.body = RequestBody::Whole(Bytes::from(
+            serde_json::to_vec(body).expect("a serializable request body"),
+        ));
         self.headers.insert(
             crate::http::header::CONTENT_TYPE,
             HeaderValue::from_static(kynos_openapi::model::body::mime_names::APPLICATION_JSON),
@@ -320,7 +508,50 @@ impl<C> TestRequest<'_, C> {
     /// Panics when `media_type` is not a header value.
     #[must_use]
     pub fn body(mut self, media_type: &str, bytes: impl Into<Bytes>) -> Self {
-        self.body = bytes.into();
+        self.body = RequestBody::Whole(bytes.into());
+        self.content_type(media_type)
+    }
+
+    /// Sets a body that arrives as `chunks` yields them, and the media type it
+    /// is in.
+    ///
+    /// Each chunk reaches the service as one frame when the stream yields it,
+    /// so a stream that waits between chunks is a slow client and one that
+    /// never yields again is a stalled one. Without
+    /// [`content_length`](Self::content_length) the body declares no length,
+    /// as a chunked one does, and ends when the stream does.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `media_type` is not a header value.
+    #[must_use]
+    pub fn body_stream<S>(mut self, media_type: &str, chunks: S) -> Self
+    where
+        S: futures_core::Stream<Item = Bytes> + Send + 'static,
+    {
+        self.body = RequestBody::Streamed(Box::pin(chunks));
+        self.content_type(media_type)
+    }
+
+    /// Declares the body's length: sends it as `Content-Length`, and frames
+    /// the body by it.
+    ///
+    /// The service reads the body as a server reads a framed message: it ends
+    /// after `length` octets, and whatever a test sends past them is never
+    /// read. A body that ends short of `length` fails part-way, as a
+    /// connection closed mid-message does. So a test can declare 64 octets,
+    /// send 10, and leave the service waiting for the rest.
+    #[must_use]
+    pub fn content_length(mut self, length: u64) -> Self {
+        self.content_length = Some(length);
+        self.headers.insert(
+            crate::http::header::CONTENT_LENGTH,
+            HeaderValue::from(length),
+        );
+        self
+    }
+
+    fn content_type(mut self, media_type: &str) -> Self {
         self.headers.insert(
             crate::http::header::CONTENT_TYPE,
             HeaderValue::from_str(media_type)
@@ -357,7 +588,15 @@ impl<C> TestRequest<'_, C> {
     /// Panics when the path is not a request target, or when the response body
     /// fails part-way through.
     pub async fn send(mut self) -> TestResponse {
-        let mut request = Request::new(Body::from_bytes(self.body));
+        let body = match (self.body, self.content_length) {
+            (RequestBody::Whole(bytes), None) => Body::from_bytes(bytes),
+            (body, remaining) => Body::from_body(Framed {
+                body,
+                remaining,
+                failed: false,
+            }),
+        };
+        let mut request = Request::new(body);
         *request.method_mut() = self.method.clone();
         *request.uri_mut() = self
             .path
@@ -396,6 +635,17 @@ impl<C> TestRequest<'_, C> {
             .await
             .expect("a response body driven in-process cannot fail")
             .to_bytes();
+
+        if let Some(coverage) = &self.client.coverage {
+            coverage
+                .lock()
+                .expect("a coverage record whose recorder panicked cannot be written to")
+                .push(Exchange {
+                    method: self.method.clone(),
+                    path: self.path.clone(),
+                    status: parts.status,
+                });
+        }
 
         self.client.recorded().push(Observed {
             method: self.method,

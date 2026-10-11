@@ -134,11 +134,13 @@ pub enum QueryRejection {
         detail: String,
     },
 
-    /// The parameter decoded as a document that breaks a bound its schema
+    /// The parameter decoded as a value that breaks a bound its schema
     /// declares. Produces 400.
     ///
     /// Raised by
-    /// [`QueryString`](crate::extract::params::querystring::QueryString).
+    /// [`QueryString`](crate::extract::params::querystring::QueryString), and
+    /// by [`Query`](crate::extract::params::query::Query) over a derived
+    /// `QueryParams` for a field's `#[schema(...)]` bound or its type's.
     /// 400 rather than 422, since RFC 9110's 422 is about the request's
     /// content and a query string is part of its target.
     #[error("query parameter `{name}` does not satisfy its schema")]

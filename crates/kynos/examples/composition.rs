@@ -26,15 +26,24 @@
 //! * **The panic policy is in the type.** `catch_panics` returns a differently
 //!   parameterised `Router`, so whether an operation has a recovery boundary is
 //!   decided at compile time and its 500 is contributed for the same reason.
+//! * **An interceptor can cover one operation.** `get_user.intercept(..)`
+//!   inside `routes!` gives that operation its own deadline without a group of
+//!   its own, so groups stay one per resource.
+//!
+//! `api` returns the finished router with its type parameters left opaque.
+//! Every `intercept` changes them, so they are not worth spelling out; `impl`
+//! keeps what `validate`, `openapi` and `build` need, and `main` describes and
+//! builds the one value.
 //!
 //! `EndpointBuilder` is the escape hatch for a route set that is not known at
 //! compile time. It is deliberately weaker: it cannot check that a handler's
 //! path parameters match its path template, because at that point the template
 //! is a value rather than a literal.
 
-use std::net::Ipv4Addr;
+use std::{net::Ipv4Addr, time::Duration};
 
 use kynos::{
+    middleware::{catch_panic::PanicPolicy, limits::timeout::Timeout},
     openapi::{Method, PathTemplate},
     prelude::*,
     router::{
@@ -145,9 +154,9 @@ async fn version() -> NoContent {
     NoContent
 }
 
-#[tokio::main]
-async fn main() -> kynos::Result<()> {
-    let router = Router::<()>::new()
+/// The whole API, as one value both the document and the service come from.
+fn api() -> Router<(), impl PanicPolicy, impl Sized, impl Sized> {
+    Router::<()>::new()
         // The first tag scope: everything in this router, whatever else it
         // also carries.
         .tag::<Ops>()
@@ -156,7 +165,11 @@ async fn main() -> kynos::Result<()> {
         .group(
             Group::new("/users")
                 .tag::<Users>()
-                .mount(kynos::routes![list_users, get_user]),
+                // The fifth scope an interceptor has: one operation.
+                .mount(kynos::routes![
+                    list_users,
+                    get_user.intercept(Timeout::new(Duration::from_secs(2)))
+                ]),
         )
         // `nest` introduces a prefix; the nested router did not know it.
         .nest("/admin", admin_router())
@@ -167,7 +180,12 @@ async fn main() -> kynos::Result<()> {
         .not_found(FallbackPolicy::Problem)
         .method_not_allowed(FallbackPolicy::Problem)
         // 308 rather than 301, so the method and body survive the replay.
-        .trailing_slashes(TrailingSlashPolicy::Redirect);
+        .trailing_slashes(TrailingSlashPolicy::Redirect)
+}
+
+#[tokio::main]
+async fn main() -> kynos::Result<()> {
+    let router = api();
 
     // Worth an integration test of its own: this catches the mistakes that only
     // show up across a whole API, such as a duplicated `operationId` or two

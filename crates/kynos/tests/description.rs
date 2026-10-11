@@ -131,10 +131,7 @@ fn a_group_scoped_interceptor_declares_on_its_group_alone() {
 #[test]
 fn an_endpoint_scoped_interceptor_declares_on_its_endpoint_alone() {
     let document = Router::<()>::new()
-        .mount((
-            kynos::routes![alpha],
-            kynos::routes![beta].0.intercept(BodySize::new(1024)),
-        ))
+        .mount(kynos::routes![alpha, beta.intercept(BodySize::new(1024))])
         .openapi()
         .expect("a describable router");
 

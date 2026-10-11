@@ -316,7 +316,7 @@ covering an operation replaces the figure for it in either direction, and so
 does `Decompression`, whose limit is the route's; each hands it on as a
 crate-private request extension, so nothing that does not declare its own 413
 can move the cap. One large upload is one `BodySize` on its own endpoint —
-`routes![upload].0.intercept(..)` for an attribute route — and needs no group.
+`routes![upload.intercept(..)]` for an attribute route — and needs no group.
 
 This reverses an earlier decision that there would be no default, and the three
 reasons it gave each fall to where the cap now sits. *It would add 413 to every
@@ -514,9 +514,9 @@ cohesive family, which is precisely what the concern test says may stay a file.
 So they stay: a longer path is a worse name, and the rule's first clause already
 permits the shorter one. That was settled before v0.1.0, while the surface could
 still have moved for free. `http/forwarded.rs` joined them when its trust policy
-had to name the field its proxies write: `ProxyHeader`, `TrustedProxies` and
-`Forwarded` are one policy and what it resolves, and the parsing beneath them is
-private.
+had to name the field its proxies write: `ProxyHeader`, `TrustedProxies`,
+`Network` and its two refusals are one policy and the blocks it names, `Forwarded`
+is what it resolves, and the parsing beneath them is private.
 
 Splitting a module that declares *one* type and a pile of `impl` blocks costs
 nothing, because the type stays declared where it was and an inherent `impl` may
@@ -618,7 +618,7 @@ fails the build when a crate is named outside the module that owns it.
 | compatibility | `async-compression` is named only under `middleware/compression/` and `middleware/decompression/` | `mise run containment:check` | `enforced` |
 | compatibility | `serde_html_form` is named only in `extract/body/form.rs`, `response/codec/form.rs` and `test/mod.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `tracing` is named only under `server/` and in `middleware/trace.rs` | `mise run containment:check` | `enforced` |
-| compatibility | `futures-core` is named only under `response/stream/` and `extract/body/json_lines/` and in `http/body.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `futures-core` is named only under `response/stream/` and `extract/body/json_lines/` and in `http/body.rs` and `test/mod.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `multer` is named only in `extract/body/multipart.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `prost` is named only in `extract/body/protobuf.rs` and `response/codec/protobuf.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `uuid` is named only in `schema/impls/identifier.rs` | `mise run containment:check` | `enforced` |

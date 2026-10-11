@@ -244,6 +244,11 @@ impl Connection {
             .map_or(&[], |tls| tls.peer_certificates.as_slice())
     }
 
+    /// Whether the connection completed a TLS handshake.
+    pub(crate) fn is_tls(&self) -> bool {
+        self.0.tls.is_some()
+    }
+
     /// Reads the connection back, or reports that there was none.
     fn of(parts: &Parts) -> Self {
         parts
