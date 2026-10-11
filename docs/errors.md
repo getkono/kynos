@@ -240,8 +240,11 @@ side's branches are flattened, a `type` already published is dropped, and what
 survives is rebuilt as a single `allOf` or a `oneOf` of them; the descriptions
 join the way a shared status already joins its variants. A `Path<T>` capture's
 400 beside a handler error's 400 is therefore a choice between `about:blank` and
-the type the variant declared, described as both. `Responses::union_from` is the
-rule, and [Where the union happens](#where-the-union-happens) is where it is
+the type the variant declared, described as both. Its headers join the same
+way whatever the bodies: each header either side sends is declared, required
+only where both require it, so a rejection contributed first neither hides a
+variant's `#[problem(headers)]` group nor keeps one required that the variant
+omits. `Responses::union_from` is the rule, and [Where the union happens](#where-the-union-happens) is where it is
 applied.
 
 That works only because the rejection side narrows too, and it does: every
