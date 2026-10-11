@@ -1,17 +1,17 @@
 //! `#[derive(HeaderParams)]`.
 
 use proc_macro::TokenStream;
+use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{DeriveInput, parse_macro_input, spanned::Spanned};
+use syn::{DeriveInput, Field, LitStr, Type, parse_macro_input, spanned::Spanned};
 
 use crate::derive::{
     common::{
         NameCase, named_fields, names_const, reject_duplicate_names, reject_non_token_names,
-        wire_names,
+        skip_value, wire_names,
     },
     params::{
-        Param, check_field, construct, decode_field, header_encode_body, parameters_body,
-        response_headers_body,
+        Param, check_field, construct, decode_field, parameters_body, render, response_headers_body,
     },
 };
 
@@ -34,6 +34,179 @@ const RESERVED: &[(&str, &str)] = &[
          and describing it are one act",
     ),
 ];
+
+/// What a required header nothing carried is refused with.
+const MISSING: &str = "the header is required";
+
+/// Binds a fixed header's field: present means equal to `value`, octet for
+/// octet, as its schema's `const` says, and anything else is refused. `found`
+/// is the `Option<&str>` the header lookup produced.
+fn decode_fixed(param: &Param<'_>, value: &str, found: &TokenStream2) -> TokenStream2 {
+    let ident = param.ident();
+    let ty = param.ty();
+    let name = param.name();
+    let differs = format!("the value must be `{value}`");
+
+    let refuse = |detail: &str| {
+        quote! {
+            return ::core::result::Result::Err(
+                ::kynos::error::rejection::HeaderRejection::Invalid {
+                    name: ::std::string::String::from(#name),
+                    detail: ::std::string::String::from(#detail),
+                },
+            );
+        }
+    };
+    let (differs, missing) = (refuse(&differs), refuse(MISSING));
+    let absent = if param.optional().is_some() {
+        quote!(::core::option::Option::None)
+    } else {
+        missing
+    };
+    let present = if param.optional().is_some() {
+        quote!(::core::option::Option::Some(()))
+    } else {
+        quote!(())
+    };
+
+    quote! {
+        let #ident: #ty = match #found {
+            ::core::option::Option::Some(raw) if raw == #value => #present,
+            ::core::option::Option::Some(_) => { #differs }
+            ::core::option::Option::None => { #absent }
+        };
+    }
+}
+
+/// The `HeaderParams::encode` body.
+///
+/// The name is lower-cased at expansion for `HeaderName::from_static`; a value
+/// that is not a valid field value is dropped rather than written. A fixed
+/// value was checked at expansion, so it is written as it stands.
+fn encode_body(params: &[Param<'_>]) -> TokenStream2 {
+    let entries = params.iter().map(|param| {
+        let folded = param.name().to_ascii_lowercase();
+        if let Some(value) = param.fixed_value() {
+            let ident = param.ident();
+            let field = quote! {
+                fields.push((
+                    ::kynos::http::HeaderName::from_static(#folded),
+                    ::kynos::http::HeaderValue::from_static(#value),
+                ));
+            };
+            return if param.optional().is_some() {
+                quote!(if ::core::option::Option::is_some(&self.#ident) { #field })
+            } else {
+                field
+            };
+        }
+        let rendered = render(param);
+        quote! {
+            if let ::core::option::Option::Some(rendered) = #rendered {
+                if let ::core::result::Result::Ok(value) =
+                    ::kynos::http::HeaderValue::from_str(&rendered)
+                {
+                    fields.push((::kynos::http::HeaderName::from_static(#folded), value));
+                }
+            }
+        }
+    });
+
+    quote! {
+        let mut fields = ::std::vec::Vec::new();
+        #(#entries)*
+        fields
+    }
+}
+
+/// Whether the field is `()` or `Option<()>`, the types that carry no value of
+/// their own; recognised syntactically, as `Option` is.
+fn carries_unit(param: &Param<'_>) -> bool {
+    matches!(
+        param.optional().unwrap_or(param.ty()),
+        Type::Tuple(tuple) if tuple.elems.is_empty()
+    )
+}
+
+/// The field's `#[header(value = "...")]`, checked: a fixed value goes on a
+/// field carrying nothing else, and every such field names one.
+///
+/// `unit` says whether the field is `()` or `Option<()>`.
+fn fixed_value(field: &Field, unit: bool) -> syn::Result<Option<String>> {
+    let mut found: Option<LitStr> = None;
+    for attr in &field.attrs {
+        if !attr.path().is_ident("header") {
+            continue;
+        }
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("value") {
+                found = Some(meta.value()?.parse()?);
+                Ok(())
+            } else {
+                skip_value(&meta)
+            }
+        })?;
+    }
+
+    let Some(literal) = found else {
+        if unit {
+            return Err(syn::Error::new(
+                field.ty.span(),
+                "`()` carries no value of its own, so this header needs the one it always \
+                 carries: `#[header(value = \"...\")]`",
+            ));
+        }
+        return Ok(None);
+    };
+    if !unit {
+        return Err(syn::Error::new(
+            field.ty.span(),
+            "a header with a fixed `value` carries nothing beside it, so its field is `()`, or \
+             `Option<()>` where it may be absent",
+        ));
+    }
+
+    let value = literal.value();
+    if let Some(message) = non_field_value_message(&value) {
+        return Err(syn::Error::new(literal.span(), message));
+    }
+    if let Some(bounded) = field
+        .attrs
+        .iter()
+        .find(|attr| attr.path().is_ident("schema"))
+    {
+        return Err(syn::Error::new(
+            bounded.span(),
+            "a fixed `value` is the whole of this header's schema, so `#[schema(...)]` has \
+             nothing left to bound",
+        ));
+    }
+    Ok(Some(value))
+}
+
+/// Says why `value` cannot be a fixed header value, or `None` where it can.
+///
+/// RFC 9110 §5.5's `field-value`, less `obs-text`, which the decoder refuses as
+/// not printable ASCII and so could never compare equal.
+fn non_field_value_message(value: &str) -> Option<String> {
+    if let Some(character) = value
+        .chars()
+        .find(|&character| !(character == ' ' || character == '\t' || character.is_ascii_graphic()))
+    {
+        return Some(format!(
+            "the header value `{}` contains {character:?}, and a fixed value is printable \
+             ASCII: a decoded header is compared as text",
+            value.escape_debug()
+        ));
+    }
+    if value.starts_with([' ', '\t']) || value.ends_with([' ', '\t']) {
+        return Some(format!(
+            "the header value {value:?} starts or ends with whitespace, which a recipient strips \
+             (RFC 9110 §5.5), so no request could carry it"
+        ));
+    }
+    None
+}
 
 pub(crate) fn expand(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
@@ -64,7 +237,14 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let names_item = names_const(&names);
 
-    let params = Param::pair(fields, &names);
+    let params = Param::pair(fields, &names)
+        .into_iter()
+        .zip(&fields.named)
+        .map(|(param, field)| {
+            let value = fixed_value(field, carries_unit(&param))?;
+            Ok(param.fixed(value))
+        })
+        .collect::<syn::Result<Vec<_>>>()?;
     let rejection = quote!(::kynos::error::rejection::HeaderRejection);
 
     // Only the first value of a repeated field is read: a field is one value.
@@ -88,7 +268,10 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
                 ::core::option::Option::None => ::core::option::Option::None,
             }
         };
-        let decoded = decode_field(param, &rejection, &found, "the header is required");
+        if let Some(fixed) = param.fixed_value() {
+            return decode_fixed(param, fixed, &found);
+        }
+        let decoded = decode_field(param, &rejection, &found, MISSING);
         let checked = check_field(param, &rejection);
         quote!(#decoded #checked)
     });
@@ -100,7 +283,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         false,
     );
     let response_headers = response_headers_body(&params);
-    let encode = header_encode_body(&params);
+    let encode = encode_body(&params);
 
     // Three implementations, one per direction plus the description.
     Ok(quote! {

@@ -11,7 +11,7 @@ use quote::{quote, quote_spanned};
 use syn::{Field, FieldsNamed, GenericArgument, Ident, PathArguments, Type, spanned::Spanned};
 
 use crate::derive::{
-    common::doc_string,
+    common::{doc_string, string_const},
     schema::{attributes::constraints, check::value_checks},
 };
 
@@ -19,6 +19,8 @@ use crate::derive::{
 pub(crate) struct Param<'a> {
     field: &'a Field,
     name: String,
+    /// The one value a header's `()` field stands for, as its schema's `const`.
+    fixed: Option<String>,
 }
 
 impl<'a> Param<'a> {
@@ -31,8 +33,22 @@ impl<'a> Param<'a> {
             .map(|(field, name)| Self {
                 field,
                 name: name.clone(),
+                fixed: None,
             })
             .collect()
+    }
+
+    /// Makes this a parameter that only ever carries `value`, or leaves it be.
+    pub(crate) fn fixed(self, value: Option<String>) -> Self {
+        Self {
+            fixed: value,
+            ..self
+        }
+    }
+
+    /// The one value this parameter carries, where it is fixed.
+    pub(crate) fn fixed_value(&self) -> Option<&str> {
+        self.fixed.as_deref()
     }
 
     /// The name this parameter is carried under.
@@ -41,19 +57,19 @@ impl<'a> Param<'a> {
     }
 
     /// The identifier the struct literal binds.
-    fn ident(&self) -> &Ident {
+    pub(crate) fn ident(&self) -> &Ident {
         self.field
             .ident
             .as_ref()
             .expect("a parameter group is a struct with named fields")
     }
 
-    fn ty(&self) -> &Type {
+    pub(crate) fn ty(&self) -> &Type {
         &self.field.ty
     }
 
     /// The `T` of an `Option<T>` field, which is what makes it optional.
-    fn optional(&self) -> Option<&Type> {
+    pub(crate) fn optional(&self) -> Option<&Type> {
         let Type::Path(path) = self.ty() else {
             return None;
         };
@@ -183,7 +199,7 @@ pub(crate) fn construct(params: &[Param<'_>]) -> TokenStream2 {
 }
 
 /// This field's value as an `Option<String>`, absent only when the field is.
-fn render(param: &Param<'_>) -> TokenStream2 {
+pub(crate) fn render(param: &Param<'_>) -> TokenStream2 {
     let ident = param.ident();
     let span = param.field.ty.span();
 
@@ -207,6 +223,14 @@ fn bounds(param: &Param<'_>) -> Option<TokenStream2> {
     constraints(param.field).map(|constraints| quote!(let schema = #constraints.apply(schema);))
 }
 
+/// The field's type's schema, or a fixed parameter's `const`.
+fn schema(param: &Param<'_>) -> TokenStream2 {
+    let ty = param.ty();
+    param
+        .fixed_value()
+        .map_or_else(|| quote!(registry.resolve::<#ty>()), string_const)
+}
+
 /// The `parameters` body: one OpenAPI parameter per field, in declaration
 /// order, each schema resolved through the registry under its field's bounds.
 ///
@@ -218,7 +242,7 @@ pub(crate) fn parameters_body(
     always_required: bool,
 ) -> TokenStream2 {
     let entries = params.iter().map(|param| {
-        let ty = param.ty();
+        let schema = schema(param);
         let name = &param.name;
         let required = always_required || param.optional().is_none();
         let constrained = bounds(param);
@@ -230,7 +254,7 @@ pub(crate) fn parameters_body(
 
         quote! {
             parameters.push({
-                let schema = registry.resolve::<#ty>();
+                let schema = #schema;
                 #constrained
                 let mut parameter =
                     ::kynos::openapi::Parameter::new(#name, #location, schema);
@@ -241,7 +265,9 @@ pub(crate) fn parameters_body(
         }
     });
 
+    // A group of fixed headers alone resolves nothing through `registry`.
     quote! {
+        let _ = &registry;
         let mut parameters = ::std::vec::Vec::new();
         #(#entries)*
         parameters
@@ -251,7 +277,7 @@ pub(crate) fn parameters_body(
 /// The `response_headers` body: the same fields, as a `headers` map.
 pub(crate) fn response_headers_body(params: &[Param<'_>]) -> TokenStream2 {
     let entries = params.iter().map(|param| {
-        let ty = param.ty();
+        let schema = schema(param);
         let name = &param.name;
         let required = param.optional().is_none();
         let constrained = bounds(param);
@@ -263,7 +289,7 @@ pub(crate) fn response_headers_body(params: &[Param<'_>]) -> TokenStream2 {
 
         quote! {
             headers.insert(::std::string::String::from(#name), {
-                let schema = registry.resolve::<#ty>();
+                let schema = #schema;
                 #constrained
                 let mut header = ::kynos::openapi::Header::new(schema);
                 header.required = ::core::option::Option::Some(#required);
@@ -274,6 +300,7 @@ pub(crate) fn response_headers_body(params: &[Param<'_>]) -> TokenStream2 {
     });
 
     quote! {
+        let _ = &registry;
         let mut headers = ::kynos::openapi::Map::new();
         #(#entries)*
         headers
@@ -294,32 +321,6 @@ pub(crate) fn path_encode_body(params: &[Param<'_>]) -> TokenStream2 {
     });
 
     quote!(::std::vec![#(#entries),*])
-}
-
-/// The `HeaderParams::encode` body.
-///
-/// The name is lower-cased at expansion for `HeaderName::from_static`; a value
-/// that is not a valid field value is dropped rather than written.
-pub(crate) fn header_encode_body(params: &[Param<'_>]) -> TokenStream2 {
-    let entries = params.iter().map(|param| {
-        let folded = param.name.to_ascii_lowercase();
-        let rendered = render(param);
-        quote! {
-            if let ::core::option::Option::Some(rendered) = #rendered {
-                if let ::core::result::Result::Ok(value) =
-                    ::kynos::http::HeaderValue::from_str(&rendered)
-                {
-                    fields.push((::kynos::http::HeaderName::from_static(#folded), value));
-                }
-            }
-        }
-    });
-
-    quote! {
-        let mut fields = ::std::vec::Vec::new();
-        #(#entries)*
-        fields
-    }
 }
 
 /// The `QueryParams::encode` body.

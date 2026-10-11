@@ -239,6 +239,24 @@ pub(crate) fn names_const(names: &[String]) -> TokenStream2 {
     }
 }
 
+/// The schema of a string that is only ever `value`: `{"type": "string",
+/// "const": value}`.
+pub(crate) fn string_const(value: &str) -> TokenStream2 {
+    quote! {
+        {
+            let mut constant = ::kynos::openapi::SchemaObject::default();
+            constant.ty = ::core::option::Option::Some(
+                ::kynos::openapi::model::schema::types::TypeSet::One(
+                    ::kynos::openapi::model::schema::types::SchemaType::String,
+                ),
+            );
+            constant.const_value =
+                ::core::option::Option::Some(::core::convert::Into::into(#value));
+            ::kynos::openapi::Schema::Object(::std::boxed::Box::new(constant))
+        }
+    }
+}
+
 /// How two wire names of one location are compared.
 #[derive(Clone, Copy)]
 pub(crate) enum NameCase {

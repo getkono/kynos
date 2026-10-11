@@ -750,6 +750,26 @@ pub fn derive_query_params(item: TokenStream) -> TokenStream {
 /// [`QueryParams`](macro@QueryParams) does: one it breaks is refused as
 /// `HeaderRejection::Schema`. A header a handler sends is not checked.
 ///
+/// # Fixed values
+///
+/// A header that only ever carries one value is a `()` field naming it, or an
+/// `Option<()>` field where the header may be absent:
+///
+/// ```ignore
+/// #[derive(HeaderParams)]
+/// struct Hardened {
+///     #[header(rename = "X-Content-Type-Options", value = "nosniff")]
+///     nosniff: (),
+/// }
+/// ```
+///
+/// It is written as that value, read only where a request carries exactly that
+/// value, octet for octet, else refused as `HeaderRejection::Invalid`, and
+/// described as a string whose `const` is that value. The value is printable
+/// ASCII with no leading or trailing whitespace, checked at the derive; a
+/// `()` field without one, a `value` on any other type, and a
+/// `#[schema(...)]` bound beside one are refused.
+///
 /// # Rejected, because a parameter has one name
 ///
 /// - `#[serde(alias = "...")]` on any field: serde would read the field under

@@ -5013,15 +5013,91 @@ mod headers {
     use syn::DeriveInput;
 
     fn ledger() -> Vec<Case> {
-        vec![case(
-            "a header the framework already negotiates",
-            quote::quote!(
-                struct Negotiation {
-                    accept: String,
-                }
+        vec![
+            case(
+                "a header the framework already negotiates",
+                quote::quote!(
+                    struct Negotiation {
+                        accept: String,
+                    }
+                ),
+                "must not be declared as a header parameter",
             ),
-            "must not be declared as a header parameter",
-        )]
+            case(
+                "a `()` field naming no value to stand for",
+                quote::quote!(
+                    struct Sniffing {
+                        #[header(rename = "X-Content-Type-Options")]
+                        nosniff: (),
+                    }
+                ),
+                "needs the one it always carries",
+            ),
+            case(
+                "a fixed value on a field that carries one of its own",
+                quote::quote!(
+                    struct Sniffing {
+                        #[header(rename = "X-Content-Type-Options", value = "nosniff")]
+                        nosniff: String,
+                    }
+                ),
+                "so its field is `()`",
+            ),
+            case(
+                "a fixed value no field value can be",
+                quote::quote!(
+                    struct Sniffing {
+                        #[header(rename = "X-Content-Type-Options", value = "nosniff\n")]
+                        nosniff: (),
+                    }
+                ),
+                "contains '\\n'",
+            ),
+            case(
+                "a bound on a fixed value",
+                quote::quote!(
+                    struct Sniffing {
+                        #[schema(max_length = 4)]
+                        #[header(rename = "X-Content-Type-Options", value = "nosniff")]
+                        nosniff: (),
+                    }
+                ),
+                "has nothing left to bound",
+            ),
+        ]
+    }
+
+    /// A fixed value is RFC 9110 §5.5's `field-value` a decoder can read as
+    /// text: printable ASCII, with inner but no outer whitespace, which a
+    /// recipient would strip before the comparison. An optional field takes one
+    /// as a required field does.
+    #[test]
+    fn a_fixed_value_is_a_field_value_read_as_text() {
+        for (value, refusal) in [
+            ("max-age=0; includeSubDomains", None),
+            ("a\tb", None),
+            ("", None),
+            ("café", Some("contains 'é'")),
+            ("a\u{7f}", Some("contains '\\u{7f}'")),
+            (" nosniff", Some("starts or ends with whitespace")),
+            ("nosniff\t", Some("starts or ends with whitespace")),
+        ] {
+            let input: DeriveInput = syn::parse_quote!(
+                struct Sniffing {
+                    #[header(rename = "X-Content-Type-Options", value = #value)]
+                    nosniff: Option<()>,
+                }
+            );
+            match (expand_inner(&input), refusal) {
+                (Ok(_), None) => {}
+                (Err(error), Some(expected)) => {
+                    let message = error.to_string();
+                    assert!(message.contains(expected), "{value:?}: {message}");
+                }
+                (Ok(_), Some(expected)) => panic!("{value:?} was accepted; expected {expected}"),
+                (Err(error), None) => panic!("{value:?} was refused: {error}"),
+            }
+        }
     }
 
     #[test]
