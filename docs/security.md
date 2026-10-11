@@ -27,13 +27,17 @@ spelling and the `security` the guard emits is the whole list, set once:
 | Guard | `security` | Enforced |
 | --- | --- | --- |
 | `Auth<S>` | `[{S}]` | `S` |
-| `Auth<AnyOf<(A, B)>>` | `[{A}, {B}]` | the first of `A`, `B` that authenticates |
+| `Auth<AnyOf<(A, B)>>` | `[{A}, {B}]` | the first of `A`, `B` that is satisfied |
 | `Auth<AllOf<(A, B)>>` | `[{A, B}]` | both |
 | `MaybeAuth<…>` | `[{}, …]` | the same, or nothing presented at all |
-| `Scoped<S, R>` | `[{S: R::REQUIRED}]` | `S`, then `R` |
+| `Scoped<S, R>` | `[{S: S::scopes() + R::REQUIRED}]` | `S`, then both scope lists |
+
+Each `{S}` above carries `S::scopes()`, the scheme's default scopes, and
+satisfying it means authenticating *and* holding them: see
+[the default scopes](#a-schemes-default-scopes-are-enforced-where-declared).
 
 - **`AnyOf` tries in order.** An absent credential is skipped and a refused one
-  does not block the next. When none authenticates, the first refusal in tuple
+  does not block the next. When none is satisfied, the first refusal in tuple
   order is the answer; when none was presented, the guard sees absence.
 - **`AllOf` reads every credential before verifying any.** None presented is
   absence; some but not all is a 401, because a partial set is not an anonymous
@@ -157,6 +161,28 @@ The type lives on the scheme rather than on the scope set alone because
 `authorize` is per scheme: a scope type chosen per set would reach it as a
 different type from each set, and the only thing it could do with one is turn it
 back into a string.
+
+### A scheme's default scopes are enforced where declared
+
+`SecurityScheme::scopes()` is written into every requirement naming the scheme,
+so every guard naming it hands them to `authorize` — the rule above, applied to
+scopes. A scheme with none is never authorized by `Auth` or `MaybeAuth`, alone
+or combined, so its 403 is `authenticate`'s alone.
+
+| Guard | `authorize` receives |
+| --- | --- |
+| `Auth<S>`, `MaybeAuth<S>` | `S::scopes()`, after `S` authenticates |
+| `AnyOf`, `AllOf` | each scheme's own, after it authenticates |
+| `Scoped<S, R>` | `S::scopes()`, then each of `R::REQUIRED` they do not name, in one call |
+
+An `AnyOf` alternative whose defaults are refused is not satisfied, so the next
+one is tried, and the refusal is the answer only when none is. `Scope` is
+`Clone` because `Scoped` joins the two lists; where `S` has no defaults it
+borrows `R::REQUIRED` and allocates nothing.
+
+Ceasing to declare the defaults would close the same gap from the other side,
+and was rejected: `scopes(..)` would then be a demand neither the description
+nor the guard makes, which is no demand at all.
 
 ### A 403 may name itself; a 401 may not
 

@@ -36,6 +36,8 @@
 //!   *operation* through `Scoped`, which is what this particular endpoint
 //!   demands. Both are values of `Grant`, the scope type each scheme names
 //!   once, so neither is a string a handler passes or an authorizer parses.
+//!   And both are checked: every guard naming `DelegatedAccess` hands its
+//!   scopes to `authorize`, exactly as `/reports` hands it `ReadReports`.
 //! * **A context declares what it can verify.** One `App`, seven
 //!   implementations, so the set of schemes an application supports is visible
 //!   in one place rather than spread across the handlers requiring them. Only
@@ -458,7 +460,8 @@ async fn reports(caller: Scoped<AccessToken, ReadReports>) -> NoContent {
 ///
 /// `AnyOf` declares `security: [{ServiceKey: []}, {AccessToken: []}]`, which
 /// OpenAPI reads as "either", and checks them in that order: the first that
-/// authenticates wins, and the credential says which one it was.
+/// authenticates, and holds its scheme's default scopes, wins, and the
+/// credential says which one it was.
 #[kynos::get("/exports")]
 async fn exports(caller: Auth<AnyOf<(ServiceKey, AccessToken)>>) -> NoContent {
     match caller.into_inner() {

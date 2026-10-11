@@ -101,9 +101,9 @@ where
 ///
 /// Declares one requirement per scheme, `[{A}, {B}]`, which is OpenAPI's
 /// "either". The first scheme that authenticates, and is authorized for its
-/// default scopes, wins; a scheme whose credential is absent is skipped. When none authenticates, the first refusal
-/// in declaration order is the answer, and when nothing was presented at all
-/// the requirement is absent.
+/// default scopes, wins; a scheme whose credential is absent is skipped. When
+/// none is satisfied, the first refusal in declaration order is the answer,
+/// and when nothing was presented at all the requirement is absent.
 ///
 /// Implemented for tuples of two to four schemes. The credential is an
 /// [`Either2`], [`Either3`] or [`Either4`] naming which one authenticated.
