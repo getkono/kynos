@@ -201,27 +201,27 @@ fn render(param: &Param<'_>) -> TokenStream2 {
     }
 }
 
+/// Puts the field's `#[schema(...)]` bounds on the resolved `schema`, as the
+/// `Schema` derive puts them on a property; [`check_field`] enforces them.
+fn bounds(param: &Param<'_>) -> Option<TokenStream2> {
+    constraints(param.field).map(|constraints| quote!(let schema = #constraints.apply(schema);))
+}
+
 /// The `parameters` body: one OpenAPI parameter per field, in declaration
-/// order, each schema resolved through the registry.
+/// order, each schema resolved through the registry under its field's bounds.
 ///
 /// `always_required` is the path location's, which the OpenAPI Parameter Object
-/// requires to be `required: true` whatever the Rust type says. `bounded` puts
-/// each field's `#[schema(...)]` bounds on its schema, as the `Schema` derive
-/// puts them on a property, for a derive whose decoder runs [`check_field`].
+/// requires to be `required: true` whatever the Rust type says.
 pub(crate) fn parameters_body(
     params: &[Param<'_>],
     location: &TokenStream2,
     always_required: bool,
-    bounded: bool,
 ) -> TokenStream2 {
     let entries = params.iter().map(|param| {
         let ty = param.ty();
         let name = &param.name;
         let required = always_required || param.optional().is_none();
-        let constrained = bounded
-            .then(|| constraints(param.field))
-            .flatten()
-            .map(|constraints| quote!(let schema = #constraints.apply(schema);));
+        let constrained = bounds(param);
         let described = doc_string(&param.field.attrs).map(|text| {
             quote!(parameter.description = ::core::option::Option::Some(
                 ::std::string::String::from(#text)
@@ -254,6 +254,7 @@ pub(crate) fn response_headers_body(params: &[Param<'_>]) -> TokenStream2 {
         let ty = param.ty();
         let name = &param.name;
         let required = param.optional().is_none();
+        let constrained = bounds(param);
         let described = doc_string(&param.field.attrs).map(|text| {
             quote!(header.description = ::core::option::Option::Some(
                 ::std::string::String::from(#text)
@@ -263,6 +264,7 @@ pub(crate) fn response_headers_body(params: &[Param<'_>]) -> TokenStream2 {
         quote! {
             headers.insert(::std::string::String::from(#name), {
                 let schema = registry.resolve::<#ty>();
+                #constrained
                 let mut header = ::kynos::openapi::Header::new(schema);
                 header.required = ::core::option::Option::Some(#required);
                 #described

@@ -554,6 +554,10 @@ pub fn derive_reply(item: TokenStream) -> TokenStream {
 /// The helper attribute is `#[param]` because `#[path]` is a built-in
 /// attribute.
 ///
+/// A field's `#[schema(...)]` bounds are written into its parameter's schema
+/// and checked on the decoded value, as [`QueryParams`](macro@QueryParams)
+/// does: one it breaks is refused as `PathRejection::Schema`.
+///
 /// # Rejected, because a parameter has one name
 ///
 /// - `#[serde(alias = "...")]` on any field: serde would read the field under
@@ -629,6 +633,11 @@ pub fn derive_query_params(item: TokenStream) -> TokenStream {
 /// The helper attribute is `#[header]`; [`PathParams`](macro@PathParams) and
 /// [`QueryParams`](macro@QueryParams) use `#[param]`.
 ///
+/// A field's `#[schema(...)]` bounds are written into its parameter's schema
+/// and its response header's, and checked on a decoded request value, as
+/// [`QueryParams`](macro@QueryParams) does: one it breaks is refused as
+/// `HeaderRejection::Schema`. A header a handler sends is not checked.
+///
 /// # Rejected, because a parameter has one name
 ///
 /// - `#[serde(alias = "...")]` on any field: serde would read the field under
@@ -651,6 +660,10 @@ pub fn derive_headers(item: TokenStream) -> TokenStream {
 ///
 /// The helper attribute is `#[cookie]`, as
 /// [`HeaderParams`](macro@HeaderParams)'s is `#[header]`.
+///
+/// A field's `#[schema(...)]` bounds are written into its parameter's schema
+/// and checked on the decoded value, as [`QueryParams`](macro@QueryParams)
+/// does: one it breaks is refused as `CookieRejection::Schema`.
 ///
 /// # Values are read as sent
 ///

@@ -371,7 +371,7 @@ fn described_checks(field: &Field) -> TokenStream2 {
 }
 
 /// The checks on one value of `field`'s type: its bounds, then its type's.
-/// Reads `value`, `at` and `violations`; a query parameter's decoder runs them.
+/// Reads `value`, `at` and `violations`; every parameter derive's decoder runs them.
 pub(crate) fn value_checks(field: &Field) -> TokenStream2 {
     checks_on(field, &field.ty)
 }
