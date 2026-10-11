@@ -154,8 +154,51 @@ impl Authenticates<Bearer> for Recording {
     }
 }
 
-/// A request head presenting `Authorization: Bearer t`, which both schemes
-/// above read.
+/// A scheme reading the bearer token every request below presents, which its
+/// authenticator never accepts.
+struct Revoked;
+
+impl SecurityScheme for Revoked {
+    const NAME: &'static str = "Revoked";
+    type Credential = String;
+    type Scope = Grant;
+
+    fn describe() -> kynos_openapi::SecurityScheme {
+        kynos_openapi::SecurityScheme::bearer(None)
+    }
+}
+
+impl Carries for Revoked {
+    type Presented = BearerToken;
+
+    fn present(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
+        carrier::bearer(parts)
+    }
+}
+
+/// Refuses every credential as unauthenticated.
+struct Rejecting;
+
+impl<C: Sync> Authenticator<Revoked, C> for Rejecting {
+    async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
+        Err(AuthRejection::unauthenticated())
+    }
+
+    async fn authorize(&self, _: &String, _: &[Grant], _: &C) -> Result<(), AuthRejection> {
+        Ok(())
+    }
+}
+
+impl Authenticates<Revoked> for Recording {
+    type Authenticator = Rejecting;
+
+    fn authenticator(&self) -> &Rejecting {
+        &Rejecting
+    }
+}
+
+/// A request head presenting `Authorization: Bearer t`, which every scheme
+/// above reads.
 fn presenting_a_token() -> Parts {
     let mut request = Request::new(Body::empty());
     request
@@ -466,6 +509,24 @@ async fn every_guard_authorizes_the_default_scopes_it_declares() {
     let admitted = <Auth<AllOf<(Audited, Bearer)>> as Guard<_>>::guard(&parts, &admitting).await;
     assert!(admitted.is_ok());
     assert_eq!(admitting.0.authorized(), defaults);
+}
+
+/// `AllOf` authenticates every scheme before authorizing any, so a credential
+/// that fails to authenticate answers 401 even where an earlier scheme's
+/// default scopes would be refused, and `authorize` never runs for a request
+/// that is not authenticated.
+#[tokio::test]
+async fn all_of_authenticates_every_scheme_before_authorizing_any() {
+    let refusing = Recording::refusing();
+    let refused =
+        <Auth<AllOf<(Audited, Revoked)>> as Guard<_>>::guard(&presenting_a_token(), &refusing)
+            .await;
+
+    assert_eq!(
+        refused.err().map(|r| r.status()),
+        Some(StatusCode::UNAUTHORIZED)
+    );
+    assert!(refusing.0.authorized().is_empty());
 }
 
 /// An `AnyOf` alternative whose default scopes are refused is not satisfied,
