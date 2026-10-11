@@ -10,7 +10,8 @@ use crate::derive::{
         wire_names,
     },
     params::{
-        Param, construct, decode_field, header_encode_body, parameters_body, response_headers_body,
+        Param, check_field, construct, decode_field, header_encode_body, parameters_body,
+        response_headers_body,
     },
 };
 
@@ -87,14 +88,15 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
                 ::core::option::Option::None => ::core::option::Option::None,
             }
         };
-        decode_field(param, &rejection, &found, "the header is required")
+        let decoded = decode_field(param, &rejection, &found, "the header is required");
+        let checked = check_field(param, &rejection);
+        quote!(#decoded #checked)
     });
     let value = construct(&params);
 
     let parameters = parameters_body(
         &params,
         &quote!(::kynos::openapi::ParameterIn::Header),
-        false,
         false,
     );
     let response_headers = response_headers_body(&params);

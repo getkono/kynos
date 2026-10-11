@@ -9,7 +9,7 @@ use crate::derive::{
         NameCase, named_fields, names_const, reject_duplicate_names, reject_non_token_names,
         wire_names,
     },
-    params::{Param, construct, decode_field, parameters_body},
+    params::{Param, check_field, construct, decode_field, parameters_body},
 };
 
 pub(crate) fn expand(item: TokenStream) -> TokenStream {
@@ -49,14 +49,15 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
                 }
             }
         };
-        decode_field(param, &rejection, &found, "the cookie is required")
+        let decoded = decode_field(param, &rejection, &found, "the cookie is required");
+        let checked = check_field(param, &rejection);
+        quote!(#decoded #checked)
     });
     let value = construct(&params);
 
     let parameters = parameters_body(
         &params,
         &quote!(::kynos::openapi::ParameterIn::Cookie),
-        false,
         false,
     );
     // `value_of` removes no percent-encoding, which OpenAPI 3.2's `cookie` style
