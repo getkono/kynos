@@ -239,6 +239,29 @@ fn all_of_declares_one_requirement_naming_every_scheme() {
     );
 }
 
+/// A guard with no scope set of its own still declares its scheme's default
+/// scopes, in the scheme's order and spelled by `Scope::name`, whether it
+/// names the scheme alone or inside a combination.
+#[test]
+fn a_scheme_declares_its_default_scopes_under_every_guard() {
+    let defaults = || {
+        SecurityRequirement::scoped(
+            component_name::<Audited>().as_str(),
+            ["audit", "reports:read"],
+        )
+    };
+
+    let (alone, _) = described::<Auth<Audited>>();
+    assert_eq!(alone.security, Some(vec![defaults()]));
+
+    let (either, _) = described::<Auth<AnyOf<(Audited, Bearer)>>>();
+    assert_eq!(either.security, Some(vec![defaults(), bare::<Bearer>()]));
+
+    let (both, _) = described::<Auth<AllOf<(Audited, Bearer)>>>();
+    let together = defaults().and(component_name::<Bearer>().as_str(), Vec::<String>::new());
+    assert_eq!(both.security, Some(vec![together]));
+}
+
 /// `MaybeAuth` prepends the anonymous alternative to whatever its requirement
 /// declares, and nothing else: the combination's own alternatives follow
 /// unchanged.
