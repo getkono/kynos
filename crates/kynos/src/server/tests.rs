@@ -843,10 +843,11 @@ async fn zero_shutdown_timeout_reports_an_incomplete_drain() {
         .expect("server task joins")
         .expect_err("an incomplete drain is reported");
     assert!(matches!(
-        error,
+        &error,
         crate::Error::Server(crate::server::error::ServerError::ShutdownTimeout { timeout })
             if timeout.is_zero()
     ));
+    assert!(matches!(&error, crate::Error::Server(error) if error.is_requested_shutdown()));
     client.await.expect("client task joins");
 }
 
@@ -891,10 +892,46 @@ async fn repeated_shutdown_trigger_forces_an_incomplete_drain() {
         .expect("server task joins")
         .expect_err("the repeated trigger is reported");
     assert!(matches!(
-        error,
+        &error,
         crate::Error::Server(crate::server::error::ServerError::ShutdownForced)
     ));
+    assert!(matches!(&error, crate::Error::Server(error) if error.is_requested_shutdown()));
     client.await.expect("client task joins");
+}
+
+/// Only the two incomplete-drain variants are a requested shutdown; every
+/// other one is a server that stopped on its own or never started.
+#[test]
+fn only_an_incomplete_drain_is_a_requested_shutdown() {
+    use std::{io, net::Ipv4Addr};
+
+    use crate::server::error::ServerError;
+
+    let io_error = || io::Error::other("failure");
+    let address = (Ipv4Addr::LOCALHOST, 0).into();
+    let failures = [
+        ServerError::NoListeners,
+        ServerError::InvalidConfiguration("setting"),
+        ServerError::Resolve {
+            address: crate::server::address::BindAddress::from(address),
+            source: io_error(),
+        },
+        ServerError::Bind {
+            address,
+            source: io_error(),
+        },
+        ServerError::Listener(io_error()),
+        ServerError::Accept {
+            address,
+            source: io_error(),
+        },
+        ServerError::AcceptLoop { panicked: true },
+        ServerError::Signal(io_error()),
+        ServerError::MutualTlsConflict,
+    ];
+    for failure in failures {
+        assert!(!failure.is_requested_shutdown(), "{failure:?}");
+    }
 }
 
 /// Makes every later `accept` on `listener` fail the way that ends its loop:

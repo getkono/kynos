@@ -308,6 +308,10 @@ impl<C: 'static> Server<C> {
     }
 
     /// Prepares and serves until shutdown.
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`prepare`](Self::prepare) or [`BoundServer::serve`] reports.
     pub async fn serve(self) -> Result<()> {
         self.prepare().await?.serve().await
     }
@@ -346,6 +350,20 @@ impl<C: 'static> BoundServer<C> {
     }
 
     /// Serves on every listener until shutdown or a terminal accept failure.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Server`](crate::error::Error::Server), carrying:
+    ///
+    /// - [`ServerError::ShutdownTimeout`] or [`ServerError::ShutdownForced`]
+    ///   when shutdown was requested and the drain was not allowed to complete,
+    ///   whether or not work was in flight;
+    ///   [`ServerError::is_requested_shutdown`] tells these apart from a
+    ///   failure.
+    /// - [`ServerError::Signal`] when the shutdown signal could not be
+    ///   registered.
+    /// - [`ServerError::Accept`] or [`ServerError::AcceptLoop`] when a listener
+    ///   stopped accepting.
     pub async fn serve(self) -> Result<()> {
         let (lifecycle_sender, lifecycle_receiver) = watch::channel(Lifecycle::Running);
         let permits = Arc::new(Semaphore::new(self.config.max_connections.get()));
