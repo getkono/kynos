@@ -1,0 +1,5 @@
+error: a parameter is one bare name, and serde writes a variant declaring fields, even an empty list of them, as an object keyed by its name, which no parameter text holds. Make every variant a unit, or implement `FromStr`, `Display` and `ParamValue` by hand
+ --> tests/ui/macros/param_value_variant_with_fields.rs:7:12
+  |
+7 |     Failed { reason: String },
+  |            ^^^^^^^^^^^^^^^^^^

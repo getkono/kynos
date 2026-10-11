@@ -1,0 +1,5 @@
+error: serde writes an internally or adjacently tagged variant as an object holding the tag, which no parameter text holds. Drop `tag`, so each variant is its bare name
+ --> tests/ui/macros/param_value_tagged.rs:5:9
+  |
+5 | #[serde(tag = "kind")]
+  |         ^^^

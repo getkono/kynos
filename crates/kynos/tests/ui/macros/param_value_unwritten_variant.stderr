@@ -1,0 +1,5 @@
+error: `skip_serializing` leaves this variant without a name serde writes, so `Display` would have no text for it. Drop the variant, or drop `skip_serializing`
+ --> tests/ui/macros/param_value_unwritten_variant.rs:7:13
+  |
+7 |     #[serde(skip_serializing)]
+  |             ^^^^^^^^^^^^^^^^
