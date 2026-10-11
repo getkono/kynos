@@ -10,6 +10,7 @@
 #![cfg(all(feature = "macros", feature = "json"))]
 
 use std::{
+    convert::Infallible,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -26,10 +27,11 @@ use kynos::{
         forwarded::{Forwarded, ProxyHeader, TrustedProxies},
         header,
     },
-    middleware::Observer,
+    middleware::{Continued, Interceptor, Next, Observer, request_id::RequestId},
     openapi,
     response::status::NoContent,
     router::{
+        group::Group,
         operation::Route,
         policy::{FallbackPolicy, TrailingSlashPolicy},
     },
@@ -831,5 +833,159 @@ async fn a_directly_driven_service_reports_an_in_process_connection() {
         reply.text().ends_with(":0"),
         "an in-process connection reported `{}`",
         reply.text()
+    );
+}
+
+// --- Fallbacks under the router's interceptors -----------------------------
+
+/// Every answer the router gives when no operation does -- the 404, the 308,
+/// the 405 and the 501 -- passes through the router's own interceptors, so a
+/// header the application adds to every response reaches these too.
+///
+/// `RequestId` stands for any of them: it adds one field and never refuses.
+#[tokio::test]
+async fn every_fallback_passes_through_the_routers_interceptors() {
+    let frob = Method::from_bytes(b"FROB").expect("a method token");
+    let service = support::router()
+        .intercept(RequestId::new())
+        .trailing_slashes(TrailingSlashPolicy::Redirect)
+        .build(App::new())
+        .expect("a describable router");
+
+    for (method, target, status) in [
+        (Method::GET, "/widgets", StatusCode::NOT_FOUND),
+        (Method::GET, "/users/42/", StatusCode::PERMANENT_REDIRECT),
+        (Method::POST, "/users/42", StatusCode::METHOD_NOT_ALLOWED),
+        (frob, "/users/42", StatusCode::NOT_IMPLEMENTED),
+    ] {
+        let asked = format!("{method} {target}");
+        let reply = send(&service, method, target).call().await;
+
+        assert_eq!(reply.status, status, "{asked}");
+        assert!(
+            reply.field("x-request-id").is_some(),
+            "{asked} skipped the router's interceptor"
+        );
+    }
+}
+
+/// An observer is told of a request no operation answered, with no route,
+/// before any interceptor runs -- as it is of every other request.
+#[tokio::test]
+async fn an_observer_is_told_of_a_request_no_operation_answered() {
+    let sightings = Sightings::default();
+    let service = support::router()
+        .observe(sightings.clone())
+        .build(App::new())
+        .expect("a describable router");
+
+    get(&service, "/widgets").call().await;
+
+    assert_eq!(sightings.taken(), [(Method::GET, None)]);
+}
+
+/// A group's interceptor and a nested router's cover their own operations and
+/// nothing else, so neither reaches a request no operation answered.
+#[tokio::test]
+async fn only_the_routers_own_interceptors_reach_a_fallback() {
+    let service = Router::<()>::new()
+        .group(
+            Group::<()>::new("/grouped")
+                .intercept(RequestId::new())
+                .mount(kynos::routes![nothing]),
+        )
+        .nest(
+            "/nested",
+            Router::<()>::new()
+                .intercept(RequestId::new())
+                .mount(kynos::routes![who]),
+        )
+        .build(())
+        .expect("a describable router");
+
+    for (method, target, status) in [
+        (Method::GET, "/grouped/nothing", StatusCode::NO_CONTENT),
+        (Method::GET, "/nested/who", StatusCode::OK),
+    ] {
+        let reply = send(&service, method, target).call().await;
+        assert_eq!(reply.status, status, "{target}");
+        assert!(reply.field("x-request-id").is_some(), "{target}");
+    }
+
+    for (method, target, status) in [
+        (Method::GET, "/widgets", StatusCode::NOT_FOUND),
+        // Nothing in this service implements `POST`, so both are 501s.
+        (
+            Method::POST,
+            "/grouped/nothing",
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        (Method::POST, "/nested/who", StatusCode::NOT_IMPLEMENTED),
+    ] {
+        let asked = format!("{method} {target}");
+        let reply = send(&service, method, target).call().await;
+
+        assert_eq!(reply.status, status, "{asked}");
+        assert_eq!(reply.field("x-request-id"), None, "{asked}");
+    }
+}
+
+/// What a [`Witness`] saw of one request: the `paths` key it was routed to, and
+/// the client the router resolved.
+type Witnessed = (Option<String>, Option<String>);
+
+/// Records what a router-scoped interceptor is handed, and changes nothing.
+#[derive(Clone, Default)]
+struct Witness(Arc<Mutex<Vec<Witnessed>>>);
+
+impl Interceptor<()> for Witness {
+    type Reads = ();
+    type Adds = ();
+    type Short = Infallible;
+
+    async fn intercept(
+        &self,
+        request: Request,
+        (): (),
+        (): &(),
+        next: Next<'_, ()>,
+    ) -> Result<Continued<()>, Infallible> {
+        let route = next.route().map(|route| route.path().to_owned());
+        let client = Forwarded::of(&request)
+            .and_then(Forwarded::client)
+            .map(|client| client.to_string());
+        self.0
+            .lock()
+            .expect("an unpoisoned record")
+            .push((route, client));
+
+        Ok(next.run(request).await)
+    }
+}
+
+/// Around a fallback, a router's interceptor is handed no route -- there is no
+/// operation to name -- and the origin the router resolved under its trust
+/// policy, as it is around an operation.
+#[tokio::test]
+async fn a_fallback_hands_its_interceptors_no_route_and_the_resolved_origin() {
+    let witness = Witness::default();
+    let service = Router::<()>::new()
+        .mount(kynos::routes![origin])
+        .intercept(witness.clone())
+        .trusted_proxies(TrustedProxies::hops(ProxyHeader::Forwarded, 1))
+        .build(())
+        .expect("a describable router");
+
+    for target in ["/origin", "/widgets"] {
+        get(&service, target)
+            .header("forwarded", "for=203.0.113.7")
+            .call()
+            .await;
+    }
+
+    let client = Some("203.0.113.7".to_owned());
+    assert_eq!(
+        *witness.0.lock().expect("an unpoisoned record"),
+        [(Some("/origin".to_owned()), client.clone()), (None, client)]
     );
 }

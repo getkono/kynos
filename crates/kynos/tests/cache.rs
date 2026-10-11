@@ -232,6 +232,31 @@ async fn a_response_with_no_freshness_is_never_stored() {
     );
 }
 
+/// A request no operation matched passes through a router's cache untouched: a
+/// key names an operation, so a 404 is neither stored, even under a default
+/// lifetime, nor given an `Age`.
+#[tokio::test]
+async fn a_request_no_operation_matched_is_neither_stored_nor_aged() {
+    let store = Stored::default();
+    let service = Router::<()>::new()
+        .mount(kynos::routes![reports])
+        .intercept(
+            Cache::new(store.clone())
+                .namespace("test")
+                .default_freshness(std::time::Duration::from_secs(60)),
+        )
+        .build(())
+        .expect("a describable router");
+
+    for _ in 0..2 {
+        let missed = get(&service, "/nowhere").call().await;
+        assert_eq!(missed.status, StatusCode::NOT_FOUND);
+        assert_eq!(missed.field("age"), None);
+    }
+
+    assert!(is_empty(&store), "a fallback was stored");
+}
+
 /// An unsafe method is neither stored nor served from the store.
 #[tokio::test]
 async fn an_unsafe_method_is_not_cached() {

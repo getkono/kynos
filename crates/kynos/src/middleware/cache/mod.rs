@@ -258,13 +258,16 @@ where
     async fn intercept(
         &self,
         request: http::Request,
-        reads: (),
+        (): (),
         context: &C,
         next: Next<'_, C>,
     ) -> Result<Continued<D::Headers>, Infallible> {
-        let () = reads;
+        // A key names an operation, and a fallback has none to store under.
+        let Some(route) = next.route() else {
+            return Ok(next.run(request).await.unrouted());
+        };
 
-        let key = primary_key(self.namespace, &request, next.route().path());
+        let key = primary_key(self.namespace, &request, route.path());
         // A request no router dispatched carries no record and is read as
         // guarded: refusing a store is the safe error.
         let secured = request

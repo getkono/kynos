@@ -592,6 +592,13 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
     /// Applies an interceptor to every operation in the router.
     ///
+    /// On the root router it also runs around the 404, 308, 405 and 501 the
+    /// router answers when no operation does, where
+    /// [`Next::route`](crate::middleware::Next::route) is `None`; the
+    /// description is unchanged, since a fallback has no `paths` entry. On a
+    /// router that is nested or merged into another it covers that router's
+    /// operations alone, as a group's interceptor does.
+    ///
     /// The first call is the outermost interceptor; see
     /// [the module's ordering rule](crate::middleware#the-order-a-chain-runs-in).
     #[must_use]

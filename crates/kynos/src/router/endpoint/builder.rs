@@ -308,7 +308,7 @@ where
                     self.operation_id.unwrap_or_default(),
                     self.method,
                 );
-                Next::new(&self.interceptors, &terminal, context, route)
+                Next::new(&self.interceptors, &terminal, context, Some(route))
                     .run(request)
                     .await
                     .into_response()

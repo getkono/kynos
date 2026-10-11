@@ -149,20 +149,26 @@ impl<C: Sync + 'static> Interceptor<C> for Telemetry {
         next: Next<'_, C>,
     ) -> Result<Continued<()>, Infallible> {
         let _ = context;
-        let route = next.route();
+        // `None` for a 404 or 405 no operation answered, which has no route.
+        let route = next.route().map(|route| route.path());
 
         // Every field is declared here, because `tracing` fixes a span's field
         // set at creation. `Empty` is the status, which is not known yet.
         //
         // `otel.name` is how `tracing-opentelemetry` overrides the span name,
-        // which matters because the convention is `{method} {route}` and a
-        // `tracing` span name has to be a literal.
+        // which matters because the convention is `{method} {route}`, or the
+        // method alone without a route, and a `tracing` span name has to be a
+        // literal.
+        let name = match route {
+            Some(route) => format!("{} {route}", request.method()),
+            None => request.method().to_string(),
+        };
         let span = tracing::info_span!(
             "http.server.request",
-            otel.name = %format!("{} {}", request.method(), route.path()),
+            otel.name = %name,
             otel.kind = "server",
             { semconv::HTTP_REQUEST_METHOD } = %request.method(),
-            { semconv::HTTP_ROUTE } = route.path(),
+            { semconv::HTTP_ROUTE } = route,
             { semconv::URL_PATH } = request.uri().path(),
             { semconv::HTTP_RESPONSE_STATUS_CODE } = tracing::field::Empty,
         );

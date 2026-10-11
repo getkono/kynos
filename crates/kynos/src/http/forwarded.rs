@@ -499,7 +499,8 @@ impl Forwarded {
     ///
     /// `None` until the request has been routed — the router resolves it once,
     /// under [`Router::trusted_proxies`](crate::Router::trusted_proxies), before
-    /// any interceptor runs.
+    /// any interceptor runs. A fallback is resolved too where the router has
+    /// interceptors to run around it, and is otherwise `None`.
     #[must_use]
     pub fn of(request: &crate::http::Request) -> Option<&Self> {
         request

@@ -265,6 +265,9 @@ the router, and have no per-route form.
 None of them adds a `paths` entry. An unmatched path, a wrong method and a
 trailing-slash variant are all outside the description, and settling them once
 at the application level is what keeps the paths *in* the description exact.
+The root router's own interceptors still run around each of those answers, and
+every observer hears of them with no route; see
+[`middleware.md`](middleware.md).
 
 `Redirect` and `Lenient` both accept a second spelling of a path and differ in
 whether the client is told. `Redirect` answers 308, so a client that follows it

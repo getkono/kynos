@@ -151,6 +151,32 @@ async fn requests_within_the_quota_are_served_and_the_rest_refused() {
     assert!(refused.field("retry-after").is_some());
 }
 
+/// A request no operation matched still passes through a router's limiter,
+/// but a policy is keyed by the operation and there is none, so it is neither
+/// refused nor told a limit -- even with every quota already spent.
+#[tokio::test]
+async fn a_request_no_operation_matched_is_neither_counted_nor_told_a_limit() {
+    let service = limited(Quotas::new(shared(), Spent(10)).quota(Quota::new(
+        "fixed",
+        3,
+        Duration::from_secs(600),
+    )));
+
+    let refused = get(&service, "/counted").call().await;
+    assert_eq!(refused.status, StatusCode::TOO_MANY_REQUESTS);
+
+    let missed = get(&service, "/nowhere").call().await;
+    assert_eq!(missed.status, StatusCode::NOT_FOUND);
+    for field in [
+        "x-ratelimit-limit",
+        "x-ratelimit-remaining",
+        "x-ratelimit-reset",
+        "retry-after",
+    ] {
+        assert_eq!(missed.field(field), None, "{field}");
+    }
+}
+
 /// A refused request does not spend quota.
 ///
 /// The reason the algorithm reads before it increments. If a denial counted,

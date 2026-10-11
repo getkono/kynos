@@ -270,8 +270,8 @@ const STACKED_STATUS: StatusCode = SHAPES[0].1;
 /// both.
 const STACKED_ALONE: usize = SHAPES[0].2;
 
-/// The control every stack is read against: the request that matched no route,
-/// read out of [`SHAPES`] for the reason [`STACKED`] is.
+/// The fallback every stack is also read against: the request that matched no
+/// route, read out of [`SHAPES`] for the reason [`STACKED`] is.
 const MISSED: &str = SHAPES[2].0;
 
 /// The answer *that* target has to give, from the same row.
@@ -369,10 +369,10 @@ fn an_interceptor_stack_allocates_what_is_recorded_here() {
 /// first. Stated as `d8 + d0 == 2 * d4`, which is `d8 - d4 == d4 - d0` written
 /// without a subtraction that could underflow before its message is read.
 ///
-/// The control is the request that matched no route: dispatch answers it
-/// before a chain exists to run, so eight layers cost it nothing. Without it a
-/// count that grew with depth everywhere — the fixture leaking rather than the
-/// chain costing — would read as the same result.
+/// The request that matched no route holds the same relation: a router's
+/// interceptors run around its fallback, through the same chain, so each layer
+/// costs it what it costs a match, and entering that chain costs a fixed
+/// [`FALLBACK_ENTRY`] on top.
 #[test]
 fn a_layer_costs_the_same_wherever_it_sits() {
     let [(_, empty, _), (_, four, _), (deepest, eight, _)] = STACKS;
@@ -407,17 +407,37 @@ fn a_layer_costs_the_same_wherever_it_sits() {
         d8 - d0
     );
 
-    let (missed_0, missed_8) = (
+    let (missed_0, missed_4, missed_8) = (
         counted(&empty(), MISSED, MISSED_STATUS),
+        counted(&four(), MISSED, MISSED_STATUS),
         counted(&eight(), MISSED, MISSED_STATUS),
     );
     assert_eq!(
-        missed_0, missed_8,
-        "a request matching no route cost {missed_0} with no stack and \
-         {missed_8} behind eight layers; nothing that never reaches a chain \
-         should notice how long one is"
+        missed_8 - missed_4,
+        d8 - d4,
+        "the second four layers cost a request matching no route {} \
+         allocation(s) and a matched one {}; a router's interceptor runs \
+         around a fallback through the same chain",
+        missed_8 - missed_4,
+        d8 - d4
+    );
+    assert_eq!(
+        missed_4 - missed_0,
+        (d4 - d0) + FALLBACK_ENTRY,
+        "the first four layers cost a request matching no route {} \
+         allocation(s) against {} for a matched one plus a recorded \
+         {FALLBACK_ENTRY} for entering the chain at all",
+        missed_4 - missed_0,
+        d4 - d0
     );
 }
+
+/// What a fallback pays, once and at any depth, to pass through a router's
+/// interceptors at all: its terminal's boxed future, and the record of the
+/// resolved origin -- the record's own box plus the extension map's box and
+/// table, which a matched request pays too. Nothing without a stack, where
+/// dispatch answers before a chain exists.
+const FALLBACK_ENTRY: usize = 4;
 
 /// The other half of what a layer costs: the width of the future
 /// [`Service::call`] returns, and that a chain in front of it adds nothing to

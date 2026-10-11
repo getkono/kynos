@@ -181,12 +181,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         }
 
         for entry in &mut paths {
-            let methods: Vec<_> = entry
-                .operations
-                .iter()
-                .map(|operation| operation.method)
-                .collect();
-            entry.allow = dispatch::allow_header(&methods);
+            entry.derive_allow();
         }
 
         // Last, so the synthesized `OPTIONS` is in no `Allow`, implemented set
@@ -199,6 +194,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             paths,
             context,
             observers: self.observers,
+            interceptors: self.interceptors,
+            catch_panics: catches::<P>(),
             not_found: self.not_found,
             method_not_allowed: self.method_not_allowed,
             trailing_slashes: self.trailing_slashes,
