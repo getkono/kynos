@@ -26,7 +26,7 @@ use kynos::{
         forwarded::{Forwarded, ProxyHeader, TrustedProxies},
         header,
     },
-    middleware::Observer,
+    middleware::{Observer, request_id::RequestId},
     openapi,
     response::status::NoContent,
     router::{
@@ -832,4 +832,52 @@ async fn a_directly_driven_service_reports_an_in_process_connection() {
         "an in-process connection reported `{}`",
         reply.text()
     );
+}
+
+// --- Fallbacks under the router's interceptors -----------------------------
+
+/// Every answer the router gives when no operation does -- the 404, the 308,
+/// the 405 and the 501 -- passes through the router's own interceptors, so a
+/// header the application adds to every response reaches these too.
+///
+/// `RequestId` stands for any of them: it adds one field and never refuses.
+#[tokio::test]
+async fn every_fallback_passes_through_the_routers_interceptors() {
+    let frob = Method::from_bytes(b"FROB").expect("a method token");
+    let service = support::router()
+        .intercept(RequestId::new())
+        .trailing_slashes(TrailingSlashPolicy::Redirect)
+        .build(App::new())
+        .expect("a describable router");
+
+    for (method, target, status) in [
+        (Method::GET, "/widgets", StatusCode::NOT_FOUND),
+        (Method::GET, "/users/42/", StatusCode::PERMANENT_REDIRECT),
+        (Method::POST, "/users/42", StatusCode::METHOD_NOT_ALLOWED),
+        (frob, "/users/42", StatusCode::NOT_IMPLEMENTED),
+    ] {
+        let asked = format!("{method} {target}");
+        let reply = send(&service, method, target).call().await;
+
+        assert_eq!(reply.status, status, "{asked}");
+        assert!(
+            reply.field("x-request-id").is_some(),
+            "{asked} skipped the router's interceptor"
+        );
+    }
+}
+
+/// An observer is told of a request no operation answered, with no route,
+/// before any interceptor runs -- as it is of every other request.
+#[tokio::test]
+async fn an_observer_is_told_of_a_request_no_operation_answered() {
+    let sightings = Sightings::default();
+    let service = support::router()
+        .observe(sightings.clone())
+        .build(App::new())
+        .expect("a describable router");
+
+    get(&service, "/widgets").call().await;
+
+    assert_eq!(sightings.taken(), [(Method::GET, None)]);
 }
