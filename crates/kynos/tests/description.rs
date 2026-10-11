@@ -1246,6 +1246,91 @@ fn a_shared_status_describes_both_halves_of_what_it_publishes() {
     );
 }
 
+/// The field a turned-away client waits on.
+#[derive(Debug, kynos::HeaderParams)]
+struct RetryAfter {
+    #[header(rename = "Retry-After")]
+    retry_after: u64,
+}
+
+/// Why admission turned a request away: a 503 sending `Retry-After`, and a
+/// 429 that does not.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[allow(dead_code)]
+enum AdmissionRefused {
+    #[error("the service is draining")]
+    #[problem(status = 503)]
+    Draining(#[problem(headers)] RetryAfter),
+
+    #[error("too many requests")]
+    #[problem(status = 429)]
+    Throttled,
+}
+
+/// An extractor whose rejection is contributed before the handler's error.
+struct Admitted;
+
+impl kynos::extract::describe::Describe for Admitted {
+    fn describe(operation: &mut kynos::router::operation::OperationCx<'_>) {
+        let _ = operation;
+    }
+}
+
+impl<C: Sync> kynos::extract::FromRequestParts<C> for Admitted {
+    type Rejection = AdmissionRefused;
+
+    async fn from_request_parts(
+        parts: &mut kynos::http::Parts,
+        context: &C,
+    ) -> Result<Self, Self::Rejection> {
+        let _ = (parts, context);
+        Ok(Self)
+    }
+}
+
+/// The handler's failures, the other way round: a 429 sending `Retry-After`,
+/// and a 503 that does not.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[allow(dead_code)]
+enum UploadError {
+    #[error("the upload quota is spent")]
+    #[problem(status = 429)]
+    Quota(#[problem(headers)] RetryAfter),
+
+    #[error("storage is offline")]
+    #[problem(status = 503)]
+    Offline,
+}
+
+/// One operation, two contributors to each of two statuses.
+#[kynos::get("/uploads")]
+async fn upload(admitted: Admitted) -> Result<NoContent, UploadError> {
+    let _ = admitted;
+    Err(UploadError::Offline)
+}
+
+/// A status two contributors reach declares the headers either sends there,
+/// required only where both send them.
+///
+/// The 429 the handler sends carries `Retry-After` although the rejection
+/// contributed first does not, so the field is declared; the 503 the rejection
+/// sends carries it and the handler's does not, so it is not required.
+#[test]
+fn a_shared_status_declares_the_headers_either_contributor_sends() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![upload])
+        .openapi()
+        .expect("a describable router");
+    let operation = operation(&document, "/uploads");
+
+    for status in ["429", "503"] {
+        let response = declared_problem(&operation, status);
+        let field = &response["headers"]["Retry-After"];
+        assert!(field.is_object(), "{status}: {response}");
+        assert_eq!(field.get("required"), None, "{status}: {response}");
+    }
+}
+
 // --- Scope in what a 403 publishes ------------------------------------------
 //
 // `AuthRejection::forbidden_as` puts an application's own problem type on a 403
