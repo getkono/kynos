@@ -15,6 +15,12 @@
 //! only to a value of its kind: an absent `Option` is `null` and satisfies
 //! every bound.
 //!
+//! `content_encoding` and `content_media_type` are the two keys that are not
+//! bounds: JSON Schema makes `contentEncoding` and `contentMediaType`
+//! annotations, which a validator does not assert, so the derive describes
+//! them and checks nothing. They still reach the field through [`Textual`],
+//! since they describe a string's content and nothing else.
+//!
 //! `pattern` takes a regular expression engine on the request path, so the
 //! derive accepts it only under the `pattern` feature, which compiles one in.
 //! The pattern is an ECMA-262 regular expression, as JSON Schema reads it; the
@@ -65,6 +71,12 @@ pub struct Constraints {
     pub unique_items: Option<bool>,
     /// `format`, a semantic annotation such as `uuid` or `date-time`.
     pub format: Option<String>,
+    /// `contentEncoding`, an annotation naming how a string field encodes
+    /// binary content, such as `base64`.
+    pub content_encoding: Option<String>,
+    /// `contentMediaType`, an annotation naming the media type of a string
+    /// field's content, once decoded under its `contentEncoding`.
+    pub content_media_type: Option<String>,
 }
 
 impl Constraints {
@@ -121,6 +133,8 @@ impl Constraints {
             max_items,
             unique_items,
             format,
+            content_encoding,
+            content_media_type,
         );
 
         OpenApiSchema::Object(object)
@@ -310,16 +324,17 @@ pub trait Numeric {
     fn number(&self) -> Option<f64>;
 }
 
-/// A value `min_length`, `max_length` and `pattern` apply to.
+/// A value `min_length`, `max_length` and `pattern` apply to, and that
+/// `content_encoding` and `content_media_type` describe.
 ///
 /// A length is counted in Unicode code points, as JSON Schema counts it, not
 /// in bytes.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a string, so a string bound cannot apply to it",
     label = "not a string",
-    note = "`min_length`, `max_length` and `pattern` apply to `String`, and to an `Option`, `Box` \
-            or `Arc` of one; implement `kynos::schema::constraints::Textual` for a newtype that is \
-            a string on the wire"
+    note = "`min_length`, `max_length`, `pattern`, `content_encoding` and `content_media_type` \
+            apply to `String`, and to an `Option`, `Box` or `Arc` of one; implement \
+            `kynos::schema::constraints::Textual` for a newtype that is a string on the wire"
 )]
 pub trait Textual {
     /// This value as a JSON string, or `None` where it is `null`.
