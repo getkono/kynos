@@ -543,10 +543,10 @@ async fn a_timeout_over_a_body_limit_declares_both_statuses() {
 #[tokio::test]
 async fn one_limit_per_endpoint_caps_each_endpoint_separately() {
     let service = Router::<()>::new()
-        .mount((
-            kynos::routes![slow].0.intercept(Concurrency::new(one())),
-            kynos::routes![prompt].0.intercept(Concurrency::new(one())),
-        ))
+        .mount(kynos::routes![
+            slow.intercept(Concurrency::new(one())),
+            prompt.intercept(Concurrency::new(one())),
+        ])
         .build(())
         .expect("a describable router");
 

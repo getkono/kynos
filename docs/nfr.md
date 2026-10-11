@@ -316,7 +316,7 @@ covering an operation replaces the figure for it in either direction, and so
 does `Decompression`, whose limit is the route's; each hands it on as a
 crate-private request extension, so nothing that does not declare its own 413
 can move the cap. One large upload is one `BodySize` on its own endpoint —
-`routes![upload].0.intercept(..)` for an attribute route — and needs no group.
+`routes![upload.intercept(..)]` for an attribute route — and needs no group.
 
 This reverses an earlier decision that there would be no default, and the three
 reasons it gave each fall to where the cap now sits. *It would add 413 to every

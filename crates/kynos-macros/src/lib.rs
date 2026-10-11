@@ -131,6 +131,18 @@ pub fn operation(attribute: TokenStream, item: TokenStream) -> TokenStream {
 /// ```ignore
 /// Router::new().mount(routes![users::list, users::create, users::get]);
 /// ```
+///
+/// `.intercept(..)` after an operation scopes an interceptor to that operation
+/// alone, as `EndpointBuilder::intercept` does: the first call is the
+/// outermost, and every enclosing scope wraps it. One resource's operations
+/// can then differ in limits and still be mounted together.
+///
+/// ```ignore
+/// routes![users::list, users::create.intercept(BodySize::new(64 * 1024))]
+/// ```
+///
+/// No other builder method is accepted; what else describes an operation is
+/// the route attribute's to declare.
 #[proc_macro]
 pub fn routes(input: TokenStream) -> TokenStream {
     route::routes::expand_routes(input)
