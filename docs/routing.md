@@ -99,6 +99,12 @@ template: a `Group` or `nest` prefix is applied here, while the router is built,
 which is after the expansion and out of its reach. A route mounted at the router
 root needs no join; one under a prefix does.
 
+Document-level members are set on the router, never patched onto `openapi`'s
+output (rule 11). The lists — `server`, `tag`, `security_scheme` — union across
+`nest` and `merge`. The singletons — `info` and `external_docs` — cannot, so the
+outer router's value is published when it sets one, and otherwise the first
+absorbed router's.
+
 A tag is applied at four scopes, and they add rather than override:
 `Router::tag`, `Group::tag`, `EndpointBuilder::tag`, and `tag = T` on the route
 attribute itself. Only the last is a fact about the operation rather than about
