@@ -143,6 +143,12 @@ async fn file_report(report: Link<report>) -> Redirect<303> {
     Redirect::to(report.uri((ReportPath, ReportQuery)))
 }
 
+/// Points at `report`'s mounted `paths` key rather than a rendered URI.
+#[kynos::post("/template")]
+async fn file_template(report: Link<report>) -> Redirect<303> {
+    Redirect::to(report.template())
+}
+
 /// `report` under `prefix` and a group, `file_report` at the root, so neither
 /// scope is the other's.
 fn linked(prefix: &str) -> Router<()> {
@@ -165,6 +171,22 @@ async fn a_link_renders_its_target_under_every_prefix() {
     assert_eq!(
         response.headers()[header::LOCATION],
         "/v1/archive/reports/annual%2F2026?download=true"
+    );
+
+    let service = linked("/v1")
+        .mount(kynos::routes![file_template])
+        .build(())
+        .expect("a buildable router");
+
+    let mut request = Request::new(Body::empty());
+    *request.method_mut() = Method::POST;
+    *request.uri_mut() = "/template".parse().expect("a usable request target");
+    let response = service.call(request).await;
+
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        response.headers()[header::LOCATION],
+        "/v1/archive/reports/{name}"
     );
 }
 
