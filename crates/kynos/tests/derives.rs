@@ -129,6 +129,12 @@ struct DigestLogin;
 #[security(mutual_tls)]
 struct PartnerCertificate;
 
+/// A deployment that may run with no credentials configured hands absence to
+/// its authenticator rather than answering 401 before asking it.
+#[derive(SecurityScheme)]
+#[security(bearer, carrier = optional)]
+struct OptionalBearer;
+
 #[derive(SecurityScheme)]
 #[security(oauth2(client_credentials(token_url = "https://auth.example.com/token")))]
 struct Delegated;
@@ -213,6 +219,7 @@ fn each_scheme_kind_presents_its_own_credential() {
     presents::<BasicLogin, Credentials>();
     presents::<DigestLogin, SchemeCredentials>();
     presents::<PartnerCertificate, PeerCertificates>();
+    presents::<OptionalBearer, Option<BearerToken>>();
 }
 
 #[test]

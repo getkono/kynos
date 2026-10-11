@@ -259,7 +259,9 @@ pub trait Authenticator<S: carrier::Carries, C: Sync>: Send + Sync + 'static {
     ///
     /// A credential that was *absent* never reaches here — that is
     /// [`Auth`](auth::Auth)'s 401 and [`MaybeAuth`](auth::MaybeAuth)'s
-    /// anonymity, and neither is a question a verifier can answer.
+    /// anonymity — unless the scheme was derived with `carrier = optional`.
+    /// Its `Presented` is then an `Option`, and `None` is this method's to
+    /// admit, for a deployment configured with no credentials, or to refuse.
     fn authenticate(
         &self,
         presented: S::Presented,

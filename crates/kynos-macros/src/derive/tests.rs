@@ -4451,7 +4451,17 @@ mod security_scheme {
                     #[security(carrier = automatic)]
                     struct Bearer;
                 ),
-                "takes only `manual`",
+                "takes `manual`",
+            ),
+            case(
+                "a carrier set twice, which could only disagree with itself",
+                quote::quote!(
+                    #[security(bearer)]
+                    #[security(carrier = optional)]
+                    #[security(carrier = manual)]
+                    struct Bearer;
+                ),
+                "`carrier` is already set",
             ),
             case(
                 "one flow declared twice",
@@ -4591,6 +4601,61 @@ mod security_scheme {
             );
             assert_eq!(expand_inner(&input).is_err(), token_only, "{location}");
         }
+    }
+
+    /// `carrier = optional` wraps the kind's own reader rather than replacing
+    /// it, so a malformed credential is still the reader's `Err` and only
+    /// absence becomes a value; `carrier = manual` writes no carrier at all.
+    #[test]
+    fn an_optional_carrier_wraps_the_kind_reader_in_some() {
+        let carrier = |mode: Option<&str>| {
+            let mode = mode.map(|mode| syn::Ident::new(mode, proc_macro2::Span::call_site()));
+            let setting = mode.map(|mode| quote::quote!(#[security(carrier = #mode)]));
+            let input: syn::DeriveInput = syn::parse_quote!(
+                #[security(bearer)]
+                #setting
+                struct Bearer;
+            );
+            let expanded = expand_inner(&input).expect("a well-formed bearer scheme");
+            let file: syn::File = syn::parse2(expanded).expect("the expansion parses");
+            file.items.into_iter().find_map(|item| match item {
+                syn::Item::Impl(implementation)
+                    if implementation.trait_.as_ref().is_some_and(|(_, path, _)| {
+                        path.segments
+                            .last()
+                            .is_some_and(|last| last.ident == "Carries")
+                    }) =>
+                {
+                    Some(quote::quote!(#implementation).to_string())
+                }
+                _ => None,
+            })
+        };
+
+        let derived = carrier(None).expect("a derived carrier");
+        assert!(
+            derived.contains("type Presented = :: kynos :: security :: carrier :: BearerToken ;"),
+            "{derived}"
+        );
+        assert!(!derived.contains("Option :: Some"), "{derived}");
+
+        let optional = carrier(Some("optional")).expect("an optional carrier");
+        assert!(
+            optional.contains(
+                "type Presented = :: core :: option :: Option < :: kynos :: security :: carrier :: \
+                 BearerToken > ;"
+            ),
+            "{optional}"
+        );
+        assert!(
+            optional.contains(
+                ":: kynos :: security :: carrier :: bearer (parts) . map (:: core :: option :: \
+                 Option :: Some)"
+            ),
+            "{optional}"
+        );
+
+        assert_eq!(carrier(Some("manual")), None);
     }
 
     /// A declared flow reaches the expansion.

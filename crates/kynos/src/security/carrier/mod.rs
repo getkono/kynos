@@ -53,6 +53,11 @@ pub trait Carries: SecurityScheme {
     /// which [`MaybeAuth`](crate::security::auth::MaybeAuth) treats as such.
     /// `Err` is *present and malformed*, which is a 401 even there.
     ///
+    /// A scheme derived with `carrier = optional` presents `Option<T>` and
+    /// never answers `Ok(None)`: absence arrives as `Ok(Some(None))`, so it
+    /// reaches the [`Authenticator`](crate::security::Authenticator) instead
+    /// of being decided by the guard. A malformed credential is still `Err`.
+    ///
     /// The challenge is left unset. [`Auth`](crate::security::auth::Auth)
     /// attaches the scheme's own on the way out.
     fn present(parts: &Parts) -> Result<Option<Self::Presented>, AuthRejection>;
