@@ -4241,6 +4241,37 @@ mod api_error {
         each_case_is_refused(transparent_ledger(), expand_inner);
     }
 
+    /// One diagnostic site refuses three keys, so the ledger's single row per
+    /// site leaves `title` and `type` unwitnessed; each must fire alone.
+    #[test]
+    fn a_transparent_variant_refuses_each_key_it_would_contradict_alone() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "a transparent variant that also declares a title",
+                    quote::quote!(
+                        enum StoreError {
+                            #[problem(transparent, title = "User not found")]
+                            Lookup(LookupError),
+                        }
+                    ),
+                    "answers as the error it holds",
+                ),
+                case(
+                    "a transparent variant that also declares a type",
+                    quote::quote!(
+                        enum StoreError {
+                            #[problem(transparent, type = "https://errors.example.com/lookup")]
+                            Lookup(LookupError),
+                        }
+                    ),
+                    "answers as the error it holds",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
     #[test]
     fn every_api_error_diagnostic_has_a_case() {
         every_diagnostic_has_a_case(
