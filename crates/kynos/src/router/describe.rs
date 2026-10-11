@@ -375,6 +375,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             self.info.clone().unwrap_or_else(placeholder_info),
         );
         document.servers.clone_from(&self.servers);
+        document.external_docs.clone_from(&self.external_docs);
         document.paths = paths;
         document.tags = unique_tags(&tag_metadata);
         document.components = registry.into_components();
