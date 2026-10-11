@@ -546,6 +546,11 @@ fn every_node_identifier_form_is_read_the_way_the_grammar_defines_it() {
         ("[2001:db8:cafe::17]:4711", Some("2001:db8:cafe::17")),
         // Outside the grammar, but proxies send it on `X-Forwarded-For`.
         ("2001:db8:cafe::17", Some("2001:db8:cafe::17")),
+        // An IPv4-mapped address is the IPv4 host it embeds.
+        ("[::ffff:192.0.2.60]:4711", Some("192.0.2.60")),
+        ("::ffff:192.0.2.60", Some("192.0.2.60")),
+        // IPv4-compatible is deprecated (RFC 4291 section 2.5.5.1), not mapped.
+        ("[::192.0.2.60]", Some("::192.0.2.60")),
         ("unknown", None),
         ("unknown:4711", None),
         ("_gazonk", None),
@@ -595,15 +600,91 @@ fn a_network_contains_exactly_the_addresses_its_prefix_names() {
     }
 }
 
-/// The two families never match across each other.
+/// An IPv4-mapped address is its IPv4 host on either side of the test, and
+/// otherwise the two families never match across each other.
 ///
-/// Mapping one onto the other would make `::ffff:10.0.0.1` match a `10.0.0.0/8`
-/// rule its author never wrote.
+/// RFC 4291 section 2.5.5.2: a mapped address represents an IPv4 node, which is
+/// how a dual-stack listener reports one. A `::/1` that spans the mapped block
+/// is an IPv6 rule, and stretching it over IPv4 would trust half of IPv4.
 #[test]
-fn a_network_never_matches_across_address_families() {
-    assert!(!net("10.0.0.0/8").contains(ip("::ffff:10.0.0.1")));
+fn a_mapped_address_is_its_ipv4_host_and_families_never_cross_otherwise() {
+    assert!(net("10.0.0.0/8").contains(ip("::ffff:10.0.0.1")));
+    assert!(!net("10.0.0.0/8").contains(ip("::ffff:11.0.0.1")));
+    assert!(net("::ffff:10.0.0.0/104").contains(ip("10.0.0.1")));
+    assert!(net("::ffff:10.0.0.0/104").contains(ip("::ffff:10.0.0.1")));
+
+    assert!(!net("10.0.0.0/8").contains(ip("::10.0.0.1")));
     assert!(!net("::/1").contains(ip("10.0.0.1")));
-    assert!(!net("::ffff:0.0.0.0/96").contains(ip("10.0.0.1")));
+    assert!(!net("::/1").contains(ip("::ffff:10.0.0.1")));
+}
+
+/// A mapped network is the IPv4 block it names, so it prints, compares and
+/// refuses as that block does.
+#[test]
+fn a_mapped_network_is_the_ipv4_block_it_names() {
+    let cases: &[(&str, &str)] = &[
+        ("::ffff:10.1.2.3/104", "10.0.0.0/8"),
+        ("::ffff:203.0.113.7/128", "203.0.113.7/32"),
+        ("::ffff:128.0.0.0/97", "128.0.0.0/1"),
+    ];
+    for (written, normalised) in cases {
+        assert_eq!(net(written), net(normalised), "{written}");
+        assert_eq!(net(written).to_string(), *normalised, "{written}");
+    }
+
+    // `/96` is every IPv4 address, which only `everyone` may say.
+    assert_eq!(
+        "::ffff:0.0.0.0/96".parse::<Network>(),
+        Err(InvalidNetwork::EveryAddress)
+    );
+    assert_eq!(
+        "::ffff:0.0.0.0/129".parse::<Network>(),
+        Err(InvalidNetwork::PrefixTooLong { bits: 128 })
+    );
+    // Short of `/96` the mapped bits are not all in the prefix: still IPv6.
+    assert_eq!(net("::ffff:0.0.0.0/95").to_string(), "::fffe:0:0/95");
+}
+
+/// A dual-stack listener reports an IPv4 proxy as `::ffff:a.b.c.d`, and the
+/// IPv4 network that names the proxy still trusts it.
+#[test]
+fn a_mapped_peer_is_trusted_by_the_ipv4_network_naming_it() {
+    let trusted = TrustedProxies::networks(ProxyHeader::XForwarded, [net("10.0.0.0/8")]);
+    let headers = map(&[("x-forwarded-for", "203.0.113.7")]);
+
+    let resolved = Forwarded::resolve(&headers, Some(peer("::ffff:10.4.5.6")), &trusted);
+    assert_eq!(resolved.client(), Some(ip("203.0.113.7")));
+
+    let resolved = Forwarded::resolve(&headers, Some(peer("::ffff:11.4.5.6")), &trusted);
+    assert_eq!(resolved.client(), Some(ip("11.4.5.6")));
+}
+
+/// Mapped forms are folded wherever an address enters: a trusted address, a
+/// hop a trusted proxy wrote, and the client resolved, so one host is one
+/// address to a rate limiter whichever listener it reached.
+#[test]
+fn every_address_is_read_in_its_ipv4_form() {
+    let trusted = TrustedProxies::addresses(ProxyHeader::Forwarded, [ip("::ffff:10.0.0.1")])
+        .and_addresses([ip("::ffff:10.0.0.2")]);
+    let headers = map(&[(
+        "forwarded",
+        "for=\"[::ffff:203.0.113.7]\", for=\"[::ffff:10.0.0.2]:80\"",
+    )]);
+
+    let resolved = Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &trusted);
+    assert_eq!(resolved.client(), Some(ip("203.0.113.7")));
+    assert_eq!(
+        trusted.to_string(),
+        "Forwarded from 10.0.0.1, 10.0.0.2",
+        "a trusted address prints in the form it matches"
+    );
+
+    let resolved = Forwarded::resolve(
+        &map(&[]),
+        Some(peer("::ffff:192.0.2.5")),
+        &TrustedProxies::none(),
+    );
+    assert_eq!(resolved.client(), Some(ip("192.0.2.5")));
 }
 
 /// A network is the block, whichever of its addresses it was written with.

@@ -55,6 +55,16 @@ pub enum ProxyHeader {
 /// immediate sender was trusted. [`everyone`](Self::everyone) is right only
 /// where nothing but your proxies can reach the service.
 ///
+/// # IPv4-mapped addresses
+///
+/// An IPv4-mapped IPv6 address (`::ffff:10.0.0.1`, RFC 4291 section 2.5.5.2)
+/// is the IPv4 host it embeds: a dual-stack `[::]` listener reports an IPv4
+/// proxy's peer in that form, and a log may print it so. Every address is
+/// therefore read as its IPv4 form wherever it comes from — the socket peer, a
+/// forwarding field, a trusted address, a trusted network — so `10.0.0.0/8`
+/// trusts that proxy on either listener, and [`Forwarded::client`] names an
+/// IPv4 client in its IPv4 form.
+///
 /// ```
 /// use kynos::http::forwarded::{ProxyHeader, TrustedProxies};
 ///
@@ -111,7 +121,7 @@ impl TrustedProxies {
     pub fn addresses(header: ProxyHeader, addresses: impl IntoIterator<Item = IpAddr>) -> Self {
         Self {
             header: Some(header),
-            addresses: addresses.into_iter().collect(),
+            addresses: addresses.into_iter().map(|a| a.to_canonical()).collect(),
             ..Self::default()
         }
     }
@@ -188,7 +198,8 @@ impl TrustedProxies {
     /// [`none`](Self::none): that policy still trusts nobody.
     #[must_use]
     pub fn and_addresses(mut self, addresses: impl IntoIterator<Item = IpAddr>) -> Self {
-        self.addresses.extend(addresses);
+        self.addresses
+            .extend(addresses.into_iter().map(|a| a.to_canonical()));
         self
     }
 
@@ -286,8 +297,11 @@ impl fmt::Display for TrustedProxies {
 /// `10.1.2.3/8` is `10.0.0.0/8`, and that is what [`Display`](fmt::Display)
 /// prints.
 ///
-/// A network matches addresses of its own family only: `::ffff:10.0.0.1` is
-/// not in `10.0.0.0/8`.
+/// An IPv4-mapped address is its IPv4 form, on either side: `::ffff:10.0.0.1`
+/// is in `10.0.0.0/8`, and `::ffff:10.0.0.0/104` *is* `10.0.0.0/8`, so
+/// `::ffff:0.0.0.0/96` is refused as the `/0` it amounts to. Otherwise a
+/// network matches addresses of its own family only, so an IPv6 network
+/// shorter than `/96` that spans the mapped block matches no IPv4 address.
 ///
 /// ```
 /// use kynos::http::forwarded::{InvalidNetwork, Network};
@@ -310,18 +324,29 @@ pub struct Network {
 impl Network {
     /// The block of addresses sharing `address`'s leading `prefix` bits.
     ///
+    /// An IPv4-mapped `address` with a `prefix` of at least `96` is the IPv4
+    /// block its last `prefix - 96` bits name.
+    ///
     /// # Errors
     ///
-    /// [`InvalidNetwork::EveryAddress`] for a `prefix` of `0`, and
-    /// [`InvalidNetwork::PrefixTooLong`] for one past the address's 32 or 128
-    /// bits.
+    /// [`InvalidNetwork::EveryAddress`] for a `prefix` of `0`, or one of `96`
+    /// on an IPv4-mapped address, and [`InvalidNetwork::PrefixTooLong`] for one
+    /// past the address's 32 or 128 bits.
     pub fn new(address: IpAddr, prefix: u8) -> Result<Self, InvalidNetwork> {
         let bits = if address.is_ipv4() { 32 } else { 128 };
-        if prefix == 0 {
-            return Err(InvalidNetwork::EveryAddress);
-        }
         if prefix > bits {
             return Err(InvalidNetwork::PrefixTooLong { bits });
+        }
+        // The mapped bits sit inside a prefix of 96 or more, so the IPv4 form
+        // is exact.
+        let (address, prefix) = match address {
+            IpAddr::V6(v6) if prefix >= 96 => v6
+                .to_ipv4_mapped()
+                .map_or((address, prefix), |v4| (IpAddr::V4(v4), prefix - 96)),
+            _ => (address, prefix),
+        };
+        if prefix == 0 {
+            return Err(InvalidNetwork::EveryAddress);
         }
         Ok(Self::masked(address, prefix))
     }
@@ -360,10 +385,12 @@ impl Network {
         self.prefix
     }
 
-    /// Whether `address` is in this block.
+    /// Whether `address`, read as its IPv4 form where it is IPv4-mapped, is in
+    /// this block.
     #[must_use]
     pub fn contains(&self, address: IpAddr) -> bool {
-        // No v4/v6 mapping, and a v6 prefix is no mask for a v4 address.
+        let address = address.to_canonical();
+        // A v6 prefix is no mask for a v4 address, nor the reverse.
         address.is_ipv4() == self.address.is_ipv4()
             && Self::masked(address, self.prefix).address == self.address
     }
@@ -492,7 +519,7 @@ impl Forwarded {
         peer: Option<SocketAddr>,
         trusted: &TrustedProxies,
     ) -> Self {
-        let peer_ip = peer.map(|peer| peer.ip());
+        let peer_ip = peer.map(|peer| peer.ip().to_canonical());
 
         let Some(header) = trusted.header() else {
             return Self {
@@ -540,6 +567,10 @@ impl Forwarded {
     }
 
     /// The client address, as far as the trust policy could resolve it.
+    ///
+    /// An IPv4 client is named in its IPv4 form, even where the socket or a
+    /// field named it IPv4-mapped (`::ffff:203.0.113.7`), so one host is one
+    /// address whichever listener it reached.
     ///
     /// `None` where no socket and no trusted hop named one — a `TestClient`, a
     /// driven `Service::call` — or where trust ends on an element naming no
@@ -679,19 +710,24 @@ fn unquote(text: &str) -> &str {
 
 /// The address a `node` identifier names, where it names one.
 ///
-/// RFC 7239 section 6; `unknown` and an `obfnode` yield `None`.
+/// RFC 7239 section 6; `unknown` and an `obfnode` yield `None`. An
+/// IPv4-mapped address yields its IPv4 form.
 fn node_address(node: &str) -> Option<IpAddr> {
     let node = node.trim();
 
     if let Some(rest) = node.strip_prefix('[') {
         let (address, _) = rest.split_once(']')?;
-        return address.parse().ok();
+        return address
+            .parse()
+            .ok()
+            .map(|address: IpAddr| address.to_canonical());
     }
 
     // Bare IPv6 is ungrammatical but `X-Forwarded-For` proxies send it, so try
-    // it before splitting off a port.
+    // it before splitting off a port. Only an IPv6 address can be mapped, and
+    // only these two paths read one.
     if let Ok(address) = node.parse::<IpAddr>() {
-        return Some(address);
+        return Some(address.to_canonical());
     }
 
     node.split_once(':')

@@ -479,6 +479,15 @@ mod security_headers {
         let peer: SocketAddr = PEER.parse().unwrap();
         let from_proxy: SocketAddr = format!("{PROXY}:50000").parse().unwrap();
         let direct = Forwarded::resolve(&HeaderMap::new(), Some(peer), &TrustedProxies::none());
+        // What a dual-stack `[::]` listener hands over for the same IPv4 client.
+        let mapped_peer: SocketAddr = "[::ffff:192.0.2.1]:50000".parse().unwrap();
+        let mapped_tls =
+            Connection::from_tls_peer(mapped_peer, LOCAL.parse().unwrap(), TlsIdentity::default());
+        let mapped_direct = Forwarded::resolve(
+            &HeaderMap::new(),
+            Some(mapped_peer),
+            &TrustedProxies::none(),
+        );
 
         let cases = [
             ("no socket", None, None, false),
@@ -495,6 +504,12 @@ mod security_headers {
                 Some(direct),
                 Some(plain()),
                 false,
+            ),
+            (
+                "TLS socket from an IPv4-mapped peer, nobody trusted",
+                Some(mapped_direct),
+                Some(mapped_tls),
+                true,
             ),
             (
                 "a trusted hop says https over a plain socket",
