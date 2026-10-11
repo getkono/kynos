@@ -13,7 +13,8 @@
 //! a `+`; the cookie
 //! decoder's refusal of a declared cookie that is not ASCII; the header
 //! decoder's refusal of a missing required header or a value that is not
-//! ASCII, and its reading of an absent optional header as `None`; the text a
+//! ASCII, its reading of an absent optional header as `None`, and the value a
+//! fixed header is written, compared and described as; the text a
 //! derived `ParamValue` reads and writes; and the response a derived `Reply` or
 //! `ApiError` writes. Their tests call the
 //! derived code directly, with no server. What *is* checked
@@ -2020,6 +2021,165 @@ fn the_derived_header_decoder_reads_an_absent_optional_header_as_none() {
     ]))
     .expect("both headers are readable");
     assert_eq!(decoded.parent.as_deref(), Some("p-1"));
+}
+
+// --- A fixed header value is sent, compared and described as one -----------
+//
+// The same recorded exception: a `()` field under `#[header(value = "...")]`
+// is written as that value, read only where it is that value, and described
+// with that value as its schema's `const`.
+
+/// A required fixed header, an optional one whose value has inner whitespace
+/// and delimiters, and a field carrying its own value beside them.
+#[derive(Debug, HeaderParams)]
+struct Hardened {
+    /// The response is not to be read as any type but its `Content-Type`.
+    #[header(rename = "X-Content-Type-Options", value = "nosniff")]
+    nosniff: (),
+    #[header(rename = "Cache-Control", value = "no-store, max-age=0")]
+    no_store: Option<()>,
+    #[header(rename = "X-Request-Id")]
+    request_id: String,
+}
+
+/// A present fixed header is read only where it is the declared value, octet
+/// for octet; a required one nothing carried is refused, an optional one is
+/// `None`.
+#[test]
+fn the_derived_header_decoder_compares_a_fixed_value() {
+    use kynos::{error::rejection::HeaderRejection, extract::params::header::DecodeHeaders};
+
+    let decoded = Hardened::decode(&header_map(&[
+        ("x-content-type-options", b"nosniff"),
+        ("x-request-id", b"r-1"),
+    ]))
+    .expect("the fixed value is the declared one");
+    assert_eq!(decoded.no_store, None);
+
+    let decoded = Hardened::decode(&header_map(&[
+        ("x-content-type-options", b"nosniff"),
+        ("cache-control", b"no-store, max-age=0"),
+        ("x-request-id", b"r-1"),
+    ]))
+    .expect("both fixed values are the declared ones");
+    assert_eq!(decoded.no_store, Some(()));
+
+    for (fields, header, detail) in [
+        (
+            &[("x-request-id", b"r-1".as_slice())][..],
+            "X-Content-Type-Options",
+            "the header is required",
+        ),
+        (
+            &[
+                ("x-content-type-options", b"NoSniff"),
+                ("x-request-id", b"r-1"),
+            ],
+            "X-Content-Type-Options",
+            "the value must be `nosniff`",
+        ),
+        (
+            &[
+                ("x-content-type-options", b"nosniff"),
+                ("cache-control", b"no-store"),
+                ("x-request-id", b"r-1"),
+            ],
+            "Cache-Control",
+            "the value must be `no-store, max-age=0`",
+        ),
+    ] {
+        match Hardened::decode(&header_map(fields)) {
+            Err(HeaderRejection::Invalid { name, detail: said }) => {
+                assert_eq!(name, header, "{fields:?}");
+                assert_eq!(said, detail, "{fields:?}");
+            }
+            Err(other) => panic!("{fields:?}: refused for another reason: {other}"),
+            Ok(decoded) => panic!("{fields:?}: accepted as {decoded:?}"),
+        }
+    }
+}
+
+/// A fixed header is written as its value, and an absent optional one not at
+/// all.
+#[test]
+fn the_derived_header_encoder_writes_a_fixed_value() {
+    use kynos::extract::params::header::EncodeHeaders;
+
+    let written = |hardened: &Hardened| {
+        hardened
+            .encode()
+            .into_iter()
+            .map(|(name, value)| {
+                (
+                    name.as_str().to_owned(),
+                    value.to_str().expect("text").to_owned(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let pair = |name: &str, value: &str| (name.to_owned(), value.to_owned());
+
+    assert_eq!(
+        written(&Hardened {
+            nosniff: (),
+            no_store: Some(()),
+            request_id: "r-1".to_owned(),
+        }),
+        [
+            pair("x-content-type-options", "nosniff"),
+            pair("cache-control", "no-store, max-age=0"),
+            pair("x-request-id", "r-1"),
+        ]
+    );
+    assert_eq!(
+        written(&Hardened {
+            nosniff: (),
+            no_store: None,
+            request_id: "r-1".to_owned(),
+        }),
+        [
+            pair("x-content-type-options", "nosniff"),
+            pair("x-request-id", "r-1"),
+        ]
+    );
+}
+
+/// A fixed header's schema is a string whose `const` is its value, in either
+/// direction, required as its field is and described by its doc comment.
+#[test]
+fn a_fixed_header_is_described_by_its_const() {
+    let nosniff = serde_json::json!({"type": "string", "const": "nosniff"});
+    let no_store = serde_json::json!({"type": "string", "const": "no-store, max-age=0"});
+    let description = "The response is not to be read as any type but its `Content-Type`.";
+
+    let mut registry = kynos::schema::registry::Registry::new();
+    let request_id = resolved::<String>();
+    assert_eq!(
+        described(&Hardened::parameters(&mut registry)),
+        serde_json::json!([
+            {
+                "name": "X-Content-Type-Options",
+                "in": "header",
+                "description": description,
+                "required": true,
+                "schema": nosniff,
+            },
+            {"name": "Cache-Control", "in": "header", "required": false, "schema": no_store},
+            {"name": "X-Request-Id", "in": "header", "required": true, "schema": request_id},
+        ])
+    );
+    assert_eq!(
+        serde_json::to_value(Hardened::response_headers(&mut registry)).expect("headers serialize"),
+        serde_json::json!({
+            "X-Content-Type-Options": {
+                "description": description,
+                "required": true,
+                "schema": nosniff,
+            },
+            "Cache-Control": {"required": false, "schema": no_store},
+            "X-Request-Id": {"required": true, "schema": request_id},
+        })
+    );
 }
 
 // --- A variant serde reads under an alias is described under each name ------

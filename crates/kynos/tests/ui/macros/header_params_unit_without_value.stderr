@@ -1,0 +1,5 @@
+error: `()` carries no value of its own, so this header needs the one it always carries: `#[header(value = "...")]`
+ --> tests/ui/macros/header_params_unit_without_value.rs:4:14
+  |
+4 |     nosniff: (),
+  |              ^^
