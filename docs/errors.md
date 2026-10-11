@@ -337,9 +337,11 @@ An extractor that cannot fail says so with `Infallible`, whose `Responses`
 implementation contributes nothing:
 [`Inject<T>`](../crates/kynos/src/di/inject.rs),
 [`MatchedPath` and `ConnectInfo`](../crates/kynos/src/extract/connection.rs),
-and [`Forwarded`](../crates/kynos/src/http/forwarded.rs). For the last three
+[`Forwarded`](../crates/kynos/src/http/forwarded.rs),
+and [`Link<E>`](../crates/kynos/src/extract/link.rs). For the last four
 this is a fact about ordering — a route has already matched by the time a
-handler argument is built.
+handler argument is built, and a router whose link has no target refuses to
+build.
 
 ## What is not an error type
 
