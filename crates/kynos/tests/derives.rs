@@ -3328,9 +3328,11 @@ enum PauseError {
 }
 
 /// Generic, so the `const` items joining the statuses are declared inside a
-/// generic `impl`; and nothing but shared groups, so no status is its own.
+/// generic `impl`; and nothing but shared groups, so no status is its own. The
+/// parameter is a `const` one because only that kind may go unused, and a
+/// field naming any parameter is refused.
 #[derive(Debug, thiserror::Error, ApiError)]
-enum SharedOnly<T: std::fmt::Debug> {
+enum SharedOnly<const N: usize> {
     #[error(transparent)]
     #[problem(transparent)]
     Lookup(LookupError),
@@ -3338,10 +3340,6 @@ enum SharedOnly<T: std::fmt::Debug> {
     #[error(transparent)]
     #[problem(transparent)]
     Invalid(ValidationFailed),
-
-    #[error("never built")]
-    #[problem(status = 404, title = "Tenant unknown")]
-    Phantom(std::marker::PhantomData<T>),
 }
 
 /// The statuses are the union of the held errors' and the enum's own, in
@@ -3373,7 +3371,25 @@ fn a_transparent_variant_contributes_its_statuses() {
     }
 
     agree::<PauseError>(&[404, 409, 422]);
-    agree::<SharedOnly<u8>>(&[404, 422]);
+    agree::<SharedOnly<0>>(&[404, 422]);
+}
+
+/// An enum declaring no status of its own describes exactly what the errors it
+/// holds describe.
+#[test]
+fn a_transparent_only_enum_describes_what_it_holds() {
+    let responses = emitted_responses::<SharedOnly<0>>();
+
+    assert_eq!(
+        responses["404"],
+        emitted_responses::<LookupError>()["404"],
+        "{responses}"
+    );
+    assert_eq!(
+        responses["422"],
+        emitted_responses::<ValidationFailed>()["422"],
+        "{responses}"
+    );
 }
 
 /// A transparent variant's problem is the held error's, `detail` and extension
@@ -3395,8 +3411,12 @@ fn a_transparent_variant_answers_as_the_error_it_holds() {
         invalid().into_problem()
     );
     assert_eq!(
-        SharedOnly::<u8>::Invalid(invalid()).into_problem(),
+        SharedOnly::<0>::Invalid(invalid()).into_problem(),
         invalid().into_problem()
+    );
+    assert_eq!(
+        SharedOnly::<0>::Lookup(LookupError::UserUnknown).into_problem(),
+        LookupError::UserUnknown.into_problem()
     );
 
     let own = PauseError::AlreadyPaused.into_problem();
