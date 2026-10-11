@@ -2521,6 +2521,53 @@ fn a_generic_instantiation_is_named_from_its_arguments() {
     assert_eq!(names, ["Page_Shape", "Page_User", "Shape", "User"]);
 }
 
+// No doc comments, which would become the components' descriptions.
+#[derive(Schema)]
+struct Chunk<T, const N: usize> {
+    items: [T; N],
+}
+
+#[derive(Schema)]
+struct Fixed<const N: usize> {
+    bytes: [u8; N],
+}
+
+/// A const argument names itself by its value, so instantiations differing
+/// only in it, whose arrays differ in length, are two components rather than
+/// one name claimed by two schemas.
+#[test]
+fn a_const_argument_names_its_instantiation_by_its_value() {
+    fn name_of<T: SchemaTrait>() -> Option<String> {
+        T::name().map(|name| name.to_string())
+    }
+
+    assert_eq!(name_of::<Chunk<User, 2>>().as_deref(), Some("Chunk_User_2"));
+    assert_eq!(name_of::<Chunk<u8, 2>>(), None);
+    assert_eq!(name_of::<Fixed<16>>().as_deref(), Some("Fixed_16"));
+
+    let mut registry = kynos::schema::registry::Registry::new();
+    registry.resolve::<Chunk<User, 2>>();
+    registry.resolve::<Chunk<User, 3>>();
+    registry.resolve::<Fixed<16>>();
+    registry.resolve::<Fixed<32>>();
+    let components = registry.into_components();
+    let bounds = |name: &str| {
+        let items = &serde_json::to_value(&components.schemas[name])
+            .expect("a component serializes")["properties"]
+            .as_object()
+            .expect("an object component")
+            .values()
+            .next()
+            .expect("one property")
+            .clone();
+        (items["minItems"].clone(), items["maxItems"].clone())
+    };
+    assert_eq!(bounds("Chunk_User_2"), (2.into(), 2.into()));
+    assert_eq!(bounds("Chunk_User_3"), (3.into(), 3.into()));
+    assert_eq!(bounds("Fixed_16"), (16.into(), 16.into()));
+    assert_eq!(bounds("Fixed_32"), (32.into(), 32.into()));
+}
+
 /// A generic transparent struct whose argument has no component name claims
 /// none either.
 #[test]

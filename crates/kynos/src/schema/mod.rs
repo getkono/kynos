@@ -187,8 +187,9 @@ pub trait Schema {
 /// `None` where any argument has no name, so the instantiation is inlined:
 /// `Page<User>` is `Page_User`, while `Page<u64>` and `Page<Vec<User>>` have no
 /// name to give their argument. `#[derive(Schema)]` names every generic type
-/// this way, and a hand implementation over a generic type may do the same.
-/// Two types mangling to one name are caught as a
+/// this way, passing a const argument as its value's name, so `Batch<User, 2>`
+/// is `Batch_User_2`, and a hand implementation over a generic type may do the
+/// same. Two types mangling to one name are caught as a
 /// [`SchemaConflict`](registry::SchemaConflict) when their schemas differ.
 ///
 /// ```

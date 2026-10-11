@@ -96,12 +96,30 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
 
     // A generic type mangles each instantiation's name from its arguments',
     // `Page_User`, and is inlined where one has none, which the derive cannot
-    // see (so it may not recurse; see `refusals::recursion`).
+    // see (so it may not recurse; see `refusals::recursion`). A const argument
+    // names itself by its value, since `Batch<User, 2>` and `Batch<User, 3>`
+    // describe different arrays.
     let component = LitStr::new(&name.to_string(), name.span());
-    let arguments: Vec<&syn::Ident> = input
+    let arguments: Vec<TokenStream2> = input
         .generics
-        .type_params()
-        .map(|parameter| &parameter.ident)
+        .params
+        .iter()
+        .filter_map(|parameter| match parameter {
+            syn::GenericParam::Type(parameter) => {
+                let ident = &parameter.ident;
+                Some(quote!(<#ident as ::kynos::schema::Schema>::name()))
+            }
+            syn::GenericParam::Const(parameter) => {
+                let ident = &parameter.ident;
+                Some(quote! {
+                    ::kynos::openapi::ComponentName::sanitized(
+                        &::std::string::ToString::to_string(&#ident),
+                    )
+                    .ok()
+                })
+            }
+            syn::GenericParam::Lifetime(_) => None,
+        })
         .collect();
     let named = if arguments.is_empty() {
         quote!(::kynos::openapi::ComponentName::sanitized(#component).ok())
@@ -109,7 +127,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         quote! {
             ::kynos::schema::instantiation_name(
                 #component,
-                &[#(<#arguments as ::kynos::schema::Schema>::name()),*],
+                &[#(#arguments),*],
             )
         }
     };
