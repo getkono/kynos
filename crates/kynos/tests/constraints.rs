@@ -292,6 +292,85 @@ fn only_a_type_that_is_its_member_on_the_wire_takes_its_kind() {
     assert!(!implements!(Range: Numeric));
 }
 
+/// A temperature serde reads as a bare number, whatever its sign.
+#[derive(Debug, Deserialize)]
+#[serde(transparent)]
+struct Kelvin(f64);
+
+impl From<&Kelvin> for f64 {
+    fn from(kelvin: &Kelvin) -> Self {
+        kelvin.0
+    }
+}
+
+/// A code serde reads as a bare string, whatever its length.
+#[derive(Debug, Deserialize)]
+#[serde(transparent)]
+struct Ticket(String);
+
+impl From<&Ticket> for Sku {
+    fn from(ticket: &Ticket) -> Self {
+        Sku(ticket.0.clone())
+    }
+}
+
+/// Fields described as another type: one under a bound of its own, and one
+/// under the bound the type it names declares.
+#[derive(Debug, Schema, Deserialize)]
+struct Reading {
+    #[schema(as = f64, minimum = 0)]
+    temperature: Kelvin,
+    #[schema(as = Sku)]
+    ticket: Ticket,
+}
+
+#[tokio::test]
+async fn a_field_described_as_another_type_is_held_to_what_that_type_states() {
+    let reading = json!({ "temperature": 1.5, "ticket": "abc" });
+    admits::<Reading>(reading.clone()).await;
+
+    let mut cold = reading.clone();
+    cold["temperature"] = json!(-1);
+    refuses::<Reading>(cold, &["/temperature"]).await;
+
+    let mut short = reading;
+    short["ticket"] = json!("ab");
+    refuses::<Reading>(short, &["/ticket"]).await;
+}
+
+/// A count serde reads as a number, which is a kind of its own.
+#[derive(Debug, Deserialize)]
+#[serde(transparent)]
+struct Count(u32);
+
+impl kynos::schema::constraints::Numeric for Count {
+    fn number(&self) -> Option<f64> {
+        Some(f64::from(self.0))
+    }
+}
+
+impl From<&Count> for String {
+    fn from(count: &Count) -> Self {
+        count.0.to_string()
+    }
+}
+
+/// A newtype over a member described as another type.
+#[derive(Debug, Schema, Deserialize)]
+struct Headcount(#[schema(as = String)] Count);
+
+/// A newtype whose member is described as another type takes no kind: not its
+/// member's, which is not what the description states, and not the described
+/// type's, which the member is not.
+#[test]
+fn a_member_described_as_another_type_lends_no_kind() {
+    use kynos::schema::constraints::{Numeric, Textual};
+
+    assert!(implements!(Count: Numeric));
+    assert!(!implements!(Headcount: Numeric));
+    assert!(!implements!(Headcount: Textual));
+}
+
 /// Externally tagged, the default: a payload sits under its variant's name.
 #[derive(Debug, Schema, Deserialize)]
 #[serde(rename_all = "snake_case")]
