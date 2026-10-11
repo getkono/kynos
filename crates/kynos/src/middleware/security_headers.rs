@@ -283,7 +283,8 @@ fn constant(value: &str) -> Schema {
 ///
 /// A scheme a trusted hop stated decides. Failing one, the socket's TLS counts
 /// only where the socket peer is the resolved client, since otherwise it
-/// describes a proxy's connection rather than the client's.
+/// describes a proxy's connection rather than the client's. An IPv4-mapped
+/// peer is compared in its IPv4 form, as [`Forwarded::client`] names it.
 pub(crate) fn conveyed_securely(
     forwarded: Option<&Forwarded>,
     connection: Option<&Connection>,
@@ -294,8 +295,9 @@ pub(crate) fn conveyed_securely(
 
     connection.is_some_and(|connection| {
         connection.is_tls()
-            && forwarded
-                .is_none_or(|forwarded| forwarded.client() == Some(connection.peer_addr().ip()))
+            && forwarded.is_none_or(|forwarded| {
+                forwarded.client() == Some(connection.peer_addr().ip().to_canonical())
+            })
     })
 }
 
