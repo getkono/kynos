@@ -1,3 +1,5 @@
+use kynos_openapi::{Header, Map, RefOr};
+
 use super::WithHeaders;
 use crate::{
     extract::params::header::{EncodeHeaders, HeaderParams},
@@ -85,4 +87,72 @@ fn a_group_varies_the_same_whichever_path_it_reaches_the_wire_by() {
     let (handler, interceptor) = both_paths(OneEncoding, &header::VARY);
     assert_eq!(handler, interceptor);
     assert_eq!(handler, ["accept-encoding"]);
+}
+
+/// One group naming one field, as its describing header says.
+fn group(name: &str, description: &str, required: bool) -> Map<RefOr<Header>> {
+    let header = Header::new(kynos_openapi::Schema::any())
+        .with_description(description)
+        .required(required);
+    Map::from_iter([(name.to_owned(), RefOr::Item(header))])
+}
+
+/// What one status declares for the groups its failures send.
+fn declared(groups: &[Map<RefOr<Header>>]) -> Map<RefOr<Header>> {
+    let mut response = kynos_openapi::Response::new("");
+    super::declare_per_failure(&mut response, groups);
+    response.headers
+}
+
+fn item(header: &RefOr<Header>) -> &Header {
+    match header {
+        RefOr::Item(header) => header,
+        RefOr::Ref(_) => panic!("declared inline"),
+    }
+}
+
+/// A field two groups name, spelled differently, is one header: the first
+/// group's, required only where both require it.
+#[test]
+fn a_field_two_failures_send_is_declared_once_as_the_first_describes_it() {
+    let both = declared(&[
+        group("Retry-After", "first", true),
+        group("retry-after", "second", true),
+    ]);
+    assert_eq!(both.keys().collect::<Vec<_>>(), ["Retry-After"]);
+    assert_eq!(
+        item(&both["Retry-After"]).description.as_deref(),
+        Some("first")
+    );
+    assert_eq!(item(&both["Retry-After"]).required, Some(true));
+
+    let once = declared(&[
+        group("Retry-After", "first", true),
+        group("retry-after", "second", false),
+    ]);
+    assert_eq!(item(&once["Retry-After"]).required, None);
+
+    let alone = declared(&[Map::new(), group("Retry-After", "second", true)]);
+    assert_eq!(item(&alone["Retry-After"]).required, None);
+}
+
+/// A group left out of the description declares nothing on a failure's
+/// status either.
+#[test]
+fn an_undescribed_group_declares_no_header() {
+    struct Undescribed;
+
+    impl HeaderParams for Undescribed {
+        const NAMES: &'static [&'static str] = &["retry-after"];
+        const DESCRIBED: bool = false;
+    }
+
+    let mut registry = crate::schema::registry::Registry::new();
+    assert!(super::described::<Undescribed>(&mut registry).is_empty());
+    assert_eq!(
+        super::described::<OneEncoding>(&mut registry)
+            .keys()
+            .collect::<Vec<_>>(),
+        ["content-encoding"]
+    );
 }

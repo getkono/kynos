@@ -3799,6 +3799,215 @@ fn a_status_shared_with_a_transparent_variant_publishes_both_sides() {
     );
 }
 
+// --- A failure sends and declares its own header group ---------------------
+//
+// `#[problem(headers)]` puts a header group on the one failure that sends it:
+// written onto that failure's response, and declared under its status alone,
+// required only where every failure answering with that status sends it.
+
+/// The field a throttled client waits on.
+#[derive(Debug, HeaderParams)]
+struct RetryAfter {
+    #[header(rename = "Retry-After")]
+    retry_after: u64,
+}
+
+/// One status two failures share, only one sending the group; one status no
+/// failure sends it on; and one status reached only by a tuple variant that
+/// sends it.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum SessionError {
+    #[error("too many sessions; retry in {}s", retry.retry_after)]
+    #[problem(status = 429, title = "Too many sessions")]
+    Throttled {
+        #[problem(headers)]
+        retry: RetryAfter,
+    },
+
+    #[error("the session queue is full")]
+    #[problem(status = 429, title = "Queue full")]
+    QueueFull,
+
+    #[error("that session already exists")]
+    #[problem(status = 409)]
+    Exists,
+
+    #[error("sessions are paused")]
+    #[problem(status = 503)]
+    Paused(#[problem(headers)] RetryAfter),
+}
+
+/// A struct sending a group beside an extension member.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[error("over the limit of {limit}")]
+#[problem(status = 429)]
+struct OverLimit {
+    #[problem(extension)]
+    limit: u32,
+    #[problem(headers)]
+    retry: RetryAfter,
+}
+
+/// A transparent variant over an error whose failure sends a group.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum LoginError {
+    #[error(transparent)]
+    #[problem(transparent)]
+    Session(#[from] SessionError),
+
+    #[error("the credentials are malformed")]
+    #[problem(status = 400)]
+    Malformed,
+}
+
+/// Statuses met both here and in the held `SessionError`: 503 sent with the
+/// group on both sides, 429 sent with it there and without it here.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum GatewayError {
+    #[error(transparent)]
+    #[problem(transparent)]
+    Session(SessionError),
+
+    #[error("the gateway is shedding load")]
+    #[problem(status = 503)]
+    Shedding(#[problem(headers)] RetryAfter),
+
+    #[error("the gateway is rate limited upstream")]
+    #[problem(status = 429)]
+    Upstream,
+}
+
+/// The `Retry-After` a response carries, if any.
+fn retry_after(response: &kynos::http::Response) -> (u16, Option<String>) {
+    let status = response.status().as_u16();
+    let field = response
+        .headers()
+        .get("retry-after")
+        .map(|value| value.to_str().expect("an ASCII field").to_owned());
+    (status, field)
+}
+
+/// The failure holding the group sends it, on its problem, and no other
+/// failure does.
+#[tokio::test]
+async fn a_failure_sends_its_header_group_on_its_problem() {
+    let throttled = || SessionError::Throttled {
+        retry: RetryAfter { retry_after: 7 },
+    };
+    let Answered {
+        status,
+        headers,
+        body,
+    } = answered(throttled().into_response()).await;
+
+    assert_eq!(status, 429);
+    assert_eq!(headers["retry-after"], "7");
+    assert_eq!(
+        headers[kynos::http::header::CONTENT_TYPE],
+        "application/problem+json"
+    );
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("a JSON body");
+    let problem = {
+        use kynos::error::problem::IntoProblem;
+        serde_json::to_value(throttled().into_problem()).expect("a problem serializes")
+    };
+    assert_eq!(body, problem);
+    assert_eq!(body["detail"], "too many sessions; retry in 7s");
+
+    assert_eq!(
+        retry_after(&SessionError::QueueFull.into_response()),
+        (429, None)
+    );
+    assert_eq!(
+        retry_after(&SessionError::Exists.into_response()),
+        (409, None)
+    );
+    assert_eq!(
+        retry_after(&SessionError::Paused(RetryAfter { retry_after: 30 }).into_response()),
+        (503, Some("30".to_owned()))
+    );
+}
+
+/// A struct sends its group beside the extension members it publishes.
+#[tokio::test]
+async fn a_struct_sends_its_header_group_beside_its_extensions() {
+    let error = OverLimit {
+        limit: 10,
+        retry: RetryAfter { retry_after: 2 },
+    };
+    let Answered { headers, body, .. } = answered(error.into_response()).await;
+
+    assert_eq!(headers["retry-after"], "2");
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("a JSON body");
+    assert_eq!(body["limit"], 10);
+    assert_eq!(body.get("retry"), None, "{body}");
+}
+
+/// A group is declared under the status of the failure sending it and no
+/// other, required only where every failure answering with it sends it.
+#[test]
+fn a_header_group_is_declared_under_its_failures_status_alone() {
+    let responses = emitted_responses::<SessionError>();
+
+    assert_eq!(responses["409"].get("headers"), None, "{responses}");
+    assert_eq!(
+        responses["503"]["headers"]["Retry-After"]["required"],
+        serde_json::json!(true),
+        "{responses}"
+    );
+    let shared = &responses["429"]["headers"]["Retry-After"];
+    assert!(shared.is_object(), "{responses}");
+    assert_eq!(shared.get("required"), None, "{responses}");
+
+    let alone = emitted_responses::<OverLimit>();
+    assert_eq!(
+        alone["429"]["headers"]["Retry-After"]["required"],
+        serde_json::json!(true),
+        "{alone}"
+    );
+}
+
+/// A transparent variant answers as its field answers, header group included,
+/// and declares it where the held error does.
+#[test]
+fn a_transparent_variant_sends_the_headers_of_the_error_it_holds() {
+    let error = LoginError::from(SessionError::Throttled {
+        retry: RetryAfter { retry_after: 5 },
+    });
+    assert_eq!(
+        retry_after(&error.into_response()),
+        (429, Some("5".to_owned()))
+    );
+    assert_eq!(
+        retry_after(&LoginError::Malformed.into_response()),
+        (400, None)
+    );
+
+    let responses = emitted_responses::<LoginError>();
+    assert_eq!(
+        responses["429"],
+        emitted_responses::<SessionError>()["429"],
+        "{responses}"
+    );
+    assert_eq!(responses["400"].get("headers"), None, "{responses}");
+}
+
+/// A status met both in the enum and in a held error declares every group
+/// either side sends there, required only where both require it.
+#[test]
+fn a_status_shared_with_a_transparent_variant_declares_both_sides_headers() {
+    let responses = emitted_responses::<GatewayError>();
+
+    assert_eq!(
+        responses["503"]["headers"]["Retry-After"]["required"],
+        serde_json::json!(true),
+        "{responses}"
+    );
+    let shared = &responses["429"]["headers"]["Retry-After"];
+    assert!(shared.is_object(), "{responses}");
+    assert_eq!(shared.get("required"), None, "{responses}");
+}
+
 // --- A member is named as serde names it ------------------------------------
 //
 // serde names a raw identifier without its `r#`, and uses each side of a split

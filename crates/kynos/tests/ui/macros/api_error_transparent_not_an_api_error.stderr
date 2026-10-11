@@ -35,6 +35,26 @@ error[E0277]: the trait bound `std::io::Error: IntoProblem` is not satisfied
              RangeRejection
              StoreError
 
+error[E0277]: `std::io::Error` cannot be turned into a response
+  --> tests/ui/macros/api_error_transparent_not_an_api_error.rs:10:16
+   |
+10 |     Io(#[from] std::io::Error),
+   |                ^^^^^^^^^^^^^^ not a response
+   |
+   = help: the trait `IntoResponse` is not implemented for `std::io::Error`
+   = note: return a body type, or wrap one in `Created`, `Accepted`, `NoContent` or `Redirect`
+   = note: a bare `StatusCode` is deliberately not one: a status the description does not list is a status it is wrong about. Use `#[derive(Reply)]` when an operation has several
+   = help: the following other types implement trait `IntoResponse`:
+             ()
+             Accepted<T>
+             AtCapacity<T>
+             AuthRejection
+             BinaryStream<S, M>
+             BodyRejection
+             BodySizeExceeded<T>
+             CookieRejection
+           and $N others
+
 error[E0277]: `std::io::Error` does not declare which responses it can produce
   --> tests/ui/macros/api_error_transparent_not_an_api_error.rs:10:16
    |

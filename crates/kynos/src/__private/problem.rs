@@ -1,10 +1,18 @@
 //! What `#[derive(ApiError)]` declares each status with, joins a `const` type
-//! URI prefix with, and unions a transparent variant's statuses with.
+//! URI prefix with, unions a transparent variant's statuses with, and sends
+//! and declares a failure's `#[problem(headers)]` group with.
 //!
 //! [`response`] forwards to [`error::problem`](crate::error::problem), where
-//! the shape is built; a `pub use` would give the builder a second path.
+//! the shape is built, and the header helpers to
+//! [`response::headers`](crate::response::headers), where `WithHeaders` writes
+//! and declares its own; a `pub use` would give each a second path.
 
-use kynos_openapi::{Response, Schema as OpenApiSchema};
+use kynos_openapi::{Header, Map, RefOr, Response, Schema as OpenApiSchema};
+
+use crate::{
+    extract::params::header::{EncodeHeaders, HeaderParams},
+    schema::registry::Registry,
+};
 
 /// The response one status declares, narrowed to the types its failures
 /// publish.
@@ -18,6 +26,31 @@ pub fn response(
     branches: &[(Option<&'static str>, Option<&'static str>)],
 ) -> Response {
     crate::error::problem::narrowed_response(problem, status, branches)
+}
+
+/// The headers group `H` declares, as one failure's entry in
+/// [`declare_headers`]; `()` for a failure sending none.
+#[must_use]
+pub fn headers<H: HeaderParams>(registry: &mut Registry) -> Map<RefOr<Header>> {
+    crate::response::headers::described::<H>(registry)
+}
+
+/// Declares on one status's `response` the header groups its failures send,
+/// one per failure answering with it, in declaration order.
+pub fn declare_headers(response: &mut Response, groups: &[Map<RefOr<Header>>]) {
+    crate::response::headers::declare_per_failure(response, groups);
+}
+
+/// Joins a transparent variant's `held` responses to the enum's, a status both
+/// declare naming every type and every header that reaches it.
+pub fn union_responses(responses: &mut kynos_openapi::Responses, held: &kynos_openapi::Responses) {
+    crate::response::headers::union_from(responses, held);
+}
+
+/// Writes a failure's header group onto the problem response it answers with,
+/// as `WithHeaders` writes its own.
+pub fn write_headers<H: EncodeHeaders>(response: &mut crate::http::Response, group: &H) {
+    crate::extract::params::header::write(response.headers_mut(), group);
 }
 
 /// `base` followed by `slug`, as the bytes of a `const`: how a type URI under

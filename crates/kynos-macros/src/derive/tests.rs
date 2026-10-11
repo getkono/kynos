@@ -4176,6 +4176,59 @@ mod api_error {
         ]
     }
 
+    /// The refusals of `#[problem(headers)]`, apart for the reason
+    /// [`transparent_ledger`] is.
+    fn headers_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "`headers` on a variant, naming the group the field should hold",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(status = 429, headers = RetryAfter)]
+                        Throttled { retry: RetryAfter },
+                    }
+                ),
+                "belongs on that field, whose type is the group",
+            ),
+            case(
+                "a field marked both an extension member and a header group",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(status = 429)]
+                        Throttled {
+                            #[problem(extension, headers)]
+                            retry: RetryAfter,
+                        },
+                    }
+                ),
+                "not both",
+            ),
+            case(
+                "a second header group on one failure",
+                quote::quote!(
+                    #[problem(status = 429)]
+                    struct Throttled {
+                        #[problem(headers)]
+                        retry: RetryAfter,
+                        #[problem(headers)]
+                        limit: RateLimit,
+                    }
+                ),
+                "already sends the header group in `retry`",
+            ),
+            case(
+                "a header group on a transparent variant's field",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(transparent)]
+                        Lookup(#[problem(headers)] LookupError),
+                    }
+                ),
+                "sends the headers of the error it holds",
+            ),
+        ]
+    }
+
     /// A second function rather than more rows in the first, for the reason
     /// `security_scheme`'s `oauth2_ledger` gives. These are the refusals of
     /// `#[problem(transparent)]`.
@@ -4239,6 +4292,7 @@ mod api_error {
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
         each_case_is_refused(transparent_ledger(), expand_inner);
+        each_case_is_refused(headers_ledger(), expand_inner);
     }
 
     /// One diagnostic site refuses three keys, so the ledger's single row per
@@ -4277,7 +4331,7 @@ mod api_error {
         every_diagnostic_has_a_case(
             "api_error.rs",
             include_str!("api_error.rs"),
-            ledger().len() + transparent_ledger().len(),
+            ledger().len() + transparent_ledger().len() + headers_ledger().len(),
         );
     }
 
