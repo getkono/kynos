@@ -83,6 +83,13 @@ pub enum Error {
     #[error(transparent)]
     Middleware(#[from] crate::middleware::MiddlewareError),
 
+    /// An operation extracts a [`Link`](crate::extract::link::Link) to an
+    /// operation the router cannot render a URI for.
+    ///
+    /// Boxed, for [`KeyPattern`](Error::KeyPattern)'s reason.
+    #[error(transparent)]
+    Link(#[from] Box<crate::extract::link::UnresolvedLink>),
+
     /// The description could not be emitted as JSON.
     #[error("the description could not be emitted as JSON")]
     Json(#[from] serde_json::Error),

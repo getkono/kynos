@@ -57,3 +57,20 @@ pub trait EndpointMeta {
     /// and the only one readable without building a router.
     const TAGS: &'static [DeclaredTag];
 }
+
+/// How a route attribute renders its operation's URI against a path template.
+///
+/// The attribute implements this beside [`EndpointMeta`], with
+/// [`Params`](EndpointUri::Params) exactly the path and query types its handler
+/// extracts, so a [`Link`](crate::extract::link::Link) to the operation takes
+/// the same arguments its `relative_uri` does.
+pub trait EndpointUri: EndpointMeta {
+    /// What the URI is built from: `()`, the handler's `Path<P>` group, its
+    /// `Query<Q>` group, or `(P, Q)` when it extracts both.
+    type Params;
+
+    /// Renders `params` into `template`, a path template with exactly
+    /// [`PATH_VARIABLES`](EndpointMeta::PATH_VARIABLES) for variables,
+    /// percent-encoding each value.
+    fn render(template: &str, params: Self::Params) -> crate::http::Uri;
+}

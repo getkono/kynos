@@ -147,7 +147,8 @@ mod doc_comments {
     }
 }
 
-/// The typed `relative_uri` constructor emitted beside each handler.
+/// The typed `relative_uri` constructor emitted beside each handler, and the
+/// `EndpointUri` implementation it and a `Link` both render through.
 ///
 /// Which parameters it takes and which builder it calls are decided by whether
 /// the handler extracts `Path<T>`, `Query<T>`, both or neither. Four arms, so
@@ -161,9 +162,11 @@ mod typed_uri {
     /// What the emitter decided, read back out of the expansion.
     #[derive(Debug, PartialEq, Eq)]
     struct Emission {
-        /// Each parameter as `name: Type`.
+        /// Each `relative_uri` parameter as `name: Type`.
         parameters: Vec<String>,
-        /// The `__private::uri` builder the body calls.
+        /// `EndpointUri::Params`, which a `Link` to the route takes.
+        params: String,
+        /// The `__private::uri` builder `EndpointUri::render` calls.
         builder: String,
         /// Whether a `const` assertion pinning the parameter names came with it.
         checks_names: bool,
@@ -182,27 +185,51 @@ mod typed_uri {
         let tokens = endpoint_uri_impl(function, path, &variables).expect("a valid endpoint");
         let file: syn::File = syn::parse2(tokens).expect("the expansion parses as items");
 
-        let block = file
-            .items
+        let constructor = only_fn(implementation(&file, false), "relative_uri");
+        (file, constructor)
+    }
+
+    /// The inherent impl, or the `EndpointUri` one.
+    fn implementation(file: &syn::File, of_trait: bool) -> &syn::ItemImpl {
+        file.items
             .iter()
             .find_map(|item| match item {
-                syn::Item::Impl(block) => Some(block),
+                syn::Item::Impl(block) if block.trait_.is_some() == of_trait => Some(block),
                 _ => None,
             })
-            .expect("an inherent impl");
-        let constructor = block
+            .expect("both impls")
+    }
+
+    /// The one function `block` declares, which must be `name`.
+    fn only_fn(block: &syn::ItemImpl, name: &str) -> syn::ImplItemFn {
+        let function = block
             .items
             .iter()
             .find_map(|item| match item {
                 syn::ImplItem::Fn(function) => Some(function),
                 _ => None,
             })
-            .expect("a `relative_uri` constructor")
+            .expect("a function")
             .clone();
+        assert_eq!(function.sig.ident, name);
+        function
+    }
 
-        assert_eq!(constructor.sig.ident, "relative_uri");
-
-        (file, constructor)
+    /// The last segment of the path the call ending `block` names.
+    fn callee(block: &syn::Block) -> String {
+        let Some(syn::Stmt::Expr(syn::Expr::Call(call), None)) = block.stmts.last() else {
+            panic!("the body ends in one call")
+        };
+        let syn::Expr::Path(callee) = call.func.as_ref() else {
+            panic!("the call names a path")
+        };
+        callee
+            .path
+            .segments
+            .last()
+            .expect("a named callee")
+            .ident
+            .to_string()
     }
 
     /// The documentation rustdoc will read off the emitted constructor.
@@ -254,22 +281,30 @@ mod typed_uri {
             })
             .collect();
 
-        let [syn::Stmt::Expr(syn::Expr::Call(call), None)] = &constructor.block.stmts[..] else {
-            panic!("`relative_uri` is one call")
-        };
-        let syn::Expr::Path(callee) = call.func.as_ref() else {
-            panic!("the call names a path")
-        };
+        // One rendering, so `relative_uri` and a `Link` cannot disagree.
+        assert_eq!(
+            constructor.block.stmts.len(),
+            1,
+            "`relative_uri` is one call"
+        );
+        assert_eq!(callee(&constructor.block), "render");
+
+        let uri = implementation(&file, true);
+        let params = uri
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::ImplItem::Type(params) if params.ident == "Params" => {
+                    Some(params.ty.to_token_stream().to_string())
+                }
+                _ => None,
+            })
+            .expect("`EndpointUri::Params`");
 
         Emission {
             parameters,
-            builder: callee
-                .path
-                .segments
-                .last()
-                .expect("a builder name")
-                .ident
-                .to_string(),
+            params,
+            builder: callee(&only_fn(uri, "render").block),
             checks_names: file
                 .items
                 .iter()
@@ -287,6 +322,7 @@ mod typed_uri {
             emitted(&function, "/reports", &[]),
             Emission {
                 parameters: vec![],
+                params: "()".to_owned(),
                 builder: "endpoint_uri".to_owned(),
                 // Nothing to check: no `Path<T>` means no names to line up.
                 checks_names: false,
@@ -304,6 +340,7 @@ mod typed_uri {
             emitted(&function, "/reports/{name}", &["name"]),
             Emission {
                 parameters: vec!["path: ReportPath".to_owned()],
+                params: "ReportPath".to_owned(),
                 builder: "endpoint_uri_with_path".to_owned(),
                 checks_names: true,
             }
@@ -320,6 +357,7 @@ mod typed_uri {
             emitted(&function, "/reports", &[]),
             Emission {
                 parameters: vec!["query: ReportQuery".to_owned()],
+                params: "ReportQuery".to_owned(),
                 builder: "endpoint_uri_with_query".to_owned(),
                 checks_names: false,
             }
@@ -339,6 +377,7 @@ mod typed_uri {
                     "path: ReportPath".to_owned(),
                     "query: ReportQuery".to_owned(),
                 ],
+                params: "(ReportPath , ReportQuery)".to_owned(),
                 builder: "endpoint_uri_with_path_and_query".to_owned(),
                 checks_names: true,
             }

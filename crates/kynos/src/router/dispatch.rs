@@ -118,6 +118,10 @@ pub(crate) struct Routed {
         expect(dead_code, reason = "the cache is the one reader")
     )]
     pub(crate) secured: bool,
+    /// Where each operation is mounted, for a `Link` argument to read; `None`
+    /// for a fallback and wherever no operation links, so a service without
+    /// links pays nothing for them.
+    pub(crate) links: Option<Arc<crate::extract::link::Links>>,
 }
 
 /// Every operation declared on one `paths` key.
@@ -188,6 +192,8 @@ pub(crate) struct Dispatch<C> {
     /// Every method some operation in the service answers, which is what
     /// tells a 405 from a 501. See [`implemented`].
     pub(crate) implemented: Vec<Method>,
+    /// Handed to every routed request; see [`Routed::links`].
+    pub(crate) links: Option<Arc<crate::extract::link::Links>>,
 }
 
 /// Why no operation answers a request.
@@ -290,6 +296,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
             captures,
             forwarded,
             secured: operation.secured,
+            links: self.links.clone(),
         });
 
         for observer in &self.observers {
@@ -410,6 +417,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
                 captures: None,
                 forwarded,
                 secured: false,
+                links: None,
             });
         }
 

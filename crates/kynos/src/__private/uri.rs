@@ -1,5 +1,5 @@
-//! URI construction for the `uri()` inherent method a route attribute emits,
-//! and the percent-encoding the rest of the crate reaches through it.
+//! URI construction for the `EndpointUri` implementation a route attribute
+//! emits, and the percent-encoding the rest of the crate reaches through it.
 
 use crate::{
     extract::params::{path::EncodePath, query::EncodeQuery},

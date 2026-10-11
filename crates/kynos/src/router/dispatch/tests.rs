@@ -52,6 +52,9 @@ fn dispatch_fields(dispatch: &Dispatch<()>) {
         trailing_slashes,
         trusted_proxies,
         implemented,
+        // Each operation's interned `paths` key by `operationId`: no document
+        // model, so a `Link` argument may read it.
+        links,
     } = dispatch;
 
     let _ = (
@@ -66,6 +69,7 @@ fn dispatch_fields(dispatch: &Dispatch<()>) {
         trailing_slashes,
         trusted_proxies,
         implemented,
+        links,
     );
 }
 

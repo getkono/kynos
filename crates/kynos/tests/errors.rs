@@ -205,6 +205,17 @@ fn the_connection_extractors_cannot_fail() {
     head_rejects_with::<Infallible, (), kynos::extract::connection::Connection>();
 }
 
+/// The operation a link is to.
+#[allow(clippy::unused_async)]
+#[kynos::get("/linked")]
+async fn linked() {}
+
+/// The router refuses to build a link with no target, so none fails a request.
+#[test]
+fn a_link_cannot_fail() {
+    head_rejects_with::<Infallible, (), kynos::extract::link::Link<linked>>();
+}
+
 /// The request-head readers whose unusable fields are ignored rather than
 /// refused: an `Accept-Language` matching nothing is served the default offer,
 /// RFC 9110 answers an unusable range or `If-Modified-Since` by ignoring it, and
@@ -341,6 +352,7 @@ const WITNESSED: &[&str] = &[
     "JsonLines",
     "JsonSeq",
     "LastEventId",
+    "Link",
     "MatchedPath",
     "MaybeAuth",
     "MultipartForm",

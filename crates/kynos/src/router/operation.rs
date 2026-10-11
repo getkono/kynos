@@ -62,6 +62,9 @@ pub struct OperationCx<'a> {
     /// What the operation's `tags` names came from, in the order they landed,
     /// so the describe walk registers metadata for exactly the tags it carries.
     tags: Vec<DeclaredTag>,
+    /// The operations a [`Link`](crate::extract::link::Link) argument points
+    /// at, which the router checks it mounts.
+    links: Vec<crate::extract::link::Target>,
 }
 
 impl<'a> OperationCx<'a> {
@@ -72,6 +75,7 @@ impl<'a> OperationCx<'a> {
             registry,
             operation: kynos_openapi::Operation::default(),
             tags: Vec::new(),
+            links: Vec::new(),
         }
     }
 
@@ -259,6 +263,16 @@ impl OperationCx<'_> {
     /// The tags that landed on this operation, for the document to document.
     pub(crate) fn declared_tags(&self) -> &[DeclaredTag] {
         &self.tags
+    }
+
+    /// Records that this operation links to `target`.
+    pub(crate) fn require_link(&mut self, target: crate::extract::link::Target) {
+        self.links.push(target);
+    }
+
+    /// The operations this one links to, for the router to resolve.
+    pub(crate) fn links(&self) -> &[crate::extract::link::Target] {
+        &self.links
     }
 
     /// The registry, for describing a schema this input needs.
