@@ -262,8 +262,14 @@ where
     ) -> Result<Continued<D::Headers>, D::Denied> {
         let () = reads;
 
+        // A policy is keyed by the operation, and a fallback has none, so it is
+        // neither counted nor told how much is left.
+        let Some(route) = next.route() else {
+            return Ok(next.run(request).await.unrouted());
+        };
+
         let policies = self.policy.advertised();
-        match self.policy.check(&request, next.route(), context).await {
+        match self.policy.check(&request, route, context).await {
             Decision::Allow(allowance) => Ok(next
                 .run(request)
                 .await

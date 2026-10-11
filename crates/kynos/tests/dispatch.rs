@@ -10,6 +10,7 @@
 #![cfg(all(feature = "macros", feature = "json"))]
 
 use std::{
+    convert::Infallible,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -26,10 +27,11 @@ use kynos::{
         forwarded::{Forwarded, ProxyHeader, TrustedProxies},
         header,
     },
-    middleware::{Observer, request_id::RequestId},
+    middleware::{Continued, Interceptor, Next, Observer, request_id::RequestId},
     openapi,
     response::status::NoContent,
     router::{
+        group::Group,
         operation::Route,
         policy::{FallbackPolicy, TrailingSlashPolicy},
     },
@@ -880,4 +882,110 @@ async fn an_observer_is_told_of_a_request_no_operation_answered() {
     get(&service, "/widgets").call().await;
 
     assert_eq!(sightings.taken(), [(Method::GET, None)]);
+}
+
+/// A group's interceptor and a nested router's cover their own operations and
+/// nothing else, so neither reaches a request no operation answered.
+#[tokio::test]
+async fn only_the_routers_own_interceptors_reach_a_fallback() {
+    let service = Router::<()>::new()
+        .group(
+            Group::<()>::new("/grouped")
+                .intercept(RequestId::new())
+                .mount(kynos::routes![nothing]),
+        )
+        .nest(
+            "/nested",
+            Router::<()>::new()
+                .intercept(RequestId::new())
+                .mount(kynos::routes![who]),
+        )
+        .build(())
+        .expect("a describable router");
+
+    for (method, target, status) in [
+        (Method::GET, "/grouped/nothing", StatusCode::NO_CONTENT),
+        (Method::GET, "/nested/who", StatusCode::OK),
+    ] {
+        let reply = send(&service, method, target).call().await;
+        assert_eq!(reply.status, status, "{target}");
+        assert!(reply.field("x-request-id").is_some(), "{target}");
+    }
+
+    for (method, target, status) in [
+        (Method::GET, "/widgets", StatusCode::NOT_FOUND),
+        // Nothing in this service implements `POST`, so both are 501s.
+        (
+            Method::POST,
+            "/grouped/nothing",
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        (Method::POST, "/nested/who", StatusCode::NOT_IMPLEMENTED),
+    ] {
+        let asked = format!("{method} {target}");
+        let reply = send(&service, method, target).call().await;
+
+        assert_eq!(reply.status, status, "{asked}");
+        assert_eq!(reply.field("x-request-id"), None, "{asked}");
+    }
+}
+
+/// What a [`Witness`] saw of one request: the `paths` key it was routed to, and
+/// the client the router resolved.
+type Witnessed = (Option<String>, Option<String>);
+
+/// Records what a router-scoped interceptor is handed, and changes nothing.
+#[derive(Clone, Default)]
+struct Witness(Arc<Mutex<Vec<Witnessed>>>);
+
+impl Interceptor<()> for Witness {
+    type Reads = ();
+    type Adds = ();
+    type Short = Infallible;
+
+    async fn intercept(
+        &self,
+        request: Request,
+        (): (),
+        (): &(),
+        next: Next<'_, ()>,
+    ) -> Result<Continued<()>, Infallible> {
+        let route = next.route().map(|route| route.path().to_owned());
+        let client = Forwarded::of(&request)
+            .and_then(Forwarded::client)
+            .map(|client| client.to_string());
+        self.0
+            .lock()
+            .expect("an unpoisoned record")
+            .push((route, client));
+
+        Ok(next.run(request).await)
+    }
+}
+
+/// Around a fallback, a router's interceptor is handed no route -- there is no
+/// operation to name -- and the origin the router resolved under its trust
+/// policy, as it is around an operation.
+#[tokio::test]
+async fn a_fallback_hands_its_interceptors_no_route_and_the_resolved_origin() {
+    let witness = Witness::default();
+    let service = Router::<()>::new()
+        .mount(kynos::routes![origin])
+        .intercept(witness.clone())
+        .trusted_proxies(TrustedProxies::hops(ProxyHeader::Forwarded, 1))
+        .build(())
+        .expect("a describable router");
+
+    for target in ["/origin", "/widgets"] {
+        get(&service, target)
+            .header("forwarded", "for=203.0.113.7")
+            .call()
+            .await;
+    }
+
+    let client = Some("203.0.113.7".to_owned());
+    assert_eq!(
+        *witness.0.lock().expect("an unpoisoned record"),
+        [(Some("/origin".to_owned()), client.clone()), (None, client)]
+    );
 }

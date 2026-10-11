@@ -916,7 +916,7 @@ fn only_a_routed_request_has_a_resolved_origin() {
     request
         .extensions_mut()
         .insert(crate::router::dispatch::Routed {
-            matched: crate::extract::connection::MatchedPath("/origin"),
+            matched: Some(crate::extract::connection::MatchedPath("/origin")),
             captures: None,
             forwarded: resolved.clone(),
             secured: false,

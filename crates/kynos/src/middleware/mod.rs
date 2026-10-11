@@ -326,6 +326,17 @@ impl<H> Continued<H> {
     pub(crate) fn into_response(self) -> Response {
         self.response
     }
+
+    /// Hands a response on under group `G` without writing it.
+    ///
+    /// Only for a request no operation matched ([`Next::route`] is `None`):
+    /// nothing describes that response, so no declaration goes unkept.
+    pub(crate) fn unrouted<G>(self) -> Continued<G> {
+        Continued {
+            response: self.response,
+            _headers: std::marker::PhantomData,
+        }
+    }
 }
 
 /// The remainder of the interceptor chain.
@@ -335,7 +346,7 @@ pub struct Next<'a, C> {
     remaining: &'a [Arc<dyn ErasedInterceptor<C>>],
     terminal: &'a dyn ErasedTerminal<C>,
     context: &'a C,
-    route: Route<'a>,
+    route: Option<Route<'a>>,
 }
 
 impl<C> std::fmt::Debug for Next<'_, C> {
@@ -353,7 +364,7 @@ impl<'a, C: Sync + 'static> Next<'a, C> {
         remaining: &'a [Arc<dyn ErasedInterceptor<C>>],
         terminal: &'a dyn ErasedTerminal<C>,
         context: &'a C,
-        route: Route<'a>,
+        route: Option<Route<'a>>,
     ) -> Self {
         Self {
             remaining,
@@ -385,9 +396,11 @@ impl<'a, C: Sync + 'static> Next<'a, C> {
 
     /// The operation this request matched.
     ///
-    /// Always available: interceptors run per-operation, after routing.
+    /// `None` when no operation did: a router's own interceptors also run
+    /// around the 404, 308, 405 and 501 it answers then, which no operation
+    /// produces and the description does not cover.
     #[must_use]
-    pub fn route(&self) -> Route<'a> {
+    pub fn route(&self) -> Option<Route<'a>> {
         self.route
     }
 }
@@ -439,8 +452,10 @@ pub trait Observer<C>: Send + Sync + 'static {
     /// recovery — the router, a group or one endpoint — before
     /// [`on_response`](Observer::on_response) sees the 500 it became.
     ///
-    /// `route` is always `Some`, naming the operation the panic unwound out
-    /// of. A panic is reported once, by the innermost scope that recovered it.
+    /// `route` names the operation the panic unwound out of, and is `None`
+    /// only for one out of a router's own interceptor around a request no
+    /// operation matched. A panic is reported once, by the innermost scope
+    /// that recovered it.
     /// Not reported: a panic nothing recovers, or one whose 500 an outer
     /// interceptor replaced with a short circuit of its own.
     fn on_panic(&self, payload: &(dyn std::any::Any + Send), route: Option<Route<'_>>) {

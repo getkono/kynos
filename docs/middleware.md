@@ -100,6 +100,15 @@ false positive rather than a stricter check — no request reaches both.
 covers the operations in that subtree and nothing else. Scope in the document
 matches scope in the router.
 
+**The root router's own interceptors also cover its fallbacks.** The 404, 308,
+405 and 501 the router answers when no operation does pass through them, so a
+request id or a header every response carries reaches those too. A group's and
+a nested router's do not: they cover operations, and a fallback is none.
+`Next::route` is `None` there, an interceptor keyed by the operation (`Cache`,
+`RateLimit`) hands the response on untouched, and nothing is added to the
+document — a fallback stays out of `paths`, as
+[`routing.md`](routing.md#why-fallbacks-are-not-routes) says.
+
 ## Declaring is not describing
 
 Every header an interceptor sets is *declared*, so the conflict check sees it.
@@ -1411,7 +1420,8 @@ What the check compares is `const` data — `HeaderParams::NAMES` and
 emitted document. Header names compare case-insensitively, per RFC 9110.
 
 An interceptor is handed the [`Route`](../crates/kynos/src/router/operation.rs)
-it covers while it runs, through `Next::route`. That is what keeps a metric
+it covers while it runs, through `Next::route` — `None` around a fallback,
+which covers no operation. That is what keeps a metric
 label keyed by the `paths` key rather than by the request path, so label
 cardinality is bounded and the label cannot disagree with the description.
 

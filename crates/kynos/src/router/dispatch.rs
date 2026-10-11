@@ -101,16 +101,18 @@ pub(crate) struct Served<C> {
 /// only through the extractors and keys that expose each fact.
 #[derive(Clone, Debug)]
 pub(crate) struct Routed {
-    /// The `paths` key that matched.
-    pub(crate) matched: crate::extract::connection::MatchedPath,
+    /// The `paths` key that matched; `None` for a fallback, which only the
+    /// router's own interceptors see.
+    pub(crate) matched: Option<crate::extract::connection::MatchedPath>,
     /// What the match captured, when the template has variables.
     pub(crate) captures: Option<PathCaptures>,
     /// Where the request came from, resolved once under the router's trust
     /// policy before any interceptor runs, so every reader gets one answer.
     pub(crate) forwarded: crate::http::forwarded::Forwarded,
     /// Whether the matched operation declares a security requirement, true
-    /// also for one admitting anonymous access beside it. Read by `Cache`,
-    /// whose hit is served before the operation's guard runs.
+    /// also for one admitting anonymous access beside it, and false where none
+    /// matched. Read by `Cache`, whose hit is served before the operation's
+    /// guard runs.
     #[cfg_attr(
         not(feature = "cache"),
         expect(dead_code, reason = "the cache is the one reader")
@@ -135,6 +137,16 @@ pub(crate) struct PathEntry<C> {
 }
 
 impl<C> PathEntry<C> {
+    /// Sets [`allow`](Self::allow) from the operations declared on this path.
+    pub(crate) fn derive_allow(&mut self) {
+        let methods: Vec<_> = self
+            .operations
+            .iter()
+            .map(|operation| operation.method)
+            .collect();
+        self.allow = allow_header(&methods);
+    }
+
     /// Where the operation answering `method` sits, if one does.
     ///
     /// An undeclared `HEAD` falls back to the `GET` (RFC 9110 section 9.3.2).
@@ -162,6 +174,13 @@ pub(crate) struct Dispatch<C> {
     pub(crate) paths: Vec<PathEntry<C>>,
     pub(crate) context: C,
     pub(crate) observers: Vec<Arc<dyn Observer<C>>>,
+    /// The root router's own interceptors, outermost first, which also run
+    /// around every fallback; a group's or a nested router's cover only their
+    /// operations.
+    pub(crate) interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
+    /// Whether the root router asked for recovery, which then covers a
+    /// fallback's chain too.
+    pub(crate) catch_panics: bool,
     pub(crate) not_found: FallbackPolicy,
     pub(crate) method_not_allowed: FallbackPolicy,
     pub(crate) trailing_slashes: TrailingSlashPolicy,
@@ -169,6 +188,36 @@ pub(crate) struct Dispatch<C> {
     /// Every method some operation in the service answers, which is what
     /// tells a 405 from a 501. See [`implemented`].
     pub(crate) implemented: Vec<Method>,
+}
+
+/// Why no operation answers a request.
+#[derive(Clone, Copy, Debug)]
+enum Unanswered {
+    /// No path matched and the method is implemented somewhere: a 404, or a
+    /// 308 under [`TrailingSlashPolicy::Redirect`].
+    Path,
+    /// No operation answers the method: a 405 carrying the `Allow` of the
+    /// path at `path`, or a 501 where `path` is `None`.
+    Method { path: Option<usize> },
+}
+
+/// A fallback, as the end of the root router's interceptor chain.
+///
+/// Owns its share of the table, since a terminal is `'static`.
+struct FallbackTerminal<C> {
+    dispatch: Arc<Dispatch<C>>,
+    unanswered: Unanswered,
+}
+
+impl<C: Send + Sync + 'static> ErasedTerminal<C> for FallbackTerminal<C> {
+    fn call<'a>(
+        &'a self,
+        request: Request,
+        context: &'a C,
+    ) -> Pin<Box<dyn Future<Output = Response> + Send + 'a>> {
+        let _ = context;
+        Box::pin(async move { self.dispatch.answer(self.unanswered, &request) })
+    }
 }
 
 /// Where in the table an operation sits; indices because the response body
@@ -196,12 +245,12 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
             let Ok(matched) = self.matcher.at(path) else {
                 // RFC 9110 section 15.6.2: a 501 is about the server, not the
                 // resource, so no 404 or redirect is owed first.
-                let response = if self.implements(method) {
-                    self.unmatched(&request)
+                let unanswered = if self.implements(method) {
+                    Unanswered::Path
                 } else {
-                    method_refusal(None, &self.method_not_allowed)
+                    Unanswered::Method { path: None }
                 };
-                return self.finish(response, None, started, head);
+                return self.fall_back(unanswered, request, started, head).await;
             };
 
             let index = *matched.value;
@@ -221,9 +270,10 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         let entry = &self.paths[index];
 
         let Some(position) = method.and_then(|method| entry.position(method)) else {
-            let allow = self.implements(method).then_some(&entry.allow);
-            let response = method_refusal(allow, &self.method_not_allowed);
-            return self.finish(response, None, started, head);
+            let path = self.implements(method).then_some(index);
+            return self
+                .fall_back(Unanswered::Method { path }, request, started, head)
+                .await;
         };
 
         let operation = &entry.operations[position];
@@ -236,7 +286,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         let forwarded = self.forwarded(&request);
         request.extensions_mut().insert(Routed {
             // The template, not the request path, to bound label cardinality.
-            matched: entry.matched.clone(),
+            matched: Some(entry.matched.clone()),
             captures,
             forwarded,
             secured: operation.secured,
@@ -288,15 +338,29 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
     /// A panic is reported here whichever scope recovered it: this one, or the
     /// endpoint's own, whose 500 carries the payload out.
     async fn run(&self, operation: &Served<C>, route: Route<'_>, request: Request) -> Response {
-        let served = Next::new(
+        self.chain(
             &operation.interceptors,
             &*operation.terminal,
-            &self.context,
-            route,
+            Some(route),
+            operation.catch_panics,
+            request,
         )
-        .run(request);
+        .await
+    }
 
-        let mut response = if operation.catch_panics {
+    /// Runs `interceptors` around `terminal`, with recovery if `catch_panics`
+    /// asked for it; `route` is `None` around a fallback.
+    async fn chain(
+        &self,
+        interceptors: &[Arc<dyn ErasedInterceptor<C>>],
+        terminal: &dyn ErasedTerminal<C>,
+        route: Option<Route<'_>>,
+        catch_panics: bool,
+        request: Request,
+    ) -> Response {
+        let served = Next::new(interceptors, terminal, &self.context, route).run(request);
+
+        let mut response = if catch_panics {
             match recover(async move { served.await.into_response() }).await {
                 Ok(response) => response,
                 Err(payload) => {
@@ -317,9 +381,70 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
     }
 
     /// Tells every observer about a recovered panic.
-    fn report_panic(&self, payload: &(dyn Any + Send), route: Route<'_>) {
+    fn report_panic(&self, payload: &(dyn Any + Send), route: Option<Route<'_>>) {
         for observer in &self.observers {
-            observer.on_panic(payload, Some(route));
+            observer.on_panic(payload, route);
+        }
+    }
+
+    /// Answers a request no operation matched: through the root router's own
+    /// interceptors where it has any, and told to every observer either way.
+    ///
+    /// Without interceptors nothing is resolved or inserted, so a fallback
+    /// costs what it did before they could reach one.
+    async fn fall_back(
+        self: &Arc<Self>,
+        unanswered: Unanswered,
+        mut request: Request,
+        started: Instant,
+        head: bool,
+    ) -> Response {
+        let chained = !self.interceptors.is_empty();
+
+        // Resolved as for a routed request, so an interceptor reading the
+        // origin reads the same answer on a 404 as on a 200.
+        if chained {
+            let forwarded = self.forwarded(&request);
+            request.extensions_mut().insert(Routed {
+                matched: None,
+                captures: None,
+                forwarded,
+                secured: false,
+            });
+        }
+
+        for observer in &self.observers {
+            observer.on_request(&request, None, &self.context);
+        }
+
+        let response = if chained {
+            let terminal = FallbackTerminal {
+                dispatch: Arc::clone(self),
+                unanswered,
+            };
+            self.chain(
+                &self.interceptors,
+                &terminal,
+                None,
+                self.catch_panics,
+                request,
+            )
+            .await
+        } else {
+            self.answer(unanswered, &request)
+        };
+
+        self.finish(response, None, started, head)
+    }
+
+    /// The fallback `unanswered` names, for `request`.
+    fn answer(&self, unanswered: Unanswered, request: &Request) -> Response {
+        match unanswered {
+            Unanswered::Path => self.unmatched(request),
+            Unanswered::Method { path } => method_refusal(
+                path.map(|path| &self.paths[path].allow),
+                &self.method_not_allowed,
+            ),
         }
     }
 

@@ -16,6 +16,7 @@
 
 use std::{
     any::Any,
+    convert::Infallible,
     panic::AssertUnwindSafe,
     sync::{Arc, Mutex},
     time::Duration,
@@ -24,7 +25,7 @@ use std::{
 use kynos::{
     Router,
     http::{Request, Response, StatusCode},
-    middleware::Observer,
+    middleware::{Continued, Interceptor, Next, Observer},
     openapi::{Method as OpenApiMethod, PathTemplate},
     response::status::NoContent,
     router::{
@@ -261,6 +262,52 @@ fn a_panic_recovered_at_any_scope_is_reported_to_observers() {
             "a panic recovered at {scope} scope was not reported exactly once"
         );
     }
+}
+
+/// An interceptor that panics on every request, whatever answers it.
+struct Exploding;
+
+impl Interceptor<()> for Exploding {
+    type Reads = ();
+    type Adds = ();
+    type Short = Infallible;
+
+    async fn intercept(
+        &self,
+        _: Request,
+        (): (),
+        (): &(),
+        _: Next<'_, ()>,
+    ) -> Result<Continued<()>, Infallible> {
+        panic!("the interceptor failed");
+    }
+}
+
+/// A router's interceptor also runs around a fallback, so the router's
+/// recovery covers it there: a 500 with recovery, reported with no route since
+/// no operation matched, and an unwind without it.
+#[test]
+fn a_router_recovers_a_panic_its_interceptor_raised_around_a_fallback() {
+    let heard = Heard::default();
+    let recovering = Router::<()>::new()
+        .catch_panics()
+        .mount(kynos::routes![fine])
+        .intercept(Exploding)
+        .observe(heard.clone())
+        .build(())
+        .expect("a describable router");
+    let propagating = Router::<()>::new()
+        .mount(kynos::routes![fine])
+        .intercept(Exploding)
+        .build(())
+        .expect("a describable router");
+
+    assert_eq!(
+        outcome(&recovering, "/nowhere"),
+        Ok(StatusCode::INTERNAL_SERVER_ERROR)
+    );
+    assert_eq!(heard.paths(), ["<unmatched>"]);
+    assert_eq!(outcome(&propagating, "/nowhere"), Err(()));
 }
 
 /// Two scopes asked, one caught: the innermost recovery is the only one that

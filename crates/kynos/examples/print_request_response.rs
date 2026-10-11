@@ -118,13 +118,17 @@ impl<C: Sync + 'static> Interceptor<C> for Print {
         let _ = (context, reads);
         // Keyed by the operation rather than by the request's own path, so the
         // line matches the `paths` key a reader will look the operation up by.
-        let route = next.route();
-        println!(
-            "--> {} {} ({})",
-            route.method(),
-            route.path(),
-            route.operation_id(),
-        );
+        // A router-scoped interceptor also sees the 404s and 405s no operation
+        // answers, which have no key.
+        match next.route() {
+            Some(route) => println!(
+                "--> {} {} ({})",
+                route.method(),
+                route.path(),
+                route.operation_id(),
+            ),
+            None => println!("--> {} {} (unrouted)", request.method(), request.uri()),
+        }
         for (name, value) in request.headers() {
             println!("--> {name}: {}", String::from_utf8_lossy(value.as_bytes()));
         }
