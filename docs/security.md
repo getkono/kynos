@@ -172,11 +172,16 @@ or combined, so its 403 is `authenticate`'s alone.
 | Guard | `authorize` receives |
 | --- | --- |
 | `Auth<S>`, `MaybeAuth<S>` | `S::scopes()`, after `S` authenticates |
-| `AnyOf`, `AllOf` | each scheme's own, after it authenticates |
+| `AnyOf` | each alternative's own, after it authenticates |
+| `AllOf` | each scheme's own, after every scheme authenticates |
 | `Scoped<S, R>` | `S::scopes()`, then each of `R::REQUIRED` they do not name, in one call |
 
 An `AnyOf` alternative whose defaults are refused is not satisfied, so the next
-one is tried, and the refusal is the answer only when none is. `Scope` is
+one is tried, and the refusal is the answer only when none is. `AllOf`
+authenticates every scheme before authorizing any, so a request one of its
+credentials fails is a 401 rather than another scheme's 403: re-authenticating
+is what the client must do first, and `authorize` never runs for a caller
+that is not authenticated. `Scope` is
 `Clone` because `Scoped` joins the two lists; where `S` has no defaults it
 borrows `R::REQUIRED` and allocates nothing.
 

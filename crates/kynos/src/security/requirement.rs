@@ -128,7 +128,10 @@ pub struct AnyOf<T>(PhantomData<fn() -> T>);
 /// Declares a single requirement naming all of them, `[{A, B}]`, which is
 /// OpenAPI's "both". Every credential is read before any is verified: when none
 /// was presented the requirement is absent, and when only some were it is a
-/// 401, because a partial set is not an anonymous request.
+/// 401, because a partial set is not an anonymous request. Every scheme is
+/// authenticated before any is authorized for its default scopes, so a
+/// credential that fails to authenticate is a 401 whatever another scheme's
+/// scopes would have answered.
 ///
 /// Implemented for tuples of two to four schemes. The credential is the tuple
 /// of theirs, in the same order.
@@ -274,9 +277,15 @@ macro_rules! all_of {
                         return Err(AuthRejection::unauthenticated());
                     };
                 )+
+                // Every authentication before any authorization, so a request
+                // one scheme cannot authenticate is a 401, never a 403, and is
+                // never authorized.
                 $(
-                    let $scheme = verify::<$scheme, C>($scheme, context).await?;
+                    let $scheme = <C as Authenticates<$scheme>>::authenticator(context)
+                        .authenticate($scheme, context)
+                        .await?;
                 )+
+                $( let $scheme = authorize_defaults::<$scheme, C>($scheme, context).await?; )+
                 Ok(Some(($($scheme,)+)))
             }
         }
@@ -294,19 +303,35 @@ all_of!(A, B, D, E);
 /// Authenticates `presented` as scheme `S`, then authorizes the scheme's
 /// default scopes, so a guard naming no scope set enforces what
 /// [`declare`](Requirement::declare) wrote for it.
-///
-/// A scheme with no default scopes is never authorized here: its requirement
-/// declares none, so there is nothing to check.
 async fn verify<S, C>(presented: S::Presented, context: &C) -> Result<S::Credential, AuthRejection>
 where
     S: Carries,
     C: Authenticates<S>,
 {
-    let authenticator = context.authenticator();
-    let credential = authenticator.authenticate(presented, context).await?;
+    let credential = context
+        .authenticator()
+        .authenticate(presented, context)
+        .await?;
+    authorize_defaults::<S, C>(credential, context).await
+}
+
+/// Authorizes `credential` for scheme `S`'s default scopes, and hands it back.
+///
+/// Owned rather than borrowed, so the future needs no `Sync` credential to be
+/// `Send`. A scheme with no default scopes is never authorized here: its
+/// requirement declares none, so there is nothing to check.
+async fn authorize_defaults<S, C>(
+    credential: S::Credential,
+    context: &C,
+) -> Result<S::Credential, AuthRejection>
+where
+    S: Carries,
+    C: Authenticates<S>,
+{
     let defaults = S::scopes();
     if !defaults.is_empty() {
-        authenticator
+        context
+            .authenticator()
             .authorize(&credential, defaults, context)
             .await?;
     }
