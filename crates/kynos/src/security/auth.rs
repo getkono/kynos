@@ -14,7 +14,7 @@ use crate::{
     http::{HeaderValue, Parts, StatusCode},
     router::operation::OperationCx,
     security::{
-        Authenticates, Authenticator, Guard, SecurityScheme,
+        Authenticates, Authenticator, Guard, Scope, SecurityScheme,
         carrier::Carries,
         requirement::{CheckedBy, Requirement, require},
         sealed,
@@ -42,6 +42,7 @@ use crate::{
 /// # impl kynos::security::SecurityScheme for Bearer {
 /// #     const NAME: &'static str = "Bearer";
 /// #     type Credential = Claims;
+/// #     type Scope = kynos::security::Unscoped;
 /// #     fn describe() -> kynos::openapi::SecurityScheme {
 /// #         kynos::openapi::SecurityScheme::bearer(None)
 /// #     }
@@ -144,6 +145,7 @@ where
 /// # impl kynos::security::SecurityScheme for Bearer {
 /// #     const NAME: &'static str = "Bearer";
 /// #     type Credential = Claims;
+/// #     type Scope = kynos::security::Unscoped;
 /// #     fn describe() -> kynos::openapi::SecurityScheme {
 /// #         kynos::openapi::SecurityScheme::bearer(None)
 /// #     }
@@ -221,33 +223,56 @@ where
 /// A named set of scopes.
 ///
 /// Declared as a unit struct, so a scope set is named once rather than
-/// repeated as string literals across handlers.
+/// repeated across handlers. Its scopes are values of a [`Scope`] type, which a
+/// [`Scoped<S, R>`](Scoped) argument holds to scheme `S`'s own
+/// [`SecurityScheme::Scope`]: a set written against another type does not
+/// compile.
 ///
 /// ```
-/// use kynos::security::auth::Scopes;
+/// use kynos::security::{Scope, auth::Scopes};
+///
+/// #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// enum Grant {
+///     ReadReports,
+///     Admin,
+/// }
+///
+/// impl Scope for Grant {
+///     fn name(&self) -> &'static str {
+///         match self {
+///             Self::ReadReports => "reports:read",
+///             Self::Admin => "admin",
+///         }
+///     }
+/// }
 ///
 /// /// What an administrative endpoint demands, and what refusing it is called.
 /// struct Admin;
 ///
 /// impl Scopes for Admin {
-///     const SCOPES: &'static [&'static str] = &["admin"];
+///     type Scope = Grant;
+///     const REQUIRED: &'static [Grant] = &[Grant::Admin];
 ///     const FORBIDDEN_TYPE: Option<&'static str> =
 ///         Some("https://errors.example.com/insufficient-scope");
 /// }
 ///
-/// /// A scope set naming no type, which is every one written before this const
-/// /// existed and still the ordinary case.
+/// /// A scope set naming no problem type, which is still the ordinary case.
 /// struct ReadReports;
 ///
 /// impl Scopes for ReadReports {
-///     const SCOPES: &'static [&'static str] = &["reports:read"];
+///     type Scope = Grant;
+///     const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
 /// }
 ///
 /// assert_eq!(ReadReports::FORBIDDEN_TYPE, None);
 /// ```
 pub trait Scopes: Send + Sync + 'static {
+    /// What each scope is: the [`SecurityScheme::Scope`] of every scheme this
+    /// set is demanded under.
+    type Scope: Scope;
+
     /// The scopes required.
-    const SCOPES: &'static [&'static str];
+    const REQUIRED: &'static [Self::Scope];
 
     /// The problem `type` a refusal of *these* scopes may publish, beside
     /// `about:blank`.
@@ -284,14 +309,54 @@ pub trait Scopes: Send + Sync + 'static {
 /// reader learns not just that a token is needed but which grants it must
 /// carry.
 ///
-/// The scope set is a type implementing [`Scopes`], since
-/// `&'static [&'static str]` is not a permitted const parameter type. The
-/// marker is private, so a handler destructures `Scoped(claims)` the way it
-/// destructures [`Auth`] and [`MaybeAuth`].
-pub struct Scoped<S: SecurityScheme, R: Scopes>(pub S::Credential, std::marker::PhantomData<R>);
+/// The scope set is a type implementing [`Scopes`], since a slice is not a
+/// permitted const parameter type, and its [`Scope`](Scopes::Scope) must be
+/// `S`'s. The marker is private, so a handler destructures `Scoped(claims)`
+/// the way it destructures [`Auth`] and [`MaybeAuth`].
+///
+/// ```no_run
+/// # use kynos::security::{Scope, auth::{Scoped, Scopes}, schemes::Bearer};
+/// # #[derive(Clone, Copy)]
+/// # enum Grant { ReadReports }
+/// # impl Scope for Grant {
+/// #     fn name(&self) -> &'static str { "reports:read" }
+/// # }
+/// struct ReadReports;
+///
+/// impl Scopes for ReadReports {
+///     type Scope = Grant;
+///     const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
+/// }
+///
+/// async fn reports(caller: Scoped<Bearer<String, Grant>, ReadReports>) {}
+/// ```
+///
+/// A scheme whose scope type is another, here the default
+/// [`Unscoped`](crate::security::Unscoped), refuses the set:
+///
+/// ```compile_fail
+/// # use kynos::security::{Scope, auth::{Scoped, Scopes}, schemes::Bearer};
+/// # #[derive(Clone, Copy)]
+/// # enum Grant { ReadReports }
+/// # impl Scope for Grant {
+/// #     fn name(&self) -> &'static str { "reports:read" }
+/// # }
+/// struct ReadReports;
+///
+/// impl Scopes for ReadReports {
+///     type Scope = Grant;
+///     const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
+/// }
+///
+/// async fn reports(caller: Scoped<Bearer<String>, ReadReports>) {}
+/// ```
+pub struct Scoped<S: SecurityScheme, R: Scopes<Scope = S::Scope>>(
+    pub S::Credential,
+    std::marker::PhantomData<R>,
+);
 
 // As on `Auth`: bounded on the credential, without `Default`.
-impl<S: SecurityScheme, R: Scopes> Clone for Scoped<S, R>
+impl<S: SecurityScheme, R: Scopes<Scope = S::Scope>> Clone for Scoped<S, R>
 where
     S::Credential: Clone,
 {
@@ -300,9 +365,9 @@ where
     }
 }
 
-impl<S: SecurityScheme, R: Scopes> Copy for Scoped<S, R> where S::Credential: Copy {}
+impl<S: SecurityScheme, R: Scopes<Scope = S::Scope>> Copy for Scoped<S, R> where S::Credential: Copy {}
 
-impl<S: SecurityScheme, R: Scopes> std::fmt::Debug for Scoped<S, R>
+impl<S: SecurityScheme, R: Scopes<Scope = S::Scope>> std::fmt::Debug for Scoped<S, R>
 where
     S::Credential: std::fmt::Debug,
 {
@@ -311,7 +376,7 @@ where
     }
 }
 
-impl<S: SecurityScheme, R: Scopes> PartialEq for Scoped<S, R>
+impl<S: SecurityScheme, R: Scopes<Scope = S::Scope>> PartialEq for Scoped<S, R>
 where
     S::Credential: PartialEq,
 {
@@ -320,9 +385,9 @@ where
     }
 }
 
-impl<S: SecurityScheme, R: Scopes> Eq for Scoped<S, R> where S::Credential: Eq {}
+impl<S: SecurityScheme, R: Scopes<Scope = S::Scope>> Eq for Scoped<S, R> where S::Credential: Eq {}
 
-impl<S: SecurityScheme, R: Scopes> Scoped<S, R> {
+impl<S: SecurityScheme, R: Scopes<Scope = S::Scope>> Scoped<S, R> {
     /// Wraps a credential that has been verified and authorized.
     ///
     /// The marker field is private, so this is how one is built from outside
@@ -338,13 +403,13 @@ impl<S: SecurityScheme, R: Scopes> Scoped<S, R> {
     }
 }
 
-impl<S: SecurityScheme, R: Scopes> Describe for Scoped<S, R> {
+impl<S: SecurityScheme, R: Scopes<Scope = S::Scope>> Describe for Scoped<S, R> {
     fn describe(operation: &mut OperationCx<'_>) {
         // `R`'s scopes join the scheme's defaults rather than replacing them,
         // without naming one twice.
-        let mut scopes = S::scopes().to_vec();
-        for scope in R::SCOPES {
-            if !scopes.contains(scope) {
+        let mut scopes = Vec::new();
+        for scope in S::scopes().iter().chain(R::REQUIRED).map(Scope::name) {
+            if !scopes.contains(&scope) {
                 scopes.push(scope);
             }
         }
@@ -353,13 +418,13 @@ impl<S: SecurityScheme, R: Scopes> Describe for Scoped<S, R> {
     }
 }
 
-impl<S: SecurityScheme, R: Scopes> sealed::Sealed for Scoped<S, R> {}
+impl<S: SecurityScheme, R: Scopes<Scope = S::Scope>> sealed::Sealed for Scoped<S, R> {}
 
 impl<C, S, R> Guard<C> for Scoped<S, R>
 where
     C: Authenticates<S>,
     S: Carries,
-    R: Scopes,
+    R: Scopes<Scope = S::Scope>,
 {
     /// [`AuthRejection`] described against `R`, which is what narrows the 403
     /// this argument declares.
@@ -382,7 +447,7 @@ where
             .await
             .map_err(challenged)?;
         authenticator
-            .authorize(&credential, R::SCOPES, context)
+            .authorize(&credential, R::REQUIRED, context)
             .await
             .map_err(challenged)?;
         Ok(Self(credential, std::marker::PhantomData))

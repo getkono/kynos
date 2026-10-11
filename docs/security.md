@@ -30,7 +30,7 @@ spelling and the `security` the guard emits is the whole list, set once:
 | `Auth<AnyOf<(A, B)>>` | `[{A}, {B}]` | the first of `A`, `B` that authenticates |
 | `Auth<AllOf<(A, B)>>` | `[{A, B}]` | both |
 | `MaybeAuth<…>` | `[{}, …]` | the same, or nothing presented at all |
-| `Scoped<S, R>` | `[{S: R::SCOPES}]` | `S`, then `R` |
+| `Scoped<S, R>` | `[{S: R::REQUIRED}]` | `S`, then `R` |
 
 - **`AnyOf` tries in order.** An absent credential is skipped and a refused one
   does not block the next. When none authenticates, the first refusal in tuple
@@ -133,6 +133,31 @@ Under an optional carrier nothing reports absence, so `MaybeAuth<S>` never sees
 anonymity, an `AnyOf` never skips `S`, and an `AllOf` holding `S` treats a
 missing partner as a partial set.
 
+### A scope is a value of the scheme's scope type
+
+`SecurityScheme::Scope` names, once per scheme, what one scope is — an
+application's enum, with `Scope::name` the one place it becomes the string a
+token and the description carry. A `Scopes` set names its own `Scope`, and
+`Scoped<S, R>` is bounded by `R: Scopes<Scope = S::Scope>`, so a set written
+against another type does not compile. `Authenticator::authorize` receives
+`&[S::Scope]`: a scope it does not handle is a non-exhaustive `match`, not a
+string a `filter_map` silently drops.
+
+| Where | Scope type |
+| --- | --- |
+| `#[derive(SecurityScheme)]` | `scope = Type`; `Unscoped` when omitted |
+| `Bearer<T, P>`, `Basic<T, P>`, `MutualTls<T, P>` | `P`, `Unscoped` by default |
+| A scheme's default `scopes(..)` | values of that type, never strings |
+
+`Unscoped` is uninhabited, so a scheme that never names a scope type has no
+scope to demand. A flow's `scopes("a" = "...")` inside `oauth2(..)` stays a
+string: it is the catalogue an authorization server publishes, not a demand.
+
+The type lives on the scheme rather than on the scope set alone because
+`authorize` is per scheme: a scope type chosen per set would reach it as a
+different type from each set, and the only thing it could do with one is turn it
+back into a string.
+
 ### A 403 may name itself; a 401 may not
 
 `AuthRejection::forbidden_as(uri)` puts an application's own problem `type` on
@@ -168,11 +193,12 @@ Three things follow, all deliberate:
 
 A URI chosen at run time has no path into a document assembled from types — but
 the *scope set* an operation demands is a type, and that is the seam.
-`Scopes::FORBIDDEN_TYPE` is a defaulted associated const beside `SCOPES`:
+`Scopes::FORBIDDEN_TYPE` is a defaulted associated const beside `REQUIRED`:
 
 ```rust
 impl Scopes for ReadReports {
-    const SCOPES: &'static [&'static str] = &["reports:read"];
+    type Scope = Grant;
+    const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
     const FORBIDDEN_TYPE: Option<&'static str> = Some(INSUFFICIENT_SCOPE);
 }
 ```
@@ -377,7 +403,7 @@ not only that one crate is absent from the graph.
 | The hoop emits no security requirement; `#[endpoint(security(..))]` is written separately | `Auth<S>` adds the requirement, the scheme, 401, 403 and the challenge in one act | Guarded-and-undocumented and documented-and-unguarded are both unrepresentable |
 | `depot.jwt_auth_state()` returns `Authorized`/`Unauthorized`/`Forbidden`; the handler must match | Guarding is the argument's type | There is no state to forget to read |
 | `force_passed(false)` lets an unauthenticated request through, invisibly | `MaybeAuth<S>` emits `[{}, {S: []}]` | "Optional" is a fact in the description rather than a flag in the wiring |
-| Scopes are strings compared in handler code | `Scoped<S, R>` writes `R::SCOPES` into the requirement *and* the check | A misspelled scope is a compile error |
+| Scopes are strings compared in handler code | `Scoped<S, R>` writes `R::REQUIRED` into the requirement *and* hands it to the check, as values of `S::Scope` | A misspelled scope is a compile error |
 | One `JwtAuth` per router; the verifier is ambient | `Authenticates<S>` is per scheme on the context | A router guarding `S` cannot be built on a context that cannot verify `S` |
 | `jsonwebtoken` is in every user's dependency graph | Named by one example and nothing under `src/` | JWT policy stays the application's |
 | Basic auth is a separate feature with its own validator | One `Carries` seam covers basic, bearer, arbitrary HTTP schemes, API keys and mTLS | One concept, five carriers |

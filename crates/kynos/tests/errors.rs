@@ -39,7 +39,7 @@ use kynos::{
     http::media::OctetStream,
     response::{negotiate::Accept, range::Range},
     security::{
-        Authenticates, Authenticator, Guard,
+        Authenticates, Authenticator, Guard, Scope,
         auth::{Auth, MaybeAuth, Scoped, Scopes},
         carrier::BearerToken,
         schemes::Bearer,
@@ -264,7 +264,7 @@ struct Claims;
 
 struct Tokens;
 
-impl<C: Sync> Authenticator<Bearer<Claims>, C> for Tokens {
+impl<C: Sync, P: Scope> Authenticator<Bearer<Claims, P>, C> for Tokens {
     async fn authenticate(
         &self,
         presented: BearerToken,
@@ -277,7 +277,7 @@ impl<C: Sync> Authenticator<Bearer<Claims>, C> for Tokens {
     async fn authorize(
         &self,
         credential: &Claims,
-        scopes: &'static [&'static str],
+        scopes: &[P],
         context: &C,
     ) -> Result<(), AuthRejection> {
         let _ = (credential, scopes, context);
@@ -289,7 +289,7 @@ struct App {
     tokens: Tokens,
 }
 
-impl Authenticates<Bearer<Claims>> for App {
+impl<P: Scope> Authenticates<Bearer<Claims, P>> for App {
     type Authenticator = Tokens;
 
     fn authenticator(&self) -> &Self::Authenticator {
@@ -297,10 +297,24 @@ impl Authenticates<Bearer<Claims>> for App {
     }
 }
 
+#[derive(Clone, Copy)]
+enum Grant {
+    ReadReports,
+}
+
+impl Scope for Grant {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::ReadReports => "reports:read",
+        }
+    }
+}
+
 struct ReadReports;
 
 impl Scopes for ReadReports {
-    const SCOPES: &'static [&'static str] = &["reports:read"];
+    type Scope = Grant;
+    const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
 }
 
 /// 401 and 403 reach an operation only through an argument that can raise them,
@@ -326,7 +340,7 @@ fn a_scoped_extractor_rejects_with_its_scope_sets_rejection() {
     guard_rejects_with::<
         kynos::error::rejection::ScopedRejection<ReadReports>,
         App,
-        Scoped<Bearer<Claims>, ReadReports>,
+        Scoped<Bearer<Claims, Grant>, ReadReports>,
     >();
 }
 

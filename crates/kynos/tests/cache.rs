@@ -536,7 +536,7 @@ impl<C: Sync> Authenticator<ReportKey, C> for Keys {
     async fn authorize(
         &self,
         _: &Holder,
-        _: &'static [&'static str],
+        _: &[kynos::security::Unscoped],
         _: &C,
     ) -> Result<(), AuthRejection> {
         Ok(())

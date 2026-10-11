@@ -34,9 +34,11 @@
 //!   `kid`, bad signature — telling a caller which one it was tells an attacker
 //!   which tokens exist and which keys are live.
 //! * **Scopes are a type, and they are checked where they are declared.**
+//!   `AccessToken` names `Grant` as its scope type once, and
 //!   `Scoped<AccessToken, ReadReports>` writes `reports:read` into the
-//!   operation's security requirement *and* into the check. A misspelling is a
-//!   compile error rather than a silent grant.
+//!   operation's security requirement *and* hands `Grant::ReadReports` to the
+//!   check. A misspelling is an unknown variant, a compile error rather than a
+//!   silent grant, and `Grant::name` is the one place a scope is a string.
 //! * **`MaybeAuth` is a description, not a flag.** `/feed` declares
 //!   `[{}, {AccessToken: []}]`, so a reader learns the credential is honoured
 //!   rather than demanded. A token that is present and *wrong* is still a 401
@@ -60,7 +62,7 @@ use kynos::{
     error::rejection::AuthRejection,
     prelude::*,
     security::{
-        Authenticates, Authenticator,
+        Authenticates, Authenticator, Scope,
         auth::{Auth, MaybeAuth, Scoped, Scopes},
         carrier::{BearerToken, Credentials},
         constant_time_eq,
@@ -137,17 +139,33 @@ struct Token {
 /// to know it would be claiming more than it can check.
 #[derive(SecurityScheme)]
 #[security(bearer(format = "JWT"))]
-#[security(credential = Claims, description = "A short-lived access token")]
+#[security(credential = Claims, scope = Grant, description = "A short-lived access token")]
 struct AccessToken;
 
-/// The scopes `/reports` demands.
+/// Every scope an `AccessToken` can carry.
 ///
-/// A type rather than a string literal, so a misspelling is a compile error and
-/// renaming one is a single edit.
+/// An enum rather than string literals, so a misspelling is a compile error and
+/// renaming one is a single edit; `name` is how the token and the description
+/// spell it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Grant {
+    ReadReports,
+}
+
+impl Scope for Grant {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::ReadReports => "reports:read",
+        }
+    }
+}
+
+/// The scopes `/reports` demands.
 struct ReadReports;
 
 impl Scopes for ReadReports {
-    const SCOPES: &'static [&'static str] = &["reports:read"];
+    type Scope = Grant;
+    const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
 }
 
 // --- Verifying ------------------------------------------------------------
@@ -261,7 +279,7 @@ impl<C: Sync> Authenticator<AccessToken, C> for Keys {
     async fn authorize(
         &self,
         credential: &Claims,
-        scopes: &'static [&'static str],
+        scopes: &[Grant],
         context: &C,
     ) -> Result<(), AuthRejection> {
         let _ = context;
@@ -270,7 +288,7 @@ impl<C: Sync> Authenticator<AccessToken, C> for Keys {
         // `Unauthenticated`: the token was valid, it simply does not reach.
         if scopes
             .iter()
-            .all(|demanded| credential.scopes().any(|held| held == *demanded))
+            .all(|demanded| credential.scopes().any(|held| held == demanded.name()))
         {
             Ok(())
         } else {
@@ -324,7 +342,7 @@ impl<C: Sync> Authenticator<Basic<Credentials>, C> for Passwords {
     async fn authorize(
         &self,
         _: &Credentials,
-        _: &'static [&'static str],
+        _: &[kynos::security::Unscoped],
         _: &C,
     ) -> Result<(), AuthRejection> {
         Ok(())

@@ -6,6 +6,7 @@ struct Undeclared;
 impl SecurityScheme for Undeclared {
     const NAME: &'static str = "Undeclared";
     type Credential = String;
+    type Scope = kynos::security::Unscoped;
 
     fn describe() -> kynos::openapi::SecurityScheme {
         kynos::openapi::SecurityScheme::bearer(None)

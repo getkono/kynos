@@ -452,6 +452,7 @@ rcgen = { workspace = true }
 # which `server/tls/` must survive.
 rustls = { workspace = true, features = ["ring", "std"] }
 listenfd = { workspace = true }
+mutants = { workspace = true }
 rust_decimal = { workspace = true, features = ["serde"] }
 # Examples install a subscriber and exporter; Kynos depends on neither.
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }

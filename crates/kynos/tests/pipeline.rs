@@ -258,7 +258,7 @@ impl<C: Sync> Authenticator<Bearer, C> for Tokens {
     async fn authorize(
         &self,
         _: &String,
-        _: &'static [&'static str],
+        _: &[kynos::security::Unscoped],
         _: &C,
     ) -> Result<(), AuthRejection> {
         Ok(())

@@ -23,7 +23,7 @@ impl<S: Carries<Credential = String>, C: Sync> Authenticator<S, C> for Verifier 
     async fn authorize(
         &self,
         _: &String,
-        _: &'static [&'static str],
+        _: &[S::Scope],
         _: &C,
     ) -> Result<(), AuthRejection> {
         Ok(())

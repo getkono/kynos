@@ -6,17 +6,52 @@ use crate::{
     router::operation::OperationCx,
     schema::registry::Registry,
     security::{
+        Scope, SecurityScheme,
         carrier::Credentials,
         requirement::{AllOf, AnyOf, component_name},
         schemes::{Basic, Bearer, MutualTls},
     },
 };
 
+/// The scopes the schemes below may demand.
+#[derive(Clone, Copy)]
+enum Grant {
+    ReadReports,
+    Audit,
+}
+
+impl Scope for Grant {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::ReadReports => "reports:read",
+            Self::Audit => "audit",
+        }
+    }
+}
+
 /// A scope set demanded by an operation rather than published by a scheme.
 struct ReadReports;
 
 impl Scopes for ReadReports {
-    const SCOPES: &'static [&'static str] = &["reports:read"];
+    type Scope = Grant;
+    const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
+}
+
+/// A scheme demanding `audit` and `reports:read` of every operation by default.
+struct Audited;
+
+impl SecurityScheme for Audited {
+    const NAME: &'static str = "Audited";
+    type Credential = String;
+    type Scope = Grant;
+
+    fn describe() -> kynos_openapi::SecurityScheme {
+        kynos_openapi::SecurityScheme::bearer(None)
+    }
+
+    fn scopes() -> &'static [Grant] {
+        &[Grant::Audit, Grant::ReadReports]
+    }
 }
 
 /// Describes one operation guarded by `D` and returns what it said.
@@ -96,7 +131,7 @@ fn a_scheme_with_no_challenge_declares_no_www_authenticate() {
 #[test]
 fn the_scopes_declared_are_the_ones_the_guard_demands() {
     let (bare, _) = described::<Auth<Bearer>>();
-    let (scoped, _) = described::<Scoped<Bearer, ReadReports>>();
+    let (scoped, _) = described::<Scoped<Bearer<String, Grant>, ReadReports>>();
 
     let demanded = |operation: &kynos_openapi::Operation| {
         operation
@@ -116,6 +151,14 @@ fn the_scopes_declared_are_the_ones_the_guard_demands() {
 
     assert!(demanded(&bare).is_empty());
     assert_eq!(demanded(&scoped), ["reports:read".to_owned()]);
+
+    // A scheme's defaults come first and a scope both name is listed once,
+    // spelled by `Scope::name` on both sides.
+    let (audited, _) = described::<Scoped<Audited, ReadReports>>();
+    assert_eq!(
+        demanded(&audited),
+        ["audit".to_owned(), "reports:read".to_owned()]
+    );
 }
 
 /// One name for both halves, so the scheme a requirement demands and the
@@ -194,6 +237,29 @@ fn all_of_declares_one_requirement_naming_every_scheme() {
             .security_schemes
             .contains_key(component_name::<MutualTls>().as_str())
     );
+}
+
+/// A guard with no scope set of its own still declares its scheme's default
+/// scopes, in the scheme's order and spelled by `Scope::name`, whether it
+/// names the scheme alone or inside a combination.
+#[test]
+fn a_scheme_declares_its_default_scopes_under_every_guard() {
+    let defaults = || {
+        SecurityRequirement::scoped(
+            component_name::<Audited>().as_str(),
+            ["audit", "reports:read"],
+        )
+    };
+
+    let (alone, _) = described::<Auth<Audited>>();
+    assert_eq!(alone.security, Some(vec![defaults()]));
+
+    let (either, _) = described::<Auth<AnyOf<(Audited, Bearer)>>>();
+    assert_eq!(either.security, Some(vec![defaults(), bare::<Bearer>()]));
+
+    let (both, _) = described::<Auth<AllOf<(Audited, Bearer)>>>();
+    let together = defaults().and(component_name::<Bearer>().as_str(), Vec::<String>::new());
+    assert_eq!(both.security, Some(vec![together]));
 }
 
 /// `MaybeAuth` prepends the anonymous alternative to whatever its requirement
