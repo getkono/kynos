@@ -1132,3 +1132,33 @@ fn an_unknown_variant_lists_what_it_expected() {
         "expected one of `asc`, `desc`, `random`"
     );
 }
+
+/// An instantiation is named only where every argument is, each argument's
+/// name joined to the base in declaration order, and a raw identifier's `#`
+/// sanitized as a concrete type's is.
+#[test]
+fn an_instantiation_is_named_from_every_argument_or_not_at_all() {
+    use kynos_openapi::ComponentName;
+
+    use crate::schema::instantiation_name;
+
+    let named = |name: &str| ComponentName::new(name).ok();
+    let mangled =
+        |base, arguments: &[_]| instantiation_name(base, arguments).map(|name| name.to_string());
+
+    assert_eq!(mangled("Page", &[]).as_deref(), Some("Page"));
+    assert_eq!(
+        mangled("Page", &[named("User")]).as_deref(),
+        Some("Page_User")
+    );
+    assert_eq!(
+        mangled("Pair", &[named("User"), named("Page_Order")]).as_deref(),
+        Some("Pair_User_Page_Order")
+    );
+    assert_eq!(
+        mangled("r#Page", &[named("User")]).as_deref(),
+        Some("r_Page_User")
+    );
+    assert_eq!(mangled("Pair", &[named("User"), None]), None);
+    assert_eq!(mangled("Pair", &[None, named("User")]), None);
+}
