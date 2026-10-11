@@ -13,8 +13,9 @@ mod wire_form;
 use syn::DeriveInput;
 
 /// Runs every refusal, in the order the later ones rely on ("refused before
-/// this runs").
-pub(super) fn check(input: &DeriveInput) -> syn::Result<()> {
+/// this runs"). The `ParamValue` derive runs them too, since it reads the
+/// names they guard.
+pub(crate) fn check(input: &DeriveInput) -> syn::Result<()> {
     wire_form::reject_container_conversions(input)?;
     wire_form::reject_untagged(input)?;
     skips::reject_unread_variant(input)?;

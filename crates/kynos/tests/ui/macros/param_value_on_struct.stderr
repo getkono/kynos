@@ -1,0 +1,5 @@
+error: `ParamValue` is derived for a field-less enum, whose variant names are its text form; implement `FromStr`, `Display` and `ParamValue` by hand for a newtype
+ --> tests/ui/macros/param_value_on_struct.rs:5:8
+  |
+5 | struct UserId(u64);
+  |        ^^^^^^

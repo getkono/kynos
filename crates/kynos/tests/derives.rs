@@ -13,8 +13,9 @@
 //! a `+`; the cookie
 //! decoder's refusal of a declared cookie that is not ASCII; the header
 //! decoder's refusal of a missing required header or a value that is not
-//! ASCII, and its reading of an absent optional header as `None`; and the
-//! response a derived `Reply` or `ApiError` writes. Their tests call the
+//! ASCII, and its reading of an absent optional header as `None`; the text a
+//! derived `ParamValue` reads and writes; and the response a derived `Reply` or
+//! `ApiError` writes. Their tests call the
 //! derived code directly, with no server. What *is* checked
 //! beyond compiling is the description a derive emits, and what the default
 //! `QueryParams::parameters` makes of a derived schema.
@@ -23,14 +24,15 @@
 #![allow(dead_code)]
 
 use kynos::{
-    ApiError, HeaderParams, PathParams, QueryParams, Reply, Schema, SecurityScheme, Tag,
+    ApiError, HeaderParams, ParamValue, PathParams, QueryParams, Reply, Schema, SecurityScheme,
+    Tag,
     extract::params::{
         header::HeaderParams, path::PathParams as PathParamsTrait,
         query::QueryParams as QueryParamsTrait,
     },
     response::{IntoResponse, Responses},
     router::operation::Tag as TagTrait,
-    schema::Schema as SchemaTrait,
+    schema::{ParamValue as ParamValueTrait, Schema as SchemaTrait, UnknownVariant},
     security::{
         SecurityScheme as SecuritySchemeTrait,
         carrier::{ApiKey, BearerToken, Carries, Credentials, PeerCertificates, SchemeCredentials},
@@ -185,6 +187,26 @@ enum StoreError {
     Conflict,
 }
 
+/// Each source of a variant name the `Schema` derive reads: the container's
+/// `rename_all`, a variant's own `rename`, and an `alias` serde reads alone.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Schema, ParamValue, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+enum Phase {
+    Checking,
+    #[serde(alias = "metadata")]
+    AwaitingMetadata,
+    #[serde(rename = "SEEDING")]
+    Seeding,
+}
+
+/// A derived `ParamValue` is what a parameter field's bound asks for.
+#[derive(Schema, QueryParams)]
+struct PhaseQuery {
+    phase: Option<Phase>,
+}
+
 #[derive(Reply)]
 enum CreateReply {
     #[reply(status = 201, description = "the user as stored")]
@@ -199,6 +221,7 @@ fn implements_query_params<T: QueryParamsTrait>() {}
 fn implements_header_params<T: HeaderParams>() {}
 #[cfg(feature = "cookie")]
 fn implements_cookie_params<T: kynos::extract::params::cookie::CookieParams>() {}
+fn implements_param_value<T: ParamValueTrait>() {}
 fn implements_tag<T: TagTrait>() {}
 fn implements_security_scheme<T: SecuritySchemeTrait>() {}
 fn implements_responses<T: IntoResponse + Responses>() {}
@@ -216,6 +239,8 @@ fn every_derive_implements_its_trait() {
     implements_schema::<Page<u32>>();
     implements_path_params::<UserPath>();
     implements_query_params::<ListQuery>();
+    implements_query_params::<PhaseQuery>();
+    implements_param_value::<Phase>();
     implements_header_params::<Conditional>();
     #[cfg(feature = "cookie")]
     implements_cookie_params::<Session>();
@@ -383,6 +408,15 @@ struct RetiredShape {
     id: u64,
 }
 
+/// A parameter value retired whole, checked as `RetiredShape` is: it carries
+/// no `#[allow(deprecated)]` of its own, so the `ParamValue` derive's impls
+/// must allow naming it.
+#[deprecated(note = "a retired parameter value")]
+#[derive(Schema, ParamValue)]
+enum RetiredSort {
+    Oldest,
+}
+
 /// Carries one field nobody should send any more.
 #[derive(Schema, serde::Serialize)]
 struct PartlyRetired {
@@ -421,6 +455,56 @@ enum Currency {
 fn emitted<T: SchemaTrait>() -> serde_json::Value {
     let mut registry = kynos::schema::registry::Registry::new();
     serde_json::to_value(T::schema(&mut registry)).expect("a schema serializes")
+}
+
+/// A derived `ParamValue`'s text form is the schema's `enum`, held to serde as
+/// the oracle: `Display` writes what serde writes, `FromStr` reads each name
+/// the schema lists as the variant serde reads it as, and refuses other text
+/// listing exactly those names. A recorded exception to a derive being a
+/// type-level surface, since the names are the decoder.
+#[test]
+fn a_derived_param_value_reads_and_writes_the_names_its_schema_lists() {
+    let schema = emitted::<Phase>();
+    let listed: Vec<&str> = schema["enum"]
+        .as_array()
+        .expect("a unit enum is an `enum` of names")
+        .iter()
+        .map(|name| name.as_str().expect("each name is a string"))
+        .collect();
+    assert_eq!(
+        listed,
+        ["checking", "awaiting_metadata", "metadata", "SEEDING"]
+    );
+
+    for variant in [Phase::Checking, Phase::AwaitingMetadata, Phase::Seeding] {
+        assert_eq!(
+            serde_json::Value::String(variant.to_string()),
+            serde_json::to_value(variant).expect("a unit variant serializes"),
+        );
+    }
+
+    for name in &listed {
+        let read: Phase = serde_json::from_value(serde_json::Value::from(*name))
+            .expect("serde reads each listed name");
+        assert_eq!(name.parse::<Phase>(), Ok(read), "{name}");
+    }
+
+    // Matched exactly, as serde matches: the identifier is not a name.
+    assert_eq!(
+        "Checking".parse::<Phase>(),
+        Err(UnknownVariant::new(&[
+            "checking",
+            "awaiting_metadata",
+            "metadata",
+            "SEEDING"
+        ]))
+    );
+    assert!(serde_json::from_value::<Phase>(serde_json::Value::from("Checking")).is_err());
+
+    // `Display` honours the caller's width, fill and precision, as `str` does.
+    assert_eq!(format!("{:>10}", Phase::Checking), "  checking");
+    assert_eq!(format!("{:*<10}", Phase::Seeding), "SEEDING***");
+    assert_eq!(format!("{:.3}", Phase::Checking), "che");
 }
 
 /// A deprecated type says so, and says nothing about the note.

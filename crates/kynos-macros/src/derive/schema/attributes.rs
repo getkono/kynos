@@ -1,6 +1,7 @@
 use super::{
-    ANNOTATIONS, COUNTS, Container, Field, Fields, IdentExt, Lit, LitFloat, LitInt, LitStr,
-    NUMERIC, Span, Spanned, TokenStream2, Type, Variant, quote, skip_value, string_value,
+    ANNOTATIONS, COUNTS, Container, DeriveInput, Field, Fields, IdentExt, Lit, LitFloat, LitInt,
+    LitStr, NUMERIC, Span, Spanned, TokenStream2, Type, Variant, aliases::variants_read_names,
+    quote, skip_value, string_value,
 };
 
 /// The name serde writes a named field under: the serialize side of its
@@ -32,6 +33,21 @@ pub(super) fn variant_read_name(variant: &Variant, container: &Container) -> Str
     serde_renames(&variant.attrs)
         .deserialize
         .unwrap_or_else(|| default_variant_name(variant, container))
+}
+
+/// Each of an enum's `variants` with the name serde writes it under and every
+/// name serde reads as it, as the `Schema` derive names them, in declaration
+/// order: the text form the `ParamValue` derive gives a field-less enum.
+pub(crate) fn variant_wire_names<'a>(
+    input: &DeriveInput,
+    variants: &[&'a Variant],
+) -> Vec<(&'a Variant, String, Vec<String>)> {
+    let container = Container::read(input);
+    variants
+        .iter()
+        .zip(variants_read_names(variants, &container))
+        .map(|(variant, read)| (*variant, variant_name(variant, &container), read))
+        .collect()
 }
 
 /// A named field's name where no `rename` gives one: its identifier without a
@@ -333,7 +349,7 @@ fn skip_schema_value(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
 }
 
 /// The first of `keys` a `#[serde(...)]` list names, at the key.
-pub(super) fn serde_key_span(attrs: &[syn::Attribute], keys: &[&str]) -> Option<(String, Span)> {
+pub(crate) fn serde_key_span(attrs: &[syn::Attribute], keys: &[&str]) -> Option<(String, Span)> {
     let mut found = None;
     for attr in attrs {
         if !attr.path().is_ident("serde") {

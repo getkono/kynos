@@ -1,0 +1,5 @@
+error: an enum with no variant has no value a parameter could carry, so every request naming it would be refused. Declare the variants it accepts
+ --> tests/ui/macros/param_value_without_variants.rs:5:6
+  |
+5 | enum Never {}
+  |      ^^^^^

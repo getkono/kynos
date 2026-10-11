@@ -23,7 +23,8 @@
 //!   right tool for each.
 //! * **A parameter is one value.** Each field is a `ParamValue`: read with
 //!   `FromStr`, written with `Display`, and described by a schema that is not
-//!   an object or an array. `UserId` below opts in with an empty impl.
+//!   an object or an array. `UserId` below opts in with an empty impl, and
+//!   `Order` derives all three from the names its schema lists.
 //! * **A hand-written extractor is a first-class one.** `ApiVersion` below
 //!   implements the same two traits the derives implement. Nothing about the
 //!   derived path is privileged, which is what makes the rule "every argument
@@ -93,12 +94,28 @@ struct UserPath {
     id: UserId,
 }
 
+/// Which way a list runs.
+///
+/// Derived rather than written out: `Display` writes `asc` and `desc`, the
+/// names the schema's `enum` lists, and `FromStr` reads exactly those, so the
+/// description and the decoder cannot drift apart.
+#[allow(dead_code)]
+#[derive(Schema, Serialize, Deserialize, kynos::ParamValue)]
+#[serde(rename_all = "lowercase")]
+enum Order {
+    Asc,
+    Desc,
+}
+
 /// How a list is paged.
 #[allow(dead_code)]
 #[derive(Schema, QueryParams)]
 struct Page {
     /// Optional, because the type is.
     after: Option<u64>,
+
+    /// Refused with the names it accepts when it is none of them.
+    order: Option<Order>,
 
     /// `rename` is what lets a Rust name and a wire name differ without either
     /// being written twice. Both derives read serde's `rename` too, so a type
@@ -187,9 +204,9 @@ impl Describe for ApiVersion {
 
 /// Fetches one user.
 ///
-/// Seven arguments, and the description lists exactly the six things a consumer
-/// can observe: one path variable, two query parameters, two conditional
-/// headers, one cookie and one custom header. `MatchedPath` and `ConnectInfo`
+/// Seven arguments, and the description lists exactly the eight things a
+/// consumer can observe: one path variable, three query parameters, two
+/// conditional headers, one cookie and one custom header. `MatchedPath` and `ConnectInfo`
 /// contribute nothing, by saying so.
 #[kynos::get("/users/{id}")]
 #[allow(clippy::too_many_arguments)]

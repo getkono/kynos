@@ -1118,3 +1118,17 @@ mod checking {
         assert!(!is_multiple(1.0, 3.0));
     }
 }
+
+/// Each arity `UnknownVariant` lists its names in, the empty one included,
+/// which no derive builds but `new` accepts.
+#[test]
+fn an_unknown_variant_lists_what_it_expected() {
+    use crate::schema::UnknownVariant;
+
+    assert_eq!(UnknownVariant::new(&[]).to_string(), "expected no value");
+    assert_eq!(UnknownVariant::new(&["asc"]).to_string(), "expected `asc`");
+    assert_eq!(
+        UnknownVariant::new(&["asc", "desc", "random"]).to_string(),
+        "expected one of `asc`, `desc`, `random`"
+    );
+}
