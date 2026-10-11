@@ -1,0 +1,5 @@
+error: `carrier` takes `manual`, which leaves the `Carries` implementation to you, or `optional`, which hands an absent credential to the authenticator; every other carrier follows from the kind
+ --> tests/ui/macros/security_scheme_carrier_unknown.rs:2:30
+  |
+2 | #[security(bearer, carrier = automatic)]
+  |                              ^^^^^^^^^
