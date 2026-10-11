@@ -93,19 +93,15 @@ where
             return Ok(None);
         };
 
-        context
-            .authenticator()
-            .authenticate(presented, context)
-            .await
-            .map(Some)
+        verify::<S, C>(presented, context).await.map(Some)
     }
 }
 
 /// Any one of a tuple of schemes, tried in order.
 ///
 /// Declares one requirement per scheme, `[{A}, {B}]`, which is OpenAPI's
-/// "either". The first scheme that authenticates wins; a scheme whose
-/// credential is absent is skipped. When none authenticates, the first refusal
+/// "either". The first scheme that authenticates, and is authorized for its
+/// default scopes, wins; a scheme whose credential is absent is skipped. When none authenticates, the first refusal
 /// in declaration order is the answer, and when nothing was presented at all
 /// the requirement is absent.
 ///
@@ -276,9 +272,7 @@ macro_rules! all_of {
                     };
                 )+
                 $(
-                    let $scheme = <C as Authenticates<$scheme>>::authenticator(context)
-                        .authenticate($scheme, context)
-                        .await?;
+                    let $scheme = verify::<$scheme, C>($scheme, context).await?;
                 )+
                 Ok(Some(($($scheme,)+)))
             }
@@ -293,6 +287,28 @@ any_of!(Either4; A => First, B => Second, D => Third, E => Fourth);
 all_of!(A, B);
 all_of!(A, B, D);
 all_of!(A, B, D, E);
+
+/// Authenticates `presented` as scheme `S`, then authorizes the scheme's
+/// default scopes, so a guard naming no scope set enforces what
+/// [`declare`](Requirement::declare) wrote for it.
+///
+/// A scheme with no default scopes is never authorized here: its requirement
+/// declares none, so there is nothing to check.
+async fn verify<S, C>(presented: S::Presented, context: &C) -> Result<S::Credential, AuthRejection>
+where
+    S: Carries,
+    C: Authenticates<S>,
+{
+    let authenticator = context.authenticator();
+    let credential = authenticator.authenticate(presented, context).await?;
+    let defaults = S::scopes();
+    if !defaults.is_empty() {
+        authenticator
+            .authorize(&credential, defaults, context)
+            .await?;
+    }
+    Ok(credential)
+}
 
 /// Registers scheme `S` and returns the requirement naming it with `scopes`.
 ///

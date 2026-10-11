@@ -228,7 +228,11 @@ pub trait SecurityScheme: Send + Sync + 'static {
 
     /// The scopes this scheme requires by default.
     ///
-    /// Declared on every requirement naming the scheme. OAuth 2.0 and OpenID
+    /// Declared on every requirement naming the scheme, and handed to
+    /// [`Authenticator::authorize`] by every guard naming it, so a credential
+    /// lacking one is refused wherever the description says it is demanded.
+    /// A scheme with none is never authorized but by a
+    /// [`Scoped`](auth::Scoped) argument. OAuth 2.0 and OpenID
     /// Connect call them scopes; OpenAPI lets any other scheme list role names
     /// here instead.
     #[must_use]
@@ -276,7 +280,11 @@ pub trait SecurityScheme: Send + Sync + 'static {
 ///
 /// assert_eq!(Grant::ReadReports.name(), "reports:read");
 /// ```
-pub trait Scope: Send + Sync + 'static {
+///
+/// `Clone`, so a [`Scoped`](auth::Scoped) argument can join its scheme's
+/// default scopes and its set's into the one slice
+/// [`Authenticator::authorize`] receives.
+pub trait Scope: Clone + Send + Sync + 'static {
     /// The scope as a description and a token spell it.
     fn name(&self) -> &'static str;
 }
