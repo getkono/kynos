@@ -371,6 +371,62 @@ fn a_member_described_as_another_type_lends_no_kind() {
     assert!(!implements!(Headcount: Textual));
 }
 
+/// Strings carrying content of their own: base64 bytes under a length bound,
+/// a document embedded as text, and a newtype that lends its string's kind.
+#[derive(Debug, Schema, Deserialize)]
+struct Upload {
+    #[schema(
+        content_encoding = "base64",
+        content_media_type = "application/x-bittorrent",
+        max_length = 8
+    )]
+    torrent: String,
+    #[schema(content_media_type = "application/json")]
+    #[serde(default)]
+    manifest: Option<String>,
+    #[schema(content_encoding = "base64url")]
+    sku: Sku,
+}
+
+/// `contentEncoding` and `contentMediaType` are annotations in draft 2020-12,
+/// so the description carries them and neither side asserts them: content
+/// that does not decode is admitted by the validator and by `Json` alike,
+/// while a bound beside them is still enforced.
+#[tokio::test]
+async fn a_content_annotation_is_described_and_asserted_by_neither_side() {
+    let schema = emitted::<Upload>();
+    let properties = &schema["properties"];
+    assert_eq!(
+        properties["torrent"],
+        json!({
+            "type": "string",
+            "maxLength": 8,
+            "contentEncoding": "base64",
+            "contentMediaType": "application/x-bittorrent",
+        })
+    );
+    assert_eq!(
+        properties["manifest"]["contentMediaType"],
+        json!("application/json")
+    );
+    assert_eq!(properties["manifest"].get("contentEncoding"), None);
+    assert_eq!(properties["sku"]["contentEncoding"], json!("base64url"));
+    assert_eq!(properties["sku"]["$ref"], json!("#/components/schemas/Sku"));
+
+    let upload = json!({ "torrent": "QUJD", "manifest": "{}", "sku": "abc" });
+    admits::<Upload>(upload.clone()).await;
+
+    let mut undecodable = upload.clone();
+    undecodable["torrent"] = json!("!!");
+    undecodable["manifest"] = json!("not json");
+    undecodable["sku"] = json!("a b c");
+    admits::<Upload>(undecodable).await;
+
+    let mut long = upload;
+    long["torrent"] = json!("QUJDREVGR0hJ");
+    refuses::<Upload>(long, &["/torrent"]).await;
+}
+
 /// Externally tagged, the default: a payload sits under its variant's name.
 #[derive(Debug, Schema, Deserialize)]
 #[serde(rename_all = "snake_case")]

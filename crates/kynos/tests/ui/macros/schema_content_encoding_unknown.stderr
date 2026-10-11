@@ -1,0 +1,5 @@
+error: "base-64" is not an encoding `contentEncoding` names: JSON Schema takes them from RFC 4648 and RFC 2045, which are `base16`, `base32`, `base32hex`, `base64`, `base64url` and `quoted-printable`, written in lowercase. A string carrying its content unencoded needs no key
+ --> tests/ui/macros/schema_content_encoding_unknown.rs:7:33
+  |
+7 |     #[schema(content_encoding = "base-64")]
+  |                                 ^^^^^^^^^

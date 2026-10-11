@@ -4,6 +4,7 @@
 use proc_macro2::Span;
 use syn::{DeriveInput, Field, Fields, Lit, LitStr, Type};
 
+use crate::derive::common::non_token_message;
 use crate::derive::schema::{
     COUNTS, Container, NUMERIC,
     attributes::{described_as_keys, is_flattened, is_phantom, open_span},
@@ -188,6 +189,40 @@ fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
         return enforceable(&pattern).map_err(|reason| syn::Error::new(pattern.span(), reason));
     }
 
+    if name == "content_encoding" {
+        let encoding: LitStr = meta.value()?.parse()?;
+        if ENCODINGS.contains(&encoding.value().as_str()) {
+            return Ok(());
+        }
+        return Err(syn::Error::new(
+            encoding.span(),
+            format!(
+                "{:?} is not an encoding `contentEncoding` names: JSON Schema takes them from \
+                 RFC 4648 and RFC 2045, which are `base16`, `base32`, `base32hex`, `base64`, \
+                 `base64url` and `quoted-printable`, written in lowercase. A string carrying \
+                 its content unencoded needs no key",
+                encoding.value()
+            ),
+        ));
+    }
+
+    if name == "content_media_type" {
+        let media_type: LitStr = meta.value()?.parse()?;
+        if is_media_type(&media_type.value()) {
+            return Ok(());
+        }
+        return Err(syn::Error::new(
+            media_type.span(),
+            format!(
+                "{:?} is not a media type, which `contentMediaType` must be: a type and a \
+                 subtype, each a token, joined by `/` and optionally followed by `; name=value` \
+                 parameters, as in `image/png` or `text/plain; charset=utf-8` (RFC 9110 \
+                 section 8.3.1)",
+                media_type.value()
+            ),
+        ));
+    }
+
     if name == "as" {
         let _: Type = meta.value()?.parse()?;
         return Ok(());
@@ -199,9 +234,85 @@ fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
             "`{name}` is not part of the `#[schema(...)]` grammar, which is the keys of \
              `kynos::schema::constraints::Constraints`: `minimum`, `maximum`, \
              `exclusive_minimum`, `exclusive_maximum`, `multiple_of`, `min_length`, \
-             `max_length`, `pattern`, `min_items`, `max_items` and `unique_items`; plus \
-             `open`, which says a flattened field's members are not named, and `as = T`, \
-             which describes a field as the type `T`"
+             `max_length`, `pattern`, `min_items`, `max_items`, `unique_items`, \
+             `content_encoding` and `content_media_type`; plus `open`, which says a flattened \
+             field's members are not named, and `as = T`, which describes a field as the type \
+             `T`"
         ),
     ))
+}
+
+/// The `contentEncoding` values JSON Schema 2020-12 (validation, section 8.3)
+/// points to: RFC 4648's, and RFC 2045's sections 6.7 and 6.8.
+const ENCODINGS: &[&str] = &[
+    "base16",
+    "base32",
+    "base32hex",
+    "base64",
+    "base64url",
+    "quoted-printable",
+];
+
+/// Whether `value` is RFC 9110's `media-type` (section 8.3.1):
+/// `type "/" subtype *( OWS ";" OWS [ parameter ] )`, each `parameter` a
+/// `token "=" ( token / quoted-string )`.
+fn is_media_type(value: &str) -> bool {
+    const OWS: [char; 2] = [' ', '\t'];
+    let token = |text: &str| non_token_message(text, "", "").is_none();
+
+    let end = value.find([';', ' ', '\t']).unwrap_or(value.len());
+    let Some((kind, subtype)) = value[..end].split_once('/') else {
+        return false;
+    };
+    if !token(kind) || !token(subtype) {
+        return false;
+    }
+
+    let mut rest = &value[end..];
+    while !rest.is_empty() {
+        let Some(after) = rest.trim_start_matches(OWS).strip_prefix(';') else {
+            return false;
+        };
+        rest = after.trim_start_matches(OWS);
+        // An empty parameter, which the grammar's `[ parameter ]` allows.
+        if rest.is_empty() || rest.starts_with(';') {
+            continue;
+        }
+        let Some((name, after)) = rest.split_once('=') else {
+            return false;
+        };
+        if !token(name) {
+            return false;
+        }
+        rest = if let Some(quoted) = after.strip_prefix('"') {
+            let Some(after) = after_quoted_string(quoted) else {
+                return false;
+            };
+            after
+        } else {
+            let end = after.find([';', ' ', '\t']).unwrap_or(after.len());
+            if !token(&after[..end]) {
+                return false;
+            }
+            &after[end..]
+        };
+    }
+    true
+}
+
+/// What follows a `quoted-string` (RFC 9110 section 5.6.4) whose opening quote
+/// has been read, or `None` where it never closes or holds a control character.
+fn after_quoted_string(text: &str) -> Option<&str> {
+    let mut characters = text.char_indices();
+    while let Some((index, character)) = characters.next() {
+        let character = match character {
+            '"' => return Some(&text[index + 1..]),
+            '\\' => characters.next()?.1,
+            other => other,
+        };
+        if character.is_ascii_control() && character != '\t' {
+            return None;
+        }
+    }
+    None
 }
