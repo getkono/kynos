@@ -1,6 +1,6 @@
 use super::{
-    COUNTS, Container, Field, Fields, IdentExt, Lit, LitFloat, LitInt, LitStr, NUMERIC, Span,
-    Spanned, TokenStream2, Type, Variant, quote, skip_value, string_value,
+    ANNOTATIONS, COUNTS, Container, Field, Fields, IdentExt, Lit, LitFloat, LitInt, LitStr,
+    NUMERIC, Span, Spanned, TokenStream2, Type, Variant, quote, skip_value, string_value,
 };
 
 /// The name serde writes a named field under: the serialize side of its
@@ -440,6 +440,9 @@ pub(super) enum BoundValue {
     Count(LitInt),
     /// The `pattern`, as written.
     Pattern(LitStr),
+    /// A `content_encoding` or `content_media_type`, as written: an annotation
+    /// the check holds the field's kind to and nothing else.
+    Annotation(LitStr),
 }
 
 impl quote::ToTokens for BoundValue {
@@ -447,7 +450,7 @@ impl quote::ToTokens for BoundValue {
         match self {
             Self::Number(number) => number.to_tokens(tokens),
             Self::Count(count) => count.to_tokens(tokens),
-            Self::Pattern(pattern) => pattern.to_tokens(tokens),
+            Self::Pattern(text) | Self::Annotation(text) => text.to_tokens(tokens),
         }
     }
 }
@@ -501,6 +504,11 @@ pub(super) fn bounds(field: &Field) -> Vec<Bound> {
                     Lit::Str(pattern) => Some(BoundValue::Pattern(pattern)),
                     _ => None,
                 }
+            } else if ANNOTATIONS.contains(&name.as_str()) {
+                match literal {
+                    Lit::Str(annotation) => Some(BoundValue::Annotation(annotation)),
+                    _ => None,
+                }
             } else {
                 None
             };
@@ -527,9 +535,9 @@ pub(crate) fn constraints(field: &Field) -> Option<TokenStream2> {
             None => quote! {
                 constraints.#key = ::core::option::Option::Some(true);
             },
-            Some(BoundValue::Pattern(pattern)) => quote! {
+            Some(BoundValue::Pattern(text) | BoundValue::Annotation(text)) => quote! {
                 constraints.#key = ::core::option::Option::Some(
-                    ::std::string::String::from(#pattern),
+                    ::std::string::String::from(#text),
                 );
             },
             Some(value) => quote! {

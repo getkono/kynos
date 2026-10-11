@@ -23,6 +23,13 @@ struct Product {
 
     #[schema(min_items = 1, max_items = 10, unique_items)]
     tags: Vec<String>,
+
+    #[schema(
+        content_encoding = "base64",
+        content_media_type = "application/x-bittorrent",
+        max_length = 1398101
+    )]
+    torrent: Option<String>,
 }
 
 fn main() {}

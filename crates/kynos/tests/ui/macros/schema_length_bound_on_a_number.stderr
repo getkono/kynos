@@ -5,7 +5,7 @@ error[E0277]: `u32` is not a string, so a string bound cannot apply to it
   |            ^^^ not a string
   |
   = help: the trait `Textual` is not implemented for `u32`
-  = note: `min_length`, `max_length` and `pattern` apply to `String`, and to an `Option`, `Box` or `Arc` of one; implement `kynos::schema::constraints::Textual` for a newtype that is a string on the wire
+  = note: `min_length`, `max_length`, `pattern`, `content_encoding` and `content_media_type` apply to `String`, and to an `Option`, `Box` or `Arc` of one; implement `kynos::schema::constraints::Textual` for a newtype that is a string on the wire
 help: the following other types implement trait `Textual`
  --> src/schema/constraints.rs
   |

@@ -182,6 +182,18 @@ pub fn unique_items<T: UniqueItems + ?Sized>(
     }
 }
 
+/// `contentEncoding` is an annotation and checks nothing: the call only holds
+/// the field to [`Textual`], since the keyword describes a string's content.
+/// It takes a bound's arguments so the derive calls it as it calls one.
+#[doc(hidden)]
+pub fn content_encoding<T: Textual + ?Sized>(_: &T, _: &str, _: Pointer<'_>, _: &mut Violations) {}
+
+/// `contentMediaType` is an annotation, held to [`Textual`] as
+/// [`content_encoding`] is.
+#[doc(hidden)]
+pub fn content_media_type<T: Textual + ?Sized>(_: &T, _: &str, _: Pointer<'_>, _: &mut Violations) {
+}
+
 /// Checks a member serde reads under any of `names`, its read name first,
 /// and reports what `check` finds at `at`, the object holding the member.
 ///

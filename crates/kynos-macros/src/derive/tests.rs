@@ -164,6 +164,33 @@ mod schema {
         ]
     }
 
+    /// The values a `content_*` annotation refuses; a function of its own for
+    /// the reason `serde_ledger` gives.
+    fn content_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a `content_encoding` no RFC JSON Schema points to defines",
+                quote::quote!(
+                    struct Upload {
+                        #[schema(content_encoding = "base-64")]
+                        torrent: String,
+                    }
+                ),
+                "is not an encoding `contentEncoding` names",
+            ),
+            case(
+                "a `content_media_type` that is not a media type",
+                quote::quote!(
+                    struct Upload {
+                        #[schema(content_media_type = "bittorrent")]
+                        torrent: String,
+                    }
+                ),
+                "is not a media type",
+            ),
+        ]
+    }
+
     /// Where `#[schema(as = T)]` cannot describe a field; a function of its
     /// own for the reason `serde_ledger` gives.
     fn described_as_ledger() -> Vec<Case> {
@@ -499,6 +526,7 @@ mod schema {
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
+        each_case_is_refused(content_ledger(), expand_inner);
         each_case_is_refused(described_as_ledger(), expand_inner);
         each_case_is_refused(serde_ledger(), expand_inner);
         each_case_is_refused(variant_ledger(), expand_inner);
@@ -525,6 +553,7 @@ mod schema {
             ]
             .concat(),
             ledger().len()
+                + content_ledger().len()
                 + described_as_ledger().len()
                 + serde_ledger().len()
                 + variant_ledger().len()
@@ -532,6 +561,92 @@ mod schema {
                 + tag_ledger().len()
                 + rename_ledger().len(),
         );
+    }
+
+    /// The `content_encoding` the derive accepts is exactly the set JSON
+    /// Schema points to, lowercase, and a `content_media_type` is RFC 9110's
+    /// `media-type`, parameters and their quoted strings included.
+    ///
+    /// Beside the ledger rather than in it: its rows prove each site fires,
+    /// and these prove where each grammar's edge is.
+    #[test]
+    fn a_content_annotation_is_held_to_its_grammar() {
+        let declare = |key: &str, value: &str| -> DeriveInput {
+            let key = syn::Ident::new(key, proc_macro2::Span::call_site());
+            syn::parse2(quote::quote!(
+                struct Upload {
+                    #[schema(#key = #value)]
+                    torrent: String,
+                }
+            ))
+            .expect("the declaration parses")
+        };
+
+        for encoding in [
+            "base16",
+            "base32",
+            "base32hex",
+            "base64",
+            "base64url",
+            "quoted-printable",
+        ] {
+            assert!(
+                expand_inner(&declare("content_encoding", encoding)).is_ok(),
+                "{encoding:?} is an encoding JSON Schema names"
+            );
+        }
+        for encoding in [
+            "", "BASE64", "base-64", "7bit", "binary", "identity", "gzip",
+        ] {
+            assert!(
+                expand_inner(&declare("content_encoding", encoding)).is_err(),
+                "{encoding:?} is no encoding JSON Schema names"
+            );
+        }
+
+        for media_type in [
+            "image/png",
+            "application/x-bittorrent",
+            "application/vnd.example+json",
+            "TEXT/Plain",
+            "text/plain;charset=utf-8",
+            "text/plain ; charset=utf-8",
+            "text/plain;",
+            "text/plain; ; charset=utf-8",
+            "text/plain; title=\"a; b \\\"c\\\"\"",
+            "text/plain; a=b\t;c=d",
+        ] {
+            assert!(
+                expand_inner(&declare("content_media_type", media_type)).is_ok(),
+                "{media_type:?} is a media type"
+            );
+        }
+        for media_type in [
+            "",
+            "image",
+            "image/",
+            "/png",
+            "image/png/x",
+            " image/png",
+            "image/png ",
+            "image /png",
+            "image/p ng",
+            "text/plain; charset",
+            "text/plain; =utf-8",
+            "text/plain; charset=",
+            "text/plain; charset=utf 8",
+            "text/plain; title=\"open",
+            "text/plain; title=\"a\"b",
+            "text/plain; title=\"a\\",
+            "text/plain; title=\"a\u{7}\"",
+            "text/plain; title=\"a\\\u{0}\"",
+            "text/plain, image/png",
+        ] {
+            assert!(
+                expand_inner(&declare("content_media_type", media_type)).is_err(),
+                "{media_type:?} is not a media type"
+            );
+        }
     }
 
     /// `Self` names the type as surely as its identifier does, in a variant as

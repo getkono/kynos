@@ -1,0 +1,5 @@
+error: "x-bittorrent" is not a media type, which `contentMediaType` must be: a type and a subtype, each a token, joined by `/` and optionally followed by `; name=value` parameters, as in `image/png` or `text/plain; charset=utf-8` (RFC 9110 section 8.3.1)
+ --> tests/ui/macros/schema_content_media_type_malformed.rs:7:35
+  |
+7 |     #[schema(content_media_type = "x-bittorrent")]
+  |                                   ^^^^^^^^^^^^^^

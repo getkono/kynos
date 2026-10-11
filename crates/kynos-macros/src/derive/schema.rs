@@ -15,7 +15,12 @@
 //!             | pattern = "<ECMA-262 regex>"      with the `pattern` feature
 //!             | min_items = <integer> | max_items = <integer>
 //!             | unique_items
+//!             | content_encoding = "<RFC 4648 or RFC 2045 encoding>"
+//!             | content_media_type = "<RFC 9110 media type>"
 //! ```
+//!
+//! The two `content_*` keys are annotations, as JSON Schema makes them: the
+//! check holds the field to a string and asserts nothing about its content.
 //!
 //! `format` is deliberately absent: it follows from the type, so naming it here
 //! is an error that points at the remedy.
@@ -63,6 +68,10 @@ const NUMERIC: &[&str] = &[
 
 /// Keys taking a non-negative count.
 const COUNTS: &[&str] = &["min_length", "max_length", "min_items", "max_items"];
+
+/// Keys taking a string JSON Schema reads as an annotation: described on a
+/// string field and asserted by nothing.
+const ANNOTATIONS: &[&str] = &["content_encoding", "content_media_type"];
 
 pub(crate) fn expand(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
