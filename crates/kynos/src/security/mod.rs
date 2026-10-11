@@ -290,6 +290,8 @@ pub trait Scope: Send + Sync + 'static {
 pub enum Unscoped {}
 
 impl Scope for Unscoped {
+    // Uninhabited, so no test can call it and every mutant survives.
+    #[cfg_attr(test, mutants::skip)]
     fn name(&self) -> &'static str {
         match *self {}
     }
