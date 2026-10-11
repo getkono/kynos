@@ -47,6 +47,7 @@ fn every_derive_has_a_witness() {
         "CookieParams",
         "HeaderParams",
         "MultipartForm",
+        "ParamValue",
         "PathParams",
         "Provider",
         "QueryParams",

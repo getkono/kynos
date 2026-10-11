@@ -612,6 +612,41 @@ pub fn derive_reply(item: TokenStream) -> TokenStream {
     derive::reply::expand(item)
 }
 
+/// Makes a field-less enum a `kynos::schema::ParamValue`, emitting its
+/// `Display` and `FromStr` from the variant names the [`Schema`](macro@Schema)
+/// derive publishes.
+///
+/// ```ignore
+/// #[derive(Serialize, Deserialize, Schema, ParamValue)]
+/// #[serde(rename_all = "snake_case")]
+/// enum Phase {
+///     Checking,
+///     #[serde(alias = "metadata")]
+///     AwaitingMetadata,
+/// }
+/// ```
+///
+/// `Display` writes the name serde writes, `awaiting_metadata`, and `FromStr`
+/// reads every name serde reads, aliases included, which is the schema's
+/// `enum`; any other text is refused with `kynos::schema::UnknownVariant`,
+/// listing them. Names are matched exactly, as serde matches them.
+///
+/// Every serde attribute the `Schema` derive refuses is refused here too, so
+/// the names a decoder reads are never ones that derive would not publish.
+///
+/// # Rejected, because a parameter is one bare name
+///
+/// - a struct or a union, and an enum with no variant;
+/// - a variant carrying data, `A {}` and `A()` included, which serde writes as
+///   an object;
+/// - `#[serde(tag = "...")]`, which writes each variant as an object;
+/// - `#[serde(skip)]` or `#[serde(skip_serializing)]` on a variant, which
+///   leaves `Display` nothing to write.
+#[proc_macro_derive(ParamValue)]
+pub fn derive_param_value(item: TokenStream) -> TokenStream {
+    derive::param_value::expand(item)
+}
+
 /// Declares a group of path parameters.
 ///
 /// Wire names must match the route template's variables in declaration order;

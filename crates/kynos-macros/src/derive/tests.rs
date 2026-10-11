@@ -5359,3 +5359,106 @@ mod tag {
         every_diagnostic_has_a_case("tag.rs", include_str!("tag.rs"), covered);
     }
 }
+
+mod param_value {
+    use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
+    use crate::derive::param_value::expand_inner;
+
+    fn ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a struct, which has no variant names",
+                quote::quote!(
+                    struct UserId(u64);
+                ),
+                "derived for a field-less enum",
+            ),
+            case(
+                "a variant carrying data",
+                quote::quote!(
+                    enum Phase {
+                        Checking,
+                        Failed(String),
+                    }
+                ),
+                "a variant declaring fields",
+            ),
+            case(
+                "an enum with no variant",
+                quote::quote!(
+                    enum Never {}
+                ),
+                "no variant",
+            ),
+            case(
+                "an internally tagged enum",
+                quote::quote!(
+                    #[serde(tag = "kind")]
+                    enum Phase {
+                        Checking,
+                    }
+                ),
+                "Drop `tag`",
+            ),
+            case(
+                "a variant serde never writes",
+                quote::quote!(
+                    enum Phase {
+                        Checking,
+                        #[serde(skip_serializing)]
+                        Legacy,
+                    }
+                ),
+                "`skip_serializing` leaves this variant",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_case_raises_the_diagnostic_it_names() {
+        each_case_is_refused(ledger(), expand_inner);
+    }
+
+    #[test]
+    fn every_param_value_diagnostic_has_a_case() {
+        every_diagnostic_has_a_case(
+            "param_value.rs",
+            include_str!("param_value.rs"),
+            ledger().len(),
+        );
+    }
+
+    /// The names come from the `Schema` derive's rules, so its refusals guard
+    /// them here too: a split `rename` would let `Display` write a name
+    /// `FromStr` never reads. A variant skipped both ways is refused before
+    /// those rules, which leave it out of the schema, could drop it silently.
+    #[test]
+    fn the_schema_refusals_guard_the_names() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "a split rename",
+                    quote::quote!(
+                        enum Phase {
+                            #[serde(rename(serialize = "checking", deserialize = "check"))]
+                            Checking,
+                        }
+                    ),
+                    "reads it as `check`",
+                ),
+                case(
+                    "a variant skipped both ways",
+                    quote::quote!(
+                        enum Phase {
+                            Checking,
+                            #[serde(skip)]
+                            Legacy,
+                        }
+                    ),
+                    "`skip` leaves this variant",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+}

@@ -37,7 +37,7 @@ pub(crate) mod check;
 mod kinds;
 #[cfg(feature = "pattern")]
 mod pattern;
-mod refusals;
+pub(crate) mod refusals;
 mod shape;
 
 use attributes::{

@@ -338,6 +338,25 @@ impl MapKey for String {
 ///     id: UserId,
 /// }
 /// ```
+///
+/// A field-less enum derives all three from the names its `Schema` derive
+/// publishes, so the parameter's `enum` and its decoder cannot disagree, and
+/// other text is refused with [`UnknownVariant`]:
+///
+/// ```
+/// #[derive(serde::Serialize, serde::Deserialize, kynos::Schema, kynos::ParamValue)]
+/// #[serde(rename_all = "snake_case")]
+/// enum Phase {
+///     Checking,
+///     AwaitingMetadata,
+/// }
+///
+/// assert_eq!(Phase::AwaitingMetadata.to_string(), "awaiting_metadata");
+/// assert!(matches!("checking".parse(), Ok(Phase::Checking)));
+/// let refused = "seeding".parse::<Phase>().err().map(|error| error.to_string());
+/// let expected = "expected one of `checking`, `awaiting_metadata`";
+/// assert_eq!(refused.as_deref(), Some(expected));
+/// ```
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a value one parameter carries",
     label = "not one parameter value",
@@ -351,6 +370,46 @@ pub trait ParamValue:
     Schema + std::str::FromStr<Err: std::fmt::Display> + std::fmt::Display
 {
 }
+
+/// The `FromStr` error of an enum deriving [`ParamValue`]: text naming none of
+/// its variants.
+///
+/// Carries the names the enum reads, in declaration order, and not the text
+/// refused, which a parameter rejection already reports beside the parameter's
+/// name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnknownVariant {
+    expected: &'static [&'static str],
+}
+
+impl UnknownVariant {
+    /// The error refusing text that is none of `expected`.
+    #[must_use]
+    pub const fn new(expected: &'static [&'static str]) -> Self {
+        Self { expected }
+    }
+
+    /// Every name the enum reads, in declaration order.
+    #[must_use]
+    pub const fn expected(&self) -> &'static [&'static str] {
+        self.expected
+    }
+}
+
+impl std::fmt::Display for UnknownVariant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.expected {
+            [] => f.write_str("expected no value"),
+            [only] => write!(f, "expected `{only}`"),
+            [first, rest @ ..] => {
+                write!(f, "expected one of `{first}`")?;
+                rest.iter().try_for_each(|name| write!(f, ", `{name}`"))
+            }
+        }
+    }
+}
+
+impl std::error::Error for UnknownVariant {}
 
 /// Whether `schema`'s `type` names `null`, whatever its other keywords say.
 pub(crate) fn type_admits_null(schema: &OpenApiSchema) -> bool {
