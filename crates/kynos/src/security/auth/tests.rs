@@ -21,6 +21,7 @@ use crate::{
 #[derive(Clone, Copy)]
 enum Grant {
     ReadReports,
+    WriteReports,
     Audit,
 }
 
@@ -28,6 +29,7 @@ impl Scope for Grant {
     fn name(&self) -> &'static str {
         match self {
             Self::ReadReports => "reports:read",
+            Self::WriteReports => "reports:write",
             Self::Audit => "audit",
         }
     }
@@ -39,6 +41,15 @@ struct ReadReports;
 impl Scopes for ReadReports {
     type Scope = Grant;
     const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
+}
+
+/// A scope set naming one scope `Audited`'s defaults already name and one
+/// they do not.
+struct EditReports;
+
+impl Scopes for EditReports {
+    type Scope = Grant;
+    const REQUIRED: &'static [Grant] = &[Grant::ReadReports, Grant::WriteReports];
 }
 
 /// A scheme demanding `audit` and `reports:read` of every operation by default.
@@ -494,4 +505,19 @@ async fn scoped_authorizes_the_defaults_and_its_set_together() {
 
     assert!(guarded.is_ok());
     assert_eq!(admitting.0.authorized(), [vec!["audit", "reports:read"]]);
+}
+
+/// A `Scoped` set's scope the defaults do not name joins them, after the
+/// defaults and once, so `Scoped` still authorizes what its own set requires.
+#[tokio::test]
+async fn scoped_adds_its_own_scopes_to_the_defaults() {
+    let admitting = Recording::admitting();
+    let guarded =
+        <Scoped<Audited, EditReports> as Guard<_>>::guard(&presenting_a_token(), &admitting).await;
+
+    assert!(guarded.is_ok());
+    assert_eq!(
+        admitting.0.authorized(),
+        [vec!["audit", "reports:read", "reports:write"]]
+    );
 }
