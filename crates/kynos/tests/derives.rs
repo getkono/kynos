@@ -55,8 +55,9 @@ enum Shape {
     Square { side: f64 },
 }
 
-/// A generic type still mangles to one component name, so the derive must
-/// carry the generics through rather than assuming there are none.
+/// A generic type mangles each instantiation's component name from its
+/// arguments', so the derive must carry the generics through rather than
+/// assuming there are none.
 #[derive(Schema)]
 struct Page<T> {
     items: Vec<T>,
@@ -2484,8 +2485,44 @@ struct Wrapped<T> {
     value: T,
 }
 
-/// A generic transparent struct claims no component name, which every
-/// instantiation would otherwise share.
+/// An instantiation whose arguments all have component names is registered
+/// under the name they mangle to and referred to by it, one per
+/// instantiation; one whose argument has none is inlined.
+#[test]
+fn a_generic_instantiation_is_named_from_its_arguments() {
+    fn name_of<T: SchemaTrait>() -> Option<String> {
+        T::name().map(|name| name.to_string())
+    }
+
+    assert_eq!(name_of::<Page<User>>().as_deref(), Some("Page_User"));
+    assert_eq!(
+        name_of::<Page<Page<User>>>().as_deref(),
+        Some("Page_Page_User")
+    );
+    assert_eq!(name_of::<Page<u32>>(), None);
+    assert_eq!(name_of::<Page<Vec<User>>>(), None);
+
+    let mut registry = kynos::schema::registry::Registry::new();
+    let users = registry.resolve::<Page<User>>();
+    let shapes = registry.resolve::<Page<Shape>>();
+    let counts = registry.resolve::<Page<u32>>();
+    assert_eq!(users, kynos::openapi::Schema::component("Page_User"));
+    assert_eq!(shapes, kynos::openapi::Schema::component("Page_Shape"));
+    assert!(
+        counts
+            .as_object()
+            .is_some_and(|page| page.properties.contains_key("items")),
+        "`Page<u32>` is inlined"
+    );
+
+    let components = registry.into_components();
+    let mut names: Vec<&str> = components.schemas.keys().map(String::as_str).collect();
+    names.sort_unstable();
+    assert_eq!(names, ["Page_Shape", "Page_User", "Shape", "User"]);
+}
+
+/// A generic transparent struct whose argument has no component name claims
+/// none either.
 #[test]
 fn a_generic_transparent_struct_claims_no_component_name() {
     assert!(

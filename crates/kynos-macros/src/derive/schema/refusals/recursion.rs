@@ -11,9 +11,10 @@ use crate::derive::schema::{
 /// A generic type naming itself in a member its schema describes, through the
 /// member's type or the `#[schema(as = T)]` it is described as, is refused.
 ///
-/// A generic type is inlined, so it would recurse without end. Only the direct
-/// case (bare identifier or `Self`) is visible here; indirect cycles are
-/// refused by `Registry::resolve`.
+/// A generic type is named only where every type argument is, which the derive
+/// cannot see, and is otherwise inlined, where it would recurse without end;
+/// so every instantiation is refused. Only the direct case (bare identifier or
+/// `Self`) is visible here; indirect cycles are refused by `Registry::resolve`.
 pub(super) fn reject_recursive_generic(input: &DeriveInput) -> syn::Result<()> {
     if input.generics.type_params().next().is_none() {
         return Ok(());
@@ -30,9 +31,10 @@ pub(super) fn reject_recursive_generic(input: &DeriveInput) -> syn::Result<()> {
     Err(syn::Error::new(
         span,
         format!(
-            "`{name}` refers to itself, but a generic type has no component name and is \
-             inlined, so its schema would never end. Make the recursive type concrete, or \
-             implement `Schema` for it by hand returning a `name()`",
+            "`{name}` refers to itself, but a generic type has a component name only where \
+             each of its type arguments has one, and is otherwise inlined, so its schema \
+             could never end. Make the recursive type concrete, or implement `Schema` for it \
+             by hand returning a `name()`",
             name = input.ident,
         ),
     ))

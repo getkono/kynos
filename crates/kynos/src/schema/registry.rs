@@ -149,8 +149,9 @@ impl Registry {
             !self.inlining.contains(&entry),
             "`{}` refers to itself through no type with a component name, so its schema \
              would never end. A generic `#[derive(Schema)]` type is inlined rather than \
-             named: make the recursive type concrete, or implement `Schema` for it by hand \
-             returning a `name()`",
+             named where one of its type arguments has no component name: make the \
+             recursive type concrete, or implement `Schema` for it by hand returning a \
+             `name()`",
             entry.0
         );
 

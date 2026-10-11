@@ -94,14 +94,24 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let generics = schema_bounded_generics(input);
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
-    // Only a concrete type claims a component name: `Page<User>` and
-    // `Page<Order>` would collide, so a generic type is inlined (and so may not
-    // recurse; see `refusals::recursion`).
+    // A generic type mangles each instantiation's name from its arguments',
+    // `Page_User`, and is inlined where one has none, which the derive cannot
+    // see (so it may not recurse; see `refusals::recursion`).
     let component = LitStr::new(&name.to_string(), name.span());
-    let named = if input.generics.type_params().next().is_some() {
-        quote!(::core::option::Option::None)
-    } else {
+    let arguments: Vec<&syn::Ident> = input
+        .generics
+        .type_params()
+        .map(|parameter| &parameter.ident)
+        .collect();
+    let named = if arguments.is_empty() {
         quote!(::kynos::openapi::ComponentName::sanitized(#component).ok())
+    } else {
+        quote! {
+            ::kynos::schema::instantiation_name(
+                #component,
+                &[#(<#arguments as ::kynos::schema::Schema>::name()),*],
+            )
+        }
     };
 
     let container = Container::read(input);
