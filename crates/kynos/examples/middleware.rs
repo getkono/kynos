@@ -298,6 +298,35 @@ impl RateLimitPolicy<()> for PerProcess {
 
 #[tokio::main]
 async fn main() -> kynos::Result<()> {
+    // Correlation. `trust_client` is false by default, and that default is
+    // the security-relevant one: an identifier a caller chose is an
+    // identifier a caller can forge into somebody else's logs.
+    //
+    // `header` takes a *group type*, not a name. The header this sets and
+    // the header every covered operation declares are then the same fact,
+    // read from one `const`, rather than two strings that have to agree.
+    let request_id = RequestId::new()
+        .header::<CorrelationId>()
+        .trust_client(false)
+        .source(Monotonic);
+    // Observability, and the one entry here that is an *observer* rather
+    // than an interceptor. An observer cannot change a request or a
+    // response, so it contributes nothing to any description -- which is
+    // exactly why tracing is one: a log line is not part of the contract.
+    // Kynos depends on the `tracing` facade and never on a subscriber, so
+    // choosing where the records go stays the application's. `Trace` emits
+    // two events per request rather than one span: an observer holds
+    // nothing between the two ends it is told about.
+    //
+    // `correlating` reads the header and the trust setting from the
+    // `RequestId` above, so the closing event's `request_id` is the
+    // `X-Correlation-Id` this service sends. Without it, `Trace` assumes
+    // `RequestId::new()` and looks for an `x-request-id` no response carries.
+    // Both are bound here because `intercept` takes `request_id` by value.
+    let trace = Trace::new()
+        .level(tracing::Level::INFO)
+        .correlating(&request_id)
+        .record_headers(&["x-correlation-id", "x-tenant"]);
     let router = Router::<()>::new()
         // The fields every API response should carry, each documented as the
         // one value it sends. Outermost, so a cache inside it still stores.
@@ -324,32 +353,9 @@ async fn main() -> kynos::Result<()> {
                 .allow_credentials()
                 .document_response_headers(),
         )
-        // Correlation. `trust_client` is false by default, and that default is
-        // the security-relevant one: an identifier a caller chose is an
-        // identifier a caller can forge into somebody else's logs.
-        //
-        // `header` takes a *group type*, not a name. The header this sets and
-        // the header every covered operation declares are then the same fact,
-        // read from one `const`, rather than two strings that have to agree.
-        .intercept(
-            RequestId::new()
-                .header::<CorrelationId>()
-                .trust_client(false)
-                .source(Monotonic),
-        )
-        // Observability, and the one entry here that is an *observer* rather
-        // than an interceptor. An observer cannot change a request or a
-        // response, so it contributes nothing to any description -- which is
-        // exactly why tracing is one: a log line is not part of the contract.
-        // Kynos depends on the `tracing` facade and never on a subscriber, so
-        // choosing where the records go stays the application's. `Trace` emits
-        // two events per request rather than one span: an observer holds
-        // nothing between the two ends it is told about.
-        .observe(
-            Trace::new()
-                .level(tracing::Level::INFO)
-                .record_headers(&["x-correlation-id", "x-tenant"]),
-        )
+        // Correlation, and the observer that reads it; both are built above.
+        .intercept(request_id)
+        .observe(trace)
         // Compression negotiates on `Accept-Encoding`. `min_size` exists
         // because compressing a 40-byte body costs more than it saves, and it
         // defaults to 2 KiB: the smallest body at which every coding saves a
