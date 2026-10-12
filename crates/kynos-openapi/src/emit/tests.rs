@@ -349,12 +349,12 @@ mod unrecognised {
     }
 }
 
-/// An extension key that repeats a model field is written as `serde_yaml_ng`
+/// An extension key that repeats a model field is written as `serde_norway`
 /// writes the model: beside the field, not in place of it.
 ///
 /// A document carrying one is malformed, since an extension's name starts with
 /// `x-`, but emitting it must not silently drop the field it collides with. A
-/// route through an intermediate `serde_yaml_ng::Value` would, because a
+/// route through an intermediate `serde_norway::Value` would, because a
 /// mapping holds one value per key. Outside `mod yaml`, and excluded by name
 /// from `test:arbitrary-precision`, on purpose: under that task that route is
 /// the one taken, and the two sides differ there by design.
@@ -371,7 +371,7 @@ fn an_extension_repeating_a_model_field_leaves_the_field_in_place() {
         document
             .to_yaml()
             .expect("the document is representable in YAML"),
-        serde_yaml_ng::to_string(&document).expect("the model serializes to YAML")
+        serde_norway::to_string(&document).expect("the model serializes to YAML")
     );
 }
 
@@ -384,7 +384,7 @@ fn an_extension_repeating_a_model_field_leaves_the_field_in_place() {
 /// under the graph that switch is on in.
 #[cfg(feature = "yaml")]
 mod yaml {
-    use serde_yaml_ng::{Number, Value};
+    use serde_norway::{Number, Value};
 
     use super::document;
 
@@ -412,7 +412,7 @@ mod yaml {
         }
 
         let yaml = document.to_yaml().expect("every number here fits a float");
-        let emitted: Value = serde_yaml_ng::from_str(&yaml).expect("emitted YAML parses");
+        let emitted: Value = serde_norway::from_str(&yaml).expect("emitted YAML parses");
 
         for (node, expected) in [
             (&emitted["x-limit"], Number::from(42u64)),
@@ -482,7 +482,7 @@ mod yaml {
     /// non-string, and those are the arms a walk gets wrong without failing.
     #[test]
     fn restore_rewrites_exactly_a_token_mapping() {
-        use serde_yaml_ng::{
+        use serde_norway::{
             Mapping,
             value::{Tag, TaggedValue},
         };

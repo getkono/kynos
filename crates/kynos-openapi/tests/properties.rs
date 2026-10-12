@@ -126,7 +126,7 @@ proptest! {
         prop_assert_eq!(to_json(&parse(&json)), json);
     }
 
-    /// YAML emission writes exactly what `serde_yaml_ng` writes for the model.
+    /// YAML emission writes exactly what `serde_norway` writes for the model.
     ///
     /// `to_yaml` may take any route to its output, but in a build where
     /// `serde_json`'s numbers serialize as numbers that output is the model's
@@ -134,10 +134,10 @@ proptest! {
     /// or drops a tag fails here rather than in a downstream diff.
     #[cfg(feature = "yaml")]
     #[test]
-    fn yaml_emission_is_what_serde_yaml_ng_writes_for_the_model(document in arb_document()) {
+    fn yaml_emission_is_what_serde_norway_writes_for_the_model(document in arb_document()) {
         prop_assert_eq!(
             document.to_yaml().expect("every generated value is representable in YAML"),
-            serde_yaml_ng::to_string(&document).expect("the model serializes to YAML")
+            serde_norway::to_string(&document).expect("the model serializes to YAML")
         );
     }
 

@@ -35,11 +35,11 @@ impl Document {
         // Only token-mapping builds take the detour through a `Value`, which
         // keeps one value per key where direct serialization writes every key.
         if !yaml_numbers::serialized_as_token() {
-            return serde_yaml_ng::to_string(self).map_err(YamlError);
+            return serde_norway::to_string(self).map_err(YamlError);
         }
-        let mut value = serde_yaml_ng::to_value(self).map_err(YamlError)?;
+        let mut value = serde_norway::to_value(self).map_err(YamlError)?;
         yaml_numbers::restore(&mut value).map_err(YamlError)?;
-        serde_yaml_ng::to_string(&value).map_err(YamlError)
+        serde_norway::to_string(&value).map_err(YamlError)
     }
 
     /// Produces this document as `version`, refusing a lossy downgrade.
@@ -72,12 +72,12 @@ impl Document {
 #[cfg(feature = "yaml")]
 #[derive(Debug, thiserror::Error)]
 #[error("the description could not be emitted as YAML")]
-pub struct YamlError(#[source] serde_yaml_ng::Error);
+pub struct YamlError(#[source] serde_norway::Error);
 
 #[cfg(feature = "yaml")]
 impl serde::ser::Error for YamlError {
     fn custom<T: std::fmt::Display>(message: T) -> Self {
-        Self(<serde_yaml_ng::Error as serde::ser::Error>::custom(message))
+        Self(<serde_norway::Error as serde::ser::Error>::custom(message))
     }
 }
 
@@ -85,12 +85,12 @@ impl serde::ser::Error for YamlError {
 /// unifies.
 ///
 /// Under `serde_json/arbitrary_precision` a number serializes as a private-token
-/// mapping, which `serde_yaml_ng` writes verbatim; since a crate cannot `cfg` on
+/// mapping, which `serde_norway` writes verbatim; since a crate cannot `cfg` on
 /// a dependency's features, this rewrites each such mapping back to a number.
 #[cfg(feature = "yaml")]
 mod yaml_numbers {
     use serde::ser::Error as _;
-    use serde_yaml_ng::{Mapping, Number, Value};
+    use serde_norway::{Mapping, Number, Value};
 
     /// Copy of `serde_json`'s `pub(crate)` `TOKEN` in `number.rs`; must stay in
     /// sync, which `mise run test:arbitrary-precision` checks.
@@ -98,15 +98,19 @@ mod yaml_numbers {
 
     /// Whether this build serializes a `serde_json::Number` as a token
     /// mapping, which is whether `arbitrary_precision` is on.
+    // Mutant runs leave `arbitrary_precision` off, where `false` is the
+    // answer, so the `false` mutant always survives;
+    // `test:arbitrary-precision` holds this to `true`.
+    #[cfg_attr(test, mutants::skip)]
     pub(super) fn serialized_as_token() -> bool {
         matches!(
-            serde_yaml_ng::to_value(serde_json::Number::from(0u8)),
+            serde_norway::to_value(serde_json::Number::from(0u8)),
             Ok(Value::Mapping(_))
         )
     }
 
     /// Replaces every token mapping in `value` with the number it holds.
-    pub(super) fn restore(value: &mut Value) -> Result<(), serde_yaml_ng::Error> {
+    pub(super) fn restore(value: &mut Value) -> Result<(), serde_norway::Error> {
         match value {
             Value::Sequence(items) => items.iter_mut().try_for_each(restore),
             Value::Mapping(mapping) => match token_digits(mapping) {
@@ -137,7 +141,7 @@ mod yaml_numbers {
     ///
     /// An integer that fits `u64` is unsigned, a negative one that fits `i64`
     /// is signed, and everything else (including `-0`) is a float.
-    pub(super) fn number_from_digits(digits: &str) -> Result<Number, serde_yaml_ng::Error> {
+    pub(super) fn number_from_digits(digits: &str) -> Result<Number, serde_norway::Error> {
         if let Ok(unsigned) = digits.parse::<u64>() {
             return Ok(Number::from(unsigned));
         }
@@ -148,7 +152,7 @@ mod yaml_numbers {
             Ok(float) if float.is_finite() => Ok(Number::from(float)),
             // Digits beyond any float, or a token-shaped object built by hand
             // whose string is no number: neither has a YAML number to be.
-            _ => Err(serde_yaml_ng::Error::custom(format_args!(
+            _ => Err(serde_norway::Error::custom(format_args!(
                 "a number serde_json holds as `{digits}` cannot be emitted as a YAML number"
             ))),
         }

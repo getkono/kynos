@@ -23,7 +23,7 @@ default = ["openapi31"]
 openapi31 = []
 # The 3.2 object model, a strict superset of 3.1.
 openapi32 = ["openapi31"]
-yaml = ["dep:serde_yaml_ng"]
+yaml = ["dep:serde_norway"]
 # `Method` to and from `http::Method`; optional so the model stays runtime-free.
 # Here because the orphan rule forbids `kynos` from writing it.
 http = ["dep:http"]
@@ -40,11 +40,12 @@ regex = { workspace = true, optional = true }
 regex-syntax = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-serde_yaml_ng = { workspace = true, optional = true }
+serde_norway = { workspace = true, optional = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 alloc_counter = { workspace = true }
+mutants = { workspace = true }
 proptest = { workspace = true }
 
 [lints]

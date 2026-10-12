@@ -68,7 +68,10 @@ serde = "1.0.221"
 # Reads a repeated key as a sequence, as `form` with `explode` describes.
 serde_html_form = "0.4.1"
 serde_json = "1.0.145"
-serde_yaml_ng = "0.10.0"
+# The maintained `serde_yaml` fork: `serde_yaml_ng` sits on `unsafe-libyaml`,
+# unmaintained (RUSTSEC-2024-0449), and the safe-Rust `serde-saphyr` needs
+# Rust 1.89, above the MSRV.
+serde_norway = "0.9.42"
 # TCP keepalive with an idle time, which tokio does not expose. Already in the
 # graph through tokio's `net`, with `all`.
 socket2 = { version = "0.6.5", features = ["all"] }

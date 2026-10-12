@@ -706,8 +706,8 @@ fn every_json_number_spelling_reads_at_a_numeric_keyword() {
 #[cfg(feature = "yaml")]
 #[test]
 fn a_numeric_keyword_read_from_yaml_refuses_what_serde_json_number_cannot_hold() {
-    fn maximum(yaml: &str) -> Result<Option<f64>, serde_yaml_ng::Error> {
-        serde_yaml_ng::from_str::<SchemaObject>(yaml).map(|object| object.maximum)
+    fn maximum(yaml: &str) -> Result<Option<f64>, serde_norway::Error> {
+        serde_norway::from_str::<SchemaObject>(yaml).map(|object| object.maximum)
     }
 
     assert_eq!(
@@ -720,8 +720,8 @@ fn a_numeric_keyword_read_from_yaml_refuses_what_serde_json_number_cannot_hold()
     }
 
     let arbitrary_precision = matches!(
-        serde_yaml_ng::to_value(serde_json::Number::from(0u8)),
-        Ok(serde_yaml_ng::Value::Mapping(_))
+        serde_norway::to_value(serde_json::Number::from(0u8)),
+        Ok(serde_norway::Value::Mapping(_))
     );
     let wide = maximum("maximum: 100000000000000000000");
     if arbitrary_precision {

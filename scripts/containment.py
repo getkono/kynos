@@ -1009,9 +1009,9 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
           "crates/kynos-openapi/src/pattern.rs"},
          "`regex` and `regex-syntax` are named only in `__private/constraints/pattern.rs` and "
          "`kynos-openapi`'s `pattern.rs`"),
-        (("serde_yaml_ng",), ONLY_IN,
+        (("serde_norway",), ONLY_IN,
          {"crates/kynos-openapi/src/emit/", "crates/kynos/src/error/mod.rs"},
-         "`serde_yaml_ng` is named only under `kynos-openapi/emit/` and in `error/mod.rs`"),
+         "`serde_norway` is named only under `kynos-openapi/emit/` and in `error/mod.rs`"),
         (("indexmap",), UNDER, "crates/kynos-openapi/src/",
          "`indexmap` is named only in `kynos-openapi`"),
         (("proc_macro2", "quote", "syn"), UNDER, "crates/kynos-macros/src/",

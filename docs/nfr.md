@@ -633,7 +633,7 @@ fails the build when a crate is named outside the module that owns it.
 | compatibility | `rust_decimal` and `bigdecimal` are named only under `schema/impls/decimal/` | `mise run containment:check` | `enforced` |
 | compatibility | `percent-encoding` is named only in `__private/uri.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `jsonschema` is named only in `test/conformance.rs` | `mise run containment:check` | `enforced` |
-| compatibility | `serde_yaml_ng` is named only under `kynos-openapi/emit/` and in `error/mod.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `serde_norway` is named only under `kynos-openapi/emit/` and in `error/mod.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `indexmap` is named only in `kynos-openapi` | `mise run containment:check` | `enforced` |
 | compatibility | `proc-macro2`, `quote` and `syn` are named only in `kynos-macros` | `mise run containment:check` | `enforced` |
 | dx | Every crate in `[workspace.dependencies]` is consumed by a member | `cargo-udeps` or an equivalent manifest check | `needs-tooling` |

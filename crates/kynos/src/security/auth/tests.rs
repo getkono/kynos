@@ -277,10 +277,11 @@ fn a_scheme_with_no_challenge_declares_no_www_authenticate() {
     );
 }
 
-/// `Scoped` demands the operation's scopes; `Auth` demands the scheme's.
+/// Every guard naming a scheme demands its default scopes; `Scoped` adds the
+/// operation's own on top of them.
 ///
-/// Two different questions with two different answers: what an
-/// authorization server can grant, and what this endpoint needs.
+/// `Auth` demands the scheme's defaults alone, and `Scoped` demands those
+/// defaults followed by each operation scope they do not already name.
 #[test]
 fn the_scopes_declared_are_the_ones_the_guard_demands() {
     let (bare, _) = described::<Auth<Bearer>>();
