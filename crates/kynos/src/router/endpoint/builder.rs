@@ -123,6 +123,10 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
     /// through [`Observer::on_panic`](crate::middleware::Observer::on_panic),
     /// as one recovered at router or group scope does.
     ///
+    /// Only the panic policy changes: the result keeps the interceptor list
+    /// `I`, so an interceptor added after this is still checked against the
+    /// ones added before it.
+    ///
     /// # Compile-time requirement
     ///
     /// The final binary must use `panic = "unwind"`. Selecting this policy in
@@ -143,7 +147,7 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
     /// # let _ = endpoint;
     /// ```
     #[must_use]
-    pub fn catch_panics(self) -> EndpointBuilder<C, H, A, Catch> {
+    pub fn catch_panics(self) -> EndpointBuilder<C, H, A, Catch, I> {
         const {
             assert!(
                 cfg!(panic = "unwind"),
