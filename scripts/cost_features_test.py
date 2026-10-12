@@ -979,7 +979,7 @@ class Failures(unittest.TestCase):
             with mock.patch.object(cost, "capture", return_value=f"{sysroot}\n"):
                 code, said = self.refused(lambda: cost.llvm_size(RECORDED_HOST))
         self.assertEqual(code, 2)
-        self.assertIn("llvm-tools-preview", said)
+        self.assertIn("`llvm-tools` component", said)
 
     def test_output_with_no_total_stops_the_codegen_half(self):
         headers = "\n".join(LLVM_LINES_SAMPLE.splitlines()[:2]) + "\n"
