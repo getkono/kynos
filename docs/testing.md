@@ -313,7 +313,7 @@ workspace asks for, and that Cargo unifies in anyway from whatever graph a
 downstream program builds. [`mise run test:arbitrary-precision`](../mise.toml)
 runs `kynos-openapi`'s suite with `serde_json/arbitrary_precision` on, under
 which every `serde_json::Number` serializes as a one-field struct. It excludes
-by exact name the two oracles holding `to_yaml` to `serde_yaml_ng`, which
+by exact name the two oracles holding `to_yaml` to `serde_norway`, which
 differ by design under the switch, and forces the feature per invocation: a
 dev-dependency would unify it into every `--all-targets` build and leave the
 default number path untested.
@@ -467,7 +467,7 @@ halve.
 | the document validators | `Validator` | `router/describe.rs` | a description is validated where it is built. The build either fails or drops the validator, and nothing on the request path holds one to run |
 | the JSON Schema interpreter | `jsonschema` | `test/conformance.rs` | it is behind `test-util` and exists to check an observed response against the description. The request parser is the other projection of the same declaration and interprets no schema |
 | the `openapi31` feature | `not(feature = "openapi31")` | `lib.rs`, `crates/kynos-openapi/src/lib.rs` | nothing is conditional on it. Both sites are the `#[cfg(not(feature = "openapi31"))] compile_error!` that refuses a build without it, and the 3.1 object model it names is compiled unconditionally. What that model does is held by the document, registry and validator rows above, and a request reaches none of the three |
-| the `yaml` feature | `serde_yaml_ng`, `YamlError`, `feature = "yaml"` | `crates/kynos-openapi/src/emit/mod.rs`, `error/mod.rs` | `Document::to_yaml` is a method on the emitted document, reached only through `Service::openapi` after the build has finished. `Error::Yaml` carries the `YamlError` that emitter produced, and no framework site makes one otherwise |
+| the `yaml` feature | `serde_norway`, `YamlError`, `feature = "yaml"` | `crates/kynos-openapi/src/emit/mod.rs`, `error/mod.rs` | `Document::to_yaml` is a method on the emitted document, reached only through `Service::openapi` after the build has finished. `Error::Yaml` carries the `YamlError` that emitter produced, and no framework site makes one otherwise |
 | the `test-util` feature | `feature = "test-util"` | `lib.rs` | one gate, on `pub mod test`. What it compiles is the conformance harness, whose interpreter is the `jsonschema` row above |
 | the `uuid` feature | `uuid`, `feature = "uuid"` | `schema/impls/{mod,identifier}.rs` | its whole contribution is `impl Schema for Uuid`, whose `Schema::schema` takes the `&mut Registry` that only `describe` mints, and `impl ParamValue for Uuid`, a marker with no items |
 | the `time` feature | `feature = "time"` | `lib.rs`, `schema/impls/mod.rs` | it carries no types: enabled without a backend it is a `compile_error!`, which `features:check` probes. The two sites are the gate that says so and the module it would open; the cost is its backends' rows |
