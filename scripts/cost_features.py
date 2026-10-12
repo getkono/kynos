@@ -269,7 +269,7 @@ def llvm_size(host):
     path = Path(sysroot) / "lib" / "rustlib" / host / "bin" / "llvm-size"
     if not path.is_file():
         fail(
-            f"{path} is missing. It ships with the `llvm-tools-preview` "
+            f"{path} is missing. It ships with the `llvm-tools` "
             "component, which `mise.toml` pins; `mise install` restores it. "
             "This sweep does not fall back to binutils `size`.",
             2,
