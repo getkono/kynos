@@ -9,7 +9,7 @@ lockfile = true
 # `ui` snapshots record (docs/testing.md#snapshots).
 rust = { version = "1.97.1", profile = "minimal", components = [
   "clippy",
-  "llvm-tools-preview",
+  "llvm-tools",
   "rust-analyzer",
   "rust-src",
   "rustfmt",
