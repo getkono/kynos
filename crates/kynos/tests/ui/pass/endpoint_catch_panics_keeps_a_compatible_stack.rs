@@ -1,0 +1,28 @@
+//! The passing half of `endpoint_catch_panics_keeps_the_interceptor_stack`.
+//!
+//! The same shape -- intercept, `catch_panics`, intercept -- differing in
+//! exactly the property under test: 413 and 408 are disjoint and neither
+//! interceptor adds a response header, so keeping the stack across the policy
+//! change rejects nothing.
+//!
+//! Without this control, the negative would pass just as well if `catch_panics`
+//! stopped compiling altogether.
+
+use kynos::{
+    middleware::limits::{body_size::BodySize, timeout::Timeout},
+    openapi,
+    router::endpoint::builder::EndpointBuilder,
+};
+
+async fn health() {}
+
+fn main() {
+    let _ = EndpointBuilder::<(), _, _>::new(
+        openapi::Method::Get,
+        openapi::PathTemplate::parse("/health").expect("valid path"),
+        health,
+    )
+    .intercept(BodySize::new(1024))
+    .catch_panics()
+    .intercept(Timeout::new(std::time::Duration::from_secs(30)));
+}
