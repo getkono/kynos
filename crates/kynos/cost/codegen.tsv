@@ -26,30 +26,31 @@
 #
 # toolchain: 1.97.1 (8bab26f4f 2026-07-14)
 # host: x86_64-unknown-linux-gnu
-# baseline: 50217 lines
+# baseline: 42444 lines
 feature	lines	copies	delta_lines	delta_copies
-openapi31	50217	1590	0	0
-assets	48886	1542	-1331	-48
-assets-fs	50663	1602	446	12
-cache	50217	1590	0	0
-compression	50173	1587	-44	-3
-cookie	50217	1590	0	0
-decimal-big	50181	1587	-36	-3
-decimal-rust	50217	1590	0	0
-docs	51502	1635	1285	45
-form	50217	1590	0	0
-http1	50217	1590	0	0
-http2	50217	1590	0	0
-json	50217	1590	0	0
-macros	50217	1590	0	0
-multipart	50114	1584	-103	-6
-openapi32	50318	1590	101	0
-protobuf	50217	1590	0	0
-test-util	46235	1510	-3982	-80
-time-chrono	50114	1584	-103	-6
-time-jiff	50151	1586	-66	-4
-trace	50217	1590	0	0
-unchecked	51994	1650	1777	60
-uuid	50217	1590	0	0
-yaml	50189	1590	-28	0
-(all-features)	48649	1574	-1568	-16
+openapi31	42444	1660	0	0
+assets	41597	1620	-847	-40
+assets-fs	43351	1696	907	36
+cache	42440	1658	-4	-2
+compression	42410	1658	-34	-2
+cookie	42444	1660	0	0
+decimal-big	42444	1660	0	0
+decimal-rust	42444	1660	0	0
+docs	43287	1702	843	42
+form	42444	1660	0	0
+http1	42444	1660	0	0
+http2	42444	1660	0	0
+json	42444	1660	0	0
+macros	42444	1660	0	0
+multipart	42444	1660	0	0
+openapi32	42668	1660	224	0
+pattern	42364	1654	-80	-6
+protobuf	42444	1660	0	0
+test-util	39719	1595	-2725	-65
+time-chrono	42444	1660	0	0
+time-jiff	42422	1659	-22	-1
+trace	42444	1660	0	0
+unchecked	44198	1736	1754	76
+uuid	42444	1660	0	0
+yaml	42461	1662	17	2
+(all-features)	42503	1681	59	21
