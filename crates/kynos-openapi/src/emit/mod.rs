@@ -98,6 +98,10 @@ mod yaml_numbers {
 
     /// Whether this build serializes a `serde_json::Number` as a token
     /// mapping, which is whether `arbitrary_precision` is on.
+    // Mutant runs leave `arbitrary_precision` off, where `false` is the
+    // answer, so the `false` mutant always survives;
+    // `test:arbitrary-precision` holds this to `true`.
+    #[cfg_attr(test, mutants::skip)]
     pub(super) fn serialized_as_token() -> bool {
         matches!(
             serde_norway::to_value(serde_json::Number::from(0u8)),

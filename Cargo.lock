@@ -1306,6 +1306,7 @@ dependencies = [
  "alloc_counter",
  "http",
  "indexmap",
+ "mutants",
  "proptest",
  "regex",
  "regex-syntax",

@@ -45,6 +45,7 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 alloc_counter = { workspace = true }
+mutants = { workspace = true }
 proptest = { workspace = true }
 
 [lints]
