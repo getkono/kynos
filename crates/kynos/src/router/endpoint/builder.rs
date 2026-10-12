@@ -123,8 +123,9 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
     /// through [`Observer::on_panic`](crate::middleware::Observer::on_panic),
     /// as one recovered at router or group scope does.
     ///
-    /// Only the panic policy changes: an interceptor added after this is still
-    /// checked against the ones added before it.
+    /// Only the panic policy changes: the result keeps the interceptor list
+    /// `I`, so an interceptor added after this is still checked against the
+    /// ones added before it.
     ///
     /// # Compile-time requirement
     ///
