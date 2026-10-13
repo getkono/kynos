@@ -143,6 +143,19 @@ RAW_SOURCES = [
     for path in sorted((crate / "src").rglob("*.rs"))
 ]
 
+#: Members whose manifest sets `publish = false`, as `crates/<name>/` prefixes.
+#: They consume `kynos` as an application does rather than being part of it --
+#: `kynos-profile` drives a runtime and drains bodies -- so which crates they
+#: name is their own manifest's business, and the rules over which framework
+#: module may name a crate, all read through `Corpus.naming`, skip them.
+UNPUBLISHED = tuple(
+    f"crates/{crate.name}/"
+    for crate in sorted((ROOT / "crates").iterdir())
+    if (crate / "Cargo.toml").is_file()
+    and tomllib.loads((crate / "Cargo.toml").read_text())["package"].get("publish") is False
+)
+
+
 def under_test(path):
     name = path.rsplit("/", 1)[-1]
     return name == "tests.rs" or name.endswith("_tests.rs")
@@ -187,9 +200,14 @@ class Corpus:
         self.gate_files = [(path, text) for path, text in gate_sources if not under_test(path)]
 
     def naming(self, *crates):
-        """The files naming any of `crates` as an identifier."""
+        """The files naming any of `crates` as an identifier, outside an
+        `UNPUBLISHED` member."""
         pattern = re.compile(r"\b(" + "|".join(crates) + r")\b")
-        return {path for path, text in self.files if pattern.search(text)}
+        return {
+            path
+            for path, text in self.files
+            if not path.startswith(UNPUBLISHED) and pattern.search(text)
+        }
 
     def replacing(self, path, text):
         """This corpus with `path` reading as `text`, and nothing else stripped again.
