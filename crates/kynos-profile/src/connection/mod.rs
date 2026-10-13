@@ -28,7 +28,9 @@ use bytes::BytesMut;
 use kynos::http::StatusCode;
 use tokio::io::{AsyncRead, AsyncWrite, DuplexStream, ReadBuf};
 
-use self::wire::{frames, go_away, handshake, http1, http1_status, http2, http2_status};
+use self::wire::{
+    frames, go_away, handshake, http1, http1_answered, http1_status, http2, http2_status,
+};
 use crate::{
     Scenario,
     app::{echo_body, get, post, service},
@@ -44,6 +46,9 @@ pub enum Wire {
     Http1,
     /// HTTP/1.1, a body framed by `transfer-encoding: chunked`, in one chunk.
     Http1Chunked,
+    /// HTTP/1.1, the request as the second on a keep-alive connection whose
+    /// first request was served in setup.
+    Http1Second,
     /// HTTP/2 with prior knowledge: the preface, the handshake and the
     /// request as the connection's only stream.
     Http2,
@@ -103,6 +108,17 @@ pub(crate) const CONNECTION: &[Connected] = &[
     },
     Connected {
         scenario: Scenario {
+            name: "conn-h1-second",
+            service,
+            request: || get("/plaintext"),
+            expected: StatusCode::OK,
+            driver: Driver::Runtime,
+            base: Some("conn-h1-plaintext"),
+        },
+        wire: Wire::Http1Second,
+    },
+    Connected {
+        scenario: Scenario {
             name: "conn-h2-plaintext",
             service,
             request: || get("/plaintext"),
@@ -153,15 +169,16 @@ const CAPACITY: usize = 256 * 1024;
 const WARMED: usize = 64 * 1024;
 
 /// A connection made ready outside the region: its future unpolled, or, for
-/// [`Wire::Http2Second`], polled until the first stream was answered, and the
-/// client's end of the duplex with every request octet already written.
+/// [`Wire::Http1Second`] and [`Wire::Http2Second`], polled until the first
+/// request was answered, and the client's end of the duplex with every
+/// request octet already written.
 pub struct Open {
     connection: Connecting,
     client: DuplexStream,
     /// The stream the measured request travels on; `0` for HTTP/1.1.
     stream: u32,
-    /// What the client has read: in setup for [`Wire::Http2Second`]'s first
-    /// stream, then everything after the region in [`Open::status`].
+    /// What the client has read: in setup for a second request's first, then
+    /// everything after the region in [`Open::status`].
     received: BytesMut,
 }
 
@@ -180,8 +197,8 @@ impl Connected {
     ///
     /// # Panics
     ///
-    /// When `runner` is not a runtime, or when an HTTP/2 connection ends
-    /// before its first stream was answered.
+    /// When `runner` is not a runtime, or when a connection carrying two
+    /// requests ends before its first was answered.
     #[must_use]
     pub fn open(&self, runner: &Runner) -> Open {
         let request = (self.scenario.request)();
@@ -195,8 +212,18 @@ impl Connected {
             received: BytesMut::new(),
         };
         match self.wire {
-            Wire::Http1 => write(&mut open.client, &http1(request, false)),
-            Wire::Http1Chunked => write(&mut open.client, &http1(request, true)),
+            Wire::Http1 => write(&mut open.client, &http1(request, false, true)),
+            Wire::Http1Chunked => write(&mut open.client, &http1(request, true, true)),
+            Wire::Http1Second => {
+                write(
+                    &mut open.client,
+                    &http1((self.scenario.request)(), false, false),
+                );
+                open.answer_first(runner, http1_answered);
+                // The first response is read; only the second's is checked.
+                open.received.clear();
+                write(&mut open.client, &http1(request, false, true));
+            }
             Wire::Http2 => {
                 let mut octets = handshake();
                 octets.extend_from_slice(&http2(request, 1));
@@ -208,7 +235,9 @@ impl Connected {
                 let mut octets = handshake();
                 octets.extend_from_slice(&http2((self.scenario.request)(), 1));
                 write(&mut open.client, &octets);
-                open.answer_first(runner);
+                open.answer_first(runner, |received| {
+                    frames(received).any(|frame| frame.stream == 1 && frame.ends_stream())
+                });
                 let mut octets = http2(request, 3);
                 octets.extend_from_slice(&go_away());
                 open.stream = 3;
@@ -247,9 +276,10 @@ impl Open {
         }
     }
 
-    /// Polls the connection, reading what it writes, until the first stream's
-    /// response has ended; for [`Wire::Http2Second`]'s setup.
-    fn answer_first(&mut self, runner: &Runner) {
+    /// Polls the connection, reading what it writes, until `answered` finds
+    /// the first request's response whole; for the setup of
+    /// [`Wire::Http1Second`] and [`Wire::Http2Second`].
+    fn answer_first(&mut self, runner: &Runner, answered: fn(&[u8]) -> bool) {
         let Self {
             connection,
             client,
@@ -259,10 +289,10 @@ impl Open {
         runner.run(poll_fn(|context| {
             assert!(
                 connection.as_mut().poll(context).is_pending(),
-                "the connection ended before its first stream was answered"
+                "the connection ended before its first request was answered"
             );
             while let Poll::Ready(true) = read(client, received, context) {}
-            if frames(received).any(|frame| frame.stream == 1 && frame.ends_stream()) {
+            if answered(received) {
                 Poll::Ready(())
             } else {
                 Poll::Pending

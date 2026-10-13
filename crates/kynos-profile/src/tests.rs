@@ -15,7 +15,10 @@ use kynos::{
 
 use super::{
     COMPRESSION, Scenario, catalog,
-    connection::{CONNECTION, connected, wire::http1},
+    connection::{
+        CONNECTION, connected,
+        wire::{http1, http1_answered},
+    },
     driver::{Drained, Driver, FRAMES, Served, frames},
     scenario,
 };
@@ -342,11 +345,13 @@ fn the_chunked_row_frames_its_body_by_chunks_and_its_base_by_length() {
     let chunked = String::from_utf8(http1(
         (connected("conn-h1-echo-chunked").scenario.request)(),
         true,
+        true,
     ))
     .expect("an ASCII request");
     let length = String::from_utf8(http1(
         (connected("conn-h1-echo-cl").scenario.request)(),
         false,
+        true,
     ))
     .expect("an ASCII request");
     assert!(chunked.contains("transfer-encoding: chunked\r\n"));
@@ -354,4 +359,20 @@ fn the_chunked_row_frames_its_body_by_chunks_and_its_base_by_length() {
     assert!(chunked.ends_with("\r\n0\r\n\r\n"));
     assert!(length.contains("content-length: "));
     assert!(!length.contains("transfer-encoding"));
+}
+
+/// The keep-alive row's first request leaves its connection open and only
+/// its second closes it, so the region serves one request on a connection
+/// setup already paid for; and setup reads the first response as whole only
+/// once its body has arrived.
+#[test]
+fn the_keep_alive_row_closes_only_behind_its_second_request() {
+    let request = connected("conn-h1-second").scenario.request;
+    let first = String::from_utf8(http1(request(), false, false)).expect("an ASCII request");
+    let second = String::from_utf8(http1(request(), false, true)).expect("an ASCII request");
+    assert!(!first.contains("connection:"));
+    assert!(second.contains("connection: close\r\n"));
+    let response = b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok";
+    assert!(!http1_answered(&response[..response.len() - 1]));
+    assert!(http1_answered(response));
 }

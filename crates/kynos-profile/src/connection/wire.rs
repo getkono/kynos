@@ -42,8 +42,9 @@ fn body(request: Request) -> (http::request::Parts, Bytes) {
     (parts, octets.freeze())
 }
 
-/// `request` as HTTP/1.1 octets that close the connection behind it.
-pub(crate) fn http1(request: Request, chunked: bool) -> Vec<u8> {
+/// `request` as HTTP/1.1 octets; with `close`, they close the connection
+/// behind it, and without, the connection stays open for another request.
+pub(crate) fn http1(request: Request, chunked: bool, close: bool) -> Vec<u8> {
     let (parts, body) = body(request);
     let target = parts
         .uri
@@ -62,7 +63,10 @@ pub(crate) fn http1(request: Request, chunked: bool) -> Vec<u8> {
     } else if !body.is_empty() {
         octets.extend_from_slice(format!("content-length: {}\r\n", body.len()).as_bytes());
     }
-    octets.extend_from_slice(b"connection: close\r\n\r\n");
+    if close {
+        octets.extend_from_slice(b"connection: close\r\n");
+    }
+    octets.extend_from_slice(b"\r\n");
     if chunked {
         if !body.is_empty() {
             octets.extend_from_slice(format!("{:x}\r\n", body.len()).as_bytes());
@@ -206,6 +210,29 @@ pub(crate) fn http1_status(octets: &[u8]) -> StatusCode {
                 String::from_utf8_lossy(octets)
             )
         })
+}
+
+/// Whether `octets` hold a whole HTTP/1.1 response framed by
+/// `content-length`, which is how a server frames every body a profiled row
+/// answers with.
+///
+/// # Panics
+///
+/// When a whole head names no `content-length`.
+pub(crate) fn http1_answered(octets: &[u8]) -> bool {
+    let Some(end) = octets.windows(4).position(|window| window == b"\r\n\r\n") else {
+        return false;
+    };
+    let head = std::str::from_utf8(&octets[..end]).expect("an ASCII response head");
+    let length: usize = head
+        .split("\r\n")
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse().expect("a decimal content-length"))
+        })
+        .unwrap_or_else(|| panic!("no content-length in {head:?}"));
+    octets.len() >= end + 4 + length
 }
 
 /// `:status` in the `HEADERS` frame on `stream`, which a server encodes as the
