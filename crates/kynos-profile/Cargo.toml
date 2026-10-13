@@ -52,7 +52,7 @@ serde = { workspace = true, features = ["derive"] }
 # reaches serde_json only through `kynos`.
 serde_json = { workspace = true }
 # `Driver::Runtime`'s current-thread runtime and its timer, named in
-# `src/driver.rs`, and the in-memory duplex `src/connection.rs` serves a
+# `src/driver.rs`, and the in-memory duplex `src/connection/` serves a
 # connection over. This package is unpublished, so `architecture.md`'s runtime
 # allowance, which governs the published crates, does not read it.
 tokio = { workspace = true, features = ["rt", "time", "io-util"] }
