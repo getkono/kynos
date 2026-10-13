@@ -20,7 +20,7 @@ use kynos::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::Served;
+use crate::driver::Served;
 
 /// kynos-bench's `json-small`: a small struct, roughly 100 octets written.
 #[derive(Schema, Serialize, Deserialize)]

@@ -1321,11 +1321,14 @@ name = "kynos-profile"
 version = "0.0.0"
 dependencies = [
  "bytes",
+ "futures-core",
  "gungraun",
- "http-body-util",
+ "http",
+ "http-body",
  "kynos",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
