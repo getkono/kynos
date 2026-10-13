@@ -16,7 +16,7 @@ use kynos::{
     security::schemes::Bearer,
 };
 
-use super::{Small, built, extract::Caller, rest, small};
+use super::{Small, built, extract::Caller, interceptors::ORIGIN, rest, small};
 use crate::driver::Served;
 
 /// `json-small`'s handler, behind a bearer guard.
@@ -39,7 +39,7 @@ pub(crate) fn stack() -> Box<dyn Served> {
             .mount(kynos::routes![json_small_guarded])
             .intercept(request_id)
             .observe(trace)
-            .intercept(Cors::new().allow_origins(["https://app.example.com"]))
+            .intercept(Cors::new().allow_origins([ORIGIN]))
             .intercept(SecurityHeaders::new())
             .intercept(BodySize::new(1_048_576))
             .intercept(Timeout::new(Duration::from_secs(30)))
