@@ -368,12 +368,17 @@ from `json-small`.
 
 **Exactness is asserted.** `mise run profile:requests --repeat N` runs the
 benchmark N times and fails when any program or DHAT count differs between
-runs. A group that cannot be exact, which only a `Runtime` group could be,
-since its timer reads the clock, is named on `requests.tsv`'s `# trend:` line:
-it is reported but never compared, against the baseline or across runs, and
-its marginal costs are marked approximate. `connection_h2` is marked: HTTP/2
-Huffman-codes the `Date` value into every response, and what that costs moves
-by a few instructions as the clock's characters change. The runtime row and
+runs. A group that cannot be exact, because what it counts reads the wall
+clock, is named on `requests.tsv`'s `# trend:` line: it is reported but never
+compared, against the baseline or across runs, and its marginal costs are
+marked approximate. Two are marked. `connection_h2`: HTTP/2 Huffman-codes the
+`Date` value into every response, and what that costs moves by a few
+instructions as the clock's characters change. `rate_limit`, a `Poll` group
+holding `INTERCEPTORS`' `rate-limit` row alone: its quota keys, its window
+arithmetic and the remaining count and reset it writes are read off the wall
+clock, so its count moves by a few instructions with the time it ran at; the
+row has a group of its own so the rest of `interceptors` stays exact. The
+runtime row and
 `connection_h1` measured exact, the latter because its setup serves the
 warming connection at the start of a wall-clock second: hyper renders `Date`
 again, allocating, on the first response of each second, and a region a
