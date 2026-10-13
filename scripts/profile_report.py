@@ -33,7 +33,8 @@ compared, against the baseline or across runs.
 **Attribution.** Each run also writes `target/gungraun/profile-attribution.md`:
 per benchmark, the top inclusive frames `callgrind_annotate --inclusive=yes`
 ranks, and DHAT's allocation sites, by the innermost frame in a workspace
-crate.
+crate. A run that cannot be attributed says so and writes no file; it is
+still the measurement it was, and exits as one.
 
 `KYNOS_PROFILE=overwrite` records this run as
 `crates/kynos-profile/requests.tsv`; otherwise the run is compared with it.
@@ -700,8 +701,10 @@ def main(
         try:
             attribution_path.write_text(attribution(attribute(directory, annotate)))
         except (Unreadable, OSError, KeyError, ValueError, subprocess.CalledProcessError) as error:
+            # Attribution explains a measurement; it never decides its outcome.
+            # A previous run's file is removed rather than left to pass for this one's.
             print(f"profile: nothing could be attributed: {error}", file=sys.stderr)
-            return NOTHING
+            attribution_path.unlink(missing_ok=True)
 
     if problems:
         print(
