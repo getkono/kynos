@@ -22,7 +22,9 @@ What a run is read *for* is tested over fixture outputs shaped after real ones:
 each row's difference from its base, a count that moves between `--repeat`
 runs, the `# trend:` declaration that exempts a group from both comparisons,
 and the two attribution parsers -- `callgrind_annotate`'s ranking and DHAT's
-allocation sites, where the region is found the way gungraun finds it.
+allocation sites, where the region is found the way gungraun finds it -- and
+`main`'s attribution, which reads each benchmark's own files and whose failure
+never replaces the measurement's outcome.
 
 Run it as `mise run profile:test`, or directly.
 """
@@ -295,17 +297,31 @@ class Main(unittest.TestCase):
                 )
             )
 
-    def run_main(self, blocks, mode, baseline_text=None, program=None, earlier=()):
+    def run_main(
+        self, blocks, mode, baseline_text=None, program=None, earlier=(), annotate=None
+    ):
+        """`main` over the tree; with `annotate`, also its attribution, whose
+        text (or `None` where none was written) is left in `self.attributed`."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.tree(root, blocks, program)
+            attribution_path = None
+            if annotate is not None:
+                attribution_path = root / "target/gungraun/profile-attribution.md"
+                attribution_path.write_text("a previous run's attribution\n")
+                for output in (root / "target/gungraun").rglob("summary.json"):
+                    bench = json.loads(output.read_text())["id"]
+                    (output.parent / f"dhat.calibration.{bench}.out").write_text(
+                        json.dumps(DHAT_SAMPLE).replace("request::__run_layers_8 ", f"calibration::__run_{bench} ")
+                    )
             alloc = root / "alloc.rs"
             alloc.write_text(Calibration.ALLOC)
             baseline = root / "requests.tsv"
             if baseline_text is not None:
                 baseline.write_text(baseline_text)
+            self.stderr = io.StringIO()
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
-                io.StringIO()
+                self.stderr
             ):
                 code = report.main(
                     mode=mode,
@@ -317,10 +333,17 @@ class Main(unittest.TestCase):
                     host="test host",
                     run_path=root / "run.tsv",
                     earlier=earlier,
+                    attribution_path=attribution_path,
+                    annotate=annotate,
                 )
                 self.run_written = (
                     (root / "run.tsv").read_text()
                     if (root / "run.tsv").is_file()
+                    else None
+                )
+                self.attributed = (
+                    attribution_path.read_text()
+                    if attribution_path is not None and attribution_path.is_file()
                     else None
                 )
             written = baseline.read_text() if baseline.is_file() else None
@@ -366,6 +389,41 @@ class Main(unittest.TestCase):
                 mode="", directory=Path(directory), run_path=Path(directory) / "run.tsv"
             )
             self.assertEqual(code, report.NOTHING)
+
+    def test_attribution_reads_each_benchmark_s_own_callgrind_and_dhat_files(self):
+        annotated = []
+
+        def annotate(path):
+            annotated.append(path)
+            return ANNOTATE_SAMPLE
+
+        code, _ = self.run_main([7, 11, 6, 11, 15], "", annotate=annotate)
+        self.assertEqual(code, report.MEASURED)
+        self.assertEqual(
+            sorted(path.name for path in annotated),
+            sorted(f"callgrind.calibration.{name.split('.')[1]}.out" for name in report.CALIBRATION),
+        )
+        for name, blocks in zip(report.CALIBRATION, [7, 11, 6, 11, 15]):
+            with self.subTest(benchmark=name):
+                self.assertIn(f"## `{name}`", self.attributed)
+                self.assertIn(
+                    f"4 of {blocks} blocks and 144 of 100 bytes attributed.", self.attributed
+                )
+        self.assertIn("__memcpy_avx_unaligned_erms", self.attributed)
+
+    def test_an_attribution_failure_keeps_the_measurement_s_own_outcome(self):
+        def annotate(path):
+            raise report.Unreadable(f"cannot annotate {path.name}")
+
+        code, written = self.run_main([7, 11, 6, 11, 15], "overwrite", annotate=annotate)
+        self.assertEqual(code, report.MEASURED)
+        self.assertIn("alloc_counter_agreement.stacked_8\t45\t15\t100", written)
+        self.assertEqual(self.run_written, written)
+        self.assertIn("nothing could be attributed: cannot annotate", self.stderr.getvalue())
+        # A previous run's file is never left to pass for this run's.
+        self.assertIsNone(self.attributed)
+        code, _ = self.run_main([7, 11, 6, 11, 14], "", annotate=annotate)
+        self.assertEqual(code, report.DISAGREE)
 
 
 class RunBenchmarks(unittest.TestCase):
