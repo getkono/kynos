@@ -363,8 +363,10 @@ impl<C: 'static> Server<C> {
     /// It is returned before `io` is read.
     ///
     /// The returned future resolves to the error that ended the connection, if
-    /// one did: the client broke the protocol, `io` failed, or no request head
-    /// arrived before the first-head deadline.
+    /// one did: the client broke the protocol, `io` failed, no request head
+    /// arrived before the first-head deadline, or an HTTP/2 connection held
+    /// no stream in flight for two idle timeouts in a row — the first sends
+    /// GOAWAY, the second ends a drain the client never closed.
     pub fn serve_io<I>(
         self,
         io: I,
