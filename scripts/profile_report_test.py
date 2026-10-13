@@ -18,6 +18,12 @@ What runs around Valgrind without needing it is tested with `cargo bench`
 replaced: the ambient `RUSTFLAGS` refusal, the stale-output removal, and the
 host key a report compares across hosts.
 
+What a run is read *for* is tested over fixture outputs shaped after real ones:
+each row's difference from its base, a count that moves between `--repeat`
+runs, the `# trend:` declaration that exempts a group from both comparisons,
+and the two attribution parsers -- `callgrind_annotate`'s ranking and DHAT's
+allocation sites, where the region is found the way gungraun finds it.
+
 Run it as `mise run profile:test`, or directly.
 """
 
@@ -289,7 +295,7 @@ class Main(unittest.TestCase):
                 )
             )
 
-    def run_main(self, blocks, mode, baseline_text=None, program=None):
+    def run_main(self, blocks, mode, baseline_text=None, program=None, earlier=()):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.tree(root, blocks, program)
@@ -310,6 +316,7 @@ class Main(unittest.TestCase):
                     toolchain="rustc test",
                     host="test host",
                     run_path=root / "run.tsv",
+                    earlier=earlier,
                 )
                 self.run_written = (
                     (root / "run.tsv").read_text()
@@ -454,6 +461,250 @@ class DescribeHost(unittest.TestCase):
     def test_cpuinfo_without_a_model_name_is_an_unknown_cpu(self):
         host, _, _ = self.describe("processor\t: 0\n", "/usr/bin/valgrind")
         self.assertEqual(host, "unknown CPU, valgrind-3.27.1")
+
+
+class Marginal(unittest.TestCase):
+    """A row against its base: the one number an ablation is read by."""
+
+    ROWS = [
+        report.Row("scenarios.layers_0", 3564, 9, 12, 4607, "layers-0"),
+        report.Row("scenarios.layers_4", 4824, 9, 16, 8831, "layers-4"),
+        report.Row("runtime.json_small", 4111, 9, 12, 4607, "json-small-runtime"),
+        report.Row("scenarios.json_small", 3564, 9, 12, 4607, "json-small"),
+    ]
+    BASES = {
+        "layers-0": None,
+        "layers-4": "layers-0",
+        "json-small-runtime": "json-small",
+        "json-small": None,
+    }
+
+    def test_the_catalog_reads_as_each_scenario_and_its_base(self):
+        text = "layers-0\t\tPoll\nlayers-4\tlayers-0\tPoll\n"
+        self.assertEqual(
+            report.read_catalog(text), {"layers-0": None, "layers-4": "layers-0"}
+        )
+
+    def test_a_summary_names_the_scenario_its_setup_was_called_with(self):
+        given = summary("scenarios", "layers_4", 1, 1)
+        given["description"] = '(prepared("layers-4"))'
+        self.assertEqual(report.scenario_of(given), "layers-4")
+        self.assertIsNone(report.scenario_of(summary("scenarios", "x", 1, 1)))
+
+    def test_each_row_is_paired_with_its_base_by_scenario_name(self):
+        pairs = report.marginal(self.ROWS, self.BASES)
+        self.assertEqual(
+            [(row.benchmark, base.benchmark) for row, base in pairs],
+            [
+                ("scenarios.layers_4", "scenarios.layers_0"),
+                ("runtime.json_small", "scenarios.json_small"),
+            ],
+        )
+
+    def test_a_base_that_was_not_measured_pairs_nothing(self):
+        self.assertEqual(report.marginal(self.ROWS[1:2], self.BASES), [])
+
+    def test_the_report_gives_each_difference_and_marks_a_trend_pair(self):
+        text = report.report(self.ROWS, {}, bases=self.BASES, trend={"runtime"})
+        self.assertIn(
+            "| `scenarios.layers_4` | `scenarios.layers_0` | +1260 | +4 | +4224 |", text
+        )
+        self.assertIn(
+            "| `runtime.json_small` | `scenarios.json_small` | ~+547 | ~= | ~= |", text
+        )
+
+    def test_no_base_writes_no_marginal_table(self):
+        self.assertNotIn("Marginal cost", report.report(self.ROWS, {}))
+
+
+class Trend(unittest.TestCase):
+    """A group the baseline declares inexact: reported, and compared with nothing."""
+
+    def test_the_declaration_survives_a_recording(self):
+        rows = [report.Row("runtime.json_small", 1, 0, 1, 1)]
+        text = report.write_baseline(rows, "rustc", "host", frozenset({"runtime"}))
+        self.assertIn("# trend: runtime\n", text)
+        self.assertEqual(report.read_trend(text), {"runtime"})
+        self.assertEqual(report.read_baseline(text)[0], {"runtime.json_small": (1, 1, 1)})
+
+    def test_no_declaration_is_no_trend_and_no_line(self):
+        text = report.write_baseline([], "rustc", "host")
+        self.assertNotIn("# trend", text)
+        self.assertEqual(report.read_trend(text), frozenset())
+
+    def test_a_trend_row_is_never_compared_with_the_baseline(self):
+        rows = [report.Row("runtime.json_small", 10, 0, 2, 3)]
+        recorded = {"runtime.json_small": (12, 2, 3)}
+        self.assertIn("| 10 | trend |", report.report(rows, recorded, trend={"runtime"}))
+        self.assertIn("| 10 | -2 |", report.report(rows, recorded))
+
+
+class Repeat(unittest.TestCase):
+    """`--repeat`: a count that moves between runs of one build is not exact."""
+
+    def run_of(self, program, blocks=2, octets=3, other=0):
+        return [
+            report.Row("scenarios.plaintext", program, other, blocks, octets),
+            report.Row("runtime.json_small", program, other, blocks, octets),
+        ]
+
+    def test_runs_that_agree_are_exact_whatever_libc_did(self):
+        self.assertEqual(report.inexact([self.run_of(5), self.run_of(5, other=9)]), [])
+
+    def test_any_compared_count_that_moves_names_the_benchmark(self):
+        for moved in (self.run_of(6), self.run_of(5, blocks=3), self.run_of(5, octets=4)):
+            with self.subTest(moved=moved[0]):
+                problems = report.inexact([self.run_of(5), moved], frozenset({"runtime"}))
+                self.assertEqual(len(problems), 1)
+                self.assertIn("scenarios.plaintext", problems[0])
+
+    def test_a_trend_group_may_move(self):
+        self.assertEqual(
+            report.inexact([self.run_of(5), self.run_of(6)], {"runtime", "scenarios"}),
+            [],
+        )
+
+    def test_a_benchmark_one_run_did_not_measure_is_a_difference(self):
+        problems = report.inexact([self.run_of(5), self.run_of(5)[:1]])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("runtime.json_small", problems[0])
+
+    def test_main_refuses_to_record_an_inexact_run(self):
+        main = Main()
+        _, recorded = main.run_main([7, 11, 6, 11, 15], "overwrite")
+        earlier = [
+            [
+                report.Row(name, instructions + 1, 0, blocks, octets)
+                for name, (instructions, blocks, octets) in report.read_baseline(recorded)[0].items()
+            ]
+        ]
+        code, written = main.run_main([7, 11, 6, 11, 15], "overwrite", earlier=earlier)
+        self.assertEqual((code, written), (report.INEXACT, None))
+
+    def test_main_records_a_run_its_repeats_agree_with(self):
+        main = Main()
+        _, recorded = main.run_main([7, 11, 6, 11, 15], "overwrite")
+        earlier = [
+            [
+                report.Row(name, instructions, 0, blocks, octets)
+                for name, (instructions, blocks, octets) in report.read_baseline(recorded)[0].items()
+            ]
+        ]
+        code, written = main.run_main([7, 11, 6, 11, 15], "overwrite", earlier=earlier)
+        self.assertEqual((code, written), (report.MEASURED, recorded))
+
+
+#: Shaped after `callgrind_annotate --inclusive=yes --show=Ir` over a real
+#: `callgrind.*.out`: the header, the totals line, a caller at the region's
+#: total, a recursive frame above it, a frame inlined from the toolchain's
+#: sources, the same frame twice once its paths are cut, and libc.
+ANNOTATE_SAMPLE = """--------------------------------------------------------------------------------
+Profile data file 'callgrind.request.layers_8.out' (creator: callgrind-3.27.1)
+--------------------------------------------------------------------------------
+Events recorded:  Ir Dr Dw
+Events shown:     Ir
+
+--------------------------------------------------------------------------------
+Ir
+--------------------------------------------------------------------------------
+16,964 (100.0%)  PROGRAM TOTALS
+
+--------------------------------------------------------------------------------
+Ir               file:function
+--------------------------------------------------------------------------------
+50,110 (295.4%)  /work/crates/kynos-profile/src/app.rs:<kynos_profile::app::Transparent as kynos::middleware::Interceptor<()>>::intercept::{closure#0} [/work/target/release/deps/requests-0123]
+16,964 (100.0%)  ???:main [/work/target/release/deps/requests-0123]
+14,791 (87.19%)  /work/crates/kynos/src/router/describe.rs:<kynos::router::Router<()>>::build::{closure#5}::{closure#0} [/work/target/release/deps/requests-0123]
+14,790 (87.19%)  /work/crates/kynos/src/router/describe.rs:<kynos::router::Router<()>>::build::{closure#5}::{closure#0}
+ 6,315 (37.23%)  /home/ci/.rustup/toolchains/1.97.1-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/future/future.rs:<kynos::middleware::Next<()>>::run::{closure#0}
+ 5,889 (34.71%)  ???:__memcpy_avx_unaligned_erms [/usr/lib64/libc.so.6]
+ 1,378 ( 8.12%)  /home/ci/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_json-1.0.151/src/ser.rs:serde_json::ser::format_escaped_str
+"""
+
+
+class InclusiveFrames(unittest.TestCase):
+    def frames(self, **given):
+        return report.inclusive_frames(
+            ANNOTATE_SAMPLE, root="/work", program="requests-0123", **given
+        )
+
+    def test_the_region_s_callers_and_recursive_frames_are_omitted(self):
+        names = [frame for _, frame in self.frames()]
+        self.assertFalse(any("Transparent" in name or "main" in name for name in names))
+
+    def test_each_frame_reads_as_the_workspace_names_it_and_is_listed_once(self):
+        self.assertEqual(
+            self.frames(),
+            [
+                (14791, "crates/kynos/src/router/describe.rs:<kynos::router::Router<()>>::build::{closure#5}::{closure#0}"),
+                (6315, "library/core/src/future/future.rs:<kynos::middleware::Next<()>>::run::{closure#0}"),
+                (5889, "???:__memcpy_avx_unaligned_erms [libc.so.6]"),
+                (1378, "serde_json-1.0.151/src/ser.rs:serde_json::ser::format_escaped_str"),
+            ],
+        )
+
+    def test_only_the_top_frames_are_kept(self):
+        self.assertEqual([count for count, _ in self.frames(limit=2)], [14791, 6315])
+
+    def test_output_with_no_totals_is_unreadable(self):
+        with self.assertRaises(report.Unreadable):
+            report.inclusive_frames(ANNOTATE_SAMPLE.replace("PROGRAM TOTALS", "TOTALS"))
+
+
+#: Shaped after a real `dhat.*.out`, which covers the whole process: one
+#: allocation in setup, three in the region -- two under one workspace frame,
+#: reached through a `std` frame naming a workspace type, and one under none --
+#: and one in a neighbouring benchmark whose id shares a prefix.
+DHAT_SAMPLE = {
+    "ftbl": [
+        "[root]",
+        "0x1: alloc (library/std/src/sys/alloc/unix.rs:14)",
+        "0x2: new<kynos::router::dispatch::Routed> (boxed.rs:286)",
+        "0x3: <kynos::router::dispatch::Dispatch<()>>::serve::{closure#0} (dispatch.rs:293)",
+        "0x4: requests::request::__run_layers_8 (requests.rs:83)",
+        "0x5: requests::prepared (requests.rs:64)",
+        "0x6: requests::request::__run_layers_80 (requests.rs:83)",
+        "0x7: <alloc::vec::Vec<u8>>::with_capacity (vec.rs:1)",
+    ],
+    "pps": [
+        {"tb": 4096, "tbk": 1, "fs": [1, 3, 5]},
+        {"tb": 104, "tbk": 1, "fs": [1, 2, 3, 4]},
+        {"tb": 32, "tbk": 2, "fs": [1, 3, 4]},
+        {"tb": 8, "tbk": 1, "fs": [1, 7, 4]},
+        {"tb": 900, "tbk": 1, "fs": [1, 3, 6]},
+    ],
+}
+
+
+class AllocationSites(unittest.TestCase):
+    def test_only_the_region_s_allocations_are_attributed(self):
+        _, attributed = report.allocation_sites(DHAT_SAMPLE, "request", "layers_8")
+        self.assertEqual(attributed, (4, 144))
+
+    def test_each_is_attributed_to_its_innermost_workspace_frame_largest_first(self):
+        sites, _ = report.allocation_sites(DHAT_SAMPLE, "request", "layers_8")
+        self.assertEqual(
+            sites,
+            [
+                (3, 136, "<kynos::router::dispatch::Dispatch<()>>::serve::{closure#0} (dispatch.rs:293)"),
+                (1, 8, None),
+            ],
+        )
+
+    def test_another_function_s_benchmark_of_the_same_id_is_not_this_region(self):
+        self.assertEqual(
+            report.allocation_sites(DHAT_SAMPLE, "sweep", "layers_8"), ([], (0, 0))
+        )
+
+    def test_the_file_lists_frames_and_sites_and_says_how_much_was_attributed(self):
+        sites = report.allocation_sites(DHAT_SAMPLE, "request", "layers_8")
+        text = report.attribution(
+            [("scenarios.layers_8", "layers-8", [(10, "a|b")], sites, (5, 150))]
+        )
+        self.assertIn("## `scenarios.layers_8` (`layers-8`)", text)
+        self.assertIn("| 10 | `a\\|b` |", text)
+        self.assertIn("4 of 5 blocks and 144 of 150 bytes attributed.", text)
+        self.assertIn("| 1 | 8 | none |", text)
 
 
 if __name__ == "__main__":
