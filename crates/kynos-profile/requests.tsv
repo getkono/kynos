@@ -31,8 +31,9 @@ compression.zstd_small	32462	25	3678557
 connection_h1.echo_chunked	92664	77	47318
 connection_h1.echo_cl	86853	76	47222
 connection_h1.plaintext	49579	28	39473
-connection_h2.plaintext	74212	41	40209
-connection_h2.second	67340	14	5557
+connection_h1.second	47142	11	4489
+connection_h2.plaintext	74206	41	40209
+connection_h2.second	67334	14	5557
 runtime.json_small	4177	12	4607
 scenarios.echo_post	36007	48	11182
 scenarios.headers	9214	26	5596
