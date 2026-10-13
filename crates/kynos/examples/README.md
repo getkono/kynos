@@ -84,6 +84,7 @@ as reading the authenticated caller in a handler, which is
 | --- | --- | --- |
 | [`graceful_shutdown.rs`](graceful_shutdown.rs) | Every shutdown trigger, the drain deadline, and reading the bound addresses | — |
 | [`auto_reload.rs`](auto_reload.rs) | Inheriting a listening socket so a rebuild does not drop it | — |
+| [`serve_io.rs`](serve_io.rs) | Serving one connection over a stream no listener accepted, here an in-memory duplex, under the server's transport settings | — |
 | [`docs_ui.rs`](docs_ui.rs) | A Scalar or Redoc reference mounted in one line, dropped by `--release`, and what mounting it costs the document | `docs` |
 | [`ranged.rs`](ranged.rs) | Ranged delivery over a source that is not a filesystem, which is the case `assets` cannot cover | — |
 

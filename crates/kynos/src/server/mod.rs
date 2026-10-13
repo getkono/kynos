@@ -6,13 +6,15 @@
 //! call every operation, so [`TlsConfig::require_client_certificate`] adds that
 //! requirement to the prepared server's description.
 //!
-//! Kynos supports HTTP/1 and HTTP/2. Custom transports, Unix sockets and
-//! HTTP/3 are outside the current server contract.
+//! Kynos supports HTTP/1 and HTTP/2, and HTTP/3 is outside the current server
+//! contract. Listeners are TCP; a stream accepted any other way, such as from
+//! a Unix socket or an in-memory pipe, is served one connection at a time by
+//! [`Server::serve_io`].
 //!
 //! Kynos runs on tokio and does not abstract over it, so serving requires a
 //! tokio runtime. This module tree is the only place the runtime is named;
-//! apart from [`address::Listener::Tokio`], no public item mentions a tokio
-//! type.
+//! apart from [`address::Listener::Tokio`] and the I/O bound on
+//! [`Server::serve_io`], no public item mentions a tokio type.
 //!
 //! # How this module is laid out
 //!
@@ -40,6 +42,7 @@ pub mod tls;
 use std::{future::pending, io, net::SocketAddr, num::NonZeroUsize, sync::Arc, time::Duration};
 
 use tokio::{
+    io::{AsyncRead, AsyncWrite},
     net::TcpListener,
     sync::{Semaphore, mpsc, watch},
     task::{JoinError, JoinSet},
@@ -228,14 +231,8 @@ impl<C: 'static> Server<C> {
     ///   resolved address fails; every listener already bound is dropped.
     /// - [`ServerError::NoListeners`] when nothing was configured to listen on.
     pub async fn prepare(self) -> Result<BoundServer<C>> {
-        validate_protocol_config(
-            #[cfg(feature = "http1")]
-            self.http1,
-            #[cfg(feature = "http2")]
-            self.http2,
-        )?;
+        self.validate()?;
         validate_tcp_keepalive(self.tcp_keepalive)?;
-        validate_request_body_idle_timeout(self.request_body_idle_timeout)?;
 
         #[cfg(feature = "tls")]
         let mut service = self.service;
@@ -314,6 +311,109 @@ impl<C: 'static> Server<C> {
     /// Whatever [`prepare`](Self::prepare) or [`BoundServer::serve`] reports.
     pub async fn serve(self) -> Result<()> {
         self.prepare().await?.serve().await
+    }
+
+    /// Serves one plaintext connection over `io`, a stream accepted from
+    /// somewhere other than a TCP listener: a Unix socket, an in-memory pipe,
+    /// or a custom acceptor.
+    ///
+    /// The connection runs under the transport settings a listener's would:
+    /// the protocol configs, including the header-read and idle timeouts, and
+    /// the request-body idle timeout. Handlers see `peer` through
+    /// [`ConnectInfo`](crate::extract::connection::ConnectInfo) and
+    /// [`Connection`](crate::extract::connection::Connection), whose local
+    /// address is the unspecified address of `peer`'s family with port zero,
+    /// since no listener accepted it. HTTP/1 and HTTP/2 are told apart from
+    /// the first bytes, as on any plaintext listener.
+    ///
+    /// Nothing that belongs to listeners applies: no address is bound, and the
+    /// connection limit, TCP keepalive, graceful shutdown and its timeout are
+    /// ignored. The connection ends when the client closes `io` or when the
+    /// returned future is dropped, which closes it without draining.
+    ///
+    /// ```
+    /// use kynos::{Router, server::Server};
+    /// use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let service = Router::<()>::new().build(())?;
+    /// let (mut client, io) = tokio::io::duplex(4096);
+    /// let connection = Server::new(service).serve_io(io, "192.0.2.1:50000".parse()?)?;
+    /// let served = tokio::spawn(connection);
+    ///
+    /// client
+    ///     .write_all(b"GET / HTTP/1.1\r\nhost: example\r\nconnection: close\r\n\r\n")
+    ///     .await?;
+    /// let mut response = String::new();
+    /// client.read_to_string(&mut response).await?;
+    /// // No operation answers GET anywhere on an empty router.
+    /// assert!(response.starts_with("HTTP/1.1 501"));
+    /// served.await??;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Server`](crate::error::Error::Server) carrying
+    /// [`ServerError::InvalidConfiguration`] for a value its setter says
+    /// [`prepare`](Self::prepare) refuses, or, with TLS, when
+    /// [`tls`](Self::tls) was configured, since `io` is served as plaintext.
+    /// It is returned before `io` is read.
+    ///
+    /// The returned future resolves to the error that ended the connection, if
+    /// one did: the client broke the protocol, `io` failed, no request head
+    /// arrived before the first-head deadline, or an HTTP/2 connection held
+    /// no stream in flight for two idle timeouts in a row — the first sends
+    /// GOAWAY, the second ends a drain the client never closed.
+    pub fn serve_io<I>(
+        self,
+        io: I,
+        peer: SocketAddr,
+    ) -> Result<impl Future<Output = io::Result<()>> + Send + 'static>
+    where
+        I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        self.validate()?;
+        #[cfg(feature = "tls")]
+        if self.tls.is_some() {
+            return Err(ServerError::InvalidConfiguration(
+                "serve_io serves plaintext, so TLS must not be configured",
+            )
+            .into());
+        }
+
+        let config = TransportConfig {
+            #[cfg(feature = "http1")]
+            http1: self.http1,
+            #[cfg(feature = "http2")]
+            http2: self.http2,
+            #[cfg(feature = "tls")]
+            tls: None,
+            shutdown_timeout: self.shutdown_timeout,
+            max_connections: self.max_connections,
+            request_body_idle_timeout: self.request_body_idle_timeout,
+        };
+        Ok(connection::serve_io(
+            io,
+            peer,
+            Arc::new(self.service),
+            config,
+        ))
+    }
+
+    /// Refuses a setting that would misconfigure every connection, whatever
+    /// accepted it.
+    fn validate(&self) -> Result<()> {
+        validate_protocol_config(
+            #[cfg(feature = "http1")]
+            self.http1,
+            #[cfg(feature = "http2")]
+            self.http2,
+        )?;
+        validate_request_body_idle_timeout(self.request_body_idle_timeout)?;
+        Ok(())
     }
 }
 
