@@ -9,7 +9,7 @@
 //! counts too, which is what lets the calibration group hold one instrument to
 //! the other.
 //!
-//! The `connection` group's region is instead [`Open::serve`]: one connection
+//! The `connection_h1` and `connection_h2` groups' region is instead [`Open::serve`]: one connection
 //! through `Server::serve_io`, driven to its end, with the encoded request
 //! written into its duplex in setup and the response read back in teardown.
 //!
@@ -258,14 +258,25 @@ fn closed((runner, mut open, ended, expected): Closed) {
 }
 
 // `connection.rs`'s `CONNECTION` table: a request through `Server::serve_io`
-// over an in-memory duplex, the server path the rows above never enter.
+// over an in-memory duplex, the server path the rows above never enter. Split
+// by protocol because HTTP/2 Huffman-codes the `Date` value into every
+// response, which costs a few instructions more or fewer as the clock's
+// characters change, so only the HTTP/1.1 group is exact; `requests.tsv` marks
+// `connection_h2` `trend`.
 #[library_benchmark(setup = opened, teardown = closed, config = heap())]
-#[bench::h1_plaintext("conn-h1-plaintext")]
-#[bench::h1_echo_cl("conn-h1-echo-cl")]
-#[bench::h1_echo_chunked("conn-h1-echo-chunked")]
-#[bench::h2_plaintext("conn-h2-plaintext")]
-#[bench::h2_second("conn-h2-second")]
-fn connect(opened: Opened) -> Closed {
+#[bench::plaintext("conn-h1-plaintext")]
+#[bench::echo_cl("conn-h1-echo-cl")]
+#[bench::echo_chunked("conn-h1-echo-chunked")]
+fn http1(opened: Opened) -> Closed {
+    let (runner, mut open, expected) = opened;
+    let ended = black_box(&mut open).serve(black_box(&runner));
+    (runner, open, black_box(ended), expected)
+}
+
+#[library_benchmark(setup = opened, teardown = closed, config = heap())]
+#[bench::plaintext("conn-h2-plaintext")]
+#[bench::second("conn-h2-second")]
+fn http2(opened: Opened) -> Closed {
     let (runner, mut open, expected) = opened;
     let ended = black_box(&mut open).serve(black_box(&runner));
     (runner, open, black_box(ended), expected)
@@ -275,12 +286,14 @@ library_benchmark_group!(name = scenarios, benchmarks = request);
 library_benchmark_group!(name = alloc_counter_agreement, benchmarks = calibration);
 library_benchmark_group!(name = compression, benchmarks = sweep);
 library_benchmark_group!(name = runtime, benchmarks = driven);
-library_benchmark_group!(name = connection, benchmarks = connect);
+library_benchmark_group!(name = connection_h1, benchmarks = http1);
+library_benchmark_group!(name = connection_h2, benchmarks = http2);
 
 main!(
     library_benchmark_groups = scenarios,
     alloc_counter_agreement,
     compression,
     runtime,
-    connection
+    connection_h1,
+    connection_h2
 );
