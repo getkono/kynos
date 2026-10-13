@@ -450,6 +450,16 @@ class ForeignFeatures(unittest.TestCase):
         tree = SERDE_JSON_TREE.replace('feature "float_roundtrip"', 'feature "raw_value"')
         self.assertEqual(report.foreign_features(tree), [])
 
+    def test_a_build_enabling_one_is_refused(self):
+        with mock.patch.object(report, "serde_json_features", return_value=SERDE_JSON_TREE):
+            with self.assertRaisesRegex(report.Unreadable, "float_roundtrip"):
+                report.refuse_foreign_build()
+
+    def test_a_build_enabling_none_is_let_through(self):
+        tree = SERDE_JSON_TREE.replace('feature "float_roundtrip"', 'feature "raw_value"')
+        with mock.patch.object(report, "serde_json_features", return_value=tree):
+            self.assertIsNone(report.refuse_foreign_build())
+
 
 class RunBenchmarks(unittest.TestCase):
     """`run_benchmarks` with `cargo bench` replaced, so no Valgrind runs."""

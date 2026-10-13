@@ -668,6 +668,17 @@ def serde_json_features():
     )
 
 
+def refuse_foreign_build():
+    """Raises `Unreadable`, which `--run` exits `NOTHING` on, when the harness
+    build enables a `FOREIGN_FEATURES` entry."""
+    if foreign := foreign_features(serde_json_features()):
+        raise Unreadable(
+            f"the harness builds serde_json with {', '.join(foreign)}, which "
+            "no application's request path is assumed to; see "
+            "crates/kynos-profile/Cargo.toml"
+        )
+
+
 def callgrind_annotate(path):
     """`callgrind_annotate`'s inclusive ranking of `path`, under the pinned Valgrind."""
     annotate = shutil.which("callgrind_annotate", path=search_path())
@@ -773,12 +784,8 @@ if __name__ == "__main__":
     try:
         target = target_directory()
         directory = target / "gungraun/kynos-profile"
-        if arguments.run and (foreign := foreign_features(serde_json_features())):
-            raise Unreadable(
-                f"the harness builds serde_json with {', '.join(foreign)}, which "
-                "no application's request path is assumed to; see "
-                "crates/kynos-profile/Cargo.toml"
-            )
+        if arguments.run:
+            refuse_foreign_build()
         for attempt in range(arguments.repeat if arguments.run else 0):
             run_benchmarks(target)
             if attempt + 1 < arguments.repeat:
