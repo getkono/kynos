@@ -750,7 +750,7 @@ and reports the mutant *caught* when one fails and *missed* when none does.
 | Command | Mutates | Where it runs |
 | --- | --- | --- |
 | `mise run mutants [crate] [--shard k/n]` | one crate, or all three | locally; nightly in [`mutants.yml`](../.github/workflows/mutants.yml) |
-| `mise run mutants:diff [--shard k/n]` | lines changed since the merge base | every pull request, which fails on a survivor |
+| `mise run mutants:diff [--shard k/n]` | lines changed since the merge base | a pull request labelled `ci:full`, which fails on a survivor |
 
 The nightly job runs one seventh of the workspace, as 16 of 112 shards picked
 by the UTC weekday, so a week covers every mutant. A shard is a slice of the

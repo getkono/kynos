@@ -23,9 +23,9 @@ mise run check                   # the gates a local change owes
 CI splits them. Every pull request runs the fast ones and `commits:check`
 (`ci.yml`). The rest, with `coverage:ci`, `msrv:check`, `publish:check`, the
 other platforms and the cost sweeps, run in `full.yml`: on the release pull
-request, on master once merges stop, and on a pull request labelled `ci:full`.
-Ask for the label when a change touches a feature flag, a `#[cfg]` or a
-platform-specific path.
+request, on master once merges stop, and on a pull request labelled `ci:full`,
+which also mutates its changed lines. Ask for the label when a change touches a
+feature flag, a `#[cfg]` or a platform-specific path.
 
 `mise tasks` lists the rest. The ones worth knowing by name:
 
