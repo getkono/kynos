@@ -28,9 +28,12 @@ on:
 permissions:
   contents: read
 
-# A newer run supersedes an older one on master too: that is the debounce.
+# A newer pull request run supersedes an older one. A push gets a group of its
+# own: past `gate`, a master run finishes, so its caches and trend points land.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: >-
+    ${{ github.workflow }}-${{ github.event_name == 'pull_request'
+    && github.ref || github.run_id }}
   cancel-in-progress: true
 
 env:
@@ -44,6 +47,10 @@ jobs:
   gate:
     name: Gate
     runs-on: ubuntu-latest
+    # Only a gate is cancelled by the next push, which is the debounce.
+    concurrency:
+      group: ${{ github.workflow }}-gate-${{ github.ref }}
+      cancel-in-progress: true
     outputs:
       full: ${{ steps.decide.outputs.full }}
     steps:
@@ -321,7 +328,8 @@ jobs:
             target/gungraun/kynos-profile/
 
   # The one check to require: a matrix job's name is unresolved when skipped,
-  # so the tier is gated through this rather than through each job.
+  # so the tier is gated through this rather than through each job. It runs
+  # whatever `gate` decided, so a gate that failed cannot pass as a skip.
   comprehensive:
     name: Comprehensive
     needs:
@@ -335,13 +343,25 @@ jobs:
       - fuzz
       - cost
       - profile
-    if: always() && needs.gate.outputs.full == 'true'
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
+      # A gate cancelled by a newer push or update leaves the check to that run.
       - name: Require every job in the tier to have passed
         env:
+          GATE: ${{ needs.gate.result }}
+          FULL: ${{ needs.gate.outputs.full }}
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
+          case "$GATE" in
+            success) ;;
+            cancelled) echo "Superseded by a newer run."; exit 0 ;;
+            *) echo "::error::the gate ended $GATE"; exit 1 ;;
+          esac
+          if [ "$FULL" != true ]; then
+            echo "The tier does not run here."
+            exit 0
+          fi
           for result in $RESULTS; do
             if [ "$result" != success ]; then
               echo "::error::a job in the tier ended $result"

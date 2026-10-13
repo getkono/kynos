@@ -13,7 +13,7 @@ and allocates a counted method to each shape of the routing stack. Every
 
 | Status | Meaning |
 | --- | --- |
-| `enforced` | A CI job runs this today. Regressions fail the build |
+| `enforced` | A CI job runs this today. Regressions fail the build, in the tier that job belongs to (below) |
 | `partial` | A job runs this today, but it cannot fail the build or cannot see the whole requirement. What it does and does not cover is stated in the row |
 | `planned` | The requirement is settled and the method needs no tool this repository lacks; it is simply not wired |
 | `needs-tooling` | Settled, and blocked on installing something. The tool is named |
