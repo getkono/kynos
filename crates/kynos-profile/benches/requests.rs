@@ -257,7 +257,7 @@ fn closed((runner, mut open, ended, expected): Closed) {
     drop((open, runner));
 }
 
-// `connection.rs`'s `CONNECTION` table: a request through `Server::serve_io`
+// `connection/mod.rs`'s `CONNECTION` table: a request through `Server::serve_io`
 // over an in-memory duplex, the server path the rows above never enter. Split
 // by protocol because HTTP/2 Huffman-codes the `Date` value into every
 // response, which costs a few instructions more or fewer as the clock's
