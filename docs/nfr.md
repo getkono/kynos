@@ -23,6 +23,12 @@ and allocates a counted method to each shape of the routing stack. Every
 | `by-design` | The requirement is not met and will not be. The alternative was weighed and refused, and the trade is recorded |
 | `kynos-bench` | A measurement any HTTP server library would answer, owned by [`getkono/kynos-bench`](https://github.com/getkono/kynos-bench) rather than by this repository |
 
+CI runs in two tiers. [`ci.yml`](../.github/workflows/ci.yml) is what every
+pull request waits on; [`full.yml`](../.github/workflows/full.yml) runs the rest
+on the release pull request, on one labelled `ci:full`, and on master once
+merges stop for fifteen minutes. A row enforced in `full.yml` blocks a release,
+not each pull request: a regression it catches lands on master first.
+
 A performance requirement is filed by *what it names*, not by its method.
 Document generation, route resolution at scale and per-layer overhead each
 name something only Kynos has, so each is two requirements: what can be
@@ -146,13 +152,14 @@ rebuilds and re-walks all three from scratch under a fresh hash seed; a second
 call would reuse the same maps and agree with itself trivially. Each is indexed
 rather than walked, and that test is what keeps them so.
 
-**Across platforms is enforced by comparison, not by a second emission.** CI's
-`portability` job runs the whole suite on `windows-latest` and `macos-latest`
-beside the Linux jobs, so each OS emits the corpus afresh and byte-compares it
-against the same committed files; two OSes agreeing with those bytes agree with
-each other. The plausible divergences are a path separator reaching a component
-name and a float formatting differently, and both are caught only where the
-corpus exercises them: a description the corpus does not contain is not covered.
+**Across platforms is enforced by comparison, not by a second emission.**
+`full.yml`'s `portability` job runs the whole suite on `windows-latest` and
+`macos-latest` beside the Linux jobs, so each OS emits the corpus afresh and
+byte-compares it against the same committed files; two OSes agreeing with those
+bytes agree with each other. The plausible divergences are a path separator
+reaching a component name and a float formatting differently, and both are
+caught only where the corpus exercises them: a description the corpus does not
+contain is not covered.
 
 ## Routing
 
@@ -161,7 +168,7 @@ corpus exercises them: a description the corpus does not contain is not covered.
 | performance | Route dispatch allocates at most a recorded number of times per route shape, and a replayed request costs what the first one did | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), over a handler that allocates nothing, counting fresh allocations and reallocations across a 10k-request replay | `enforced` |
 | performance | Zero heap allocations on the routing path | — | `absent`. The row above enforces a ceiling, which is the opposite direction; nothing asserts the zero, and the measurement below is why |
 | performance | Route resolution p99 ≤ TBD at 1000 registered operations | `criterion` with a regression gate | `kynos-bench` |
-| performance | What one request of each `kynos-bench` scenario, and of each row of the compression sweep `Compression`'s default `min_size` is read from, executes in process is recorded as a count exact on one host: instructions in the program object, and heap blocks and bytes | `mise run profile:requests`: gungraun over Callgrind and DHAT on [`kynos-profile`](../crates/kynos-profile/), split by object and compared with [`requests.tsv`](../crates/kynos-profile/requests.tsv) by [`profile_report.py`](../scripts/profile_report.py), which also holds DHAT's block counts to `tests/alloc.rs`'s | `partial`: a trend after each merge in `cost.yml`, with no ceiling and no gate, and over `Service::call` rather than a socket — below |
+| performance | What one request of each `kynos-bench` scenario, and of each row of the compression sweep `Compression`'s default `min_size` is read from, executes in process is recorded as a count exact on one host: instructions in the program object, and heap blocks and bytes | `mise run profile:requests`: gungraun over Callgrind and DHAT on [`kynos-profile`](../crates/kynos-profile/), split by object and compared with [`requests.tsv`](../crates/kynos-profile/requests.tsv) by [`profile_report.py`](../scripts/profile_report.py), which also holds DHAT's block counts to `tests/alloc.rs`'s | `partial`: a trend in `full.yml` once master settles, with no ceiling and no gate, and over `Service::call` rather than a socket — below |
 | performance | Erasing a body through the boxed trait object costs a recorded number of allocations per construction | [`tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs), counting `Body::empty` and `Body::from_bytes` | `enforced` |
 | reliability | Route conflicts and ambiguity are rejected before the service runs | `trybuild` compile-fail suite for statically expressible conflicts; [`tests/routing.rs`](../crates/kynos/tests/routing.rs) over `Router::validate` for those only visible once the tree is assembled, each refusal with its pass control | `enforced` |
 | security | A served asset path is enumerated, never joined from request input | [`tests/assets.rs`](../crates/kynos/tests/assets.rs) asserting an embedded set registers only literal `paths` keys, and [`router/assets/fs/tests.rs`](../crates/kynos/src/router/assets/fs/tests.rs) sweeping every escape a resolver must refuse against a control that must not be | `enforced` |
@@ -272,7 +279,7 @@ rewrite.
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
-| reliability | No extractor panics on any input | `cargo-fuzz` targets in [`fuzz/`](../fuzz/), one per hand-written parser of untrusted input, each asserting no panic and a round trip or an independent oracle where one exists; [`fuzz.yml`](../.github/workflows/fuzz.yml) searches each nightly and replays the committed [`fuzz/corpus/`](../fuzz/corpus/) on every pull request | `partial`: a pull request fails only on a committed input, while a new one fails the nightly job, which no merge waits on; and the nine targets are Kynos's own parsers, not every extractor — a codec whose parser is a dependency's (`serde_json`, `serde_html_form`, `multer`, `prost`) is not fuzzed here. [`testing.md`](testing.md#fuzzing) lists them |
+| reliability | No extractor panics on any input | `cargo-fuzz` targets in [`fuzz/`](../fuzz/), one per hand-written parser of untrusted input, each asserting no panic and a round trip or an independent oracle where one exists; [`fuzz.yml`](../.github/workflows/fuzz.yml) searches each nightly, and [`full.yml`](../.github/workflows/full.yml) replays the committed [`fuzz/corpus/`](../fuzz/corpus/) | `partial`: a release fails only on a committed input, while a new one fails the nightly job, which no merge waits on; and the nine targets are Kynos's own parsers, not every extractor — a codec whose parser is a dependency's (`serde_json`, `serde_html_form`, `multer`, `prost`) is not fuzzed here. [`testing.md`](testing.md#fuzzing) lists them |
 | security | Header count and header-list size are bounded by default | The driver is configured from [`Http1Config`](../crates/kynos/src/server/protocol/http1.rs) and [`Http2Config`](../crates/kynos/src/server/protocol/http2.rs) on every connection; [`server/tests.rs`](../crates/kynos/src/server/tests.rs) asserts the configured cap is the one forwarded | `enforced` |
 | security | Every buffered request body is capped by default, the cap is declared wherever a body is read, and a mounted limit replaces it per operation | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) asserting a 2 MiB default refuses at default+1 counted and declared, accepts at the default, declares its 413 only on operations reading a body, is raised past itself by a `BodySize` on one operation, and holds for multipart; a mounted limit asserted at limit+1 and refused from a declared length before the body is read; [`json_lines/tests.rs`](../crates/kynos/src/extract/body/json_lines/tests.rs) bounding each streamed record | `enforced`; `planned` for the allocation bound |
 | security | Per-IP connection caps | none yet — see below | `planned` |
@@ -705,7 +712,7 @@ open against a `kynos-otel` that may never be written.
 | reliability | Every crate's published archive builds from a pristine extraction, with every feature | `mise run publish:check` (`cargo package --workspace --all-features`), dedicated CI job | `enforced` |
 | reliability | Nothing a package publishes reads a path outside that package | `mise run containment:check`, resolving every `include_bytes!`, `include_str!` and `CARGO_MANIFEST_DIR` path literal against the package that holds it, and exempting only what the manifest's `exclude` names | `enforced`. `publish:check` cannot see this: its verify step builds the library, not the test targets, so a file the archive omits and a test target names resolves in the working tree and nowhere else |
 | compatibility | A release reports whether its API broke | `cargo-semver-checks` via release-plz, verdict in the release pull request body | `partial`: default features only, and fail-open — it is evidence for the reviewer, not a gate |
-| compatibility | A pull request reports whether it broke the public API, across every feature | `mise run semver:check`, dedicated CI job, comparing the workspace at `--all-features` against the last published version | `partial`: advisory before 1.0 — the verdict goes to the job summary rather than failing the pull request. Pre-1.0 a minor bump is how an intentional break is declared, and the baseline is the *published* version, so one break landed for the next minor release is reported by every later pull request until that release ships; blocking would put a red mark meaning "the release has not happened yet" on all of them. The job still fails when the tool produces no verdict at all, which is the fail-open hole the release-time copy has. Reaching 1.0, or an explicit change to the `master` ruleset, is what would make it required |
+| compatibility | A release pull request, or one labelled `ci:full`, reports whether the API broke, across every feature | `mise run semver:check`, the `API compatibility` job in `full.yml`, comparing the workspace at `--all-features` against the last published version | `partial`: advisory before 1.0 — the verdict goes to the job summary rather than failing the pull request. Pre-1.0 a minor bump is how an intentional break is declared, and the baseline is the *published* version, so one break landed for the next minor release is reported by every later run until that release ships; blocking would put a red mark meaning "the release has not happened yet" on all of them. The job still fails when the tool produces no verdict at all, which is the fail-open hole the release-time copy has. Reaching 1.0, or an explicit change to the `master` ruleset, is what would make it required |
 | security | No crate in the graph, at any feature, carries a RustSec advisory or is yanked, unless `deny.toml` waives it with a reason | `mise run deny:check` (`cargo deny check`), the `Dependencies` CI job | `enforced`, and blocking. It can fail a pull request that changed no dependency, when an advisory is published against something already locked: that is the point of it. One waiver today, RUSTSEC-2026-0009 in `time`, reached only through the `rcgen` dev-dependency and fixed only above the MSRV |
 | compatibility | Every dependency is under a licence an MIT application can redistribute | `mise run deny:check`, against `deny.toml`'s permissive allow list | `enforced` |
 | reliability | Every dependency comes from crates.io, and no requirement is a wildcard | `mise run deny:check` | `enforced` |
@@ -726,7 +733,7 @@ open against a `kynos-otel` that may never be written.
 | dx | Every public item has a compiling doc example | Doctests already run via `mise run test:doc`; *presence* of an example per item is unenforced | `planned` |
 | compatibility | Public API item count is tracked as a budget | `cargo-public-api` count with a committed baseline | `needs-tooling` |
 | performance | The benchmark suite runs nightly with regression alerting | `kynos-bench`, so erosion surfaces as a trend rather than at release | `kynos-bench` |
-| performance | What each feature costs a linked artifact and in monomorphized IR | `mise run cost:features` over a fixed fixture at each feature, in `cost.yml` after each merge and as a release pull request's gate, deltas and the floor against a committed baseline | `partial`: a release is refused only for numbers nobody recorded, never a pull request for a cost, and no ceiling is set — one is set from a first recorded measurement, which is what the committed baselines are. That fixture mounts no codec, so the codec question is [Extraction](#extraction)'s row over a second one |
+| performance | What each feature costs a linked artifact and in monomorphized IR | `mise run cost:features` over a fixed fixture at each feature, in `full.yml` as a trend once master settles and as a release pull request's gate, deltas and the floor against a committed baseline | `partial`: a release is refused only for numbers nobody recorded, never a pull request for a cost, and no ceiling is set — one is set from a first recorded measurement, which is what the committed baselines are. That fixture mounts no codec, so the codec question is [Extraction](#extraction)'s row over a second one |
 
 **The build-footprint row is held by its cause, because the effect is a number
 nothing reads and the cause is one cargo will not report.** The figure is a

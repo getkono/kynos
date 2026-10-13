@@ -808,7 +808,7 @@ finds the input a hand-written parser of request fields was never shown.
 | Command | Does | Where it runs |
 | --- | --- | --- |
 | `mise run fuzz [target] [--seconds n]` | searches one target, or each in turn, for `n` seconds | locally; nightly in [`fuzz.yml`](../.github/workflows/fuzz.yml), twenty minutes per target |
-| `mise run fuzz:check` | builds every target and replays [`fuzz/corpus/`](../fuzz/corpus/) | every pull request |
+| `mise run fuzz:check` | builds every target and replays [`fuzz/corpus/`](../fuzz/corpus/) | [`full.yml`](../.github/workflows/full.yml): the release pull request, one labelled `ci:full`, and master |
 
 [`fuzz/`](../fuzz/) is a workspace of its own: `cargo fuzz` needs a nightly
 toolchain, pinned by date in both tasks, and a member would break every stable
@@ -830,7 +830,7 @@ are reached through `kynos::__private::fuzz`, which exists only under the
 
 The search runs nightly rather than on a pull request because its verdict
 depends on how long it ran: a gate that fails on an input a longer run found is
-a gate whose result turns on the runner. What a pull request owes is the
+a gate whose result turns on the runner. What a release owes is the
 corpus. A crash the nightly job uploads is a bug fix, and lands as one: the
 input, copied into `fuzz/corpus/<target>/`, is the failing test, and the fix
 follows it. `fuzz:check` replays it from then on. The search writes what it
