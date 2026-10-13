@@ -15,7 +15,7 @@ use kynos::{
 
 use super::{
     COMPRESSION, Scenario, catalog,
-    driver::{Drained, Driver, Served, frames},
+    driver::{Drained, Driver, FRAMES, Served, frames},
     scenario,
 };
 
@@ -237,7 +237,7 @@ fn a_service_of_any_context_is_served_through_the_erased_handle() {
 /// Three chunks, each produced on the poll after one that returned `Pending`,
 /// so no single poll drains the body.
 struct Chunks {
-    left: u8,
+    left: usize,
     yielded: bool,
 }
 
@@ -267,10 +267,19 @@ async fn chunks() -> BinaryStream<Chunks, OctetStream> {
     })
 }
 
+/// One frame more than [`FRAMES`] reserves.
+#[kynos::get("/chunks-past-reserve")]
+async fn chunks_past_reserve() -> BinaryStream<Chunks, OctetStream> {
+    BinaryStream::new(Chunks {
+        left: FRAMES + 1,
+        yielded: false,
+    })
+}
+
 fn chunked() -> Box<dyn Served> {
     Box::new(
         Router::<()>::new()
-            .mount(kynos::routes![chunks])
+            .mount(kynos::routes![chunks, chunks_past_reserve])
             .build(())
             .expect("a describable router"),
     )
@@ -284,6 +293,20 @@ fn a_runtime_driver_drains_a_streamed_body_frame_by_frame() {
     assert_eq!(drained.frames.len(), 3);
     assert_eq!(drained.octets(), b"chunkchunkchunk");
     assert!(!drained.regrew());
+}
+
+/// A body producing more frames than were reserved reallocates the buffer
+/// inside the region, which `regrew` reports so the benchmark's teardown
+/// refuses the count.
+#[test]
+fn a_body_past_the_reserved_frames_regrew() {
+    let drained = drive(
+        &*chunked(),
+        Driver::Runtime,
+        crate::app::get("/chunks-past-reserve"),
+    );
+    assert_eq!(drained.frames.len(), FRAMES + 1);
+    assert!(drained.regrew());
 }
 
 /// A `Poll` scenario that is not ready on its one poll would count part of a
