@@ -13,8 +13,11 @@ use kynos::{
     response::stream::binary::BinaryStream,
 };
 
+use tracing::subscriber::NoSubscriber;
+
 use super::{
-    COMPRESSION, Scenario, catalog,
+    CODECS, COMPRESSION, EXTRACT, INTERCEPTORS, REALISTIC, RESPOND, ROUTING, SCOPE, STATIC, STREAM,
+    Scenario, catalog,
     connection::{
         CONNECTION, connected,
         wire::{http1, http1_answered},
@@ -162,7 +165,7 @@ fn every_payload_is_the_size_the_catalog_names() {
 fn the_default_threshold_is_where_every_coding_first_saves_a_segment() {
     const SEGMENT: usize = 1_460;
 
-    let service = crate::app::compressed();
+    let service = crate::app::sweep::compressed();
     let saved = |target: &str, coding: &'static str| {
         let length = |coding| {
             drive(
@@ -189,7 +192,7 @@ fn the_default_threshold_is_where_every_coding_first_saves_a_segment() {
 /// identity coding of the same routes the sweep encodes.
 #[test]
 fn every_sweep_size_is_the_size_it_names() {
-    let service = crate::app::compressed();
+    let service = crate::app::sweep::compressed();
     for (target, low, high) in [
         ("/json/1k", 896, 1_280),
         ("/json/2k", 1_792, 2_304),
@@ -207,6 +210,146 @@ fn every_sweep_size_is_the_size_it_names() {
             "{target} wrote {length} octets, outside {low}..={high}"
         );
     }
+}
+
+/// The ablation rows whose answer is meant to differ from their base's,
+/// and why: a body each writes in another shape, or none.
+const ANSWERED_OTHERWISE: &[&str] = &[
+    // One capture more, which the handler adds into its sum.
+    "captures-4",
+    // A `HEAD`, answered without content.
+    "head-get",
+    // The description, not `plaintext`'s octets.
+    "docs-json",
+    // `echo-post`'s document in another codec's octets.
+    "form-echo",
+    "multipart-echo",
+    "protobuf-echo",
+    // `ndjson-16`'s lines, gzip-coded.
+    "compressed-stream-gzip",
+];
+
+/// A row is meant to differ from its base in one variable, and that variable
+/// is never what the response says: so every row answered as its base is
+/// writes its base's octets, and a fixture that drifted to another payload is
+/// caught here rather than read as that variable's cost.
+#[test]
+fn every_ablation_row_writes_what_its_base_writes() {
+    let ablation = [
+        ROUTING,
+        SCOPE,
+        EXTRACT,
+        CODECS,
+        RESPOND,
+        INTERCEPTORS,
+        STREAM,
+        STATIC,
+        REALISTIC,
+    ];
+    for &row in ablation.iter().copied().flatten() {
+        let Some(base) = row.base.map(scenario) else {
+            continue;
+        };
+        if row.expected != StatusCode::OK
+            || base.expected != StatusCode::OK
+            || ANSWERED_OTHERWISE.contains(&row.name)
+        {
+            continue;
+        }
+        assert_eq!(
+            answered(row),
+            answered(base),
+            "{} writes other octets than {}",
+            row.name,
+            base.name
+        );
+    }
+}
+
+/// Each stream row produces the items its name counts, one data frame each,
+/// so a stream that ended early would not read as cheap framing.
+#[test]
+fn every_stream_row_produces_its_items_one_frame_each() {
+    for scenario in STREAM.iter().filter(|scenario| scenario.base.is_none()) {
+        let drained = drive(
+            &*(scenario.service)(),
+            scenario.driver,
+            (scenario.request)(),
+        );
+        let data = drained
+            .frames
+            .iter()
+            .filter(|frame| frame.is_data())
+            .count();
+        assert_eq!(data, crate::app::stream::ITEMS, "{}", scenario.name);
+    }
+}
+
+/// The value of `name` in what `scenario` answers.
+fn field(scenario: Scenario, name: &str) -> Option<String> {
+    drive(
+        &*(scenario.service)(),
+        scenario.driver,
+        (scenario.request)(),
+    )
+    .head
+    .headers
+    .get(name)
+    .and_then(|value| value.to_str().ok())
+    .map(str::to_owned)
+}
+
+/// `compression-default` and the composite decline: `json-small` is under the
+/// default `min_size`, which is what they count applying. The compressed
+/// stream is encoded, since a stream states no length to be under it.
+#[test]
+fn the_default_compression_declines_json_small_and_encodes_a_stream() {
+    assert_eq!(
+        field(scenario("compression-default"), "content-encoding"),
+        None
+    );
+    assert_eq!(field(scenario("stack-typical"), "content-encoding"), None);
+    assert_eq!(
+        field(scenario("compressed-stream-gzip"), "content-encoding").as_deref(),
+        Some("gzip")
+    );
+}
+
+/// An interceptor row counts its interceptor's work only if the request
+/// reaches it, so each one whose work shows in the response is held to
+/// showing it.
+#[test]
+fn every_interceptor_row_reaches_its_interceptor() {
+    for (name, shown) in [
+        ("cors-simple", "access-control-allow-origin"),
+        ("cors-preflight", "access-control-allow-methods"),
+        ("request-id-counter", "x-request-id"),
+        ("request-id-random", "x-request-id"),
+        ("security-headers", "x-content-type-options"),
+        ("set-cookies", "set-cookie"),
+        ("cache-miss", "age"),
+        ("cache-hit", "age"),
+        ("stack-typical", "access-control-allow-origin"),
+        ("stack-typical", "x-request-id"),
+    ] {
+        assert!(
+            field(scenario(name), shown).is_some(),
+            "{name} answered without `{shown}`"
+        );
+    }
+}
+
+/// `trace-sub` differs from `trace-nosub` in a subscriber alone, so one is
+/// the thread's default while its service lives, and none is once it is
+/// dropped.
+#[test]
+fn trace_sub_serves_under_a_subscriber_of_its_own() {
+    let unsubscribed = || tracing::dispatcher::get_default(tracing::Dispatch::is::<NoSubscriber>);
+    assert!(unsubscribed());
+    let service = (scenario("trace-sub").service)();
+    assert!(!unsubscribed());
+    drop(service);
+    assert!(unsubscribed());
 }
 
 #[derive(Clone)]

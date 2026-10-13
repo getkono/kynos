@@ -7,14 +7,22 @@
 //! measured changes; this changes when what a request *is* does, and the
 //! payload sizes the catalog names are held by that module's tests rather than
 //! restated here.
-
-use std::convert::Infallible;
+//!
+//! # One route table
+//!
+//! Every ablation row is served by the route table [`service`] builds, or by
+//! that table with one thing changed: an interceptor mounted, a policy set, or
+//! `/json/small` mounted another way. A row's base is then the same table
+//! without that one thing, so the difference between them is that thing and
+//! not a router of a different size. Each submodule holds one ablation
+//! group's handlers and the services that change the table, and mounts its
+//! handlers through [`rest`].
 
 use kynos::{
     Router,
     extract::body::text::Text,
-    http::{HeaderValue, Method, Request, body::Body, header},
-    middleware::{Continued, Interceptor, Next, compression::Compression},
+    http::{HeaderName, HeaderValue, Method, Request, body::Body, header},
+    middleware::catch_panic::PanicPolicy,
     openapi::model::body::mime_names,
     prelude::*,
 };
@@ -22,9 +30,41 @@ use serde::{Deserialize, Serialize};
 
 use crate::driver::Served;
 
+pub(crate) mod assets;
+pub(crate) mod codecs;
+pub(crate) mod extract;
+pub(crate) mod interceptors;
+pub(crate) mod realistic;
+pub(crate) mod respond;
+pub(crate) mod routing;
+pub(crate) mod scope;
+pub(crate) mod stream;
+pub(crate) mod sweep;
+
+/// The context every row's service is built with: what `Inject` reads and
+/// what the guards authenticate against.
+///
+/// One context for the whole table, so that a row reading it and its base,
+/// which does not, are served by the same `Service<App>`.
+#[derive(kynos::Provider)]
+pub(crate) struct App {
+    greeting: extract::Greeting,
+    #[provide(skip)]
+    keys: extract::Keys,
+}
+
+impl App {
+    fn new() -> Self {
+        Self {
+            greeting: extract::Greeting("Hello, World!"),
+            keys: extract::Keys,
+        }
+    }
+}
+
 /// kynos-bench's `json-small`: a small struct, roughly 100 octets written.
-#[derive(Schema, Serialize, Deserialize)]
-struct Small {
+#[derive(Clone, Schema, Serialize, Deserialize)]
+pub(crate) struct Small {
     id: u64,
     name: String,
     email: String,
@@ -32,7 +72,7 @@ struct Small {
     score: f64,
 }
 
-fn small() -> Small {
+pub(crate) fn small() -> Small {
     Small {
         id: 7,
         name: "Ada Lovelace".to_owned(),
@@ -88,40 +128,47 @@ fn entries(count: u64) -> Large {
 }
 
 /// kynos-bench's `echo-post`: a typed body of about 1 KiB, in and back out.
+///
+/// The codec rows carry this same value in their own encodings, so that what
+/// differs between them and `echo-post` is the codec alone.
 #[derive(Schema, Serialize, Deserialize)]
-struct Echo {
-    id: u64,
-    message: String,
-    values: Vec<u64>,
-    labels: Vec<String>,
+pub(crate) struct Echo {
+    pub(crate) id: u64,
+    pub(crate) message: String,
+    pub(crate) values: Vec<u64>,
+    pub(crate) labels: Vec<String>,
 }
 
-/// The `echo-post` body, built once per request outside the region.
-pub(crate) fn echo_body() -> Body {
-    let echo = Echo {
+/// The `echo-post` value.
+pub(crate) fn echo_value() -> Echo {
+    Echo {
         id: 42,
         message: "the quick brown fox jumps over the lazy dog ".repeat(8),
         values: (0..64).collect(),
         labels: (0..24).map(|index| format!("label-{index}")).collect(),
-    };
-    let octets = serde_json::to_vec(&echo).expect("a struct of plain fields serializes");
+    }
+}
+
+/// The `echo-post` body, built once per request outside the region.
+pub(crate) fn echo_body() -> Body {
+    let octets = serde_json::to_vec(&echo_value()).expect("a struct of plain fields serializes");
     Body::from_bytes(bytes::Bytes::from(octets))
 }
 
 /// `path-params`: three captures.
 #[derive(Schema, PathParams)]
-struct Item {
-    a: u64,
-    b: u64,
-    c: u64,
+pub(crate) struct Item {
+    pub(crate) a: u64,
+    pub(crate) b: u64,
+    pub(crate) c: u64,
 }
 
 /// `path-params`: and two query parameters beside them.
 #[derive(Schema, QueryParams)]
-struct Page {
-    after: Option<u64>,
+pub(crate) struct Page {
+    pub(crate) after: Option<u64>,
     #[param(rename = "per_page")]
-    per: u32,
+    pub(crate) per: u32,
 }
 
 /// `headers`: sixteen declared `x-bench-*` request headers, as kynos-bench
@@ -189,30 +236,13 @@ async fn plaintext() -> Text {
 }
 
 #[kynos::get("/json/small")]
-async fn json_small() -> Json<Small> {
+pub(crate) async fn json_small() -> Json<Small> {
     Json(small())
 }
 
 #[kynos::get("/json/large")]
 async fn json_large() -> Json<Large> {
     Json(large())
-}
-
-/// The compression sweep's middle sizes: about 1, 2 and 4 KiB of the
-/// `json-large` shape. `json-small` and `json-large` are its two ends.
-#[kynos::get("/json/1k")]
-async fn json_1k() -> Json<Large> {
-    Json(entries(5))
-}
-
-#[kynos::get("/json/2k")]
-async fn json_2k() -> Json<Large> {
-    Json(entries(10))
-}
-
-#[kynos::get("/json/4k")]
-async fn json_4k() -> Json<Large> {
-    Json(entries(21))
 }
 
 #[kynos::post("/echo")]
@@ -241,34 +271,39 @@ async fn user(Path(path): Path<One>) -> NoContent {
     NoContent
 }
 
-fn router() -> Router<()> {
-    Router::<()>::new().mount(kynos::routes![
-        plaintext, json_small, json_large, echo, items, headers, ping, user
-    ])
+/// Every route but `/json/small`, which a row mounts the way it measures.
+///
+/// `/json/small` is the base most interceptor and scope rows differ from, so a
+/// row that changes how that one operation is mounted — behind endpoint
+/// layers, in a group, with recovery — mounts it onto this and leaves every
+/// other route as [`router`] has it.
+pub(crate) fn rest() -> Router<App> {
+    let router = Router::<App>::new().mount(kynos::routes![
+        plaintext, json_large, echo, items, headers, ping, user
+    ]);
+    let router = routing::mount(router);
+    let router = extract::mount(router);
+    let router = codecs::mount(router);
+    let router = respond::mount(router);
+    let router = stream::mount(router);
+    assets::mount(router)
 }
 
-/// The JSON documents at every size the compression sweep reads, behind
-/// `Compression`.
-///
-/// A table of its own rather than the catalog's with more routes, so that the
-/// catalog's scenarios keep the route table their recorded counts were taken
-/// over.
-///
-/// `min_size(0)` rather than the default, because the sweep measures what
-/// encoding a body costs at each length, and the default's threshold is what
-/// that measurement is read to choose: measured through it, the rows below the
-/// threshold would report the skip instead.
+/// The whole table: [`rest`] and `/json/small` as an attribute route mounts it.
+pub(crate) fn router() -> Router<App> {
+    rest().mount(kynos::routes![json_small])
+}
+
+/// Builds `router` with the context every row shares.
+pub(crate) fn built<P: PanicPolicy, I, S>(router: Router<App, P, I, S>) -> Box<dyn Served> {
+    Box::new(router.build(App::new()).expect("a describable router"))
+}
+
+/// The service every scenario but the deeper stacks and the ablation rows
+/// that change the table is sent to.
 #[must_use]
-pub(crate) fn compressed() -> Box<dyn Served> {
-    Box::new(
-        Router::<()>::new()
-            .mount(kynos::routes![
-                json_small, json_1k, json_2k, json_4k, json_large
-            ])
-            .intercept(Compression::new().min_size(0))
-            .build(())
-            .expect("a describable router"),
-    )
+pub(crate) fn service() -> Box<dyn Served> {
+    built(router())
 }
 
 /// A bodiless `GET` offering exactly `coding`.
@@ -278,68 +313,6 @@ pub(crate) fn get_encoded(target: &str, coding: &'static str) -> Request {
         .headers_mut()
         .insert(header::ACCEPT_ENCODING, HeaderValue::from_static(coding));
     request
-}
-
-/// The service every scenario but the two deeper stacks is sent to.
-#[must_use]
-pub(crate) fn service() -> Box<dyn Served> {
-    Box::new(router().build(()).expect("a describable router"))
-}
-
-/// An interceptor that forwards and does nothing else, so that what a stack
-/// costs is the chain's own machinery — `tests/alloc.rs`'s `Transparent`, for
-/// its reason.
-struct Transparent;
-
-impl<C: Sync + 'static> Interceptor<C> for Transparent {
-    type Reads = ();
-    type Adds = ();
-    type Short = Infallible;
-
-    async fn intercept(
-        &self,
-        request: Request,
-        reads: (),
-        context: &C,
-        next: Next<'_, C>,
-    ) -> Result<Continued<()>, Infallible> {
-        let _ = (reads, context);
-        Ok(next.run(request).await)
-    }
-}
-
-/// The same service behind four transparent layers, written out because each
-/// `intercept` returns a different `Router` type and a loop has none to
-/// iterate at.
-#[must_use]
-pub(crate) fn layers_4() -> Box<dyn Served> {
-    Box::new(
-        router()
-            .intercept(Transparent)
-            .intercept(Transparent)
-            .intercept(Transparent)
-            .intercept(Transparent)
-            .build(())
-            .expect("a describable router"),
-    )
-}
-
-/// Behind eight, for the same reason.
-#[must_use]
-pub(crate) fn layers_8() -> Box<dyn Served> {
-    Box::new(
-        router()
-            .intercept(Transparent)
-            .intercept(Transparent)
-            .intercept(Transparent)
-            .intercept(Transparent)
-            .intercept(Transparent)
-            .intercept(Transparent)
-            .intercept(Transparent)
-            .intercept(Transparent)
-            .build(())
-            .expect("a describable router"),
-    )
 }
 
 /// One request, built outside the measured region.
@@ -363,6 +336,37 @@ pub(crate) fn request(
 /// A bodiless `GET`.
 pub(crate) fn get(target: &str) -> Request {
     request(Method::GET, target, None, Body::empty())
+}
+
+/// `request` carrying each of `fields` besides what it already has.
+pub(crate) fn with(mut request: Request, fields: &[(&'static str, &'static str)]) -> Request {
+    for &(name, value) in fields {
+        request.headers_mut().insert(
+            HeaderName::from_static(name),
+            HeaderValue::from_static(value),
+        );
+    }
+    request
+}
+
+/// Every octet of `body`, which must be ready on one poll; for building a
+/// request outside the region out of what a codec writes.
+pub(crate) fn octets(body: Body) -> bytes::Bytes {
+    use http_body::Body as _;
+
+    let mut body = std::pin::pin!(body);
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    let mut octets = Vec::new();
+    while let std::task::Poll::Ready(Some(frame)) = body.as_mut().poll_frame(&mut context) {
+        if let Ok(data) = frame
+            .expect("an encoded body produces every frame")
+            .into_data()
+        {
+            octets.extend_from_slice(&data);
+        }
+    }
+    assert!(body.is_end_stream(), "an encoded body is ready on one poll");
+    bytes::Bytes::from(octets)
 }
 
 /// A JSON `POST`.
