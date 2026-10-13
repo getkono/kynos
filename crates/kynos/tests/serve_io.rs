@@ -2,8 +2,9 @@
 //!
 //! One reason: `Server::serve_io` is the public way onto the connection driver
 //! without a socket, and whether it serves what a listener's connection would
-//! — both protocols, the peer it was handed, and a configuration `prepare`
-//! refuses — is only visible by composing it as a caller does.
+//! — both protocols, the peer it was handed, the local address standing in
+//! for a listener's, a client that breaks the protocol, and a configuration
+//! `prepare` refuses — is only visible by composing it as a caller does.
 
 #![cfg(all(feature = "server", feature = "macros"))]
 
@@ -14,7 +15,10 @@ use hyper_util::rt::{TokioExecutor, TokioIo};
 use kynos::{
     Router,
     error::Error,
-    extract::{body::text::Text, connection::ConnectInfo},
+    extract::{
+        body::text::Text,
+        connection::{ConnectInfo, Connection},
+    },
     router::service::Service,
     server::{Server, error::ServerError},
 };
@@ -22,10 +26,20 @@ use kynos::{
 /// The peer every case hands the server, which no socket could have reported.
 const PEER: &str = "192.0.2.7:50123";
 
-/// Answers with the peer the request arrived from.
+/// What `peer` answers for [`PEER`]: no listener accepted the stream, so the
+/// local address is the unspecified IPv4 one with port zero, and a stream is
+/// not in-process.
+const PEER_SEEN: &str = "192.0.2.7:50123 0.0.0.0:0 false";
+
+/// Answers with the peer the request arrived from, the local address its
+/// connection reports, and whether that connection calls itself in-process.
 #[kynos::get("/peer")]
-async fn peer(ConnectInfo(peer): ConnectInfo) -> Text {
-    Text(peer.to_string())
+async fn peer(ConnectInfo(peer): ConnectInfo, connection: Connection) -> Text {
+    Text(format!(
+        "{peer} {} {}",
+        connection.local_addr(),
+        connection.is_in_process()
+    ))
 }
 
 fn service() -> Service<()> {
@@ -70,10 +84,30 @@ async fn read(
 #[cfg(feature = "http1")]
 #[tokio::test]
 async fn an_http1_request_is_served_and_sees_the_peer_it_was_handed() {
+    assert_eq!(http1_get_peer(peer_addr()).await, PEER_SEEN);
+}
+
+/// An IPv6 peer is given the unspecified IPv6 address as its local one, not
+/// IPv4's.
+#[cfg(feature = "http1")]
+#[tokio::test]
+async fn an_ipv6_peer_sees_the_unspecified_ipv6_local_address() {
+    let peer = "[2001:db8::7]:50123".parse().expect("a socket address");
+    assert_eq!(
+        http1_get_peer(peer).await,
+        "[2001:db8::7]:50123 [::]:0 false"
+    );
+}
+
+/// Serves one HTTP/1.1 `GET /peer` over a duplex handed to the server as
+/// coming from `peer`, and returns the body once the connection has ended
+/// cleanly.
+#[cfg(feature = "http1")]
+async fn http1_get_peer(peer: SocketAddr) -> String {
     let (client, io) = tokio::io::duplex(64 * 1024);
     let served = tokio::spawn(
         Server::new(service())
-            .serve_io(io, peer_addr())
+            .serve_io(io, peer)
             .expect("the default configuration is accepted"),
     );
 
@@ -89,7 +123,6 @@ async fn an_http1_request_is_served_and_sees_the_peer_it_was_handed() {
         .expect("request succeeds");
     let (status, body) = read(response, version).await;
     assert_eq!(status, http::StatusCode::OK);
-    assert_eq!(body, PEER);
 
     drop(sender);
     client.await.expect("client task").expect("client closes");
@@ -98,6 +131,34 @@ async fn an_http1_request_is_served_and_sees_the_peer_it_was_handed() {
         .expect("the connection ends once the client closes")
         .expect("server task")
         .expect("the connection ends cleanly");
+    body
+}
+
+/// A client that sends no HTTP at all ends the connection, and the future
+/// reports why rather than resolving `Ok`.
+#[cfg(feature = "http1")]
+#[tokio::test]
+async fn a_client_breaking_the_protocol_resolves_the_connection_with_an_error() {
+    use tokio::io::AsyncWriteExt as _;
+
+    let (mut client, io) = tokio::io::duplex(64 * 1024);
+    let served = tokio::spawn(
+        Server::new(service())
+            .serve_io(io, peer_addr())
+            .expect("the default configuration is accepted"),
+    );
+
+    client
+        .write_all(b"\x00\x01 this is not HTTP\r\n\r\n")
+        .await
+        .expect("the bytes are written");
+    client.shutdown().await.expect("the client closes its side");
+
+    tokio::time::timeout(Duration::from_secs(5), served)
+        .await
+        .expect("the connection ends on a malformed request")
+        .expect("server task")
+        .expect_err("a protocol violation is reported");
 }
 
 #[cfg(feature = "http2")]
@@ -123,7 +184,7 @@ async fn a_prior_knowledge_http2_request_is_served_and_sees_the_peer_it_was_hand
         .expect("request succeeds");
     let (status, body) = read(response, version).await;
     assert_eq!(status, http::StatusCode::OK);
-    assert_eq!(body, PEER);
+    assert_eq!(body, PEER_SEEN);
 
     drop(sender);
     client.await.expect("client task").expect("client closes");
