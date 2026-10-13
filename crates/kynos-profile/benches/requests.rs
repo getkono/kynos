@@ -9,6 +9,10 @@
 //! counts too, which is what lets the calibration group hold one instrument to
 //! the other.
 //!
+//! The `connection_h1` and `connection_h2` groups' region is instead [`Open::serve`]: one connection
+//! through `Server::serve_io`, driven to its end, with the encoded request
+//! written into its duplex in setup and the response read back in teardown.
+//!
 //! What gungraun prints is not the number of record: its Callgrind total
 //! includes glibc's allocator, whose cost depends on the heap's history and
 //! moves between runs. `scripts/profile_report.py` reads the output files and
@@ -21,12 +25,16 @@
 #![allow(missing_docs, clippy::must_use_candidate)]
 
 use std::hint::black_box;
+use std::io;
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use gungraun::{Dhat, LibraryBenchmarkConfig, library_benchmark, library_benchmark_group, main};
 use http_body::Frame;
 use kynos::http::{Request, StatusCode};
 use kynos_profile::{
+    connection::{Open, connected},
     driver::{Drained, Runner, Served, frames},
     scenario,
 };
@@ -200,14 +208,93 @@ fn driven(prepared: Prepared) -> Answered {
     (service, runner, black_box(drained), expected)
 }
 
+/// A connection row's setup: its driver and the connection made ready, the
+/// request already in the duplex, and the status its response must carry.
+type Opened = (Runner, Open, StatusCode);
+
+/// What leaves a connection row's region, to be checked and dropped outside it.
+type Closed = (Runner, Open, io::Result<()>, StatusCode);
+
+/// The connection, and the request the region serves — over the *second*
+/// connection, for [`prepared`]'s reason: one identical connection is served
+/// to its end and dropped here first.
+///
+/// That connection is served at the start of a wall-clock second, for hyper's
+/// `Date` cache: it renders the header again, allocating, on the first
+/// response written in each new second, so a region that a second boundary
+/// separated from the warming connection would count one more block than one
+/// it did not, by the clock alone. Served at the start of a second, the warming
+/// connection renders it and the region, milliseconds later even under
+/// Valgrind, reuses it: the counts are a request's, and the render, a cost per
+/// second rather than per request, is left out of every row alike.
+fn opened(name: &str) -> Opened {
+    let connected = connected(name);
+    let runner = connected.scenario.driver.runner();
+    // Both are opened first: building a service is the slowest part of setup
+    // under Valgrind, and it must not stand between the render and the region.
+    let mut warm = connected.open(&runner);
+    let open = connected.open(&runner);
+    let into_second = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("the clock is past the epoch")
+        .subsec_nanos();
+    thread::sleep(Duration::from_nanos(u64::from(1_000_000_000 - into_second)));
+    warm.serve(&runner)
+        .expect("the warming connection closes cleanly");
+    drop(warm);
+    (runner, open, connected.scenario.expected)
+}
+
+/// As [`checked`], reading the status from what the server wrote; and a
+/// connection that ended in an error counted that error's path.
+fn closed((runner, mut open, ended, expected): Closed) {
+    ended.expect("the profiled connection closes cleanly");
+    assert_eq!(
+        open.status(),
+        expected,
+        "the profiled request was answered wrongly"
+    );
+    drop((open, runner));
+}
+
+// `connection/mod.rs`'s `CONNECTION` table: a request through `Server::serve_io`
+// over an in-memory duplex, the server path the rows above never enter. Split
+// by protocol because HTTP/2 Huffman-codes the `Date` value into every
+// response, which costs a few instructions more or fewer as the clock's
+// characters change, so only the HTTP/1.1 group is exact; `requests.tsv` marks
+// `connection_h2` `trend`.
+#[library_benchmark(setup = opened, teardown = closed, config = heap())]
+#[bench::plaintext("conn-h1-plaintext")]
+#[bench::echo_cl("conn-h1-echo-cl")]
+#[bench::echo_chunked("conn-h1-echo-chunked")]
+#[bench::second("conn-h1-second")]
+fn http1(opened: Opened) -> Closed {
+    let (runner, mut open, expected) = opened;
+    let ended = black_box(&mut open).serve(black_box(&runner));
+    (runner, open, black_box(ended), expected)
+}
+
+#[library_benchmark(setup = opened, teardown = closed, config = heap())]
+#[bench::plaintext("conn-h2-plaintext")]
+#[bench::second("conn-h2-second")]
+fn http2(opened: Opened) -> Closed {
+    let (runner, mut open, expected) = opened;
+    let ended = black_box(&mut open).serve(black_box(&runner));
+    (runner, open, black_box(ended), expected)
+}
+
 library_benchmark_group!(name = scenarios, benchmarks = request);
 library_benchmark_group!(name = alloc_counter_agreement, benchmarks = calibration);
 library_benchmark_group!(name = compression, benchmarks = sweep);
 library_benchmark_group!(name = runtime, benchmarks = driven);
+library_benchmark_group!(name = connection_h1, benchmarks = http1);
+library_benchmark_group!(name = connection_h2, benchmarks = http2);
 
 main!(
     library_benchmark_groups = scenarios,
     alloc_counter_agreement,
     compression,
-    runtime
+    runtime,
+    connection_h1,
+    connection_h2
 );

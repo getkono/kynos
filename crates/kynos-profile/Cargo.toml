@@ -51,10 +51,11 @@ serde = { workspace = true, features = ["derive"] }
 # Builds the `echo-post` body outside the measured region; the region itself
 # reaches serde_json only through `kynos`.
 serde_json = { workspace = true }
-# `Driver::Runtime`'s current-thread runtime and its timer, named only in
-# `src/driver.rs`. This package is unpublished, so `architecture.md`'s runtime
+# `Driver::Runtime`'s current-thread runtime and its timer, named in
+# `src/driver.rs`, and the in-memory duplex `src/connection/` serves a
+# connection over. This package is unpublished, so `architecture.md`'s runtime
 # allowance, which governs the published crates, does not read it.
-tokio = { workspace = true, features = ["rt", "time"] }
+tokio = { workspace = true, features = ["rt", "time", "io-util"] }
 
 [dev-dependencies]
 # The stream a test drains frame by frame.

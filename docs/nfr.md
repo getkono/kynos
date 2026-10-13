@@ -161,7 +161,7 @@ corpus exercises them: a description the corpus does not contain is not covered.
 | performance | Route dispatch allocates at most a recorded number of times per route shape, and a replayed request costs what the first one did | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), over a handler that allocates nothing, counting fresh allocations and reallocations across a 10k-request replay | `enforced` |
 | performance | Zero heap allocations on the routing path | — | `absent`. The row above enforces a ceiling, which is the opposite direction; nothing asserts the zero, and the measurement below is why |
 | performance | Route resolution p99 ≤ TBD at 1000 registered operations | `criterion` with a regression gate | `kynos-bench` |
-| performance | What one request of each `kynos-bench` scenario, and of each row of the compression sweep `Compression`'s default `min_size` is read from, executes in process is recorded as a count exact on one host: instructions in the program object, and heap blocks and bytes | `mise run profile:requests`: gungraun over Callgrind and DHAT on [`kynos-profile`](../crates/kynos-profile/), split by object and compared with [`requests.tsv`](../crates/kynos-profile/requests.tsv) by [`profile_report.py`](../scripts/profile_report.py), which also holds DHAT's block counts to `tests/alloc.rs`'s | `partial`: a trend after each merge in `cost.yml`, with no ceiling and no gate, and over `Service::call` rather than a socket — below |
+| performance | What one request of each `kynos-bench` scenario, and of each row of the compression sweep `Compression`'s default `min_size` is read from, executes in process is recorded as a count exact on one host: instructions in the program object, and heap blocks and bytes; and so is what a request costs that enters through the server's connection path | `mise run profile:requests`: gungraun over Callgrind and DHAT on [`kynos-profile`](../crates/kynos-profile/), split by object and compared with [`requests.tsv`](../crates/kynos-profile/requests.tsv) by [`profile_report.py`](../scripts/profile_report.py), which also holds DHAT's block counts to `tests/alloc.rs`'s. The `connection_*` groups drive `Server::serve_io` over an in-memory duplex, so hyper's parse, its per-connection builder, buffers and timers, `Body::from_incoming` and the `Connection` extension are counted | `partial`: a trend after each merge in `cost.yml`, with no ceiling and no gate; the connection path is counted to the duplex and no further, so no socket, syscall or kernel buffer is (`kynos-bench`'s), and `connection_h2` is `trend` rather than exact — below |
 | performance | Erasing a body through the boxed trait object costs a recorded number of allocations per construction | [`tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs), counting `Body::empty` and `Body::from_bytes` | `enforced` |
 | reliability | Route conflicts and ambiguity are rejected before the service runs | `trybuild` compile-fail suite for statically expressible conflicts; [`tests/routing.rs`](../crates/kynos/tests/routing.rs) over `Router::validate` for those only visible once the tree is assembled, each refusal with its pass control | `enforced` |
 | security | A served asset path is enumerated, never joined from request input | [`tests/assets.rs`](../crates/kynos/tests/assets.rs) asserting an embedded set registers only literal `paths` keys, and [`router/assets/fs/tests.rs`](../crates/kynos/src/router/assets/fs/tests.rs) sweeping every escape a resolver must refuse against a control that must not be | `enforced` |
@@ -170,19 +170,42 @@ corpus exercises them: a description the corpus does not contain is not covered.
 | correctness | The description a service serves is the description it emits | [`tests/docs.rs`](../crates/kynos/tests/docs.rs), byte-comparing the description route's body against `Router::openapi`'s JSON, and asserting a nested mount moves both routes and the page's pointer with them | `enforced` |
 
 **The first instruction counts say where a request's work goes, and it is
-rarely routing.** Recorded at rustc 1.97.1 in
-[`requests.tsv`](../crates/kynos-profile/requests.tsv), with the host it was
-taken on: a static match executes 1561 instructions in the program and a miss
-1885, while `echo-post` executes 35104. Read with
+rarely routing.** First recorded at rustc 1.97.1 on an AMD EPYC 9V45;
+[`requests.tsv`](../crates/kynos-profile/requests.tsv) holds the counts of
+record and the host they were taken on. Then, a static match executed 1561 instructions in the program and a miss
+1885, while `echo-post` executed 35104. Read with
 `callgrind_annotate --inclusive=yes` over that scenario's Callgrind file, 52%
 of everything Callgrind counted for the request, libc included, is
 `serde_json`'s deserializer inside the `Json` extractor and 26% inside
 `serde_json::to_vec`. A transparent interceptor costs 315 program instructions
 and one heap block per layer, the same at depth four and eight. `json-large`
-executes 1027297 program instructions, and `serde_json`'s string writer alone
+executed 1027297 program instructions, and `serde_json`'s string writer alone
 is 37% of all it counted.
 The ceiling this row would need stays unset for [Thresholds](#thresholds)'
 reason; the counts are the first measurement, not a target.
+
+**A request through the server pays for its connection first.**
+`connection_h1.plaintext` sends `plaintext`'s request through
+`Server::serve_io` and counts 49579 program instructions and 28 heap blocks,
+against the in-process row's 2372 and 9 on the same host. A second request on
+that connection once kept alive (`connection_h1.second`) counts 47142 and 11,
+so of the nineteen blocks between the first two rows seventeen are the
+connection's, paid on its first request only: hyper's read buffer (two blocks,
+24 KiB), its 8 KiB write buffer and its write queue, its dispatcher and the
+boxed `service_fn`, the two timer handles `serve_http`'s builder gives each
+protocol, the prefix hyper-util replays after sniffing the protocol, the
+lifecycle channel, `Connection`'s shared state, the first-head flag, the HTTP/2
+stream counter, built for an HTTP/1.1 connection too, and four DHAT attributes
+to the first request's head: the header-read deadline's sleep, the head split
+off the read buffer and the parsed header map's two. Two are every request's:
+`Body::from_incoming`'s box and the `Connection` extension's own box — the
+extension map's first allocation moves from `Routed` to it rather than being
+added. The instructions do not split that way: the second request executes
+only 2437 fewer than the first, so the server path's instruction cost is
+nearly all paid per request. A second HTTP/2 stream on an open connection
+(`connection_h2.second`) counts 14 blocks where a connection carrying one
+stream counts 41, and a chunked body one block more than a `content-length`
+one.
 
 **The zero does not hold.** A static match allocates five times, of the seven
 the attribution below decided on, a capture eight and a miss six, each stable to the allocation across a

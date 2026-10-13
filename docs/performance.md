@@ -55,7 +55,7 @@ What each kind of measurement proves that no other kind does.
 | Off-path proof | a sibling `tests.rs`, and a table [`containment:check`](../scripts/containment.py) reads | `python3 scripts/containment.py`, `cargo nextest` | that a feature is unreachable from the request path | in use, for the off-path flags and for the document, the registry, the validators and `jsonschema`: a table in [`testing.md`](testing.md#the-off-path-proof) held by `mise run containment:check`, plus the field witness in [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs); `describe` is the one off-path shape no row holds, and the emitters are held by the `yaml` flag's row rather than by one of their own |
 | Codegen delta | a feature sweep | `cargo llvm-lines` | what a feature costs in monomorphized IR | in use, via `mise run cost:features` over [`cost/fixture.rs`](../crates/kynos/cost/fixture.rs); reports a trend after each merge, refuses a release whose numbers are not the recorded ones, and sets no ceiling, and sees the generics that fixture instantiates rather than the whole surface — so a feature that grows the dependency graph can shrink this number by sharing instantiations out of upstream rlibs, and a negative row is a relocation rather than a saving |
 | Binary delta | a feature sweep | `.text` of a fixed fixture | what a feature costs a linked artifact | in use, over [`cost/binary.tsv`](../crates/kynos/cost/binary.tsv); reports a trend after each merge, refuses a release whose numbers are not the recorded ones, and sets no ceiling. The fixture uses none of these features, so a zero row says the linker stripped — or the collector never instantiated — what nothing called, rather than that the feature is free to a program that uses it. A second sweep answers the question that fixture structurally cannot, over [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv): what mounting a codec costs, weighed on a fixture that mounts one |
-| Instruction count | [`kynos-profile`](../crates/kynos-profile/), an unpublished member | `mise run profile:requests`: gungraun over Callgrind and DHAT, read by [`profile_report.py`](../scripts/profile_report.py) | what a request of each [`kynos-bench`](https://github.com/getkono/kynos-bench) scenario executes between a built request and a drained response, once the process has served one — instructions in the program object, and heap blocks and bytes — and which functions they were spent in; what one variable costs, as a scenario's difference from the *base* it differs from in that variable alone; and, in a compression sweep of Kynos's own, what an encode adds at each body size, which [`middleware.md`](middleware.md) reads `min_size`'s default from | in use, in process only: nothing between the socket and `Service::call` is on the measured path. Every request-path feature is built; a scenario is driven by one poll or, where it needs timers or wakeups, by a current-thread runtime. Recorded in [`requests.tsv`](../crates/kynos-profile/requests.tsv); held exact across `--repeat` runs except in a group marked `trend`; reports a trend after each merge and sets no ceiling |
+| Instruction count | [`kynos-profile`](../crates/kynos-profile/), an unpublished member | `mise run profile:requests`: gungraun over Callgrind and DHAT, read by [`profile_report.py`](../scripts/profile_report.py) | what a request of each [`kynos-bench`](https://github.com/getkono/kynos-bench) scenario executes between a built request and a drained response, once the process has served one — instructions in the program object, and heap blocks and bytes — and which functions they were spent in; what one variable costs, as a scenario's difference from the *base* it differs from in that variable alone; and, in a compression sweep of Kynos's own, what an encode adds at each body size, which [`middleware.md`](middleware.md) reads `min_size`'s default from | in use, in process and, for the `connection_*` groups, through `Server::serve_io` over an in-memory duplex, so hyper's parse and per-connection state are on the measured path and the socket is not. Every request-path feature is built; a scenario is driven by one poll or, where it needs timers or wakeups, by a current-thread runtime. Recorded in [`requests.tsv`](../crates/kynos-profile/requests.tsv); held exact across `--repeat` runs except in a group marked `trend`; reports a trend after each merge and sets no ceiling |
 
 **An allocation count needs its own target because a global allocator is
 process-wide.** Installing one in the library's unit-test binary would perturb
@@ -371,8 +371,24 @@ benchmark N times and fails when any program or DHAT count differs between
 runs. A group that cannot be exact, which only a `Runtime` group could be,
 since its timer reads the clock, is named on `requests.tsv`'s `# trend:` line:
 it is reported but never compared, against the baseline or across runs, and
-its marginal costs are marked approximate. No group is marked today; the
-runtime row measured exact.
+its marginal costs are marked approximate. `connection_h2` is marked: HTTP/2
+Huffman-codes the `Date` value into every response, and what that costs moves
+by a few instructions as the clock's characters change. The runtime row and
+`connection_h1` measured exact, the latter because its setup serves the
+warming connection at the start of a wall-clock second: hyper renders `Date`
+again, allocating, on the first response of each second, and a region a
+second boundary separated from that render would count it.
+
+**The connection path is a region of its own.** A `connection_*` row encodes
+its catalog request to octets in setup and writes it into a duplex the server
+was handed through `Server::serve_io`; the region is that connection's future
+driven to its end under `Runtime`, and the response is read back and checked
+in teardown. Every connection ends itself — `connection: close` over HTTP/1.1,
+a client `GOAWAY` over HTTP/2 — and the server's direction of the duplex is
+grown in setup, so writing the response reuses memory as a socket's send
+would. Its difference from its in-process base is the server path's;
+[`nfr.md`](nfr.md#routing) attributes it. A socket, a syscall and a kernel
+buffer stay `kynos-bench`'s.
 
 ### Why the measurements live beside the features
 

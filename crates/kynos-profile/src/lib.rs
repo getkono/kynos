@@ -8,7 +8,10 @@
 //! describe the same request, and a gap between them is the transport's: this
 //! harness counts what Kynos does between a parsed request and a drained
 //! response, and the wire plane's numbers are everything else. How a request
-//! is driven, and what the region is, is [`driver`]'s.
+//! is driven, and what the region is, is [`driver`]'s. The exception is
+//! [`connection`]'s rows, which send a catalog request through the server's
+//! connection path over an in-memory duplex, so that the server's share of
+//! that gap is counted too.
 //!
 //! A scenario may name a [`base`](Scenario::base): the scenario it differs
 //! from in one variable, whose difference the report gives as that variable's
@@ -37,6 +40,7 @@ use crate::{
 };
 
 mod app;
+pub mod connection;
 pub mod driver;
 
 #[cfg(test)]
@@ -362,4 +366,9 @@ pub fn catalog() -> impl Iterator<Item = Scenario> {
         .chain(COMPRESSION)
         .chain(RUNTIME)
         .copied()
+        .chain(
+            connection::CONNECTION
+                .iter()
+                .map(|connected| connected.scenario),
+        )
 }
