@@ -17,6 +17,7 @@ use kynos::{
 use tokio::io::DuplexStream;
 use tracing::{
     Event, Metadata,
+    instrument::WithSubscriber,
     span::{Attributes, Id, Record},
     subscriber::{DefaultGuard, Subscriber},
 };
@@ -185,7 +186,9 @@ impl Subscriber for Discarding {
 /// outside the region.
 ///
 /// The service is held by type rather than boxed, so serving through this
-/// is the same call `traced`'s service is.
+/// is the same call `traced`'s service is. A connection outlives the thread
+/// default, which [`connect`](Served::connect) consumes, so its future
+/// carries [`Discarding`] as the default for each of its polls instead.
 struct Subscribed {
     service: Service<App>,
     _default: DefaultGuard,
@@ -197,7 +200,11 @@ impl Served for Subscribed {
     }
 
     fn connect(self: Box<Self>, io: DuplexStream, peer: SocketAddr) -> Connecting {
-        Box::new(self.service).connect(io, peer)
+        Box::pin(
+            Box::new(self.service)
+                .connect(io, peer)
+                .with_subscriber(Discarding),
+        )
     }
 }
 
