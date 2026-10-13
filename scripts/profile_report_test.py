@@ -426,6 +426,31 @@ class Main(unittest.TestCase):
         self.assertEqual(code, report.DISAGREE)
 
 
+#: Shaped after `cargo tree -p kynos-profile -e features -i serde_json` with
+#: `kynos/test-util` on, cut down: a dependency's edge into a feature names the
+#: feature on the line above it.
+SERDE_JSON_TREE = """serde_json v1.0.151
+├── serde_json feature "default"
+│   ├── jsonschema v0.49.9
+│   │   └── kynos v0.4.0 (/work/crates/kynos)
+│   └── kynos-profile v0.0.0 (/work/crates/kynos-profile)
+├── serde_json feature "float_roundtrip"
+│   ├── jsonschema v0.49.9 (*)
+│   └── jsonschema-value v0.49.9 (*)
+└── serde_json feature "std"
+    └── serde_json feature "default" (*)
+"""
+
+
+class ForeignFeatures(unittest.TestCase):
+    def test_a_feature_test_util_brings_is_named(self):
+        self.assertEqual(report.foreign_features(SERDE_JSON_TREE), ["float_roundtrip"])
+
+    def test_a_tree_without_one_names_nothing(self):
+        tree = SERDE_JSON_TREE.replace('feature "float_roundtrip"', 'feature "raw_value"')
+        self.assertEqual(report.foreign_features(tree), [])
+
+
 class RunBenchmarks(unittest.TestCase):
     """`run_benchmarks` with `cargo bench` replaced, so no Valgrind runs."""
 

@@ -36,6 +36,10 @@ ranks, and DHAT's allocation sites, by the innermost frame in a workspace
 crate. A run that cannot be attributed says so and writes no file; it is
 still the measurement it was, and exits as one.
 
+**The harness builds what applications run.** `--run` refuses (`NOTHING`) a
+harness whose `serde_json` carries a `FOREIGN_FEATURES` entry, which a
+test-only feature of `kynos` would otherwise bring into every JSON row.
+
 `KYNOS_PROFILE=overwrite` records this run as
 `crates/kynos-profile/requests.tsv`; otherwise the run is compared with it.
 Either way it is written to `profile-requests.tsv`, which CI uploads so the host
@@ -71,6 +75,11 @@ VALGRIND = Path(
 )
 
 MEASURED, NOTHING, DISAGREE, INEXACT = 0, 1, 2, 3
+
+# `serde_json` features no application's request path is assumed to carry: a
+# harness build with one measures a parser the applications it describes do not
+# run. `kynos/test-util` is what would bring `float_roundtrip`.
+FOREIGN_FEATURES = ("float_roundtrip",)
 
 # How many inclusive frames attribution lists per benchmark.
 FRAMES = 15
@@ -646,6 +655,19 @@ def catalog():
     )
 
 
+def foreign_features(tree):
+    """Which of `FOREIGN_FEATURES` `cargo tree -e features -i serde_json` shows
+    the harness build enabling."""
+    return [feature for feature in FOREIGN_FEATURES if f'serde_json feature "{feature}"' in tree]
+
+
+def serde_json_features():
+    """`serde_json`'s features in the harness build, as `cargo tree` draws them."""
+    return output(
+        ["cargo", "tree", "-p", "kynos-profile", "-e", "features", "-i", "serde_json"]
+    )
+
+
 def callgrind_annotate(path):
     """`callgrind_annotate`'s inclusive ranking of `path`, under the pinned Valgrind."""
     annotate = shutil.which("callgrind_annotate", path=search_path())
@@ -751,6 +773,12 @@ if __name__ == "__main__":
     try:
         target = target_directory()
         directory = target / "gungraun/kynos-profile"
+        if arguments.run and (foreign := foreign_features(serde_json_features())):
+            raise Unreadable(
+                f"the harness builds serde_json with {', '.join(foreign)}, which "
+                "no application's request path is assumed to; see "
+                "crates/kynos-profile/Cargo.toml"
+            )
         for attempt in range(arguments.repeat if arguments.run else 0):
             run_benchmarks(target)
             if attempt + 1 < arguments.repeat:
