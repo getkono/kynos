@@ -323,13 +323,30 @@ fn responded(prepared: Prepared) -> Answered {
 #[bench::timeout("timeout")]
 #[bench::body_timeout("body-timeout")]
 #[bench::decompress_gzip("decompress-gzip")]
-#[bench::rate_limit("rate-limit")]
 #[bench::cache_miss("cache-miss")]
 #[bench::cache_hit("cache-hit")]
 #[bench::set_cookies("set-cookies")]
 #[bench::compression_default("compression-default")]
 #[bench::unchecked_layer("unchecked-layer")]
 fn intercepted(prepared: Prepared) -> Answered {
+    let Prepared {
+        service,
+        runner,
+        request,
+        frames,
+        expected,
+    } = prepared;
+    let drained = black_box(&*service).serve(black_box(&runner), black_box(request), frames);
+    (service, runner, black_box(drained), expected)
+}
+
+// `INTERCEPTORS`' `rate-limit` alone: its quota keys, its window arithmetic
+// and the remaining count and reset it writes are read off the wall clock,
+// so its count moves by a few instructions with the time it ran at, and
+// `requests.tsv` marks this group `trend` rather than the whole table's.
+#[library_benchmark(setup = prepared, teardown = checked, config = heap())]
+#[bench::rate_limit("rate-limit")]
+fn limited(prepared: Prepared) -> Answered {
     let Prepared {
         service,
         runner,
@@ -476,6 +493,7 @@ library_benchmark_group!(name = extract, benchmarks = extracted);
 library_benchmark_group!(name = codecs, benchmarks = coded);
 library_benchmark_group!(name = respond, benchmarks = responded);
 library_benchmark_group!(name = interceptors, benchmarks = intercepted);
+library_benchmark_group!(name = rate_limit, benchmarks = limited);
 library_benchmark_group!(name = stream, benchmarks = streamed);
 library_benchmark_group!(name = statics, benchmarks = served_static);
 library_benchmark_group!(name = realistic, benchmarks = composed);
@@ -493,6 +511,7 @@ main!(
     codecs,
     respond,
     interceptors,
+    rate_limit,
     stream,
     statics,
     realistic
