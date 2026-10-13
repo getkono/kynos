@@ -26,6 +26,8 @@
 
 use std::hint::black_box;
 use std::io;
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use gungraun::{Dhat, LibraryBenchmarkConfig, library_benchmark, library_benchmark_group, main};
@@ -216,14 +218,30 @@ type Closed = (Runner, Open, io::Result<()>, StatusCode);
 /// The connection, and the request the region serves — over the *second*
 /// connection, for [`prepared`]'s reason: one identical connection is served
 /// to its end and dropped here first.
+///
+/// That connection is served at the start of a wall-clock second, for hyper's
+/// `Date` cache: it renders the header again, allocating, on the first
+/// response written in each new second, so a region that a second boundary
+/// separated from the warming connection would count one more block than one
+/// it did not, by the clock alone. Served at the start of a second, the warming
+/// connection renders it and the region, milliseconds later even under
+/// Valgrind, reuses it: the counts are a request's, and the render, a cost per
+/// second rather than per request, is left out of every row alike.
 fn opened(name: &str) -> Opened {
     let connected = connected(name);
     let runner = connected.scenario.driver.runner();
+    // Both are opened first: building a service is the slowest part of setup
+    // under Valgrind, and it must not stand between the render and the region.
     let mut warm = connected.open(&runner);
+    let open = connected.open(&runner);
+    let into_second = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("the clock is past the epoch")
+        .subsec_nanos();
+    thread::sleep(Duration::from_nanos(u64::from(1_000_000_000 - into_second)));
     warm.serve(&runner)
         .expect("the warming connection closes cleanly");
     drop(warm);
-    let open = connected.open(&runner);
     (runner, open, connected.scenario.expected)
 }
 
