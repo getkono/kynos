@@ -22,7 +22,7 @@ fn octets(body: Body) -> Vec<u8> {
 
 fn answered(scenario: Scenario) -> Vec<u8> {
     let service = (scenario.service)();
-    let response = serve(&service, (scenario.request)());
+    let response = serve(&*service, (scenario.request)());
     assert_eq!(
         response.status(),
         scenario.expected,
@@ -58,7 +58,7 @@ fn every_compression_row_is_encoded_as_it_asks() {
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned)
             .expect("every sweep row offers one coding");
-        let response = serve(&service, request);
+        let response = serve(&*service, request);
         let applied = response
             .headers()
             .get(kynos::http::header::CONTENT_ENCODING)
@@ -130,7 +130,7 @@ fn the_default_threshold_is_where_every_coding_first_saves_a_segment() {
     let service = crate::app::compressed();
     let saved = |target: &str, coding: &'static str| {
         let length = |coding| {
-            octets(serve(&service, crate::app::get_encoded(target, coding)).into_body()).len()
+            octets(serve(&*service, crate::app::get_encoded(target, coding)).into_body()).len()
         };
         length("identity").saturating_sub(length(coding))
     };
@@ -154,7 +154,7 @@ fn every_sweep_size_is_the_size_it_names() {
         ("/json/2k", 1_792, 2_304),
         ("/json/4k", 3_840, 4_608),
     ] {
-        let response = serve(&service, crate::app::get_encoded(target, "identity"));
+        let response = serve(&*service, crate::app::get_encoded(target, "identity"));
         let length = octets(response.into_body()).len();
         assert!(
             (low..=high).contains(&length),

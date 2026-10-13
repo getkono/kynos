@@ -21,19 +21,16 @@
 use std::hint::black_box;
 
 use gungraun::{Dhat, LibraryBenchmarkConfig, library_benchmark, library_benchmark_group, main};
-use kynos::{
-    http::{Request, Response, StatusCode},
-    router::service::Service,
-};
-use kynos_profile::{scenario, serve};
+use kynos::http::{Request, Response, StatusCode};
+use kynos_profile::{Served, scenario, serve};
 
 /// What a benchmark receives: the service, the request, and the status the
 /// response must carry. The service travels through the benchmark and out
 /// again so that it is dropped in `teardown` rather than inside the region.
-type Prepared = (Service<()>, Request, StatusCode);
+type Prepared = (Box<dyn Served>, Request, StatusCode);
 
 /// What leaves the region, to be checked and dropped outside it.
-type Served = (Service<()>, Response, StatusCode);
+type Answered = (Box<dyn Served>, Response, StatusCode);
 
 /// DHAT alongside Callgrind, keeping enough of each backtrace to reach the
 /// benchmark frame.
@@ -64,14 +61,14 @@ fn heap() -> LibraryBenchmarkConfig {
 fn prepared(name: &str) -> Prepared {
     let scenario = scenario(name);
     let service = (scenario.service)();
-    drop(serve(&service, (scenario.request)()));
+    drop(serve(&*service, (scenario.request)()));
     let request = (scenario.request)();
     (service, request, scenario.expected)
 }
 
 /// A count of the wrong response reads as a cheap request, so the status is
 /// checked here, where checking it costs the count nothing.
-fn checked((service, response, expected): Served) {
+fn checked((service, response, expected): Answered) {
     assert_eq!(
         response.status(),
         expected,
@@ -93,8 +90,8 @@ fn checked((service, response, expected): Served) {
 #[bench::not_found("not-found")]
 #[bench::method_not_allowed("method-not-allowed")]
 #[bench::rejection("rejection")]
-fn request((service, request, expected): Prepared) -> Served {
-    let response = serve(black_box(&service), black_box(request));
+fn request((service, request, expected): Prepared) -> Answered {
+    let response = serve(black_box(&*service), black_box(request));
     (service, black_box(response), expected)
 }
 
@@ -108,8 +105,8 @@ fn request((service, request, expected): Prepared) -> Served {
 #[bench::miss("calibration-miss")]
 #[bench::stacked_4("calibration-stacked-4")]
 #[bench::stacked_8("calibration-stacked-8")]
-fn calibration((service, request, expected): Prepared) -> Served {
-    let response = serve(black_box(&service), black_box(request));
+fn calibration((service, request, expected): Prepared) -> Answered {
+    let response = serve(black_box(&*service), black_box(request));
     (service, black_box(response), expected)
 }
 
@@ -136,8 +133,8 @@ fn calibration((service, request, expected): Prepared) -> Served {
 #[bench::zstd_2k("compressed-zstd-2k")]
 #[bench::zstd_4k("compressed-zstd-4k")]
 #[bench::zstd_large("compressed-zstd-large")]
-fn sweep((service, request, expected): Prepared) -> Served {
-    let response = serve(black_box(&service), black_box(request));
+fn sweep((service, request, expected): Prepared) -> Answered {
+    let response = serve(black_box(&*service), black_box(request));
     (service, black_box(response), expected)
 }
 

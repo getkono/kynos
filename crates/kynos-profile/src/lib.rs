@@ -52,8 +52,8 @@ mod tests;
 pub struct Scenario {
     /// The name a benchmark and a report refer to it by.
     pub name: &'static str,
-    /// Builds the service the request is sent to.
-    pub service: fn() -> Service<()>,
+    /// Builds the service the request is sent to, of whatever context.
+    pub service: fn() -> Box<dyn Served>,
     /// Builds the request, always outside the measured region.
     pub request: fn() -> Request,
     /// The status the response must carry.
@@ -270,13 +270,30 @@ pub fn scenario(name: &str) -> Scenario {
 ///
 /// When the future is pending, which means something on the request path now
 /// needs a runtime and the count stopped covering the whole request.
-pub fn serve(service: &Service<()>, request: Request) -> Response {
-    let mut future = pin!(service.call(request));
-    match future
-        .as_mut()
-        .poll(&mut Context::from_waker(Waker::noop()))
-    {
-        Poll::Ready(response) => response,
-        Poll::Pending => panic!("a request was not served on its first poll"),
+pub fn serve(service: &dyn Served, request: Request) -> Response {
+    service.serve(request)
+}
+
+/// A built [`Service`] with its context type erased, so that one catalog holds
+/// services of every context.
+///
+/// Erased when the service is built, outside the measured region: what the
+/// region adds over `Service::call` is the one virtual call into
+/// [`serve`](Served::serve), behind which the call is monomorphized as before.
+pub trait Served {
+    /// Serves one request; [`serve`](crate::serve) is the region that calls it.
+    fn serve(&self, request: Request) -> Response;
+}
+
+impl<C: 'static> Served for Service<C> {
+    fn serve(&self, request: Request) -> Response {
+        let mut future = pin!(self.call(request));
+        match future
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+        {
+            Poll::Ready(response) => response,
+            Poll::Pending => panic!("a request was not served on its first poll"),
+        }
     }
 }
