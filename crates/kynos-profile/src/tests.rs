@@ -15,7 +15,7 @@ use kynos::{
 
 use super::{
     COMPRESSION, Scenario, catalog,
-    connection::{CONNECTION, connected, http1},
+    connection::{CONNECTION, connected, wire::http1},
     driver::{Drained, Driver, FRAMES, Served, frames},
     scenario,
 };
