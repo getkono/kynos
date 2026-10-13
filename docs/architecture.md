@@ -21,13 +21,16 @@ buffer that consumes much of what it came for.
 
 - tokio is a hard dependency, not a generic parameter. No runtime abstraction
   trait exists — not public, not internal. The server calls tokio directly.
-- tokio types appear in zero handler-facing signatures. The one deliberate
-  exception anywhere in the public API is
+- tokio types appear in zero handler-facing signatures. The two deliberate
+  exceptions anywhere in the public API are
   [`server::address::Listener::Tokio`](../crates/kynos/src/server/address.rs)
   together with its `From<tokio::net::TcpListener>` conversion, which exist so
-  an already-bound `tokio::net::TcpListener` can be handed to the server;
-  naming the runtime there is the point, not a leak. A surface check counts
-  both, because the conversion names the type as plainly as the variant does.
+  an already-bound `tokio::net::TcpListener` can be handed to the server, and
+  the `tokio::io::{AsyncRead, AsyncWrite}` bound on
+  [`Server::serve_io`](../crates/kynos/src/server/mod.rs), which hands the
+  server one stream no listener accepted. Naming the runtime there is the
+  point, not a leak. A surface check counts all three, because the conversion
+  names the type as plainly as the variant does.
 - The runtime coupling surface is exactly five points, and they all live in
   `crates/kynos/src/server/`: the accept loop and listener, connection socket
   read and write (the `tokio::io::{AsyncRead, AsyncWrite}` bound on the
@@ -529,8 +532,12 @@ and HTTP/2. Nothing about HTTP/3 is undescribable — it carries the same reques
 and response semantics OpenAPI already covers — so the ground here is cost, not
 principle, and the door stays open. See [why HTTP/3 is deferred](#why-http3-is-deferred).
 
-**Custom transports and Unix sockets are out**, for the same reason the runtime
-is: they widen the coupling surface the runtime policy exists to bound.
+**Listeners other than TCP are out**, for the same reason the runtime is: they
+widen the coupling surface the runtime policy exists to bound. A stream
+accepted some other way — a Unix socket, an in-memory pipe, a custom acceptor —
+is served one connection at a time by `Server::serve_io`, as plaintext, which
+exposes the connection driver's existing `AsyncRead + AsyncWrite` bound rather
+than adding a coupling point; accepting those streams stays the application's.
 
 **WebSockets and WebTransport are out.** Both stop being request/response the
 moment they are established, and OpenAPI describes request/response. This is

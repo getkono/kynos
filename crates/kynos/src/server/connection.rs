@@ -1,8 +1,10 @@
 //! Serving one accepted connection.
 //!
 //! This is where the TLS handshake happens when it is configured, and where
-//! hyper's protocol driver is handed the socket. The runtime's read and write
-//! halves are named here and nowhere else outside the accept loop.
+//! hyper's protocol driver is handed the socket, or the stream
+//! [`Server::serve_io`](crate::server::Server::serve_io) was given. The
+//! runtime's read and write halves are named here and nowhere else outside the
+//! accept loop and that method's bound.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{convert::Infallible, net::SocketAddr, sync::Arc};
@@ -41,12 +43,7 @@ pub(in crate::server) async fn serve_connection<C: 'static>(
     config: TransportConfig,
     lifecycle: watch::Receiver<Lifecycle>,
 ) {
-    // Without HTTP/1's header-read timeout, the idle timeout bounds the head.
-    #[cfg(feature = "http1")]
-    let deadline = (config.http1).first_head_deadline(std::time::Instant::now());
-    #[cfg(not(feature = "http1"))]
-    let deadline = (config.http2).first_head_deadline(std::time::Instant::now());
-    let deadline = deadline.map(Instant::from_std);
+    let deadline = first_head_deadline(&config);
 
     #[cfg(feature = "tls")]
     let mut lifecycle = lifecycle;
@@ -94,6 +91,48 @@ pub(in crate::server) async fn serve_connection<C: 'static>(
     if let Err(error) = served.await {
         tracing::debug!(%error, %local_addr, %peer_addr, "HTTP connection failed");
     }
+}
+
+/// Serves one plaintext connection no listener accepted, outside any server's
+/// lifecycle, reporting its failure rather than logging it.
+pub(in crate::server) async fn serve_io<C, I>(
+    io: I,
+    peer_addr: SocketAddr,
+    service: Arc<Service<C>>,
+    config: TransportConfig,
+) -> std::io::Result<()>
+where
+    C: 'static,
+    I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let deadline = first_head_deadline(&config);
+    // Held until the connection ends: a dropped sender reads as `Forced`.
+    let (_running, lifecycle) = watch::channel(Lifecycle::Running);
+    let connection = Connection::from_peer(peer_addr, unbound_local_addr(peer_addr));
+    serve_http(io, service, config, connection, lifecycle, deadline)
+        .await
+        .map_err(std::io::Error::other)
+}
+
+/// The local address of a connection no listener accepted: the unspecified
+/// address of the peer's family, port zero.
+fn unbound_local_addr(peer_addr: SocketAddr) -> SocketAddr {
+    let ip: std::net::IpAddr = match peer_addr {
+        SocketAddr::V4(_) => std::net::Ipv4Addr::UNSPECIFIED.into(),
+        SocketAddr::V6(_) => std::net::Ipv6Addr::UNSPECIFIED.into(),
+    };
+    SocketAddr::new(ip, 0)
+}
+
+/// When a connection accepted now must have sent its first request head.
+///
+/// Without HTTP/1's header-read timeout, the idle timeout bounds the head.
+fn first_head_deadline(config: &TransportConfig) -> Option<Instant> {
+    #[cfg(feature = "http1")]
+    let deadline = (config.http1).first_head_deadline(std::time::Instant::now());
+    #[cfg(not(feature = "http1"))]
+    let deadline = (config.http2).first_head_deadline(std::time::Instant::now());
+    deadline.map(Instant::from_std)
 }
 
 /// Resolves once `deadline` passes unless `head_seen` says a request head
