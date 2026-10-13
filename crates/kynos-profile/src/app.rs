@@ -17,9 +17,10 @@ use kynos::{
     middleware::{Continued, Interceptor, Next, compression::Compression},
     openapi::model::body::mime_names,
     prelude::*,
-    router::service::Service,
 };
 use serde::{Deserialize, Serialize};
+
+use crate::driver::Served;
 
 /// kynos-bench's `json-small`: a small struct, roughly 100 octets written.
 #[derive(Schema, Serialize, Deserialize)]
@@ -258,14 +259,16 @@ fn router() -> Router<()> {
 /// that measurement is read to choose: measured through it, the rows below the
 /// threshold would report the skip instead.
 #[must_use]
-pub(crate) fn compressed() -> Service<()> {
-    Router::<()>::new()
-        .mount(kynos::routes![
-            json_small, json_1k, json_2k, json_4k, json_large
-        ])
-        .intercept(Compression::new().min_size(0))
-        .build(())
-        .expect("a describable router")
+pub(crate) fn compressed() -> Box<dyn Served> {
+    Box::new(
+        Router::<()>::new()
+            .mount(kynos::routes![
+                json_small, json_1k, json_2k, json_4k, json_large
+            ])
+            .intercept(Compression::new().min_size(0))
+            .build(())
+            .expect("a describable router"),
+    )
 }
 
 /// A bodiless `GET` offering exactly `coding`.
@@ -279,8 +282,8 @@ pub(crate) fn get_encoded(target: &str, coding: &'static str) -> Request {
 
 /// The service every scenario but the two deeper stacks is sent to.
 #[must_use]
-pub(crate) fn service() -> Service<()> {
-    router().build(()).expect("a describable router")
+pub(crate) fn service() -> Box<dyn Served> {
+    Box::new(router().build(()).expect("a describable router"))
 }
 
 /// An interceptor that forwards and does nothing else, so that what a stack
@@ -309,30 +312,34 @@ impl<C: Sync + 'static> Interceptor<C> for Transparent {
 /// `intercept` returns a different `Router` type and a loop has none to
 /// iterate at.
 #[must_use]
-pub(crate) fn layers_4() -> Service<()> {
-    router()
-        .intercept(Transparent)
-        .intercept(Transparent)
-        .intercept(Transparent)
-        .intercept(Transparent)
-        .build(())
-        .expect("a describable router")
+pub(crate) fn layers_4() -> Box<dyn Served> {
+    Box::new(
+        router()
+            .intercept(Transparent)
+            .intercept(Transparent)
+            .intercept(Transparent)
+            .intercept(Transparent)
+            .build(())
+            .expect("a describable router"),
+    )
 }
 
 /// Behind eight, for the same reason.
 #[must_use]
-pub(crate) fn layers_8() -> Service<()> {
-    router()
-        .intercept(Transparent)
-        .intercept(Transparent)
-        .intercept(Transparent)
-        .intercept(Transparent)
-        .intercept(Transparent)
-        .intercept(Transparent)
-        .intercept(Transparent)
-        .intercept(Transparent)
-        .build(())
-        .expect("a describable router")
+pub(crate) fn layers_8() -> Box<dyn Served> {
+    Box::new(
+        router()
+            .intercept(Transparent)
+            .intercept(Transparent)
+            .intercept(Transparent)
+            .intercept(Transparent)
+            .intercept(Transparent)
+            .intercept(Transparent)
+            .intercept(Transparent)
+            .intercept(Transparent)
+            .build(())
+            .expect("a describable router"),
+    )
 }
 
 /// One request, built outside the measured region.

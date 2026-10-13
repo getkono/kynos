@@ -1800,6 +1800,29 @@ class Main(unittest.TestCase):
         self.assertEqual(len(reported), 1)
         self.assertIn("crates/kynos/src/unchecked.rs", reported[0])
 
+    def test_an_unpublished_member_is_not_read_by_the_rules_over_framework_modules(self):
+        # `kynos-profile` drives a runtime and drains bodies as an application
+        # does, so it names `tokio` and `http-body` where no row allows them.
+        # The same lines in a published member are offenders under both rules,
+        # which is the half that keeps the exemption from widening.
+        lines = "\nuse tokio::runtime::Runtime;\nuse http_body::Frame;\n"
+        status, failures = self.report(
+            corpus=self.appending("crates/kynos-profile/src/lib.rs", lines)
+        )
+        self.assertEqual((status, failures), (0, []))
+
+        status, failures = self.report(
+            corpus=self.appending("crates/kynos-openapi/src/lib.rs", lines)
+        )
+        self.assertEqual(status, 1)
+        for needle in (
+            "named outside `server/`",
+            "`http-body` and `http-body-util` are named only",
+        ):
+            reported = self.naming(failures, needle)
+            self.assertEqual(len(reported), 1, needle)
+            self.assertIn("crates/kynos-openapi/src/lib.rs", reported[0])
+
     def test_a_crate_name_matches_as_a_word_and_not_as_a_substring(self):
         # `Corpus.naming`'s word boundaries, which every rule in the loop below
         # and the `tokio` scan above are all stated through: one pattern, so

@@ -1,45 +1,80 @@
 use std::collections::BTreeSet;
+use std::convert::Infallible;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
-use http_body_util::BodyExt;
-use kynos::http::body::Body;
+use bytes::Bytes;
+use futures_core::Stream;
+use kynos::{
+    Router,
+    di::inject::Inject,
+    extract::body::json::Json,
+    http::{Request, StatusCode, media::OctetStream},
+    response::stream::binary::BinaryStream,
+};
 
-use super::{CALIBRATION, COMPRESSION, SCENARIOS, Scenario, scenario, serve};
+use super::{
+    COMPRESSION, Scenario, catalog,
+    driver::{Drained, Driver, FRAMES, Served, frames},
+    scenario,
+};
 
-/// The octets a response carries, read outside any measurement.
-fn octets(body: Body) -> Vec<u8> {
-    let mut collected = std::pin::pin!(body.collect());
-    match collected
-        .as_mut()
-        .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
-    {
-        std::task::Poll::Ready(Ok(collected)) => collected.to_bytes().to_vec(),
-        other => panic!(
-            "an in-memory body did not collect on its first poll: {:?}",
-            other.is_ready()
-        ),
-    }
+/// One request through `service`, driven as the benchmark drives it.
+fn drive(service: &dyn Served, driver: Driver, request: Request) -> Drained {
+    service.serve(&driver.runner(), request, frames())
 }
 
+/// What `scenario` answers, held to the status it is measured at and to a
+/// drain that stayed within the frames reserved for it.
 fn answered(scenario: Scenario) -> Vec<u8> {
-    let service = (scenario.service)();
-    let response = serve(&service, (scenario.request)());
+    let drained = drive(
+        &*(scenario.service)(),
+        scenario.driver,
+        (scenario.request)(),
+    );
     assert_eq!(
-        response.status(),
+        drained.status(),
         scenario.expected,
         "{} answered {} where its count is meant to be of a {}",
         scenario.name,
-        response.status(),
+        drained.status(),
         scenario.expected,
     );
-    octets(response.into_body())
+    assert!(
+        !drained.regrew(),
+        "{} produced more frames than the region reserves",
+        scenario.name
+    );
+    drained.octets()
 }
 
 /// A benchmark that measured a refusal would read as a cheap request, so every
-/// fixture is held to the status its name promises where no Valgrind is needed.
+/// fixture is held to the status its name promises where no Valgrind is needed,
+/// under the driver it is measured with.
 #[test]
 fn every_scenario_is_answered_with_the_status_it_is_measured_at() {
-    for scenario in SCENARIOS.iter().chain(CALIBRATION).chain(COMPRESSION) {
-        answered(*scenario);
+    let mut drivers = BTreeSet::new();
+    for scenario in catalog() {
+        answered(scenario);
+        drivers.insert(format!("{:?}", scenario.driver));
+    }
+    assert_eq!(drivers.len(), 2, "both drivers are exercised: {drivers:?}");
+}
+
+/// A base names the scenario a report subtracts, so one naming nothing would
+/// leave a row's marginal cost unreported, and one naming itself would report
+/// a zero.
+#[test]
+fn every_base_names_another_existing_scenario() {
+    let names: BTreeSet<_> = catalog().map(|scenario| scenario.name).collect();
+    for scenario in catalog() {
+        if let Some(base) = scenario.base {
+            assert!(
+                names.contains(base) && base != scenario.name,
+                "{} names {base:?} as its base",
+                scenario.name
+            );
+        }
     }
 }
 
@@ -58,9 +93,10 @@ fn every_compression_row_is_encoded_as_it_asks() {
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned)
             .expect("every sweep row offers one coding");
-        let response = serve(&service, request);
-        let applied = response
-            .headers()
+        let drained = drive(&*service, scenario.driver, request);
+        let applied = drained
+            .head
+            .headers
             .get(kynos::http::header::CONTENT_ENCODING)
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned);
@@ -74,12 +110,7 @@ fn every_compression_row_is_encoded_as_it_asks() {
 /// requests' numbers under one heading.
 #[test]
 fn every_scenario_name_is_unique_and_resolves_to_itself() {
-    let names: Vec<_> = SCENARIOS
-        .iter()
-        .chain(CALIBRATION)
-        .chain(COMPRESSION)
-        .map(|scenario| scenario.name)
-        .collect();
+    let names: Vec<_> = catalog().map(|scenario| scenario.name).collect();
     let unique: BTreeSet<_> = names.iter().collect();
     assert_eq!(
         names.len(),
@@ -130,7 +161,13 @@ fn the_default_threshold_is_where_every_coding_first_saves_a_segment() {
     let service = crate::app::compressed();
     let saved = |target: &str, coding: &'static str| {
         let length = |coding| {
-            octets(serve(&service, crate::app::get_encoded(target, coding)).into_body()).len()
+            drive(
+                &*service,
+                Driver::Poll,
+                crate::app::get_encoded(target, coding),
+            )
+            .octets()
+            .len()
         };
         length("identity").saturating_sub(length(coding))
     };
@@ -154,11 +191,128 @@ fn every_sweep_size_is_the_size_it_names() {
         ("/json/2k", 1_792, 2_304),
         ("/json/4k", 3_840, 4_608),
     ] {
-        let response = serve(&service, crate::app::get_encoded(target, "identity"));
-        let length = octets(response.into_body()).len();
+        let length = drive(
+            &*service,
+            Driver::Poll,
+            crate::app::get_encoded(target, "identity"),
+        )
+        .octets()
+        .len();
         assert!(
             (low..=high).contains(&length),
             "{target} wrote {length} octets, outside {low}..={high}"
         );
     }
+}
+
+#[derive(Clone)]
+struct Pool(u64);
+
+/// A context that is not `()`, which is what erasing the service is for.
+#[derive(kynos::Provider)]
+struct App {
+    pool: Pool,
+}
+
+#[kynos::get("/pool")]
+async fn pool(Inject(pool): Inject<Pool>) -> Json<u64> {
+    Json(pool.0)
+}
+
+/// A scenario's service may carry the context DI and authentication read, and
+/// is served through the same erased handle as one of context `()`.
+#[test]
+fn a_service_of_any_context_is_served_through_the_erased_handle() {
+    let service: Box<dyn Served> = Box::new(
+        Router::<App>::new()
+            .mount(kynos::routes![pool])
+            .build(App { pool: Pool(7) })
+            .expect("a describable router"),
+    );
+    let drained = drive(&*service, Driver::Poll, crate::app::get("/pool"));
+    assert_eq!(drained.status(), StatusCode::OK);
+    assert_eq!(drained.octets(), b"7");
+}
+
+/// Three chunks, each produced on the poll after one that returned `Pending`,
+/// so no single poll drains the body.
+struct Chunks {
+    left: usize,
+    yielded: bool,
+}
+
+impl Stream for Chunks {
+    type Item = Result<Bytes, Infallible>;
+
+    fn poll_next(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if self.left == 0 {
+            return Poll::Ready(None);
+        }
+        if !self.yielded {
+            self.yielded = true;
+            context.waker().wake_by_ref();
+            return Poll::Pending;
+        }
+        self.yielded = false;
+        self.left -= 1;
+        Poll::Ready(Some(Ok(Bytes::from_static(b"chunk"))))
+    }
+}
+
+#[kynos::get("/chunks")]
+async fn chunks() -> BinaryStream<Chunks, OctetStream> {
+    BinaryStream::new(Chunks {
+        left: 3,
+        yielded: false,
+    })
+}
+
+/// One frame more than [`FRAMES`] reserves.
+#[kynos::get("/chunks-past-reserve")]
+async fn chunks_past_reserve() -> BinaryStream<Chunks, OctetStream> {
+    BinaryStream::new(Chunks {
+        left: FRAMES + 1,
+        yielded: false,
+    })
+}
+
+fn chunked() -> Box<dyn Served> {
+    Box::new(
+        Router::<()>::new()
+            .mount(kynos::routes![chunks, chunks_past_reserve])
+            .build(())
+            .expect("a describable router"),
+    )
+}
+
+/// The region drains the body: a streamed body's every frame is produced
+/// inside it, so its production is counted with the request.
+#[test]
+fn a_runtime_driver_drains_a_streamed_body_frame_by_frame() {
+    let drained = drive(&*chunked(), Driver::Runtime, crate::app::get("/chunks"));
+    assert_eq!(drained.frames.len(), 3);
+    assert_eq!(drained.octets(), b"chunkchunkchunk");
+    assert!(!drained.regrew());
+}
+
+/// A body producing more frames than were reserved reallocates the buffer
+/// inside the region, which `regrew` reports so the benchmark's teardown
+/// refuses the count.
+#[test]
+fn a_body_past_the_reserved_frames_regrew() {
+    let drained = drive(
+        &*chunked(),
+        Driver::Runtime,
+        crate::app::get("/chunks-past-reserve"),
+    );
+    assert_eq!(drained.frames.len(), FRAMES + 1);
+    assert!(drained.regrew());
+}
+
+/// A `Poll` scenario that is not ready on its one poll would count part of a
+/// request, so it fails instead.
+#[test]
+#[should_panic(expected = "not served and drained on its first poll")]
+fn a_poll_driver_refuses_a_body_that_is_not_ready_on_one_poll() {
+    drive(&*chunked(), Driver::Poll, crate::app::get("/chunks"));
 }

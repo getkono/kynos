@@ -64,7 +64,10 @@ is checkable, so the sites are enumerated:
 **Six rows, and the count is the check.** [`nfr.md`](nfr.md#runtime) states the
 containment requirement against this table rather than against `server/` alone,
 so a seventh site is a failing build rather than a silently broken sentence.
-`mise run containment:check` is where that count runs.
+`mise run containment:check` is where that count runs. It and [the
+graph](#the-graph) govern the published crates: an unpublished member —
+[`kynos-profile`](../crates/kynos-profile/) — drives a runtime and drains
+bodies as an application does, and neither reads it.
 
 The last two were added deliberately, which is what the table is for. Serving
 a file from disk means reading one, and which file is not known until routing

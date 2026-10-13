@@ -55,7 +55,7 @@ What each kind of measurement proves that no other kind does.
 | Off-path proof | a sibling `tests.rs`, and a table [`containment:check`](../scripts/containment.py) reads | `python3 scripts/containment.py`, `cargo nextest` | that a feature is unreachable from the request path | in use, for the off-path flags and for the document, the registry, the validators and `jsonschema`: a table in [`testing.md`](testing.md#the-off-path-proof) held by `mise run containment:check`, plus the field witness in [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs); `describe` is the one off-path shape no row holds, and the emitters are held by the `yaml` flag's row rather than by one of their own |
 | Codegen delta | a feature sweep | `cargo llvm-lines` | what a feature costs in monomorphized IR | in use, via `mise run cost:features` over [`cost/fixture.rs`](../crates/kynos/cost/fixture.rs); reports a trend after each merge, refuses a release whose numbers are not the recorded ones, and sets no ceiling, and sees the generics that fixture instantiates rather than the whole surface — so a feature that grows the dependency graph can shrink this number by sharing instantiations out of upstream rlibs, and a negative row is a relocation rather than a saving |
 | Binary delta | a feature sweep | `.text` of a fixed fixture | what a feature costs a linked artifact | in use, over [`cost/binary.tsv`](../crates/kynos/cost/binary.tsv); reports a trend after each merge, refuses a release whose numbers are not the recorded ones, and sets no ceiling. The fixture uses none of these features, so a zero row says the linker stripped — or the collector never instantiated — what nothing called, rather than that the feature is free to a program that uses it. A second sweep answers the question that fixture structurally cannot, over [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv): what mounting a codec costs, weighed on a fixture that mounts one |
-| Instruction count | [`kynos-profile`](../crates/kynos-profile/), an unpublished member | `mise run profile:requests`: gungraun over Callgrind and DHAT, read by [`profile_report.py`](../scripts/profile_report.py) | what a request of each [`kynos-bench`](https://github.com/getkono/kynos-bench) scenario executes between a built request and a built response, once the process has served one — instructions in the program object, and heap blocks and bytes — and which functions they were spent in; and, in a compression sweep of Kynos's own, what an encode adds at each body size, which [`middleware.md`](middleware.md) reads `min_size`'s default from | in use, in process only: nothing between the socket and `Service::call` is on the measured path. Recorded in [`requests.tsv`](../crates/kynos-profile/requests.tsv); reports a trend after each merge and sets no ceiling |
+| Instruction count | [`kynos-profile`](../crates/kynos-profile/), an unpublished member | `mise run profile:requests`: gungraun over Callgrind and DHAT, read by [`profile_report.py`](../scripts/profile_report.py) | what a request of each [`kynos-bench`](https://github.com/getkono/kynos-bench) scenario executes between a built request and a drained response, once the process has served one — instructions in the program object, and heap blocks and bytes — and which functions they were spent in; what one variable costs, as a scenario's difference from the *base* it differs from in that variable alone; and, in a compression sweep of Kynos's own, what an encode adds at each body size, which [`middleware.md`](middleware.md) reads `min_size`'s default from | in use, in process only: nothing between the socket and `Service::call` is on the measured path. Every request-path feature is built; a scenario is driven by one poll or, where it needs timers or wakeups, by a current-thread runtime. Recorded in [`requests.tsv`](../crates/kynos-profile/requests.tsv); held exact across `--repeat` runs except in a group marked `trend`; reports a trend after each merge and sets no ceiling |
 
 **An allocation count needs its own target because a global allocator is
 process-wide.** Installing one in the library's unit-test binary would perturb
@@ -338,14 +338,41 @@ this document does not replace it.
 
 ### Profiling locally
 
-Where a count says *how much* and the question is *where*, the Callgrind files
-`profile:requests` leaves under `target/gungraun/kynos-profile/` already hold
-the answer per function: `callgrind_annotate --inclusive=yes` over one of them
-ranks the frames a scenario spent its instructions in, and
-`--tree=caller` says who called the allocator. A timed profile — `perf record`
-over the same benchmark binary, which `[profile.bench]` builds with symbols — is
-the corroboration a count cannot give, and it stays on the machine that took it
+Where a count says *how much* and the question is *where*, `profile:requests`
+writes `target/gungraun/profile-attribution.md`, which CI uploads with the run:
+for each scenario, the fifteen frames `callgrind_annotate --inclusive=yes`
+ranks highest, and DHAT's allocation sites by the innermost frame in a
+workspace crate. The Callgrind files beside it under
+`target/gungraun/kynos-profile/` hold the rest — `--tree=caller` over one says
+who called the allocator. A timed profile — `perf record` over the same
+benchmark binary, which `[profile.bench]` builds with symbols — is the
+corroboration a count cannot give, and it stays on the machine that took it
 for the reason the section above gives.
+
+**An ablation is a scenario and its base.** A scenario's `base` names the one
+it differs from in exactly one variable — a layer, a coding, a method — and
+`profile-report.md` gives the difference as that variable's marginal cost. A
+row changing two variables at once has no base, since its difference would
+attribute both to neither.
+
+**The region drains the body.** Both drivers poll the response body to its
+end inside the measured region, so a streamed body's production is counted
+with the request. The frames are kept in a buffer reserved in setup, so
+neither collecting them nor dropping them is counted.
+`Poll`, the default, polls once with no executor and refuses a request that is
+not ready, for the reason [`tests/support/counting.rs`](../crates/kynos/tests/support/counting.rs)
+gives. `Runtime` enters a current-thread tokio runtime built in setup, for what
+needs a timer or a wakeup — a timeout, a queued permit, an event stream's
+keep-alive — and its own cost is the `json-small-runtime` row's difference
+from `json-small`.
+
+**Exactness is asserted.** `mise run profile:requests --repeat N` runs the
+benchmark N times and fails when any program or DHAT count differs between
+runs. A group that cannot be exact, which only a `Runtime` group could be,
+since its timer reads the clock, is named on `requests.tsv`'s `# trend:` line:
+it is reported but never compared, against the baseline or across runs, and
+its marginal costs are marked approximate. No group is marked today; the
+runtime row measured exact.
 
 ### Why the measurements live beside the features
 

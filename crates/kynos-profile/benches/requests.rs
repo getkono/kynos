@@ -1,11 +1,13 @@
 //! Instructions and heap blocks for one request of each
 //! scenario, counted under Callgrind and DHAT.
 //!
-//! The region is [`kynos_profile::serve`] and nothing else. Building the
-//! service and the request is `setup`, and dropping both, with the response,
-//! is `teardown`, so neither is attributed: gungraun centres both tools on the
-//! benchmark function. That is the region `tests/alloc.rs` counts too, which is
-//! what lets the calibration group hold one instrument to the other.
+//! The region is [`Served::serve`] and nothing else: the request served and
+//! its body drained, under the scenario's driver. Building the service, the
+//! driver, the request and the frame buffer is `setup`, and dropping them, with
+//! what was drained, is `teardown`, so none is attributed: gungraun centres
+//! both tools on the benchmark function. That is the region `tests/alloc.rs`
+//! counts too, which is what lets the calibration group hold one instrument to
+//! the other.
 //!
 //! What gungraun prints is not the number of record: its Callgrind total
 //! includes glibc's allocator, whose cost depends on the heap's history and
@@ -20,20 +22,29 @@
 
 use std::hint::black_box;
 
+use bytes::Bytes;
 use gungraun::{Dhat, LibraryBenchmarkConfig, library_benchmark, library_benchmark_group, main};
-use kynos::{
-    http::{Request, Response, StatusCode},
-    router::service::Service,
+use http_body::Frame;
+use kynos::http::{Request, StatusCode};
+use kynos_profile::{
+    driver::{Drained, Runner, Served, frames},
+    scenario,
 };
-use kynos_profile::{scenario, serve};
 
-/// What a benchmark receives: the service, the request, and the status the
-/// response must carry. The service travels through the benchmark and out
-/// again so that it is dropped in `teardown` rather than inside the region.
-type Prepared = (Service<()>, Request, StatusCode);
+/// What a benchmark receives: the service, its readied driver, the request,
+/// the buffer its body is drained into, and the status the response must
+/// carry. The service and the driver travel through the benchmark and out
+/// again so that they are dropped in `teardown` rather than inside the region.
+struct Prepared {
+    service: Box<dyn Served>,
+    runner: Runner,
+    request: Request,
+    frames: Vec<Frame<Bytes>>,
+    expected: StatusCode,
+}
 
 /// What leaves the region, to be checked and dropped outside it.
-type Served = (Service<()>, Response, StatusCode);
+type Answered = (Box<dyn Served>, Runner, Drained, StatusCode);
 
 /// DHAT alongside Callgrind, keeping enough of each backtrace to reach the
 /// benchmark frame.
@@ -55,29 +66,41 @@ fn heap() -> LibraryBenchmarkConfig {
 ///
 /// The first request a process serves pays for things no later request does:
 /// `std`'s CPU-feature cache and `memchr`'s choice of routine are initialised
-/// on first use, inside whatever region first reaches them. That is a cost per
-/// process rather than per request, and it is the host-dependent part of the
-/// program count, so one identical request is served and dropped here, outside
-/// the region. What it cannot move is the routine chosen, which is why
+/// on first use, inside whatever region first reaches them, and so is a
+/// runtime's per-thread context. That is a cost per process rather than per
+/// request, and it is the host-dependent part of the program count, so one
+/// identical request is served, drained and dropped here, outside the region.
+/// What it cannot move is the routine chosen, which is why
 /// `scripts/profile_report.py` records the host. Allocation counts are not
 /// affected: `tests/alloc.rs` holds a replayed request to what the first cost.
 fn prepared(name: &str) -> Prepared {
     let scenario = scenario(name);
     let service = (scenario.service)();
-    drop(serve(&service, (scenario.request)()));
-    let request = (scenario.request)();
-    (service, request, scenario.expected)
+    let runner = scenario.driver.runner();
+    drop(service.serve(&runner, (scenario.request)(), frames()));
+    Prepared {
+        service,
+        runner,
+        request: (scenario.request)(),
+        frames: frames(),
+        expected: scenario.expected,
+    }
 }
 
 /// A count of the wrong response reads as a cheap request, so the status is
-/// checked here, where checking it costs the count nothing.
-fn checked((service, response, expected): Served) {
+/// checked here, where checking it costs the count nothing; and a body that
+/// outgrew its reserved frames reallocated inside the region.
+fn checked((service, runner, drained, expected): Answered) {
     assert_eq!(
-        response.status(),
+        drained.status(),
         expected,
         "the profiled request was answered wrongly"
     );
-    drop((response, service));
+    assert!(
+        !drained.regrew(),
+        "the profiled body produced more frames than the region reserves"
+    );
+    drop((drained, runner, service));
 }
 
 #[library_benchmark(setup = prepared, teardown = checked, config = heap())]
@@ -93,9 +116,16 @@ fn checked((service, response, expected): Served) {
 #[bench::not_found("not-found")]
 #[bench::method_not_allowed("method-not-allowed")]
 #[bench::rejection("rejection")]
-fn request((service, request, expected): Prepared) -> Served {
-    let response = serve(black_box(&service), black_box(request));
-    (service, black_box(response), expected)
+fn request(prepared: Prepared) -> Answered {
+    let Prepared {
+        service,
+        runner,
+        request,
+        frames,
+        expected,
+    } = prepared;
+    let drained = black_box(&*service).serve(black_box(&runner), black_box(request), frames);
+    (service, runner, black_box(drained), expected)
 }
 
 // The shapes and stacks `tests/alloc.rs` counts with `alloc_counter`.
@@ -108,9 +138,16 @@ fn request((service, request, expected): Prepared) -> Served {
 #[bench::miss("calibration-miss")]
 #[bench::stacked_4("calibration-stacked-4")]
 #[bench::stacked_8("calibration-stacked-8")]
-fn calibration((service, request, expected): Prepared) -> Served {
-    let response = serve(black_box(&service), black_box(request));
-    (service, black_box(response), expected)
+fn calibration(prepared: Prepared) -> Answered {
+    let Prepared {
+        service,
+        runner,
+        request,
+        frames,
+        expected,
+    } = prepared;
+    let drained = black_box(&*service).serve(black_box(&runner), black_box(request), frames);
+    (service, runner, black_box(drained), expected)
 }
 
 // `lib.rs`'s `COMPRESSION` sweep: what an encode costs at each size, read
@@ -136,17 +173,41 @@ fn calibration((service, request, expected): Prepared) -> Served {
 #[bench::zstd_2k("compressed-zstd-2k")]
 #[bench::zstd_4k("compressed-zstd-4k")]
 #[bench::zstd_large("compressed-zstd-large")]
-fn sweep((service, request, expected): Prepared) -> Served {
-    let response = serve(black_box(&service), black_box(request));
-    (service, black_box(response), expected)
+fn sweep(prepared: Prepared) -> Answered {
+    let Prepared {
+        service,
+        runner,
+        request,
+        frames,
+        expected,
+    } = prepared;
+    let drained = black_box(&*service).serve(black_box(&runner), black_box(request), frames);
+    (service, runner, black_box(drained), expected)
+}
+
+// `lib.rs`'s `RUNTIME` table: what `Driver::Runtime` costs over one poll.
+#[library_benchmark(setup = prepared, teardown = checked, config = heap())]
+#[bench::json_small("json-small-runtime")]
+fn driven(prepared: Prepared) -> Answered {
+    let Prepared {
+        service,
+        runner,
+        request,
+        frames,
+        expected,
+    } = prepared;
+    let drained = black_box(&*service).serve(black_box(&runner), black_box(request), frames);
+    (service, runner, black_box(drained), expected)
 }
 
 library_benchmark_group!(name = scenarios, benchmarks = request);
 library_benchmark_group!(name = alloc_counter_agreement, benchmarks = calibration);
 library_benchmark_group!(name = compression, benchmarks = sweep);
+library_benchmark_group!(name = runtime, benchmarks = driven);
 
 main!(
     library_benchmark_groups = scenarios,
     alloc_counter_agreement,
-    compression
+    compression,
+    runtime
 );
