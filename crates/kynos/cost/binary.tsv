@@ -21,30 +21,31 @@
 #
 # toolchain: 1.97.1 (8bab26f4f 2026-07-14)
 # host: x86_64-unknown-linux-gnu
-# baseline: 865004 bytes
+# baseline: 1005308 bytes
 feature	text	delta
-openapi31	865004	0
-assets	865020	16
-assets-fs	892220	27216
-cache	864956	-48
-compression	865164	160
-cookie	865004	0
-decimal-big	865004	0
-decimal-rust	865004	0
-docs	871036	6032
-form	865004	0
-http1	865004	0
-http2	865004	0
-json	865004	0
-macros	865004	0
-multipart	865132	128
-openapi32	940924	75920
-protobuf	865004	0
-test-util	862540	-2464
-time-chrono	865004	0
-time-jiff	865004	0
-trace	865004	0
-unchecked	892044	27040
-uuid	864972	-32
-yaml	871196	6192
-(all-features)	984060	119056
+openapi31	1005308	0
+assets	1005308	0
+assets-fs	1033084	27776
+cache	1005276	-32
+compression	1005468	160
+cookie	1005308	0
+decimal-big	1005308	0
+decimal-rust	1005308	0
+docs	1011068	5760
+form	1005308	0
+http1	1005308	0
+http2	1005308	0
+json	1005308	0
+macros	1005308	0
+multipart	1005436	128
+openapi32	1090716	85408
+pattern	1005740	432
+protobuf	1005308	0
+test-util	1002812	-2496
+time-chrono	1005308	0
+time-jiff	1005308	0
+trace	1005308	0
+unchecked	1032924	27616
+uuid	1005276	-32
+yaml	1011820	6512
+(all-features)	1135980	130672
