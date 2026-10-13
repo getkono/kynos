@@ -9,6 +9,10 @@
 //! counts too, which is what lets the calibration group hold one instrument to
 //! the other.
 //!
+//! The `connection` group's region is instead [`Open::serve`]: one connection
+//! through `Server::serve_io`, driven to its end, with the encoded request
+//! written into its duplex in setup and the response read back in teardown.
+//!
 //! What gungraun prints is not the number of record: its Callgrind total
 //! includes glibc's allocator, whose cost depends on the heap's history and
 //! moves between runs. `scripts/profile_report.py` reads the output files and
@@ -21,12 +25,14 @@
 #![allow(missing_docs, clippy::must_use_candidate)]
 
 use std::hint::black_box;
+use std::io;
 
 use bytes::Bytes;
 use gungraun::{Dhat, LibraryBenchmarkConfig, library_benchmark, library_benchmark_group, main};
 use http_body::Frame;
 use kynos::http::{Request, StatusCode};
 use kynos_profile::{
+    connection::{Open, connected},
     driver::{Drained, Runner, Served, frames},
     scenario,
 };
@@ -200,14 +206,63 @@ fn driven(prepared: Prepared) -> Answered {
     (service, runner, black_box(drained), expected)
 }
 
+/// A connection row's setup: its driver and the connection made ready, the
+/// request already in the duplex, and the status its response must carry.
+type Opened = (Runner, Open, StatusCode);
+
+/// What leaves a connection row's region, to be checked and dropped outside it.
+type Closed = (Runner, Open, io::Result<()>, StatusCode);
+
+/// The connection, and the request the region serves — over the *second*
+/// connection, for [`prepared`]'s reason: one identical connection is served
+/// to its end and dropped here first.
+fn opened(name: &str) -> Opened {
+    let connected = connected(name);
+    let runner = connected.scenario.driver.runner();
+    let mut warm = connected.open(&runner);
+    warm.serve(&runner)
+        .expect("the warming connection closes cleanly");
+    drop(warm);
+    let open = connected.open(&runner);
+    (runner, open, connected.scenario.expected)
+}
+
+/// As [`checked`], reading the status from what the server wrote; and a
+/// connection that ended in an error counted that error's path.
+fn closed((runner, mut open, ended, expected): Closed) {
+    ended.expect("the profiled connection closes cleanly");
+    assert_eq!(
+        open.status(),
+        expected,
+        "the profiled request was answered wrongly"
+    );
+    drop((open, runner));
+}
+
+// `connection.rs`'s `CONNECTION` table: a request through `Server::serve_io`
+// over an in-memory duplex, the server path the rows above never enter.
+#[library_benchmark(setup = opened, teardown = closed, config = heap())]
+#[bench::h1_plaintext("conn-h1-plaintext")]
+#[bench::h1_echo_cl("conn-h1-echo-cl")]
+#[bench::h1_echo_chunked("conn-h1-echo-chunked")]
+#[bench::h2_plaintext("conn-h2-plaintext")]
+#[bench::h2_second("conn-h2-second")]
+fn connect(opened: Opened) -> Closed {
+    let (runner, mut open, expected) = opened;
+    let ended = black_box(&mut open).serve(black_box(&runner));
+    (runner, open, black_box(ended), expected)
+}
+
 library_benchmark_group!(name = scenarios, benchmarks = request);
 library_benchmark_group!(name = alloc_counter_agreement, benchmarks = calibration);
 library_benchmark_group!(name = compression, benchmarks = sweep);
 library_benchmark_group!(name = runtime, benchmarks = driven);
+library_benchmark_group!(name = connection, benchmarks = connect);
 
 main!(
     library_benchmark_groups = scenarios,
     alloc_counter_agreement,
     compression,
-    runtime
+    runtime,
+    connection
 );

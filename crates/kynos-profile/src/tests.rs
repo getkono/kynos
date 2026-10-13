@@ -15,6 +15,7 @@ use kynos::{
 
 use super::{
     COMPRESSION, Scenario, catalog,
+    connection::{CONNECTION, connected, http1},
     driver::{Drained, Driver, FRAMES, Served, frames},
     scenario,
 };
@@ -315,4 +316,42 @@ fn a_body_past_the_reserved_frames_regrew() {
 #[should_panic(expected = "not served and drained on its first poll")]
 fn a_poll_driver_refuses_a_body_that_is_not_ready_on_one_poll() {
     drive(&*chunked(), Driver::Poll, crate::app::get("/chunks"));
+}
+
+/// A connection row counts a request that entered through `serve_io`, so each
+/// is answered over its wire with the status it is measured at, and its
+/// connection ends cleanly on its own rather than leaving the region pending
+/// or ending in an error a count would include.
+#[test]
+fn every_connection_row_is_answered_over_its_wire_and_closes_cleanly() {
+    for connected in CONNECTION {
+        let scenario = connected.scenario;
+        assert_eq!(scenario.driver, Driver::Runtime, "{}", scenario.name);
+        let runner = scenario.driver.runner();
+        let mut open = connected.open(&runner);
+        open.serve(&runner)
+            .unwrap_or_else(|error| panic!("{} ended with {error}", scenario.name));
+        assert_eq!(open.status(), scenario.expected, "{}", scenario.name);
+    }
+}
+
+/// The chunked row differs from its base in framing alone: the same request,
+/// framed by `transfer-encoding` where its base is framed by `content-length`.
+#[test]
+fn the_chunked_row_frames_its_body_by_chunks_and_its_base_by_length() {
+    let chunked = String::from_utf8(http1(
+        (connected("conn-h1-echo-chunked").scenario.request)(),
+        true,
+    ))
+    .expect("an ASCII request");
+    let length = String::from_utf8(http1(
+        (connected("conn-h1-echo-cl").scenario.request)(),
+        false,
+    ))
+    .expect("an ASCII request");
+    assert!(chunked.contains("transfer-encoding: chunked\r\n"));
+    assert!(!chunked.contains("content-length"));
+    assert!(chunked.ends_with("\r\n0\r\n\r\n"));
+    assert!(length.contains("content-length: "));
+    assert!(!length.contains("transfer-encoding"));
 }

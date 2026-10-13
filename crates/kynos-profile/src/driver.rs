@@ -8,6 +8,8 @@
 //! it.
 
 use std::future::{Future, poll_fn};
+use std::io;
+use std::net::SocketAddr;
 use std::pin::{Pin, pin};
 use std::task::{Context, Poll, Waker};
 
@@ -17,7 +19,9 @@ use http_body::{Body as _, Frame};
 use kynos::{
     http::{Request, Response, StatusCode, body::Body},
     router::service::Service,
+    server::Server,
 };
+use tokio::io::DuplexStream;
 
 /// How many frames a drained body may produce before collecting them would
 /// allocate inside the region.
@@ -83,7 +87,7 @@ enum Engine {
 }
 
 impl Runner {
-    fn run<F: Future>(&self, future: F) -> F::Output {
+    pub(crate) fn run<F: Future>(&self, future: F) -> F::Output {
         match &self.0 {
             Engine::Poll => {
                 let mut future = pin!(future);
@@ -168,11 +172,32 @@ pub trait Served {
     /// its path needs a runtime and the count stopped covering the whole
     /// request; or when the body fails, which no profiled response should.
     fn serve(&self, runner: &Runner, request: Request, frames: Vec<Frame<Bytes>>) -> Drained;
+
+    /// Hands the service to a [`Server`] that serves `io` as one connection
+    /// from `peer`, returning the connection's future unpolled: what a
+    /// [`connection`](crate::connection) row's region drives.
+    ///
+    /// # Panics
+    ///
+    /// When the server refuses its default configuration, which no profiled
+    /// service should make it do.
+    fn connect(self: Box<Self>, io: DuplexStream, peer: SocketAddr) -> Connecting;
 }
+
+/// A connection's future, boxed so that one type holds every service's.
+pub type Connecting = Pin<Box<dyn Future<Output = io::Result<()>> + Send>>;
 
 impl<C: 'static> Served for Service<C> {
     fn serve(&self, runner: &Runner, request: Request, frames: Vec<Frame<Bytes>>) -> Drained {
         runner.run(async move { drain(self.call(request).await, frames).await })
+    }
+
+    fn connect(self: Box<Self>, io: DuplexStream, peer: SocketAddr) -> Connecting {
+        Box::pin(
+            Server::new(*self)
+                .serve_io(io, peer)
+                .expect("the default configuration is accepted"),
+        )
     }
 }
 
