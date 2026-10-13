@@ -153,13 +153,13 @@ call would reuse the same maps and agree with itself trivially. Each is indexed
 rather than walked, and that test is what keeps them so.
 
 **Across platforms is enforced by comparison, not by a second emission.**
-`full.yml`'s `portability` job runs the whole suite on `windows-latest` and
-`macos-latest` beside the Linux jobs, so each OS emits the corpus afresh and
-byte-compares it against the same committed files; two OSes agreeing with those
-bytes agree with each other. The plausible divergences are a path separator
-reaching a component name and a float formatting differently, and both are
-caught only where the corpus exercises them: a description the corpus does not
-contain is not covered.
+`full.yml`'s `portability` job runs the whole suite on `windows-latest`,
+`macos-latest` and `ubuntu-24.04-arm` beside the x86-64 Linux jobs, so each
+platform emits the corpus afresh and byte-compares it against the same committed
+files; two platforms agreeing with those bytes agree with each other. The
+plausible divergences are a path separator reaching a component name and a
+float formatting differently, and both are caught only where the corpus
+exercises them: a description the corpus does not contain is not covered.
 
 ## Routing
 
@@ -708,7 +708,7 @@ open against a `kynos-otel` that may never be written.
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
 | reliability | The declared MSRV builds | `mise run msrv:check`, dedicated CI job | `enforced` |
-| reliability | Every target builds, with every feature, and the suite passes on Windows and macOS as on Linux | `mise run test`, the `portability` CI job on `windows-latest` and `macos-latest` | `enforced` for those two runners' architectures, x86-64 Windows and arm64 macOS; the `cfg(windows)` shutdown signals are compiled there and not exercised, since no test delivers a console control event |
+| reliability | Every target builds, with every feature, and the suite passes on Windows, macOS and arm64 Linux as on x86-64 Linux | `mise run test`, the `portability` job in `full.yml` on `windows-latest`, `macos-latest` and `ubuntu-24.04-arm` | `enforced` for those three runners' architectures, x86-64 Windows, arm64 macOS and arm64 Linux, and at release rather than per pull request; the `cfg(windows)` shutdown signals are compiled there and not exercised, since no test delivers a console control event |
 | reliability | Every crate's published archive builds from a pristine extraction, with every feature | `mise run publish:check` (`cargo package --workspace --all-features`), dedicated CI job | `enforced` |
 | reliability | Nothing a package publishes reads a path outside that package | `mise run containment:check`, resolving every `include_bytes!`, `include_str!` and `CARGO_MANIFEST_DIR` path literal against the package that holds it, and exempting only what the manifest's `exclude` names | `enforced`. `publish:check` cannot see this: its verify step builds the library, not the test targets, so a file the archive omits and a test target names resolves in the working tree and nowhere else |
 | compatibility | A release reports whether its API broke | `cargo-semver-checks` via release-plz, verdict in the release pull request body | `partial`: default features only, and fail-open — it is evidence for the reviewer, not a gate |

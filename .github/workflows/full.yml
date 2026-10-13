@@ -117,8 +117,9 @@ jobs:
             lcov.info
             coverage-summary.txt
 
-  # Compiles the non-Linux `cfg` arms and runs the suite, which holds each OS's
-  # emission to the same committed corpus.
+  # Compiles the `cfg` arms x86-64 Linux does not, and runs the suite on arm64
+  # Linux, the other common server target, and on each other OS, holding every
+  # one's emission to the same committed corpus.
   portability:
     name: Tests (${{ matrix.os }})
     needs: gate
@@ -129,11 +130,12 @@ jobs:
         os:
           - windows-latest
           - macos-latest
+          - ubuntu-24.04-arm
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-      # `rust-cache` keys on the OS itself.
+      # `rust-cache` keys on the OS and the host triple itself.
       - name: Set up
         uses: ./.github/actions/setup
         with:
