@@ -283,3 +283,40 @@ async fn a_reply_body_is_written_as_json_under_its_declared_status() {
         .to_bytes();
     assert_eq!(&body[..], b"[1,2]");
 }
+
+/// JSON Schema validates a number against a bound only where it compares to
+/// it, and NaN compares to nothing, so each of the four bounds refuses it,
+/// whichever side of the bound its check reads.
+#[test]
+fn each_numeric_bound_refuses_nan() {
+    use crate::{
+        __private::constraints::{exclusive_maximum, exclusive_minimum, maximum, minimum},
+        schema::constraints::{Pointer, Violations},
+    };
+
+    type Check = fn(&f64, f64, Pointer<'_>, &mut Violations);
+    let checks: [(&str, Check, &str); 4] = [
+        ("minimum", minimum::<f64>, "must be at least 0"),
+        ("maximum", maximum::<f64>, "must be at most 0"),
+        (
+            "exclusive_minimum",
+            exclusive_minimum::<f64>,
+            "must be greater than 0",
+        ),
+        (
+            "exclusive_maximum",
+            exclusive_maximum::<f64>,
+            "must be less than 0",
+        ),
+    ];
+
+    for (keyword, check, detail) in checks {
+        let mut violations = Violations::new();
+        check(&f64::NAN, 0.0, Pointer::root(), &mut violations);
+        assert_eq!(
+            violations.into_each().collect::<Vec<_>>(),
+            [(String::new(), detail.to_owned())],
+            "{keyword}"
+        );
+    }
+}

@@ -1600,6 +1600,34 @@ fn a_query_value_that_breaks_a_bound_is_refused_naming_its_parameter() {
     }
 }
 
+#[derive(Schema, QueryParams)]
+struct Ratio {
+    #[schema(minimum = 0, maximum = 1)]
+    ratio: f64,
+}
+
+/// `NaN` parses as an `f64` but lies within no bound the document states, so
+/// it is refused as `Schema`, the first bound it fails named.
+#[test]
+fn a_nan_query_value_is_refused_under_its_numeric_bounds() {
+    use kynos::{error::rejection::QueryRejection, extract::params::query::DecodeQuery};
+
+    match <Ratio as DecodeQuery>::decode(Some("ratio=NaN")) {
+        Err(QueryRejection::Schema { name, failures }) => {
+            assert_eq!(name, "ratio");
+            assert_eq!(
+                failures,
+                std::collections::BTreeMap::from([(
+                    String::new(),
+                    "must be at least 0".to_owned()
+                )])
+            );
+        }
+        Err(other) => panic!("refused for another reason: {other}"),
+        Ok(decoded) => panic!("accepted as {}", decoded.ratio),
+    }
+}
+
 // --- Path, header and cookie parameters keep their fields' bounds -----------
 //
 // The same recorded exception as the query parameter's: each other parameter
