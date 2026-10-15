@@ -181,7 +181,8 @@ async fn encode(coding: Coding, plain: &'static [u8]) -> Bytes {
     let input = io::Cursor::new(plain);
     let encoded = match coding {
         Coding::Zstd => drain_capped(ZstdEncoder::new(input), u64::MAX).await,
-        Coding::Brotli => drain_capped(BrotliEncoder::new(input), u64::MAX).await,
+        // Boxed for the reason `decode` boxes its decoder.
+        Coding::Brotli => drain_capped(Box::new(BrotliEncoder::new(input)), u64::MAX).await,
         Coding::Gzip => drain_capped(GzipEncoder::new(input), u64::MAX).await,
     };
     encoded.expect("an encoder over memory does not fail")

@@ -269,19 +269,47 @@ async fn drain_capped<R: AsyncRead + Unpin>(mut source: R, limit: u64) -> Result
 }
 
 /// Removes `coding` from `bytes`, producing no more than `limit` bytes.
+///
+/// Gzip is a series of members (RFC 1952 section 2.2) and zstd one or more
+/// frames (RFC 8878 section 3.1), so each is read to the end of its input;
+/// brotli is one stream (RFC 7932). Any input left after the stream is
+/// [`Reason::Malformed`].
 async fn decode(coding: Coding, bytes: Bytes, limit: u64) -> Result<Bytes, Reason> {
-    match coding {
-        Coding::Zstd => drain_capped(ZstdDecoder::new(io::Cursor::new(bytes)), limit).await,
+    let input = io::Cursor::new(bytes);
+
+    let (decoded, rest) = match coding {
+        Coding::Zstd => {
+            let mut decoder = ZstdDecoder::new(input);
+            decoder.multiple_members(true);
+            (
+                drain_capped(&mut decoder, limit).await?,
+                decoder.into_inner(),
+            )
+        }
         // Boxed: brotli's state is kilobytes, held for the whole exchange.
         Coding::Brotli => {
-            Box::pin(drain_capped(
-                BrotliDecoder::new(io::Cursor::new(bytes)),
-                limit,
-            ))
-            .await
+            let mut decoder = Box::new(BrotliDecoder::new(input));
+            (
+                drain_capped(&mut decoder, limit).await?,
+                decoder.into_inner(),
+            )
         }
-        Coding::Gzip => drain_capped(GzipDecoder::new(io::Cursor::new(bytes)), limit).await,
+        Coding::Gzip => {
+            let mut decoder = GzipDecoder::new(input);
+            decoder.multiple_members(true);
+            (
+                drain_capped(&mut decoder, limit).await?,
+                decoder.into_inner(),
+            )
+        }
+    };
+
+    let consumed = usize::try_from(rest.position()).unwrap_or(usize::MAX);
+    if consumed < rest.get_ref().len() {
+        return Err(Reason::Malformed);
     }
+
+    Ok(decoded)
 }
 
 /// The codings `headers` declares, in the order they were applied.
