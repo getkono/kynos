@@ -615,3 +615,54 @@ mod a_wrapper_keeps_what_the_body_declared_for_its_own_status {
         );
     }
 }
+
+/// A body that failed to render answers with its own error status.
+///
+/// RFC 9457 §3.1.2 requires a problem's `status` member to match the status
+/// actually sent, and a 201 over a failed body would also claim a resource
+/// RFC 9110 §15.3.2 says was created when nothing was.
+#[cfg(feature = "json")]
+mod a_failed_body_keeps_its_status {
+    use crate::{
+        extract::body::json::Json,
+        http::{Response, StatusCode, header},
+        response::{
+            IntoResponse,
+            status::{Accepted, Created},
+        },
+    };
+
+    /// A value serde cannot write, so `Json` answers with a 500 problem.
+    struct Unserializable;
+
+    impl serde::Serialize for Unserializable {
+        fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+            Err(serde::ser::Error::custom("this value cannot be written"))
+        }
+    }
+
+    fn assert_problem(response: &Response) {
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("application/problem+json")
+        );
+    }
+
+    #[test]
+    fn created_sends_the_failure_and_no_location() {
+        let response = Created::at("/x", Json(Unserializable)).into_response();
+
+        assert_problem(&response);
+        // Nothing was created, so there is nothing to point at.
+        assert!(response.headers().get(header::LOCATION).is_none());
+    }
+
+    #[test]
+    fn accepted_sends_the_failure() {
+        assert_problem(&Accepted::new(Json(Unserializable)).into_response());
+    }
+}
