@@ -17,6 +17,9 @@ This is a runbook. Nothing here is normative for implementation work.
    reopen the pull request, which re-attributes the event to a person. Do this
    before reading the changelog, not after: this is the one merge here that
    publishes to crates.io, and it is the one whose CI does not start itself.
+   That CI is the whole of `full.yml`, which an ordinary pull request skips:
+   the release is where the other platforms, the feature matrix, coverage, the
+   MSRV and packaging are held, behind its `Comprehensive` check.
 3. **Record what the release costs.** `Cost trend` fails on the release pull
    request unless the baselines under `crates/kynos/cost/` are exactly what
    this release measures, including the floor every feature's delta is taken
@@ -66,8 +69,8 @@ mise run publish:check
 ```
 
 It packages every published crate and rebuilds each from its own tarball, which
-is what `cargo publish` will do. CI runs the same task on every push, in the
-`Package` job.
+is what `cargo publish` will do. CI runs the same task in `full.yml`'s
+`Package` job, on the release pull request and on master once merges stop.
 
 ## What the pipeline does not check
 
@@ -75,7 +78,7 @@ is what `cargo publish` will do. CI runs the same task on every push, in the
   it cannot parse as "compatible". The verdict in the release pull request body
   is evidence for a reviewer, not a gate. [`nfr.md`](nfr.md) records it as
   `partial` for this reason; `mise run semver:check` covers `--all-features` on
-  every pull request.
+  the release pull request.
 - **The changelog skips `refactor`, `test`, `style`, `build`, `ci` and `chore`.**
   A breaking commit of any of those types is still listed: the `!` parser in
   `release-plz.toml` matches it before any skip rule does, and it has to, because
