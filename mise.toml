@@ -77,7 +77,8 @@ run = "cargo nextest run --workspace --all-targets --all-features"
 description = "Test all workspace targets at baseline features"
 # The only task that builds test targets with optional features off
 # (docs/testing.md#cross-cutting). `ui` snapshots record an `--all-features`
-# build. `kynos-profile` enables `kynos/compression`, which Cargo would unify on.
+# build. `kynos-profile` enables every request-path feature of `kynos`, which
+# Cargo would unify on.
 run = "cargo nextest run --workspace --exclude kynos-profile --all-targets -E 'not binary(ui)'"
 
 [tasks."test:doc"]

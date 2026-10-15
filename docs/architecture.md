@@ -21,13 +21,16 @@ buffer that consumes much of what it came for.
 
 - tokio is a hard dependency, not a generic parameter. No runtime abstraction
   trait exists — not public, not internal. The server calls tokio directly.
-- tokio types appear in zero handler-facing signatures. The one deliberate
-  exception anywhere in the public API is
+- tokio types appear in zero handler-facing signatures. The two deliberate
+  exceptions anywhere in the public API are
   [`server::address::Listener::Tokio`](../crates/kynos/src/server/address.rs)
   together with its `From<tokio::net::TcpListener>` conversion, which exist so
-  an already-bound `tokio::net::TcpListener` can be handed to the server;
-  naming the runtime there is the point, not a leak. A surface check counts
-  both, because the conversion names the type as plainly as the variant does.
+  an already-bound `tokio::net::TcpListener` can be handed to the server, and
+  the `tokio::io::{AsyncRead, AsyncWrite}` bound on
+  [`Server::serve_io`](../crates/kynos/src/server/mod.rs), which hands the
+  server one stream no listener accepted. Naming the runtime there is the
+  point, not a leak. A surface check counts all three, because the conversion
+  names the type as plainly as the variant does.
 - The runtime coupling surface is exactly five points, and they all live in
   `crates/kynos/src/server/`: the accept loop and listener, connection socket
   read and write (the `tokio::io::{AsyncRead, AsyncWrite}` bound on the
@@ -61,7 +64,10 @@ is checkable, so the sites are enumerated:
 **Six rows, and the count is the check.** [`nfr.md`](nfr.md#runtime) states the
 containment requirement against this table rather than against `server/` alone,
 so a seventh site is a failing build rather than a silently broken sentence.
-`mise run containment:check` is where that count runs.
+`mise run containment:check` is where that count runs. It and [the
+graph](#the-graph) govern the published crates: an unpublished member —
+[`kynos-profile`](../crates/kynos-profile/) — drives a runtime and drains
+bodies as an application does, and neither reads it.
 
 The last two were added deliberately, which is what the table is for. Serving
 a file from disk means reading one, and which file is not known until routing
@@ -101,7 +107,11 @@ the graph.
   [`Framed<S>`](../crates/kynos/src/response/stream/json.rs) and
   [`Records<S>`](../crates/kynos/src/response/stream/sse.rs) each take
   `S: Stream` as a bound and stay private, which is only possible because the
-  caller brought the stream. What is left is the exception, and it is
+  caller brought the stream. A third is outside the published crates
+  altogether: [`Iter<I>`](../crates/kynos-profile/src/app/stream.rs) serves an
+  iterator as a stream to the measurement harness's stream rows, written out
+  because `futures-core` declares the trait and nothing the harness depends on
+  adapts an iterator to it. What is left is the exception, and it is
   enumerated for the reason the runtime allowance is: a rule that is false is
   worth less than a list that is checkable.
 
@@ -109,7 +119,7 @@ the graph.
   | --- | --- | --- |
   | [`extract/body/json_lines/records.rs`](../crates/kynos/src/extract/body/json_lines/records.rs) | `Stream` for the public `Records<T>`, the streamed JSON request body | a *request* body's stream is produced by Kynos rather than supplied by the handler, so there is no caller type to bound |
 
-  **One public row, three sites, and the count is the check** — the count runs
+  **One public row, four sites, and the count is the check** — the count runs
   in [`nfr.md`](nfr.md#workspace). The two `Records` are unrelated types that
   ended up sharing a name: the private one frames SSE events on the way out,
   the public one decodes JSON records on the way in, and only the second is
@@ -526,8 +536,12 @@ and HTTP/2. Nothing about HTTP/3 is undescribable — it carries the same reques
 and response semantics OpenAPI already covers — so the ground here is cost, not
 principle, and the door stays open. See [why HTTP/3 is deferred](#why-http3-is-deferred).
 
-**Custom transports and Unix sockets are out**, for the same reason the runtime
-is: they widen the coupling surface the runtime policy exists to bound.
+**Listeners other than TCP are out**, for the same reason the runtime is: they
+widen the coupling surface the runtime policy exists to bound. A stream
+accepted some other way — a Unix socket, an in-memory pipe, a custom acceptor —
+is served one connection at a time by `Server::serve_io`, as plaintext, which
+exposes the connection driver's existing `AsyncRead + AsyncWrite` bound rather
+than adding a coupling point; accepting those streams stays the application's.
 
 **WebSockets and WebTransport are out.** Both stop being request/response the
 moment they are established, and OpenAPI describes request/response. This is

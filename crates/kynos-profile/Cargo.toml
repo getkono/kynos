@@ -11,18 +11,65 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-# Default features, plus `compression` for the encoding sweep. Cargo unifies it,
-# so the `*:baseline` tasks exclude this package.
-kynos = { path = "../kynos", features = ["compression"] }
+# Every element a request can reach, named one by one: `full` without
+# `test-util`, plus `assets-fs` (and the `unchecked` it implies), the two
+# request-path features `full` omits. `test-util`'s `jsonschema` turns on
+# `serde_json/float_roundtrip`, which would put every JSON row on a parser no
+# application without it runs; `profile_report.py` refuses a build that has it.
+# Cargo unifies these, so the `*:baseline` tasks exclude this package.
+kynos = { path = "../kynos", features = [
+  "assets",
+  "assets-fs",
+  "cache",
+  "docs",
+  "openapi32",
+  "macros",
+  "pattern",
+  "server",
+  "http1",
+  "http2",
+  "json",
+  "tls",
+  "form",
+  "multipart",
+  "protobuf",
+  "cookie",
+  "compression",
+  "trace",
+  "yaml",
+  "uuid",
+  "time-chrono",
+  "time-jiff",
+  "decimal-rust",
+  "decimal-big",
+] }
+# Gzips `decompress-gzip`'s request body in setup, with the features `kynos`'s
+# `compression` already compiles.
+async-compression = { workspace = true, features = ["tokio", "gzip"] }
 bytes = { workspace = true }
+# The stream the stream rows' iterators are served as.
+futures-core = { workspace = true }
+# The response head and the frame type a drained body leaves the region as.
+http = { workspace = true }
+http-body = { workspace = true }
+# `protobuf-echo`'s message, which `prost::Message`'s derive names by path.
+prost = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 # Builds the `echo-post` body outside the measured region; the region itself
 # reaches serde_json only through `kynos`.
 serde_json = { workspace = true }
+# `Driver::Runtime`'s current-thread runtime and its timer, named in
+# `src/driver.rs`, and the in-memory duplex `src/connection/` serves a
+# connection over. This package is unpublished, so `architecture.md`'s runtime
+# allowance, which governs the published crates, does not read it.
+tokio = { workspace = true, features = ["rt", "time", "io-util"] }
+# `unchecked-layer`'s pass-through layer.
+tower-layer = { workspace = true }
+# `trace-sub`'s subscriber, installed on the serving thread in setup.
+tracing = { workspace = true }
 
 [dev-dependencies]
 gungraun = { workspace = true }
-http-body-util = { workspace = true }
 
 # gungraun-runner spawns each benchmark under Valgrind.
 [[bench]]

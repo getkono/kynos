@@ -1320,12 +1320,19 @@ dependencies = [
 name = "kynos-profile"
 version = "0.0.0"
 dependencies = [
+ "async-compression",
  "bytes",
+ "futures-core",
  "gungraun",
- "http-body-util",
+ "http",
+ "http-body",
  "kynos",
+ "prost",
  "serde",
  "serde_json",
+ "tokio",
+ "tower-layer",
+ "tracing",
 ]
 
 [[package]]

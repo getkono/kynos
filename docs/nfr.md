@@ -168,7 +168,7 @@ exercises them: a description the corpus does not contain is not covered.
 | performance | Route dispatch allocates at most a recorded number of times per route shape, and a replayed request costs what the first one did | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), over a handler that allocates nothing, counting fresh allocations and reallocations across a 10k-request replay | `enforced` |
 | performance | Zero heap allocations on the routing path | — | `absent`. The row above enforces a ceiling, which is the opposite direction; nothing asserts the zero, and the measurement below is why |
 | performance | Route resolution p99 ≤ TBD at 1000 registered operations | `criterion` with a regression gate | `kynos-bench` |
-| performance | What one request of each `kynos-bench` scenario, and of each row of the compression sweep `Compression`'s default `min_size` is read from, executes in process is recorded as a count exact on one host: instructions in the program object, and heap blocks and bytes | `mise run profile:requests`: gungraun over Callgrind and DHAT on [`kynos-profile`](../crates/kynos-profile/), split by object and compared with [`requests.tsv`](../crates/kynos-profile/requests.tsv) by [`profile_report.py`](../scripts/profile_report.py), which also holds DHAT's block counts to `tests/alloc.rs`'s | `partial`: a trend in `full.yml` once master settles, with no ceiling and no gate, and over `Service::call` rather than a socket — below |
+| performance | What one request of each `kynos-bench` scenario, and of each row of the compression sweep `Compression`'s default `min_size` is read from, executes in process is recorded as a count exact on one host: instructions in the program object, and heap blocks and bytes; and so is what a request costs that enters through the server's connection path; and so is each element of the per-request surface, priced as the difference from the row it alone changes: routing past three captures and every answer the router gives without an operation, a layer or panic recovery at each scope, an observer and `Trace` with and without a subscriber, each extractor and guard, each body codec and refusal, ranged, conditional, negotiated and created responses, every shipped interceptor, each streamed body, an embedded asset and the served description, and a typical production stack | `mise run profile:requests`: gungraun over Callgrind and DHAT on [`kynos-profile`](../crates/kynos-profile/), split by object and compared with [`requests.tsv`](../crates/kynos-profile/requests.tsv) by [`profile_report.py`](../scripts/profile_report.py), which also holds DHAT's block counts to `tests/alloc.rs`'s. The `connection_*` groups drive `Server::serve_io` over an in-memory duplex, so hyper's parse, its per-connection builder, buffers and timers, `Body::from_incoming` and the `Connection` extension are counted. The `routing` through `realistic` groups are the ablation matrix: each row names its base in `lib.rs`, and the report gives the difference beside the counts | `partial`: a trend in `full.yml` once master settles, with no ceiling and no gate; the connection path is counted to the duplex and no further, so no socket, syscall or kernel buffer is (`kynos-bench`'s), and `connection_h2` and `rate_limit` are `trend` rather than exact, since what each counts reads the wall clock ([`performance.md`](performance.md)) — below |
 | performance | Erasing a body through the boxed trait object costs a recorded number of allocations per construction | [`tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs), counting `Body::empty` and `Body::from_bytes` | `enforced` |
 | reliability | Route conflicts and ambiguity are rejected before the service runs | `trybuild` compile-fail suite for statically expressible conflicts; [`tests/routing.rs`](../crates/kynos/tests/routing.rs) over `Router::validate` for those only visible once the tree is assembled, each refusal with its pass control | `enforced` |
 | security | A served asset path is enumerated, never joined from request input | [`tests/assets.rs`](../crates/kynos/tests/assets.rs) asserting an embedded set registers only literal `paths` keys, and [`router/assets/fs/tests.rs`](../crates/kynos/src/router/assets/fs/tests.rs) sweeping every escape a resolver must refuse against a control that must not be | `enforced` |
@@ -177,19 +177,42 @@ exercises them: a description the corpus does not contain is not covered.
 | correctness | The description a service serves is the description it emits | [`tests/docs.rs`](../crates/kynos/tests/docs.rs), byte-comparing the description route's body against `Router::openapi`'s JSON, and asserting a nested mount moves both routes and the page's pointer with them | `enforced` |
 
 **The first instruction counts say where a request's work goes, and it is
-rarely routing.** Recorded at rustc 1.97.1 in
-[`requests.tsv`](../crates/kynos-profile/requests.tsv), with the host it was
-taken on: a static match executes 1561 instructions in the program and a miss
-1885, while `echo-post` executes 35104. Read with
+rarely routing.** First recorded at rustc 1.97.1 on an AMD EPYC 9V45;
+[`requests.tsv`](../crates/kynos-profile/requests.tsv) holds the counts of
+record and the host they were taken on. Then, a static match executed 1561 instructions in the program and a miss
+1885, while `echo-post` executed 35104. Read with
 `callgrind_annotate --inclusive=yes` over that scenario's Callgrind file, 52%
 of everything Callgrind counted for the request, libc included, is
 `serde_json`'s deserializer inside the `Json` extractor and 26% inside
 `serde_json::to_vec`. A transparent interceptor costs 315 program instructions
 and one heap block per layer, the same at depth four and eight. `json-large`
-executes 1027297 program instructions, and `serde_json`'s string writer alone
+executed 1027297 program instructions, and `serde_json`'s string writer alone
 is 37% of all it counted.
 The ceiling this row would need stays unset for [Thresholds](#thresholds)'
 reason; the counts are the first measurement, not a target.
+
+**A request through the server pays for its connection first.**
+`connection_h1.plaintext` sends `plaintext`'s request through
+`Server::serve_io` and counts 49579 program instructions and 28 heap blocks,
+against the in-process row's 2372 and 9 on the same host. A second request on
+that connection once kept alive (`connection_h1.second`) counts 47142 and 11,
+so of the nineteen blocks between the first two rows seventeen are the
+connection's, paid on its first request only: hyper's read buffer (two blocks,
+24 KiB), its 8 KiB write buffer and its write queue, its dispatcher and the
+boxed `service_fn`, the two timer handles `serve_http`'s builder gives each
+protocol, the prefix hyper-util replays after sniffing the protocol, the
+lifecycle channel, `Connection`'s shared state, the first-head flag, the HTTP/2
+stream counter, built for an HTTP/1.1 connection too, and four DHAT attributes
+to the first request's head: the header-read deadline's sleep, the head split
+off the read buffer and the parsed header map's two. Two are every request's:
+`Body::from_incoming`'s box and the `Connection` extension's own box — the
+extension map's first allocation moves from `Routed` to it rather than being
+added. The instructions do not split that way: the second request executes
+only 2437 fewer than the first, so the server path's instruction cost is
+nearly all paid per request. A second HTTP/2 stream on an open connection
+(`connection_h2.second`) counts 14 blocks where a connection carrying one
+stream counts 41, and a chunked body one block more than a `content-length`
+one.
 
 **The zero does not hold.** A static match allocates five times, of the seven
 the attribution below decided on, a capture eight and a miss six, each stable to the allocation across a
@@ -449,8 +472,8 @@ paragraph in [Status](#status).
 | performance | Syscalls per request ≤ TBD | `strace -c` assertion over a fixed request count | `kynos-bench` |
 | performance | Idle memory per connection ≤ TBD at 100k connections | Nightly load test measuring RSS delta | `kynos-bench` |
 | performance | The per-connection state Kynos itself holds inline stays within its recorded ceilings | [`extract/connection/tests.rs`](../crates/kynos/src/extract/connection/tests.rs), asserting `Connection` one pointer wide, narrower than `Inner`, and shared rather than copied on clone, `Inner` ≤ 192 from a measured 144 and `TlsIdentity` ≤ 128 from a measured 72; and [`server/tests.rs`](../crates/kynos/src/server/tests.rs), asserting the configuration cloned per accepted socket — `Http1Config` ≤ 64 from 40, `Http2Config` ≤ 128 from 96, `TransportConfig` ≤ 256 from 200. Every reading is a `size_of`, so what a certificate chain or a server name points at is counted by none of them | `enforced` for the ceilings; the relation to the smallest transport buffer is prose in the same doc comments, since it cannot fail while a ceiling holds |
-| compatibility | `Listener::Tokio` is the only public item naming a tokio type | `cargo-public-api` assertion over the framework surface | `needs-tooling` |
-| compatibility | Every `tokio` mention outside `crates/kynos/src/server/` appears in the allowance table in [`architecture.md`](architecture.md#runtime-policy), and the table has exactly six rows | `mise run containment:check`, which reads the table rather than restating it, over source stripped of comments, string literals and `#[cfg(test)]` modules | `enforced` |
+| compatibility | `Listener::Tokio` and the I/O bound on `Server::serve_io` are the only public items naming a tokio type | `cargo-public-api` assertion over the framework surface | `needs-tooling` |
+| compatibility | Every `tokio` mention in a published crate outside `crates/kynos/src/server/` appears in the allowance table in [`architecture.md`](architecture.md#runtime-policy), and the table has exactly six rows | `mise run containment:check`, which reads the table rather than restating it, over source stripped of comments, string literals and `#[cfg(test)]` modules | `enforced` |
 
 The last two rows are the enforcement of the tokio-only policy in
 [`architecture.md`](architecture.md#runtime-policy). There is no runtime
@@ -504,7 +527,7 @@ where someone mounting a cap will meet it.
 
 AGENTS.md: *"A module becomes a directory once it holds two
 independently-changing concerns … Passing ~400 lines excluding tests is when to
-ask that question, not an answer to it."* Thirty-two files under `crates/*/src` are
+ask that question, not an answer to it."* Thirty-three files under `crates/*/src` are
 past that line and asked it, and `containment:check` holds that number so it can
 only move on purpose.
 
@@ -515,7 +538,7 @@ public types lengthens every one of their paths, because no re-export may
 preserve the old one. `error/rejection.rs` is the clearest case: it is one of
 them, it declares every rejection type, and splitting it would turn
 `error::rejection::PathRejection` into
-`error::rejection::path::PathRejection`. Nineteen of the thirty-two are that
+`error::rejection::path::PathRejection`. Nineteen of the thirty-three are that
 shape, worth roughly a hundred public paths between them — and each is one
 cohesive family, which is precisely what the concern test says may stay a file.
 So they stay: a longer path is a worse name, and the rule's first clause already
@@ -538,7 +561,7 @@ own reason to change. The concern test answers yes there, so
 The budget is the honest record of what stayed. It falls when a module is split,
 and raising it means saying in the same commit why a new module needs the room.
 
-Nine of them crossed the line after v0.1.0, and each was argued for as it did.
+Ten of them crossed the line after v0.1.0, and each was argued for as it did.
 `response/status.rs` is the shape above rather than a new argument. It declares
 six public types — `Location`, `NoContent`, `Created`, `Accepted`, `Redirect`
 and `ValidRedirectCode` — so splitting it would turn `response::status::Created` into
@@ -613,6 +636,16 @@ the bound every parameter field names, into a longer path. What pushed it over
 was deriving `ParamValue` for a field-less enum, whose `FromStr` refuses with
 `UnknownVariant`: the error is that trait's, and one concern with it. Most of
 the length is the module's own tables of what each type is described as.
+
+`kynos-profile`'s `lib.rs` is unpublished, so a split would cost no path, and
+it is one concern: the catalog of what the request-path profile measures, each
+row naming the request, the status it must be answered with and the base it
+is measured against. What pushed it over was the ablation tables, one per
+group, whose rows mostly name a base in another table; split by table, a row
+would sit a file away from the base its difference is read against, and the
+`catalog` binary and `profile_report.py` read them as one list anyway. The
+fixtures those rows are served by are the part that changes for other reasons,
+and they went to `src/app/`, one module per group.
 
 ## Dependencies
 
@@ -721,11 +754,11 @@ open against a `kynos-otel` that may never be written.
 | reliability | Every test target compiles and runs at baseline features, not only `--all-features` | `mise run test:baseline` | `enforced` |
 | reliability | Every test target is built at the feature sets its own `#[cfg]` gates decide, not only at all-on, default and baseline | `mise run lint:codecs`, six `-p kynos --all-targets` Clippy runs over `openapi31 + macros` and each optional codec in turn | `enforced` for the codec flags, which is where a per-feature-gated target lives today; a target gated on some other flag would need its set added to that list |
 | reliability | Tests are hermetic; no shared state, no ordering dependence, no retries | `cargo-nextest` process isolation, `retries = 0`, guarded by `crates/kynos/tests/hermeticity.rs` | `enforced` |
-| dx | No module grows past the size the layout rule allows without that being recorded | `mise run containment:check`, against a module-size budget of 32 files stated below | `enforced` as a ratchet: the count cannot rise silently, and lowering it is what splitting a module looks like |
+| dx | No module grows past the size the layout rule allows without that being recorded | `mise run containment:check`, against a module-size budget of 33 files stated below | `enforced` as a ratchet: the count cannot rise silently, and lowering it is what splitting a module looks like |
 | dx | A worktree's `target/` stays near the 17 GiB [PR #126](https://github.com/getkono/kynos/pull/126) measured, against the 44 GiB before it | `mise run containment:check`, holding [`.cargo/config.toml`](../.cargo/config.toml) to declaring `profile.dev.debug` and `profile.dev.package."*".debug`, and to carrying no top-level table but `profile` | `partial`: it holds the cause and not the size. No job takes a `du -sh target` reading, so a build that grows for some other reason passes; the two keys' *values* are unchecked, and so are the two `CARGO_INCREMENTAL = "0"` task envs #126 added beside them. What it closes is the half nobody can review — below |
 | reliability | Panic recovery refuses to compile under `panic = "abort"` | `mise run panic:check` | `enforced` |
 | reliability | Commits follow Conventional Commits, merge commits exempt | `convco`, twice over: the `conventional-commit` `commit-msg` step runs `mise run commits:message` over the one message being written, exempting a merge on the presence of the `MERGE_HEAD` *file*; `mise run commits:check` and the `commits` CI job run `convco check` over a range, where the exemption is convco's own parent-count filter. `mise run commits:test` runs *both* halves over the same commits, since a divergence between them fails neither | `enforced`, with one case out of reach: amending an *existing* merge commit runs the hook with `MERGE_HEAD` already gone over a commit that still has two parents, so the hook rejects what the range form exempts, and `--no-verify` is the escape. `commits:test` pins that residual in both directions, so closing or widening it fails this row |
-| compatibility | Every hand-rolled `Stream` implementation is private, except the one row in [`architecture.md`](architecture.md#public-api-surface), and there are exactly three of them | `mise run containment:check`, counting `Stream for` against the table and the two private sites its prose names | `enforced` |
+| compatibility | Every hand-rolled `Stream` implementation is private, except the one row in [`architecture.md`](architecture.md#public-api-surface), and there are exactly four of them | `mise run containment:check`, counting `Stream for` against the table and the three private sites its prose names | `enforced` |
 | compatibility | No parent re-exports a submodule, so every public item has exactly one path | `mise run containment:check`, refusing a `pub use` that names `crate`, `self`, `super` or a module the same file declares, outside the `lib.rs` that carries the crate root and the prelude | `enforced` |
 | dx | No item stands in for its implementation with a `todo!()` or `unimplemented!()` body | `mise run containment:check`, which sees code only after doc comments are stripped, so the `todo!()` elisions inside doc examples are not candidates | `enforced`, now that the API-skeleton exception has lapsed |
 | dx | Every flag `crates/kynos` declares is graded in exactly one row of [`performance.md`](performance.md#the-feature-grading), and every graded flag is declared | `mise run containment:check`, holding the table's set against `[features]` rather than against a stated count, so the failure names the flag that is unaccounted for | `enforced` |

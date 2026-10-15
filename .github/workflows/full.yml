@@ -315,8 +315,9 @@ jobs:
       - name: Add profile summary
         if: ${{ !cancelled() && hashFiles('profile-report.md') != '' }}
         run: cat profile-report.md >> "$GITHUB_STEP_SUMMARY"
-      # The Callgrind files attribute a moved count. CI is the host of record:
-      # recording the baseline is copying `profile-requests.tsv` over `requests.tsv`.
+      # The attribution and the Callgrind files beside it attribute a moved
+      # count. CI is the host of record: recording the baseline is copying
+      # `profile-requests.tsv` over `requests.tsv`.
       - name: Upload profile
         if: ${{ !cancelled() && hashFiles('profile-report.md') != '' }}
         uses: actions/upload-artifact@v4
@@ -325,6 +326,7 @@ jobs:
           path: |
             profile-report.md
             profile-requests.tsv
+            target/gungraun/profile-attribution.md
             target/gungraun/kynos-profile/
 
   # The one check to require: a matrix job's name is unresolved when skipped,
