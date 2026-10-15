@@ -343,6 +343,37 @@ async fn a_request_one_quota_refuses_spends_no_other_quota() {
     }
 }
 
+/// A refusal reports what a quota that passed still has, which is everything
+/// the refusal did not spend.
+#[tokio::test]
+async fn a_refusal_reports_the_other_quotas_unspent() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![counted, other])
+        .intercept(
+            RateLimit::new(
+                Quotas::new(shared(), Counters::default())
+                    .quota(Quota::new("burst", 1, Duration::from_secs(600)))
+                    .quota(Quota::new("daily", 1_000, Duration::from_secs(86_400))),
+            )
+            .standard_fields(),
+        )
+        .build(())
+        .expect("a describable router");
+
+    let served = get(&service, "/counted").call().await;
+    let served = served.field("ratelimit").expect("the limits are reported");
+    assert!(served.contains(r#""daily";r=999;"#), "{served}");
+
+    let refused = get(&service, "/counted").call().await;
+    assert_eq!(refused.status, StatusCode::TOO_MANY_REQUESTS);
+    let refused = refused.field("ratelimit").expect("the limits are reported");
+    assert!(refused.contains(r#""burst";r=0;"#), "{refused}");
+    assert!(
+        refused.contains(r#""daily";r=999;"#),
+        "a refusal reported daily quota it did not spend: {refused}"
+    );
+}
+
 /// Both quotas reach the wire under the standard spelling.
 ///
 /// The limitation that motivates it: the `X-` triple has room for one.
