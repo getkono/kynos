@@ -76,7 +76,9 @@ pub struct NoContent;
 
 /// A 201 Created response carrying the created representation.
 ///
-/// The `Location` header is required, so a 201 always says where.
+/// The `Location` header is required, so a 201 always says where. A body
+/// answering 4xx or 5xx, such as a `Json` that failed to serialize, is sent
+/// unchanged, with neither 201 nor `Location`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Created<T> {
     /// The created representation.
@@ -99,6 +101,8 @@ impl<T> Created<T> {
 }
 
 /// A 202 Accepted response for work that has not finished.
+///
+/// A body that answers with a 4xx or 5xx is sent unchanged rather than as 202.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Accepted<T> {
     /// A representation of the accepted work, typically a job handle.
@@ -171,6 +175,12 @@ fn set_location(response: &mut Response, location: &Location) {
     if let Ok(value) = HeaderValue::from_str(location.as_str()) {
         response.headers_mut().insert(header::LOCATION, value);
     }
+}
+
+/// Whether the body answered with an error, which a success wrapper sends as
+/// is: a problem's `status` must match the one sent (RFC 9457 §3.1.2).
+fn is_failure(response: &Response) -> bool {
+    response.status().is_client_error() || response.status().is_server_error()
 }
 
 /// Describes a `Location` field that is always sent.
@@ -305,6 +315,9 @@ impl Responses for NoContent {
 impl<T: IntoResponse> IntoResponse for Created<T> {
     fn into_response(self) -> Response {
         let mut response = self.body.into_response();
+        if is_failure(&response) {
+            return response;
+        }
         *response.status_mut() = StatusCode::CREATED;
         set_location(&mut response, &self.location);
         response
@@ -332,6 +345,9 @@ impl<T: Responses> Responses for Created<T> {
 impl<T: IntoResponse> IntoResponse for Accepted<T> {
     fn into_response(self) -> Response {
         let mut response = self.body.into_response();
+        if is_failure(&response) {
+            return response;
+        }
         *response.status_mut() = StatusCode::ACCEPTED;
         response
     }
