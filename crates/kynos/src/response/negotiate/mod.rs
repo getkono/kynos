@@ -144,7 +144,13 @@ impl<T> Accept<T> {
     }
 
     fn score(&self, media_type: &str) -> Option<(u16, u8, std::cmp::Reverse<usize>)> {
-        let (type_, subtype) = media_type.split_once('/')?;
+        // RFC 9110 12.5.1: a range matches on type and subtype; the offer's
+        // parameters, such as `charset`, are not part of its subtype.
+        let essence = media_type
+            .split_once(';')
+            .map_or(media_type, |(essence, _)| essence);
+        let (type_, subtype) = essence.split_once('/')?;
+        let (type_, subtype) = (type_.trim(), subtype.trim());
         self.preferences
             .iter()
             .filter_map(|preference| {
