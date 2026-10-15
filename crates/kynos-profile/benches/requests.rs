@@ -208,6 +208,204 @@ fn driven(prepared: Prepared) -> Answered {
     (service, runner, black_box(drained), expected)
 }
 
+// The ablation tables, `lib.rs`'s `ROUTING` through `REALISTIC`: each row
+// differs from the base it names in one variable, so the report's difference
+// between them is that variable's marginal cost. One group per table.
+#[library_benchmark(setup = prepared, teardown = checked, config = heap())]
+#[bench::captures_4("captures-4")]
+#[bench::not_implemented("not-implemented")]
+#[bench::redirect_slash("redirect-slash")]
+#[bench::head_get("head-get")]
+#[bench::not_found_empty("not-found-empty")]
+#[bench::not_found_layered_4("not-found-layered-4")]
+fn routed(prepared: Prepared) -> Answered {
+    let Prepared {
+        service,
+        runner,
+        request,
+        frames,
+        expected,
+    } = prepared;
+    let drained = black_box(&*service).serve(black_box(&runner), black_box(request), frames);
+    (service, runner, black_box(drained), expected)
+}
+
+#[library_benchmark(setup = prepared, teardown = checked, config = heap())]
+#[bench::group_layers_4("group-layers-4")]
+#[bench::endpoint_layers_4("endpoint-layers-4")]
+#[bench::catch_panics_router("catch-panics-router")]
+#[bench::catch_panics_endpoint("catch-panics-endpoint")]
+#[bench::observer_noop("observer-noop")]
+#[bench::trace_nosub("trace-nosub")]
+#[bench::trace_sub("trace-sub")]
+fn scoped(prepared: Prepared) -> Answered {
+    let Prepared {
+        service,
+        runner,
+        request,
+        frames,
+        expected,
+    } = prepared;
+    let drained = black_box(&*service).serve(black_box(&runner), black_box(request), frames);
+    (service, runner, black_box(drained), expected)
+}
+
+#[library_benchmark(setup = prepared, teardown = checked, config = heap())]
+#[bench::inject("inject")]
+#[bench::auth_bearer("auth-bearer")]
+#[bench::auth_basic("auth-basic")]
+#[bench::auth_apikey("auth-apikey")]
+#[bench::auth_401("auth-401")]
+#[bench::cookies("cookies")]
+#[bench::bounds("bounds")]
+#[bench::query_unused_8("query-unused-8")]
+#[bench::querystring("querystring")]
+#[bench::one_of("one-of")]
+#[bench::text_body("text-body")]
+fn extracted(prepared: Prepared) -> Answered {
+    let Prepared {
+        service,
+        runner,
+        request,
+        frames,
+        expected,
+    } = prepared;
+    let drained = black_box(&*service).serve(black_box(&runner), black_box(request), frames);
+    (service, runner, black_box(drained), expected)
+}
+
+#[library_benchmark(setup = prepared, teardown = checked, config = heap())]
+#[bench::form_echo("form-echo")]
+#[bench::multipart_echo("multipart-echo")]
+#[bench::protobuf_echo("protobuf-echo")]
+#[bench::reject_415("reject-415")]
+#[bench::reject_413("reject-413")]
+#[bench::reject_422("reject-422")]
+fn coded(prepared: Prepared) -> Answered {
+    let Prepared {
+        service,
+        runner,
+        request,
+        frames,
+        expected,
+    } = prepared;
+    let drained = black_box(&*service).serve(black_box(&runner), black_box(request), frames);
+    (service, runner, black_box(drained), expected)
+}
+
+#[library_benchmark(setup = prepared, teardown = checked, config = heap())]
+#[bench::binary_full("binary-full")]
+#[bench::ranged("ranged")]
+#[bench::conditional_304("conditional-304")]
+#[bench::negotiated("negotiated")]
+#[bench::created("created")]
+fn responded(prepared: Prepared) -> Answered {
+    let Prepared {
+        service,
+        runner,
+        request,
+        frames,
+        expected,
+    } = prepared;
+    let drained = black_box(&*service).serve(black_box(&runner), black_box(request), frames);
+    (service, runner, black_box(drained), expected)
+}
+
+#[library_benchmark(setup = prepared, teardown = checked, config = heap())]
+#[bench::cors_simple("cors-simple")]
+#[bench::cors_preflight("cors-preflight")]
+#[bench::csrf("csrf")]
+#[bench::request_id_counter("request-id-counter")]
+#[bench::request_id_random("request-id-random")]
+#[bench::security_headers("security-headers")]
+#[bench::body_size("body-size")]
+#[bench::concurrency("concurrency")]
+#[bench::timeout("timeout")]
+#[bench::body_timeout("body-timeout")]
+#[bench::decompress_gzip("decompress-gzip")]
+#[bench::cache_miss("cache-miss")]
+#[bench::cache_hit("cache-hit")]
+#[bench::set_cookies("set-cookies")]
+#[bench::compression_default("compression-default")]
+#[bench::unchecked_layer("unchecked-layer")]
+fn intercepted(prepared: Prepared) -> Answered {
+    let Prepared {
+        service,
+        runner,
+        request,
+        frames,
+        expected,
+    } = prepared;
+    let drained = black_box(&*service).serve(black_box(&runner), black_box(request), frames);
+    (service, runner, black_box(drained), expected)
+}
+
+// `INTERCEPTORS`' `rate-limit` alone: its quota keys, its window arithmetic
+// and the remaining count and reset it writes are read off the wall clock,
+// so its count moves by a few instructions with the time it ran at, and
+// `requests.tsv` marks this group `trend` rather than the whole table's.
+#[library_benchmark(setup = prepared, teardown = checked, config = heap())]
+#[bench::rate_limit("rate-limit")]
+fn limited(prepared: Prepared) -> Answered {
+    let Prepared {
+        service,
+        runner,
+        request,
+        frames,
+        expected,
+    } = prepared;
+    let drained = black_box(&*service).serve(black_box(&runner), black_box(request), frames);
+    (service, runner, black_box(drained), expected)
+}
+
+#[library_benchmark(setup = prepared, teardown = checked, config = heap())]
+#[bench::sse_16("sse-16")]
+#[bench::sse_keepalive("sse-keepalive")]
+#[bench::ndjson_16("ndjson-16")]
+#[bench::json_seq_16("json-seq-16")]
+#[bench::binary_stream_16("binary-stream-16")]
+#[bench::compressed_stream_gzip("compressed-stream-gzip")]
+fn streamed(prepared: Prepared) -> Answered {
+    let Prepared {
+        service,
+        runner,
+        request,
+        frames,
+        expected,
+    } = prepared;
+    let drained = black_box(&*service).serve(black_box(&runner), black_box(request), frames);
+    (service, runner, black_box(drained), expected)
+}
+
+#[library_benchmark(setup = prepared, teardown = checked, config = heap())]
+#[bench::assets_hit("assets-hit")]
+#[bench::docs_json("docs-json")]
+fn served_static(prepared: Prepared) -> Answered {
+    let Prepared {
+        service,
+        runner,
+        request,
+        frames,
+        expected,
+    } = prepared;
+    let drained = black_box(&*service).serve(black_box(&runner), black_box(request), frames);
+    (service, runner, black_box(drained), expected)
+}
+
+#[library_benchmark(setup = prepared, teardown = checked, config = heap())]
+#[bench::stack_typical("stack-typical")]
+fn composed(prepared: Prepared) -> Answered {
+    let Prepared {
+        service,
+        runner,
+        request,
+        frames,
+        expected,
+    } = prepared;
+    let drained = black_box(&*service).serve(black_box(&runner), black_box(request), frames);
+    (service, runner, black_box(drained), expected)
+}
+
 /// A connection row's setup: its driver and the connection made ready, the
 /// request already in the duplex, and the status its response must carry.
 type Opened = (Runner, Open, StatusCode);
@@ -289,6 +487,16 @@ library_benchmark_group!(name = compression, benchmarks = sweep);
 library_benchmark_group!(name = runtime, benchmarks = driven);
 library_benchmark_group!(name = connection_h1, benchmarks = http1);
 library_benchmark_group!(name = connection_h2, benchmarks = http2);
+library_benchmark_group!(name = routing, benchmarks = routed);
+library_benchmark_group!(name = scope, benchmarks = scoped);
+library_benchmark_group!(name = extract, benchmarks = extracted);
+library_benchmark_group!(name = codecs, benchmarks = coded);
+library_benchmark_group!(name = respond, benchmarks = responded);
+library_benchmark_group!(name = interceptors, benchmarks = intercepted);
+library_benchmark_group!(name = rate_limit, benchmarks = limited);
+library_benchmark_group!(name = stream, benchmarks = streamed);
+library_benchmark_group!(name = statics, benchmarks = served_static);
+library_benchmark_group!(name = realistic, benchmarks = composed);
 
 main!(
     library_benchmark_groups = scenarios,
@@ -296,5 +504,15 @@ main!(
     compression,
     runtime,
     connection_h1,
-    connection_h2
+    connection_h2,
+    routing,
+    scope,
+    extract,
+    codecs,
+    respond,
+    interceptors,
+    rate_limit,
+    stream,
+    statics,
+    realistic
 );

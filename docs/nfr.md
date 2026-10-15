@@ -161,7 +161,7 @@ corpus exercises them: a description the corpus does not contain is not covered.
 | performance | Route dispatch allocates at most a recorded number of times per route shape, and a replayed request costs what the first one did | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), over a handler that allocates nothing, counting fresh allocations and reallocations across a 10k-request replay | `enforced` |
 | performance | Zero heap allocations on the routing path | — | `absent`. The row above enforces a ceiling, which is the opposite direction; nothing asserts the zero, and the measurement below is why |
 | performance | Route resolution p99 ≤ TBD at 1000 registered operations | `criterion` with a regression gate | `kynos-bench` |
-| performance | What one request of each `kynos-bench` scenario, and of each row of the compression sweep `Compression`'s default `min_size` is read from, executes in process is recorded as a count exact on one host: instructions in the program object, and heap blocks and bytes; and so is what a request costs that enters through the server's connection path | `mise run profile:requests`: gungraun over Callgrind and DHAT on [`kynos-profile`](../crates/kynos-profile/), split by object and compared with [`requests.tsv`](../crates/kynos-profile/requests.tsv) by [`profile_report.py`](../scripts/profile_report.py), which also holds DHAT's block counts to `tests/alloc.rs`'s. The `connection_*` groups drive `Server::serve_io` over an in-memory duplex, so hyper's parse, its per-connection builder, buffers and timers, `Body::from_incoming` and the `Connection` extension are counted | `partial`: a trend after each merge in `cost.yml`, with no ceiling and no gate; the connection path is counted to the duplex and no further, so no socket, syscall or kernel buffer is (`kynos-bench`'s), and `connection_h2` is `trend` rather than exact — below |
+| performance | What one request of each `kynos-bench` scenario, and of each row of the compression sweep `Compression`'s default `min_size` is read from, executes in process is recorded as a count exact on one host: instructions in the program object, and heap blocks and bytes; and so is what a request costs that enters through the server's connection path; and so is each element of the per-request surface, priced as the difference from the row it alone changes: routing past three captures and every answer the router gives without an operation, a layer or panic recovery at each scope, an observer and `Trace` with and without a subscriber, each extractor and guard, each body codec and refusal, ranged, conditional, negotiated and created responses, every shipped interceptor, each streamed body, an embedded asset and the served description, and a typical production stack | `mise run profile:requests`: gungraun over Callgrind and DHAT on [`kynos-profile`](../crates/kynos-profile/), split by object and compared with [`requests.tsv`](../crates/kynos-profile/requests.tsv) by [`profile_report.py`](../scripts/profile_report.py), which also holds DHAT's block counts to `tests/alloc.rs`'s. The `connection_*` groups drive `Server::serve_io` over an in-memory duplex, so hyper's parse, its per-connection builder, buffers and timers, `Body::from_incoming` and the `Connection` extension are counted. The `routing` through `realistic` groups are the ablation matrix: each row names its base in `lib.rs`, and the report gives the difference beside the counts | `partial`: a trend after each merge in `cost.yml`, with no ceiling and no gate; the connection path is counted to the duplex and no further, so no socket, syscall or kernel buffer is (`kynos-bench`'s), and `connection_h2` and `rate_limit` are `trend` rather than exact, since what each counts reads the wall clock ([`performance.md`](performance.md)) — below |
 | performance | Erasing a body through the boxed trait object costs a recorded number of allocations per construction | [`tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs), counting `Body::empty` and `Body::from_bytes` | `enforced` |
 | reliability | Route conflicts and ambiguity are rejected before the service runs | `trybuild` compile-fail suite for statically expressible conflicts; [`tests/routing.rs`](../crates/kynos/tests/routing.rs) over `Router::validate` for those only visible once the tree is assembled, each refusal with its pass control | `enforced` |
 | security | A served asset path is enumerated, never joined from request input | [`tests/assets.rs`](../crates/kynos/tests/assets.rs) asserting an embedded set registers only literal `paths` keys, and [`router/assets/fs/tests.rs`](../crates/kynos/src/router/assets/fs/tests.rs) sweeping every escape a resolver must refuse against a control that must not be | `enforced` |
@@ -520,7 +520,7 @@ where someone mounting a cap will meet it.
 
 AGENTS.md: *"A module becomes a directory once it holds two
 independently-changing concerns … Passing ~400 lines excluding tests is when to
-ask that question, not an answer to it."* Thirty-two files under `crates/*/src` are
+ask that question, not an answer to it."* Thirty-three files under `crates/*/src` are
 past that line and asked it, and `containment:check` holds that number so it can
 only move on purpose.
 
@@ -531,7 +531,7 @@ public types lengthens every one of their paths, because no re-export may
 preserve the old one. `error/rejection.rs` is the clearest case: it is one of
 them, it declares every rejection type, and splitting it would turn
 `error::rejection::PathRejection` into
-`error::rejection::path::PathRejection`. Nineteen of the thirty-two are that
+`error::rejection::path::PathRejection`. Nineteen of the thirty-three are that
 shape, worth roughly a hundred public paths between them — and each is one
 cohesive family, which is precisely what the concern test says may stay a file.
 So they stay: a longer path is a worse name, and the rule's first clause already
@@ -554,7 +554,7 @@ own reason to change. The concern test answers yes there, so
 The budget is the honest record of what stayed. It falls when a module is split,
 and raising it means saying in the same commit why a new module needs the room.
 
-Nine of them crossed the line after v0.1.0, and each was argued for as it did.
+Ten of them crossed the line after v0.1.0, and each was argued for as it did.
 `response/status.rs` is the shape above rather than a new argument. It declares
 six public types — `Location`, `NoContent`, `Created`, `Accepted`, `Redirect`
 and `ValidRedirectCode` — so splitting it would turn `response::status::Created` into
@@ -629,6 +629,16 @@ the bound every parameter field names, into a longer path. What pushed it over
 was deriving `ParamValue` for a field-less enum, whose `FromStr` refuses with
 `UnknownVariant`: the error is that trait's, and one concern with it. Most of
 the length is the module's own tables of what each type is described as.
+
+`kynos-profile`'s `lib.rs` is unpublished, so a split would cost no path, and
+it is one concern: the catalog of what the request-path profile measures, each
+row naming the request, the status it must be answered with and the base it
+is measured against. What pushed it over was the ablation tables, one per
+group, whose rows mostly name a base in another table; split by table, a row
+would sit a file away from the base its difference is read against, and the
+`catalog` binary and `profile_report.py` read them as one list anyway. The
+fixtures those rows are served by are the part that changes for other reasons,
+and they went to `src/app/`, one module per group.
 
 ## Dependencies
 
@@ -737,11 +747,11 @@ open against a `kynos-otel` that may never be written.
 | reliability | Every test target compiles and runs at baseline features, not only `--all-features` | `mise run test:baseline` | `enforced` |
 | reliability | Every test target is built at the feature sets its own `#[cfg]` gates decide, not only at all-on, default and baseline | `mise run lint:codecs`, six `-p kynos --all-targets` Clippy runs over `openapi31 + macros` and each optional codec in turn | `enforced` for the codec flags, which is where a per-feature-gated target lives today; a target gated on some other flag would need its set added to that list |
 | reliability | Tests are hermetic; no shared state, no ordering dependence, no retries | `cargo-nextest` process isolation, `retries = 0`, guarded by `crates/kynos/tests/hermeticity.rs` | `enforced` |
-| dx | No module grows past the size the layout rule allows without that being recorded | `mise run containment:check`, against a module-size budget of 32 files stated below | `enforced` as a ratchet: the count cannot rise silently, and lowering it is what splitting a module looks like |
+| dx | No module grows past the size the layout rule allows without that being recorded | `mise run containment:check`, against a module-size budget of 33 files stated below | `enforced` as a ratchet: the count cannot rise silently, and lowering it is what splitting a module looks like |
 | dx | A worktree's `target/` stays near the 17 GiB [PR #126](https://github.com/getkono/kynos/pull/126) measured, against the 44 GiB before it | `mise run containment:check`, holding [`.cargo/config.toml`](../.cargo/config.toml) to declaring `profile.dev.debug` and `profile.dev.package."*".debug`, and to carrying no top-level table but `profile` | `partial`: it holds the cause and not the size. No job takes a `du -sh target` reading, so a build that grows for some other reason passes; the two keys' *values* are unchecked, and so are the two `CARGO_INCREMENTAL = "0"` task envs #126 added beside them. What it closes is the half nobody can review — below |
 | reliability | Panic recovery refuses to compile under `panic = "abort"` | `mise run panic:check` | `enforced` |
 | reliability | Commits follow Conventional Commits, merge commits exempt | `convco`, twice over: the `conventional-commit` `commit-msg` step runs `mise run commits:message` over the one message being written, exempting a merge on the presence of the `MERGE_HEAD` *file*; `mise run commits:check` and the `commits` CI job run `convco check` over a range, where the exemption is convco's own parent-count filter. `mise run commits:test` runs *both* halves over the same commits, since a divergence between them fails neither | `enforced`, with one case out of reach: amending an *existing* merge commit runs the hook with `MERGE_HEAD` already gone over a commit that still has two parents, so the hook rejects what the range form exempts, and `--no-verify` is the escape. `commits:test` pins that residual in both directions, so closing or widening it fails this row |
-| compatibility | Every hand-rolled `Stream` implementation is private, except the one row in [`architecture.md`](architecture.md#public-api-surface), and there are exactly three of them | `mise run containment:check`, counting `Stream for` against the table and the two private sites its prose names | `enforced` |
+| compatibility | Every hand-rolled `Stream` implementation is private, except the one row in [`architecture.md`](architecture.md#public-api-surface), and there are exactly four of them | `mise run containment:check`, counting `Stream for` against the table and the three private sites its prose names | `enforced` |
 | compatibility | No parent re-exports a submodule, so every public item has exactly one path | `mise run containment:check`, refusing a `pub use` that names `crate`, `self`, `super` or a module the same file declares, outside the `lib.rs` that carries the crate root and the prelude | `enforced` |
 | dx | No item stands in for its implementation with a `todo!()` or `unimplemented!()` body | `mise run containment:check`, which sees code only after doc comments are stripped, so the `todo!()` elisions inside doc examples are not candidates | `enforced`, now that the API-skeleton exception has lapsed |
 | dx | Every flag `crates/kynos` declares is graded in exactly one row of [`performance.md`](performance.md#the-feature-grading), and every graded flag is declared | `mise run containment:check`, holding the table's set against `[features]` rather than against a stated count, so the failure names the flag that is unaccounted for | `enforced` |

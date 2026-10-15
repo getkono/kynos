@@ -107,7 +107,11 @@ the graph.
   [`Framed<S>`](../crates/kynos/src/response/stream/json.rs) and
   [`Records<S>`](../crates/kynos/src/response/stream/sse.rs) each take
   `S: Stream` as a bound and stay private, which is only possible because the
-  caller brought the stream. What is left is the exception, and it is
+  caller brought the stream. A third is outside the published crates
+  altogether: [`Iter<I>`](../crates/kynos-profile/src/app/stream.rs) serves an
+  iterator as a stream to the measurement harness's stream rows, written out
+  because `futures-core` declares the trait and nothing the harness depends on
+  adapts an iterator to it. What is left is the exception, and it is
   enumerated for the reason the runtime allowance is: a rule that is false is
   worth less than a list that is checkable.
 
@@ -115,7 +119,7 @@ the graph.
   | --- | --- | --- |
   | [`extract/body/json_lines/records.rs`](../crates/kynos/src/extract/body/json_lines/records.rs) | `Stream` for the public `Records<T>`, the streamed JSON request body | a *request* body's stream is produced by Kynos rather than supplied by the handler, so there is no caller type to bound |
 
-  **One public row, three sites, and the count is the check** — the count runs
+  **One public row, four sites, and the count is the check** — the count runs
   in [`nfr.md`](nfr.md#workspace). The two `Records` are unrelated types that
   ended up sharing a name: the private one frames SSE events on the way out,
   the public one decodes JSON records on the way in, and only the second is
