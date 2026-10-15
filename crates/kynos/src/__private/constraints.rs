@@ -1,7 +1,8 @@
 //! The keyword checks `#[derive(Schema)]` generates one call to per bound.
 //!
 //! Each applies only to a value of its kind, as its JSON Schema keyword does,
-//! so a `None` behind any of the kind traits satisfies it.
+//! so a `None` behind any of the kind traits satisfies it. NaN compares to no
+//! bound, so it breaks each numeric one.
 
 #[cfg(feature = "pattern")]
 pub mod pattern;
@@ -17,7 +18,10 @@ pub fn minimum<T: Numeric + ?Sized>(
     at: Pointer<'_>,
     violations: &mut Violations,
 ) {
-    if value.number().is_some_and(|number| number < bound) {
+    if value
+        .number()
+        .is_some_and(|number| number.is_nan() || number < bound)
+    {
         violations.report(at, format!("must be at least {bound}"));
     }
 }
@@ -29,7 +33,10 @@ pub fn maximum<T: Numeric + ?Sized>(
     at: Pointer<'_>,
     violations: &mut Violations,
 ) {
-    if value.number().is_some_and(|number| number > bound) {
+    if value
+        .number()
+        .is_some_and(|number| number.is_nan() || number > bound)
+    {
         violations.report(at, format!("must be at most {bound}"));
     }
 }
@@ -41,7 +48,10 @@ pub fn exclusive_minimum<T: Numeric + ?Sized>(
     at: Pointer<'_>,
     violations: &mut Violations,
 ) {
-    if value.number().is_some_and(|number| number <= bound) {
+    if value
+        .number()
+        .is_some_and(|number| number.is_nan() || number <= bound)
+    {
         violations.report(at, format!("must be greater than {bound}"));
     }
 }
@@ -53,7 +63,10 @@ pub fn exclusive_maximum<T: Numeric + ?Sized>(
     at: Pointer<'_>,
     violations: &mut Violations,
 ) {
-    if value.number().is_some_and(|number| number >= bound) {
+    if value
+        .number()
+        .is_some_and(|number| number.is_nan() || number >= bound)
+    {
         violations.report(at, format!("must be less than {bound}"));
     }
 }
