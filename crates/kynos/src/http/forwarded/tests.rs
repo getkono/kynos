@@ -533,6 +533,79 @@ fn an_unreadable_rightmost_x_forwarded_proto_states_no_scheme() {
     assert_eq!(resolved.proto(), None);
 }
 
+/// A forwarding line that is not text is still split, so the element a
+/// trusted proxy comma-joined onto the client's unreadable one stands (RFC
+/// 7239 sections 5.2, 8.1) and the peer is never taken for the client.
+#[test]
+fn a_line_that_is_not_text_still_yields_the_trusted_hops_element() {
+    for (header, name, line) in [
+        (
+            ProxyHeader::Forwarded,
+            "forwarded",
+            &b"for=\xe9, for=203.0.113.7"[..],
+        ),
+        (
+            ProxyHeader::Forwarded,
+            "forwarded",
+            &b"for=198.51.100.66, for=203.0.113.7;ext=\"\xe9\""[..],
+        ),
+        (
+            ProxyHeader::XForwarded,
+            "x-forwarded-for",
+            &b"\xe9, 203.0.113.7"[..],
+        ),
+    ] {
+        let mut headers = HeaderMap::new();
+        headers.append(
+            name,
+            HeaderValue::from_bytes(line).expect("obs-text is a legal field value"),
+        );
+
+        let resolved = Forwarded::resolve(
+            &headers,
+            Some(peer("10.0.0.1")),
+            &TrustedProxies::hops(header, 1),
+        );
+
+        assert_eq!(resolved.client(), Some(ip("203.0.113.7")), "{name}");
+    }
+}
+
+/// An element that is not text names no address, so trust stopping there
+/// resolves no client, as `for=unknown` does, rather than skipping it and
+/// handing its position to the element before it.
+#[test]
+fn an_element_that_is_not_text_is_an_unknown_hop() {
+    for (header, name, client, unreadable) in [
+        (
+            ProxyHeader::Forwarded,
+            "forwarded",
+            "for=198.51.100.66",
+            &b"for=\"203.0.113.\xe9\""[..],
+        ),
+        (
+            ProxyHeader::XForwarded,
+            "x-forwarded-for",
+            "198.51.100.66",
+            &b"203.0.113.\xe9"[..],
+        ),
+    ] {
+        let mut headers = map(&[(name, client)]);
+        headers.append(
+            name,
+            HeaderValue::from_bytes(unreadable).expect("obs-text is a legal field value"),
+        );
+
+        let resolved = Forwarded::resolve(
+            &headers,
+            Some(peer("10.0.0.1")),
+            &TrustedProxies::hops(header, 1),
+        );
+
+        assert_eq!(resolved.client(), None, "{name}");
+    }
+}
+
 /// Every `nodename` form section 6 defines, and what each yields.
 ///
 /// The table is the grammar. `unknown` and an `obfnode` are identifiers rather
