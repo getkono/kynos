@@ -42,7 +42,7 @@ use crate::{
 pub struct Form<T>(pub T);
 
 /// The media type decoded and described.
-const MEDIA_TYPE: &str = mime_names::APPLICATION_FORM_URLENCODED;
+pub(super) const MEDIA_TYPE: &str = mime_names::APPLICATION_FORM_URLENCODED;
 
 /// `T: Schema` because the bounds a derived field declares are checked once `T`
 /// is deserialized.
