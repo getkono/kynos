@@ -606,6 +606,41 @@ fn an_element_that_is_not_text_is_an_unknown_hop() {
     }
 }
 
+/// A `Forwarded` value that is not text still counts as its element's
+/// parameter, so a duplicate of that parameter further left in the same
+/// element cannot stand in for it: the rightmost `for=` and the rightmost
+/// `proto=` are the element's, readable or not.
+#[test]
+fn an_unreadable_parameter_is_not_replaced_by_its_duplicate() {
+    for (line, client, proto) in [
+        (
+            &b"for=198.51.100.66;for=\"\xe9\";proto=http"[..],
+            None,
+            Some("http"),
+        ),
+        (
+            &b"for=203.0.113.7;proto=https;proto=\"\xe9\""[..],
+            Some(ip("203.0.113.7")),
+            None,
+        ),
+    ] {
+        let mut headers = HeaderMap::new();
+        headers.append(
+            "forwarded",
+            HeaderValue::from_bytes(line).expect("obs-text is a legal field value"),
+        );
+
+        let resolved = Forwarded::resolve(
+            &headers,
+            Some(peer("10.0.0.1")),
+            &TrustedProxies::hops(ProxyHeader::Forwarded, 1),
+        );
+
+        assert_eq!(resolved.client(), client, "{}", line.escape_ascii());
+        assert_eq!(resolved.proto(), proto, "{}", line.escape_ascii());
+    }
+}
+
 /// Every `nodename` form section 6 defines, and what each yields.
 ///
 /// The table is the grammar. `unknown` and an `obfnode` are identifiers rather
