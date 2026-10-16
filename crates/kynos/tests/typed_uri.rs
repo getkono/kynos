@@ -118,6 +118,53 @@ fn route_attributes_generate_typed_percent_encoded_uris() {
     assert_eq!(uri, "/reports/annual%2F2026?download=true");
 }
 
+/// A path group whose one value the caller chooses, so a test can hand
+/// `relative_uri` a value that would not address the route.
+#[derive(kynos::PathParams)]
+struct FilePath {
+    name: String,
+}
+
+#[allow(clippy::unused_async)]
+#[kynos::get("/files/{name}/raw")]
+async fn file(Path(_): Path<FilePath>) {}
+
+fn file_uri(name: &str) -> kynos::http::Uri {
+    file::relative_uri(FilePath {
+        name: name.to_owned(),
+    })
+}
+
+/// `..` would resolve to `/raw` (RFC 3986 §5.2.4), and `%2E%2E` is decoded
+/// back to it before resolution, so the value is refused rather than encoded.
+#[test]
+#[should_panic(expected = "path parameter `name` is `..`")]
+fn a_dot_dot_segment_is_refused() {
+    let _ = file_uri("..");
+}
+
+/// `.` would resolve to `/files/raw`, which is not this route.
+#[test]
+#[should_panic(expected = "path parameter `name` is `.`")]
+fn a_dot_segment_is_refused() {
+    let _ = file_uri(".");
+}
+
+/// An empty value leaves `/files//raw`, which no captured variable matches.
+#[test]
+#[should_panic(expected = "path parameter `name` is empty")]
+fn an_empty_value_is_refused() {
+    let _ = file_uri("");
+}
+
+/// The control: dots that are not the whole segment address the route.
+#[test]
+fn dots_inside_a_segment_are_rendered() {
+    assert_eq!(file_uri("..."), "/files/.../raw");
+    assert_eq!(file_uri(".env"), "/files/.env/raw");
+    assert_eq!(file_uri("a..b"), "/files/a..b/raw");
+}
+
 /// The fixture describes, so `ReportQuery::schema` is a body something runs.
 ///
 /// Without this the schema above would be written and never called, which is
