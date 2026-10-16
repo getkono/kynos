@@ -213,6 +213,7 @@ impl<C: Sync, T: FromMultipart + Schema + Send> FromRequest<C> for MultipartForm
 
     async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
         let boundary = boundary(request.headers())?;
+        super::refuse_undecoded(request.headers())?;
 
         // Every part is held until `T` is built, so the limit bounds the whole
         // stream.

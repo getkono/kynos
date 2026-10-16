@@ -357,6 +357,18 @@ pub enum BodyRejection {
         received: Option<String>,
     },
 
+    /// The body is still under a content coding: `Content-Encoding` names one
+    /// besides `identity`. Produces 415.
+    ///
+    /// `Decompression` removes the field once it decodes, so a coding a body
+    /// extractor still sees is one nothing on its operation decoded (RFC 9110
+    /// sections 8.4 and 15.5.16).
+    #[error("the request body's content coding was not decoded")]
+    UnsupportedCoding {
+        /// The `Content-Encoding` the client sent, its fields joined by `, `.
+        received: String,
+    },
+
     /// The body exceeded the limit its operation reads it under. Produces 413.
     ///
     /// Every extractor that holds a body in memory caps it, at
@@ -377,7 +389,9 @@ impl BodyRejection {
         match self {
             Self::Syntax { .. } => StatusCode::BAD_REQUEST,
             Self::Schema { .. } => StatusCode::UNPROCESSABLE_ENTITY,
-            Self::UnsupportedMediaType { .. } => StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            Self::UnsupportedMediaType { .. } | Self::UnsupportedCoding { .. } => {
+                StatusCode::UNSUPPORTED_MEDIA_TYPE
+            }
             Self::TooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
         }
     }
@@ -398,6 +412,10 @@ impl IntoProblem for BodyRejection {
             Self::UnsupportedMediaType { received } => problem.with_detail(received.map_or_else(
                 || format!("{summary}: the request declared no `Content-Type`"),
                 |received| format!("{summary}: `{received}`"),
+            )),
+
+            Self::UnsupportedCoding { received } => problem.with_detail(format!(
+                "{summary}: `{received}`; send the body without a content coding"
             )),
 
             // Matches `BodySizeExceeded`, so both caps read as one refusal.

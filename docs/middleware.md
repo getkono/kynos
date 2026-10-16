@@ -679,6 +679,18 @@ cannot be mounted together — both answer 413, and `CompatibleWith` refuses
 the pair — which is right rather than awkward: on a route that accepts content
 codings, `BodySize` alone is not a weaker guard but a misleading one.
 
+**A coding nothing decoded is refused, without `Accept-Encoding`.**
+`Decompression` removes `Content-Encoding` once it decodes, and hands a body
+that fails part-way on as only its failure and without its coding, so a coding
+a body codec still sees is one nothing on the route decodes. The codec answers
+415 rather than read coded octets as its media type. RFC 9110 §15.5.16 says that
+415 "ought to" carry `Accept-Encoding`, and this one does not: the codec's 415 is
+the one its media type check already declares, so the header would become an
+optional header on the 415 of every operation that reads a body, describing a
+refusal most of those requests never meet. The detail names the coding instead,
+and the remedy is a route change rather than a client one: mount `Decompression`,
+whose own 415 does carry `Accept-Encoding`, naming what it decodes.
+
 **A stalled body is the server's to bound, and a slow one is not.** The
 server wraps every request body it reads off a socket in an idle timer,
 `Server::request_body_idle_timeout`, 30 seconds by default. The clock runs only
