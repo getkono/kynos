@@ -1,10 +1,12 @@
 name: Mutants
 
-# Mutation testing. A pull request fails on a surviving mutant on its changed
-# lines; each night runs one seventh of the workspace, so a week covers it.
-# `docs/testing.md#mutation-testing` has the reasons.
+# Mutation testing. A pull request labelled `ci:full` fails on a surviving
+# mutant on its changed lines; each night runs one seventh of the workspace, so
+# a week covers it. `docs/testing.md#mutation-testing` has the reasons.
 on:
+  # `labeled` so adding `ci:full` starts the diff.
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
   schedule:
     # 03:17 UTC, off the hour, when scheduled runs queue behind each other.
     - cron: "17 3 * * *"
@@ -33,7 +35,11 @@ env:
 jobs:
   diff:
     name: Mutants on changed lines
-    if: github.event_name == 'pull_request'
+    # The pull request's labels, not the one an event added: a run started by
+    # an unrelated label cancels the one before it, so it has to decide alike.
+    if: >-
+      github.event_name == 'pull_request'
+      && contains(github.event.pull_request.labels.*.name, 'ci:full')
     runs-on: ubuntu-latest
     timeout-minutes: 300
     strategy:
