@@ -108,6 +108,12 @@ pub fn endpoint_uri(template: &str) -> Uri {
 }
 
 /// Builds a URI for a generated endpoint with path parameters.
+///
+/// # Panics
+///
+/// Panics when a value cannot address the route: an empty one, which no
+/// variable captures, or `.` or `..` filling a whole segment, which URI
+/// resolution removes (RFC 3986 §5.2.4) even when written `%2E`.
 pub fn endpoint_uri_with_path<P: EncodePath>(template: &str, path: &P) -> Uri {
     render_endpoint_path(template, path)
         .parse()
@@ -127,6 +133,10 @@ pub fn endpoint_uri_with_query<Q: EncodeQuery>(template: &str, query: &Q) -> Uri
 }
 
 /// Builds a URI for a generated endpoint with path and query parameters.
+///
+/// # Panics
+///
+/// As [`endpoint_uri_with_path`].
 pub fn endpoint_uri_with_path_and_query<P: EncodePath, Q: EncodeQuery>(
     template: &str,
     path: &P,
@@ -157,9 +167,31 @@ fn render_endpoint_path<P: EncodePath>(template: &str, path: &P) -> String {
             P::NAMES.contains(&name),
             "PathParams::encode returned undeclared name `{name}`"
         );
+        let slot = format!("{{{name}}}");
+        if let Some(reason) = unaddressable(template, &slot, &value) {
+            panic!("path parameter `{name}` is {reason}, so no URI renders it into `{template}`");
+        }
         let encoded =
             percent_encoding::utf8_percent_encode(&value, PATH_SEGMENT_ENCODE_SET).to_string();
-        rendered = rendered.replace(&format!("{{{name}}}"), &encoded);
+        rendered = rendered.replace(&slot, &encoded);
     }
     rendered
+}
+
+/// Why `value` in `slot` cannot address `template`, or `None` when it can.
+///
+/// Encoding is no remedy for a dot segment: resolution decodes `%2E` first.
+fn unaddressable(template: &str, slot: &str, value: &str) -> Option<&'static str> {
+    if value.is_empty() {
+        return Some("empty");
+    }
+    let dots = match value {
+        "." => "`.`",
+        ".." => "`..`",
+        _ => return None,
+    };
+    template
+        .split('/')
+        .any(|segment| segment == slot)
+        .then_some(dots)
 }

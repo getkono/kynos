@@ -1,0 +1,5 @@
+error: a path parameter is always present, so it cannot be an `Option`. Use the inner type, or move the optional value to a `QueryParams` group
+ --> tests/ui/macros/path_params_optional_field.rs:3:11
+  |
+3 |     name: Option<String>,
+  |           ^^^^^^
