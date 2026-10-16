@@ -702,6 +702,7 @@ async fn the_owned_layer_matrix_matches_the_description_it_emits() {
 
     exercise_the_operations(&client).await;
     exercise_the_rejections(&client).await;
+    exercise_the_interceptor_reads(&client).await;
     exercise_the_combined_guards(&client).await;
     exercise_the_shared_status(&client).await;
     exercise_the_limits(&client).await;
@@ -911,21 +912,6 @@ async fn exercise_the_rejections(client: &TestClient<App>) {
         .await
         .assert_status(StatusCode::UNPROCESSABLE_ENTITY);
 
-    // An interceptor's `Reads` that cannot be decoded, answered before the
-    // interceptor runs. The success beside it is what keeps the 204 declared.
-    client
-        .get("/tenanted")
-        .send()
-        .await
-        .assert_status(StatusCode::BAD_REQUEST);
-
-    client
-        .get("/tenanted")
-        .header("x-tenant", "acme")
-        .send()
-        .await
-        .assert_status(StatusCode::NO_CONTENT);
-
     // The declared application failure.
     client
         .post("/users")
@@ -1019,6 +1005,23 @@ async fn exercise_the_rejections(client: &TestClient<App>) {
         .send()
         .await
         .assert_status(StatusCode::FORBIDDEN);
+}
+
+/// Both outcomes of an interceptor's `Reads`: a group that cannot be decoded is
+/// answered before the interceptor runs, and one that can reaches the handler.
+async fn exercise_the_interceptor_reads(client: &TestClient<App>) {
+    client
+        .get("/tenanted")
+        .send()
+        .await
+        .assert_status(StatusCode::BAD_REQUEST);
+
+    client
+        .get("/tenanted")
+        .header("x-tenant", "acme")
+        .send()
+        .await
+        .assert_status(StatusCode::NO_CONTENT);
 }
 
 /// Every outcome of the two combined guards.
