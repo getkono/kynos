@@ -177,7 +177,7 @@ fn a_ratio_that_would_overflow_falls_back_to_the_absolute_limit() {
 }
 
 /// `plain` under `coding`, through the same codec the decoder is built from.
-async fn encode(coding: Coding, plain: &'static [u8]) -> Bytes {
+async fn encode(coding: Coding, plain: &[u8]) -> Bytes {
     let input = io::Cursor::new(plain);
     let encoded = match coding {
         Coding::Zstd => drain_capped(ZstdEncoder::new(input), u64::MAX).await,
@@ -338,6 +338,55 @@ async fn read(response: Response) -> (StatusCode, Bytes) {
         .expect("a response body that completes")
         .to_bytes();
     (status, body)
+}
+
+/// The ratio is measured against what arrived, so stacking codings must not
+/// multiply it: `gzip, gzip` over a megabyte of zeroes expands each layer by
+/// less than the ratio, and the two together by far more.
+#[tokio::test]
+async fn a_ratio_bounds_stacked_codings_by_what_arrived() {
+    const RATIO: u64 = 1024;
+    static ZEROES: [u8; 1 << 20] = [0; 1 << 20];
+
+    let inner = encode(Coding::Gzip, &ZEROES).await;
+    let outer = encode(Coding::Gzip, &inner).await;
+    let len = |bytes: &[u8]| u64::try_from(bytes.len()).expect("a length fits u64");
+
+    let decompression = Decompression::new(16 << 20).max_ratio(RATIO);
+    assert!(
+        len(&inner) <= len(&outer) * RATIO && len(&ZEROES) <= len(&inner) * RATIO,
+        "each layer alone should expand by less than the ratio"
+    );
+    assert!(
+        len(&ZEROES) > decompression.bound(len(&outer)),
+        "the layers together should expand by more than the ratio"
+    );
+
+    let endpoint = EndpointBuilder::new(
+        Method::Post,
+        PathTemplate::parse("/upload").expect("a valid path"),
+        upload,
+    );
+    let service = Router::<()>::new()
+        .mount(endpoint)
+        .intercept(decompression)
+        .build(())
+        .expect("a describable router");
+    let request = ::http::Request::builder()
+        .method("POST")
+        .uri("/upload")
+        .header(http::header::CONTENT_TYPE, "application/octet-stream")
+        .header(http::header::CONTENT_ENCODING, "gzip, gzip")
+        .body(Body::from_bytes(outer))
+        .expect("a well-formed request");
+
+    let (status, body) = read(service.call(request).await).await;
+    assert_eq!(
+        status,
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
 }
 
 /// Buffering the body to decode it must not turn a refused request into an

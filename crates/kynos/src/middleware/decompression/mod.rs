@@ -604,10 +604,12 @@ where
             }
         };
 
+        // Measured once, against what arrived: a bound taken from each layer's
+        // input would let stacked codings multiply the ratio.
+        let bound = self.bound(u64::try_from(arrived.len()).unwrap_or(u64::MAX));
         let mut bytes = arrived;
         // Applied in the order listed, so undone in the reverse of it.
         for coding in codings.iter().rev().copied() {
-            let bound = self.bound(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
             bytes = decode(coding, bytes, bound)
                 .await
                 .map_err(Undecodable::of)?;
