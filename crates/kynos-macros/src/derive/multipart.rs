@@ -181,7 +181,7 @@ impl<'a> Declared<'a> {
         let gathered = self.gathered();
         let element = self.element;
         let span = self.field.ty.span();
-        let pointer = format!("/{}", self.name);
+        let name = self.name;
 
         let one = quote_spanned! {span=>
             <#element as ::kynos::extract::body::multipart::FromPart>::from_part(part)?
@@ -196,7 +196,9 @@ impl<'a> Declared<'a> {
                     return ::core::result::Result::Err(
                         ::kynos::error::rejection::BodyRejection::Schema {
                             failures: ::std::collections::BTreeMap::from([(
-                                ::std::string::String::from(#pointer),
+                                ::std::string::ToString::to_string(
+                                    &::kynos::schema::constraints::Pointer::root().member(#name),
+                                ),
                                 ::std::string::String::from("the part is required"),
                             )]),
                         },

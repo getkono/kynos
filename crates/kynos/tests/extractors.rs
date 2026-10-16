@@ -417,7 +417,10 @@ mod one_of {
 mod multipart {
     use kynos::{Schema, extract::body::multipart::MultipartForm};
 
-    use super::{BodyRejection, Json, OneOf, Payload, StatusCode, assert_unsupported, read};
+    use super::{
+        BTreeMap, BodyRejection, Deserialize, Json, OneOf, Payload, StatusCode, assert_unsupported,
+        read,
+    };
 
     /// The one field the multipart bodies below carry.
     #[derive(Debug, PartialEq, Schema, kynos::MultipartForm)]
@@ -503,6 +506,45 @@ mod multipart {
                 "expected multipart's syntax failure, got {rejection:?}"
             );
         }
+    }
+
+    /// A field whose part name holds a `/`, so its key must escape it.
+    #[derive(Debug, Schema, Deserialize, kynos::MultipartForm)]
+    struct Slashed {
+        #[serde(rename = "a/b")]
+        slashed: String,
+    }
+
+    /// Asserts `rejection` is the 422 keyed at `a/b`'s RFC 6901 pointer,
+    /// `/a~1b`, rather than the unescaped `/a/b` naming member `b` of `a`.
+    fn assert_at_slashed(rejection: BodyRejection, detail: &str) {
+        let BodyRejection::Schema { failures } = rejection else {
+            panic!("expected a schema failure, got {rejection:?}");
+        };
+        assert_eq!(
+            failures,
+            BTreeMap::from([("/a~1b".to_owned(), detail.to_owned())])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_missing_part_is_keyed_by_its_escaped_pointer() {
+        let rejection =
+            read::<MultipartForm<Slashed>>(Some("multipart/form-data; boundary=x"), b"--x--\r\n")
+                .await
+                .expect_err("the `a/b` part is missing");
+        assert_at_slashed(rejection, "the part is required");
+    }
+
+    #[tokio::test]
+    async fn a_malformed_part_is_keyed_by_its_escaped_pointer() {
+        let rejection = read::<MultipartForm<Slashed>>(
+            Some("multipart/form-data; boundary=x"),
+            b"--x\r\nContent-Disposition: form-data; name=\"a/b\"\r\n\r\n\xff\r\n--x--\r\n",
+        )
+        .await
+        .expect_err("the `a/b` part is not UTF-8");
+        assert_at_slashed(rejection, "the part is not valid UTF-8");
     }
 }
 
