@@ -257,7 +257,7 @@ fn checked<T: Schema>(value: T, at: Pointer<'_>) -> Result<T, BodyRejection> {
 /// it apart, so the pair is refused once the build instantiates it rather than
 /// when it typechecks:
 ///
-/// ```compile_fail,E0080
+/// ```compile_fail
 /// use kynos::{
 ///     extract::{body::{OneOf, binary::Binary, json::Json}, describe::RequestContent},
 ///     http::media,
@@ -311,6 +311,7 @@ where
     type Rejection = BodyRejection;
 
     async fn from_request(request: Request, context: &C) -> Result<Self, Self::Rejection> {
+        let () = <L as Alternative<R>>::DISTINCT;
         // Chosen from the head, so a malformed body fails as its own
         // representation rather than falling through.
         if offers_any(request.headers(), &L::media_types()) {
@@ -340,12 +341,14 @@ where
     R: RequestContent,
 {
     fn media_types() -> Vec<&'static str> {
+        let () = <L as Alternative<R>>::DISTINCT;
         let mut media_types = L::media_types();
         media_types.extend(R::media_types());
         media_types
     }
 
     fn request_body(registry: &mut Registry) -> kynos_openapi::RequestBody {
+        let () = <L as Alternative<R>>::DISTINCT;
         let mut body = L::request_body(registry);
         for (media_type, content) in R::request_body(registry).content {
             assert!(

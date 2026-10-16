@@ -48,6 +48,46 @@ fn the_marker_chooses_the_content_key() {
     assert!(bytes.content.contains_key("application/octet-stream"));
 }
 
+/// A `Binary` marker beside another body is refused exactly when a request
+/// naming the marker's type and subtype would also be offered to that body,
+/// so the comparison follows `offers`: case, parameters and surrounding
+/// whitespace aside, and a structured suffix still a different subtype.
+#[test]
+fn a_marker_shares_a_media_type_by_type_and_subtype() {
+    use crate::extract::body::{alternative::same_essence, offers};
+    use crate::http::{HeaderMap, HeaderValue, header};
+
+    for (marker, body, shared) in [
+        ("application/json", "application/json", true),
+        ("Application/JSON", "application/json", true),
+        ("application/json; charset=utf-8", "application/json", true),
+        (" application/json ;q=1", "application/json", true),
+        ("text/plain", "text/plain; charset=utf-8", true),
+        ("application/vnd.x+json", "application/json", false),
+        ("application/jsonl", "application/json", false),
+        ("application/json-seq", "application/json", false),
+        ("image/png", "application/json", false),
+    ] {
+        assert_eq!(
+            same_essence(marker, body),
+            shared,
+            "`{marker}` beside `{body}`"
+        );
+
+        let essence = marker.split(';').next().unwrap_or(marker).trim();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_str(essence).expect("a header value"),
+        );
+        assert_eq!(
+            offers(&headers, body),
+            shared,
+            "`{essence}` offered to `{body}`"
+        );
+    }
+}
+
 /// The documented remedy for a variable number of uploads has to compile.
 ///
 /// `multipart.rs` tells a reader to declare one field of type `Vec<FilePart>`,

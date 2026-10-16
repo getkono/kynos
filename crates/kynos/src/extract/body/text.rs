@@ -18,7 +18,7 @@ use crate::{
 pub struct Text(pub String);
 
 /// The media type decoded and described.
-const MEDIA_TYPE: &str = mime_names::TEXT_PLAIN;
+pub(super) const MEDIA_TYPE: &str = mime_names::TEXT_PLAIN;
 
 impl<C: Sync> FromRequest<C> for Text {
     type Rejection = BodyRejection;

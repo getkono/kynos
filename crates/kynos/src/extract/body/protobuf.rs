@@ -30,7 +30,7 @@ use crate::{
 pub struct Protobuf<T>(pub T);
 
 /// The media type decoded and described.
-const MEDIA_TYPE: &str = "application/protobuf";
+pub(super) const MEDIA_TYPE: &str = "application/protobuf";
 
 impl<C: Sync, T: prost::Message + Default + Send> FromRequest<C> for Protobuf<T> {
     type Rejection = BodyRejection;
