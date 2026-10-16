@@ -520,6 +520,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// The pattern is the router's own matching syntax, and the route runs the
     /// interceptors mounted on this router like any other. A method OpenAPI
     /// has no field for is not served, and the record says which were dropped.
+    /// A method and pattern already declared, described or unchecked, is an
+    /// error-level `DuplicateOperation`, since only the first would be served.
     #[must_use]
     pub fn route_unchecked<M, H>(mut self, methods: M, pattern: &str, handler: H) -> Self
     where
