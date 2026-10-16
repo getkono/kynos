@@ -13,7 +13,9 @@ fn reparse(record: &[u8]) -> Vec<(String, String)> {
     let text = std::str::from_utf8(record).expect("a UTF-8 record");
     let mut fields = Vec::new();
 
-    for line in text.split('\n') {
+    // `end-of-line = ( cr lf / cr / lf )`: a CRLF is one break, and a CR on
+    // its own is as much a break as an LF.
+    for line in text.replace("\r\n", "\n").split(['\r', '\n']) {
         if line.is_empty() {
             // The blank line that dispatches the event.
             continue;
@@ -187,6 +189,46 @@ fn a_carriage_return_does_not_become_a_second_line() {
             (String::new(), "first".to_owned()),
             (String::new(), "second".to_owned()),
             ("data".to_owned(), "0".to_owned()),
+        ]
+    );
+}
+
+/// A bare CR ends a line as surely as an LF does, so it ends the field.
+///
+/// Written through, it would end the field on the client anyway and start a
+/// new one from whatever follows -- an `id` taken from user data could set
+/// `retry`, name the event, or inject `data`.
+#[test]
+fn a_bare_carriage_return_ends_the_field_rather_than_starting_another() {
+    let event = Event::new(0_u8)
+        .comment("note\r: forged")
+        .event("created\rdata: forged")
+        .id("a\rretry: 1");
+    let record = encode(&event).expect("an encodable event");
+
+    assert_eq!(
+        reparse(&record),
+        [
+            (String::new(), "note".to_owned()),
+            (String::new(), ": forged".to_owned()),
+            ("event".to_owned(), "created".to_owned()),
+            ("event".to_owned(), "data: forged".to_owned()),
+            ("id".to_owned(), "a".to_owned()),
+            ("id".to_owned(), "retry: 1".to_owned()),
+            ("data".to_owned(), "0".to_owned()),
+        ]
+    );
+    assert!(
+        !record.contains(&b'\r'),
+        "every line ends with the LF the writer chose"
+    );
+
+    let record = heartbeat_record("ping\rdata: forged");
+    assert_eq!(
+        reparse(&record),
+        [
+            (String::new(), "ping".to_owned()),
+            (String::new(), "data: forged".to_owned()),
         ]
     );
 }
