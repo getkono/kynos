@@ -198,8 +198,9 @@ against the in-process row's 2432 and 9 on the same host. Like the in-process
 row, it leaves the service and its document to be dropped in teardown: the
 server is held beside the connection's future, so the connection's end
 releases only its share. A second request on that connection once kept alive
-(`connection_h1.second`) counts 11672 and 11, so of the nineteen blocks between the first two rows seventeen are the
-connection's, paid on its first request only: hyper's read buffer (two blocks,
+(`connection_h1.second`) counts 11672 and 11, so of the nineteen blocks
+between the first two rows seventeen are the connection's, paid on its first
+request only: hyper's read buffer (two blocks,
 24 KiB), its 8 KiB write buffer and its write queue, its dispatcher and the
 boxed `service_fn`, the two timer handles `serve_http`'s builder gives each
 protocol, the prefix hyper-util replays after sniffing the protocol, the
