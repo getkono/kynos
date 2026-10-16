@@ -152,7 +152,7 @@ pub trait FromPart: Sized {
 /// name as a JSON Pointer into the body.
 fn malformed_part(name: &str, detail: &str) -> BodyRejection {
     BodyRejection::Schema {
-        failures: BTreeMap::from([(format!("/{name}"), detail.to_owned())]),
+        failures: BTreeMap::from([(Pointer::root().member(name).to_string(), detail.to_owned())]),
     }
 }
 
