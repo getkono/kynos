@@ -15,8 +15,11 @@ updates:
       interval: weekly
     versioning-strategy: increase
     open-pull-requests-limit: 5
+    # `ci:full`: a bump is what moves the MSRV or breaks a feature combination,
+    # which only the comprehensive tier checks.
     labels:
       - chore
+      - ci:full
     # `prefix` plus `include: scope` yields `chore(deps): bump ...`, which convco
     # accepts and `release-plz.toml`'s changelog parsers skip: it changes what a
     # downstream build resolves, but nothing Kynos itself does. Majors leave the
