@@ -7,11 +7,12 @@ use std::{
     task::{Context, Poll},
 };
 
+use async_compression::tokio::bufread::{BrotliEncoder, GzipEncoder, ZstdEncoder};
 use bytes::Bytes;
 use http_body::Frame;
 use http_body_util::BodyExt;
 
-use super::{Coding, Decompression, MAX_CODINGS, declared};
+use super::{Coding, Decompression, MAX_CODINGS, Reason, declared, decode, drain_capped};
 use crate::{
     Router,
     extract::body::{binary::Binary, text::Text},
@@ -173,6 +174,80 @@ fn a_ratio_that_would_overflow_falls_back_to_the_absolute_limit() {
     let decompression = Decompression::new(1_000).max_ratio(u64::MAX);
 
     assert_eq!(decompression.bound(u64::MAX), 1_000);
+}
+
+/// `plain` under `coding`, through the same codec the decoder is built from.
+async fn encode(coding: Coding, plain: &'static [u8]) -> Bytes {
+    let input = io::Cursor::new(plain);
+    let encoded = match coding {
+        Coding::Zstd => drain_capped(ZstdEncoder::new(input), u64::MAX).await,
+        // Boxed for the reason `decode` boxes its decoder.
+        Coding::Brotli => drain_capped(Box::new(BrotliEncoder::new(input)), u64::MAX).await,
+        Coding::Gzip => drain_capped(GzipEncoder::new(input), u64::MAX).await,
+    };
+    encoded.expect("an encoder over memory does not fail")
+}
+
+/// `parts`, each encoded on its own under `coding`, laid end to end.
+async fn concatenated(coding: Coding, parts: &[&'static [u8]]) -> Bytes {
+    let mut joined = Vec::new();
+    for part in parts {
+        joined.extend_from_slice(&encode(coding, part).await);
+    }
+    Bytes::from(joined)
+}
+
+/// RFC 1952 section 2.2: a gzip file is a series of members, and RFC 9110
+/// section 8.4.1.3 names that format. Stopping at the first member hands the
+/// handler a prefix of what the client sent.
+#[tokio::test]
+async fn every_gzip_member_is_decoded() {
+    let body = concatenated(Coding::Gzip, &[b"a", b"b"]).await;
+
+    assert_eq!(
+        decode(Coding::Gzip, body, 1024).await,
+        Ok(Bytes::from_static(b"ab"))
+    );
+}
+
+/// RFC 8878 section 3.1: a zstd stream is one or more frames.
+#[tokio::test]
+async fn every_zstd_frame_is_decoded() {
+    let body = concatenated(Coding::Zstd, &[b"a", b"b"]).await;
+
+    assert_eq!(
+        decode(Coding::Zstd, body, 1024).await,
+        Ok(Bytes::from_static(b"ab"))
+    );
+}
+
+/// Octets after the coded stream are not part of any coding's format, so a
+/// body carrying them did not decode as the coding it declared. Brotli is
+/// swept with the rest: RFC 7932 defines one stream, so even a second valid
+/// stream is trailing input there.
+#[tokio::test]
+async fn input_after_the_coded_stream_is_malformed() {
+    for coding in [Coding::Zstd, Coding::Brotli, Coding::Gzip] {
+        let mut junk = encode(coding, b"a").await.to_vec();
+        junk.extend_from_slice(b"junk");
+
+        assert_eq!(
+            decode(coding, Bytes::from(junk), 1024).await,
+            Err(Reason::Malformed),
+            "{coding:?} followed by junk"
+        );
+    }
+
+    assert_eq!(
+        decode(
+            Coding::Brotli,
+            concatenated(Coding::Brotli, &[b"a", b"b"]).await,
+            1024
+        )
+        .await,
+        Err(Reason::Malformed),
+        "two brotli streams"
+    );
 }
 
 /// One data frame, then the connection fails.
