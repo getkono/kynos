@@ -267,6 +267,30 @@ fn a_nested_routers_panic_recovery_covers_its_unchecked_route() {
     );
 }
 
+/// A nested router holding only unchecked routes still has its interceptors
+/// checked for a configuration they cannot honour, now that they cover those
+/// routes. Built, this pair echoes any `Origin` with credentials allowed.
+#[test]
+fn a_nested_routers_unhonourable_cors_over_unchecked_routes_refuses_to_build() {
+    let refused = Router::<()>::new()
+        .nest(
+            "/admin",
+            Router::<()>::new()
+                .intercept(
+                    kynos::middleware::cors::Cors::new()
+                        .allow_any_origin()
+                        .allow_credentials(),
+                )
+                .route_unchecked([Method::GET], "/files/{*path}", echo_path),
+        )
+        .build(());
+
+    assert!(
+        refused.is_err(),
+        "a nested wildcard origin with credentials over an unchecked route was accepted"
+    );
+}
+
 /// A directory served from a nested router runs that router's interceptors,
 /// since `assets_directory` registers its route the way `route_unchecked` does.
 #[cfg(feature = "assets-fs")]
