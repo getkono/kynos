@@ -240,9 +240,10 @@ survives as `%2F` rather than silently becoming two segments —
 [`tests/typed_uri.rs`](../crates/kynos/tests/typed_uri.rs) asserts exactly that.
 
 A value encoding cannot save is refused instead, by a panic naming the
-parameter: an empty one, which leaves a segment no variable captures, and `.`
-or `..` filling a whole segment, which URI resolution removes (RFC 3986
-§5.2.4) even when written `%2E`. A value taken from a request is the caller's
+parameter: an empty one, which leaves a segment no variable captures, and one
+that renders its segment as `.` or `..` — alone, or completing literal text
+such as `.{name}` — which URI resolution removes (RFC 3986 §5.2.4) even when
+written `%2E`. A value taken from a request is the caller's
 to validate before it reaches `relative_uri` or `Link::uri`. For the same
 reason a `PathParams` field cannot be an `Option`: the derive refuses it.
 

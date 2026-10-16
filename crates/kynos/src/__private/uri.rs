@@ -112,8 +112,9 @@ pub fn endpoint_uri(template: &str) -> Uri {
 /// # Panics
 ///
 /// Panics when a value cannot address the route: an empty one, which no
-/// variable captures, or `.` or `..` filling a whole segment, which URI
-/// resolution removes (RFC 3986 §5.2.4) even when written `%2E`.
+/// variable captures, or one that renders its segment, with any literal text
+/// sharing it, as `.` or `..`, which URI resolution removes (RFC 3986 §5.2.4)
+/// even when written `%2E`.
 pub fn endpoint_uri_with_path<P: EncodePath>(template: &str, path: &P) -> Uri {
     render_endpoint_path(template, path)
         .parse()
@@ -162,36 +163,49 @@ fn render_endpoint_path<P: EncodePath>(template: &str, path: &P) -> String {
     );
 
     let mut rendered = template.to_owned();
-    for (name, value) in values {
+    for (name, value) in &values {
         assert!(
-            P::NAMES.contains(&name),
+            P::NAMES.contains(name),
             "PathParams::encode returned undeclared name `{name}`"
         );
-        let slot = format!("{{{name}}}");
-        if let Some(reason) = unaddressable(template, &slot, &value) {
-            panic!("path parameter `{name}` is {reason}, so no URI renders it into `{template}`");
-        }
+        assert!(
+            !value.is_empty(),
+            "path parameter `{name}` is empty, so no URI renders it into `{template}`"
+        );
         let encoded =
-            percent_encoding::utf8_percent_encode(&value, PATH_SEGMENT_ENCODE_SET).to_string();
-        rendered = rendered.replace(&slot, &encoded);
+            percent_encoding::utf8_percent_encode(value, PATH_SEGMENT_ENCODE_SET).to_string();
+        rendered = rendered.replace(&format!("{{{name}}}"), &encoded);
+    }
+    if let Some((segment, dots)) = dot_segment(template, &rendered) {
+        let (name, value) = values
+            .iter()
+            .find(|(name, _)| segment.contains(&format!("{{{name}}}")))
+            .expect("only a segment holding a variable is checked");
+        panic!(
+            "path parameter `{name}` is `{value}`, which renders `{segment}` as `{dots}`, so no URI \
+             renders it into `{template}`"
+        );
     }
     rendered
 }
 
-/// Why `value` in `slot` cannot address `template`, or `None` when it can.
+/// The first template segment holding a variable that `rendered` turns into a
+/// dot segment, with that dot segment.
 ///
-/// Encoding is no remedy for a dot segment: resolution decodes `%2E` first.
-fn unaddressable(template: &str, slot: &str, value: &str) -> Option<&'static str> {
-    if value.is_empty() {
-        return Some("empty");
-    }
-    let dots = match value {
-        "." => "`.`",
-        ".." => "`..`",
-        _ => return None,
-    };
+/// Compared after decoding, because resolution (RFC 3986 §5.2.4) decodes `%2E`
+/// first, so neither an encoded value nor an encoded literal escapes it. A
+/// rendered value holds no `/`, so the two paths split into the same segments.
+fn dot_segment<'t>(template: &'t str, rendered: &str) -> Option<(&'t str, &'static str)> {
     template
         .split('/')
-        .any(|segment| segment == slot)
-        .then_some(dots)
+        .zip(rendered.split('/'))
+        .filter(|(segment, _)| segment.contains('{'))
+        .find_map(|(segment, rendered)| {
+            let dots = match &*percent_encoding::percent_decode_str(rendered).collect::<Vec<u8>>() {
+                b"." => ".",
+                b".." => "..",
+                _ => return None,
+            };
+            Some((segment, dots))
+        })
 }
