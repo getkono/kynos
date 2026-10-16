@@ -126,15 +126,53 @@ fn unsupported_media_type(headers: &HeaderMap) -> BodyRejection {
     }
 }
 
-/// Enforces `media_type`, then reads the whole body into memory, up to the
-/// operation's [limit](limit::DEFAULT_LIMIT).
+/// Whether a token of `Content-Encoding` names a coding: `identity` and empty
+/// list elements do not (RFC 9110 sections 5.6.1 and 8.4).
+fn is_coding(token: &str) -> bool {
+    let token = token.trim();
+    !token.is_empty() && !token.eq_ignore_ascii_case("identity")
+}
+
+/// The 415 a body extractor raises for a body still under a content coding,
+/// or `Ok` when none is declared.
+///
+/// `Decompression` removes `Content-Encoding` once it decodes, so a coding left
+/// on the request means nothing decoded the body, and reading it as its media
+/// type would hand the handler coded bytes. A field that is not text names a
+/// coding nothing here can read.
+fn refuse_undecoded(headers: &HeaderMap) -> Result<(), BodyRejection> {
+    let coded = headers
+        .get_all(header::CONTENT_ENCODING)
+        .iter()
+        .any(|value| {
+            value
+                .to_str()
+                .map_or(true, |text| text.split(',').any(is_coding))
+        });
+    if !coded {
+        return Ok(());
+    }
+
+    let received: Vec<_> = headers
+        .get_all(header::CONTENT_ENCODING)
+        .iter()
+        .map(|value| String::from_utf8_lossy(value.as_bytes()))
+        .collect();
+    Err(BodyRejection::UnsupportedCoding {
+        received: received.join(", "),
+    })
+}
+
+/// Enforces `media_type` and refuses an undecoded coding, then reads the whole
+/// body into memory, up to the operation's [limit](limit::DEFAULT_LIMIT).
 ///
 /// The first half of every buffering codec; no byte is read before the content
-/// type is enforced.
+/// type and coding are enforced.
 async fn read_body(request: Request, media_type: &str) -> Result<Bytes, BodyRejection> {
     if !offers(request.headers(), media_type) {
         return Err(unsupported_media_type(request.headers()));
     }
+    refuse_undecoded(request.headers())?;
 
     let limit = limit::of(&request);
     limit::refuse_declared(request.headers(), limit)?;

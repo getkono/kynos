@@ -270,15 +270,19 @@ async fn read(response: Response) -> (StatusCode, Bytes) {
 /// exactly as it does with no `Decompression` mounted. Uncoded, because that
 /// body reaches the handler with no decode to notice the truncation; and coded,
 /// because decoding the part that arrived would answer for a body the client
-/// never sent.
+/// never sent. Without `Decompression` the coded body is refused for its
+/// coding, which nothing decoded, before any byte is read.
 #[tokio::test]
 async fn a_body_that_fails_part_way_is_refused_as_it_is_without_decompression() {
-    for coding in [None, Some("gzip")] {
+    for (coding, refused) in [
+        (None, StatusCode::BAD_REQUEST),
+        (Some("gzip"), StatusCode::UNSUPPORTED_MEDIA_TYPE),
+    ] {
         let (plain, plain_body) = read(service(None).call(interrupted(coding)).await).await;
         let (decoded, decoded_body) =
             read(service(Some(1024)).call(interrupted(coding)).await).await;
 
-        assert_eq!(plain, StatusCode::BAD_REQUEST, "coding {coding:?}");
+        assert_eq!(plain, refused, "coding {coding:?}");
         assert_eq!(
             decoded,
             plain,

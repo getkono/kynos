@@ -348,6 +348,10 @@ mod an_undecoded_content_coding_is_refused {
                 Some(StatusCode::UNSUPPORTED_MEDIA_TYPE),
                 "`{content_type}` under {codings:?}: {rejection:?}"
             );
+            assert!(
+                matches!(rejection, Some(BodyRejection::UnsupportedCoding { .. })),
+                "a coding refusal, not a media type one: {rejection:?}"
+            );
         }
         for codings in IDENTITY {
             let rejection = refusal::<T>(content_type, codings, body).await;
@@ -356,6 +360,38 @@ mod an_undecoded_content_coding_is_refused {
                 "`{content_type}` under {codings:?}: {rejection:?}"
             );
         }
+    }
+
+    /// The refusal quotes every field the client sent, in order, a value that
+    /// is not text lossily.
+    #[tokio::test]
+    async fn the_refusal_quotes_what_was_sent() {
+        let received = |codings| async move {
+            match refusal::<Text>("text/plain", codings, b"").await {
+                Some(BodyRejection::UnsupportedCoding { received }) => received,
+                other => panic!("expected a coding refusal, got {other:?}"),
+            }
+        };
+
+        assert_eq!(received(&[b"identity", b"br"]).await, "identity, br");
+        assert_eq!(received(&[b"gzip, br"]).await, "gzip, br");
+        assert_eq!(received(&[b"\xff"]).await, "\u{fffd}");
+    }
+
+    /// A body in the wrong media type is refused for that first, as it is
+    /// without a coding.
+    #[tokio::test]
+    async fn the_media_type_is_enforced_first() {
+        let rejection = refusal::<Text>("application/json", &[b"gzip"], b"").await;
+
+        assert!(
+            matches!(
+                rejection,
+                Some(BodyRejection::UnsupportedMediaType { received: Some(ref received) })
+                    if received == "application/json"
+            ),
+            "{rejection:?}"
+        );
     }
 
     #[tokio::test]
