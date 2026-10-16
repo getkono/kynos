@@ -88,10 +88,67 @@ fn malformed(value: &str) -> bool {
     )
 }
 
+/// A recipient ignores empty list elements (RFC 9110 section 5.6.1.2), which
+/// is also what a comma join of repeated field lines leaves behind.
+#[test]
+fn an_empty_list_element_is_ignored() {
+    for value in [
+        "application/pdf,",
+        "text/plain;q=0.5, , application/pdf",
+        ", application/pdf",
+        "application/pdf, \t,",
+    ] {
+        let accepted = Accept::<(Text, Binary<Pdf>)>::parse(value)
+            .unwrap_or_else(|rejection| panic!("{value:?} was refused as {rejection:?}"))
+            .choose::<(Text, Binary<Pdf>)>()
+            .ok();
+
+        assert_eq!(accepted, Some(1), "{value:?} did not choose the PDF offer");
+    }
+}
+
+/// `Accept` is a `#` list, which may hold no element at all: a field of only
+/// empty elements is well-formed, accepts nothing, and so is a 406 rather than
+/// a 400.
+#[test]
+fn a_field_of_only_empty_elements_accepts_nothing() {
+    for value in ["", " ", ",", " , ,\t"] {
+        let chosen = Accept::<(Text, Binary<Pdf>)>::parse(value)
+            .unwrap_or_else(|rejection| panic!("{value:?} was refused as {rejection:?}"))
+            .choose::<(Text, Binary<Pdf>)>();
+
+        assert!(
+            matches!(chosen, Err(NegotiationRejection::NotAcceptable)),
+            "{value:?} chose {chosen:?}"
+        );
+    }
+}
+
+/// A repeated field line that is empty adds an empty element to the joined
+/// list, not a malformed one.
+#[tokio::test]
+async fn an_empty_repeated_field_line_is_ignored() {
+    let mut parts = http::Request::new(()).into_parts().0;
+    parts
+        .headers
+        .append(header::ACCEPT, HeaderValue::from_static("application/pdf"));
+    parts
+        .headers
+        .append(header::ACCEPT, HeaderValue::from_static(""));
+
+    let chosen = Accept::<(Text, Binary<Pdf>)>::from_request_parts(&mut parts, &())
+        .await
+        .expect("a well-formed Accept list")
+        .choose::<(Text, Binary<Pdf>)>()
+        .ok();
+
+    assert_eq!(chosen, Some(1));
+}
+
 /// A media range with no `/` is not a media range.
 #[test]
 fn a_range_without_a_slash_is_malformed() {
-    for value in ["", "text", "text/plain, html"] {
+    for value in ["text", "text/plain, html", ";q=1", "application/pdf, ;q=1"] {
         assert!(malformed(value), "{value:?} was not refused as malformed");
     }
 }
