@@ -514,3 +514,70 @@ fn an_unchecked_pattern_the_matcher_cannot_read_fails_every_entry_point() {
         ["error at #: `/static/{*path}/raw` is not a pattern the router's match table accepts"]
     );
 }
+
+// --- What an unchecked route may not repeat -------------------------------
+
+/// The described operation an unchecked route collides with.
+#[kynos::get("/users")]
+async fn list_users() -> NoContent {
+    NoContent
+}
+
+/// An unchecked route repeating a described method and path would never be
+/// served, since dispatch takes the first operation for a method, yet the
+/// document would list it as opaque.
+#[test]
+fn an_unchecked_route_repeating_a_described_operation_fails_every_entry_point() {
+    assert_eq!(
+        refusals(|| Router::<()>::new()
+            .mount(kynos::routes![list_users])
+            .route_unchecked([Method::GET], "/users", echo_path)),
+        [
+            "error at #/paths/~1users/get: operation `GET /users` is described more than once; a \
+             path item holds one operation per method"
+        ]
+    );
+}
+
+/// Two unchecked routes repeating one method and pattern leave the second
+/// unreachable just the same.
+#[test]
+fn an_unchecked_route_repeating_another_fails_every_entry_point() {
+    assert_eq!(
+        refusals(|| with_catch_all().route_unchecked(
+            [Method::POST, Method::GET],
+            "/static/{*path}",
+            echo_path
+        )),
+        [
+            "error at #: operation `GET /static/{*path}` is described more than once; a path item \
+             holds one operation per method"
+        ]
+    );
+}
+
+/// The control: another method on a described path is served, and the path's
+/// `Allow` lists each method once (RFC 9110 §10.2.1). `DELETE` is served
+/// elsewhere, so `/users` answers it 405 rather than 501.
+#[tokio::test]
+async fn an_unchecked_method_beside_a_described_one_is_served() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![list_users])
+        .route_unchecked([Method::POST], "/users", echo_path)
+        .route_unchecked([Method::DELETE], "/elsewhere", echo_path)
+        .build(())
+        .expect("a buildable router");
+
+    assert_eq!(
+        support::post(&service, "/users").call().await.status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        support::send(&service, Method::DELETE, "/users")
+            .call()
+            .await
+            .field("allow")
+            .as_deref(),
+        Some("GET, HEAD, POST")
+    );
+}
