@@ -50,6 +50,8 @@ impl HeaderParams for Preconditions {
 }
 
 impl DecodeHeaders for Preconditions {
+    const FALLIBLE: bool = false;
+
     /// Never fails.
     ///
     /// RFC 9110 section 13.1: a recipient ignores a condition it cannot
