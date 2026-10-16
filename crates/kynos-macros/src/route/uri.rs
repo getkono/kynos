@@ -105,6 +105,13 @@ fn shape(
             quote! {
                 ///
                 /// Takes exactly the path parameters this route extracts.
+                ///
+                /// # Panics
+                ///
+                /// Panics when a path value cannot address the route: an empty
+                /// one, which no variable captures, or one that renders its
+                /// segment as `.` or `..`, which URI resolution removes
+                /// (RFC 3986 §5.2.4) even when written `%2E`.
                 pub fn relative_uri(path: #path_type) -> ::kynos::http::Uri {
                     <Self as ::kynos::router::endpoint::meta::EndpointUri>::render(#path, path)
                 }
@@ -133,6 +140,13 @@ fn shape(
                 ///
                 /// Takes exactly the path and query parameters this route
                 /// extracts.
+                ///
+                /// # Panics
+                ///
+                /// Panics when a path value cannot address the route: an empty
+                /// one, which no variable captures, or one that renders its
+                /// segment as `.` or `..`, which URI resolution removes
+                /// (RFC 3986 §5.2.4) even when written `%2E`.
                 pub fn relative_uri(
                     path: #path_type,
                     query: #query_type,

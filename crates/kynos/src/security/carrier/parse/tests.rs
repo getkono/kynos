@@ -43,6 +43,18 @@ fn extra_space_after_the_scheme_is_not_part_of_the_credential() {
     assert_eq!(read.credentials, "dXNlcjpwYXNz");
 }
 
+/// RFC 9110 section 11.4 makes everything after the scheme optional.
+#[test]
+fn a_scheme_alone_reads_as_empty_credentials() {
+    let head = parts(&["justatoken"]);
+    let read = authorization(&head)
+        .expect("a credential")
+        .expect("present");
+
+    assert_eq!(read.scheme, "justatoken");
+    assert_eq!(read.credentials, "");
+}
+
 /// One case per way `authorization` refuses, counted against the refusals.
 #[test]
 fn every_refusal_has_a_case() {
@@ -56,7 +68,6 @@ fn every_refusal_has_a_case() {
         // decide which credential the service honours.
         ("two Authorization fields", &["Bearer a", "Bearer b"]),
         ("bytes no `&str` can hold", &[]),
-        ("a value with no scheme token", &["justatoken"]),
         ("an empty scheme", &[" credentials"]),
     ];
 

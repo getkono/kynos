@@ -85,6 +85,110 @@ mod a_file_part_describes_itself {
     }
 }
 
+/// The `boundary` is read by the same rule that accepted the media type:
+/// RFC 9110 section 5.6.6 allows optional whitespace on both sides of each
+/// `;`, so a `Content-Type` spelled with it decodes the parts rather than being
+/// the 415 a stricter parser makes of it.
+#[cfg(feature = "multipart")]
+mod a_multipart_boundary_is_read_past_optional_whitespace {
+    use crate::{
+        error::rejection::BodyRejection,
+        extract::{
+            FromRequest,
+            body::multipart::{FromMultipart, MultipartForm, Part},
+        },
+        http::{HeaderValue, Request, StatusCode, body::Body, header},
+        schema::{Schema, registry::Registry},
+    };
+
+    /// Every part the body carried, as `(name, bytes)`.
+    #[derive(Debug, PartialEq, Eq)]
+    struct Parts(Vec<(String, bytes::Bytes)>);
+
+    impl FromMultipart for Parts {
+        fn from_parts(parts: Vec<Part>) -> Result<Self, BodyRejection> {
+            Ok(Self(
+                parts
+                    .into_iter()
+                    .map(|part| (part.name, part.bytes))
+                    .collect(),
+            ))
+        }
+    }
+
+    impl Schema for Parts {
+        fn schema(_registry: &mut Registry) -> kynos_openapi::Schema {
+            kynos_openapi::Schema::any()
+        }
+    }
+
+    /// One part, `a`, holding `b`, delimited by `x`.
+    const BODY: &[u8] = b"--x\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nb\r\n--x--\r\n";
+
+    /// What `MultipartForm` makes of [`BODY`] under `content_type`.
+    async fn read(content_type: &'static str) -> Result<Parts, BodyRejection> {
+        let mut request = Request::new(Body::from_bytes(bytes::Bytes::from_static(BODY)));
+        request
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+        MultipartForm::<Parts>::from_request(request, &())
+            .await
+            .map(|MultipartForm(parts)| parts)
+    }
+
+    /// Whitespace before and after the delimiter, SP and HTAB, a trailing one,
+    /// a quoted value, a preceding parameter, an empty trailing parameter, and
+    /// names in another case.
+    const SPELLINGS: &[&str] = &[
+        "multipart/form-data;boundary=x",
+        "multipart/form-data ; boundary=x",
+        "multipart/form-data\t; boundary=x",
+        "multipart/form-data;\tboundary=x",
+        "multipart/form-data; boundary=x ",
+        "multipart/form-data; boundary=x\t",
+        "multipart/form-data \t;\t boundary=\"x\" ",
+        "multipart/form-data; charset=utf-8 ; boundary=x",
+        "multipart/form-data; boundary=x ;",
+        "Multipart/Form-Data; Boundary=x",
+    ];
+
+    #[tokio::test]
+    async fn every_spelling_decodes_the_parts() {
+        for content_type in SPELLINGS {
+            let parts = read(content_type)
+                .await
+                .unwrap_or_else(|rejection| panic!("`{content_type}`: {rejection:?}"));
+            assert_eq!(
+                parts,
+                Parts(vec![("a".to_owned(), bytes::Bytes::from_static(b"b"))]),
+                "`{content_type}`"
+            );
+        }
+    }
+
+    /// An empty `boundary` delimits nothing, so it is the 400 a missing one is,
+    /// not a media type the codec refuses.
+    #[tokio::test]
+    async fn an_empty_boundary_is_no_boundary() {
+        for content_type in [
+            "multipart/form-data",
+            "multipart/form-data; boundary=",
+            "multipart/form-data; boundary=\"\" ",
+        ] {
+            let rejection = read(content_type).await.expect_err(content_type);
+            assert_eq!(
+                rejection.status(),
+                StatusCode::BAD_REQUEST,
+                "`{content_type}`"
+            );
+            assert!(
+                matches!(rejection, BodyRejection::Syntax { .. }),
+                "`{content_type}`: {rejection:?}"
+            );
+        }
+    }
+}
+
 /// A form body decodes the encoding its description states.
 ///
 /// No Encoding Object is written, so each property takes the defaults:
@@ -272,4 +376,196 @@ async fn a_protobuf_body_decodes_to_the_message_it_encodes() {
         .expect("a well-formed message");
 
     assert_eq!(message, Tagged { value: 7 });
+}
+
+/// A body still under a content coding was decoded by nothing, since
+/// `Decompression` removes the field once it decodes: every codec refuses it
+/// with 415 rather than reading the coded bytes as its media type (RFC 9110
+/// sections 8.4 and 15.5.16), and `identity`, which is no coding, still reads.
+mod an_undecoded_content_coding_is_refused {
+    use crate::{
+        error::rejection::BodyRejection,
+        extract::{
+            FromRequest,
+            body::{binary::Binary, text::Text},
+        },
+        http::{HeaderValue, Request, StatusCode, body::Body, header, media::OctetStream},
+    };
+
+    /// A `content_type` request carrying `body` under each of `codings`, one
+    /// `Content-Encoding` field per entry.
+    fn coded(
+        content_type: &'static str,
+        codings: &[&'static [u8]],
+        body: &'static [u8],
+    ) -> Request {
+        let mut request = Request::new(Body::from_bytes(bytes::Bytes::from_static(body)));
+        request
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+        for coding in codings {
+            request.headers_mut().append(
+                header::CONTENT_ENCODING,
+                HeaderValue::from_bytes(coding).expect("a field value"),
+            );
+        }
+        request
+    }
+
+    /// What `T` refuses `coded(..)` with, or `None` where it reads it.
+    async fn refusal<T: FromRequest<(), Rejection = BodyRejection>>(
+        content_type: &'static str,
+        codings: &[&'static [u8]],
+        body: &'static [u8],
+    ) -> Option<BodyRejection> {
+        T::from_request(coded(content_type, codings, body), &())
+            .await
+            .err()
+    }
+
+    /// The field values that leave a coding undecoded: each coding Kynos can
+    /// decode, one it cannot, one listed after `identity`, one in a second
+    /// field, and a value that is not text.
+    const UNDECODED: &[&[&[u8]]] = &[
+        &[b"gzip"],
+        &[b"br"],
+        &[b"zstd"],
+        &[b"x-unknown"],
+        &[b"identity, gzip"],
+        &[b"identity", b"br"],
+        &[b"\xff"],
+    ];
+
+    /// The field values that declare no coding at all.
+    const IDENTITY: &[&[&[u8]]] = &[&[b"identity"], &[b"IDENTITY, identity"], &[b""]];
+
+    /// Asserts that `T` refuses every [`UNDECODED`] value with 415 and reads
+    /// every [`IDENTITY`] one.
+    async fn holds<T: FromRequest<(), Rejection = BodyRejection>>(
+        content_type: &'static str,
+        body: &'static [u8],
+    ) {
+        for codings in UNDECODED {
+            let rejection = refusal::<T>(content_type, codings, body).await;
+            assert_eq!(
+                rejection.as_ref().map(BodyRejection::status),
+                Some(StatusCode::UNSUPPORTED_MEDIA_TYPE),
+                "`{content_type}` under {codings:?}: {rejection:?}"
+            );
+            assert!(
+                matches!(rejection, Some(BodyRejection::UnsupportedCoding { .. })),
+                "a coding refusal, not a media type one: {rejection:?}"
+            );
+        }
+        for codings in IDENTITY {
+            let rejection = refusal::<T>(content_type, codings, body).await;
+            assert!(
+                rejection.is_none(),
+                "`{content_type}` under {codings:?}: {rejection:?}"
+            );
+        }
+    }
+
+    /// The refusal quotes every field the client sent, in order, a value that
+    /// is not text lossily.
+    #[tokio::test]
+    async fn the_refusal_quotes_what_was_sent() {
+        let received = |codings| async move {
+            match refusal::<Text>("text/plain", codings, b"").await {
+                Some(BodyRejection::UnsupportedCoding { received }) => received,
+                other => panic!("expected a coding refusal, got {other:?}"),
+            }
+        };
+
+        assert_eq!(received(&[b"identity", b"br"]).await, "identity, br");
+        assert_eq!(received(&[b"gzip, br"]).await, "gzip, br");
+        assert_eq!(received(&[b"\xff"]).await, "\u{fffd}");
+    }
+
+    /// A body in the wrong media type is refused for that first, as it is
+    /// without a coding.
+    #[tokio::test]
+    async fn the_media_type_is_enforced_first() {
+        let rejection = refusal::<Text>("application/json", &[b"gzip"], b"").await;
+
+        assert!(
+            matches!(
+                rejection,
+                Some(BodyRejection::UnsupportedMediaType { received: Some(ref received) })
+                    if received == "application/json"
+            ),
+            "{rejection:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn by_a_binary_body() {
+        holds::<Binary<OctetStream>>("application/octet-stream", b"\x1f\x8b").await;
+    }
+
+    #[tokio::test]
+    async fn by_a_text_body() {
+        holds::<Text>("text/plain", b"text").await;
+    }
+
+    #[cfg(feature = "json")]
+    #[tokio::test]
+    async fn by_a_json_body() {
+        holds::<crate::extract::body::json::Json<u32>>("application/json", b"1").await;
+    }
+
+    #[cfg(feature = "form")]
+    #[tokio::test]
+    async fn by_a_form_body() {
+        holds::<crate::extract::body::form::Form<std::collections::BTreeMap<String, String>>>(
+            "application/x-www-form-urlencoded",
+            b"a=b",
+        )
+        .await;
+    }
+
+    #[cfg(feature = "protobuf")]
+    #[tokio::test]
+    async fn by_a_protobuf_body() {
+        holds::<crate::extract::body::protobuf::Protobuf<()>>("application/protobuf", b"").await;
+    }
+
+    #[cfg(all(feature = "json", feature = "openapi32"))]
+    #[tokio::test]
+    async fn by_a_streamed_json_body() {
+        use crate::extract::body::json_lines::{JsonLines, JsonSeq, records::Records};
+
+        holds::<JsonLines<Records<u32>>>("application/x-ndjson", b"1\n").await;
+        holds::<JsonSeq<Records<u32>>>("application/json-seq", b"\x1e1\n").await;
+    }
+
+    #[cfg(feature = "multipart")]
+    #[tokio::test]
+    async fn by_a_multipart_body() {
+        use crate::{
+            extract::body::multipart::{FromMultipart, MultipartForm, Part},
+            schema::{Schema, registry::Registry},
+        };
+
+        /// Built from any parts, so only the coding decides.
+        struct Anything;
+
+        impl FromMultipart for Anything {
+            fn from_parts(_parts: Vec<Part>) -> Result<Self, BodyRejection> {
+                Ok(Self)
+            }
+        }
+
+        impl Schema for Anything {
+            fn schema(_registry: &mut Registry) -> kynos_openapi::Schema {
+                kynos_openapi::Schema::any()
+            }
+        }
+
+        holds::<MultipartForm<Anything>>(
+            "multipart/form-data; boundary=x",
+            b"--x\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nb\r\n--x--\r\n",
+        )
+        .await;
+    }
 }

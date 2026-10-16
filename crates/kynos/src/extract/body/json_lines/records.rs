@@ -128,7 +128,8 @@ impl<T> fmt::Debug for Records<T> {
 }
 
 impl<T> Records<T> {
-    /// Enforces the content type (the shared 415), then takes the body unread.
+    /// Enforces the content type and refuses an undecoded coding (the shared
+    /// 415s), then takes the body unread.
     pub(super) fn new(
         request: Request,
         media_type: &str,
@@ -139,6 +140,7 @@ impl<T> Records<T> {
                 request.headers(),
             ));
         }
+        crate::extract::body::refuse_undecoded(request.headers())?;
 
         Ok(Self {
             limit: crate::extract::body::limit::of(&request),

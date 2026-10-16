@@ -8,6 +8,7 @@ use std::{future::Future, pin::Pin};
 use kynos_openapi::{RefOr, StatusPattern};
 
 use crate::{
+    error::rejection::HeaderRejection,
     extract::params::header::{DecodeHeaders, HeaderParams},
     http::{Request, Response},
     middleware::{Continued, Interceptor, Next},
@@ -52,6 +53,13 @@ where
             }
         }
 
+        // Whether or not the group is described: an undescribed one still
+        // answers the 400, as a handler's `Headers` extractor does.
+        if <I::Reads as DecodeHeaders>::FALLIBLE {
+            let rejected = <HeaderRejection as Responses>::responses(operation.registry());
+            operation.add_responses(&rejected);
+        }
+
         let responses = <I::Short as Responses>::responses(operation.registry());
         operation.add_responses(&responses);
 
@@ -75,7 +83,14 @@ where
         Box::pin(async move {
             let reads = match <I::Reads as DecodeHeaders>::decode(request.headers()) {
                 Ok(reads) => reads,
-                Err(rejection) => return rejection.into_response(),
+                Err(rejection) => {
+                    debug_assert!(
+                        <I::Reads as DecodeHeaders>::FALLIBLE,
+                        "`{}` sets `FALLIBLE = false` and rejected a request",
+                        std::any::type_name::<I::Reads>(),
+                    );
+                    return rejection.into_response();
+                }
             };
 
             match Interceptor::intercept(self, request, reads, context, next).await {

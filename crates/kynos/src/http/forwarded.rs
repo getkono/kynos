@@ -575,8 +575,9 @@ impl Forwarded {
     ///
     /// `None` where no socket and no trusted hop named one — a `TestClient`, a
     /// driven `Service::call` — or where trust ends on an element naming no
-    /// address: `for=unknown`, an obfuscated or unparseable `for=`, or no
-    /// `for=` at all, as in a proxy sending only `Forwarded: proto=https`.
+    /// address: `for=unknown`, an obfuscated or unparseable `for=`, one that
+    /// is not text, or no `for=` at all, as in a proxy sending only
+    /// `Forwarded: proto=https`.
     #[must_use]
     pub fn client(&self) -> Option<IpAddr> {
         self.client
@@ -621,25 +622,33 @@ fn elements(headers: &HeaderMap, header: ProxyHeader) -> (Vec<Hop<'_>>, Option<&
 
 /// [`elements`] from `Forwarded`, whose scheme sits in the element it belongs
 /// to.
+///
+/// A line is split on its raw bytes, since its delimiters are ASCII: a value
+/// that is not text names nothing, but its element is still a hop.
 fn forwarded_elements(headers: &HeaderMap) -> Vec<Hop<'_>> {
     let mut hops = Vec::new();
     for value in headers.get_all(FORWARDED) {
-        let Ok(value) = value.to_str() else { continue };
-
         let start = hops.len();
-        for element in unquoted_rsplit(value, b',') {
+        for element in unquoted_rsplit(value.as_bytes(), b',') {
             let (mut address, mut proto) = (None, None);
-            let pairs = unquoted_rsplit(element, b';').filter_map(|pair| pair.split_once('='));
-            for (name, raw) in pairs.map(|(name, raw)| (name, unquote(raw.trim()))) {
-                if name.trim().eq_ignore_ascii_case("for") {
-                    address = address.or(Some(node_address(raw)));
-                } else if name.trim().eq_ignore_ascii_case("proto") {
+            let pairs = unquoted_rsplit(element, b';').filter_map(|pair| {
+                let at = pair.iter().position(|&b| b == b'=')?;
+                let value = std::str::from_utf8(&pair[at + 1..]).ok();
+                Some((
+                    pair[..at].trim_ascii(),
+                    value.map(|raw| unquote(raw.trim())),
+                ))
+            });
+            for (name, raw) in pairs {
+                if name.eq_ignore_ascii_case(b"for") {
+                    address = address.or(Some(raw.and_then(node_address)));
+                } else if name.eq_ignore_ascii_case(b"proto") {
                     proto = proto.or(Some(raw));
                 }
             }
             hops.push(Hop {
                 address: address.flatten(),
-                proto,
+                proto: proto.flatten(),
             });
         }
         hops[start..].reverse();
@@ -650,19 +659,22 @@ fn forwarded_elements(headers: &HeaderMap) -> Vec<Hop<'_>> {
 
 /// [`elements`] from the `X-Forwarded-For` and `X-Forwarded-Proto` pair.
 ///
-/// The scheme is `X-Forwarded-Proto`'s rightmost non-empty list element (RFC
-/// 9110 sections 5.3, 5.6.1); a non-text rightmost line yields none rather
-/// than an earlier, further-out line's.
+/// An `X-Forwarded-For` line is split on its raw bytes, so an entry that is not
+/// text is a hop naming no address. The scheme is `X-Forwarded-Proto`'s
+/// rightmost non-empty list element (RFC 9110 sections 5.3, 5.6.1); a non-text
+/// rightmost line yields none rather than an earlier, further-out line's.
 fn x_forwarded_elements(headers: &HeaderMap) -> (Vec<Hop<'_>>, Option<&str>) {
     let mut hops = Vec::new();
     for value in headers.get_all(X_FORWARDED_FOR) {
-        let Ok(value) = value.to_str() else { continue };
-        let addresses = value.split(',').map(str::trim);
+        let addresses = value
+            .as_bytes()
+            .split(|&b| b == b',')
+            .map(<[u8]>::trim_ascii);
         hops.extend(
             addresses
                 .filter(|address| !address.is_empty())
                 .map(|address| Hop {
-                    address: node_address(address),
+                    address: std::str::from_utf8(address).ok().and_then(node_address),
                     proto: None,
                 }),
         );
@@ -683,11 +695,11 @@ fn x_forwarded_elements(headers: &HeaderMap) -> (Vec<Hop<'_>>, Option<&str>) {
     (hops, proto)
 }
 
-/// `text`'s non-blank pieces between `delimiter`s outside any `quoted-string`
+/// `bytes`'s non-blank pieces between `delimiter`s outside any `quoted-string`
 /// (an odd run of `\` escapes its `"`), last first, so a client's unclosed
 /// quote cannot swallow a hop's. Allocation-free: it runs behind every proxy.
-fn unquoted_rsplit(text: &str, delimiter: u8) -> impl Iterator<Item = &str> {
-    let (bytes, mut end) = (text.as_bytes(), Some(text.len()));
+fn unquoted_rsplit(bytes: &[u8], delimiter: u8) -> impl Iterator<Item = &[u8]> {
+    let mut end = Some(bytes.len());
     let pieces = std::iter::from_fn(move || {
         let (stop, mut quoted) = (end?, false);
         end = (0..stop).rev().find(|&at| {
@@ -697,9 +709,9 @@ fn unquoted_rsplit(text: &str, delimiter: u8) -> impl Iterator<Item = &str> {
             }
             !quoted && bytes[at] == delimiter
         });
-        Some(&text[end.map_or(0, |at| at + 1)..stop])
+        Some(&bytes[end.map_or(0, |at| at + 1)..stop])
     });
-    pieces.filter(|piece| !piece.trim().is_empty())
+    pieces.filter(|piece| !piece.trim_ascii().is_empty())
 }
 
 /// Strips one layer of `quoted-string` quoting.

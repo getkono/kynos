@@ -365,10 +365,6 @@ where
         }
 
         let vary = freshness::vary(&headers);
-        let selecting = vary
-            .iter()
-            .map(|name| request_headers.get(name.as_str()).cloned())
-            .collect();
 
         self.store
             .put(
@@ -378,7 +374,7 @@ where
                     headers,
                     bytes.clone(),
                     vary,
-                    selecting,
+                    &request_headers,
                     freshness,
                 ),
                 context,

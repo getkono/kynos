@@ -229,6 +229,30 @@ fn an_unsupported_media_type_names_what_was_received_or_its_absence() {
     );
 }
 
+/// A coding 415 names the coding rather than the media type, so a client can
+/// tell the two refusals apart.
+#[test]
+fn an_undecoded_coding_names_the_coding_received() {
+    let document = serde_json::to_value(
+        BodyRejection::UnsupportedCoding {
+            received: "gzip".to_owned(),
+        }
+        .into_problem(),
+    )
+    .expect("a problem serializes");
+
+    assert_eq!(
+        document,
+        serde_json::json!({
+            "type": "about:blank",
+            "title": "Unsupported Media Type",
+            "status": 415,
+            "detail": "the request body's content coding was not decoded: `gzip`; \
+                       send the body without a content coding",
+        })
+    );
+}
+
 #[test]
 fn negotiation_separates_a_bad_header_from_an_unmatchable_one() {
     let observed = [
@@ -595,6 +619,7 @@ fn body(expected: StatusCode, rejection: &BodyRejection) -> Row {
         BodyRejection::Syntax { .. } => "BodyRejection::Syntax",
         BodyRejection::Schema { .. } => "BodyRejection::Schema",
         BodyRejection::UnsupportedMediaType { .. } => "BodyRejection::UnsupportedMediaType",
+        BodyRejection::UnsupportedCoding { .. } => "BodyRejection::UnsupportedCoding",
         BodyRejection::TooLarge { .. } => "BodyRejection::TooLarge",
     };
     let statuses = (rejection.status(), BodyRejection::statuses());
@@ -736,6 +761,12 @@ fn content_ledger() -> Vec<Row> {
             },
         ),
         body(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            &BodyRejection::UnsupportedCoding {
+                received: text("gzip"),
+            },
+        ),
+        body(
             StatusCode::PAYLOAD_TOO_LARGE,
             &BodyRejection::TooLarge { limit: 1_024 },
         ),
@@ -785,6 +816,7 @@ fn every_variant_produces_a_status_its_type_declares() {
         "BodyRejection::Syntax",
         "BodyRejection::Schema",
         "BodyRejection::UnsupportedMediaType",
+        "BodyRejection::UnsupportedCoding",
         "BodyRejection::TooLarge",
         "NegotiationRejection::MalformedAccept",
         "NegotiationRejection::NotAcceptable",

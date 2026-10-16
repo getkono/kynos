@@ -12,8 +12,10 @@
 //! - Where the engine reads a construct ECMA-262 refuses or reads otherwise —
 //!   inline flags, `\A`, `\z`, `(?P<name>`, a group name that is no
 //!   identifier, a quantified quantifier or assertion, a POSIX class, a nested
-//!   class, a leading `]` in a class or a set operation — it is refused, since
-//!   the document and the check would disagree about it.
+//!   class, a leading `]` in a class, a set operation, or a Unicode property
+//!   spelled other than as ECMA-262 spells it (`\p{greek}`, `\p{Greek}` for a
+//!   script) — it is refused, since the document and the check would disagree
+//!   about it.
 //! - Where ECMA-262 reads a construct the engine cannot — lookaround and
 //!   backreferences, which need a backtracking search — it is refused, since
 //!   no check could enforce it.
@@ -56,6 +58,14 @@ static GROUP_NAME: LazyLock<regex::Regex> = LazyLock::new(|| {
 /// What ECMA-262 lets a backslash escape to the character itself, outside a
 /// class: its syntax characters and `/`. Inside one, `-` as well.
 const IDENTITY_ESCAPES: &str = r"^$\.*+?()[]{}|/";
+
+/// The spellings ECMA-262 reads in `\p{...}`, each value on a line beside its
+/// aliases: its tables of `General_Category` values and of binary properties,
+/// and the Script values of the Unicode version the engine carries (16.0),
+/// which `Script_Extensions` shares.
+const GENERAL_CATEGORY: &str = include_str!("pattern/general_category.txt");
+const BINARY_PROPERTY: &str = include_str!("pattern/binary_property.txt");
+const SCRIPT: &str = include_str!("pattern/script.txt");
 
 /// A `pattern` that no check could enforce as ECMA-262 reads it.
 ///
@@ -317,21 +327,58 @@ fn literal_escape(literal: &Literal, in_class: bool) -> Result<(), String> {
 }
 
 /// Refuses a Unicode class ECMA-262 does not write as the engine does.
+///
+/// The engine matches a property's name and value loosely, ignoring case,
+/// spaces, `_` and `-`; ECMA-262 matches them exactly, and reads a lone name only
+/// as a `General_Category` value or a binary property.
 fn unicode_class(class: &ClassUnicode) -> Result<(), String> {
-    match &class.kind {
-        ClassUnicodeKind::Named(_)
-        | ClassUnicodeKind::NamedValue {
+    let (spelled, written) = match &class.kind {
+        ClassUnicodeKind::Named(name) => (
+            spells(GENERAL_CATEGORY, name) || spells(BINARY_PROPERTY, name),
+            name.clone(),
+        ),
+        ClassUnicodeKind::NamedValue {
             op: ClassUnicodeOpKind::Equal,
-            ..
-        } => Ok(()),
-        ClassUnicodeKind::OneLetter(_) => Err(not_ecma(
-            "a one-letter Unicode class such as `\\pL`; ECMA-262 writes it `\\p{L}`",
-        )),
-        ClassUnicodeKind::NamedValue { .. } => Err(not_ecma(
-            "a Unicode class written with `:` or `!=`; ECMA-262 writes `\\p{name=value}`, and \
-             `\\P{...}` for its complement",
-        )),
+            name,
+            value,
+        } => (
+            match name.as_str() {
+                "General_Category" | "gc" => spells(GENERAL_CATEGORY, value),
+                "Script" | "sc" | "Script_Extensions" | "scx" => spells(SCRIPT, value),
+                _ => false,
+            },
+            format!("{name}={value}"),
+        ),
+        ClassUnicodeKind::OneLetter(_) => {
+            return Err(not_ecma(
+                "a one-letter Unicode class such as `\\pL`; ECMA-262 writes it `\\p{L}`",
+            ));
+        }
+        ClassUnicodeKind::NamedValue { .. } => {
+            return Err(not_ecma(
+                "a Unicode class written with `:` or `!=`; ECMA-262 writes `\\p{name=value}`, \
+                 and `\\P{...}` for its complement",
+            ));
+        }
+    };
+    if spelled {
+        Ok(())
+    } else {
+        Err(not_ecma(&format!(
+            "`\\{}{{{written}}}`, a property ECMA-262 does not spell. It spells a name and a \
+             value exactly as Unicode does, case and `_` included, and reads `\\p{{Lu}}` as a \
+             General_Category value or a binary property and `\\p{{Script=Greek}}` as a script",
+            if class.negated { 'P' } else { 'p' },
+        )))
     }
+}
+
+/// Whether `table`, a property's values one per line beside their aliases,
+/// spells `name`.
+fn spells(table: &str, name: &str) -> bool {
+    table
+        .split_ascii_whitespace()
+        .any(|spelling| spelling == name)
 }
 
 /// The refusal of a construct ECMA-262 reads otherwise than the engine.

@@ -311,13 +311,15 @@ pub(crate) fn response_headers_body(params: &[Param<'_>]) -> TokenStream2 {
 /// The `PathParams::encode` body.
 ///
 /// One entry per declared name, so every template slot is filled; values are
-/// percent-encoded where the template is rendered.
+/// percent-encoded where the template is rendered. No field is an `Option`,
+/// which the derive refuses, so no slot is filled with nothing.
 pub(crate) fn path_encode_body(params: &[Param<'_>]) -> TokenStream2 {
     let entries = params.iter().map(|param| {
         let name = &param.name;
-        let rendered = render(param);
-        quote! {
-            (#name, ::core::option::Option::unwrap_or_default(#rendered))
+        let ident = param.ident();
+        let span = param.field.ty.span();
+        quote_spanned! {span=>
+            (#name, ::std::string::ToString::to_string(&self.#ident))
         }
     });
 

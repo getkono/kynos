@@ -98,14 +98,18 @@ There is no way to choose a status at run time.
 
 `Created<T>` and `Accepted<T>` re-key the response `T` describes for itself: a
 body's 200 becomes the wrapper's status and carries its representation across.
-A body describing no 200 — a `Reply` enum naming its own statuses, say — still
-reaches the wire under the wrapper's status, so the wrapper takes that body's
-representation where the body declares exactly one response at all: that one
-response is everything the body sends, and re-describing it promises nothing a
-value of the body withholds. Where the body declares several, the wrapper
-declares no content rather than choosing between promises it did not make —
-including where only one of them carries content, since the others reach the
-same status carrying none.
+A body answering 4xx or 5xx — a `Reply` variant's 409, or a `Json` that failed
+to serialize — keeps its own status, and `Created` sends no `Location` with it:
+nothing was created, and a problem's `status` must match the one sent (RFC 9457
+§3.1.2). Any other body describing no 200 — a `Reply` enum naming its own
+statuses, say — still reaches the wire under the wrapper's status, so the
+wrapper takes that body's representation where the body declares exactly one
+response outside 4xx and 5xx: that one response is everything the body sends
+under the wrapper's status, and re-describing it promises nothing a value of
+the body withholds. Where the body declares several, the wrapper declares no
+content rather than choosing between promises it did not make — including
+where only one of them carries content, since the others reach the same status
+carrying none.
 
 `Created` and `Redirect` both carry a
 [`Location`](../crates/kynos/src/response/status.rs), which exists because a

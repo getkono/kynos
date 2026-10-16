@@ -539,7 +539,7 @@ principle, and the door stays open. See [why HTTP/3 is deferred](#why-http3-is-d
 **Listeners other than TCP are out**, for the same reason the runtime is: they
 widen the coupling surface the runtime policy exists to bound. A stream
 accepted some other way — a Unix socket, an in-memory pipe, a custom acceptor —
-is served one connection at a time by `Server::serve_io`, as plaintext, which
+is served by `Server::serve_io`, one connection per call, as plaintext, which
 exposes the connection driver's existing `AsyncRead + AsyncWrite` bound rather
 than adding a coupling point; accepting those streams stays the application's.
 
