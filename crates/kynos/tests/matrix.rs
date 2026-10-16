@@ -552,6 +552,40 @@ async fn under_rate_limit() -> NoContent {
     NoContent
 }
 
+/// The header [`Tenant`] reads, required so that its absence is a rejection.
+#[derive(HeaderParams)]
+struct TenantHeader {
+    #[header(rename = "X-Tenant")]
+    tenant: String,
+}
+
+/// An interceptor whose only answer of its own is none: the 400 it can send
+/// is its `Reads` failing to decode, which no `Short` names.
+struct Tenant;
+
+impl kynos::middleware::Interceptor<App> for Tenant {
+    type Reads = TenantHeader;
+    type Adds = ();
+    type Short = std::convert::Infallible;
+
+    async fn intercept(
+        &self,
+        request: kynos::http::Request,
+        reads: TenantHeader,
+        context: &App,
+        next: kynos::middleware::Next<'_, App>,
+    ) -> Result<kynos::middleware::Continued<()>, std::convert::Infallible> {
+        let _ = (context, reads.tenant);
+        Ok(next.run(request).await)
+    }
+}
+
+/// The one operation behind an interceptor that reads a required header.
+#[kynos::get("/tenanted")]
+async fn tenanted() -> NoContent {
+    NoContent
+}
+
 /// The whole matrix: every owned layer, mounted where its declaration lands on
 /// exactly the operations that can produce it.
 fn service() -> kynos::Result<kynos::router::service::Service<App>> {
@@ -602,6 +636,11 @@ fn service() -> kynos::Result<kynos::router::service::Service<App>> {
             kynos::router::group::Group::<App>::new("/")
                 .intercept(kynos::middleware::csrf::Csrf::new())
                 .mount(kynos::routes![under_csrf]),
+        )
+        .group(
+            kynos::router::group::Group::<App>::new("/")
+                .intercept(Tenant)
+                .mount(kynos::routes![tenanted]),
         );
 
     // A ranged file, which is the one layer whose success has three statuses.
@@ -871,6 +910,21 @@ async fn exercise_the_rejections(client: &TestClient<App>) {
         .send()
         .await
         .assert_status(StatusCode::UNPROCESSABLE_ENTITY);
+
+    // An interceptor's `Reads` that cannot be decoded, answered before the
+    // interceptor runs. The success beside it is what keeps the 204 declared.
+    client
+        .get("/tenanted")
+        .send()
+        .await
+        .assert_status(StatusCode::BAD_REQUEST);
+
+    client
+        .get("/tenanted")
+        .header("x-tenant", "acme")
+        .send()
+        .await
+        .assert_status(StatusCode::NO_CONTENT);
 
     // The declared application failure.
     client
