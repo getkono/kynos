@@ -12,7 +12,7 @@
 use kynos::{
     Router,
     http::{Method, Request, Response, StatusCode, body::Body},
-    middleware::request_id::RequestId,
+    middleware::{Continued, Interceptor, Next, request_id::RequestId},
     openapi::{Opaque, OpaqueReason, OpaqueRoute},
     response::status::NoContent,
     router::group::Group,
@@ -158,6 +158,159 @@ async fn a_router_interceptor_covers_an_unchecked_route() {
     assert!(
         reply.field("x-request-id").is_some(),
         "the router's interceptor did not cover the unchecked route"
+    );
+}
+
+/// The 401 `Refuse` answers every request with.
+#[derive(Debug, thiserror::Error, kynos::ApiError)]
+#[error("no credentials")]
+#[problem(status = 401)]
+struct Unauthenticated;
+
+/// An authentication stand-in that turns every request away.
+struct Refuse;
+
+impl Interceptor<()> for Refuse {
+    type Reads = ();
+    type Adds = ();
+    type Short = Unauthenticated;
+
+    async fn intercept(
+        &self,
+        _: Request,
+        (): (),
+        (): &(),
+        _: Next<'_, ()>,
+    ) -> Result<Continued<()>, Unauthenticated> {
+        Err(Unauthenticated)
+    }
+}
+
+/// A nested router's interceptor covers that router's unchecked routes, as it
+/// covers its operations, and runs inside the root's own.
+///
+/// `install_unchecked` used to give every unchecked route the root's
+/// interceptors alone, so an authentication interceptor on a nested router
+/// left that router's catch-all open.
+#[tokio::test]
+async fn a_nested_routers_interceptor_covers_its_unchecked_route() {
+    let service = Router::<()>::new()
+        .nest(
+            "/admin",
+            Router::<()>::new().intercept(Refuse).route_unchecked(
+                [Method::GET],
+                "/files/{*path}",
+                echo_path,
+            ),
+        )
+        .intercept(RequestId::new())
+        .build(())
+        .expect("a buildable router");
+
+    let reply = get(&service, "/admin/files/x").call().await;
+
+    assert_eq!(
+        reply.status,
+        StatusCode::UNAUTHORIZED,
+        "the nested router's interceptor did not cover its unchecked route"
+    );
+    assert!(
+        reply.field("x-request-id").is_some(),
+        "the root's interceptor did not wrap the nested one"
+    );
+}
+
+/// The status a request to `path` is answered with, or `None` when serving it
+/// unwound.
+fn outcome(
+    service: &kynos::router::service::Service<()>,
+    path: &'static str,
+) -> Option<StatusCode> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime");
+
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runtime.block_on(async { get(service, path).call().await.status })
+    }));
+    std::panic::set_hook(hook);
+
+    caught.ok()
+}
+
+/// A nested router's panic recovery covers that router's unchecked routes.
+#[test]
+fn a_nested_routers_panic_recovery_covers_its_unchecked_route() {
+    async fn explode(_: Request) -> Response {
+        panic!("the handler failed");
+    }
+
+    let service = Router::<()>::new()
+        .nest(
+            "/admin",
+            Router::<()>::new().catch_panics().route_unchecked(
+                [Method::GET],
+                "/files/{*path}",
+                explode,
+            ),
+        )
+        .build(())
+        .expect("a buildable router");
+
+    assert_eq!(
+        outcome(&service, "/admin/files/x"),
+        Some(StatusCode::INTERNAL_SERVER_ERROR),
+        "a panic in the nested router's unchecked route unwound"
+    );
+}
+
+/// A nested router holding only unchecked routes still has its interceptors
+/// checked for a configuration they cannot honour, now that they cover those
+/// routes. Built, this pair echoes any `Origin` with credentials allowed.
+#[test]
+fn a_nested_routers_unhonourable_cors_over_unchecked_routes_refuses_to_build() {
+    let refused = Router::<()>::new()
+        .nest(
+            "/admin",
+            Router::<()>::new()
+                .intercept(
+                    kynos::middleware::cors::Cors::new()
+                        .allow_any_origin()
+                        .allow_credentials(),
+                )
+                .route_unchecked([Method::GET], "/files/{*path}", echo_path),
+        )
+        .build(());
+
+    assert!(
+        refused.is_err(),
+        "a nested wildcard origin with credentials over an unchecked route was accepted"
+    );
+}
+
+/// A directory served from a nested router runs that router's interceptors,
+/// since `assets_directory` registers its route the way `route_unchecked` does.
+#[cfg(feature = "assets-fs")]
+#[tokio::test]
+async fn a_nested_routers_interceptor_covers_its_served_directory() {
+    let service = Router::<()>::new()
+        .nest(
+            "/admin",
+            Router::<()>::new().intercept(Refuse).assets_directory(
+                "/files",
+                kynos::router::assets::fs::Directory::new("tests/assets"),
+            ),
+        )
+        .build(())
+        .expect("a buildable router");
+
+    assert_eq!(
+        get(&service, "/admin/files/index.html").call().await.status,
+        StatusCode::UNAUTHORIZED,
+        "the nested router's interceptor did not cover its served directory"
     );
 }
 

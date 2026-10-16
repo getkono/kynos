@@ -340,7 +340,8 @@ impl<C, P, I, S> Router<C, P, I, S> {
         self.violations.extend(other.violations);
         self.deny_unchecked_schemas |= other.deny_unchecked_schemas;
         #[cfg(feature = "unchecked")]
-        self.unchecked.absorb(other.unchecked, prefix);
+        self.unchecked
+            .absorb(other.unchecked, prefix, &other.interceptors, catch_panics);
         if self.info.is_none() {
             self.info = other.info;
         }

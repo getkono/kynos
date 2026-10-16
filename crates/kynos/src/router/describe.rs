@@ -255,16 +255,26 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     }
 
     /// Refuses an interceptor configured with a combination it cannot honour;
-    /// today only `Cors` (see [`cors_conflict`]).
+    /// today only `Cors` (see [`cors_conflict`]). Covers every interceptor
+    /// that serves a request: the root's, and those each operation and
+    /// unchecked route was nested under.
     fn refuse_unhonourable_interceptors(&self) -> Result<()>
     where
         C: 'static,
     {
-        for interceptor in self.interceptors.iter().chain(
-            self.mounted
+        let nested = self
+            .mounted
+            .iter()
+            .flat_map(|mounted| &mounted.interceptors);
+        #[cfg(feature = "unchecked")]
+        let nested = nested.chain(
+            self.unchecked
+                .routes
                 .iter()
-                .flat_map(|mounted| &mounted.interceptors),
-        ) {
+                .flat_map(|route| &route.interceptors),
+        );
+
+        for interceptor in self.interceptors.iter().chain(nested) {
             if let Some(conflict) = cors_conflict(interceptor) {
                 return Err(Error::Middleware(conflict));
             }
