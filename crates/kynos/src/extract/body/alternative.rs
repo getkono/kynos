@@ -45,7 +45,7 @@ pub trait Alternative<Rhs>: RequestContent
 where
     Rhs: RequestContent,
 {
-    /// Fails to evaluate when the two media types coincide by value.
+    /// Fails to evaluate when the two sides are offered the same requests.
     ///
     /// A pair of distinct body types keeps the default. A
     /// [`Binary<M>`](Binary) beside another body is the one pair its types
@@ -53,23 +53,107 @@ where
     /// type, so its implementations compare the two. `OneOf` evaluates this
     /// wherever it is used, so such a pair fails the build that instantiates
     /// it rather than the description of its route.
+    ///
+    /// A marker parameter that the other body refuses keeps the pair: beside
+    /// [`Text`], `text/plain; charset=iso-8859-1` is offered the Latin-1
+    /// requests `Text` turns away.
     const DISTINCT: () = ();
 }
 
-/// Refuses, in the constant evaluation calling it, a marker naming `body`'s
-/// media type.
+/// Refuses, in the constant evaluation calling it, a marker offered exactly
+/// the requests `body` is.
 const fn distinct(marker: &str, body: &str) {
     assert!(
-        !same_essence(marker, body),
-        "a `Binary` marker names the media type of the body beside it in `OneOf`"
+        !same_requests(marker, body),
+        "a `Binary` marker is offered the same requests as the body beside it in `OneOf`"
     );
 }
 
-/// Whether two media types share a type and subtype, compared as
-/// [`offers`](super::offers) compares them: ignoring ASCII case, parameters
-/// and surrounding whitespace.
-pub(super) const fn same_essence(left: &str, right: &str) -> bool {
-    let (left, right) = (essence(left.as_bytes()), essence(right.as_bytes()));
+/// Whether [`offers`](super::offers) hands a marker exactly the requests it
+/// hands `body`, a codec's own parameterless media type.
+///
+/// True when the two share a type and subtype, ignoring ASCII case and
+/// surrounding whitespace, and every parameter the marker declares is one a
+/// request may already carry to `body`: `charset=utf-8`, or a parameter the
+/// codec reads. A structured suffix is a different subtype.
+pub(super) const fn same_requests(marker: &str, body: &str) -> bool {
+    let (essence, mut parameters) = split_essence(marker.as_bytes());
+    if !eq_ignore_ascii_case(essence, split_essence(body.as_bytes()).0) {
+        return false;
+    }
+    while !parameters.is_empty() {
+        let (parameter, rest) = split_at_byte(parameters, b';');
+        if !carried_to_codec(essence, parameter) {
+            return false;
+        }
+        parameters = rest;
+    }
+    true
+}
+
+/// A media type's trimmed type and subtype, and the parameters after them.
+const fn split_essence(media_type: &[u8]) -> (&[u8], &[u8]) {
+    let (essence, parameters) = split_at_byte(media_type, b';');
+    (essence.trim_ascii(), parameters)
+}
+
+/// The bytes before the first `byte`, and those after it.
+const fn split_at_byte(bytes: &[u8], byte: u8) -> (&[u8], &[u8]) {
+    let mut end = 0;
+    while end < bytes.len() && bytes[end] != byte {
+        end += 1;
+    }
+    let (before, after) = bytes.split_at(end);
+    match after {
+        [_, rest @ ..] => (before, rest),
+        [] => (before, after),
+    }
+}
+
+/// Whether a request may carry a marker's declared `parameter` to the codec
+/// owning `essence` too, as `parameters_are_acceptable` decides; one without
+/// `=` widens nothing, since a request's own such parameter is refused.
+const fn carried_to_codec(essence: &[u8], parameter: &[u8]) -> bool {
+    let (name, value) = split_at_byte(parameter, b'=');
+    if name.len() == parameter.len() {
+        return true;
+    }
+    let name = name.trim_ascii();
+    if eq_ignore_ascii_case(name, b"charset") && eq_ignore_ascii_case(unquote(value), b"utf-8") {
+        return true;
+    }
+    let mut codec = 0;
+    while codec < super::CODEC_PARAMETERS.len() {
+        let (media_type, read) = super::CODEC_PARAMETERS[codec];
+        if eq_ignore_ascii_case(media_type.as_bytes(), essence) {
+            let mut at = 0;
+            while at < read.len() {
+                if eq_ignore_ascii_case(read[at].as_bytes(), name) {
+                    return true;
+                }
+                at += 1;
+            }
+        }
+        codec += 1;
+    }
+    false
+}
+
+/// A parameter value trimmed and stripped of its quotes, as `parameter`
+/// reads it.
+const fn unquote(value: &[u8]) -> &[u8] {
+    let mut value = value.trim_ascii();
+    while let [b'"', rest @ ..] = value {
+        value = rest;
+    }
+    while let [rest @ .., b'"'] = value {
+        value = rest;
+    }
+    value
+}
+
+/// Byte-wise ASCII case-insensitive equality, usable in a constant.
+const fn eq_ignore_ascii_case(left: &[u8], right: &[u8]) -> bool {
     if left.len() != right.len() {
         return false;
     }
@@ -81,15 +165,6 @@ pub(super) const fn same_essence(left: &str, right: &str) -> bool {
         at += 1;
     }
     true
-}
-
-/// A media type's type and subtype, trimmed.
-const fn essence(media_type: &[u8]) -> &[u8] {
-    let mut end = 0;
-    while end < media_type.len() && media_type[end] != b';' {
-        end += 1;
-    }
-    media_type.split_at(end).0.trim_ascii()
 }
 
 // No `Binary<A>`/`Binary<B>` pair: any impl admitting it would also admit

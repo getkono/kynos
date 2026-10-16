@@ -48,44 +48,85 @@ fn the_marker_chooses_the_content_key() {
     assert!(bytes.content.contains_key("application/octet-stream"));
 }
 
-/// A `Binary` marker beside another body is refused exactly when a request
-/// naming the marker's type and subtype would also be offered to that body,
-/// so the comparison follows `offers`: case, parameters and surrounding
-/// whitespace aside, and a structured suffix still a different subtype.
+/// A `Binary` marker beside another body is refused exactly when `offers`
+/// hands the two the same requests: case and surrounding whitespace aside, a
+/// parameter a request may already carry to the body adds nothing, one the
+/// body refuses keeps the marker reachable, and a structured suffix is a
+/// different subtype.
 #[test]
-fn a_marker_shares_a_media_type_by_type_and_subtype() {
-    use crate::extract::body::{alternative::same_essence, offers};
+fn a_marker_is_refused_only_where_it_is_offered_its_partners_requests() {
+    use crate::extract::body::{alternative::same_requests, offers};
     use crate::http::{HeaderMap, HeaderValue, header};
 
-    for (marker, body, shared) in [
+    let pairs = [
         ("application/json", "application/json", true),
         ("Application/JSON", "application/json", true),
         ("application/json; charset=utf-8", "application/json", true),
-        (" application/json ;q=1", "application/json", true),
-        ("text/plain", "text/plain; charset=utf-8", true),
+        (
+            "application/json;charset=\"UTF-8\";",
+            "application/json",
+            true,
+        ),
+        (" application/json ; flag", "application/json", true),
+        (" application/json ;q=1", "application/json", false),
+        ("application/json; version=2", "application/json", false),
+        ("text/plain", "text/plain", true),
+        ("text/plain; charset=iso-8859-1", "text/plain", false),
         ("application/vnd.x+json", "application/json", false),
         ("application/jsonl", "application/json", false),
         ("application/json-seq", "application/json", false),
         ("image/png", "application/json", false),
-    ] {
+    ];
+    #[cfg(feature = "multipart")]
+    let pairs = pairs.into_iter().chain([(
+        "multipart/form-data; boundary=x",
+        "multipart/form-data",
+        true,
+    )]);
+
+    for (marker, body, refused) in pairs {
         assert_eq!(
-            same_essence(marker, body),
-            shared,
+            same_requests(marker, body),
+            refused,
             "`{marker}` beside `{body}`"
         );
 
+        // Held to `offers`: a probe the marker's own value or a charset
+        // reaches tells the two apart exactly when the pair is kept.
         let essence = marker.split(';').next().unwrap_or(marker).trim();
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::CONTENT_TYPE,
-            HeaderValue::from_str(essence).expect("a header value"),
-        );
-        assert_eq!(
-            offers(&headers, body),
-            shared,
-            "`{essence}` offered to `{body}`"
-        );
+        let probes = [
+            marker.to_owned(),
+            body.to_owned(),
+            format!("{essence}; charset=utf-8"),
+            format!("{essence}; charset=iso-8859-1"),
+        ];
+        let agree = probes.iter().all(|probe| {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_str(probe).expect("a header value"),
+            );
+            offers(&headers, marker) == offers(&headers, body)
+        });
+        assert_eq!(agree, refused, "`offers` on `{marker}` beside `{body}`");
     }
+}
+
+/// A marker whose charset `Text` refuses still builds beside it, and both
+/// keys are described.
+#[test]
+fn a_latin_1_marker_stays_an_alternative_to_text() {
+    use crate::extract::body::{OneOf, text::Text};
+
+    struct Latin1;
+    impl crate::http::media::MediaType for Latin1 {
+        const MEDIA_TYPE: &'static str = "text/plain; charset=iso-8859-1";
+    }
+
+    let body = OneOf::<Text, Binary<Latin1>>::request_body(&mut Registry::default());
+
+    assert!(body.content.contains_key("text/plain"));
+    assert!(body.content.contains_key("text/plain; charset=iso-8859-1"));
 }
 
 /// The documented remedy for a variable number of uploads has to compile.
