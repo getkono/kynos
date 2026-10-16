@@ -230,16 +230,14 @@ async fn serve(directory: &Directory, request: &Request) -> Response {
         return refused;
     }
 
-    if let (Some(tag), Some(field)) = (
-        headers.etag.as_deref(),
-        request.headers().get(header::IF_NONE_MATCH),
-    ) {
-        if crate::http::etag::matches(field, tag) {
-            let mut response = Response::new(crate::http::body::Body::empty());
-            *response.status_mut() = StatusCode::NOT_MODIFIED;
-            crate::extract::params::header::write(response.headers_mut(), &headers);
-            return response;
-        }
+    // Section 13.1.2, over every field line. The file was located, so a
+    // tagless one is still named by `*`.
+    if crate::http::etag::if_none_match(request.headers(), || headers.etag.as_deref()) == Some(true)
+    {
+        let mut response = Response::new(crate::http::body::Body::empty());
+        *response.status_mut() = StatusCode::NOT_MODIFIED;
+        crate::extract::params::header::write(response.headers_mut(), &headers);
+        return response;
     }
 
     // Section 14.2: `Range` is evaluated only once the 412 and 304 are ruled out.
