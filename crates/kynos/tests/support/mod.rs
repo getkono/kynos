@@ -201,7 +201,7 @@ pub(crate) struct Pending<'a, C> {
 }
 
 impl<C: 'static> Pending<'_, C> {
-    /// Adds one request header.
+    /// Adds one request field line; a repeated name adds another line.
     #[must_use]
     pub(crate) fn header(mut self, name: &str, value: &str) -> Self {
         self.headers.push((
@@ -239,7 +239,7 @@ impl<C: 'static> Pending<'_, C> {
         *request.method_mut() = self.method;
         *request.uri_mut() = self.target.parse().expect("a usable request target");
         for (name, value) in self.headers {
-            request.headers_mut().insert(name, value);
+            request.headers_mut().append(name, value);
         }
 
         let response = self.service.call(request).await;

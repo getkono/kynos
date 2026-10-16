@@ -242,6 +242,32 @@ async fn a_list_of_tags_matches_on_any_member() {
     );
 }
 
+/// Two `If-None-Match` field lines are one list, so a match on the second
+/// names the current representation.
+///
+/// RFC 9110 section 5.3: a recipient may combine field lines of a list-based
+/// field into one value, so reading only the first would send bytes the client
+/// already holds.
+#[tokio::test]
+async fn if_none_match_reads_every_field_line() {
+    let service = served().build(()).expect("a describable router");
+
+    let etag = get(&service, "/static/css/app.css")
+        .call()
+        .await
+        .field(header::ETAG.as_str())
+        .expect("an entity tag");
+
+    let reply = get(&service, "/static/css/app.css")
+        .header("if-none-match", "\"other\"")
+        .header("if-none-match", &etag)
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::NOT_MODIFIED);
+    assert!(reply.body.is_empty());
+}
+
 // --- Byte ranges ----------------------------------------------------------
 
 /// The stylesheet, whole. Every range case below is an offset into this.
@@ -860,6 +886,27 @@ mod directory {
 
         assert_eq!(second.status, StatusCode::NOT_MODIFIED);
         assert!(second.body.is_empty());
+    }
+
+    /// Every `If-None-Match` field line is read, as for an embedded set.
+    #[tokio::test]
+    async fn if_none_match_reads_every_field_line() {
+        let service = served().build(()).expect("a buildable router");
+
+        let etag = get(&service, "/files/css/app.css")
+            .call()
+            .await
+            .field(kynos::http::header::ETAG.as_str())
+            .expect("an entity tag");
+
+        let reply = get(&service, "/files/css/app.css")
+            .header("if-none-match", "\"other\"")
+            .header("if-none-match", &etag)
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::NOT_MODIFIED);
+        assert!(reply.body.is_empty());
     }
 
     // --- Byte ranges -------------------------------------------------------

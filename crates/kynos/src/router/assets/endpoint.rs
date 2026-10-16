@@ -322,17 +322,16 @@ impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
         }
 
         // RFC 9110 section 13.1.2, against the tag of the representation this
-        // request would receive, not one the client may no longer decode.
-        if let Some(field) = request.headers().get(header::IF_NONE_MATCH) {
-            if etag::matches(field, chosen.etag) {
-                let mut response = Response::new(crate::http::body::Body::empty());
-                *response.status_mut() = StatusCode::NOT_MODIFIED;
-                crate::extract::params::header::write(
-                    response.headers_mut(),
-                    &self.headers(&chosen).not_modified(),
-                );
-                return response;
-            }
+        // request would receive, not one the client may no longer decode, and
+        // over every field line, since section 5.3 makes them one list.
+        if etag::if_none_match(request.headers(), || Some(chosen.etag)) == Some(true) {
+            let mut response = Response::new(crate::http::body::Body::empty());
+            *response.status_mut() = StatusCode::NOT_MODIFIED;
+            crate::extract::params::header::write(
+                response.headers_mut(),
+                &self.headers(&chosen).not_modified(),
+            );
+            return response;
         }
 
         // Section 14.2: `Range` only once a 200 is owed, guarded by the chosen
