@@ -56,15 +56,20 @@ struct Stored {
 }
 
 impl StoredResponse {
-    /// Records a response and what selected it.
+    /// Records a response varying on `vary`, selected by `request`'s values
+    /// for those fields.
     pub(super) fn new(
         status: StatusCode,
         headers: HeaderMap,
         body: bytes::Bytes,
         vary: Vec<String>,
-        selecting: Vec<Option<HeaderValue>>,
+        request: &HeaderMap,
         freshness: Duration,
     ) -> Self {
+        let selecting = vary
+            .iter()
+            .map(|name| request.get(name.as_str()).cloned())
+            .collect();
         Self(Arc::new(Stored {
             status,
             headers,
