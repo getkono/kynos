@@ -21,8 +21,9 @@ env:
   CARGO_INCREMENTAL: 0
   NEXTEST_PROFILE: ci
 
-# Between them these jobs run every task in `mise run check`; `cost.yml` and
-# `mutants.yml` run the slower ones. Keep each task in exactly one job.
+# What every pull request waits on, kept narrow. `full.yml` runs the rest of
+# `mise run check` and the slower checks; between the two, each task runs in
+# exactly one job.
 jobs:
   lint:
     name: Lint
@@ -38,11 +39,6 @@ jobs:
         run: mise run format:check
       - name: Lint
         run: mise run lint
-      # Further Clippy passes share this job's dependency cache.
-      - name: Lint at baseline features
-        run: mise run lint:baseline
-      - name: Lint at each codec's feature set
-        run: mise run lint:codecs
       # The gates below compile nothing, so they need no cache of their own.
       - name: Verify the vendored specifications
         run: mise run references:verify
@@ -73,20 +69,9 @@ jobs:
         uses: ./.github/actions/setup
         with:
           cargo-cache-key: test
-      # The instrumented run is the test of record; `ui` cannot run under it.
-      - name: Run tests under coverage
-        run: mise run coverage:ci
-      - name: Run the compile-fail suite
-        run: mise run ui:check
-      - name: Add coverage summary
-        run: cat coverage-summary.txt >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload coverage artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage-report
-          path: |
-            lcov.info
-            coverage-summary.txt
+      # Uninstrumented, and with the `ui` suite; `full.yml` measures coverage.
+      - name: Run tests
+        run: mise run test
 
   docs:
     name: Documentation
@@ -104,113 +89,6 @@ jobs:
       - name: Build documentation
         run: mise run docs:check
 
-  features:
-    name: Feature matrix
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-      - name: Set up
-        uses: ./.github/actions/setup
-        with:
-          cargo-cache-key: features
-      # Test builds run before `features:check`, which rewrites manifests and
-      # strips dev-dependencies while it walks.
-      - name: Test at baseline features
-        run: mise run test:baseline
-      - name: Test kynos-openapi with arbitrary_precision forced on
-        run: mise run test:arbitrary-precision
-      - name: Check every feature combination
-        run: mise run features:check
-      - name: Check every target at each feature
-        run: mise run features:targets
-      - name: Check panic recovery gating
-        run: mise run panic:check
-
-  # Compiles the non-Linux `cfg` arms and runs the suite, which holds each OS's
-  # emission to the same committed corpus.
-  portability:
-    name: Tests (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - windows-latest
-          - macos-latest
-    runs-on: ${{ matrix.os }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-      # `rust-cache` keys on the OS itself.
-      - name: Set up
-        uses: ./.github/actions/setup
-        with:
-          cargo-cache-key: portability
-      - name: Run tests
-        run: mise run test
-
-  msrv:
-    name: MSRV
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-      - name: Set up
-        uses: ./.github/actions/setup
-        with:
-          cargo-cache-key: msrv
-      - name: Check the declared MSRV
-        run: mise run msrv:check
-
-  semver:
-    name: API compatibility
-    runs-on: ubuntu-latest
-    # Advisory before 1.0 (docs/nfr.md): a break goes to the job summary and
-    # passes; no verdict at all fails. Not `continue-on-error`, which still
-    # marks the check run red.
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-      - name: Set up
-        uses: ./.github/actions/setup
-        with:
-          cargo-cache-key: semver
-      - name: Compare the public API against the last published release
-        run: |
-          set -o pipefail
-          mise run semver:check 2>&1 | tee semver.log || true
-
-          # `CARGO_TERM_COLOR: always` puts escapes inside the verdict line.
-          sed -r 's/\x1b\[[0-9;]*m//g' semver.log > semver.txt
-
-          if grep -q 'Summary semver requires new major version' semver.txt; then
-            verdict=broken
-          elif grep -q 'Summary no semver update required' semver.txt; then
-            verdict=clean
-          else
-            echo "::error::cargo-semver-checks produced no verdict; treating as a job failure"
-            exit 1
-          fi
-
-          {
-            echo "## API compatibility against the last published release"
-            echo
-            if [ "$verdict" = clean ]; then
-              echo "No break against the published baseline."
-            else
-              echo "Breaks against the published baseline, listed below."
-              echo
-              echo "Pre-1.0, a minor bump is how a break is declared, so this is"
-              echo "evidence for the release review rather than a failure of this"
-              echo "pull request."
-            fi
-            echo
-            echo '```'
-            grep -E '^(--- failure|Failed in:|  [a-z]|[[:space:]]+Summary )' semver.txt \
-              | sed "s#$GITHUB_WORKSPACE/##g"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
   # Its own job: the one gate that can turn red with no change here, when a new
   # advisory names something locked. It blocks; waivers live in `deny.toml`.
   deny:
@@ -224,19 +102,6 @@ jobs:
         uses: ./.github/actions/setup
       - name: Check advisories, licences, bans and sources
         run: mise run deny:check
-
-  package:
-    name: Package
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-      # No cache: `cargo package` builds pristine extractions under
-      # `target/package/`, which `rust-cache` neither keys nor prunes.
-      - name: Set up
-        uses: ./.github/actions/setup
-      - name: Package every crate
-        run: mise run publish:check
 
   commits:
     name: Conventional commits
