@@ -401,10 +401,16 @@ where
     }
 }
 
+/// A body beside a nested `OneOf` is an alternative to each of its sides.
 impl<L, R, N> Alternative<N> for OneOf<L, R>
 where
-    L: Alternative<R>,
-    R: RequestContent,
+    L: Alternative<R> + Alternative<N>,
+    R: Alternative<N>,
     N: RequestContent,
 {
+    const DISTINCT: () = {
+        let () = <L as Alternative<R>>::DISTINCT;
+        let () = <L as Alternative<N>>::DISTINCT;
+        let () = <R as Alternative<N>>::DISTINCT;
+    };
 }
