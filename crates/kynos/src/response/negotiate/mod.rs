@@ -61,12 +61,18 @@ pub struct Accept<T> {
 impl<T> Accept<T> {
     /// Parses an `Accept` field value for tests and non-server integrations.
     ///
-    /// An absent field is represented by `"*/*"`. Invalid quality values are
-    /// rejected as malformed headers.
+    /// An absent field is represented by `"*/*"`. Empty list elements are
+    /// ignored (RFC 9110 section 5.6.1.2), so a field holding nothing else
+    /// accepts no representation. Invalid quality values are rejected as
+    /// malformed headers.
     pub fn parse(value: &str) -> Result<Self, NegotiationRejection> {
         let mut preferences = Vec::new();
         for (order, item) in value.split(',').enumerate() {
-            let mut segments = item.trim().split(';');
+            let item = item.trim();
+            if item.is_empty() {
+                continue;
+            }
+            let mut segments = item.split(';');
             let range = segments.next().unwrap_or_default().trim();
             let Some((type_, subtype)) = range.split_once('/') else {
                 return Err(invalid_accept());
@@ -200,7 +206,7 @@ impl<C: Sync, T: Send> FromRequestParts<C> for Accept<T> {
         let mut values = parts.headers.get_all(crate::http::header::ACCEPT).iter();
 
         // RFC 9110 12.5.1: no `Accept` accepts anything; a present but empty
-        // field is malformed.
+        // field is an empty list, which accepts nothing.
         let Some(first) = values.next() else {
             return Self::parse("*/*");
         };
