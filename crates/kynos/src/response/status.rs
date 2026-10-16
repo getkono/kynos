@@ -201,12 +201,11 @@ fn location_header(description: &str) -> kynos_openapi::Header {
 ///   unchanged, or `None` if it is a `$ref`, which this may not overwrite.
 /// * The body's 200 is moved to the wrapper's status with the wrapper's
 ///   description; a `$ref` 200 is left in place.
-/// * With no 200, a body declaring exactly one response has its
-///   representation carried over by [`sole_representation`], since that is
-///   all it can send; otherwise the wrapper's response is empty.
+/// * With no 200, the one response a body sends under the wrapper's status
+///   has its representation carried over by [`sole_representation`];
+///   otherwise the wrapper's response is empty.
 ///
-/// A body's other statuses stay in the set, even though the wrapper re-keys
-/// everything it sends.
+/// A body's other statuses stay in the set; its 4xx and 5xx go out unchanged.
 fn body_response(
     description: &str,
     status: u16,
@@ -246,14 +245,16 @@ fn body_response(
     })
 }
 
-/// The representations a body declares, when it declares exactly one response
-/// and that response carries any.
+/// The representations of the one response a body declares outside 4xx and
+/// 5xx, which keep their own status, if it carries any.
 ///
-/// `None` for a second response even if it has no content, since it too is
-/// sent under the wrapper's status, and for a `$ref`. A `default` counts as
-/// the one response; a wildcard such as `4XX` does not.
+/// `None` for a second such response even if bodiless, and for a `$ref`. A
+/// `default` counts as the one response; a `2XX` wildcard does not.
 fn sole_representation(body: &kynos_openapi::Responses) -> Option<&kynos_openapi::Response> {
-    let mut keyed = body.responses.iter();
+    let mut keyed = body
+        .responses
+        .iter()
+        .filter(|(key, _)| !key.starts_with(['4', '5']));
 
     let sole = match (body.default_response.as_ref(), keyed.next()) {
         (Some(default), None) => default,
@@ -272,11 +273,7 @@ fn sole_representation(body: &kynos_openapi::Responses) -> Option<&kynos_openapi
         return None;
     };
 
-    if sole.content.is_empty() {
-        return None;
-    }
-
-    Some(sole)
+    (!sole.content.is_empty()).then_some(sole)
 }
 
 /// What each redirect status tells a client, as RFC 9110 defines it.
