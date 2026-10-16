@@ -125,7 +125,7 @@ struct FilePath {
     name: String,
 }
 
-#[allow(clippy::unused_async)]
+#[allow(clippy::unused_async, dead_code)]
 #[kynos::get("/files/{name}/raw")]
 async fn file(Path(_): Path<FilePath>) {}
 
