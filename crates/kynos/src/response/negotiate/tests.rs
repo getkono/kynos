@@ -4,7 +4,10 @@ use crate::{
         FromRequestParts,
         body::{binary::Binary, text::Text},
     },
-    http::{HeaderValue, header, media::Pdf},
+    http::{
+        HeaderValue, header,
+        media::{Html, Pdf},
+    },
     response::{
         IntoResponse,
         negotiate::{Accept, representation::Representation},
@@ -42,6 +45,25 @@ fn accept_uses_first_offered_representation_to_break_ties() {
         .expect("a representation matches");
 
     assert_eq!(accepted, 0);
+}
+
+/// An offer's parameters are not part of its subtype (RFC 9110 section
+/// 12.5.1), so `text/html; charset=utf-8` matches a `text/html` range rather
+/// than only `*/*`.
+#[test]
+fn an_offer_carrying_parameters_matches_its_type_and_subtype() {
+    for value in [
+        "text/html",
+        "TEXT/HTML",
+        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    ] {
+        let accepted = Accept::<(Text, Binary<Html>)>::parse(value)
+            .expect("valid Accept header")
+            .choose::<(Text, Binary<Html>)>()
+            .ok();
+
+        assert_eq!(accepted, Some(1), "{value:?} did not choose the HTML offer");
+    }
 }
 
 #[test]
