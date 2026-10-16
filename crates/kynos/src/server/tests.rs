@@ -632,6 +632,72 @@ async fn http1_serves_and_shuts_down_over_a_real_socket() {
         .expect("server exits cleanly");
 }
 
+/// One configured server serves two connections from one built service while
+/// the caller holds a reference of its own: each connection shares the
+/// service while it runs and releases it when it ends, so the last reference
+/// drops where the caller drops it, never inside a connection's final poll.
+#[cfg(feature = "http1")]
+#[tokio::test]
+async fn one_server_serves_two_connections_from_a_service_the_caller_shares() {
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    let server = crate::server::Server::new(test_service());
+    let held = Arc::clone(&server.service);
+    let peer = "192.0.2.1:50000".parse().expect("a socket address");
+
+    let mut clients = Vec::new();
+    let mut connections = Vec::new();
+    for _ in 0..2 {
+        let (client, io) = tokio::io::duplex(4096);
+        clients.push(client);
+        connections.push(tokio::spawn(
+            server
+                .serve_io(io, peer)
+                .expect("the default configuration is accepted"),
+        ));
+    }
+    assert_eq!(
+        Arc::strong_count(&held),
+        4,
+        "the server, the caller and each running connection hold the service"
+    );
+
+    for client in &mut clients {
+        client
+            .write_all(b"GET / HTTP/1.1\r\nhost: example\r\nconnection: close\r\n\r\n")
+            .await
+            .expect("the request is written");
+    }
+    for client in &mut clients {
+        let mut response = String::new();
+        client
+            .read_to_string(&mut response)
+            .await
+            .expect("the response is read");
+        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+        assert!(response.ends_with("ok"), "{response}");
+    }
+    for connection in connections {
+        connection
+            .await
+            .expect("the connection task joins")
+            .expect("the connection ends cleanly");
+    }
+
+    assert_eq!(
+        Arc::strong_count(&held),
+        2,
+        "a finished connection releases its reference"
+    );
+    drop(server);
+    assert_eq!(
+        Arc::strong_count(&held),
+        1,
+        "the caller's reference outlives the server and every connection"
+    );
+}
+
 #[cfg(feature = "http1")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shutdown_closes_listeners_while_an_http1_request_drains() {
