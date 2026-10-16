@@ -745,6 +745,20 @@ async fn tagged_status(fields: &[(HeaderName, &str)]) -> StatusCode {
         .status()
 }
 
+/// A `*` line beside a tag line matches by itself, so an untagged
+/// representation still answers 304 where the tag line alone would not.
+#[tokio::test]
+async fn a_star_line_beside_a_tag_line_matches_by_itself() {
+    assert_eq!(
+        untagged_status(&[
+            (header::IF_NONE_MATCH, "\"a\""),
+            (header::IF_NONE_MATCH, "*"),
+        ])
+        .await,
+        StatusCode::NOT_MODIFIED
+    );
+}
+
 /// Section 5.3: two `If-None-Match` lines are one list, so a tag on the second
 /// line matches as surely as one on the first.
 #[tokio::test]

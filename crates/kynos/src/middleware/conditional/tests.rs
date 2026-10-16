@@ -137,6 +137,26 @@ fn every_if_none_match_line_is_read() {
     assert!(matched(&read.expect("a precondition"), &current));
 }
 
+/// A `*` line among tag lines makes the whole condition `Any`, whatever line
+/// came before it.
+#[test]
+fn a_star_line_beside_a_tag_line_reads_as_any() {
+    let mut request = HeaderMap::new();
+    for line in ["\"a\"", "*"] {
+        request.append(
+            header::IF_NONE_MATCH,
+            HeaderValue::from_str(line).expect("a printable field"),
+        );
+    }
+
+    assert_eq!(
+        Preconditions::decode(&request)
+            .expect("decoding a precondition never fails")
+            .if_none_match,
+        Some(IfNoneMatch::Any)
+    );
+}
+
 #[test]
 fn a_list_of_tags_is_read_as_a_list() {
     assert_eq!(
