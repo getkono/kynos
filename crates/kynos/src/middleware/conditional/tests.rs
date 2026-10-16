@@ -110,6 +110,33 @@ fn a_wildcard_precondition_is_read_as_one() {
     assert_eq!(precondition("*").if_none_match, Some(IfNoneMatch::Any));
 }
 
+/// RFC 9110 section 5.3: two `If-None-Match` lines are one list, so a tag on
+/// the second line is read as surely as one on the first.
+#[test]
+fn every_if_none_match_line_is_read() {
+    let mut request = HeaderMap::new();
+    for line in ["\"a\"", "\"b\""] {
+        request.append(
+            header::IF_NONE_MATCH,
+            HeaderValue::from_str(line).expect("a printable field"),
+        );
+    }
+
+    let read = Preconditions::decode(&request)
+        .expect("decoding a precondition never fails")
+        .if_none_match;
+    assert_eq!(
+        read,
+        Some(IfNoneMatch::Tags(vec![
+            "\"a\"".to_owned(),
+            "\"b\"".to_owned()
+        ]))
+    );
+
+    let current = headers(&[(&header::ETAG, "\"b\"")]);
+    assert!(matched(&read.expect("a precondition"), &current));
+}
+
 #[test]
 fn a_list_of_tags_is_read_as_a_list() {
     assert_eq!(
