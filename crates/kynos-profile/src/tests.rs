@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::convert::Infallible;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use bytes::Bytes;
@@ -479,6 +480,33 @@ fn every_connection_row_is_answered_over_its_wire_and_closes_cleanly() {
             .unwrap_or_else(|error| panic!("{} ended with {error}", scenario.name));
         assert_eq!(open.status(), scenario.expected, "{}", scenario.name);
     }
+}
+
+/// A connection row's region ends with the connection, not with the service:
+/// the service, and the document it holds, outlive `Open::serve` and are
+/// released only where the `Open` is dropped, in teardown, as the in-process
+/// rows drop theirs.
+#[test]
+fn a_connection_row_releases_its_service_only_when_dropped_after_its_region() {
+    let held = Arc::new(());
+    let service = Router::<Arc<()>>::new()
+        .build(Arc::clone(&held))
+        .expect("an empty router builds");
+    let connected = connected("conn-h1-plaintext");
+    let runner = connected.scenario.driver.runner();
+    let mut open = connected.open_over(Box::new(service), &runner);
+    open.serve(&runner).expect("the connection closes cleanly");
+    assert_eq!(
+        Arc::strong_count(&held),
+        2,
+        "the service outlives the connection's region"
+    );
+    drop(open);
+    assert_eq!(
+        Arc::strong_count(&held),
+        1,
+        "dropping the opened connection releases the service"
+    );
 }
 
 /// The chunked row differs from its base in framing alone: the same request,

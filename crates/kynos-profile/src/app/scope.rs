@@ -200,11 +200,11 @@ impl Served for Subscribed {
     }
 
     fn connect(self: Box<Self>, io: DuplexStream, peer: SocketAddr) -> Connecting {
-        Box::pin(
-            Box::new(self.service)
-                .connect(io, peer)
-                .with_subscriber(Discarding),
-        )
+        let Connecting { future, server } = Box::new(self.service).connect(io, peer);
+        Connecting {
+            future: Box::pin(future.with_subscriber(Discarding)),
+            server,
+        }
     }
 }
 

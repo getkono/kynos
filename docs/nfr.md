@@ -193,11 +193,14 @@ reason; the counts are the first measurement, not a target.
 
 **A request through the server pays for its connection first.**
 `connection_h1.plaintext` sends `plaintext`'s request through
-`Server::serve_io` and counts 49579 program instructions and 28 heap blocks,
-against the in-process row's 2372 and 9 on the same host. A second request on
-that connection once kept alive (`connection_h1.second`) counts 47142 and 11,
-so of the nineteen blocks between the first two rows seventeen are the
-connection's, paid on its first request only: hyper's read buffer (two blocks,
+`Server::serve_io` and counts 14205 program instructions and 28 heap blocks,
+against the in-process row's 2432 and 9 on the same host. Like the in-process
+row, it leaves the service and its document to be dropped in teardown: the
+server is held beside the connection's future, so the connection's end
+releases only its share. A second request on that connection once kept alive
+(`connection_h1.second`) counts 11672 and 11, so of the nineteen blocks
+between the first two rows seventeen are the connection's, paid on its first
+request only: hyper's read buffer (two blocks,
 24 KiB), its 8 KiB write buffer and its write queue, its dispatcher and the
 boxed `service_fn`, the two timer handles `serve_http`'s builder gives each
 protocol, the prefix hyper-util replays after sniffing the protocol, the
@@ -208,7 +211,7 @@ off the read buffer and the parsed header map's two. Two are every request's:
 `Body::from_incoming`'s box and the `Connection` extension's own box — the
 extension map's first allocation moves from `Routed` to it rather than being
 added. The instructions do not split that way: the second request executes
-only 2437 fewer than the first, so the server path's instruction cost is
+only 2533 fewer than the first, so the server path's instruction cost is
 nearly all paid per request. A second HTTP/2 stream on an open connection
 (`connection_h2.second`) counts 14 blocks where a connection carrying one
 stream counts 41, and a chunked body one block more than a `content-length`
