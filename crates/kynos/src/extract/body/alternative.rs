@@ -57,6 +57,41 @@ where
     /// A marker parameter that the other body refuses keeps the pair: beside
     /// [`Text`], `text/plain; charset=iso-8859-1` is offered the Latin-1
     /// requests `Text` turns away.
+    ///
+    /// The refusal holds on each path that reaches the pair on its own:
+    /// describing the route,
+    ///
+    /// ```compile_fail
+    /// use kynos::{
+    ///     extract::{body::{OneOf, binary::Binary, json::Json}, describe::RequestContent},
+    ///     http::media,
+    ///     schema::registry::Registry,
+    /// };
+    ///
+    /// OneOf::<Json<u64>, Binary<media::Json>>::request_body(&mut Registry::new());
+    /// ```
+    ///
+    /// and extracting the body:
+    ///
+    /// ```compile_fail
+    /// use std::{
+    ///     future::Future,
+    ///     pin::pin,
+    ///     task::{Context, Waker},
+    /// };
+    ///
+    /// use kynos::{
+    ///     extract::{FromRequest, body::{OneOf, binary::Binary, json::Json}},
+    ///     http::{Request, media},
+    /// };
+    ///
+    /// let request = Request::new(kynos::http::body::Body::empty());
+    /// let extract = <OneOf<Json<u64>, Binary<media::Json>> as FromRequest<()>>::from_request(
+    ///     request,
+    ///     &(),
+    /// );
+    /// let _ = pin!(extract).poll(&mut Context::from_waker(Waker::noop()));
+    /// ```
     const DISTINCT: () = ();
 }
 

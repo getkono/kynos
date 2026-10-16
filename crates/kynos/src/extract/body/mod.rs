@@ -265,41 +265,6 @@ fn checked<T: Schema>(value: T, at: Pointer<'_>) -> Result<T, BodyRejection> {
 ///
 /// OneOf::<Json<u64>, Binary<media::Json>>::media_types();
 /// ```
-///
-/// The refusal holds on each path that reaches the pair on its own: describing
-/// the route,
-///
-/// ```compile_fail
-/// use kynos::{
-///     extract::{body::{OneOf, binary::Binary, json::Json}, describe::RequestContent},
-///     http::media,
-///     schema::registry::Registry,
-/// };
-///
-/// OneOf::<Json<u64>, Binary<media::Json>>::request_body(&mut Registry::new());
-/// ```
-///
-/// and extracting the body:
-///
-/// ```compile_fail
-/// use std::{
-///     future::Future,
-///     pin::pin,
-///     task::{Context, Waker},
-/// };
-///
-/// use kynos::{
-///     extract::{FromRequest, body::{OneOf, binary::Binary, json::Json}},
-///     http::{Request, media},
-/// };
-///
-/// let request = Request::new(kynos::http::body::Body::empty());
-/// let extract = <OneOf<Json<u64>, Binary<media::Json>> as FromRequest<()>>::from_request(
-///     request,
-///     &(),
-/// );
-/// let _ = pin!(extract).poll(&mut Context::from_waker(Waker::noop()));
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OneOf<L, R> {
     /// The left representation was selected.
