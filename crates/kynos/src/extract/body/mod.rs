@@ -271,10 +271,7 @@ fn checked<T: Schema>(value: T, at: Pointer<'_>) -> Result<T, BodyRejection> {
 ///
 /// ```
 /// use kynos::{
-///     extract::{
-///         body::{OneOf, binary::Binary, json::Json, text::Text},
-///         describe::RequestContent,
-///     },
+///     extract::{body::{OneOf, binary::Binary, json::Json, text::Text}, describe::RequestContent},
 ///     http::media::Pdf,
 ///     schema::registry::Registry,
 /// };
@@ -296,10 +293,7 @@ fn checked<T: Schema>(value: T, at: Pointer<'_>) -> Result<T, BodyRejection> {
 ///
 /// ```compile_fail
 /// use kynos::{
-///     extract::{
-///         body::{OneOf, binary::Binary, json::Json, text::Text},
-///         describe::RequestContent,
-///     },
+///     extract::{body::{OneOf, binary::Binary, json::Json, text::Text}, describe::RequestContent},
 ///     http::media,
 ///     schema::registry::Registry,
 /// };
@@ -399,18 +393,4 @@ where
         }
         body
     }
-}
-
-/// A body beside a nested `OneOf` is an alternative to each of its sides.
-impl<L, R, N> Alternative<N> for OneOf<L, R>
-where
-    L: Alternative<R> + Alternative<N>,
-    R: Alternative<N>,
-    N: RequestContent,
-{
-    const DISTINCT: () = {
-        let () = <L as Alternative<R>>::DISTINCT;
-        let () = <L as Alternative<N>>::DISTINCT;
-        let () = <R as Alternative<N>>::DISTINCT;
-    };
 }
