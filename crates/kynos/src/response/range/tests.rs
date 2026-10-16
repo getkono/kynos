@@ -2,6 +2,8 @@ use super::{
     Range, Ranged, Selection,
     headers::{AcceptRanges, ContentRange},
     rangeable::Rangeable,
+    served::{Conditions, Served},
+    source::InMemory,
     spec::{self, Ignored, MAX_RANGES, Spec},
 };
 use crate::{
@@ -17,6 +19,7 @@ use crate::{
     response::{IntoResponse, Responses},
     schema::registry::Registry,
 };
+use bytes::Bytes;
 
 // --- The oracle ------------------------------------------------------------
 
@@ -677,5 +680,41 @@ fn each_group_writes_a_value_its_own_grammar_admits() {
         .encode()),
         // Section 15.5.17's own worked example.
         "bytes */47022"
+    );
+}
+
+// --- Delivery preconditions ------------------------------------------------
+
+/// The status an untagged ten-octet [`Served`] answers a `GET` carrying
+/// `fields` with.
+async fn untagged_status(fields: &[(HeaderName, &str)]) -> StatusCode {
+    let mut headers = HeaderMap::new();
+    for (name, value) in fields {
+        headers.append(name, HeaderValue::from_str(value).expect("a valid field"));
+    }
+    let conditions = Conditions {
+        method: Method::GET,
+        fields: headers,
+    };
+
+    Served::<_, OctetStream>::new(InMemory::new(Bytes::from_static(b"0123456789")))
+        .deliver(&conditions)
+        .await
+        .expect("an in-memory source cannot fail")
+        .status()
+}
+
+/// Section 13.1.2: `If-None-Match: *` is false wherever a current
+/// representation exists, which a readable length proves with or without an
+/// entity tag. A list of tags still needs a tag to name.
+#[tokio::test]
+async fn an_untagged_representation_answers_any_with_not_modified() {
+    assert_eq!(
+        untagged_status(&[(header::IF_NONE_MATCH, "*")]).await,
+        StatusCode::NOT_MODIFIED
+    );
+    assert_eq!(
+        untagged_status(&[(header::IF_NONE_MATCH, "\"r3\"")]).await,
+        StatusCode::OK
     );
 }
