@@ -26,9 +26,10 @@ its base: what that one variable costs. The catalog is read from the
 
 **Exactness is asserted, not assumed.** `--repeat N` runs the benchmark N
 times and fails (`INEXACT`) when any program or DHAT count differs between
-runs. A group that cannot be exact -- only one whose driver is a runtime could
-be -- is named on the baseline's `# trend:` line: it is reported, never
-compared, against the baseline or across runs.
+runs. A group that cannot be exact, because what it counts reads the wall
+clock or a key the process draws at random, is named on the baseline's
+`# trend:` line: it is reported, never compared, against the baseline or
+across runs.
 
 **Attribution.** Each run also writes `target/gungraun/profile-attribution.md`:
 per benchmark, the top inclusive frames `callgrind_annotate --inclusive=yes`
