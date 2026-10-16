@@ -68,6 +68,13 @@ impl<E: EndpointUri> Link<E> {
     ///
     /// `params` is `()`, the target's `Path<P>` group, its `Query<Q>` group,
     /// or `(P, Q)` when it extracts both.
+    ///
+    /// # Panics
+    ///
+    /// Panics when a path value cannot address the target: an empty one,
+    /// which no variable captures, or one that renders its segment as `.` or
+    /// `..`, which URI resolution removes (RFC 3986 §5.2.4) even when written
+    /// `%2E`. A value taken from a request is the caller's to validate first.
     #[must_use]
     pub fn uri(&self, params: E::Params) -> Uri {
         E::render(self.template, params)

@@ -208,6 +208,29 @@ pub(crate) fn matches(field: &HeaderValue, current: &str) -> bool {
     split(text).any(|candidate| weak_match(candidate, current))
 }
 
+/// Whether a request's `If-None-Match` names a representation tagged
+/// `current`, or `None` where the request carries no `If-None-Match` at all.
+///
+/// Every field line is read, since section 5.3 makes them one list: a line
+/// [that matches](matches) names it. Where `current` is `None` the caller has
+/// established a representation exists without a tag, so only `*` names it.
+/// `current` is called only when the field is present.
+#[must_use]
+pub(crate) fn if_none_match<S: AsRef<str>>(
+    fields: &HeaderMap,
+    current: impl FnOnce() -> Option<S>,
+) -> Option<bool> {
+    let mut lines = fields.get_all(header::IF_NONE_MATCH).iter().peekable();
+    lines.peek()?;
+
+    let current = current();
+    let current = current.as_ref().map(AsRef::as_ref);
+    Some(lines.any(|line| match current {
+        Some(current) => matches(line, current),
+        None => line.to_str().is_ok_and(|text| text.trim() == ANY),
+    }))
+}
+
 /// Whether an `If-Match` `field` holds for a representation tagged `current`,
 /// per RFC 9110 section 13.1.1.
 ///

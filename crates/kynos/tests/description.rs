@@ -40,6 +40,10 @@
 //! The seventh is what a router declares about itself rather than its
 //! operations: its servers, and which router's `info` and `externalDocs` a nest
 //! publishes.
+//!
+//! The eighth is what an interceptor's `Reads` answers with when it cannot be
+//! decoded. The 400 is sent before the interceptor runs, so nothing in its
+//! `Short` names it, and a document that left it out would still validate.
 
 #![cfg(all(feature = "macros", feature = "json"))]
 
@@ -1963,4 +1967,73 @@ fn a_nested_routers_external_docs_are_used_only_when_the_outer_declares_none() {
         external_docs(Router::<()>::new().mount(kynos::routes![alpha])),
         None
     );
+}
+
+// --- What an interceptor's `Reads` answers with -----------------------------
+//
+// A handler's head extractor files its rejection's responses beside its
+// parameters. An interceptor's `Reads` is the same decode with the same
+// `HeaderRejection`, run before the interceptor's body, so it owes the document
+// the same 400 -- and only where the decode can fail at all, since a 400 no
+// request can produce is a promise `tests/matrix.rs` refuses.
+
+/// A header every covered request must send.
+#[derive(kynos::HeaderParams)]
+struct TenantHeader {
+    /// Not an `Option`, so its absence is a rejection.
+    #[header(rename = "X-Tenant")]
+    tenant: String,
+}
+
+/// Reads [`TenantHeader`] and answers with nothing of its own.
+struct Tenant;
+
+impl kynos::middleware::Interceptor<()> for Tenant {
+    type Reads = TenantHeader;
+    type Adds = ();
+    type Short = std::convert::Infallible;
+
+    async fn intercept(
+        &self,
+        request: kynos::http::Request,
+        reads: TenantHeader,
+        context: &(),
+        next: kynos::middleware::Next<'_, ()>,
+    ) -> Result<kynos::middleware::Continued<()>, std::convert::Infallible> {
+        let _ = (context, reads.tenant);
+        Ok(next.run(request).await)
+    }
+}
+
+/// The 400 reaches the operations the interceptor covers, and no other.
+#[test]
+fn an_interceptor_whose_reads_can_fail_declares_its_rejection() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![alpha])
+        .group(
+            Group::<()>::new("/tenanted")
+                .intercept(Tenant)
+                .mount(kynos::routes![beta]),
+        )
+        .openapi()
+        .expect("a describable router");
+
+    assert_eq!(declaring(&document, "400"), paths(&["/tenanted/beta"]));
+}
+
+/// A `Reads` whose decode never fails declares no 400: `()` reads nothing, and
+/// `Preconditions` drops a condition it cannot parse rather than refusing it.
+#[test]
+fn an_interceptor_whose_reads_cannot_fail_declares_no_rejection() {
+    let router = Router::<()>::new().intercept(kynos::middleware::request_id::RequestId::new());
+
+    #[cfg(feature = "cache")]
+    let router = router.intercept(kynos::middleware::conditional::Conditional::new());
+
+    let document = router
+        .mount(kynos::routes![alpha])
+        .openapi()
+        .expect("a describable router");
+
+    assert_eq!(declaring(&document, "400"), BTreeSet::new());
 }

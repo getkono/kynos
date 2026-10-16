@@ -31,6 +31,7 @@ use kynos::{
     openapi,
     response::status::NoContent,
     router::{
+        endpoint::builder::EndpointBuilder,
         group::Group,
         operation::Route,
         policy::{FallbackPolicy, TrailingSlashPolicy},
@@ -934,7 +935,7 @@ async fn only_the_routers_own_interceptors_reach_a_fallback() {
 /// the client the router resolved.
 type Witnessed = (Option<String>, Option<String>);
 
-/// Records what a router-scoped interceptor is handed, and changes nothing.
+/// Records what an interceptor is handed, and changes nothing.
 #[derive(Clone, Default)]
 struct Witness(Arc<Mutex<Vec<Witnessed>>>);
 
@@ -988,4 +989,35 @@ async fn a_fallback_hands_its_interceptors_no_route_and_the_resolved_origin() {
         *witness.0.lock().expect("an unpoisoned record"),
         [(Some("/origin".to_owned()), client.clone()), (None, client)]
     );
+}
+
+/// An endpoint's own interceptor is handed the `paths` key the request matched,
+/// prefix included, as the router's interceptors around it are: a rate-limit
+/// bucket keyed by route must not merge `/users/me` with `/orders/me`.
+#[tokio::test]
+async fn an_endpoint_interceptor_is_handed_the_mounted_paths_key() {
+    let outer = Witness::default();
+    let inner = Witness::default();
+    let endpoint = EndpointBuilder::<(), _, _>::new(
+        openapi::Method::Get,
+        openapi::PathTemplate::parse("/me").expect("a parsable path template"),
+        nothing_at_all,
+    )
+    .intercept(inner.clone());
+    let service = Router::<()>::new()
+        .group(Group::<()>::new("/users").mount(endpoint))
+        .intercept(outer.clone())
+        .build(())
+        .expect("a describable router");
+
+    let reply = get(&service, "/users/me").call().await;
+    assert_eq!(reply.status, StatusCode::NO_CONTENT);
+
+    let routed = [(Some("/users/me".to_owned()), None)];
+    assert_eq!(*outer.0.lock().expect("an unpoisoned record"), routed);
+    assert_eq!(*inner.0.lock().expect("an unpoisoned record"), routed);
+}
+
+async fn nothing_at_all() -> NoContent {
+    NoContent
 }

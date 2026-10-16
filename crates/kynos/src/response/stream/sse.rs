@@ -329,15 +329,31 @@ fn milliseconds(retry: std::time::Duration) -> u128 {
 
 /// Writes one field, one line per line of its value.
 ///
-/// This is how the format carries a newline. An empty `name` writes the
-/// comment form, `: text`.
+/// This is how the format carries a newline. A line ends at CR, LF or CRLF,
+/// as the format's own `end-of-line` does, so no break in `value` reaches
+/// the wire to start a field a client would read on its own. An empty
+/// `name` writes the comment form, `: text`.
 fn field(record: &mut String, name: &str, value: &str) {
-    for line in value.split('\n') {
+    let mut push = |line: &str| {
         record.push_str(name);
         record.push_str(": ");
-        record.push_str(line.strip_suffix('\r').unwrap_or(line));
+        record.push_str(line);
         record.push('\n');
+    };
+
+    let mut rest = value;
+    while let Some(end) = rest.find(['\r', '\n']) {
+        push(&rest[..end]);
+        // A CRLF is one break; a CR anywhere else, the last in the value
+        // included, is a break of its own.
+        let width = if rest[end..].starts_with("\r\n") {
+            2
+        } else {
+            1
+        };
+        rest = &rest[end + width..];
     }
+    push(rest);
 }
 
 impl<S, T, E> IntoResponse for Sse<S>

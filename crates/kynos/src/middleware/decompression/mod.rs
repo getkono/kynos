@@ -17,7 +17,10 @@ use tokio::io::{AsyncRead, ReadBuf};
 use crate::{
     error::problem::{ProblemType, refusal_problem, refusal_response},
     extract::body::limit::BodyLimit,
-    http::{self, body::Body},
+    http::{
+        self,
+        body::{Body, BoxError},
+    },
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
     schema::registry::Registry,
@@ -585,8 +588,18 @@ where
         {
             Collected::Whole(bytes) => bytes,
             // Handed on as it failed, so the extractor refuses it as usual
-            // rather than blaming the coding for a transport failure.
-            Collected::FailedPartWay(body) => {
+            // rather than blaming the coding for a transport failure. A coded
+            // body goes on as only its failure and without its coding: its
+            // octets are not the media type's, and a coding left declared would
+            // be refused as one nothing decoded.
+            Collected::FailedPartWay { arrived, error } => {
+                let arrived = if codings.is_empty() {
+                    arrived
+                } else {
+                    parts.headers.remove(http::header::CONTENT_ENCODING);
+                    Bytes::new()
+                };
+                let body = Body::failed_after(arrived, error);
                 return Ok(next.run(http::Request::from_parts(parts, body)).await);
             }
         };
@@ -625,8 +638,13 @@ where
 enum Collected {
     /// Every byte the body carried.
     Whole(Bytes),
-    /// What arrived before the read failed, then the same failure.
-    FailedPartWay(Body),
+    /// What arrived before the read failed, and that failure.
+    FailedPartWay {
+        /// The octets read before the failure.
+        arrived: Bytes,
+        /// The failure itself.
+        error: BoxError,
+    },
 }
 
 /// Reads `body` while the running total stays within `limit`.
@@ -640,10 +658,10 @@ async fn collect_capped(mut body: Body, limit: u64) -> Result<Collected, Reason>
         let frame = match frame {
             Ok(frame) => frame,
             Err(error) => {
-                return Ok(Collected::FailedPartWay(Body::failed_after(
-                    collected.freeze(),
+                return Ok(Collected::FailedPartWay {
+                    arrived: collected.freeze(),
                     error,
-                )));
+                });
             }
         };
         let Ok(data) = frame.into_data() else {

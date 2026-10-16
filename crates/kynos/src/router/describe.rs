@@ -232,9 +232,13 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         }
     }
 
-    /// Reports every pattern the match table would refuse, so `validate` sees
-    /// what `build` would be refused.
-    fn try_match_table(&self, violations: &mut Vec<Violation>) {
+    /// Reports every pattern the match table would refuse, and every unchecked
+    /// route repeating a declared operation, so `validate` sees what `build`
+    /// would be refused.
+    fn try_match_table(&self, violations: &mut Vec<Violation>)
+    where
+        C: 'static,
+    {
         let mut table = TrialTable::default();
         for mounted in &self.mounted {
             if let Some(error) = table.insert_template(&mounted.path) {
@@ -252,19 +256,76 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 violations.push(error_at("#", error));
             }
         }
+
+        #[cfg(feature = "unchecked")]
+        self.refuse_repeated_unchecked(violations);
+    }
+
+    /// Reports every unchecked method and pattern already declared, by a
+    /// described operation or an earlier unchecked route: dispatch serves the
+    /// first operation for a method, so the repeat is never reached.
+    #[cfg(feature = "unchecked")]
+    fn refuse_repeated_unchecked(&self, violations: &mut Vec<Violation>)
+    where
+        C: 'static,
+    {
+        let mut declared: HashSet<(&str, kynos_openapi::Method)> = self
+            .mounted
+            .iter()
+            .map(|mounted| (mounted.path.as_str(), mounted.endpoint.method()))
+            .collect();
+
+        for route in &self.unchecked.routes {
+            for method in &route.methods {
+                if declared.insert((route.pattern.as_str(), *method)) {
+                    continue;
+                }
+                let described = self.mounted.iter().any(|mounted| {
+                    mounted.path.as_str() == route.pattern && mounted.endpoint.method() == *method
+                });
+                // A repeat of a described operation is located at it; an
+                // unchecked pattern alone has no `paths` key.
+                let location = if described {
+                    format!(
+                        "#/paths/{}/{}",
+                        pointer_token(&route.pattern),
+                        method.as_wire_str().to_lowercase()
+                    )
+                } else {
+                    "#".to_owned()
+                };
+                violations.push(error_at(
+                    location,
+                    SpecError::DuplicateOperation {
+                        method: *method,
+                        path: route.pattern.clone(),
+                    },
+                ));
+            }
+        }
     }
 
     /// Refuses an interceptor configured with a combination it cannot honour;
-    /// today only `Cors` (see [`cors_conflict`]).
+    /// today only `Cors` (see [`cors_conflict`]). Covers every interceptor
+    /// that serves a request: the root's, and those each operation and
+    /// unchecked route was nested under.
     fn refuse_unhonourable_interceptors(&self) -> Result<()>
     where
         C: 'static,
     {
-        for interceptor in self.interceptors.iter().chain(
-            self.mounted
+        let nested = self
+            .mounted
+            .iter()
+            .flat_map(|mounted| &mounted.interceptors);
+        #[cfg(feature = "unchecked")]
+        let nested = nested.chain(
+            self.unchecked
+                .routes
                 .iter()
-                .flat_map(|mounted| &mounted.interceptors),
-        ) {
+                .flat_map(|route| &route.interceptors),
+        );
+
+        for interceptor in self.interceptors.iter().chain(nested) {
             if let Some(conflict) = cors_conflict(interceptor) {
                 return Err(Error::Middleware(conflict));
             }
