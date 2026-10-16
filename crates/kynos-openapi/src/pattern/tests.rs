@@ -92,6 +92,7 @@ fn refusals() -> Vec<(&'static str, &'static str)> {
         (r"\a", "an escape such as `\\a`"),
         (r"\pL", "a one-letter Unicode class"),
         (r"\p{scx:Greek}", "a Unicode class written with `:`"),
+        (r"\p{greek}", "a property ECMA-262 does not spell"),
         ("a**", "a quantifier on a quantifier"),
         (r"\b+", "a quantified assertion"),
         ("[]a]", "a `]` first in a class"),
@@ -139,6 +140,21 @@ fn each_spelling_of_a_refused_construct_is_refused() {
             "(?<\u{345}a>x)",
             "a group name that is not an ECMA-262 identifier",
         ),
+        // ECMA-262 matches a property's name and value exactly, and the engine
+        // loosely; a lone name is a General_Category value or a binary
+        // property, never a script.
+        (r"\p{lu}", "a property ECMA-262 does not spell"),
+        (r"\p{Greek}", "a property ECMA-262 does not spell"),
+        (r"\p{Script=greek}", "a property ECMA-262 does not spell"),
+        (r"\P{script=Greek}", "a property ECMA-262 does not spell"),
+        (r"[\p{Upper_Case}]", "a property ECMA-262 does not spell"),
+        (r"\p{^Lu}", "a property ECMA-262 does not spell"),
+        (r"\p{gc=Any}", "a property ECMA-262 does not spell"),
+        (r"\p{sc=Lu}", "a property ECMA-262 does not spell"),
+        (
+            r"\p{Block=Basic_Latin}",
+            "a property ECMA-262 does not spell",
+        ),
     ] {
         let Err(reason) = translate(pattern) else {
             panic!("`{pattern}` must be refused");
@@ -147,6 +163,29 @@ fn each_spelling_of_a_refused_construct_is_refused() {
             reason.contains(expects),
             "`{pattern}`: expected {expects:?}, got {reason:?}"
         );
+    }
+}
+
+/// Each form ECMA-262 writes a property in, spelled as it spells it.
+#[test]
+fn a_property_ecma_262_spells_is_accepted() {
+    for pattern in [
+        r"\p{Lu}",
+        r"\p{Uppercase_Letter}",
+        r"\p{punct}",
+        r"\p{General_Category=Lu}",
+        r"\p{gc=Cased_Letter}",
+        r"\p{Script=Greek}",
+        r"\p{sc=Grek}",
+        r"\p{Script_Extensions=Zyyy}",
+        r"\P{scx=Hira}",
+        r"\p{ASCII}",
+        r"\p{Any}",
+        r"\p{White_Space}",
+        r"\p{space}",
+        r"[\p{Alpha}\p{ID_Continue}]",
+    ] {
+        assert!(translate(pattern).is_ok(), "`{pattern}` must be accepted");
     }
 }
 
