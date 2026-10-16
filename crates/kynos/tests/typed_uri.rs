@@ -165,6 +165,59 @@ fn dots_inside_a_segment_are_rendered() {
     assert_eq!(file_uri("a..b"), "/files/a..b/raw");
 }
 
+/// The same group under literal text sharing the variable's segment, which
+/// is a dot segment once the value supplies the rest of it.
+#[allow(clippy::unused_async, dead_code)]
+#[kynos::get("/dotfiles/.{name}/raw")]
+async fn dotfile(Path(_): Path<FilePath>) {}
+
+#[allow(clippy::unused_async, dead_code)]
+#[kynos::get("/backups/{name}./raw")]
+async fn backup(Path(_): Path<FilePath>) {}
+
+#[allow(clippy::unused_async, dead_code)]
+#[kynos::get("/escaped/%2E{name}/raw")]
+async fn escaped(Path(_): Path<FilePath>) {}
+
+fn file_path(name: &str) -> FilePath {
+    FilePath {
+        name: name.to_owned(),
+    }
+}
+
+/// `.{name}` with `.` renders `/dotfiles/../raw`, which resolves to `/raw`.
+#[test]
+#[should_panic(expected = "path parameter `name` is `.`, which renders `.{name}` as `..`")]
+fn a_value_completing_a_prefixed_dot_segment_is_refused() {
+    let _ = dotfile::relative_uri(file_path("."));
+}
+
+/// `{name}.` with `.` renders `/backups/../raw`, which resolves to `/raw`.
+#[test]
+#[should_panic(expected = "path parameter `name` is `.`, which renders `{name}.` as `..`")]
+fn a_value_completing_a_suffixed_dot_segment_is_refused() {
+    let _ = backup::relative_uri(file_path("."));
+}
+
+/// A literal `%2E` is decoded before resolution, so `%2E{name}` with `.` is
+/// the dot segment `..` too.
+#[test]
+#[should_panic(expected = "path parameter `name` is `.`, which renders `%2E{name}` as `..`")]
+fn a_value_completing_an_encoded_dot_segment_is_refused() {
+    let _ = escaped::relative_uri(file_path("."));
+}
+
+/// The control: an affixed segment that does not come out as `.` or `..`.
+#[test]
+fn affixed_dots_that_are_not_a_dot_segment_are_rendered() {
+    assert_eq!(
+        dotfile::relative_uri(file_path("env")),
+        "/dotfiles/.env/raw"
+    );
+    assert_eq!(dotfile::relative_uri(file_path("..")), "/dotfiles/.../raw");
+    assert_eq!(backup::relative_uri(file_path("tar")), "/backups/tar./raw");
+}
+
 /// The fixture describes, so `ReportQuery::schema` is a body something runs.
 ///
 /// Without this the schema above would be written and never called, which is
