@@ -189,6 +189,72 @@ fn a_property_ecma_262_spells_is_accepted() {
     }
 }
 
+/// The engine's reading of `pattern`, translated.
+fn hir(pattern: &str) -> regex_syntax::hir::Hir {
+    let translated = translate(pattern).unwrap_or_else(|reason| panic!("`{pattern}`: {reason}"));
+    regex_syntax::Parser::new()
+        .parse(&translated)
+        .expect("a translation parses")
+}
+
+/// Each spelling in the tables is accepted where ECMA-262 reads it, and the
+/// engine reads it as the property ECMA-262 does: a line's spellings are one
+/// set, and a lone `General_Category` value is not some binary property the
+/// engine's loose lookup found first.
+#[test]
+fn each_spelling_ecma_262_reads_is_the_property_it_names() {
+    // Each table with the forms that read it, the first being the reference
+    // the line's every spelling, in every form, must equal.
+    let mut uncompiled = Vec::new();
+    for (table, forms) in [
+        (
+            super::GENERAL_CATEGORY,
+            &["gc=", "General_Category=", ""][..],
+        ),
+        (super::BINARY_PROPERTY, &[""][..]),
+        (super::SCRIPT, &["sc=", "Script="][..]),
+        (super::SCRIPT, &["scx=", "Script_Extensions="][..]),
+    ] {
+        for line in table.lines() {
+            let value = line.split(' ').next().expect("a line holds a value");
+            let reference = format!(r"\p{{{}{value}}}", forms[0]);
+            // A property the engine lacks is refused as that, in every
+            // spelling, and never as a misspelling.
+            if translate(&reference).is_err() {
+                uncompiled.push(value);
+                for spelling in line.split(' ') {
+                    for form in forms {
+                        let pattern = format!(r"\p{{{form}{spelling}}}");
+                        let reason = translate(&pattern).expect_err(&pattern);
+                        assert!(reason.contains("cannot compile"), "{pattern}: {reason}");
+                    }
+                }
+                continue;
+            }
+            let reference = hir(&reference);
+            for spelling in line.split(' ') {
+                for form in forms {
+                    let pattern = format!(r"\p{{{form}{spelling}}}");
+                    assert_eq!(hir(&pattern), reference, "`{pattern}`");
+                }
+            }
+        }
+    }
+    // No surrogate is a `char`, the engine reads no NFKC property, and its
+    // script tables leave out the two scripts no character is assigned.
+    assert_eq!(
+        uncompiled,
+        [
+            "Cs",
+            "Changes_When_NFKC_Casefolded",
+            "Katakana_Or_Hiragana",
+            "Unknown",
+            "Katakana_Or_Hiragana",
+            "Unknown"
+        ]
+    );
+}
+
 /// ECMA-262 admits `\-` only inside a class, where the engine agrees.
 #[test]
 fn an_escaped_hyphen_is_refused_outside_a_class() {
