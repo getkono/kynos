@@ -211,23 +211,26 @@ mod a_wrapper_produces_and_declares_one_status {
 /// What a wrapper declares for a body that never described a 200.
 ///
 /// `Created<T>` and `Accepted<T>` overwrite the status on whatever
-/// `T::into_response` produced, so `T`'s representation reaches the wire under
-/// the wrapper's status whichever key `T` filed it under. Declaring nothing
+/// `T::into_response` produced unless it is a 4xx or 5xx, so `T`'s
+/// representation reaches the wire under the wrapper's status whichever other
+/// key `T` filed it under. Declaring nothing
 /// there is a description of an empty response over a body -- exactly what
 /// `assert_conformance` reports as "the description declares no content, but a
 /// 35-byte body was sent".
 ///
 /// What the wrapper may carry across is bounded by the count: exactly one
-/// response, because one response is the whole of what the body sends and
-/// anything more is several exchanges arriving under a single key.
+/// response outside 4xx and 5xx, because that one is the whole of what the
+/// body sends under the wrapper's status and anything more is several
+/// exchanges arriving under a single key.
 ///
 /// The bodies here are hand-written rather than derived, because `Responses`
 /// is the whole of what the wrapper reads and a derive would put the macro
 /// crate between the assertion and the rule. The arrangement they stand in for
 /// exists in the tree already: `tests/derives.rs`'s `CreateReply` declares a
-/// 201 carrying a `User` and a 409 carrying nothing, so `Created<CreateReply>`
-/// is a `Created` over a body that never described a 200 -- and, with two
-/// responses of which one is bodiless, one the wrapper declares nothing for.
+/// 201 carrying a `User` and a 409 carrying nothing, so `Accepted<CreateReply>`
+/// is an `Accepted` over a body that never described a 200 -- and, its 409
+/// going out under its own status, one whose 201 is the representation the
+/// wrapper takes.
 mod a_wrapper_declares_the_body_it_forwards {
     use crate::{
         http::{Response, StatusCode, body::Body, header},
@@ -271,7 +274,7 @@ mod a_wrapper_declares_the_body_it_forwards {
 
     /// A representation beside a status carrying none.
     ///
-    /// The shape `#[derive(Reply)]` produces for `{204: none, 409: content}`.
+    /// The shape `#[derive(Reply)]` produces for `{204: none, 206: content}`.
     /// Both variants reach the wire under the wrapper's status, so the two
     /// entries are two different exchanges under one key -- and only one of
     /// them carries a representation.
@@ -281,7 +284,7 @@ mod a_wrapper_declares_the_body_it_forwards {
         fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
             kynos_openapi::Responses::new()
                 .with(204, kynos_openapi::Response::new("it was replaced"))
-                .with(409, json("what is already there", registry))
+                .with(206, json("a range of it", registry))
         }
     }
 
@@ -306,6 +309,33 @@ mod a_wrapper_declares_the_body_it_forwards {
     struct TwoRepresentations;
 
     impl Responses for TwoRepresentations {
+        fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+            kynos_openapi::Responses::new()
+                .with(203, json("it, as a proxy transformed it", registry))
+                .with(206, json("a range of it", registry))
+        }
+    }
+
+    /// One representation, under an error status.
+    ///
+    /// A body answering 4xx or 5xx keeps its own status under the wrapper, so
+    /// nothing this body declares is ever sent as the wrapper's status.
+    struct OnlyAnError;
+
+    impl Responses for OnlyAnError {
+        fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+            kynos_openapi::Responses::new().with(409, json("what is already there", registry))
+        }
+    }
+
+    /// A representation beside an error, which goes out under its own status.
+    ///
+    /// The shape `#[derive(Reply)]` produces for `{206: content, 416: content}`:
+    /// only the 206 reaches the wrapper's status, so it is the one response
+    /// the wrapper's status sends.
+    struct ARepresentationBesideAnError;
+
+    impl Responses for ARepresentationBesideAnError {
         fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
             kynos_openapi::Responses::new()
                 .with(206, json("a range of it", registry))
@@ -352,8 +382,8 @@ mod a_wrapper_declares_the_body_it_forwards {
         fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
             let _ = registry;
             kynos_openapi::Responses::new().with_pattern(
-                kynos_openapi::StatusPattern::Code(409),
-                kynos_openapi::Ref::new("#/components/responses/Conflict").into(),
+                kynos_openapi::StatusPattern::Code(203),
+                kynos_openapi::Ref::new("#/components/responses/Transformed").into(),
             )
         }
     }
@@ -383,6 +413,24 @@ mod a_wrapper_declares_the_body_it_forwards {
     #[test]
     fn a_body_declaring_two_representations_leaves_the_wrapper_empty() {
         assert!(representations::<Created<TwoRepresentations>>(201).is_empty());
+    }
+
+    /// A 4xx or 5xx goes out under its own status, so a representation
+    /// declared there is not one the wrapper's status ever sends.
+    #[test]
+    fn a_sole_error_is_not_carried_onto_the_wrappers_status() {
+        assert!(representations::<Created<OnlyAnError>>(201).is_empty());
+        assert!(representations::<Accepted<OnlyAnError>>(202).is_empty());
+    }
+
+    /// For the same reason an error is not a second response the wrapper's
+    /// status sends, so it leaves the one representation that is to be taken.
+    #[test]
+    fn an_error_beside_a_representation_does_not_hide_it() {
+        assert_eq!(
+            representations::<Created<ARepresentationBesideAnError>>(201),
+            ["application/json"]
+        );
     }
 
     /// A body with nothing to carry across leaves the wrapper declaring
@@ -456,8 +504,9 @@ mod a_wrapper_declares_the_body_it_forwards {
 /// writes. `crates/kynos/tests/derives.rs` already declares it.
 mod a_wrapper_keeps_what_the_body_declared_for_its_own_status {
     use crate::{
+        http::{Response, StatusCode, body::Body, header},
         response::{
-            Responses,
+            IntoResponse, Responses,
             status::{Accepted, Created},
         },
         schema::registry::Registry,
@@ -489,6 +538,16 @@ mod a_wrapper_keeps_what_the_body_declared_for_its_own_status {
             kynos_openapi::Responses::new()
                 .with(201, json("the user as created", registry))
                 .with(409, json("that email is already registered", registry))
+        }
+    }
+
+    /// A value of `CreateReply` is its 409, as the derive's `Conflict`
+    /// variant sends it.
+    impl IntoResponse for CreateReply {
+        fn into_response(self) -> Response {
+            let mut response = Response::new(Body::from("that email is already registered"));
+            *response.status_mut() = StatusCode::CONFLICT;
+            response
         }
     }
 
@@ -525,8 +584,8 @@ mod a_wrapper_keeps_what_the_body_declared_for_its_own_status {
     impl Responses for SoleResponseWithAHeader {
         fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
             kynos_openapi::Responses::new().with(
-                409,
-                json("what is already there", registry).with_header(
+                203,
+                json("it, as a proxy transformed it", registry).with_header(
                     "X-Trace",
                     kynos_openapi::Header::new(kynos_openapi::Schema::of_type(
                         kynos_openapi::model::schema::types::SchemaType::String,
@@ -583,6 +642,16 @@ mod a_wrapper_keeps_what_the_body_declared_for_its_own_status {
             conflict.description.as_deref(),
             Some("that email is already registered")
         );
+    }
+
+    /// And on the wire: a body answering 4xx keeps its status, and with
+    /// nothing created there is no `Location` to send.
+    #[test]
+    fn the_bodys_conflict_is_sent_as_a_conflict() {
+        let sent = Created::at("/users/1", CreateReply).into_response();
+
+        assert_eq!(sent.status(), StatusCode::CONFLICT);
+        assert!(sent.headers().get(header::LOCATION).is_none());
     }
 
     #[test]
