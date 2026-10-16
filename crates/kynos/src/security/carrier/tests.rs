@@ -108,6 +108,8 @@ fn every_malformed_basic_credential_is_refused() {
         ("bytes that are not UTF-8", "Basic /w=="),
         // `dXNlcm5hbWU=` is `username`, with no colon.
         ("no colon at all", "Basic dXNlcm5hbWU="),
+        // Empty credentials decode to an empty user-pass, which has no colon.
+        ("a scheme alone", "Basic"),
     ];
 
     for (description, field) in cases {
