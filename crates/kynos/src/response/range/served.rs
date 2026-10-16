@@ -291,9 +291,14 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
     fn unmodified(&self, conditions: &Conditions) -> bool {
         // Section 13.1.3: `If-None-Match` overrides `If-Modified-Since`.
         if let Some(field) = conditions.fields.get(header::IF_NONE_MATCH) {
-            return self
-                .tag()
-                .is_some_and(|current| crate::http::etag::matches(field, &current));
+            // Section 13.1.2: `*` names any current representation, which the
+            // length `deliver` read proves exists; a tag list needs a tag.
+            return match self.tag() {
+                Some(current) => crate::http::etag::matches(field, &current),
+                None => field
+                    .to_str()
+                    .is_ok_and(|text| text.trim() == crate::http::etag::ANY),
+            };
         }
 
         // Section 13.1.3: the date applies to GET and HEAD alone.
