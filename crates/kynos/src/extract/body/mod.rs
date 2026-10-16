@@ -251,6 +251,20 @@ fn checked<T: Schema>(value: T, at: Pointer<'_>) -> Result<T, BodyRejection> {
 /// fn body<T: kynos::extract::FromRequest<()>>() {}
 /// body::<OneOf<JsonLines<Records<u64>>, JsonLines<Records<String>>>>();
 /// ```
+///
+/// Nor is a [`Binary`](binary::Binary) whose marker names a codec's own media
+/// type, here JSON beside [`Json`](json::Json). Only a marker's value can tell
+/// it apart, so the pair is refused once the build instantiates it rather than
+/// when it typechecks:
+///
+/// ```compile_fail,E0080
+/// use kynos::{
+///     extract::{body::{OneOf, binary::Binary, json::Json}, describe::RequestContent},
+///     http::media,
+/// };
+///
+/// OneOf::<Json<u64>, Binary<media::Json>>::media_types();
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OneOf<L, R> {
     /// The left representation was selected.
