@@ -118,6 +118,106 @@ fn route_attributes_generate_typed_percent_encoded_uris() {
     assert_eq!(uri, "/reports/annual%2F2026?download=true");
 }
 
+/// A path group whose one value the caller chooses, so a test can hand
+/// `relative_uri` a value that would not address the route.
+#[derive(kynos::PathParams)]
+struct FilePath {
+    name: String,
+}
+
+#[allow(clippy::unused_async, dead_code)]
+#[kynos::get("/files/{name}/raw")]
+async fn file(Path(_): Path<FilePath>) {}
+
+fn file_uri(name: &str) -> kynos::http::Uri {
+    file::relative_uri(FilePath {
+        name: name.to_owned(),
+    })
+}
+
+/// `..` would resolve to `/raw` (RFC 3986 §5.2.4), and `%2E%2E` is decoded
+/// back to it before resolution, so the value is refused rather than encoded.
+#[test]
+#[should_panic(expected = "path parameter `name` is `..`")]
+fn a_dot_dot_segment_is_refused() {
+    let _ = file_uri("..");
+}
+
+/// `.` would resolve to `/files/raw`, which is not this route.
+#[test]
+#[should_panic(expected = "path parameter `name` is `.`")]
+fn a_dot_segment_is_refused() {
+    let _ = file_uri(".");
+}
+
+/// An empty value leaves `/files//raw`, which no captured variable matches.
+#[test]
+#[should_panic(expected = "path parameter `name` is empty")]
+fn an_empty_value_is_refused() {
+    let _ = file_uri("");
+}
+
+/// The control: dots that are not the whole segment address the route.
+#[test]
+fn dots_inside_a_segment_are_rendered() {
+    assert_eq!(file_uri("..."), "/files/.../raw");
+    assert_eq!(file_uri(".env"), "/files/.env/raw");
+    assert_eq!(file_uri("a..b"), "/files/a..b/raw");
+}
+
+/// The same group under literal text sharing the variable's segment, which
+/// is a dot segment once the value supplies the rest of it.
+#[allow(clippy::unused_async, dead_code)]
+#[kynos::get("/dotfiles/.{name}/raw")]
+async fn dotfile(Path(_): Path<FilePath>) {}
+
+#[allow(clippy::unused_async, dead_code)]
+#[kynos::get("/backups/{name}./raw")]
+async fn backup(Path(_): Path<FilePath>) {}
+
+#[allow(clippy::unused_async, dead_code)]
+#[kynos::get("/escaped/%2E{name}/raw")]
+async fn escaped(Path(_): Path<FilePath>) {}
+
+fn file_path(name: &str) -> FilePath {
+    FilePath {
+        name: name.to_owned(),
+    }
+}
+
+/// `.{name}` with `.` renders `/dotfiles/../raw`, which resolves to `/raw`.
+#[test]
+#[should_panic(expected = "path parameter `name` is `.`, which renders `.{name}` as `..`")]
+fn a_value_completing_a_prefixed_dot_segment_is_refused() {
+    let _ = dotfile::relative_uri(file_path("."));
+}
+
+/// `{name}.` with `.` renders `/backups/../raw`, which resolves to `/raw`.
+#[test]
+#[should_panic(expected = "path parameter `name` is `.`, which renders `{name}.` as `..`")]
+fn a_value_completing_a_suffixed_dot_segment_is_refused() {
+    let _ = backup::relative_uri(file_path("."));
+}
+
+/// A literal `%2E` is decoded before resolution, so `%2E{name}` with `.` is
+/// the dot segment `..` too.
+#[test]
+#[should_panic(expected = "path parameter `name` is `.`, which renders `%2E{name}` as `..`")]
+fn a_value_completing_an_encoded_dot_segment_is_refused() {
+    let _ = escaped::relative_uri(file_path("."));
+}
+
+/// The control: an affixed segment that does not come out as `.` or `..`.
+#[test]
+fn affixed_dots_that_are_not_a_dot_segment_are_rendered() {
+    assert_eq!(
+        dotfile::relative_uri(file_path("env")),
+        "/dotfiles/.env/raw"
+    );
+    assert_eq!(dotfile::relative_uri(file_path("..")), "/dotfiles/.../raw");
+    assert_eq!(backup::relative_uri(file_path("tar")), "/backups/tar./raw");
+}
+
 /// The fixture describes, so `ReportQuery::schema` is a body something runs.
 ///
 /// Without this the schema above would be written and never called, which is

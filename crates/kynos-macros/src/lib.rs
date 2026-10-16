@@ -660,8 +660,9 @@ pub fn derive_param_value(item: TokenStream) -> TokenStream {
 /// its identifier under the struct's `rename_all`, cased as the
 /// [`Schema`](macro@Schema) derive cases a property, so a field no Kynos
 /// attribute renames carries the name that derive would give its property.
-/// Each field's type, or an `Option`'s inner type, is a
-/// `kynos::schema::ParamValue`.
+/// Each field's type is a `kynos::schema::ParamValue`, and never an `Option`:
+/// a path variable is always captured, and an absent value would render as an
+/// empty segment the route does not match.
 ///
 /// The helper attribute is `#[param]` because `#[path]` is a built-in
 /// attribute.
