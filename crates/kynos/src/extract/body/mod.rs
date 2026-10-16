@@ -265,6 +265,47 @@ fn checked<T: Schema>(value: T, at: Pointer<'_>) -> Result<T, BodyRejection> {
 ///
 /// OneOf::<Json<u64>, Binary<media::Json>>::media_types();
 /// ```
+///
+/// A nested `OneOf` offers more than two bodies, each distinct from every
+/// other:
+///
+/// ```
+/// use kynos::{
+///     extract::{
+///         body::{OneOf, binary::Binary, json::Json, text::Text},
+///         describe::RequestContent,
+///     },
+///     http::media::Pdf,
+///     schema::registry::Registry,
+/// };
+///
+/// let body = OneOf::<OneOf<Text, Json<u64>>, Binary<Pdf>>::request_body(&mut Registry::new());
+/// assert_eq!(body.content.len(), 3);
+/// ```
+///
+/// so a body repeating one of the nested sides is refused, by type
+///
+/// ```compile_fail
+/// use kynos::extract::body::{OneOf, json::Json, text::Text};
+///
+/// fn body<T: kynos::extract::FromRequest<()>>() {}
+/// body::<OneOf<OneOf<Text, Json<u64>>, Json<String>>>();
+/// ```
+///
+/// or by a marker's value:
+///
+/// ```compile_fail
+/// use kynos::{
+///     extract::{
+///         body::{OneOf, binary::Binary, json::Json, text::Text},
+///         describe::RequestContent,
+///     },
+///     http::media,
+///     schema::registry::Registry,
+/// };
+///
+/// OneOf::<OneOf<Text, Json<u64>>, Binary<media::Json>>::request_body(&mut Registry::new());
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OneOf<L, R> {
     /// The left representation was selected.
