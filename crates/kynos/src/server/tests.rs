@@ -1983,6 +1983,45 @@ fn mutual_tls_rejects_an_existing_incompatible_component() {
     assert!(document.security.is_empty());
 }
 
+/// Mutual TLS adds itself to the document `prepare` hands the bound server,
+/// which it cannot do to a service a `serve_io` connection still shares, so
+/// `prepare` refuses before binding rather than serve two documents under one
+/// description.
+#[cfg(feature = "tls")]
+#[tokio::test]
+async fn mutual_tls_refuses_a_service_a_connection_still_shares() {
+    let issued = authority();
+    let client_authentication =
+        crate::server::tls::ClientCertificateConfig::from_pem_roots(issued.certificate.as_bytes())
+            .expect("CA parses");
+    let tls = crate::server::tls::TlsConfig::from_pem(
+        issued.server.certificate.as_bytes(),
+        issued.server.key.as_bytes(),
+    )
+    .expect("server identity parses")
+    .require_client_certificate(client_authentication);
+
+    let server = crate::server::Server::new(test_service());
+    let (_client, io) = tokio::io::duplex(64);
+    let connection = server
+        .serve_io(io, "192.0.2.1:50000".parse().expect("a socket address"))
+        .expect("the default configuration is accepted");
+    let error = server
+        .tls(tls)
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .prepare()
+        .await
+        .expect_err("a shared service cannot gain mutual TLS");
+
+    assert!(matches!(
+        error,
+        crate::Error::Server(crate::server::error::ServerError::InvalidConfiguration(
+            "mutual TLS adds itself to the document, so no serve_io connection may still share the service"
+        ))
+    ));
+    drop(connection);
+}
+
 /// A mounted reference serves the description the bound server reports,
 /// mutual TLS included.
 ///
