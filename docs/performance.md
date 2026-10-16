@@ -369,16 +369,23 @@ from `json-small`.
 **Exactness is asserted.** `mise run profile:requests --repeat N` runs the
 benchmark N times and fails when any program or DHAT count differs between
 runs. A group that cannot be exact, because what it counts reads the wall
-clock, is named on `requests.tsv`'s `# trend:` line: it is reported but never
-compared, against the baseline or across runs, and its marginal costs are
-marked approximate. Two are marked. `connection_h2`: HTTP/2 Huffman-codes the
+clock or a key the process draws at random, is named on `requests.tsv`'s
+`# trend:` line: it is reported but never compared, against the baseline or
+across runs, and its marginal costs are marked approximate. Each such row
+outside `connection_h2` has a group of its own, so the rest of its table stays
+exact. Four are marked. `connection_h2`: HTTP/2 Huffman-codes the
 `Date` value into every response, and what that costs moves by a few
 instructions as the clock's characters change. `rate_limit`, a `Poll` group
 holding `INTERCEPTORS`' `rate-limit` row alone: its quota keys, its window
 arithmetic and the remaining count and reset it writes are read off the wall
-clock, so its count moves by a few instructions with the time it ran at; the
-row has a group of its own so the rest of `interceptors` stays exact. The
-runtime row and
+clock, so its count moves by a few instructions with the time it ran at.
+`form_echo`, `CODECS`' `form-echo` row: `serde_html_form` groups the pairs it
+decodes in an `IndexMap` under `std`'s `RandomState`, so how far each field's
+lookup probes moves its count by a few instructions with the process's key,
+and its heap not at all. `request_id_random`, `INTERCEPTORS`'
+`request-id-random` row: `Random` keys its hash per process, and an
+identifier whose high half begins with a zero digit is zero-padded one
+character at a time, which costs one allocation more. The runtime row and
 `connection_h1` measured exact, the latter because its setup serves the
 warming connection at the start of a wall-clock second: hyper renders `Date`
 again, allocating, on the first response of each second, and a region a

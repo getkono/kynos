@@ -274,8 +274,26 @@ fn extracted(prepared: Prepared) -> Answered {
     (service, runner, black_box(drained), expected)
 }
 
+// `CODECS`' `form-echo` alone: `serde_html_form` groups the pairs it decodes
+// in an `IndexMap` under `std`'s `RandomState`, keyed afresh in each process,
+// so how far each field's lookup probes, and so its count, moves by a few
+// instructions with the key the process drew; `requests.tsv` marks this group
+// `trend` rather than the whole table's.
 #[library_benchmark(setup = prepared, teardown = checked, config = heap())]
 #[bench::form_echo("form-echo")]
+fn form_coded(prepared: Prepared) -> Answered {
+    let Prepared {
+        service,
+        runner,
+        request,
+        frames,
+        expected,
+    } = prepared;
+    let drained = black_box(&*service).serve(black_box(&runner), black_box(request), frames);
+    (service, runner, black_box(drained), expected)
+}
+
+#[library_benchmark(setup = prepared, teardown = checked, config = heap())]
 #[bench::multipart_echo("multipart-echo")]
 #[bench::protobuf_echo("protobuf-echo")]
 #[bench::reject_415("reject-415")]
@@ -316,7 +334,6 @@ fn responded(prepared: Prepared) -> Answered {
 #[bench::cors_preflight("cors-preflight")]
 #[bench::csrf("csrf")]
 #[bench::request_id_counter("request-id-counter")]
-#[bench::request_id_random("request-id-random")]
 #[bench::security_headers("security-headers")]
 #[bench::body_size("body-size")]
 #[bench::concurrency("concurrency")]
@@ -347,6 +364,25 @@ fn intercepted(prepared: Prepared) -> Answered {
 #[library_benchmark(setup = prepared, teardown = checked, config = heap())]
 #[bench::rate_limit("rate-limit")]
 fn limited(prepared: Prepared) -> Answered {
+    let Prepared {
+        service,
+        runner,
+        request,
+        frames,
+        expected,
+    } = prepared;
+    let drained = black_box(&*service).serve(black_box(&runner), black_box(request), frames);
+    (service, runner, black_box(drained), expected)
+}
+
+// `INTERCEPTORS`' `request-id-random` alone: `Random` keys its hash afresh in
+// each process, and `format!` pads a half with fewer than sixteen significant
+// digits one character at a time, so an identifier whose high half begins
+// with a zero digit, one in sixteen, grows its buffer through one allocation
+// more; `requests.tsv` marks this group `trend` rather than the whole table's.
+#[library_benchmark(setup = prepared, teardown = checked, config = heap())]
+#[bench::request_id_random("request-id-random")]
+fn random_id(prepared: Prepared) -> Answered {
     let Prepared {
         service,
         runner,
@@ -490,10 +526,12 @@ library_benchmark_group!(name = connection_h2, benchmarks = http2);
 library_benchmark_group!(name = routing, benchmarks = routed);
 library_benchmark_group!(name = scope, benchmarks = scoped);
 library_benchmark_group!(name = extract, benchmarks = extracted);
+library_benchmark_group!(name = form_echo, benchmarks = form_coded);
 library_benchmark_group!(name = codecs, benchmarks = coded);
 library_benchmark_group!(name = respond, benchmarks = responded);
 library_benchmark_group!(name = interceptors, benchmarks = intercepted);
 library_benchmark_group!(name = rate_limit, benchmarks = limited);
+library_benchmark_group!(name = request_id_random, benchmarks = random_id);
 library_benchmark_group!(name = stream, benchmarks = streamed);
 library_benchmark_group!(name = statics, benchmarks = served_static);
 library_benchmark_group!(name = realistic, benchmarks = composed);
@@ -508,10 +546,12 @@ main!(
     routing,
     scope,
     extract,
+    form_echo,
     codecs,
     respond,
     interceptors,
     rate_limit,
+    request_id_random,
     stream,
     statics,
     realistic
