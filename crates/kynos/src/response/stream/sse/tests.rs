@@ -233,6 +233,33 @@ fn a_bare_carriage_return_ends_the_field_rather_than_starting_another() {
     );
 }
 
+/// A CR at the end of a value is a break like any other, not half of a
+/// CRLF that never arrives, so it writes the same fields an LF there does.
+///
+/// Dropped instead, `id("a\r")` would leave a client's last event ID at `a`
+/// where `id("a\n")` resets it to empty.
+#[test]
+fn a_trailing_carriage_return_breaks_the_value_as_a_line_feed_does() {
+    let carriage_return = Event::new(0_u8).comment("x\r\r").id("a\r");
+    let line_feed = Event::new(0_u8).comment("x\n\n").id("a\n");
+
+    assert_eq!(
+        reparse(&encode(&carriage_return).expect("an encodable event")),
+        [
+            (String::new(), "x".to_owned()),
+            (String::new(), String::new()),
+            (String::new(), String::new()),
+            ("id".to_owned(), "a".to_owned()),
+            ("id".to_owned(), String::new()),
+            ("data".to_owned(), "0".to_owned()),
+        ]
+    );
+    assert_eq!(
+        encode(&carriage_return).expect("an encodable event"),
+        encode(&line_feed).expect("an encodable event")
+    );
+}
+
 /// An event whose data cannot be serialized is an error rather than a
 /// record, because a half-written record would desynchronize the stream.
 #[test]
