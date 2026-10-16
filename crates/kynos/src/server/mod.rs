@@ -8,8 +8,8 @@
 //!
 //! Kynos supports HTTP/1 and HTTP/2, and HTTP/3 is outside the current server
 //! contract. Listeners are TCP; a stream accepted any other way, such as from
-//! a Unix socket or an in-memory pipe, is served one connection at a time by
-//! [`Server::serve_io`].
+//! a Unix socket or an in-memory pipe, is served by [`Server::serve_io`], one
+//! connection per call.
 //!
 //! Kynos runs on tokio and does not abstract over it, so serving requires a
 //! tokio runtime. This module tree is the only place the runtime is named;
@@ -78,7 +78,8 @@ const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(25);
 /// An HTTP server.
 #[derive(Debug)]
 pub struct Server<C> {
-    service: Service<C>,
+    /// Shared with every connection [`serve_io`](Self::serve_io) returns.
+    service: Arc<Service<C>>,
     addresses: Vec<BindAddress>,
     listeners: Vec<Listener>,
     #[cfg(feature = "http1")]
@@ -99,7 +100,7 @@ impl<C: 'static> Server<C> {
     #[must_use]
     pub fn new(service: Service<C>) -> Self {
         Self {
-            service,
+            service: Arc::new(service),
             addresses: Vec::new(),
             listeners: Vec::new(),
             #[cfg(feature = "http1")]
@@ -225,7 +226,10 @@ impl<C: 'static> Server<C> {
     ///   refused, checked before anything else so no socket is bound.
     /// - With TLS: [`ServerError::MutualTlsConflict`] when a required client
     ///   certificate meets a different `MutualTls` scheme in the description,
-    ///   and `ServerError::Tls` when the TLS configuration cannot be built.
+    ///   [`ServerError::InvalidConfiguration`] when a required client
+    ///   certificate would change the description of a service a connection
+    ///   from [`serve_io`](Self::serve_io) is still serving, and
+    ///   `ServerError::Tls` when the TLS configuration cannot be built.
     /// - [`ServerError::Listener`], [`ServerError::Resolve`] or
     ///   [`ServerError::Bind`] when a supplied listener, an address, or a
     ///   resolved address fails; every listener already bound is dropped.
@@ -242,7 +246,11 @@ impl<C: 'static> Server<C> {
         #[cfg(feature = "tls")]
         let tls = if let Some(config) = self.tls {
             if config.client_authentication.is_some() {
-                service.openapi_mut(apply_mutual_tls)??;
+                Arc::get_mut(&mut service)
+                    .ok_or(ServerError::InvalidConfiguration(
+                        "mutual TLS adds itself to the document, so no serve_io connection may still share the service",
+                    ))?
+                    .openapi_mut(apply_mutual_tls)??;
             }
             Some(config.build().map_err(ServerError::from)?)
         } else {
@@ -285,7 +293,7 @@ impl<C: 'static> Server<C> {
             .map_err(ServerError::Listener)?;
 
         Ok(BoundServer {
-            service: Arc::new(service),
+            service,
             listeners,
             local_addrs,
             socket: SocketOptions::new(self.tcp_keepalive),
@@ -331,6 +339,11 @@ impl<C: 'static> Server<C> {
     /// ignored. The connection ends when the client closes `io` or when the
     /// returned future is dropped, which closes it without draining.
     ///
+    /// One server serves any number of connections, one per call, from the
+    /// service it was built with: each connection shares that service while it
+    /// runs and releases it when it ends, so the service is dropped with the
+    /// server or with the last connection still running, whichever is later.
+    ///
     /// ```
     /// use kynos::{Router, server::Server};
     /// use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
@@ -368,7 +381,7 @@ impl<C: 'static> Server<C> {
     /// no stream in flight for two idle timeouts in a row — the first sends
     /// GOAWAY, the second ends a drain the client never closed.
     pub fn serve_io<I>(
-        self,
+        &self,
         io: I,
         peer: SocketAddr,
     ) -> Result<impl Future<Output = io::Result<()>> + Send + 'static>
@@ -398,7 +411,7 @@ impl<C: 'static> Server<C> {
         Ok(connection::serve_io(
             io,
             peer,
-            Arc::new(self.service),
+            Arc::clone(&self.service),
             config,
         ))
     }

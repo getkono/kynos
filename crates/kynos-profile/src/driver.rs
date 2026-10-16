@@ -7,6 +7,7 @@
 //! allowances, which say which *framework* module may name them, do not read
 //! it.
 
+use std::any::Any;
 use std::future::{Future, poll_fn};
 use std::io;
 use std::net::SocketAddr;
@@ -174,8 +175,9 @@ pub trait Served {
     fn serve(&self, runner: &Runner, request: Request, frames: Vec<Frame<Bytes>>) -> Drained;
 
     /// Hands the service to a [`Server`] that serves `io` as one connection
-    /// from `peer`, returning the connection's future unpolled: what a
-    /// [`connection`](crate::connection) row's region drives.
+    /// from `peer`, returning the connection's future unpolled, what a
+    /// [`connection`](crate::connection) row's region drives, beside the
+    /// server that keeps the service alive past the future's end.
     ///
     /// # Panics
     ///
@@ -184,8 +186,26 @@ pub trait Served {
     fn connect(self: Box<Self>, io: DuplexStream, peer: SocketAddr) -> Connecting;
 }
 
-/// A connection's future, boxed so that one type holds every service's.
-pub type Connecting = Pin<Box<dyn Future<Output = io::Result<()>> + Send>>;
+/// A connection's future, boxed so that one type holds every service's, and
+/// the server it was served from.
+///
+/// The future shares the service with the server and releases its share when
+/// it ends, so the service, and the document it holds, are dropped with
+/// `server`, where the `Connecting` is: a region that drives `future` to its
+/// end counts no service teardown, which the in-process rows likewise leave
+/// to theirs.
+pub struct Connecting {
+    /// The connection: what a connection row's region drives.
+    pub future: Pin<Box<dyn Future<Output = io::Result<()>> + Send>>,
+    /// Held only so that the service outlives `future`.
+    pub(crate) server: Box<dyn Any>,
+}
+
+impl std::fmt::Debug for Connecting {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("Connecting").finish_non_exhaustive()
+    }
+}
 
 impl<C: 'static> Served for Service<C> {
     fn serve(&self, runner: &Runner, request: Request, frames: Vec<Frame<Bytes>>) -> Drained {
@@ -193,11 +213,16 @@ impl<C: 'static> Served for Service<C> {
     }
 
     fn connect(self: Box<Self>, io: DuplexStream, peer: SocketAddr) -> Connecting {
-        Box::pin(
-            Server::new(*self)
+        let server = Server::new(*self);
+        let future = Box::pin(
+            server
                 .serve_io(io, peer)
                 .expect("the default configuration is accepted"),
-        )
+        );
+        Connecting {
+            future,
+            server: Box::new(server),
+        }
     }
 }
 

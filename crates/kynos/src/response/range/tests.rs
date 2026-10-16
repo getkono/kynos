@@ -2,6 +2,8 @@ use super::{
     Range, Ranged, Selection,
     headers::{AcceptRanges, ContentRange},
     rangeable::Rangeable,
+    served::{Conditions, Served},
+    source::InMemory,
     spec::{self, Ignored, MAX_RANGES, Spec},
 };
 use crate::{
@@ -17,6 +19,7 @@ use crate::{
     response::{IntoResponse, Responses},
     schema::registry::Registry,
 };
+use bytes::Bytes;
 
 // --- The oracle ------------------------------------------------------------
 
@@ -677,5 +680,127 @@ fn each_group_writes_a_value_its_own_grammar_admits() {
         .encode()),
         // Section 15.5.17's own worked example.
         "bytes */47022"
+    );
+}
+
+// --- Delivery preconditions ------------------------------------------------
+
+/// The status an untagged ten-octet [`Served`] answers a `GET` carrying
+/// `fields` with.
+async fn untagged_status(fields: &[(HeaderName, &str)]) -> StatusCode {
+    let mut headers = HeaderMap::new();
+    for (name, value) in fields {
+        headers.append(name, HeaderValue::from_str(value).expect("a valid field"));
+    }
+    let conditions = Conditions {
+        method: Method::GET,
+        fields: headers,
+    };
+
+    Served::<_, OctetStream>::new(InMemory::new(Bytes::from_static(b"0123456789")))
+        .deliver(&conditions)
+        .await
+        .expect("an in-memory source cannot fail")
+        .status()
+}
+
+/// Section 13.1.2: `If-None-Match: *` is false wherever a current
+/// representation exists, which a readable length proves with or without an
+/// entity tag. A list of tags still needs a tag to name.
+#[tokio::test]
+async fn an_untagged_representation_answers_any_with_not_modified() {
+    assert_eq!(
+        untagged_status(&[(header::IF_NONE_MATCH, "*")]).await,
+        StatusCode::NOT_MODIFIED
+    );
+    assert_eq!(
+        untagged_status(&[(header::IF_NONE_MATCH, "\"r3\"")]).await,
+        StatusCode::OK
+    );
+}
+
+/// When the representation [`tagged_status`] serves last changed:
+/// `Sun, 06 Nov 1994 08:49:37 GMT`.
+const MODIFIED: std::time::Duration = std::time::Duration::from_secs(784_111_777);
+
+/// The status a ten-octet [`Served`] tagged `"b"` and last modified at
+/// [`MODIFIED`] answers a `GET` carrying `fields` with, each pair one field
+/// line.
+async fn tagged_status(fields: &[(HeaderName, &str)]) -> StatusCode {
+    let mut headers = HeaderMap::new();
+    for (name, value) in fields {
+        headers.append(name, HeaderValue::from_str(value).expect("a valid field"));
+    }
+    let conditions = Conditions {
+        method: Method::GET,
+        fields: headers,
+    };
+
+    Served::<_, OctetStream>::new(InMemory::new(Bytes::from_static(b"0123456789")))
+        .etag(crate::http::etag::ETag::strong("b"))
+        .last_modified(std::time::SystemTime::UNIX_EPOCH + MODIFIED)
+        .deliver(&conditions)
+        .await
+        .expect("an in-memory source cannot fail")
+        .status()
+}
+
+/// A `*` line beside a tag line matches by itself, so an untagged
+/// representation still answers 304 where the tag line alone would not.
+#[tokio::test]
+async fn a_star_line_beside_a_tag_line_matches_by_itself() {
+    assert_eq!(
+        untagged_status(&[
+            (header::IF_NONE_MATCH, "\"a\""),
+            (header::IF_NONE_MATCH, "*"),
+        ])
+        .await,
+        StatusCode::NOT_MODIFIED
+    );
+}
+
+/// Section 5.3: two `If-None-Match` lines are one list, so a tag on the second
+/// line matches as surely as one on the first.
+#[tokio::test]
+async fn every_if_none_match_line_is_read() {
+    assert_eq!(
+        tagged_status(&[
+            (header::IF_NONE_MATCH, "\"a\""),
+            (header::IF_NONE_MATCH, "\"b\""),
+        ])
+        .await,
+        StatusCode::NOT_MODIFIED
+    );
+
+    // The control: neither line names the current tag.
+    assert_eq!(
+        tagged_status(&[
+            (header::IF_NONE_MATCH, "\"a\""),
+            (header::IF_NONE_MATCH, "\"c\""),
+        ])
+        .await,
+        StatusCode::OK
+    );
+}
+
+/// Section 13.1.3: "A recipient MUST ignore the If-Modified-Since header field
+/// if ... the field value has more than one member", and two lines are two.
+#[tokio::test]
+async fn a_repeated_if_modified_since_is_ignored() {
+    const SENT: &str = "Sun, 06 Nov 1994 08:49:37 GMT";
+
+    assert_eq!(
+        tagged_status(&[
+            (header::IF_MODIFIED_SINCE, SENT),
+            (header::IF_MODIFIED_SINCE, SENT),
+        ])
+        .await,
+        StatusCode::OK
+    );
+
+    // The control: the same date on one line is honoured.
+    assert_eq!(
+        tagged_status(&[(header::IF_MODIFIED_SINCE, SENT)]).await,
+        StatusCode::NOT_MODIFIED
     );
 }

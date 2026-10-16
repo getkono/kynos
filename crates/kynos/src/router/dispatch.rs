@@ -124,6 +124,16 @@ pub(crate) struct Routed {
     pub(crate) links: Option<Arc<crate::extract::link::Links>>,
 }
 
+/// The `paths` key routing matched `request` to, prefixes included; `None`
+/// where no router routed it.
+pub(crate) fn mounted_path(request: &Request) -> Option<&'static str> {
+    request
+        .extensions()
+        .get::<Routed>()
+        .and_then(|routed| routed.matched.as_ref())
+        .map(|matched| matched.0)
+}
+
 /// Every operation declared on one `paths` key.
 pub(crate) struct PathEntry<C> {
     /// The `paths` key, exactly as the description spells it.

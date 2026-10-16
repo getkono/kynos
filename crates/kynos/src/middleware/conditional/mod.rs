@@ -50,23 +50,36 @@ impl HeaderParams for Preconditions {
 }
 
 impl DecodeHeaders for Preconditions {
+    const FALLIBLE: bool = false;
+
     /// Never fails.
     ///
     /// RFC 9110 section 13.1: a recipient ignores a condition it cannot
     /// evaluate, so a malformed precondition is absent rather than a 400.
+    ///
+    /// Every field line is read as one list (RFC 9110 section 5.3); a line
+    /// that is `*` makes the whole condition [`IfNoneMatch::Any`].
     fn decode(headers: &HeaderMap) -> Result<Self, HeaderRejection> {
-        Ok(Self {
-            if_none_match: headers
-                .get(header::IF_NONE_MATCH)
-                .and_then(|value| value.to_str().ok())
-                .map(|text| {
-                    if text.trim() == etag::ANY {
-                        IfNoneMatch::Any
-                    } else {
-                        IfNoneMatch::Tags(etag::split(text).map(str::to_owned).collect())
-                    }
-                }),
-        })
+        let mut if_none_match = None;
+
+        for text in headers
+            .get_all(header::IF_NONE_MATCH)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+        {
+            if text.trim() == etag::ANY {
+                if_none_match = Some(IfNoneMatch::Any);
+                break;
+            }
+
+            if let IfNoneMatch::Tags(tags) =
+                if_none_match.get_or_insert_with(|| IfNoneMatch::Tags(Vec::new()))
+            {
+                tags.extend(etag::split(text).map(str::to_owned));
+            }
+        }
+
+        Ok(Self { if_none_match })
     }
 }
 

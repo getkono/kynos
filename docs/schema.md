@@ -809,8 +809,9 @@ no response body is. `Protobuf<T>` is described by its message rather than by
   `\d`, `\w` and `\b` stay ASCII, and `\s` and `.` take ECMA-262's space and
   line terminators. A construct the engine cannot run (lookaround,
   backreferences) or that the two dialects read apart (`(?i)`, `\A`,
-  `(?P<name>`, `a**`, `^*`, `[]a]`, POSIX and nested classes) is a compile
-  error. The engine is a
+  `(?P<name>`, `a**`, `^*`, `[]a]`, POSIX and nested classes, a property
+  spelled loosely as `\p{greek}`, or a script written alone as `\p{Greek}`
+  rather than `\p{Script=Greek}`) is a compile error. The engine is a
   finite automaton, so a request cannot make a pattern backtrack, and each
   field's pattern compiles once per process.
 - **A map key's `pattern` is refused when the router is built** where a

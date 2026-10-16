@@ -92,6 +92,7 @@ fn refusals() -> Vec<(&'static str, &'static str)> {
         (r"\a", "an escape such as `\\a`"),
         (r"\pL", "a one-letter Unicode class"),
         (r"\p{scx:Greek}", "a Unicode class written with `:`"),
+        (r"\p{greek}", "a property ECMA-262 does not spell"),
         ("a**", "a quantifier on a quantifier"),
         (r"\b+", "a quantified assertion"),
         ("[]a]", "a `]` first in a class"),
@@ -139,6 +140,21 @@ fn each_spelling_of_a_refused_construct_is_refused() {
             "(?<\u{345}a>x)",
             "a group name that is not an ECMA-262 identifier",
         ),
+        // ECMA-262 matches a property's name and value exactly, and the engine
+        // loosely; a lone name is a General_Category value or a binary
+        // property, never a script.
+        (r"\p{lu}", "a property ECMA-262 does not spell"),
+        (r"\p{Greek}", "a property ECMA-262 does not spell"),
+        (r"\p{Script=greek}", "a property ECMA-262 does not spell"),
+        (r"\P{script=Greek}", "a property ECMA-262 does not spell"),
+        (r"[\p{Upper_Case}]", "a property ECMA-262 does not spell"),
+        (r"\p{^Lu}", "a property ECMA-262 does not spell"),
+        (r"\p{gc=Any}", "a property ECMA-262 does not spell"),
+        (r"\p{sc=Lu}", "a property ECMA-262 does not spell"),
+        (
+            r"\p{Block=Basic_Latin}",
+            "a property ECMA-262 does not spell",
+        ),
     ] {
         let Err(reason) = translate(pattern) else {
             panic!("`{pattern}` must be refused");
@@ -148,6 +164,95 @@ fn each_spelling_of_a_refused_construct_is_refused() {
             "`{pattern}`: expected {expects:?}, got {reason:?}"
         );
     }
+}
+
+/// Each form ECMA-262 writes a property in, spelled as it spells it.
+#[test]
+fn a_property_ecma_262_spells_is_accepted() {
+    for pattern in [
+        r"\p{Lu}",
+        r"\p{Uppercase_Letter}",
+        r"\p{punct}",
+        r"\p{General_Category=Lu}",
+        r"\p{gc=Cased_Letter}",
+        r"\p{Script=Greek}",
+        r"\p{sc=Grek}",
+        r"\p{Script_Extensions=Zyyy}",
+        r"\P{scx=Hira}",
+        r"\p{ASCII}",
+        r"\p{Any}",
+        r"\p{White_Space}",
+        r"\p{space}",
+        r"[\p{Alpha}\p{ID_Continue}]",
+    ] {
+        assert!(translate(pattern).is_ok(), "`{pattern}` must be accepted");
+    }
+}
+
+/// The engine's reading of `pattern`, translated.
+fn hir(pattern: &str) -> regex_syntax::hir::Hir {
+    let translated = translate(pattern).unwrap_or_else(|reason| panic!("`{pattern}`: {reason}"));
+    regex_syntax::Parser::new()
+        .parse(&translated)
+        .expect("a translation parses")
+}
+
+/// Each spelling in the tables is accepted where ECMA-262 reads it, and the
+/// engine reads it as the property ECMA-262 does: a line's spellings are one
+/// set, and a lone `General_Category` value is not some binary property the
+/// engine's loose lookup found first.
+#[test]
+fn each_spelling_ecma_262_reads_is_the_property_it_names() {
+    // Each table with the forms that read it, the first being the reference
+    // the line's every spelling, in every form, must equal.
+    let mut uncompiled = Vec::new();
+    for (table, forms) in [
+        (
+            super::GENERAL_CATEGORY,
+            &["gc=", "General_Category=", ""][..],
+        ),
+        (super::BINARY_PROPERTY, &[""][..]),
+        (super::SCRIPT, &["sc=", "Script="][..]),
+        (super::SCRIPT, &["scx=", "Script_Extensions="][..]),
+    ] {
+        for line in table.lines() {
+            let value = line.split(' ').next().expect("a line holds a value");
+            let reference = format!(r"\p{{{}{value}}}", forms[0]);
+            // A property the engine lacks is refused as that, in every
+            // spelling, and never as a misspelling.
+            if translate(&reference).is_err() {
+                uncompiled.push(value);
+                for spelling in line.split(' ') {
+                    for form in forms {
+                        let pattern = format!(r"\p{{{form}{spelling}}}");
+                        let reason = translate(&pattern).expect_err(&pattern);
+                        assert!(reason.contains("cannot compile"), "{pattern}: {reason}");
+                    }
+                }
+                continue;
+            }
+            let reference = hir(&reference);
+            for spelling in line.split(' ') {
+                for form in forms {
+                    let pattern = format!(r"\p{{{form}{spelling}}}");
+                    assert_eq!(hir(&pattern), reference, "`{pattern}`");
+                }
+            }
+        }
+    }
+    // No surrogate is a `char`, the engine reads no NFKC property, and its
+    // script tables leave out the two scripts no character is assigned.
+    assert_eq!(
+        uncompiled,
+        [
+            "Cs",
+            "Changes_When_NFKC_Casefolded",
+            "Katakana_Or_Hiragana",
+            "Unknown",
+            "Katakana_Or_Hiragana",
+            "Unknown"
+        ]
+    );
 }
 
 /// ECMA-262 admits `\-` only inside a class, where the engine agrees.

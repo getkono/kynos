@@ -2,7 +2,7 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{DeriveInput, parse_macro_input};
+use syn::{DeriveInput, parse_macro_input, spanned::Spanned};
 
 use crate::derive::{
     common::{NameCase, named_fields, names_const, reject_duplicate_names, wire_names},
@@ -17,6 +17,19 @@ pub(crate) fn expand(item: TokenStream) -> TokenStream {
     }
 }
 
+/// A path variable is always captured, and an absent one would render as an
+/// empty segment no route matches, so a path parameter cannot be optional.
+fn reject_optional(params: &[Param<'_>]) -> syn::Result<()> {
+    match params.iter().find(|param| param.optional().is_some()) {
+        Some(param) => Err(syn::Error::new(
+            param.ty().span(),
+            "a path parameter is always present, so it cannot be an `Option`. Use the inner \
+             type, or move the optional value to a `QueryParams` group",
+        )),
+        None => Ok(()),
+    }
+}
+
 fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = named_fields(input, "PathParams")?;
     let names = wire_names(input, fields, "param")?;
@@ -27,6 +40,7 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let names_item = names_const(&names);
 
     let params = Param::pair(fields, &names);
+    reject_optional(&params)?;
     let rejection = quote!(::kynos::error::rejection::PathRejection);
 
     // Looked up by name, so decoding does not depend on the route attribute's

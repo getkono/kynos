@@ -108,6 +108,13 @@ pub fn endpoint_uri(template: &str) -> Uri {
 }
 
 /// Builds a URI for a generated endpoint with path parameters.
+///
+/// # Panics
+///
+/// Panics when a value cannot address the route: an empty one, which no
+/// variable captures, or one that renders its segment, with any literal text
+/// sharing it, as `.` or `..`, which URI resolution removes (RFC 3986 §5.2.4)
+/// even when written `%2E`.
 pub fn endpoint_uri_with_path<P: EncodePath>(template: &str, path: &P) -> Uri {
     render_endpoint_path(template, path)
         .parse()
@@ -127,6 +134,10 @@ pub fn endpoint_uri_with_query<Q: EncodeQuery>(template: &str, query: &Q) -> Uri
 }
 
 /// Builds a URI for a generated endpoint with path and query parameters.
+///
+/// # Panics
+///
+/// As [`endpoint_uri_with_path`].
 pub fn endpoint_uri_with_path_and_query<P: EncodePath, Q: EncodeQuery>(
     template: &str,
     path: &P,
@@ -152,14 +163,49 @@ fn render_endpoint_path<P: EncodePath>(template: &str, path: &P) -> String {
     );
 
     let mut rendered = template.to_owned();
-    for (name, value) in values {
+    for (name, value) in &values {
         assert!(
-            P::NAMES.contains(&name),
+            P::NAMES.contains(name),
             "PathParams::encode returned undeclared name `{name}`"
         );
+        assert!(
+            !value.is_empty(),
+            "path parameter `{name}` is empty, so no URI renders it into `{template}`"
+        );
         let encoded =
-            percent_encoding::utf8_percent_encode(&value, PATH_SEGMENT_ENCODE_SET).to_string();
+            percent_encoding::utf8_percent_encode(value, PATH_SEGMENT_ENCODE_SET).to_string();
         rendered = rendered.replace(&format!("{{{name}}}"), &encoded);
     }
+    if let Some((segment, dots)) = dot_segment(template, &rendered) {
+        let (name, value) = values
+            .iter()
+            .find(|(name, _)| segment.contains(&format!("{{{name}}}")))
+            .expect("only a segment holding a variable is checked");
+        panic!(
+            "path parameter `{name}` is `{value}`, which renders `{segment}` as `{dots}`, so no URI \
+             renders it into `{template}`"
+        );
+    }
     rendered
+}
+
+/// The first template segment holding a variable that `rendered` turns into a
+/// dot segment, with that dot segment.
+///
+/// Compared after decoding, because resolution (RFC 3986 §5.2.4) decodes `%2E`
+/// first, so neither an encoded value nor an encoded literal escapes it. A
+/// rendered value holds no `/`, so the two paths split into the same segments.
+fn dot_segment<'t>(template: &'t str, rendered: &str) -> Option<(&'t str, &'static str)> {
+    template
+        .split('/')
+        .zip(rendered.split('/'))
+        .filter(|(segment, _)| segment.contains('{'))
+        .find_map(|(segment, rendered)| {
+            let dots = match &*percent_encoding::percent_decode_str(rendered).collect::<Vec<u8>>() {
+                b"." => ".",
+                b".." => "..",
+                _ => return None,
+            };
+            Some((segment, dots))
+        })
 }

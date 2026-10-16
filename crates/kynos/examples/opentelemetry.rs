@@ -89,6 +89,10 @@ impl HeaderParams for TraceContext {
 }
 
 impl DecodeHeaders for TraceContext {
+    /// The decode below never refuses, so no covered operation declares the
+    /// 400 a failing one would answer with.
+    const FALLIBLE: bool = false;
+
     fn decode(headers: &HeaderMap) -> Result<Self, HeaderRejection> {
         let read = |name: &str| {
             headers

@@ -290,10 +290,10 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
     /// Whether section 13.1's preconditions say the client's copy is current.
     fn unmodified(&self, conditions: &Conditions) -> bool {
         // Section 13.1.3: `If-None-Match` overrides `If-Modified-Since`.
-        if let Some(field) = conditions.fields.get(header::IF_NONE_MATCH) {
-            return self
-                .tag()
-                .is_some_and(|current| crate::http::etag::matches(field, &current));
+        // Section 13.1.2: `*` names any current representation, which the
+        // length `deliver` read proves exists; a tag list needs a tag.
+        if let Some(named) = crate::http::etag::if_none_match(&conditions.fields, || self.tag()) {
+            return named;
         }
 
         // Section 13.1.3: the date applies to GET and HEAD alone.
@@ -301,13 +301,15 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
             return false;
         }
 
+        // Section 13.1.3: ignored unless exactly one HTTP-date, as
+        // `If-Unmodified-Since` is.
+        let mut lines = conditions.fields.get_all(header::IF_MODIFIED_SINCE).iter();
+        let (Some(line), None) = (lines.next(), lines.next()) else {
+            return false;
+        };
         let (Some(modified), Some(since)) = (
             self.last_modified,
-            conditions
-                .fields
-                .get(header::IF_MODIFIED_SINCE)
-                .and_then(|value| value.to_str().ok())
-                .and_then(crate::http::date::parse),
+            line.to_str().ok().and_then(crate::http::date::parse),
         ) else {
             return false;
         };

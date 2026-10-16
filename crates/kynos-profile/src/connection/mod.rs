@@ -8,10 +8,12 @@
 //! The request is the in-process row's own, encoded to octets in setup; the
 //! region is the connection's future driven to its end under
 //! [`Driver::Runtime`], and the response is left in the duplex, read and
-//! checked in teardown. No client runs inside the region, so nothing a client
-//! does is counted, and what is counted is what a socket would have handed the
-//! server: these rows' difference from their in-process base is the server
-//! path's.
+//! checked in teardown. The service outlives the region, held by the server
+//! [`Connecting`] keeps beside the future, and is dropped with the [`Open`] in
+//! teardown, as an in-process row drops its own. No client runs inside the
+//! region, so nothing a client does is counted, and what is counted is what a
+//! socket would have handed the server: these rows' difference from their
+//! in-process base is the server path's.
 //!
 //! Every connection ends itself once its request is answered: an HTTP/1.1
 //! request says `connection: close`, and an HTTP/2 client sends `GOAWAY`
@@ -34,7 +36,7 @@ use self::wire::{
 use crate::{
     Scenario,
     app::{echo_body, get, post, service},
-    driver::{Connecting, Driver, Runner},
+    driver::{Connecting, Driver, Runner, Served},
 };
 
 pub(crate) mod wire;
@@ -201,10 +203,16 @@ impl Connected {
     /// requests ends before its first was answered.
     #[must_use]
     pub fn open(&self, runner: &Runner) -> Open {
+        self.open_over((self.scenario.service)(), runner)
+    }
+
+    /// As [`open`](Self::open), serving `service` in place of the scenario's
+    /// own; for a test that must hold a reference into what is served.
+    pub(crate) fn open_over(&self, service: Box<dyn Served>, runner: &Runner) -> Open {
         let request = (self.scenario.request)();
         let (mut client, mut io) = tokio::io::duplex(CAPACITY);
         warm(&mut io, &mut client);
-        let connection = (self.scenario.service)().connect(io, PEER);
+        let connection = service.connect(io, PEER);
         let mut open = Open {
             connection,
             client,
@@ -257,7 +265,7 @@ impl Open {
     /// What ended the connection, if not its client's close; no profiled
     /// connection should end with one.
     pub fn serve(&mut self, runner: &Runner) -> io::Result<()> {
-        runner.run(self.connection.as_mut())
+        runner.run(self.connection.future.as_mut())
     }
 
     /// The status the measured request was answered with, read from what the
@@ -288,7 +296,7 @@ impl Open {
         } = self;
         runner.run(poll_fn(|context| {
             assert!(
-                connection.as_mut().poll(context).is_pending(),
+                connection.future.as_mut().poll(context).is_pending(),
                 "the connection ended before its first request was answered"
             );
             while let Poll::Ready(true) = read(client, received, context) {}
