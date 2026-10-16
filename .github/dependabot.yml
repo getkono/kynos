@@ -4,16 +4,17 @@
 # else is actually opening them.
 version: 2
 updates:
-  # `versioning-strategy: increase` rewrites the requirement in
-  # `[workspace.dependencies]` rather than moving `Cargo.lock` alone. The
-  # manifest already pins the exact minor of everything it declares, and a
-  # requirement that names the version CI last built is worth more than a caret
-  # range that quietly covers a dozen it never saw.
+  # `versioning-strategy: lockfile-only` moves `Cargo.lock` alone: the
+  # requirements in `[workspace.dependencies]` stay as written, so each one
+  # keeps stating the lowest version Kynos promises to build against, which
+  # `minimal-versions:check` holds it to. Cargo accepts only `lockfile-only`
+  # and `auto` here, and `auto` would rewrite a requirement whenever the
+  # lockfile alone could not take the update.
   - package-ecosystem: cargo
     directory: "/"
     schedule:
       interval: weekly
-    versioning-strategy: increase
+    versioning-strategy: lockfile-only
     open-pull-requests-limit: 5
     # `ci:full`: a bump is what moves the MSRV or breaks a feature combination,
     # which only the comprehensive tier checks.
@@ -22,8 +23,9 @@ updates:
       - ci:full
     # `prefix` plus `include: scope` yields `chore(deps): bump ...`, which convco
     # accepts and `release-plz.toml`'s changelog parsers skip: it changes what a
-    # downstream build resolves, but nothing Kynos itself does. Majors leave the
-    # group and arrive alone, because that is where the containment table gets
+    # downstream build resolves, but nothing Kynos itself does. A major needs a
+    # requirement rewritten, which `lockfile-only` never does, so none arrives
+    # here: a human raises it, because that is where the containment table gets
     # consulted.
     commit-message:
       prefix: chore
