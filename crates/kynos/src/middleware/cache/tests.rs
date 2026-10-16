@@ -507,3 +507,21 @@ fn a_variant_is_selected_by_every_line_of_a_varied_field() {
     ])));
     assert!(!stored.selected_by(&HeaderMap::new()));
 }
+
+/// A field sent empty is not a field not sent, though both combine to no
+/// octets: a variant stored without `Accept` misses a request sending it
+/// empty, and the request that also omits it is the control.
+#[test]
+fn an_empty_varied_field_is_not_an_absent_one() {
+    let stored = super::store::StoredResponse::new(
+        StatusCode::OK,
+        HeaderMap::new(),
+        bytes::Bytes::new(),
+        vec!["accept".to_owned()],
+        &HeaderMap::new(),
+        Duration::from_secs(60),
+    );
+
+    assert!(stored.selected_by(&HeaderMap::new()));
+    assert!(!stored.selected_by(&map(&[("accept", "")])));
+}

@@ -48,8 +48,9 @@ struct Stored {
     body: bytes::Bytes,
     /// The field names the response varied on, lowercased and sorted.
     vary: Vec<String>,
-    /// The request's values for those names, in the same order.
-    selecting: Vec<Option<HeaderValue>>,
+    /// The request's field lines for each of those names, in the same order;
+    /// none where the request did not send it.
+    selecting: Vec<Box<[HeaderValue]>>,
     recorded_at: std::time::SystemTime,
     /// How long it may be reused without revalidation.
     freshness: Duration,
@@ -68,7 +69,7 @@ impl StoredResponse {
     ) -> Self {
         let selecting = vary
             .iter()
-            .map(|name| request.get(name.as_str()).cloned())
+            .map(|name| request.get_all(name.as_str()).iter().cloned().collect())
             .collect();
         Self(Arc::new(Stored {
             status,
@@ -121,15 +122,31 @@ impl StoredResponse {
     ///
     /// RFC 9111 section 4.1: a stored response matches when the request's
     /// values for every field the *stored* response varied on agree with the
-    /// values that were present when it was stored.
+    /// values that were present when it was stored, each compared "after
+    /// combining multiple header field lines with the same field name": two
+    /// lines match the one line that lists both, and a field sent empty does
+    /// not match a field not sent.
     #[must_use]
     pub fn selected_by(&self, headers: &HeaderMap) -> bool {
         self.0
             .vary
             .iter()
             .zip(&self.0.selecting)
-            .all(|(name, stored)| headers.get(name.as_str()) == stored.as_ref())
+            .all(|(name, stored)| {
+                let received = headers.get_all(name.as_str());
+                received.iter().next().is_none() == stored.is_empty()
+                    && combined(stored.iter()).eq(combined(received.iter()))
+            })
     }
+}
+
+/// The octets of `lines` combined into one field value, as RFC 9110 section
+/// 5.3 combines them: in order, separated by a comma and a space.
+fn combined<'a>(lines: impl Iterator<Item = &'a HeaderValue>) -> impl Iterator<Item = u8> {
+    lines.enumerate().flat_map(|(index, line)| {
+        let separator: &[u8] = if index == 0 { b"" } else { b", " };
+        separator.iter().chain(line.as_bytes()).copied()
+    })
 }
 
 /// Where a [`Cache`](super::Cache) keeps responses.
