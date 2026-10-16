@@ -751,7 +751,7 @@ and reports the mutant *caught* when one fails and *missed* when none does.
 | Command | Mutates | Where it runs |
 | --- | --- | --- |
 | `mise run mutants [crate] [--shard k/n]` | one crate, or all three | locally; nightly in [`mutants.yml`](../.github/workflows/mutants.yml) |
-| `mise run mutants:diff [--shard k/n]` | lines changed since the merge base | every pull request, which fails on a survivor |
+| `mise run mutants:diff [--shard k/n]` | lines changed since the merge base | a pull request labelled `ci:full`, which fails on a survivor |
 
 The nightly job runs one seventh of the workspace, as 16 of 112 shards picked
 by the UTC weekday, so a week covers every mutant. A shard is a slice of the
@@ -809,7 +809,7 @@ finds the input a hand-written parser of request fields was never shown.
 | Command | Does | Where it runs |
 | --- | --- | --- |
 | `mise run fuzz [target] [--seconds n]` | searches one target, or each in turn, for `n` seconds | locally; nightly in [`fuzz.yml`](../.github/workflows/fuzz.yml), twenty minutes per target |
-| `mise run fuzz:check` | builds every target and replays [`fuzz/corpus/`](../fuzz/corpus/) | every pull request |
+| `mise run fuzz:check` | builds every target and replays [`fuzz/corpus/`](../fuzz/corpus/) | [`full.yml`](../.github/workflows/full.yml): the release pull request, one labelled `ci:full`, and master |
 
 [`fuzz/`](../fuzz/) is a workspace of its own: `cargo fuzz` needs a nightly
 toolchain, pinned by date in both tasks, and a member would break every stable
@@ -831,7 +831,7 @@ are reached through `kynos::__private::fuzz`, which exists only under the
 
 The search runs nightly rather than on a pull request because its verdict
 depends on how long it ran: a gate that fails on an input a longer run found is
-a gate whose result turns on the runner. What a pull request owes is the
+a gate whose result turns on the runner. What a release owes is the
 corpus. A crash the nightly job uploads is a bug fix, and lands as one: the
 input, copied into `fuzz/corpus/<target>/`, is the failing test, and the fix
 follows it. `fuzz:check` replays it from then on. The search writes what it
