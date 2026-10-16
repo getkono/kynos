@@ -132,6 +132,14 @@ pub trait HeaderParams: Sized {
 /// `#[derive(HeaderParams)]` writes this. An interceptor that only *adds*
 /// headers implements [`EncodeHeaders`] alone.
 pub trait DecodeHeaders: HeaderParams {
+    /// Whether [`decode`](DecodeHeaders::decode) can return `Err`.
+    ///
+    /// `true` — the default — declares [`HeaderRejection`]'s 400 on every
+    /// operation an interceptor reading this group covers. A group that treats
+    /// what it cannot read as absent, rather than refusing the request, sets
+    /// `false`, so the description promises no 400 the decode never sends.
+    const FALLIBLE: bool = true;
+
     /// Decodes this group from request headers.
     fn decode(headers: &HeaderMap) -> Result<Self, HeaderRejection>;
 }
@@ -192,6 +200,8 @@ impl HeaderParams for () {
 }
 
 impl DecodeHeaders for () {
+    const FALLIBLE: bool = false;
+
     fn decode(headers: &HeaderMap) -> Result<Self, HeaderRejection> {
         let _ = headers;
         Ok(())

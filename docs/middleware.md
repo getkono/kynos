@@ -15,7 +15,7 @@ cannot describe.
 | --- | --- | --- |
 | `Short` | the responses it can answer with alone | `Err(Short)` is the only way to answer without the handler |
 | `Adds` | the response headers it attaches | `Continued<Adds>` is the return type, so it must attach them — and `with_headers` is on `Continued<()>` alone, so it attaches nothing else |
-| `Reads` | the request headers it consumes | it is handed that group, and nothing else |
+| `Reads` | the request headers it consumes, and the 400 a failed decode answers with unless `DecodeHeaders::FALLIBLE` is `false` | it is handed that group, and nothing else |
 
 **One group, once.** `with_headers` writes its group and then relabels the
 `Continued`, so a second call could relabel back to the declared type with the
