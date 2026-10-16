@@ -34,7 +34,7 @@ use self::wire::{
 use crate::{
     Scenario,
     app::{echo_body, get, post, service},
-    driver::{Connecting, Driver, Runner},
+    driver::{Connecting, Driver, Runner, Served},
 };
 
 pub(crate) mod wire;
@@ -201,10 +201,16 @@ impl Connected {
     /// requests ends before its first was answered.
     #[must_use]
     pub fn open(&self, runner: &Runner) -> Open {
+        self.open_over((self.scenario.service)(), runner)
+    }
+
+    /// As [`open`](Self::open), serving `service` in place of the scenario's
+    /// own; for a test that must hold a reference into what is served.
+    pub(crate) fn open_over(&self, service: Box<dyn Served>, runner: &Runner) -> Open {
         let request = (self.scenario.request)();
         let (mut client, mut io) = tokio::io::duplex(CAPACITY);
         warm(&mut io, &mut client);
-        let connection = (self.scenario.service)().connect(io, PEER);
+        let connection = service.connect(io, PEER);
         let mut open = Open {
             connection,
             client,
