@@ -1,10 +1,9 @@
 name: Fuzz
 
-# The `fuzz/` targets, on the nightly toolchain `cargo fuzz` needs. A pull
-# request replays the committed corpus; each night every target searches for a
-# bounded time. `docs/testing.md#fuzzing` has the reasons.
+# The `fuzz/` targets, on the nightly toolchain `cargo fuzz` needs. Each night
+# every target searches for a bounded time; `full.yml` replays the committed
+# corpus. `docs/testing.md#fuzzing` has the reasons.
 on:
-  pull_request:
   schedule:
     # 04:41 UTC, off the hour and clear of the mutants run at 03:17.
     - cron: "41 4 * * *"
@@ -18,33 +17,18 @@ on:
 permissions:
   contents: read
 
-# A superseded pull request run is cancelled; a night's run queues instead.
+# A night's run queues behind the last rather than being cancelled by it.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
 
 jobs:
-  corpus:
-    name: Fuzz corpus replay
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-      # No `cargo-cache-key`: the targets build under `fuzz/target/`.
-      - name: Set up
-        uses: ./.github/actions/setup
-      - name: Build every target and replay its corpus
-        run: mise run fuzz:check
-
   search:
     name: Fuzz, nightly search
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
