@@ -329,14 +329,19 @@ fn milliseconds(retry: std::time::Duration) -> u128 {
 
 /// Writes one field, one line per line of its value.
 ///
-/// This is how the format carries a newline. An empty `name` writes the
-/// comment form, `: text`.
+/// This is how the format carries a newline. A line ends at CR, LF or CRLF,
+/// as the format's own `end-of-line` does, so no break in `value` reaches
+/// the wire to start a field a client would read on its own. An empty
+/// `name` writes the comment form, `: text`.
 fn field(record: &mut String, name: &str, value: &str) {
     for line in value.split('\n') {
-        record.push_str(name);
-        record.push_str(": ");
-        record.push_str(line.strip_suffix('\r').unwrap_or(line));
-        record.push('\n');
+        // A CRLF is one break; any CR left after that is a break of its own.
+        for line in line.strip_suffix('\r').unwrap_or(line).split('\r') {
+            record.push_str(name);
+            record.push_str(": ");
+            record.push_str(line);
+            record.push('\n');
+        }
     }
 }
 
