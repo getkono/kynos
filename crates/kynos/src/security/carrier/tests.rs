@@ -70,6 +70,7 @@ fn a_credential_for_another_scheme_is_refused_rather_than_ignored() {
 #[test]
 fn a_bearer_scheme_with_no_token_is_not_a_credential() {
     assert!(bearer(&authorized("Bearer ")).is_err());
+    assert!(bearer(&authorized("Bearer")).is_err(), "a scheme alone");
 }
 
 // --- Basic, RFC 7617 -------------------------------------------------------
@@ -107,6 +108,8 @@ fn every_malformed_basic_credential_is_refused() {
         ("bytes that are not UTF-8", "Basic /w=="),
         // `dXNlcm5hbWU=` is `username`, with no colon.
         ("no colon at all", "Basic dXNlcm5hbWU="),
+        // Empty credentials decode to an empty user-pass, which has no colon.
+        ("a scheme alone", "Basic"),
     ];
 
     for (description, field) in cases {
@@ -128,6 +131,19 @@ fn an_arbitrary_scheme_yields_both_halves() {
 
     assert_eq!(read.scheme(), "Negotiate", "the spelling the client used");
     assert_eq!(read.credentials(), "YIIB...");
+}
+
+/// RFC 9110 section 11.4: `credentials = auth-scheme [ 1*SP ( token68 /
+/// #auth-param ) ]`, so a scheme alone is a credential the authenticator
+/// judges, not a malformed field.
+#[test]
+fn a_scheme_alone_reaches_the_authenticator_with_empty_credentials() {
+    let read = http_scheme(&authorized("Negotiate"), "negotiate")
+        .expect("a credential")
+        .expect("present");
+
+    assert_eq!(read.scheme(), "Negotiate");
+    assert_eq!(read.credentials(), "");
 }
 
 // --- API keys --------------------------------------------------------------
