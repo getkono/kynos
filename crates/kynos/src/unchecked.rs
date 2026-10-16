@@ -46,7 +46,10 @@ use kynos_openapi::{Method, OpaqueReason, OpaqueRoute};
 use crate::{
     error::problem::Problem,
     http::{Request, Response, StatusCode},
-    middleware::{catch_panic::PanicPolicy, erased::ErasedTerminal},
+    middleware::{
+        catch_panic::PanicPolicy,
+        erased::{ErasedInterceptor, ErasedTerminal},
+    },
     response::IntoResponse,
     router::{Router, dispatch::Dispatch, group::Group, service::Service},
 };
@@ -226,6 +229,11 @@ pub(crate) struct UncheckedRoute<C> {
     pub(crate) terminal: Arc<dyn ErasedTerminal<C>>,
     /// Layers the enclosing scopes contributed, outermost first.
     pub(crate) layers: Vec<Arc<dyn ErasedLayer>>,
+    /// Interceptors the nested and merged routers it passed through mounted,
+    /// outermost first. The root's own are added when the router is built.
+    pub(crate) interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
+    /// Whether a router it passed through asked for panic recovery.
+    pub(crate) catch_panics: bool,
     /// What the document records in place of a `paths` entry.
     pub(crate) record: OpaqueRoute,
 }
@@ -269,11 +277,17 @@ impl<C> Unchecked<C> {
         self.routes.is_empty() && self.layers.is_empty()
     }
 
-    /// Takes over another scope's waivers, under `prefix`.
+    /// Takes over another router's waivers, under `prefix`.
     ///
-    /// The absorbed scope's layers become part of each of its routes, since
-    /// they covered exactly those.
-    pub(crate) fn absorb(&mut self, other: Self, prefix: &str) {
+    /// The absorbed router's layers, `interceptors` and panic policy become
+    /// part of each of its routes, since they covered exactly those.
+    pub(crate) fn absorb(
+        &mut self,
+        other: Self,
+        prefix: &str,
+        interceptors: &[Arc<dyn ErasedInterceptor<C>>],
+        catch_panics: bool,
+    ) {
         let Self { routes, layers } = other;
 
         for mut route in routes {
@@ -281,6 +295,10 @@ impl<C> Unchecked<C> {
             let mut covering = layers.clone();
             covering.append(&mut route.layers);
             route.layers = covering;
+            let mut covering = interceptors.to_vec();
+            covering.append(&mut route.interceptors);
+            route.interceptors = covering;
+            route.catch_panics |= catch_panics;
             self.routes.push(route);
         }
     }
@@ -502,6 +520,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// The pattern is the router's own matching syntax, and the route runs the
     /// interceptors mounted on this router like any other. A method OpenAPI
     /// has no field for is not served, and the record says which were dropped.
+    /// A method and pattern already declared, described or unchecked, is an
+    /// error-level `DuplicateOperation`, since only the first would be served.
     #[must_use]
     pub fn route_unchecked<M, H>(mut self, methods: M, pattern: &str, handler: H) -> Self
     where
@@ -537,6 +557,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 _context: PhantomData,
             }),
             layers: Vec::new(),
+            interceptors: Vec::new(),
+            catch_panics: false,
             record,
         });
         self
@@ -566,6 +588,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 _context: PhantomData,
             }),
             layers: Vec::new(),
+            interceptors: Vec::new(),
+            catch_panics: false,
             record,
         });
         self
@@ -603,6 +627,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 _context: PhantomData,
             }),
             layers: Vec::new(),
+            interceptors: Vec::new(),
+            catch_panics: false,
             record,
         });
         self

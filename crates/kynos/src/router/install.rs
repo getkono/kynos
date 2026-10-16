@@ -48,6 +48,10 @@ pub(super) fn install_unchecked<C>(
         let mut unchecked_layers = unchecked.layers.clone();
         unchecked_layers.extend(route.layers.iter().cloned());
 
+        // The root's own, then those of the routers the route was nested in.
+        let mut covering = interceptors.to_vec();
+        covering.extend(route.interceptors.iter().cloned());
+
         for method in &route.methods {
             paths[index].operations.push(dispatch::Served {
                 // Distinct per route and method, since interceptors key on it;
@@ -55,8 +59,8 @@ pub(super) fn install_unchecked<C>(
                 operation_id: format!("unchecked:{} {}", method.as_wire_str(), route.pattern),
                 method: *method,
                 terminal: Arc::clone(&route.terminal),
-                interceptors: interceptors.to_vec(),
-                catch_panics,
+                interceptors: covering.clone(),
+                catch_panics: catch_panics || route.catch_panics,
                 // Undescribed; an `Authorization` it checks itself still keeps
                 // its response out of a cache.
                 secured: false,

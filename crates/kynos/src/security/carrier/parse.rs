@@ -10,14 +10,15 @@ use crate::{
 pub(super) struct Authorization<'r> {
     /// The RFC 9110 section 11.1 scheme token, as the client spelled it.
     pub(super) scheme: &'r str,
-    /// Everything after the single space that follows the scheme.
+    /// Everything after the space that follows the scheme; empty when the
+    /// field is the scheme alone.
     pub(super) credentials: &'r str,
 }
 
 /// Reads the request's `Authorization` field.
 ///
 /// `Ok(None)` when there is none. `Err` when there is one and it is not a
-/// credential: two fields, bytes no `&str` can hold, or no scheme token.
+/// credential: two fields, bytes no `&str` can hold, or an empty scheme.
 pub(super) fn authorization(parts: &Parts) -> Result<Option<Authorization<'_>>, AuthRejection> {
     let mut fields = parts.headers.get_all(AUTHORIZATION).into_iter();
 
@@ -35,10 +36,10 @@ pub(super) fn authorization(parts: &Parts) -> Result<Option<Authorization<'_>>, 
         .to_str()
         .map_err(|_| AuthRejection::unauthenticated())?;
 
-    // `scheme SP credentials`, and the scheme is a token so it holds no space.
-    let (scheme, credentials) = value
-        .split_once(' ')
-        .ok_or_else(AuthRejection::unauthenticated)?;
+    // RFC 9110 section 11.4: `auth-scheme [ 1*SP ( token68 / #auth-param ) ]`,
+    // and the scheme is a token so it holds no space. A scheme alone carries
+    // empty credentials, which the scheme's own reader judges.
+    let (scheme, credentials) = value.split_once(' ').unwrap_or((value, ""));
 
     if scheme.is_empty() {
         return Err(AuthRejection::unauthenticated());

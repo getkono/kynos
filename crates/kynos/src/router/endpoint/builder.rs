@@ -307,11 +307,10 @@ where
                     handler: self.handler.clone(),
                     _private: PhantomData,
                 };
-                let route = Route::new(
-                    self.path.as_str(),
-                    self.operation_id.unwrap_or_default(),
-                    self.method,
-                );
+                // The key routing matched, prefixes included; this endpoint's
+                // own template only when driven without a router.
+                let path = dispatch::mounted_path(&request).unwrap_or(self.path.as_str());
+                let route = Route::new(path, self.operation_id.unwrap_or_default(), self.method);
                 Next::new(&self.interceptors, &terminal, context, Some(route))
                     .run(request)
                     .await

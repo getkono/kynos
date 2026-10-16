@@ -15,7 +15,7 @@ cannot describe.
 | --- | --- | --- |
 | `Short` | the responses it can answer with alone | `Err(Short)` is the only way to answer without the handler |
 | `Adds` | the response headers it attaches | `Continued<Adds>` is the return type, so it must attach them — and `with_headers` is on `Continued<()>` alone, so it attaches nothing else |
-| `Reads` | the request headers it consumes | it is handed that group, and nothing else |
+| `Reads` | the request headers it consumes, and the 400 a failed decode answers with unless `DecodeHeaders::FALLIBLE` is `false` | it is handed that group, and nothing else |
 
 **One group, once.** `with_headers` writes its group and then relabels the
 `Continued`, so a second call could relabel back to the declared type with the
@@ -678,6 +678,18 @@ limit instead and applies it to what the handler will actually see. The two
 cannot be mounted together — both answer 413, and `CompatibleWith` refuses
 the pair — which is right rather than awkward: on a route that accepts content
 codings, `BodySize` alone is not a weaker guard but a misleading one.
+
+**A coding nothing decoded is refused, without `Accept-Encoding`.**
+`Decompression` removes `Content-Encoding` once it decodes, and hands a body
+that fails part-way on as only its failure and without its coding, so a coding
+a body codec still sees is one nothing on the route decodes. The codec answers
+415 rather than read coded octets as its media type. RFC 9110 §15.5.16 says that
+415 "ought to" carry `Accept-Encoding`, and this one does not: the codec's 415 is
+the one its media type check already declares, so the header would become an
+optional header on the 415 of every operation that reads a body, describing a
+refusal most of those requests never meet. The detail names the coding instead,
+and the remedy is a route change rather than a client one: mount `Decompression`,
+whose own 415 does carry `Accept-Encoding`, naming what it decodes.
 
 **A stalled body is the server's to bound, and a slow one is not.** The
 server wraps every request body it reads off a socket in an idle timer,
