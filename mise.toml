@@ -167,7 +167,7 @@ cargo hack check --workspace --exclude kynos-profile --each-feature --all-target
 description = "Measure what each feature costs a linked artifact and monomorphized IR"
 # `.text` at `--release`, the shipped artifact; IR at the dev profile, since
 # fat LTO deletes the monomorphizations `llvm-lines` counts. The script drives
-# the loop because every build overwrites the fixture. Runs in `cost.yml`, not
+# the loop because every build overwrites the fixture. Runs in `full.yml`, not
 # per pull request (docs/releasing.md).
 #
 # Task-scoped pins stay out of every other job, and `mise lock` does not lock

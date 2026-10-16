@@ -1,0 +1,372 @@
+name: Comprehensive
+
+# Every check too slow for a pull request to wait on: the feature matrix, the
+# other platforms, coverage, the MSRV, packaging, the API comparison, the fuzz
+# corpus and the cost sweeps. `ci.yml` is what an ordinary pull request runs.
+#
+# The tier runs on a release pull request (a `release-plz-` head, per
+# `docs/releasing.md`), on one labelled `ci:full`, on a manual dispatch, and
+# on master once merges stop arriving. Otherwise every job but `gate` is
+# skipped, which a required check reads as passing.
+on:
+  push:
+    branches:
+      - master
+  # Every pull request, so the required checks are reported (as skipped) on
+  # each; `labeled` so adding `ci:full` starts the tier.
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+    inputs:
+      check:
+        description: >-
+          Apply the cost release gate, to preview what a release PR will say.
+          Always on for a release-plz- branch.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# A newer pull request run supersedes an older one. A push gets a group of its
+# own: past `gate`, a master run finishes, so its caches and trend points land.
+concurrency:
+  group: >-
+    ${{ github.workflow }}-${{ github.event_name == 'pull_request'
+    && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # No working tree persists across edits, so incremental is dead weight.
+  CARGO_INCREMENTAL: 0
+  NEXTEST_PROFILE: ci
+
+jobs:
+  # The one place that decides whether the tier runs.
+  gate:
+    name: Gate
+    runs-on: ubuntu-latest
+    # Only a gate is cancelled by the next push, which is the debounce.
+    concurrency:
+      group: ${{ github.workflow }}-gate-${{ github.ref }}
+      cancel-in-progress: true
+    outputs:
+      full: ${{ steps.decide.outputs.full }}
+    steps:
+      # The pull request's labels, not the one an event added: a run started by
+      # an unrelated label cancels the one before it, so it has to decide alike.
+      - name: Decide whether the tier runs
+        id: decide
+        env:
+          FULL: >-
+            ${{ github.event_name != 'pull_request'
+            || startsWith(github.head_ref, 'release-plz-')
+            || contains(github.event.pull_request.labels.*.name, 'ci:full') }}
+        run: echo "full=$FULL" >> "$GITHUB_OUTPUT"
+      # A merge inside this window cancels the run before any job below starts,
+      # so a burst of merges is checked once, at its last commit.
+      - name: Wait for master to settle
+        if: github.event_name == 'push'
+        run: sleep 900
+
+  features:
+    name: Feature matrix
+    needs: gate
+    if: needs.gate.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Set up
+        uses: ./.github/actions/setup
+        with:
+          cargo-cache-key: features
+      - name: Lint at baseline features
+        run: mise run lint:baseline
+      - name: Lint at each codec's feature set
+        run: mise run lint:codecs
+      # Test builds run before `features:check`, which rewrites manifests and
+      # strips dev-dependencies while it walks.
+      - name: Test at baseline features
+        run: mise run test:baseline
+      - name: Test kynos-openapi with arbitrary_precision forced on
+        run: mise run test:arbitrary-precision
+      - name: Check every feature combination
+        run: mise run features:check
+      - name: Check every target at each feature
+        run: mise run features:targets
+      - name: Check panic recovery gating
+        run: mise run panic:check
+
+  coverage:
+    name: Coverage
+    needs: gate
+    if: needs.gate.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Set up
+        uses: ./.github/actions/setup
+        with:
+          cargo-cache-key: coverage
+      # `ui` cannot run under instrumentation; `ci.yml`'s `Tests` runs it.
+      - name: Run tests under coverage
+        run: mise run coverage:ci
+      - name: Add coverage summary
+        run: cat coverage-summary.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report
+          path: |
+            lcov.info
+            coverage-summary.txt
+
+  # Compiles the `cfg` arms x86-64 Linux does not, and runs the suite on arm64
+  # Linux, the other common server target, and on each other OS, holding every
+  # one's emission to the same committed corpus.
+  portability:
+    name: Tests (${{ matrix.os }})
+    needs: gate
+    if: needs.gate.outputs.full == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - macos-latest
+          - ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      # `rust-cache` keys on the OS and the host triple itself.
+      - name: Set up
+        uses: ./.github/actions/setup
+        with:
+          cargo-cache-key: portability
+      - name: Run tests
+        run: mise run test
+
+  msrv:
+    name: MSRV
+    needs: gate
+    if: needs.gate.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Set up
+        uses: ./.github/actions/setup
+        with:
+          cargo-cache-key: msrv
+      - name: Check the declared MSRV
+        run: mise run msrv:check
+
+  semver:
+    name: API compatibility
+    needs: gate
+    if: needs.gate.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    # Advisory before 1.0 (docs/nfr.md): a break goes to the job summary and
+    # passes; no verdict at all fails. Not `continue-on-error`, which still
+    # marks the check run red.
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Set up
+        uses: ./.github/actions/setup
+        with:
+          cargo-cache-key: semver
+      - name: Compare the public API against the last published release
+        run: |
+          set -o pipefail
+          mise run semver:check 2>&1 | tee semver.log || true
+
+          # `CARGO_TERM_COLOR: always` puts escapes inside the verdict line.
+          sed -r 's/\x1b\[[0-9;]*m//g' semver.log > semver.txt
+
+          if grep -q 'Summary semver requires new major version' semver.txt; then
+            verdict=broken
+          elif grep -q 'Summary no semver update required' semver.txt; then
+            verdict=clean
+          else
+            echo "::error::cargo-semver-checks produced no verdict; treating as a job failure"
+            exit 1
+          fi
+
+          {
+            echo "## API compatibility against the last published release"
+            echo
+            if [ "$verdict" = clean ]; then
+              echo "No break against the published baseline."
+            else
+              echo "Breaks against the published baseline, listed below."
+              echo
+              echo "Pre-1.0, a minor bump is how a break is declared, so this is"
+              echo "evidence for the release review rather than a failure of this"
+              echo "pull request."
+            fi
+            echo
+            echo '```'
+            grep -E '^(--- failure|Failed in:|  [a-z]|[[:space:]]+Summary )' semver.txt \
+              | sed "s#$GITHUB_WORKSPACE/##g"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  package:
+    name: Package
+    needs: gate
+    if: needs.gate.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      # No cache: `cargo package` builds pristine extractions under
+      # `target/package/`, which `rust-cache` neither keys nor prunes.
+      - name: Set up
+        uses: ./.github/actions/setup
+      - name: Package every crate
+        run: mise run publish:check
+
+  # The `fuzz/` targets, on the nightly toolchain `cargo fuzz` needs; the
+  # nightly search is `fuzz.yml`. `docs/testing.md#fuzzing` has the reasons.
+  fuzz:
+    name: Fuzz corpus replay
+    needs: gate
+    if: needs.gate.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      # No `cargo-cache-key`: the targets build under `fuzz/target/`.
+      - name: Set up
+        uses: ./.github/actions/setup
+      - name: Build every target and replay its corpus
+        run: mise run fuzz:check
+
+  # The per-feature cost sweep: a trend on master and a release pull request's
+  # gate (`KYNOS_COST=check`, argued in `scripts/cost_features.py`;
+  # `docs/releasing.md` has the loop). The script, not YAML, decides what exit
+  # status a measurement earns.
+  cost:
+    name: Cost trend
+    needs: gate
+    if: needs.gate.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          # The report reads the baselines the last `kynos-v*` tag shipped.
+          fetch-depth: 0
+      # No `cargo-cache-key`: a save this size would evict master's entries, and
+      # the sweep rebuilds every point anyway.
+      - name: Set up
+        uses: ./.github/actions/setup
+      # Gated on a release branch whatever the event, so a manual run there
+      # cannot pass in place of a refusal. A `ci:full` pull request gets the
+      # trend.
+      - name: Measure per-feature codegen and binary deltas, and per-codec ones
+        env:
+          KYNOS_COST: >-
+            ${{ (startsWith(github.head_ref, 'release-plz-') || inputs.check
+            || startsWith(github.ref_name, 'release-plz-')) && 'check' || '' }}
+        run: mise run cost:features
+      # Also after a refused gate: the re-record is reviewed against the report.
+      - name: Add cost summary
+        if: ${{ !cancelled() && hashFiles('cost-report.md') != '' }}
+        run: cat cost-report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload cost report
+        if: ${{ !cancelled() && hashFiles('cost-report.md') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: cost-report
+          path: |
+            cost-report.md
+            cost-binary.tsv
+            cost-codec.tsv
+            cost-codegen.tsv
+
+  profile:
+    name: Profile trend
+    needs: gate
+    if: needs.gate.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Set up
+        uses: ./.github/actions/setup
+      # Pinned to `profile:valgrind`'s version: the CPU features Valgrind
+      # reports decide which routines a dependency picks.
+      - name: Install Valgrind
+        uses: gungraun/setup-gungraun@v1
+        with:
+          runner-strategy: none
+          valgrind-version: 3.27.1
+          # Never the distribution's, which is a different version.
+          valgrind-strategy: builder,source
+      - name: Count instructions and heap blocks over the request path
+        run: mise run profile:requests
+      - name: Add profile summary
+        if: ${{ !cancelled() && hashFiles('profile-report.md') != '' }}
+        run: cat profile-report.md >> "$GITHUB_STEP_SUMMARY"
+      # The attribution and the Callgrind files beside it attribute a moved
+      # count. CI is the host of record: recording the baseline is copying
+      # `profile-requests.tsv` over `requests.tsv`.
+      - name: Upload profile
+        if: ${{ !cancelled() && hashFiles('profile-report.md') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: profile
+          path: |
+            profile-report.md
+            profile-requests.tsv
+            target/gungraun/profile-attribution.md
+            target/gungraun/kynos-profile/
+
+  # The one check to require: a matrix job's name is unresolved when skipped,
+  # so the tier is gated through this rather than through each job. It runs
+  # whatever `gate` decided, so a gate that failed cannot pass as a skip.
+  comprehensive:
+    name: Comprehensive
+    needs:
+      - gate
+      - features
+      - coverage
+      - portability
+      - msrv
+      - semver
+      - package
+      - fuzz
+      - cost
+      - profile
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      # A gate cancelled by a newer push or update leaves the check to that run.
+      - name: Require every job in the tier to have passed
+        env:
+          GATE: ${{ needs.gate.result }}
+          FULL: ${{ needs.gate.outputs.full }}
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          case "$GATE" in
+            success) ;;
+            cancelled) echo "Superseded by a newer run."; exit 0 ;;
+            *) echo "::error::the gate ended $GATE"; exit 1 ;;
+          esac
+          if [ "$FULL" != true ]; then
+            echo "The tier does not run here."
+            exit 0
+          fi
+          for result in $RESULTS; do
+            if [ "$result" != success ]; then
+              echo "::error::a job in the tier ended $result"
+              exit 1
+            fi
+          done
