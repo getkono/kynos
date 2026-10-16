@@ -267,22 +267,20 @@ async fn read(response: Response) -> (StatusCode, Bytes) {
 
 /// Buffering the body to decode it must not turn a refused request into an
 /// accepted one, nor into a different refusal: the extractor beneath answers
-/// exactly as it does with no `Decompression` mounted. Uncoded, because that
-/// body reaches the handler with no decode to notice the truncation; and coded,
-/// because decoding the part that arrived would answer for a body the client
-/// never sent. Without `Decompression` the coded body is refused for its
-/// coding, which nothing decoded, before any byte is read.
+/// as it does for an uncoded body that fails with no `Decompression` mounted,
+/// a transport failure. Uncoded, because that body reaches the handler with no
+/// decode to notice the truncation; and coded, because decoding the part that
+/// arrived would answer for a body the client never sent, and leaving its
+/// coding declared would blame the coding, which this operation decodes.
 #[tokio::test]
 async fn a_body_that_fails_part_way_is_refused_as_it_is_without_decompression() {
-    for (coding, refused) in [
-        (None, StatusCode::BAD_REQUEST),
-        (Some("gzip"), StatusCode::UNSUPPORTED_MEDIA_TYPE),
-    ] {
-        let (plain, plain_body) = read(service(None).call(interrupted(coding)).await).await;
+    let (plain, plain_body) = read(service(None).call(interrupted(None)).await).await;
+    assert_eq!(plain, StatusCode::BAD_REQUEST);
+
+    for coding in [None, Some("gzip")] {
         let (decoded, decoded_body) =
             read(service(Some(1024)).call(interrupted(coding)).await).await;
 
-        assert_eq!(plain, refused, "coding {coding:?}");
         assert_eq!(
             decoded,
             plain,
@@ -356,6 +354,23 @@ mod streamed {
             plain_body,
             "{}",
             String::from_utf8_lossy(&decoded_body)
+        );
+    }
+
+    /// A coded body that fails part-way hands on only the failure: the coded
+    /// octets before it are no records, and its coding, left declared, would be
+    /// refused as one nothing decoded.
+    #[tokio::test]
+    async fn a_coded_body_that_fails_part_way_reaches_a_streaming_handler_as_its_failure() {
+        let request = interrupted_as("application/x-ndjson", Some("gzip"), b"1\n2\n");
+        let (status, body) = read(service(Some(1024)).call(request).await).await;
+
+        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+        assert_eq!(
+            body.as_ref(),
+            b"read [], then a rejection",
+            "{}",
+            String::from_utf8_lossy(&body)
         );
     }
 }
