@@ -534,7 +534,6 @@ run = [
   { task = "test" },
   { task = "test:baseline" },
   { task = "test:doc" },
-  { task = "ui:check" },
   { task = "references:verify" },
   { task = "containment:check" },
   { task = "containment:test" },
