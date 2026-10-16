@@ -145,6 +145,22 @@ pub(super) fn recovers_in(
     remaining_window.saturating_add(decay)
 }
 
+/// What one quota decided, before anything is spent.
+enum Outcome {
+    /// The store could not answer and the policy allows: nothing to spend.
+    Unread { elapsed: Duration },
+    /// The store could not answer and the policy refuses, for `wait`.
+    Unreachable { wait: Duration },
+    /// Over the quota, which recovers after `wait`.
+    Refused { wait: Duration },
+    /// Room for this request, spent only if no other quota refuses it.
+    Within {
+        counted: u64,
+        elapsed: Duration,
+        current_key: String,
+    },
+}
+
 /// The rate limiter Kynos ships: named quotas over a store you supply.
 ///
 /// ```no_run
@@ -209,6 +225,49 @@ impl<K, S> Quotas<K, S> {
     }
 }
 
+impl<K, S: RateLimitStore> Quotas<K, S> {
+    /// What `quota` decides for `partition` at `now`, spending nothing.
+    async fn decide(&self, quota: &Quota, partition: &str, now: Duration) -> Outcome {
+        let window_ms = quota.window.as_millis().max(1);
+        let index = now.as_millis() / window_ms;
+        let elapsed =
+            Duration::from_millis(u64::try_from(now.as_millis() % window_ms).unwrap_or(u64::MAX));
+
+        let current_key = format!("{partition}|{}|{index}", quota.name);
+        let previous_key = format!("{partition}|{}|{}", quota.name, index.saturating_sub(1));
+
+        // Read before increment: a denied request must not consume quota, or
+        // a retrying client never recovers.
+        let counted = match (
+            self.store.read(&current_key).await,
+            self.store.read(&previous_key).await,
+        ) {
+            (Ok(current), Ok(previous)) => estimate(previous, current, elapsed, quota.window),
+            _ => {
+                return match self.on_store_failure {
+                    StoreFailure::Allow => Outcome::Unread { elapsed },
+                    StoreFailure::Deny => Outcome::Unreachable {
+                        wait: quota.window.saturating_sub(elapsed),
+                    },
+                };
+            }
+        };
+
+        let ceiling = quota.ceiling();
+        if counted >= ceiling {
+            return Outcome::Refused {
+                wait: recovers_in(counted, ceiling.saturating_sub(1), elapsed, quota.window),
+            };
+        }
+
+        Outcome::Within {
+            counted,
+            elapsed,
+            current_key,
+        }
+    }
+}
+
 impl<C, K, S> RateLimitPolicy<C> for Quotas<K, S>
 where
     C: Sync + 'static,
@@ -241,76 +300,65 @@ where
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();
 
-        let mut limits = Vec::with_capacity(self.enforced.len());
+        // Two passes: decide against every quota, then spend only if none
+        // refused. A request one quota refuses spends no other, or a client held
+        // to its burst rate drains its daily allowance at the rate it asks.
+        let mut outcomes = Vec::with_capacity(self.enforced.len());
         let mut denial: Option<Duration> = None;
 
         for quota in &self.enforced {
-            let window_ms = quota.window.as_millis().max(1);
-            let index = now.as_millis() / window_ms;
-            let elapsed = Duration::from_millis(
-                u64::try_from(now.as_millis() % window_ms).unwrap_or(u64::MAX),
-            );
-
-            let current_key = format!("{partition}|{}|{index}", quota.name);
-            let previous_key = format!("{partition}|{}|{}", quota.name, index.saturating_sub(1));
-
-            // Read before increment: a denied request must not consume quota, or
-            // a retrying client never recovers.
-            let counted = match (
-                self.store.read(&current_key).await,
-                self.store.read(&previous_key).await,
-            ) {
-                (Ok(current), Ok(previous)) => estimate(previous, current, elapsed, quota.window),
-                _ => match self.on_store_failure {
-                    StoreFailure::Allow => {
-                        limits.push(ServiceLimit::new(
-                            quota.name.clone(),
-                            quota.ceiling(),
-                            quota.ceiling(),
-                            quota.window.saturating_sub(elapsed),
-                        ));
-                        continue;
-                    }
-                    StoreFailure::Deny => {
-                        denial.get_or_insert(quota.window.saturating_sub(elapsed));
-                        limits.push(ServiceLimit::new(
-                            quota.name.clone(),
-                            quota.ceiling(),
-                            0,
-                            quota.window.saturating_sub(elapsed),
-                        ));
-                        continue;
-                    }
-                },
-            };
-
-            let ceiling = quota.ceiling();
-            if counted >= ceiling {
-                let wait = recovers_in(counted, ceiling.saturating_sub(1), elapsed, quota.window);
-                let wait = denial.map_or(wait, |existing| existing.max(wait));
-                denial = Some(wait);
-
-                limits.push(ServiceLimit::new(quota.name.clone(), ceiling, 0, wait));
-                continue;
+            let outcome = self.decide(quota, &partition, now).await;
+            match outcome {
+                Outcome::Unreachable { wait } => {
+                    denial.get_or_insert(wait);
+                }
+                Outcome::Refused { wait } => {
+                    denial = Some(denial.map_or(wait, |existing| existing.max(wait)));
+                }
+                Outcome::Unread { .. } | Outcome::Within { .. } => {}
             }
+            outcomes.push(outcome);
+        }
 
-            // Only a request that will be served spends quota.
-            let spent = match self
-                .store
-                .increment(&current_key, 1, quota.window.saturating_mul(2))
-                .await
-            {
-                Ok(spent) => spent,
-                Err(_) => counted.saturating_add(1),
-            };
-            let _ = spent;
+        let mut limits = Vec::with_capacity(self.enforced.len());
 
-            limits.push(ServiceLimit::new(
-                quota.name.clone(),
-                ceiling,
-                ceiling.saturating_sub(counted).saturating_sub(1),
-                quota.window.saturating_sub(elapsed),
-            ));
+        for (quota, outcome) in self.enforced.iter().zip(outcomes) {
+            let ceiling = quota.ceiling();
+            limits.push(match outcome {
+                Outcome::Unread { elapsed } => ServiceLimit::new(
+                    quota.name.clone(),
+                    ceiling,
+                    ceiling,
+                    quota.window.saturating_sub(elapsed),
+                ),
+                Outcome::Refused { wait } | Outcome::Unreachable { wait } => {
+                    ServiceLimit::new(quota.name.clone(), ceiling, 0, wait)
+                }
+                Outcome::Within {
+                    counted,
+                    elapsed,
+                    current_key,
+                } => {
+                    // Only a request that will be served spends quota; a failed
+                    // increment still serves it, as the read already allowed.
+                    let spends = denial.is_none();
+                    if spends {
+                        let _ = self
+                            .store
+                            .increment(&current_key, 1, quota.window.saturating_mul(2))
+                            .await;
+                    }
+
+                    ServiceLimit::new(
+                        quota.name.clone(),
+                        ceiling,
+                        ceiling
+                            .saturating_sub(counted)
+                            .saturating_sub(u64::from(spends)),
+                        quota.window.saturating_sub(elapsed),
+                    )
+                }
+            });
         }
 
         match denial {

@@ -289,6 +289,91 @@ async fn the_tightest_quota_is_the_one_that_refuses() {
     );
 }
 
+/// What `quota` has counted in `counters`, across every window.
+fn spent(counters: &Counters, quota: &str) -> u64 {
+    let infix = format!("|{quota}|");
+    counters
+        .0
+        .lock()
+        .expect("no panic")
+        .iter()
+        .filter(|(key, _)| key.contains(&infix))
+        .map(|(_, count)| count)
+        .sum()
+}
+
+/// A request one quota refuses spends no other quota either.
+///
+/// Otherwise a client held to its burst rate still drains its daily allowance
+/// at the rate it asks, and is locked out for the day having been served a
+/// fraction of it. Declared in both orders, since the quotas are checked in
+/// the order they were added.
+#[tokio::test]
+async fn a_request_one_quota_refuses_spends_no_other_quota() {
+    for tight_first in [true, false] {
+        let counters = Counters::default();
+        let burst = Quota::new("burst", 1, Duration::from_secs(600));
+        let daily = Quota::new("daily", 1_000, Duration::from_secs(86_400));
+        let quotas = Quotas::new(shared(), counters.clone());
+        let quotas = if tight_first {
+            quotas.quota(burst).quota(daily)
+        } else {
+            quotas.quota(daily).quota(burst)
+        };
+        let service = limited(quotas);
+
+        assert_eq!(
+            get(&service, "/counted").call().await.status,
+            StatusCode::NO_CONTENT
+        );
+
+        for _ in 0..5 {
+            assert_eq!(
+                get(&service, "/counted").call().await.status,
+                StatusCode::TOO_MANY_REQUESTS
+            );
+        }
+
+        assert_eq!(
+            spent(&counters, "daily"),
+            1,
+            "refusals spent the daily quota (burst declared first: {tight_first})"
+        );
+        assert_eq!(spent(&counters, "burst"), 1);
+    }
+}
+
+/// A refusal reports what a quota that passed still has, which is everything
+/// the refusal did not spend.
+#[tokio::test]
+async fn a_refusal_reports_the_other_quotas_unspent() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![counted, other])
+        .intercept(
+            RateLimit::new(
+                Quotas::new(shared(), Counters::default())
+                    .quota(Quota::new("burst", 1, Duration::from_secs(600)))
+                    .quota(Quota::new("daily", 1_000, Duration::from_secs(86_400))),
+            )
+            .standard_fields(),
+        )
+        .build(())
+        .expect("a describable router");
+
+    let served = get(&service, "/counted").call().await;
+    let served = served.field("ratelimit").expect("the limits are reported");
+    assert!(served.contains(r#""daily";r=999;"#), "{served}");
+
+    let refused = get(&service, "/counted").call().await;
+    assert_eq!(refused.status, StatusCode::TOO_MANY_REQUESTS);
+    let refused = refused.field("ratelimit").expect("the limits are reported");
+    assert!(refused.contains(r#""burst";r=0;"#), "{refused}");
+    assert!(
+        refused.contains(r#""daily";r=999;"#),
+        "a refusal reported daily quota it did not spend: {refused}"
+    );
+}
+
 /// Both quotas reach the wire under the standard spelling.
 ///
 /// The limitation that motivates it: the `X-` triple has room for one.
