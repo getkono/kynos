@@ -12,7 +12,7 @@ use crate::{
         FromRequest,
         describe::{Describe, RequestContent},
     },
-    http::{HeaderMap, Request, header},
+    http::{HeaderMap, Request},
     router::operation::OperationCx,
     schema::{Schema, constraints::Pointer, registry::Registry},
 };
@@ -35,8 +35,11 @@ pub struct MultipartForm<T>(pub T);
 /// The media type decoded and described.
 pub(super) const MEDIA_TYPE: &str = mime_names::MULTIPART_FORM_DATA;
 
-/// The parameters this codec reads: RFC 2046's `boundary`.
-pub(super) const PARAMETERS: &[&str] = &["boundary"];
+/// RFC 2046's delimiter parameter.
+const BOUNDARY: &str = "boundary";
+
+/// The parameters this codec reads: [`BOUNDARY`].
+pub(super) const PARAMETERS: &[&str] = &[BOUNDARY];
 
 /// One uploaded file within a [`MultipartForm`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -176,24 +179,29 @@ impl FromPart for String {
 /// The delimiter the request declares, or the rejection saying why there is
 /// none to read the body with.
 ///
-/// An unacceptable media type is the 415; an accepted one without a `boundary`
-/// is a 400, since no parser can find the parts.
+/// Read by the parameter rule [`offers`](super::offers) accepted the media type
+/// by, so optional whitespace around each `;` (RFC 9110 section 5.6.6) is
+/// skipped here as it is there. An unacceptable media type is the 415; an
+/// accepted one without a `boundary`, or with an empty one, is a 400, since no
+/// parser can find the parts.
 fn boundary(headers: &HeaderMap) -> Result<String, BodyRejection> {
     if !super::offers(headers, MEDIA_TYPE) {
         return Err(super::unsupported_media_type(headers));
     }
 
-    let declared = headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok());
-
-    match declared.map(multer::parse_boundary) {
-        Some(Ok(boundary)) => Ok(boundary),
-        Some(Err(multer::Error::NoBoundary)) => Err(BodyRejection::Syntax {
-            detail: format!("`{MEDIA_TYPE}` declares no `boundary` parameter"),
-        }),
-        _ => Err(super::unsupported_media_type(headers)),
-    }
+    super::content_type(headers)
+        .and_then(|(_, parameters)| {
+            parameters
+                .split(';')
+                .filter_map(super::parameter)
+                .find(|(name, _)| name.eq_ignore_ascii_case(BOUNDARY))
+        })
+        .map(|(_, value)| value)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| BodyRejection::Syntax {
+            detail: format!("`{MEDIA_TYPE}` declares no `{BOUNDARY}` parameter"),
+        })
 }
 
 /// A parser failure is a 400, except passing the limit, which is the 413.

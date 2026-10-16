@@ -85,6 +85,110 @@ mod a_file_part_describes_itself {
     }
 }
 
+/// The `boundary` is read by the same rule that accepted the media type:
+/// RFC 9110 section 5.6.6 allows optional whitespace on both sides of each
+/// `;`, so a `Content-Type` spelled with it decodes the parts rather than being
+/// the 415 a stricter parser makes of it.
+#[cfg(feature = "multipart")]
+mod a_multipart_boundary_is_read_past_optional_whitespace {
+    use crate::{
+        error::rejection::BodyRejection,
+        extract::{
+            FromRequest,
+            body::multipart::{FromMultipart, MultipartForm, Part},
+        },
+        http::{HeaderValue, Request, StatusCode, body::Body, header},
+        schema::{Schema, registry::Registry},
+    };
+
+    /// Every part the body carried, as `(name, bytes)`.
+    #[derive(Debug, PartialEq, Eq)]
+    struct Parts(Vec<(String, bytes::Bytes)>);
+
+    impl FromMultipart for Parts {
+        fn from_parts(parts: Vec<Part>) -> Result<Self, BodyRejection> {
+            Ok(Self(
+                parts
+                    .into_iter()
+                    .map(|part| (part.name, part.bytes))
+                    .collect(),
+            ))
+        }
+    }
+
+    impl Schema for Parts {
+        fn schema(_registry: &mut Registry) -> kynos_openapi::Schema {
+            kynos_openapi::Schema::any()
+        }
+    }
+
+    /// One part, `a`, holding `b`, delimited by `x`.
+    const BODY: &[u8] = b"--x\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nb\r\n--x--\r\n";
+
+    /// What `MultipartForm` makes of [`BODY`] under `content_type`.
+    async fn read(content_type: &'static str) -> Result<Parts, BodyRejection> {
+        let mut request = Request::new(Body::from_bytes(bytes::Bytes::from_static(BODY)));
+        request
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+        MultipartForm::<Parts>::from_request(request, &())
+            .await
+            .map(|MultipartForm(parts)| parts)
+    }
+
+    /// Whitespace before and after the delimiter, SP and HTAB, a trailing one,
+    /// a quoted value, a preceding parameter, an empty trailing parameter, and
+    /// names in another case.
+    const SPELLINGS: &[&str] = &[
+        "multipart/form-data;boundary=x",
+        "multipart/form-data ; boundary=x",
+        "multipart/form-data\t; boundary=x",
+        "multipart/form-data;\tboundary=x",
+        "multipart/form-data; boundary=x ",
+        "multipart/form-data; boundary=x\t",
+        "multipart/form-data \t;\t boundary=\"x\" ",
+        "multipart/form-data; charset=utf-8 ; boundary=x",
+        "multipart/form-data; boundary=x ;",
+        "Multipart/Form-Data; Boundary=x",
+    ];
+
+    #[tokio::test]
+    async fn every_spelling_decodes_the_parts() {
+        for content_type in SPELLINGS {
+            let parts = read(content_type)
+                .await
+                .unwrap_or_else(|rejection| panic!("`{content_type}`: {rejection:?}"));
+            assert_eq!(
+                parts,
+                Parts(vec![("a".to_owned(), bytes::Bytes::from_static(b"b"))]),
+                "`{content_type}`"
+            );
+        }
+    }
+
+    /// An empty `boundary` delimits nothing, so it is the 400 a missing one is,
+    /// not a media type the codec refuses.
+    #[tokio::test]
+    async fn an_empty_boundary_is_no_boundary() {
+        for content_type in [
+            "multipart/form-data",
+            "multipart/form-data; boundary=",
+            "multipart/form-data; boundary=\"\" ",
+        ] {
+            let rejection = read(content_type).await.expect_err(content_type);
+            assert_eq!(
+                rejection.status(),
+                StatusCode::BAD_REQUEST,
+                "`{content_type}`"
+            );
+            assert!(
+                matches!(rejection, BodyRejection::Syntax { .. }),
+                "`{content_type}`: {rejection:?}"
+            );
+        }
+    }
+}
+
 /// A form body decodes the encoding its description states.
 ///
 /// No Encoding Object is written, so each property takes the defaults:
