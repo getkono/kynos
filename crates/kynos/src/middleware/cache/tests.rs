@@ -472,3 +472,56 @@ fn the_key_names_the_authority_the_request_carried() {
         Some("b.example.com")
     );
 }
+
+/// A variant is selected by every line of a field it varied on, not the first.
+///
+/// RFC 9111 section 4.1 compares selecting fields "after combining multiple
+/// header field lines with the same field name", so a request sending only the
+/// first of two `Accept` lines negotiated something else and must miss, while
+/// one sending the same list on one line must hit. The identical request is
+/// the control: without it, a variant that selected nothing would pass.
+#[test]
+fn a_variant_is_selected_by_every_line_of_a_varied_field() {
+    let stored = super::store::StoredResponse::new(
+        StatusCode::OK,
+        HeaderMap::new(),
+        bytes::Bytes::new(),
+        vec!["accept".to_owned()],
+        &map(&[
+            ("accept", "text/html;q=0.1"),
+            ("accept", "application/json"),
+        ]),
+        Duration::from_secs(60),
+    );
+
+    assert!(stored.selected_by(&map(&[
+        ("accept", "text/html;q=0.1"),
+        ("accept", "application/json")
+    ])));
+    assert!(stored.selected_by(&map(&[("accept", "text/html;q=0.1, application/json")])));
+    assert!(!stored.selected_by(&map(&[("accept", "text/html;q=0.1")])));
+    assert!(!stored.selected_by(&map(&[
+        ("accept", "text/html;q=0.1"),
+        ("accept", "application/json"),
+        ("accept", "image/png")
+    ])));
+    assert!(!stored.selected_by(&HeaderMap::new()));
+}
+
+/// A field sent empty is not a field not sent, though both combine to no
+/// octets: a variant stored without `Accept` misses a request sending it
+/// empty, and the request that also omits it is the control.
+#[test]
+fn an_empty_varied_field_is_not_an_absent_one() {
+    let stored = super::store::StoredResponse::new(
+        StatusCode::OK,
+        HeaderMap::new(),
+        bytes::Bytes::new(),
+        vec!["accept".to_owned()],
+        &HeaderMap::new(),
+        Duration::from_secs(60),
+    );
+
+    assert!(stored.selected_by(&HeaderMap::new()));
+    assert!(!stored.selected_by(&map(&[("accept", "")])));
+}
