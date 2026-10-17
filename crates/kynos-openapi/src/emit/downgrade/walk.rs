@@ -180,13 +180,7 @@ pub(super) fn collect_path_item_blockers(
     }
 
     // Path-level parameters can carry a 3.2 location too.
-    for parameter in item.parameters.iter().filter_map(RefOr::as_item) {
-        collect_parameter_blockers(
-            &format!("{location}/parameters/{}", parameter.name),
-            parameter,
-            blockers,
-        );
-    }
+    collect_parameters_blockers(location, &item.parameters, blockers);
 
     collect_servers_blockers(location, &item.servers, blockers);
 
@@ -231,13 +225,7 @@ pub(super) fn collect_operation_blockers(
     operation: &Operation,
     blockers: &mut Vec<String>,
 ) {
-    for parameter in operation.parameters.iter().filter_map(RefOr::as_item) {
-        collect_parameter_blockers(
-            &format!("{location}/parameters/{}", parameter.name),
-            parameter,
-            blockers,
-        );
-    }
+    collect_parameters_blockers(location, &operation.parameters, blockers);
 
     if let Some(RefOr::Item(body)) = &operation.request_body {
         for (media_type, content) in &body.content {
@@ -319,6 +307,26 @@ pub(super) fn collect_response_blockers(
     for_each_item(&format!("{location}/links"), &response.links, |at, link| {
         collect_link_blockers(&at, link, blockers);
     });
+}
+
+/// The inline entries of a `parameters` array under `location`.
+///
+/// Each is located by its array index, which a reference before it also
+/// takes up, since a JSON Pointer addresses an array by index, never by name.
+fn collect_parameters_blockers(
+    location: &str,
+    parameters: &[RefOr<Parameter>],
+    blockers: &mut Vec<String>,
+) {
+    for (index, parameter) in parameters.iter().enumerate() {
+        if let RefOr::Item(parameter) = parameter {
+            collect_parameter_blockers(
+                &format!("{location}/parameters/{index}"),
+                parameter,
+                blockers,
+            );
+        }
+    }
 }
 
 /// A parameter, located at the pointer the caller built for it.
