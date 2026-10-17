@@ -8,7 +8,8 @@
 //!
 //! A source is asked for a span and returns that span, so serving a kilobyte
 //! out of a gigabyte reads a kilobyte. A short answer is asked again for the
-//! remainder; an empty one fails the body with [`Truncated`].
+//! remainder; a long one is cut to the span; an empty one fails the body with
+//! [`Truncated`].
 //!
 //! Nothing here names tokio; a source that reads a file names it in the
 //! application's own implementation.
@@ -76,7 +77,10 @@ pub trait ByteSource: Send + Sync + 'static {
     ///
     /// Returning fewer octets than asked for is a short read: the remainder is
     /// asked for on the next poll. Returning *none* fails the body with
-    /// [`Truncated`].
+    /// [`Truncated`]. Returning more is cut back to the span: the head has
+    /// already named the length, and a 206 carries exactly the octets its
+    /// `Content-Range` names (RFC 9110 section 14.4), so a source may answer
+    /// from whole blocks and leave the slicing to the body.
     fn read_span(
         &self,
         first: u64,
@@ -249,8 +253,13 @@ impl<S: ByteSource> http_body::Body for Spans<S> {
                         let truncated = Truncated { first, last };
                         Poll::Ready(Some(Err(Box::new(truncated) as Self::Error)))
                     }
-                    Ok(span) => {
-                        // A short answer: the remainder is asked for next poll.
+                    Ok(mut span) => {
+                        // A long answer is cut to the span, since the head
+                        // already named the length; a short one has its
+                        // remainder asked for next poll.
+                        // `truncate` leaves a span no longer than that alone.
+                        let (first, last) = this.span();
+                        span.truncate(usize::try_from(last - first + 1).unwrap_or(usize::MAX));
                         this.cursor = this
                             .cursor
                             .saturating_add(u64::try_from(span.len()).unwrap_or(u64::MAX));
