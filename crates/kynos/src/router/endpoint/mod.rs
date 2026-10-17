@@ -15,6 +15,7 @@ use kynos_openapi::{Method, PathTemplate};
 
 use crate::{
     http::{Request, Response},
+    middleware::MiddlewareError,
     router::operation::OperationCx,
 };
 
@@ -39,6 +40,17 @@ pub trait Endpoint<C>: Send + Sync + 'static {
 
     /// Handles a request.
     fn call(&self, request: Request, context: &C) -> impl Future<Output = Response> + Send;
+
+    /// The configuration conflict an interceptor this operation holds itself
+    /// carries, which the router refuses to build over.
+    ///
+    /// Not part of the stable API: [`EndpointBuilder`](builder::EndpointBuilder)
+    /// answers it from what `intercept` added, and an endpoint holding no
+    /// interceptor of its own has nothing to answer.
+    #[doc(hidden)]
+    fn __unhonourable_interceptor(&self) -> Option<MiddlewareError> {
+        None
+    }
 }
 
 /// The object-safe form of [`Endpoint`], so a router can hold a heterogeneous
@@ -55,6 +67,8 @@ pub(crate) trait DynEndpoint<C>: Send + Sync + 'static {
         request: Request,
         context: &'a C,
     ) -> Pin<Box<dyn Future<Output = Response> + Send + 'a>>;
+
+    fn unhonourable_interceptor(&self) -> Option<MiddlewareError>;
 }
 
 impl<C: Send + Sync + 'static, E: Endpoint<C>> DynEndpoint<C> for E {
@@ -76,6 +90,10 @@ impl<C: Send + Sync + 'static, E: Endpoint<C>> DynEndpoint<C> for E {
         context: &'a C,
     ) -> Pin<Box<dyn Future<Output = Response> + Send + 'a>> {
         Box::pin(Endpoint::call(self, request, context))
+    }
+
+    fn unhonourable_interceptor(&self) -> Option<MiddlewareError> {
+        Endpoint::__unhonourable_interceptor(self)
     }
 }
 
