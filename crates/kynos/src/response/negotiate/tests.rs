@@ -311,6 +311,32 @@ fn a_representation_is_offered_under_the_media_type_it_describes() {
     offered_under_what_it_describes::<crate::extract::body::multipart::MultipartForm<Fields>>();
 }
 
+/// Negotiation breaks the tie between two offers of one media type by tuple
+/// order, so the first is what is sent; the description must describe it.
+#[cfg(feature = "json")]
+#[test]
+fn an_offer_repeating_a_media_type_describes_what_negotiation_sends() {
+    use crate::{extract::body::json::Json, response::Responses, schema::Schema};
+
+    type Offer = (Json<u64>, Json<String>);
+    let chosen = Accept::<Offer>::parse("application/json")
+        .expect("valid Accept header")
+        .choose::<Offer>()
+        .expect("a representation matches");
+    assert_eq!(chosen, 0, "negotiation sends `Json<u64>`");
+
+    let described = <super::Negotiated<Offer> as Responses>::responses(&mut Registry::default());
+    let Some(kynos_openapi::RefOr::Item(ok)) = described.get(200) else {
+        panic!("no inline 200 response");
+    };
+
+    assert_eq!(
+        ok.content["application/json"].schema,
+        Some(u64::schema(&mut Registry::default())),
+        "the 200 describes a schema other than the one negotiation sends"
+    );
+}
+
 /// A multipart form with no fields, which is all an offer's description needs.
 #[cfg(feature = "multipart")]
 struct Fields;
