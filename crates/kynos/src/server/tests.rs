@@ -2267,6 +2267,107 @@ async fn tls_serves_a_connection_that_settled_on_http1() {
         .expect("server exits cleanly");
 }
 
+/// A connection pinned to HTTP/1.1 by ALPN still upgrades.
+///
+/// The pin is hyper's own HTTP/1 driver rather than hyper-util's, because
+/// hyper-util's upgradeable driver ignores `http1_only` and sniffs; this is the
+/// case that fails if the pinned arm serves without upgrades. The plaintext
+/// half, which the sniffing driver serves, is `tests/unchecked.rs`'s.
+#[cfg(all(feature = "tls", feature = "http1"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_tls_connection_settled_on_http1_upgrades() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio_rustls::rustls::pki_types::ServerName;
+
+    let document = kynos_openapi::Document::new(
+        kynos_openapi::SpecVersion::V3_1,
+        kynos_openapi::Info::new("Test", "1"),
+    );
+    let service = crate::router::service::Service::new(
+        document,
+        |mut request: crate::http::Request| async move {
+            let upgrade = hyper::upgrade::on(&mut request);
+            tokio::spawn(async move {
+                let Ok(upgraded) = upgrade.await else {
+                    return;
+                };
+                let mut io = hyper_util::rt::TokioIo::new(upgraded);
+                let mut buffer = [0_u8; 64];
+                while let Ok(read @ 1..) = io.read(&mut buffer).await {
+                    if io.write_all(&buffer[..read]).await.is_err() {
+                        return;
+                    }
+                }
+            });
+            let mut response = crate::http::Response::new(crate::http::body::Body::empty());
+            *response.status_mut() = http::StatusCode::SWITCHING_PROTOCOLS;
+            response.headers_mut().insert(
+                http::header::CONNECTION,
+                http::HeaderValue::from_static("upgrade"),
+            );
+            response.headers_mut().insert(
+                http::header::UPGRADE,
+                http::HeaderValue::from_static("echo"),
+            );
+            response
+        },
+    );
+    let (address, authority, shutdown_sender, server) = tls_server(service).await;
+
+    let stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    let mut stream = alpn_connector(authority.as_bytes(), &[b"http/1.1"])
+        .connect(
+            ServerName::try_from("localhost").expect("valid DNS name"),
+            stream,
+        )
+        .await
+        .expect("the HTTP/1.1 handshake succeeds");
+    stream
+        .write_all(
+            b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: upgrade\r\nUpgrade: echo\r\n\r\n",
+        )
+        .await
+        .expect("the request head writes");
+
+    // Byte by byte, so nothing past the head is consumed.
+    let mut head = Vec::new();
+    while !head.ends_with(b"\r\n\r\n") {
+        let byte = tokio::time::timeout(std::time::Duration::from_secs(5), stream.read_u8())
+            .await
+            .expect("the response head arrives")
+            .expect("the response head reads");
+        head.push(byte);
+    }
+    assert!(
+        head.starts_with(b"HTTP/1.1 101"),
+        "not a 101: {}",
+        String::from_utf8_lossy(&head)
+    );
+
+    stream
+        .write_all(b"ping")
+        .await
+        .expect("the upgraded stream writes");
+    let mut echoed = [0_u8; 4];
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        stream.read_exact(&mut echoed),
+    )
+    .await
+    .expect("the echo arrives")
+    .expect("the upgraded stream echoes rather than closes");
+    assert_eq!(&echoed, b"ping");
+
+    drop(stream);
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
 /// The other half of the offer: a connection that settled on `h2`.
 ///
 /// Gated on `http2` alone for the reason the HTTP/1 case above gives, and it is
