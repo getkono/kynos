@@ -24,8 +24,8 @@ fn accepting(value: Option<&str>) -> HeaderMap {
 #[test]
 fn every_negotiation_rule_the_specification_states_is_applied() {
     let cases: &[(&str, Option<&str>, Negotiated)] = &[
-        // Rule 1: absent means everything is acceptable.
-        ("no field at all", None, Negotiated::Identity),
+        // Rule 1: absent means everything is acceptable, identity included.
+        ("no field at all", None, Negotiated::Unstated),
         // An empty value "implies that the user agent does not want any
         // content coding in response" -- it excludes nothing, so identity.
         ("an empty field value", Some(""), Negotiated::Identity),

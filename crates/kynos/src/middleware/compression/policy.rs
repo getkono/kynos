@@ -34,6 +34,11 @@ pub enum Encoding {
     /// Identity stops being an acceptable answer, so a client that will take
     /// only identity is told 406 rather than handed the body uncompressed.
     ///
+    /// A request with no `Accept-Encoding` at all accepts any coding (RFC 9110
+    /// section 12.5.3), so it is served the server's first preference, zstd,
+    /// rather than refused. One whose field lists only codings it refuses, or
+    /// is empty, has said it will take only identity, and is refused.
+    ///
     /// It also outranks [`min_size`](super::Compression::min_size). An empty
     /// body, or one [`Compression`](super::Compression) must leave alone (a
     /// ranged or strongly tagged response), is refused with 406 whatever the

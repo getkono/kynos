@@ -313,9 +313,12 @@ for a body that reflects a secret back beside attacker-chosen input — RFC 9110
 a policy the application owns. `Encoding::Required` for one too large to be
 worth sending as it is: identity stops being an acceptable answer, so a client
 that will take only identity is answered 406 rather than handed the whole
-representation. It travels in the response's extensions, so no interceptor has
-to declare a header for it, and the one status it can produce is the 406
-`Compression` already contributes.
+representation. A request carrying no `Accept-Encoding` is not that client:
+RFC 9110 §12.5.3 makes every coding acceptable to it, so a `Required` response
+is sent in zstd, the server's first preference, while one stating no policy
+still goes out as identity. It travels in the response's extensions, so no
+interceptor has to declare a header for it, and the one status it can produce
+is the 406 `Compression` already contributes.
 
 **A response that ranges is left alone.** `Compression` refuses a 206, a 416,
 anything carrying a `Content-Range`, and anything carrying `Accept-Ranges`,
