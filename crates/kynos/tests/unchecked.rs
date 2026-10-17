@@ -581,3 +581,117 @@ async fn an_unchecked_method_beside_a_described_one_is_served() {
         Some("GET, HEAD, POST")
     );
 }
+
+// --- What an upgrade does on the wire ---------------------------------------
+
+/// Answers `101 Switching Protocols`, then echoes every byte the client sends
+/// on the connection it took over.
+#[cfg(all(feature = "server", feature = "http1"))]
+async fn echo_upgrade(mut request: Request) -> Response {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    let upgrade = hyper::upgrade::on(&mut request);
+    // Spawned, since the upgrade resolves only once the 101 is written. A
+    // failed upgrade drops the connection, which the client sees.
+    tokio::spawn(async move {
+        let Ok(upgraded) = upgrade.await else {
+            return;
+        };
+        let mut io = hyper_util::rt::TokioIo::new(upgraded);
+        let mut buffer = [0_u8; 64];
+        while let Ok(read @ 1..) = io.read(&mut buffer).await {
+            if io.write_all(&buffer[..read]).await.is_err() {
+                return;
+            }
+        }
+    });
+
+    let mut response = Response::new(Body::empty());
+    *response.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
+    let headers = response.headers_mut();
+    headers.insert(
+        kynos::http::header::CONNECTION,
+        kynos::http::HeaderValue::from_static("upgrade"),
+    );
+    headers.insert(
+        kynos::http::header::UPGRADE,
+        kynos::http::HeaderValue::from_static("echo"),
+    );
+    response
+}
+
+/// An `upgrade_unchecked` handler gets the connection after its 101.
+///
+/// Over a real socket, because handing the connection over is the driver's: a
+/// driver serving without upgrades writes the 101, then fails the upgrade and
+/// closes the connection before a byte of the new protocol moves.
+#[cfg(all(feature = "server", feature = "http1"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_upgraded_connection_carries_the_new_protocol_after_the_101() {
+    use std::{net::Ipv4Addr, time::Duration};
+
+    use kynos::server::{Server, shutdown::Shutdown};
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    /// How long the client waits for the server before the case fails.
+    const BOUND: Duration = Duration::from_secs(5);
+
+    let service = Router::<()>::new()
+        .upgrade_unchecked("/echo", echo_upgrade)
+        .build(())
+        .expect("a buildable router");
+    let (shutdown, stopped) = tokio::sync::oneshot::channel::<()>();
+    let bound = Server::new(service)
+        .bind((Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(Shutdown::on(async move {
+            let _ = stopped.await;
+        }))
+        .prepare()
+        .await
+        .expect("a loopback listener binds");
+    let address = bound.local_addrs()[0];
+    let serving = tokio::spawn(bound.serve());
+
+    let mut stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    stream
+        .write_all(
+            b"GET /echo HTTP/1.1\r\nHost: localhost\r\nConnection: upgrade\r\nUpgrade: echo\r\n\r\n",
+        )
+        .await
+        .expect("the request head writes");
+
+    // Byte by byte, so nothing past the head is consumed.
+    let mut head = Vec::new();
+    while !head.ends_with(b"\r\n\r\n") {
+        let byte = tokio::time::timeout(BOUND, stream.read_u8())
+            .await
+            .expect("the response head arrives")
+            .expect("the response head reads");
+        head.push(byte);
+    }
+    assert!(
+        head.starts_with(b"HTTP/1.1 101"),
+        "not a 101: {}",
+        String::from_utf8_lossy(&head)
+    );
+
+    stream
+        .write_all(b"ping")
+        .await
+        .expect("the upgraded stream writes");
+    let mut echoed = [0_u8; 4];
+    tokio::time::timeout(BOUND, stream.read_exact(&mut echoed))
+        .await
+        .expect("the echo arrives")
+        .expect("the upgraded stream echoes rather than closes");
+    assert_eq!(&echoed, b"ping");
+
+    drop(stream);
+    let _ = shutdown.send(());
+    serving
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
