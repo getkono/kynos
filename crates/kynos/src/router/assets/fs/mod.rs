@@ -213,8 +213,13 @@ impl EncodeHeaders for FileHeaders {
 }
 
 /// Serves one request against the directory.
+///
+/// A capture that is missing or does not decode to UTF-8 names no file, so it
+/// is a 404 rather than the empty path, which is the root and its index.
 async fn serve(directory: &Directory, request: &Request) -> Response {
-    let requested = crate::unchecked::captured(request, "path").unwrap_or_default();
+    let Some(requested) = crate::unchecked::captured(request, "path") else {
+        return refused(StatusCode::NOT_FOUND);
+    };
 
     let Some((path, metadata)) = directory.locate(&requested).await else {
         return refused(StatusCode::NOT_FOUND);
