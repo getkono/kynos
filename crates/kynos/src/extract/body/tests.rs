@@ -56,7 +56,7 @@ fn the_marker_chooses_the_content_key() {
 /// structured suffix is a different subtype.
 #[test]
 fn a_marker_is_refused_wherever_a_request_reaches_both_sides() {
-    use crate::extract::body::{alternative::same_requests, offers};
+    use crate::extract::body::{alternative::shares_requests, offers};
     use crate::http::{HeaderMap, HeaderValue, header};
 
     let pairs = [
@@ -87,7 +87,7 @@ fn a_marker_is_refused_wherever_a_request_reaches_both_sides() {
 
     for (marker, body, refused) in pairs {
         assert_eq!(
-            same_requests(marker, body),
+            shares_requests(marker, body),
             refused,
             "`{marker}` beside `{body}`"
         );
