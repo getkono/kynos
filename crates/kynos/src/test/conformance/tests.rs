@@ -171,6 +171,20 @@ fn the_most_literal_matching_template_is_the_one_chosen() {
     );
 }
 
+/// The router prefers a literal segment at the first position where two
+/// matching templates differ, left to right, so `/a/{x}/{y}` answers `/a/b/c`
+/// although `/{x}/b/c` holds more literals. Both document orders, so the
+/// choice is not a tie broken by position.
+#[test]
+fn the_first_differing_segment_decides_between_matching_templates() {
+    for templates in [["/a/{x}/{y}", "/{x}/b/c"], ["/{x}/b/c", "/a/{x}/{y}"]] {
+        let document = document(&templates);
+
+        assert_eq!(matched_template(&document, "/a/b/c"), Some("/a/{x}/{y}"));
+        assert_eq!(matched_template(&document, "/z/b/c"), Some("/{x}/b/c"));
+    }
+}
+
 /// A request target carries a query and may carry a fragment; a `paths` key
 /// carries neither, so both are cut before matching.
 #[test]
