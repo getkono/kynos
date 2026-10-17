@@ -14,7 +14,9 @@
 //! [`Document::restamp_authority`] — never authored.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
+use crate::Map;
 use crate::model::{
     document::Document,
     paths::{item::PathItem, operation::Operation},
@@ -111,6 +113,15 @@ impl std::fmt::Display for OpaqueReason {
 ///
 /// Serialized under [`OPAQUE_OPERATION_ANNOTATION`]. Marks the operation
 /// unverified; never removes it.
+///
+/// Fields a newer Kynos recorded are only ever read, never written, so none can
+/// shadow a field this version knows:
+///
+/// ```compile_fail
+/// # use kynos_openapi::annotation::{Opaque, OpaqueReason};
+/// let mut marker = Opaque::new(OpaqueReason::UntypedLayer);
+/// marker.unrecognized.insert("note".to_owned(), serde_json::json!(1));
+/// ```
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Opaque {
@@ -120,6 +131,12 @@ pub struct Opaque {
     /// Where the waiver was taken, for a human reading the description.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+
+    /// Preserved verbatim, in order, so rewriting the record never drops them.
+    /// Private, so only reading a record fills it: serde routes every field
+    /// this version knows to its own member first.
+    #[serde(flatten)]
+    unrecognized: Map<Value>,
 }
 
 impl Opaque {
@@ -129,6 +146,7 @@ impl Opaque {
         Self {
             reasons: vec![reason],
             note: None,
+            unrecognized: Map::new(),
         }
     }
 
@@ -146,13 +164,26 @@ impl Opaque {
         self
     }
 
+    /// Fields recorded by a version of Kynos that knows more than this one.
+    #[must_use]
+    pub fn unrecognized(&self) -> &Map<Value> {
+        &self.unrecognized
+    }
+
     /// Unions `other`'s reasons into this marker, keeping the first note.
+    ///
+    /// An unrecognized field this marker already holds keeps its value too.
     pub fn absorb(&mut self, other: &Self) {
         for reason in &other.reasons {
             self.add_reason(reason.clone());
         }
         if self.note.is_none() {
             self.note.clone_from(&other.note);
+        }
+        for (name, value) in &other.unrecognized {
+            self.unrecognized
+                .entry(name.clone())
+                .or_insert_with(|| value.clone());
         }
     }
 
@@ -218,6 +249,15 @@ impl Opaque {
 /// `pattern` is the router's own matching syntax, verbatim, not a
 /// [`PathTemplate`](crate::PathTemplate): any template minted for a catch-all
 /// would claim something in `paths` the service does not honour.
+///
+/// Fields a newer Kynos recorded are read-only, for the reason [`Opaque`]
+/// gives:
+///
+/// ```compile_fail
+/// # use kynos_openapi::annotation::{OpaqueReason, OpaqueRoute};
+/// let mut route = OpaqueRoute::new("/{*path}", OpaqueReason::UntypedRoute);
+/// route.unrecognized.insert("reason".to_owned(), serde_json::json!(1));
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct OpaqueRoute {
@@ -238,6 +278,11 @@ pub struct OpaqueRoute {
     /// A human-readable note.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+
+    /// Preserved verbatim, in order, so appending another route never drops
+    /// them. Private for the reason [`Opaque`]'s is.
+    #[serde(flatten)]
+    unrecognized: Map<Value>,
 }
 
 impl OpaqueRoute {
@@ -250,6 +295,7 @@ impl OpaqueRoute {
             methods: Vec::new(),
             reason,
             note: None,
+            unrecognized: Map::new(),
         }
     }
 
@@ -276,6 +322,12 @@ impl OpaqueRoute {
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
         self.note = Some(note.into());
         self
+    }
+
+    /// Fields recorded by a version of Kynos that knows more than this one.
+    #[must_use]
+    pub fn unrecognized(&self) -> &Map<Value> {
+        &self.unrecognized
     }
 
     /// Whether `document` carries the annotation at all.
