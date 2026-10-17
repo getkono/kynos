@@ -232,3 +232,48 @@ async fn main() -> kynos::Result<()> {
         .serve()
         .await
 }
+
+// --- The tests ------------------------------------------------------------
+
+/// What a `Last-Event-ID` can make the feed do, since a client writes it.
+#[cfg(test)]
+mod tests {
+    use std::task::Waker;
+
+    use futures_core::Stream as _;
+
+    use super::*;
+
+    /// How many events `feed` sends before it ends.
+    fn sent(mut feed: Feed) -> usize {
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut sent = 0;
+        while let Poll::Ready(Some(event)) = Pin::new(&mut feed).poll_next(&mut cx) {
+            event.expect("the feed never fails");
+            sent += 1;
+        }
+        sent
+    }
+
+    #[test]
+    fn a_minted_id_resumes_after_itself() {
+        assert_eq!(sent(Feed::resuming_after(Some("3"))), 6);
+    }
+
+    #[test]
+    fn resuming_after_the_last_id_sends_nothing() {
+        assert_eq!(sent(Feed::resuming_after(Some("9"))), 0);
+    }
+
+    /// `u64::MAX` is the one id whose successor overflows.
+    #[test]
+    fn an_id_never_minted_replays_from_the_start() {
+        for unminted in ["10", "18446744073709551615", "seven", ""] {
+            assert_eq!(
+                sent(Feed::resuming_after(Some(unminted))),
+                10,
+                "{unminted:?}"
+            );
+        }
+    }
+}
