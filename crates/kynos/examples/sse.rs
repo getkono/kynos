@@ -111,26 +111,33 @@ impl Update {
 struct Feed {
     /// The identifier of the next event, which is what a client sends back.
     next_id: u64,
-    /// How many events are left before the feed closes.
-    remaining: u32,
     /// Whether the reconnection advice has been sent yet.
     advised: bool,
 }
 
 impl Feed {
+    /// How many events the producer mints, identified `0` up to one less.
+    ///
+    /// A fixed log, so "an identifier this producer minted" is a range check.
+    /// A real producer asks its retention store the same question.
+    const MINTED: u64 = 10;
+
     /// Starts a feed, resuming after `last_event_id` when one was supplied.
     ///
     /// An identifier this producer never minted is treated as no identifier at
     /// all. A client controls the header, so parsing it is the same act as
-    /// validating it.
+    /// validating it: `checked_add` because `u64::MAX` is a number a client can
+    /// send, and the bound because a successor past the last event names
+    /// nothing this feed holds.
     fn resuming_after(last_event_id: Option<&str>) -> Self {
         let next_id = last_event_id
             .and_then(|id| id.parse::<u64>().ok())
-            .map_or(0, |id| id + 1);
+            .and_then(|id| id.checked_add(1))
+            .filter(|&next| next <= Self::MINTED)
+            .unwrap_or(0);
 
         Self {
             next_id,
-            remaining: 10,
             advised: false,
         }
     }
@@ -144,15 +151,14 @@ impl futures_core::Stream for Feed {
     type Item = Result<Event<Update>, io::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if self.remaining == 0 {
+        if self.next_id == Self::MINTED {
             return Poll::Ready(None);
         }
 
         let id = self.next_id;
         self.next_id += 1;
-        self.remaining -= 1;
 
-        let update = if self.remaining == 0 {
+        let update = if self.next_id == Self::MINTED {
             Update::Closed
         } else if id % 5 == 4 {
             Update::Alert {
