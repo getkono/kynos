@@ -338,6 +338,21 @@ mod tests {
         );
     }
 
+    /// A list missing a line is a different list, so none is passed on.
+    #[test]
+    fn one_unreadable_tracestate_line_drops_the_list() {
+        let mut headers = HeaderMap::new();
+        headers.append("tracestate", HeaderValue::from_static("congo=t61rcWkgMzE"));
+        headers.append(
+            "tracestate",
+            HeaderValue::from_bytes(b"rojo=\xff").expect("obs-text is a field value"),
+        );
+
+        let context = TraceContext::decode(&headers).expect("the decode never refuses");
+
+        assert_eq!(context.get("tracestate"), None);
+    }
+
     /// Yields once, inside the span either side of the yield.
     #[kynos::get("/waits")]
     async fn waits() -> NoContent {
