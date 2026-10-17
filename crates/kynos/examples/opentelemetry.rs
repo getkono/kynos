@@ -353,6 +353,20 @@ mod tests {
         assert_eq!(context.get("tracestate"), None);
     }
 
+    /// No line is no list, not an empty one joined from zero lines.
+    #[test]
+    fn an_absent_tracestate_stays_absent() {
+        let mut headers = HeaderMap::new();
+        headers.append(
+            "traceparent",
+            HeaderValue::from_static("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
+        );
+
+        let context = TraceContext::decode(&headers).expect("the decode never refuses");
+
+        assert_eq!(context.get("tracestate"), None);
+    }
+
     /// Yields once, inside the span either side of the yield.
     #[kynos::get("/waits")]
     async fn waits() -> NoContent {
