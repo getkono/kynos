@@ -1193,6 +1193,14 @@ every heuristic is a guess that turns a correct origin into an incorrect cache.
 A response that did not say how long it may be reused is not reused;
 `default_freshness` is opt-in and documented as the guess it is.
 
+**A lifetime stated badly is stale, not defaulted.** Section 4.2.1 reads
+`s-maxage`, then `max-age`, then `Expires` minus `Date`, and the first present
+decides. Where it is unreadable (`max-age=abc`, `Expires: 0`), repeated, or
+already past, the response is stale — the section's encouraged reading — and
+`default_freshness`, which is for a response that stated nothing, does not
+stand in. A quoted `max-age="60"` is read as 60: section 5.2 has a recipient
+accept the form a sender must not generate.
+
 `stale-while-revalidate` and `stale-if-error` are absent, and not as an
 oversight: the revalidation is a background task — a `tokio::spawn` outside
 `server/` — which would be a seventh row in the runtime allowance table for a
