@@ -68,6 +68,7 @@ use kynos::{
 };
 use opentelemetry::{propagation::Extractor, trace::TracerProvider as _};
 use opentelemetry_semantic_conventions::trace as semconv;
+use tracing::Instrument as _;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
 /// The W3C Trace Context fields, as a declared header group.
@@ -202,10 +203,13 @@ impl<C: Sync + 'static> Interceptor<C> for Telemetry {
         // Entered across `next.run`, which is the whole reason this is an
         // interceptor: everything the handler does -- including whatever it
         // instruments itself -- lands inside this span.
-        let continued = {
-            let _entered = span.enter();
-            next.run(request).await
-        };
+        //
+        // `instrument`, never `span.enter()` held across the `.await`: the
+        // guard would keep the span entered on the thread while this task is
+        // parked, so whatever runs there next is recorded inside it.
+        // `instrument` enters it for each poll and exits before the poll
+        // returns.
+        let continued = next.run(request).instrument(span.clone()).await;
 
         span.record(
             semconv::HTTP_RESPONSE_STATUS_CODE,
