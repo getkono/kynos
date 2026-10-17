@@ -94,20 +94,29 @@ impl DecodeHeaders for TraceContext {
     const FALLIBLE: bool = false;
 
     fn decode(headers: &HeaderMap) -> Result<Self, HeaderRejection> {
-        let read = |name: &str| {
-            headers
-                .get(name)
-                .and_then(|value| value.to_str().ok())
-                .map(ToOwned::to_owned)
-        };
+        // `tracestate` is a list a sender may split across field lines, and
+        // section 3.3.1.1 combines them in order (RFC 9110 section 5.3), so
+        // reading only the first drops every vendor after it. One unreadable
+        // line makes the whole list absent: a list missing a line is a
+        // different list, and the traceparent survives either way.
+        let mut lines = headers.get_all("tracestate").iter().peekable();
+        let tracestate = lines.peek().is_some().then(|| {
+            lines
+                .map(|value| value.to_str().ok())
+                .collect::<Option<Vec<_>>>()
+                .map(|lines| lines.join(","))
+        });
 
         // Neither is required, and an unreadable one is absent rather than a
         // rejection: a malformed `traceparent` means this request starts a new
         // trace, which is what the W3C specification asks for. Refusing the
         // request would let a broken caller take the service down.
         Ok(Self {
-            traceparent: read("traceparent"),
-            tracestate: read("tracestate"),
+            traceparent: headers
+                .get("traceparent")
+                .and_then(|value| value.to_str().ok())
+                .map(ToOwned::to_owned),
+            tracestate: tracestate.flatten(),
         })
     }
 }
