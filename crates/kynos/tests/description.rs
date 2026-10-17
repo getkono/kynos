@@ -57,7 +57,11 @@ use kynos::{
     middleware::limits::{body_size::BodySize, timeout::Timeout},
     openapi::Document,
     response::{
-        range::{Range, Ranged},
+        range::{
+            Range, Ranged,
+            served::{Conditions, Delivery, Served},
+            source::InMemory,
+        },
         status::NoContent,
     },
     router::{endpoint::builder::EndpointBuilder, group::Group},
@@ -417,6 +421,76 @@ fn an_operation_that_reads_a_range_but_cannot_fail_declares_no_416() {
     // pass against a description that stopped declaring the 416 anywhere.
     let ranged = operation(&document, "/recordings/current");
     assert!(ranged.responses.responses.contains_key("416"));
+}
+
+/// Serves a fixed object as a named download with a stated lifetime: every
+/// field `Served`'s builder can add.
+#[kynos::get("/objects/current")]
+async fn object(conditions: Conditions) -> Delivery<OctetStream> {
+    Served::<_, OctetStream>::new(InMemory::new(bytes::Bytes::from_static(b"0123456789")))
+        .etag(kynos::http::etag::ETag::strong("o1"))
+        .cache_control("max-age=60")
+        .attachment("object.bin")
+        .deliver(&conditions)
+        .await
+        .expect("an in-memory source cannot fail")
+}
+
+/// A delivery declares every field it can send on the statuses that carry it.
+///
+/// `Cache-Control` rides the 304 as well, which RFC 9110 section 15.4.5 makes
+/// a MUST wherever the 200 would carry it; `Content-Disposition` does not,
+/// since the same section asks a 304 to carry no other metadata. Both are sent
+/// only when the builder asks for them, so neither is required.
+#[test]
+fn a_delivery_declares_the_fields_its_builder_adds() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![object])
+        .openapi()
+        .expect("a describable router");
+
+    let delivery = operation(&document, "/objects/current");
+    let declared = |status: &str| -> BTreeSet<String> {
+        declared_headers(&delivery, status)
+            .expect("a described status")
+            .into_iter()
+            .collect()
+    };
+    let names = |names: &[&str]| -> BTreeSet<String> {
+        names.iter().map(|&name| name.to_owned()).collect()
+    };
+
+    let representation = [
+        "Accept-Ranges",
+        "Cache-Control",
+        "Content-Disposition",
+        "ETag",
+        "Last-Modified",
+    ];
+    assert_eq!(declared("200"), names(&representation));
+    assert_eq!(
+        declared("206"),
+        names(&[&representation[..], &["Content-Range"]].concat())
+    );
+    assert_eq!(
+        declared("304"),
+        names(&["Cache-Control", "ETag", "Last-Modified"])
+    );
+
+    for status in ["200", "206", "304"] {
+        let Some(kynos::openapi::RefOr::Item(response)) = delivery.responses.responses.get(status)
+        else {
+            panic!("an inline {status}");
+        };
+        for name in ["Cache-Control", "Content-Disposition"] {
+            if let Some(header) = response.headers.get(name) {
+                let kynos::openapi::RefOr::Item(header) = header else {
+                    panic!("{name} on {status} is described as a `$ref`");
+                };
+                assert_ne!(header.required, Some(true), "{name} on {status}");
+            }
+        }
+    }
 }
 
 // --- `#[deprecated]` on a handler -------------------------------------------
