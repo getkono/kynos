@@ -897,6 +897,50 @@ fn every_component_section_checks_its_keys() {
     }
 }
 
+/// A component name is a pointer token: unescaped, `a/b~c` would point two
+/// levels below a key `a`, not at the key itself.
+#[test]
+fn an_invalid_component_name_is_located_at_its_escaped_pointer() {
+    let mut document = document_with(&[]);
+    document
+        .components
+        .schemas
+        .insert("a/b~c".to_owned(), Schema::of_type(SchemaType::String));
+
+    let located: Vec<String> = violations(&document)
+        .into_iter()
+        .filter(|v| matches!(v.error, SpecError::InvalidComponentName { .. }))
+        .map(|v| v.location)
+        .collect();
+
+    assert_eq!(located, ["#/components/schemas/a~1b~0c"]);
+}
+
+/// A server variable's name is a pointer token, escaped as one.
+#[test]
+fn a_server_variable_is_located_at_its_escaped_pointer() {
+    use crate::model::server::{Server, ServerVariable};
+
+    let mut document = document_with(&[]);
+    document.servers = vec![Server::new("https://example.com").with_variable(
+        "a/b~c",
+        ServerVariable {
+            enumeration: Some(Vec::new()),
+            default_value: "eu".to_owned(),
+            description: None,
+            extensions: crate::model::extensions::Extensions::new(),
+        },
+    )];
+
+    let located: Vec<String> = violations(&document)
+        .into_iter()
+        .filter(|v| matches!(v.error, SpecError::EmptyServerVariableEnum { .. }))
+        .map(|v| v.location)
+        .collect();
+
+    assert_eq!(located, ["#/servers/0/variables/a~1b~0c"]);
+}
+
 #[test]
 fn an_operation_must_declare_a_response() {
     let item = PathItem::new().with_operation(Method::Get, Operation::new("listUsers"));
