@@ -13,12 +13,12 @@ use crate::{
     validate::{
         Validator,
         rules::{
-            content::check_media_type,
+            content::{check_request_body, check_response},
             extensions::check_extensions,
-            parameters::{check_header_map, check_parameter_list},
+            parameters::check_parameter_list,
             paths::check_path_correspondence,
         },
-        violation::{SpecError, Violation, pointer_token},
+        violation::{SpecError, Violation},
     },
 };
 
@@ -129,43 +129,34 @@ impl Validator {
     }
 }
 
-/// Checks the request body and every response of one operation.
+/// Checks the inline request body and every inline response of one operation,
+/// `default` included.
+///
+/// A referenced one is checked where it is defined, by
+/// [`check_component_content`](super::content::check_component_content).
 pub(in crate::validate) fn check_operation_content(
     location: &str,
     operation: &Operation,
     violations: &mut Vec<Violation>,
 ) {
     if let Some(RefOr::Item(body)) = &operation.request_body {
-        for (media_type, content) in &body.content {
-            check_media_type(
-                &format!(
-                    "{location}/requestBody/content/{}",
-                    pointer_token(media_type)
-                ),
-                content,
-                violations,
-            );
-        }
+        check_request_body(&format!("{location}/requestBody"), body, violations);
     }
 
+    if let Some(RefOr::Item(response)) = &operation.responses.default_response {
+        check_response(
+            &format!("{location}/responses/default"),
+            response,
+            violations,
+        );
+    }
     for (status, response) in &operation.responses.responses {
-        let Some(response) = response.as_item() else {
-            continue;
-        };
-        let response_location = format!("{location}/responses/{status}");
-        for (media_type, content) in &response.content {
-            check_media_type(
-                &format!("{response_location}/content/{}", pointer_token(media_type)),
-                content,
+        if let Some(response) = response.as_item() {
+            check_response(
+                &format!("{location}/responses/{status}"),
+                response,
                 violations,
             );
         }
-        // Links and a header's shape hold by construction; a header's name is
-        // a map key no type reaches, so it is still checked.
-        check_header_map(
-            &format!("{response_location}/headers"),
-            &response.headers,
-            violations,
-        );
     }
 }
