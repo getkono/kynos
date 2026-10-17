@@ -168,6 +168,8 @@ required-features = ["openapi31", "macros", "server", "http1"]
 [[example]]
 name = "jwt"
 required-features = ["openapi31", "macros", "server", "http1", "json"]
+# Runs the token response test, which examples skip by default.
+test = true
 
 [[example]]
 name = "rate_limit"

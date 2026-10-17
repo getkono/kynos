@@ -467,3 +467,36 @@ async fn main() -> kynos::Result<()> {
         .serve()
         .await
 }
+
+// --- The tests ------------------------------------------------------------
+
+/// What a token response tells the caches between the client and here.
+#[cfg(test)]
+mod tests {
+    use kynos::http::{HeaderValue, Method, Request, StatusCode, body::Body, header};
+
+    use super::*;
+
+    /// RFC 6749 section 5.1: a response carrying a token is never stored.
+    #[tokio::test]
+    async fn a_token_response_is_not_stored() {
+        let service = service().expect("a valid router");
+
+        let mut request = Request::new(Body::empty());
+        *request.method_mut() = Method::POST;
+        *request.uri_mut() = "/session".parse().expect("a path");
+        request.headers_mut().insert(
+            header::AUTHORIZATION,
+            // `reporter:correct-horse`
+            HeaderValue::from_static("Basic cmVwb3J0ZXI6Y29ycmVjdC1ob3JzZQ=="),
+        );
+
+        let response = service.call(request).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CACHE_CONTROL),
+            Some(&HeaderValue::from_static("no-store")),
+        );
+    }
+}
