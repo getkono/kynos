@@ -38,8 +38,10 @@ fn a_jar_is_split_the_way_the_grammar_writes_it() {
         (&[r#"a="1""#], &[("a", "1")]),
         // One quote is not a pair of them, so nothing is stripped.
         (&[r#"a="1"#], &[("a", "\"1")]),
-        // A bare name is a name with an empty value.
-        (&["flag"], &[("flag", "")]),
+        // A pair with no `=` is a nameless cookie, the text its value: a user
+        // agent serialises one as its bare value (RFC 6265bis section 5.8.3).
+        (&["flag"], &[("", "flag")]),
+        (&["a=1; flag"], &[("a", "1"), ("", "flag")]),
         // An explicitly empty value is the same thing spelled out.
         (&["a="], &[("a", "")]),
         // Empty entries are skipped rather than yielding empty names.
@@ -102,6 +104,18 @@ fn an_unprintable_pair_does_not_hide_the_rest_of_its_field() {
 fn a_repeated_name_reads_back_as_the_first_one_sent() {
     let headers = from(&["session=narrow", "session=wide"]);
     assert_eq!(value_of(&headers, "session"), Ok(Some("narrow")));
+}
+
+/// A nameless cookie is never one asked for by name: a site able to set one
+/// whose value spells a credential's name must not make that credential read
+/// as present and empty.
+#[test]
+fn a_nameless_cookie_spelling_a_name_is_not_that_cookie() {
+    let headers = from(&["session"]);
+    assert_eq!(value_of(&headers, "session"), Ok(None));
+
+    let headers = from(&["session; session=s-42"]);
+    assert_eq!(value_of(&headers, "session"), Ok(Some("s-42")));
 }
 
 #[test]
