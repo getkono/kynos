@@ -155,6 +155,22 @@ fn a_date_before_the_epoch_is_none() {
     assert_eq!(format(UNIX_EPOCH - Duration::from_secs(1)), None);
 }
 
+/// IMF-fixdate's year is `4DIGIT`, so the last instant of 9999 is the last one
+/// it spells; the first instant of 10000 renders as nothing rather than as a
+/// five-digit year no recipient, this parser included, reads back.
+#[test]
+fn a_date_past_year_9999_is_none() {
+    let year_10000 = UNIX_EPOCH + Duration::from_secs(253_402_300_800);
+    let last = year_10000 - Duration::from_secs(1);
+
+    assert_eq!(
+        format(last).as_deref(),
+        Some("Fri, 31 Dec 9999 23:59:59 GMT")
+    );
+    assert_eq!(parse("Fri, 31 Dec 9999 23:59:59 GMT"), Some(last));
+    assert_eq!(format(year_10000), None);
+}
+
 /// Surrounding whitespace is not part of the value.
 #[test]
 fn a_padded_value_is_still_a_date() {
