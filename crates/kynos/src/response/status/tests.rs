@@ -44,6 +44,58 @@ mod a_location_takes_every_spelling {
     }
 }
 
+/// A `Location` is a field value by construction (RFC 9110 §5.5).
+///
+/// `Created` and `Redirect` declare the header `required`, so a value that
+/// cannot be sent must never reach them: refused where it is made, rather
+/// than dropped where it is sent.
+mod a_location_is_a_field_value {
+    use crate::{
+        http::header,
+        response::{
+            IntoResponse,
+            status::{Created, Location, Redirect},
+        },
+    };
+
+    /// Each would forge or truncate the message, or be stripped on receipt:
+    /// a control character, DEL, and whitespace at either end.
+    const REFUSED: &[&str] = &["/a\nb", "/a\rb", "/a\0b", "/a\u{7f}b", " /a", "/a\t"];
+
+    /// Field values that are not URI references are still sent as written;
+    /// grammar beyond the field is the caller's.
+    const SENT: &[&str] = &["", "/a b", "/a\tb", "/caf\u{e9}", "../sibling"];
+
+    #[test]
+    fn a_value_that_is_not_a_field_value_is_refused() {
+        for &value in REFUSED {
+            assert!(Location::try_from(value).is_err(), "{value:?}");
+            assert!(Location::try_from(value.to_owned()).is_err(), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn every_accepted_value_is_sent_as_written() {
+        for &value in SENT {
+            let location = Location::try_from(value).expect("a field value");
+
+            let created = Created::at(location.clone(), ()).into_response();
+            let redirect = Redirect::<303>::to(location).into_response();
+
+            for response in [created, redirect] {
+                assert_eq!(
+                    response
+                        .headers()
+                        .get(header::LOCATION)
+                        .map(crate::http::HeaderValue::as_bytes),
+                    Some(value.as_bytes()),
+                    "{value:?}"
+                );
+            }
+        }
+    }
+}
+
 /// Every status a wrapper fixes, produced and declared.
 ///
 /// The two halves at once, because a wrapper's whole purpose is that they
