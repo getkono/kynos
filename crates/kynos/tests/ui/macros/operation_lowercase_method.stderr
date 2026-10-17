@@ -1,0 +1,5 @@
+error: method names are case-sensitive, so `get` is not `GET`; write `method = "GET"`
+ --> tests/ui/macros/operation_lowercase_method.rs:4:29
+  |
+4 | #[kynos::operation(method = "get", path = "/documents")]
+  |                             ^^^^^

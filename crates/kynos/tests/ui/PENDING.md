@@ -48,10 +48,15 @@ feature sets, only require them.
 | Case | Asserts |
 | --- | --- |
 | `Group::layer_unchecked` absent | the escape hatch for README anti-pattern 1 is behind `unchecked` |
-| `#[kynos::operation(method = "PROPFIND")]` rejected | a method outside the eight OpenAPI 3.1 names needs `openapi32` for `additionalOperations` |
+| `#[kynos::operation(method = "QUERY")]` rejected | `QUERY` is mountable only under `openapi32`, so a 3.1 build refuses it with the feature hint |
 | `#[security(oauth2(device_authorization(..)))]` rejected | the RFC 8628 flow was introduced in OpenAPI 3.2, so a 3.1 build has no field to hold it |
 | `#[security(oauth2(.., metadata_url = ".."))]` rejected | `oauth2MetadataUrl` was introduced in OpenAPI 3.2, and was silently dropped before |
 | `#[schema(pattern = "..")]` rejected | without the `pattern` feature there is no engine to enforce it, so it is refused rather than described unchecked |
+
+The `QUERY` row is checked, not only its wording missing: the
+`operation_method` unit test in
+[`route/tests.rs`](../../../kynos-macros/src/route/tests.rs) asserts in both
+builds that `QUERY` is refused exactly when `openapi32` is off.
 
 None of the last three rows is unchecked, only unsnapshotted. The `pattern`
 row's ledger case is gated on `not(feature = "pattern")`, and the schema

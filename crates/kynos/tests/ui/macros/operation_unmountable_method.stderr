@@ -1,0 +1,5 @@
+error: the router cannot mount `PROPFIND`; `#[kynos::operation]` accepts `GET`, `PUT`, `POST`, `DELETE`, `OPTIONS`, `HEAD`, `PATCH`, `TRACE`, `QUERY`
+ --> tests/ui/macros/operation_unmountable_method.rs:5:29
+  |
+5 | #[kynos::operation(method = "PROPFIND", path = "/files")]
+  |                             ^^^^^^^^^^
