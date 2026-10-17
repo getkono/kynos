@@ -161,9 +161,13 @@ pub enum MiddlewareError {
 /// A delay in whole seconds, rounded *up*.
 ///
 /// Truncating a sub-second wait to zero would tell a client to retry
-/// immediately into the refusal it just received.
+/// immediately into the refusal it just received. Saturates at `u64::MAX`
+/// rather than overflowing within the last second of
+/// [`Duration::MAX`](std::time::Duration::MAX).
 pub(crate) fn whole_seconds(delay: std::time::Duration) -> u64 {
-    delay.as_secs() + u64::from(delay.subsec_nanos() > 0)
+    delay
+        .as_secs()
+        .saturating_add(u64::from(delay.subsec_nanos() > 0))
 }
 
 /// Describes `Retry-After`, which is a delta-seconds count or an HTTP-date.
