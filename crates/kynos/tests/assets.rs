@@ -805,6 +805,27 @@ mod directory {
         );
     }
 
+    /// A relative root is resolved when the `Directory` is made, so a later
+    /// change of working directory does not move it.
+    ///
+    /// The new working directory lies inside the fixture, where the relative
+    /// root names nothing, so a root re-read per request would answer 404.
+    /// Changing it is process-wide, which nextest's process per test contains.
+    #[tokio::test]
+    async fn a_relative_root_stays_where_it_was_resolved() {
+        let directory = Directory::new("tests/assets");
+        std::env::set_current_dir("tests/assets/css").expect("the fixture's own subdirectory");
+
+        let service = Router::<()>::new()
+            .assets_directory("/files", directory)
+            .build(())
+            .expect("a buildable router");
+        let reply = get(&service, "/files/css/app.css").call().await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(reply.text(), super::STYLESHEET);
+    }
+
     /// A file the embedded set excluded is served here, because membership is
     /// the directory's rather than the macro's.
     ///
