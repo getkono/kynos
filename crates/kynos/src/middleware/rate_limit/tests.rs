@@ -305,6 +305,40 @@ fn a_delay_shorter_than_a_second_is_still_a_delay() {
     );
 }
 
+/// The longest delay saturates at `u64::MAX` seconds rather than wrapping.
+///
+/// A [`RateLimitPolicy`](super::decision::RateLimitPolicy) may answer
+/// `Duration::MAX` for "never". Rounding its last part-second up overflows
+/// `u64`: a debug build panics, and a release build wraps to `0`, telling the
+/// client to retry at once.
+#[test]
+fn the_longest_delay_saturates_rather_than_wrapping() {
+    let fields = RateLimitFields {
+        limits: vec![ServiceLimit {
+            name: "never".into(),
+            quota: 5,
+            remaining: 0,
+            reset: Duration::MAX,
+        }],
+        policies: Vec::new(),
+    };
+
+    assert_eq!(
+        rendered(&fields)[0].1,
+        format!(r#""never";r=0;t={}"#, u64::MAX)
+    );
+
+    assert_eq!(
+        rendered(&RateLimitHeaders {
+            limit: 5,
+            remaining: 0,
+            reset: Duration::MAX,
+        })[2]
+            .1,
+        u64::MAX.to_string()
+    );
+}
+
 /// Every quota unit renders as a structured-field String.
 ///
 /// The match is exhaustive, so adding a variant to `QuotaUnit` fails to compile
