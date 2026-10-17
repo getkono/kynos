@@ -202,7 +202,8 @@ impl TlsConfig {
     ///
     /// [`TlsError::ServerName`] when `server_names` is empty, or a name is
     /// empty, repeated within `server_names`, already registered by an earlier
-    /// call, or not a valid DNS name or IP address. [`TlsError::Pem`] or
+    /// call, or not a valid DNS name; an IP address is refused, since a client
+    /// never sends one as SNI (RFC 6066 §3). [`TlsError::Pem`] or
     /// [`TlsError::EmptyPem`] when `certificate_chain` or `private_key` is not
     /// PEM holding that material.
     pub fn with_server_certificate(

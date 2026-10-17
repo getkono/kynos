@@ -3385,6 +3385,22 @@ fn tls_rejects_an_sni_name_that_is_not_a_server_name() {
     ));
 }
 
+/// rustls never selects a certificate by an IP literal, which RFC 6066 §3
+/// forbids as an SNI `HostName`, so such a certificate could never be served.
+#[cfg(feature = "tls")]
+#[test]
+fn tls_rejects_an_ip_literal_sni_name() {
+    for literal in ["192.0.2.1", "2001:db8::1"] {
+        assert!(
+            matches!(
+                sni_refusal(&[], &["example.com", literal]),
+                Err(crate::server::tls::error::TlsError::ServerName(name)) if name == literal
+            ),
+            "{literal} must be refused as an SNI name"
+        );
+    }
+}
+
 /// `TlsConfig::build` with no crypto provider installed anywhere.
 ///
 /// rustls resolves the process-level provider from the `aws-lc-rs` and `ring`
