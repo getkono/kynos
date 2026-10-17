@@ -2,17 +2,21 @@ use std::{fmt, marker::PhantomData, time::Duration};
 
 use super::{
     Legacy, RateLimit, Structured,
-    decision::{QuotaPolicy, QuotaUnit, ServiceLimit},
+    decision::{Decision, Denial, QuotaPolicy, QuotaUnit, RateLimitPolicy, ServiceLimit},
     headers::{RateLimitFields, RateLimitHeaders},
-    quota::{estimate, recovers_in},
+    key::Shared,
+    quota::{Quota, Quotas, estimate, recovers_in},
     refusal::{RateLimited, RateLimitedFields},
+    store::{RateLimitStore, StoreFailure},
 };
-use kynos_openapi::RefOr;
+use kynos_openapi::{Method, RefOr};
 
 use crate::{
     error::problem::ProblemType,
     extract::params::header::{EncodeHeaders, HeaderParams},
+    http::body::Body,
     response::ShortCircuit,
+    router::operation::Route,
     schema::registry::Registry,
 };
 
@@ -655,4 +659,73 @@ fn a_limiter_keeps_its_impls_whatever_type_names_its_refusal() {
         format!("{:?}", limiter.clone()),
         "RateLimit { policy: Policy }"
     );
+}
+
+// --- The wait a refusal reports -------------------------------------------
+
+/// A store that cannot answer for the quota named `unreachable`, and reads one
+/// request already counted under every other key.
+#[derive(Clone, Copy, Debug)]
+struct PartlyDown;
+
+#[derive(Debug, thiserror::Error)]
+#[error("the counter store is unavailable")]
+struct Unavailable;
+
+impl RateLimitStore for PartlyDown {
+    type Error = Unavailable;
+
+    async fn read(&self, key: &str) -> Result<u64, Self::Error> {
+        if key.contains("|unreachable|") {
+            Err(Unavailable)
+        } else {
+            Ok(1)
+        }
+    }
+
+    async fn increment(&self, _: &str, by: u64, _: Duration) -> Result<u64, Self::Error> {
+        Ok(1 + by)
+    }
+}
+
+/// The wait `quotas` reports for one request, with every limit it reported.
+async fn denied(quotas: Quotas<Shared, PartlyDown>) -> Denial {
+    let request = http::Request::new(Body::empty());
+    let route = Route::new("/", "op", Method::Get);
+
+    match quotas.check(&request, route, &()).await {
+        Decision::Deny(denial) => denial,
+        Decision::Allow(allowance) => panic!("one quota refuses, yet {allowance:?}"),
+    }
+}
+
+/// A refusal reports the wait after which every quota would admit the request,
+/// whichever order the quotas were added in and whichever of them denied
+/// because the store could not answer.
+///
+/// `refused` is spent and recovers within two seconds. `unreachable`'s window
+/// is long enough that what remains of it outlasts that at any instant before
+/// 2106, so the two waits differ in the direction an order-dependent fold
+/// would get wrong.
+#[tokio::test]
+async fn a_refusal_waits_out_the_longest_denial_in_either_quota_order() {
+    let refused = || Quota::new("refused", 1, Duration::from_secs(1));
+    let unreachable = || Quota::new("unreachable", 1, Duration::from_secs(u64::from(u32::MAX)));
+    let quotas =
+        || Quotas::new(Shared("everyone".into()), PartlyDown).on_store_failure(StoreFailure::Deny);
+
+    for denial in [
+        denied(quotas().quota(refused()).quota(unreachable())).await,
+        denied(quotas().quota(unreachable()).quota(refused())).await,
+    ] {
+        let longest = denial
+            .limits
+            .iter()
+            .map(|limit| limit.reset)
+            .max()
+            .expect("both quotas report");
+
+        assert!(longest > Duration::from_secs(2), "{denial:?}");
+        assert_eq!(denial.retry_after, longest, "{denial:?}");
+    }
 }
