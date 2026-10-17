@@ -203,15 +203,12 @@ enum Negotiated {
 
 /// The coding to apply, per RFC 9110 section 12.5.3.
 fn negotiate(headers: &http::HeaderMap) -> Negotiated {
-    let Some(accept) = headers
-        .get(http::header::ACCEPT_ENCODING)
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-    else {
+    let Some(accept) = crate::http::coding::accept_encoding(headers) else {
         // Rule 1: "If no Accept-Encoding header field is in the request, any
         // content coding is considered acceptable by the user agent."
         return Negotiated::Identity;
     };
+    let accept = &*accept;
 
     let mut best: Option<(Coding, u16)> = None;
     for coding in Coding::ALL {
