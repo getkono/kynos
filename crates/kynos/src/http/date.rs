@@ -52,8 +52,9 @@ pub(crate) fn format(time: SystemTime) -> Option<String> {
 
 /// Reads any of the three formats section 5.6.7 names.
 ///
-/// `None` for anything else, which callers ignore rather than refuse (section
-/// 13.1.3).
+/// `None` for anything else, which no caller refuses: a precondition ignores it
+/// (section 13.1.3), and a cache reads an unreadable `Expires` as past (RFC 9111
+/// section 5.3).
 #[must_use]
 pub(crate) fn parse(value: &str) -> Option<SystemTime> {
     let value = value.trim();
