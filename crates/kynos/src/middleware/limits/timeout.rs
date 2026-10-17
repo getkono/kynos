@@ -38,8 +38,8 @@ impl<T: ProblemType> IntoResponse for TimedOut<T> {
     fn into_response(self) -> http::Response {
         refusal_problem::<T>(http::StatusCode::REQUEST_TIMEOUT)
             .with_detail(format!(
-                "the handler did not finish within {} seconds",
-                self.after.as_secs()
+                "the handler did not finish within {:?}",
+                self.after
             ))
             .into_response()
     }
