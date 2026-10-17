@@ -238,6 +238,62 @@ fn a_reason_from_a_newer_writer_round_trips_rather_than_failing() {
     );
 }
 
+/// A field a newer writer added to a marker is part of its record, so merging
+/// another waiver in must carry it through unchanged.
+#[test]
+fn a_marker_field_from_a_newer_writer_survives_a_rewrite() {
+    let unknown = json!({ "since": "0.9", "layers": [1, 2] });
+    let mut operation = Operation::new("listOrders");
+    operation.extensions.insert(
+        OPAQUE_OPERATION_ANNOTATION,
+        json!({ "reasons": ["untyped-layer"], "provenance": unknown }),
+    );
+
+    Opaque::new(OpaqueReason::ProtocolUpgrade)
+        .apply_to(&mut operation)
+        .expect("readable");
+
+    assert_eq!(
+        operation.extensions.get(OPAQUE_OPERATION_ANNOTATION),
+        Some(&json!({
+            "reasons": ["untyped-layer", "protocol-upgrade"],
+            "provenance": unknown
+        }))
+    );
+}
+
+/// The same holds for a route record already on the document when another is
+/// appended.
+#[test]
+fn a_route_field_from_a_newer_writer_survives_a_rewrite() {
+    let unknown = json!({ "since": "0.9", "layers": [1, 2] });
+    let mut document = document();
+    document.extensions.insert(
+        OPAQUE_ROUTES_ANNOTATION,
+        json!([{
+            "pattern": "/assets/{*path}",
+            "reason": "untyped-route",
+            "provenance": unknown
+        }]),
+    );
+
+    OpaqueRoute::new("/socket", OpaqueReason::ProtocolUpgrade)
+        .append_to(&mut document)
+        .expect("readable");
+
+    assert_eq!(
+        document.extensions.get(OPAQUE_ROUTES_ANNOTATION),
+        Some(&json!([
+            {
+                "pattern": "/assets/{*path}",
+                "reason": "untyped-route",
+                "provenance": unknown
+            },
+            { "pattern": "/socket", "reason": "protocol-upgrade" }
+        ]))
+    );
+}
+
 #[test]
 fn an_unreadable_record_is_refused_rather_than_overwritten() {
     let mut document = document();
