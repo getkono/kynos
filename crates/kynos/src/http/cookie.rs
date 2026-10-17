@@ -16,8 +16,9 @@ use crate::http::{HeaderMap, header::COOKIE};
 /// Look a cookie up by name, a credential above all, with [`value_of`], which
 /// tells them apart.
 ///
-/// A quoted value is unwrapped. A pair with no `=` is a name with an empty
-/// value.
+/// A quoted value is unwrapped. A pair with no `=` is a nameless cookie: its
+/// text is the value and the name is empty, as RFC 6265bis section 5.8.3
+/// serialises one, so it never answers [`value_of`] for a real name.
 pub fn jar(headers: &HeaderMap) -> impl Iterator<Item = (&str, &str)> + '_ {
     pairs(headers).filter_map(|(name, value)| Some((text(name)?, text(value)?)))
 }
@@ -72,7 +73,7 @@ fn pairs(headers: &HeaderMap) -> impl Iterator<Item = (&[u8], &[u8])> + '_ {
             }
             let (name, value) = match entry.iter().position(|&byte| byte == b'=') {
                 Some(at) => (&entry[..at], &entry[at + 1..]),
-                None => (entry, &[][..]),
+                None => (&[][..], entry),
             };
             let value = value.trim_ascii();
             let value = value
