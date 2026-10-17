@@ -605,6 +605,11 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// and the only one RFC 6455 permits, and recorded with
     /// [`OpaqueReason::ProtocolUpgrade`].
     ///
+    /// The handler answers `101 Switching Protocols` and takes the connection
+    /// with `hyper::upgrade::on(&mut request)`, awaited on a spawned task since
+    /// it resolves only once the 101 is written. Only an HTTP/1.1 connection
+    /// can upgrade: HTTP/2 has no `Upgrade` (RFC 9113 §8.6).
+    ///
     /// [RFC 9110]: https://www.rfc-editor.org/rfc/rfc9110
     #[must_use]
     pub fn upgrade_unchecked<H>(mut self, path: &str, handler: H) -> Self
