@@ -10,17 +10,12 @@ use kynos_openapi::model::schema::types::SchemaType;
 use crate::{
     extract::params::header::{EncodeHeaders, HeaderParams},
     http,
-    middleware::rate_limit::decision::{QuotaPolicy, ServiceLimit},
+    middleware::{
+        rate_limit::decision::{QuotaPolicy, ServiceLimit},
+        whole_seconds,
+    },
     schema::registry::Registry,
 };
-
-/// A delay in whole seconds, rounded *up*.
-///
-/// Truncating a sub-second wait to zero would tell a client to retry
-/// immediately into the refusal it just received.
-pub(super) fn whole_seconds(delay: Duration) -> u64 {
-    delay.as_secs() + u64::from(delay.subsec_nanos() > 0)
-}
 
 /// Describes one integer count.
 fn count(description: &str) -> kynos_openapi::RefOr<kynos_openapi::Header> {

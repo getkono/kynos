@@ -2,36 +2,15 @@
 
 use std::{fmt, marker::PhantomData, num::NonZeroUsize, sync::Arc, time::Duration};
 
-use kynos_openapi::model::schema::types::SchemaType;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::{
     error::problem::{ProblemType, refusal_problem, refusal_response},
     http,
-    middleware::{Continued, Interceptor, Next},
+    middleware::{Continued, Interceptor, Next, retry_after_header, set_retry_after},
     response::{IntoResponse, Responses, ShortCircuit},
     schema::registry::Registry,
 };
-
-/// Describes `Retry-After`, which is a delta-seconds count or an HTTP-date.
-///
-/// A string, since an integer schema would be wrong for the HTTP-date form.
-fn retry_after_header() -> kynos_openapi::Header {
-    kynos_openapi::Header::new(kynos_openapi::Schema::of_type(SchemaType::String))
-        .with_description("How long to wait before retrying, in seconds or as an HTTP-date")
-}
-
-/// Sets `Retry-After` on `response` when there is a delay to advertise.
-fn set_retry_after(response: &mut http::Response, retry_after: Option<Duration>) {
-    // Not a let-chain: those are stable only above the declared MSRV.
-    let Some(delay) = retry_after else { return };
-
-    if let Ok(value) = http::HeaderValue::from_str(&delay.as_secs().to_string()) {
-        response
-            .headers_mut()
-            .insert(http::header::RETRY_AFTER, value);
-    }
-}
 
 /// What [`Concurrency`] answers with when every slot is taken.
 ///
@@ -62,7 +41,9 @@ impl<T: ProblemType> IntoResponse for AtCapacity<T> {
         let mut response = refusal_problem::<T>(http::StatusCode::SERVICE_UNAVAILABLE)
             .with_detail("the service is at its concurrency limit")
             .into_response();
-        set_retry_after(&mut response, self.retry_after);
+        if let Some(delay) = self.retry_after {
+            set_retry_after(&mut response, delay);
+        }
         response
     }
 }
