@@ -183,26 +183,38 @@ fn validate(document: &Document, schema: &kynos_openapi::Schema, instance: &Valu
 /// The `paths` key this request matched, or `None` when the description
 /// declares no path it could have reached.
 ///
-/// The most literal template wins, and document order breaks a tie, as in the
-/// router's matcher.
+/// Between matching templates, a literal segment beats a variable at the first
+/// position where they differ, read left to right, as in the router's matcher;
+/// document order breaks a tie, which only templates the router would refuse
+/// as conflicting can reach.
 pub(super) fn matched_template<'d>(document: &'d Document, path: &str) -> Option<&'d str> {
     let path = path.split(['?', '#']).next().unwrap_or(path);
 
-    let mut best: Option<(&'d String, usize)> = None;
+    let mut best: Option<&'d str> = None;
     for template in document.paths.items.keys() {
-        if !template_matches(template, path) {
-            continue;
-        }
-        let literals = template
-            .split('/')
-            .filter(|segment| !is_variable(segment))
-            .count();
-        if best.is_none_or(|(_, most)| literals > most) {
-            best = Some((template, literals));
+        if template_matches(template, path) && best.is_none_or(|best| outranks(template, best)) {
+            best = Some(template);
         }
     }
 
-    best.map(|(template, _)| template.as_str())
+    best
+}
+
+/// Whether `candidate` takes priority over `incumbent`, two templates matching
+/// the same path: the first segment where one is a literal and the other a
+/// variable goes to the literal.
+fn outranks(candidate: &str, incumbent: &str) -> bool {
+    candidate
+        .split('/')
+        .zip(incumbent.split('/'))
+        .find_map(
+            |(candidate, incumbent)| match (is_variable(candidate), is_variable(incumbent)) {
+                (false, true) => Some(true),
+                (true, false) => Some(false),
+                _ => None,
+            },
+        )
+        .unwrap_or(false)
 }
 
 /// Whether a concrete path is an instance of a template.
