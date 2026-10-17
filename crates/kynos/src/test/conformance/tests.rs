@@ -158,10 +158,10 @@ fn document(templates: &[&str]) -> Document {
     document
 }
 
-/// The more literal of two matching templates wins, which is what keeps a
+/// A literal beats a variable in the same position, which is what keeps a
 /// declared `/users/me` from being answered by `/users/{id}`'s description.
 #[test]
-fn the_most_literal_matching_template_is_the_one_chosen() {
+fn a_literal_beats_a_variable_in_the_same_segment() {
     let document = document(&["/users/{id}", "/users/me"]);
 
     assert_eq!(matched_template(&document, "/users/me"), Some("/users/me"));
