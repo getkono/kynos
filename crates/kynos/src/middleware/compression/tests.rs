@@ -188,6 +188,84 @@ fn only_a_strong_validator_stops_the_encoder() {
     }
 }
 
+/// Every zstd level, on both encoding paths, inside the window HTTP allows.
+mod zstd_window {
+    use async_compression::{tokio::bufread::ZstdDecoder, zstd::DParameter};
+    use bytes::Bytes;
+    use http_body_util::BodyExt as _;
+    use tokio::io::AsyncReadExt as _;
+
+    use crate::{
+        http::body::Body,
+        middleware::compression::{
+            Coding, Levels, encode,
+            levels::ZstdLevel,
+            streaming::{LatencyMode, Streamed},
+        },
+    };
+
+    /// RFC 9659 section 3's 8 MB, as the base-2 logarithm zstd states it in.
+    const HTTP_WINDOW_LOG: u32 = 23;
+
+    /// A body large enough for every level to reach its matching strategy.
+    fn body() -> Bytes {
+        (0..4_096)
+            .map(|line| format!("line {line} of a response, {}\n", line * 7_919 % 104_729))
+            .collect::<String>()
+            .into()
+    }
+
+    /// What a decoder that refuses windows above 8 MB makes of `encoded`.
+    async fn decoded_within_the_window(encoded: &[u8]) -> std::io::Result<Vec<u8>> {
+        let mut decoded = Vec::new();
+        ZstdDecoder::with_params(
+            std::io::Cursor::new(encoded),
+            &[DParameter::window_log_max(HTTP_WINDOW_LOG)],
+        )
+        .read_to_end(&mut decoded)
+        .await?;
+        Ok(decoded)
+    }
+
+    /// RFC 9659 section 3: an encoder "MUST NOT generate frames requiring a
+    /// Window_Size larger than 8 MB". zstd's own table gives levels 20 to 22
+    /// a 32 to 128 MB window when the input's size is unknown, which it is
+    /// to both paths.
+    ///
+    /// Swept rather than sampled, so a zstd release that moves a level's
+    /// window fails here rather than on a client.
+    #[tokio::test]
+    async fn every_zstd_level_decodes_within_the_window_rfc_9659_allows() {
+        for level in 1..=22 {
+            let levels = Levels {
+                zstd: ZstdLevel::new(level).expect("a level zstd defines"),
+                ..Levels::default()
+            };
+
+            let buffered = encode(Coding::Zstd, body(), levels)
+                .await
+                .expect("an encodable body");
+            let streamed = Streamed::new(
+                Body::from_bytes(body()),
+                Coding::Zstd,
+                levels,
+                LatencyMode::Throughput,
+            )
+            .collect()
+            .await
+            .expect("an encodable body")
+            .to_bytes();
+
+            for (path, encoded) in [("buffered", buffered), ("streamed", streamed)] {
+                let decoded = decoded_within_the_window(&encoded)
+                    .await
+                    .unwrap_or_else(|error| panic!("level {level}, {path}: {error}"));
+                assert_eq!(decoded, body(), "level {level}, {path}");
+            }
+        }
+    }
+}
+
 /// A response body that fails while `Compression` buffers it.
 ///
 /// In-crate because no public surface builds a body that fails on demand:
