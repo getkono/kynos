@@ -383,12 +383,13 @@ pub(crate) fn delivery_responses(
         ))
     };
     // The type's own description, optional here: a delivery names a file only
-    // where its builder asked for one.
+    // where its builder asked for one. A drift away from an inline header must
+    // fail loudly rather than declare an undescribed field.
     let mut disposition =
         crate::response::disposition::ContentDisposition::response_headers(registry)
             .into_values()
             .find_map(|header| header.as_item().cloned())
-            .unwrap_or_else(string);
+            .expect("ContentDisposition declares its header inline");
     disposition.required = None;
 
     let mut responses = kynos_openapi::Responses::new()
