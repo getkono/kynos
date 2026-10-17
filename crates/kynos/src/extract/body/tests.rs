@@ -445,6 +445,14 @@ async fn a_protobuf_body_decodes_to_the_message_it_encodes() {
         value: i32,
     }
 
+    // An open schema declaring no bound: this reads the decoding alone.
+    impl crate::schema::Schema for Tagged {
+        fn schema(registry: &mut crate::schema::registry::Registry) -> kynos_openapi::Schema {
+            let _ = registry;
+            kynos_openapi::Schema::any()
+        }
+    }
+
     // Field 1, varint wire type, value 7 -- the whole message.
     let mut request = Request::new(Body::from_bytes(bytes::Bytes::from_static(&[0x08, 0x07])));
     request.headers_mut().insert(
