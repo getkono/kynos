@@ -5353,7 +5353,9 @@ mod multipart {
 
     /// A field serde only reads is still refused: a part has one name in both
     /// directions, whichever side serde uses. A container `rename_all` whose
-    /// sides differ is refused beside it, since it names every part twice.
+    /// sides differ is refused beside it, since it names every part twice. The
+    /// serde keys the description honours and the decoder could not follow
+    /// are refused after them.
     fn ledger() -> Vec<Case> {
         vec![
             case(
@@ -5380,12 +5382,110 @@ mod multipart {
                 ),
                 "gives every field two part names",
             ),
+            case(
+                "a container `default`, which a form read part by part never builds",
+                quote::quote!(
+                    #[serde(default)]
+                    struct Upload {
+                        caption: String,
+                    }
+                ),
+                "fills a field left out from the form's own `Default`",
+            ),
+            case(
+                "an `alias`, a second name the part is never read under",
+                quote::quote!(
+                    struct Upload {
+                        #[serde(alias = "title")]
+                        caption: String,
+                    }
+                ),
+                "gives this field a second part name",
+            ),
+            case(
+                "a `skip`, which leaves out a field the form still carries",
+                quote::quote!(
+                    struct Upload {
+                        #[serde(skip)]
+                        caption: String,
+                    }
+                ),
+                "leaves this field out of what serde",
+            ),
+            case(
+                "a `flatten`, which describes the field as its members",
+                quote::quote!(
+                    struct Upload {
+                        #[serde(flatten)]
+                        caption: String,
+                    }
+                ),
+                "is described as its own members",
+            ),
+            case(
+                "a `Vec` field without `default`, required yet carried by no part when empty",
+                quote::quote!(
+                    struct Upload {
+                        images: Vec<FilePart>,
+                    }
+                ),
+                "is carried by no part when it is empty",
+            ),
         ]
     }
 
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
+    }
+
+    /// Every one of serde's `skip` keys leaves a field out of one direction at
+    /// least, while a form reads and writes each field as its parts.
+    #[test]
+    fn every_skip_is_refused() {
+        let skips = [
+            quote::quote!(skip),
+            quote::quote!(skip_serializing),
+            quote::quote!(skip_deserializing),
+            quote::quote!(skip_serializing_if = "Option::is_none"),
+        ];
+        let ledger = skips
+            .into_iter()
+            .map(|skip| {
+                case(
+                    "a `skip` key",
+                    quote::quote!(
+                        struct Upload {
+                            #[serde(#skip)]
+                            caption: Option<String>,
+                        }
+                    ),
+                    "leaves this field out of what serde",
+                )
+            })
+            .collect();
+        each_case_is_refused(ledger, expand_inner);
+    }
+
+    /// A field-level `default`, bare or naming a function, is what the
+    /// description reads as optional, and so is what the decoder fills; a
+    /// `Vec` under it is the one form an empty list is described by.
+    #[test]
+    fn a_defaulted_field_is_accepted() {
+        let input: syn::DeriveInput = syn::parse2(quote::quote!(
+            struct Upload {
+                #[serde(default)]
+                caption: String,
+                #[serde(default = "untitled")]
+                title: String,
+                #[serde(default)]
+                images: Vec<FilePart>,
+            }
+        ))
+        .expect("the case itself must parse");
+        if let Err(error) = expand_inner(&input) {
+            panic!("a defaulted field was refused: {error}");
+        }
     }
 
     /// A split `rename` or `rename_all` whose sides agree gives the part one

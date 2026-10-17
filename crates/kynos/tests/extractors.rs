@@ -418,8 +418,8 @@ mod multipart {
     use kynos::{Schema, extract::body::multipart::MultipartForm};
 
     use super::{
-        BTreeMap, BodyRejection, Deserialize, Json, OneOf, Payload, StatusCode, assert_unsupported,
-        read,
+        BTreeMap, BodyRejection, Deserialize, Json, OneOf, Payload, StatusCode, Value,
+        assert_unsupported, json, read,
     };
 
     /// The one field the multipart bodies below carry.
@@ -545,6 +545,95 @@ mod multipart {
         .await
         .expect_err("the `a/b` part is not UTF-8");
         assert_at_slashed(rejection, "the part is not valid UTF-8");
+    }
+
+    /// A form two of whose fields serde fills when they are left out.
+    #[derive(Debug, PartialEq, Schema, Deserialize, kynos::MultipartForm)]
+    struct Noted {
+        name: String,
+        #[serde(default)]
+        note: String,
+        #[serde(default)]
+        tags: Vec<String>,
+    }
+
+    /// `T`'s own schema, as the document carries it.
+    fn described<T: kynos::schema::Schema>() -> Value {
+        let schema = T::schema(&mut kynos::schema::registry::Registry::new());
+        serde_json::to_value(schema).expect("a schema serializes")
+    }
+
+    /// What [`BODY`] decodes to as a [`Noted`]: every defaulted field filled.
+    fn noted() -> Noted {
+        Noted {
+            name: "kynos".to_owned(),
+            note: String::new(),
+            tags: Vec::new(),
+        }
+    }
+
+    /// A defaulted field is not `required`, so a body leaving its part out is
+    /// one the decoder fills rather than refuses.
+    #[tokio::test]
+    async fn a_part_the_description_leaves_optional_may_be_left_out() {
+        assert_eq!(described::<Noted>()["required"], json!(["name"]));
+
+        let read = read::<MultipartForm<Noted>>(Some("multipart/form-data; boundary=x"), BODY)
+            .await
+            .expect("only `name` is required");
+        assert_eq!(read, MultipartForm(noted()));
+    }
+
+    /// An empty list is written as no part at all, which reads back as the
+    /// empty list its `default` fills, so a form round-trips through its own
+    /// description.
+    #[test]
+    fn an_empty_list_is_written_as_no_part_and_read_back_empty() {
+        use kynos::{
+            extract::body::multipart::FromMultipart, response::codec::multipart::IntoMultipart,
+        };
+
+        let parts = noted().into_parts();
+        assert_eq!(
+            parts
+                .iter()
+                .map(|part| part.name.as_str())
+                .collect::<Vec<_>>(),
+            ["name", "note"]
+        );
+        assert_eq!(
+            Noted::from_parts(parts).expect("its own parts read back"),
+            noted()
+        );
+    }
+
+    /// A form serde closes to undeclared members.
+    #[derive(Debug, Schema, Deserialize, kynos::MultipartForm)]
+    #[serde(deny_unknown_fields)]
+    struct Closed {
+        name: String,
+    }
+
+    /// `deny_unknown_fields` closes the description, so a part it does not
+    /// declare is refused, keyed by the name it was sent under.
+    #[tokio::test]
+    async fn a_closed_form_refuses_a_part_it_does_not_declare() {
+        assert_eq!(described::<Closed>()["additionalProperties"], json!(false));
+
+        let rejection = read::<MultipartForm<Closed>>(
+            Some("multipart/form-data; boundary=x"),
+            b"--x\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\nkynos\r\n\
+              --x\r\nContent-Disposition: form-data; name=\"extra\"\r\n\r\n1\r\n--x--\r\n",
+        )
+        .await
+        .expect_err("`extra` is not declared");
+        let BodyRejection::Schema { failures } = rejection else {
+            panic!("expected a schema failure, got {rejection:?}");
+        };
+        assert_eq!(
+            failures,
+            BTreeMap::from([("/extra".to_owned(), "the part is not declared".to_owned())])
+        );
     }
 }
 
