@@ -133,6 +133,21 @@ fn an_escape_only_ecma_262_parses_is_refused_by_name() {
     }
 }
 
+/// `\c` without an ASCII letter after it is no control escape in either
+/// dialect, so it is refused as no regular expression, at the escape.
+#[test]
+fn a_control_escape_without_a_letter_is_refused_at_the_escape() {
+    for (pattern, at) in [(r"\c1", 0), (r"\c", 0), (r"ab\c", 2)] {
+        let reason = translate(pattern).expect_err(pattern);
+        let expects =
+            format!("not a regular expression: `\\c` takes an ASCII letter, at byte {at}");
+        assert!(
+            reason.contains(&expects),
+            "`{pattern}`: expected {expects:?}, got {reason:?}"
+        );
+    }
+}
+
 #[test]
 fn a_pattern_the_dialects_read_apart_is_refused() {
     for (pattern, expects) in refusals() {
