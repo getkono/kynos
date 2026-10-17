@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/getkono/kynos/compare/kynos-v0.4.0...kynos-v0.5.0) - 2026-10-17
+
+### Added
+
+- *(server)* serve one connection over any AsyncRead + AsyncWrite ([#584](https://github.com/getkono/kynos/pull/584))
+
+### Fixed
+
+- *(extract)* [**breaking**] refuse a nested OneOf that repeats a media type at compile time ([#662](https://github.com/getkono/kynos/pull/662))
+- *(decompression)* measure max_ratio against what arrived across stacked codings ([#660](https://github.com/getkono/kynos/pull/660))
+- *(extract)* [**breaking**] refuse a Binary marker offered its OneOf partner's requests ([#656](https://github.com/getkono/kynos/pull/656))
+- *(negotiate)* ignore empty elements in Accept ([#661](https://github.com/getkono/kynos/pull/661))
+- *(assets)* read every If-None-Match field line in both asset modes ([#658](https://github.com/getkono/kynos/pull/658))
+- *(multipart)* escape rejection keys as RFC 6901 pointers ([#657](https://github.com/getkono/kynos/pull/657))
+- *(rate-limit)* spend no quota on a request any quota refuses ([#633](https://github.com/getkono/kynos/pull/633))
+- *(schema)* refuse NaN under minimum, maximum and exclusive bounds ([#632](https://github.com/getkono/kynos/pull/632))
+- *(negotiate)* match an offer whose media type carries parameters ([#630](https://github.com/getkono/kynos/pull/630))
+- *(decompression)* decode every gzip member and zstd frame, refuse trailing input ([#628](https://github.com/getkono/kynos/pull/628))
+- *(range)* read every If-None-Match field line, and ignore a repeated If-Modified-Since ([#653](https://github.com/getkono/kynos/pull/653))
+- *(multipart)* accept a Content-Type with whitespace around its parameter delimiter ([#649](https://github.com/getkono/kynos/pull/649))
+- *(router)* refuse an unchecked route that duplicates a declared operation ([#647](https://github.com/getkono/kynos/pull/647))
+- *(params)* [**breaking**] refuse a path value that cannot address its route in relative_uri ([#646](https://github.com/getkono/kynos/pull/646))
+- *(security)* accept a credential that is only an auth-scheme ([#645](https://github.com/getkono/kynos/pull/645))
+- *(middleware)* describe the 400 an interceptor's Reads rejection answers with ([#642](https://github.com/getkono/kynos/pull/642))
+- *(router)* hand endpoint-scoped interceptors the mounted paths key ([#641](https://github.com/getkono/kynos/pull/641))
+- *(range)* answer If-None-Match: * with 304 when Served has no entity tag ([#640](https://github.com/getkono/kynos/pull/640))
+- *(server)* let one server serve_io many connections from a shared service ([#639](https://github.com/getkono/kynos/pull/639))
+- *(cache)* compare Vary-selected request fields across every field line ([#636](https://github.com/getkono/kynos/pull/636))
+- *(extract)* refuse a body whose content coding nothing decoded ([#643](https://github.com/getkono/kynos/pull/643))
+- *(sse)* end a field value at a bare CR ([#638](https://github.com/getkono/kynos/pull/638))
+- *(response)* keep a failed body's status under Created and Accepted ([#634](https://github.com/getkono/kynos/pull/634))
+- *(router)* run a nested router's interceptors and panic recovery over its unchecked routes ([#629](https://github.com/getkono/kynos/pull/629))
+- *(forwarded)* split a forwarding line that is not text on its raw bytes ([#631](https://github.com/getkono/kynos/pull/631))
+
 ## [0.4.0](https://github.com/getkono/kynos/compare/kynos-v0.3.0...kynos-v0.4.0) - 2026-10-13
 
 ### Added
