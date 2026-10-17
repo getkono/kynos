@@ -68,6 +68,7 @@ use kynos::{
 };
 use opentelemetry::{propagation::Extractor, trace::TracerProvider as _};
 use opentelemetry_semantic_conventions::trace as semconv;
+use tracing::Instrument as _;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
 /// The W3C Trace Context fields, as a declared header group.
@@ -94,20 +95,29 @@ impl DecodeHeaders for TraceContext {
     const FALLIBLE: bool = false;
 
     fn decode(headers: &HeaderMap) -> Result<Self, HeaderRejection> {
-        let read = |name: &str| {
-            headers
-                .get(name)
-                .and_then(|value| value.to_str().ok())
-                .map(ToOwned::to_owned)
-        };
+        // `tracestate` is a list a sender may split across field lines, and
+        // section 3.3.1.1 combines them in order (RFC 9110 section 5.3), so
+        // reading only the first drops every vendor after it. One unreadable
+        // line makes the whole list absent: a list missing a line is a
+        // different list, and the traceparent survives either way.
+        let mut lines = headers.get_all("tracestate").iter().peekable();
+        let tracestate = lines.peek().is_some().then(|| {
+            lines
+                .map(|value| value.to_str().ok())
+                .collect::<Option<Vec<_>>>()
+                .map(|lines| lines.join(","))
+        });
 
         // Neither is required, and an unreadable one is absent rather than a
         // rejection: a malformed `traceparent` means this request starts a new
         // trace, which is what the W3C specification asks for. Refusing the
         // request would let a broken caller take the service down.
         Ok(Self {
-            traceparent: read("traceparent"),
-            tracestate: read("tracestate"),
+            traceparent: headers
+                .get("traceparent")
+                .and_then(|value| value.to_str().ok())
+                .map(ToOwned::to_owned),
+            tracestate: tracestate.flatten(),
         })
     }
 }
@@ -193,10 +203,13 @@ impl<C: Sync + 'static> Interceptor<C> for Telemetry {
         // Entered across `next.run`, which is the whole reason this is an
         // interceptor: everything the handler does -- including whatever it
         // instruments itself -- lands inside this span.
-        let continued = {
-            let _entered = span.enter();
-            next.run(request).await
-        };
+        //
+        // `instrument`, never `span.enter()` held across the `.await`: the
+        // guard would keep the span entered on the thread while this task is
+        // parked, so whatever runs there next is recorded inside it.
+        // `instrument` enters it for each poll and exits before the poll
+        // returns.
+        let continued = next.run(request).instrument(span.clone()).await;
 
         span.record(
             semconv::HTTP_RESPONSE_STATUS_CODE,
@@ -293,4 +306,95 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     provider.shutdown()?;
 
     Ok(())
+}
+
+// --- The tests ------------------------------------------------------------
+
+/// What the carrier reads, and where the span is while a handler waits.
+#[cfg(test)]
+mod tests {
+    use std::{future::poll_fn, pin::pin, task::Poll};
+
+    use kynos::http::{Request, StatusCode, body::Body};
+    use tracing::Span;
+
+    use super::*;
+
+    /// W3C Trace Context section 3.3.1.1: field lines combine into one list.
+    #[test]
+    fn every_tracestate_line_is_read() {
+        let mut headers = HeaderMap::new();
+        headers.append("tracestate", HeaderValue::from_static("congo=t61rcWkgMzE"));
+        headers.append(
+            "tracestate",
+            HeaderValue::from_static("rojo=00f067aa0ba902b7"),
+        );
+
+        let context = TraceContext::decode(&headers).expect("the decode never refuses");
+
+        assert_eq!(
+            context.get("tracestate"),
+            Some("congo=t61rcWkgMzE,rojo=00f067aa0ba902b7"),
+        );
+    }
+
+    /// A list missing a line is a different list, so none is passed on.
+    #[test]
+    fn one_unreadable_tracestate_line_drops_the_list() {
+        let mut headers = HeaderMap::new();
+        headers.append("tracestate", HeaderValue::from_static("congo=t61rcWkgMzE"));
+        headers.append(
+            "tracestate",
+            HeaderValue::from_bytes(b"rojo=\xff").expect("obs-text is a field value"),
+        );
+
+        let context = TraceContext::decode(&headers).expect("the decode never refuses");
+
+        assert_eq!(context.get("tracestate"), None);
+    }
+
+    /// No line is no list, not an empty one joined from zero lines.
+    #[test]
+    fn an_absent_tracestate_stays_absent() {
+        let mut headers = HeaderMap::new();
+        headers.append(
+            "traceparent",
+            HeaderValue::from_static("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
+        );
+
+        let context = TraceContext::decode(&headers).expect("the decode never refuses");
+
+        assert_eq!(context.get("tracestate"), None);
+    }
+
+    /// Yields once, inside the span either side of the yield.
+    #[kynos::get("/waits")]
+    async fn waits() -> NoContent {
+        assert!(!Span::current().is_none(), "entered before the yield");
+        tokio::task::yield_now().await;
+        assert!(!Span::current().is_none(), "entered after the yield");
+        NoContent
+    }
+
+    /// A span entered across an `.await` stays entered on the thread while the
+    /// task is parked, so whatever runs there next is recorded inside it.
+    #[tokio::test]
+    async fn the_span_is_left_while_the_handler_waits() {
+        let _subscriber = tracing::subscriber::set_default(tracing_subscriber::registry());
+        let service = Router::<()>::new()
+            .mount(kynos::routes![waits])
+            .intercept(Telemetry)
+            .build(())
+            .expect("a valid router");
+
+        let mut request = Request::new(Body::empty());
+        *request.uri_mut() = "/waits".parse().expect("a path");
+        let mut call = pin!(service.call(request));
+
+        let first = poll_fn(|cx| Poll::Ready(call.as_mut().poll(cx))).await;
+        assert!(first.is_pending(), "the handler yields once");
+        assert!(Span::current().is_none(), "no span outlives the poll");
+
+        assert_eq!(call.await.status(), StatusCode::NO_CONTENT);
+    }
 }

@@ -46,7 +46,9 @@
 //! * **Issuing a token is an ordinary operation.** `POST /session` is guarded
 //!   by `Auth<Basic<Credentials>>`, so both carriers are exercised, and the
 //!   password is compared with [`constant_time_eq`] because comparing a shared
-//!   secret with `==` leaks how much of it was right.
+//!   secret with `==` leaks how much of it was right. The token it answers with
+//!   is a credential, so the operation sits under [`SecurityHeaders`] and the
+//!   response says `Cache-Control: no-store`, as RFC 6749 section 5.1 requires.
 //!
 //! [`BearerToken`]: kynos::security::carrier::BearerToken
 //! [`constant_time_eq`]: kynos::security::constant_time_eq
@@ -60,7 +62,9 @@ use std::{
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use kynos::{
     error::rejection::AuthRejection,
+    middleware::security_headers::SecurityHeaders,
     prelude::*,
+    router::service::Service,
     security::{
         Authenticates, Authenticator, Scope,
         auth::{Auth, MaybeAuth, Scoped, Scopes},
@@ -443,19 +447,69 @@ async fn feed(caller: MaybeAuth<AccessToken>) -> Json<Subject> {
     })
 }
 
-#[tokio::main]
-async fn main() -> kynos::Result<()> {
-    let router = Router::<App>::new().mount(kynos::routes![sign_in, me, reports, feed]);
-
-    println!("{}", router.openapi()?.to_json()?);
+/// The whole API, built over a seeded key store.
+fn service() -> kynos::Result<Service<App>> {
+    let router = Router::<App>::new()
+        // A token response is a credential, and RFC 6749 section 5.1 forbids
+        // every cache between here and the client from storing one.
+        // `SecurityHeaders` sends `Cache-Control: no-store` and declares it, at
+        // group scope so only the operation that issues a token says so.
+        .group(
+            Group::new("/")
+                .intercept(SecurityHeaders::new())
+                .mount(kynos::routes![sign_in]),
+        )
+        .mount(kynos::routes![me, reports, feed]);
 
     let context = App {
         keys: std::sync::Arc::new(Keys::seeded()),
         passwords: Passwords,
     };
 
-    Server::new(router.build(context)?)
+    router.build(context)
+}
+
+#[tokio::main]
+async fn main() -> kynos::Result<()> {
+    let service = service()?;
+
+    println!("{}", service.openapi().to_json()?);
+
+    Server::new(service)
         .bind((Ipv4Addr::UNSPECIFIED, 3000))
         .serve()
         .await
+}
+
+// --- The tests ------------------------------------------------------------
+
+/// What a token response tells the caches between the client and here.
+#[cfg(test)]
+mod tests {
+    use kynos::http::{HeaderValue, Method, Request, StatusCode, body::Body, header};
+
+    use super::*;
+
+    /// RFC 6749 section 5.1: a response carrying a token is never stored.
+    #[tokio::test]
+    async fn a_token_response_is_not_stored() {
+        let service = service().expect("a valid router");
+
+        let mut request = Request::new(Body::empty());
+        *request.method_mut() = Method::POST;
+        *request.uri_mut() = "/session".parse().expect("a path");
+        request.headers_mut().insert(
+            header::AUTHORIZATION,
+            // `reporter:correct-horse`
+            HeaderValue::from_static("Basic cmVwb3J0ZXI6Y29ycmVjdC1ob3JzZQ=="),
+        );
+
+        let response = service.call(request).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CACHE_CONTROL),
+            Some(&HeaderValue::from_static("no-store")),
+        );
+    }
 }
