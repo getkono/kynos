@@ -181,6 +181,11 @@ async fn a_handler_past_the_limit_is_answered_with_the_status_its_type_declares(
 
     let timed_out = get(&service, "/slow").call().await;
     assert_eq!(timed_out.status, StatusCode::REQUEST_TIMEOUT);
+    // A sub-second limit is reported as configured, not truncated to "0 seconds".
+    assert_eq!(
+        timed_out.json()["detail"],
+        "the handler did not finish within 20ms"
+    );
 
     let in_time = get(&service, "/prompt").call().await;
     assert_eq!(in_time.status, StatusCode::NO_CONTENT);
