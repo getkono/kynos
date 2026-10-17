@@ -1503,6 +1503,54 @@ async fn an_http2_connection_that_opens_no_stream_is_closed() {
         .expect("server exits cleanly");
 }
 
+/// With the header-read timeout disabled, an HTTP/2 connection that finishes
+/// its preface and opens no stream is closed at the HTTP/2 idle timeout: no
+/// stream is in flight from accept, so the idle timeout bounds the first head
+/// as well.
+#[cfg(all(feature = "http1", feature = "http2"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_http2_connection_that_opens_no_stream_is_closed_at_the_idle_timeout() {
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let bound = crate::server::Server::new(test_service())
+        .http1(Http1Config::default().header_read_timeout(None))
+        .http2(Http2Config::default().idle_timeout(Some(HEAD_TIMEOUT)))
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+            let _ = shutdown_receiver.await;
+        }))
+        .prepare()
+        .await
+        .expect("loopback listener binds");
+    let address = bound.local_addrs()[0];
+    let server = tokio::spawn(bound.serve());
+
+    let stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    let (sender, connection) = hyper::client::conn::http2::handshake::<
+        _,
+        _,
+        http_body_util::Empty<bytes::Bytes>,
+    >(TokioExecutor::new(), TokioIo::new(stream))
+    .await
+    .expect("HTTP/2 handshake completes");
+    let closed = tokio::time::timeout(SILENT_CONNECTION_BOUND, connection).await;
+    assert!(
+        closed.is_ok(),
+        "an HTTP/2 connection with no stream is still held {SILENT_CONNECTION_BOUND:?} after \
+         accepting it, past a {HEAD_TIMEOUT:?} idle timeout and no header-read timeout"
+    );
+    drop(sender);
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
 /// The bound is on the first request head only: a connection that produced one
 /// in time is not closed when the timeout passes.
 ///
