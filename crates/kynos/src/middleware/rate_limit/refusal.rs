@@ -6,25 +6,20 @@
 
 use std::{fmt, marker::PhantomData, time::Duration};
 
-use kynos_openapi::model::schema::types::SchemaType;
-
 use crate::{
     error::problem::{ProblemType, refusal_problem, refusal_response},
     extract::params::header::{EncodeHeaders, HeaderParams},
     http,
-    middleware::rate_limit::{
-        decision::{QuotaPolicy, ServiceLimit},
-        headers::{RateLimitFields, RateLimitHeaders, whole_seconds},
+    middleware::{
+        rate_limit::{
+            decision::{QuotaPolicy, ServiceLimit},
+            headers::{RateLimitFields, RateLimitHeaders},
+        },
+        retry_after_header, set_retry_after,
     },
     response::{IntoResponse, Responses, ShortCircuit},
     schema::registry::Registry,
 };
-
-/// Describes `Retry-After`, which is a delta-seconds count or an HTTP-date.
-fn retry_after_header() -> kynos_openapi::Header {
-    kynos_openapi::Header::new(kynos_openapi::Schema::of_type(SchemaType::String))
-        .with_description("How long to wait before retrying, in seconds or as an HTTP-date")
-}
 
 /// What a limiter answers with when a policy refuses, in the `X-` spelling.
 ///
@@ -158,14 +153,6 @@ fn described_refusal<T: ProblemType>(
     );
 
     kynos_openapi::Responses::new().with(429, response)
-}
-
-fn set_retry_after(response: &mut http::Response, retry_after: Duration) {
-    if let Ok(value) = http::HeaderValue::from_str(&whole_seconds(retry_after).to_string()) {
-        response
-            .headers_mut()
-            .insert(http::header::RETRY_AFTER, value);
-    }
 }
 
 /// Writes a group onto a short-circuit response, through the same writer a

@@ -749,6 +749,54 @@ async fn a_configured_retry_after_reaches_a_shed_response() {
     );
 }
 
+/// A sub-second delay rounds *up* to a whole second.
+///
+/// Truncated, it would be `Retry-After: 0`, telling the client to retry
+/// immediately into the refusal it just received.
+#[tokio::test]
+async fn a_sub_second_retry_after_rounds_up_to_one() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![slow, prompt])
+        .intercept(Concurrency::new(one()).retry_after(Duration::from_millis(500)))
+        .build(())
+        .expect("a describable router");
+
+    let (_held, shed) = tokio::join!(get(&service, "/slow").call(), async {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        get(&service, "/prompt").call().await
+    });
+
+    assert_eq!(shed.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        shed.field(header::RETRY_AFTER.as_str()).as_deref(),
+        Some("1")
+    );
+}
+
+/// The longest delay saturates at `u64::MAX` seconds rather than overflowing.
+///
+/// Rounding `Duration::MAX` up by one second overflows `u64`: a debug build
+/// panics, and a release build wraps to `Retry-After: 0`.
+#[tokio::test]
+async fn the_longest_retry_after_saturates() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![slow, prompt])
+        .intercept(Concurrency::new(one()).retry_after(Duration::MAX))
+        .build(())
+        .expect("a describable router");
+
+    let (_held, shed) = tokio::join!(get(&service, "/slow").call(), async {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        get(&service, "/prompt").call().await
+    });
+
+    assert_eq!(shed.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        shed.field(header::RETRY_AFTER.as_str()),
+        Some(u64::MAX.to_string())
+    );
+}
+
 /// A slot is released when the chain's future is dropped, not only when it
 /// finishes.
 ///
