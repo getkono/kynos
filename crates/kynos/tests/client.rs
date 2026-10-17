@@ -124,7 +124,7 @@ async fn session() -> WithHeaders<NoContent, kynos::middleware::cookies::SetCook
 /// Sends the client somewhere else.
 #[kynos::get("/old")]
 async fn old() -> Redirect<308> {
-    Redirect::to("/new")
+    Redirect::to(Location::from_static("/new"))
 }
 
 fn client() -> TestClient<()> {

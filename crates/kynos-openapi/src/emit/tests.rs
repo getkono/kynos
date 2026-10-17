@@ -753,7 +753,7 @@ mod blockers {
                         Schema::any(),
                     ))
                 }),
-                "#/paths/~1orders/get/parameters/filter".to_owned(),
+                "#/paths/~1orders/get/parameters/0".to_owned(),
             )],
             vec![(
                 with_operation(|operation| {
@@ -762,7 +762,7 @@ mod blockers {
                             .with_style(Style::Cookie, false),
                     )
                 }),
-                "#/paths/~1orders/get/parameters/session/style".to_owned(),
+                "#/paths/~1orders/get/parameters/0/style".to_owned(),
             )],
             vec![(
                 with_operation(|operation| {
@@ -1015,6 +1015,29 @@ mod blockers {
                 }
             );
         }
+    }
+
+    /// A parameter is located by its index in the array, as a JSON Pointer
+    /// addresses it, and a reference before it takes up an index too; its
+    /// name is no pointer token, and `a/b~c` would not even be one segment.
+    #[test]
+    fn a_parameter_is_located_by_its_index() {
+        let document = with_operation(|mut operation| {
+            operation.parameters = vec![
+                RefOr::Ref(crate::model::reference::Ref::parameter("Shared")),
+                RefOr::Item(Parameter::new(
+                    "a/b~c",
+                    ParameterIn::Querystring,
+                    Schema::any(),
+                )),
+            ];
+            operation
+        });
+
+        assert_eq!(
+            three_two_only_constructs(&document),
+            ["#/paths/~1orders/get/parameters/1"]
+        );
     }
 
     /// Every wire name the model gates behind `openapi32`, read from `model/`.
@@ -1444,7 +1467,7 @@ mod reach {
                 );
                 document
             },
-            "#/paths/~1orders/parameters/q".to_owned(),
+            "#/paths/~1orders/parameters/0".to_owned(),
         ));
 
         cases.push((

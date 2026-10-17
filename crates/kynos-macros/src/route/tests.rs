@@ -908,3 +908,17 @@ mod routes {
         assert_eq!(expanded.to_string(), expected.to_string());
     }
 }
+
+/// `#[kynos::operation]`'s method check.
+///
+/// The UI suite pins the diagnostics, under `--all-features` only; this holds
+/// the one answer that moves with a feature, which only `test:baseline`'s
+/// build sees from the other side.
+mod operation_method {
+    use crate::route::unmountable;
+
+    #[test]
+    fn query_is_mountable_exactly_under_openapi32() {
+        assert_eq!(unmountable("QUERY").is_none(), cfg!(feature = "openapi32"));
+    }
+}

@@ -37,8 +37,8 @@ pub(in crate::server) fn parse_certificates(
 }
 
 /// `names`, lowercased, unless one is refused as an SNI name: the list is
-/// empty, or a name is repeated, empty, already in `registered`, or not a
-/// server name.
+/// empty, or a name is repeated, empty, already in `registered`, or not a DNS
+/// name.
 pub(in crate::server) fn server_names(
     names: impl IntoIterator<Item = String>,
     registered: &[CertificateMaterial],
@@ -68,8 +68,12 @@ pub(in crate::server) fn server_names(
         ));
     }
     for name in &names {
-        tokio_rustls::rustls::pki_types::ServerName::try_from(name.clone())
-            .map_err(|_| TlsError::ServerName(name.clone()))?;
+        // rustls never presents an IP literal as SNI (RFC 6066 §3), so a
+        // certificate registered under one could never be selected.
+        match tokio_rustls::rustls::pki_types::ServerName::try_from(name.as_str()) {
+            Ok(tokio_rustls::rustls::pki_types::ServerName::DnsName(_)) => {}
+            _ => return Err(TlsError::ServerName(name.clone())),
+        }
     }
     Ok(names)
 }

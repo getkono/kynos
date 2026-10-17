@@ -28,7 +28,8 @@ const MONTHS: [&str; 12] = [
 
 /// Renders `time` as an IMF-fixdate.
 ///
-/// `Sun, 06 Nov 1994 08:49:37 GMT`; `None` for a time before the epoch.
+/// `Sun, 06 Nov 1994 08:49:37 GMT`; `None` for a time before the epoch or
+/// past year 9999, which the grammar's `4DIGIT` year cannot spell.
 #[must_use]
 pub(crate) fn format(time: SystemTime) -> Option<String> {
     let seconds = time.duration_since(UNIX_EPOCH).ok()?.as_secs();
@@ -36,6 +37,9 @@ pub(crate) fn format(time: SystemTime) -> Option<String> {
     let rest = seconds % 86_400;
 
     let (year, month, day) = civil_from_days(days);
+    if year > 9999 {
+        return None;
+    }
     let weekday = usize::try_from((days.rem_euclid(7) + 3) % 7).ok()?;
 
     Some(format!(
@@ -52,8 +56,9 @@ pub(crate) fn format(time: SystemTime) -> Option<String> {
 
 /// Reads any of the three formats section 5.6.7 names.
 ///
-/// `None` for anything else, which callers ignore rather than refuse (section
-/// 13.1.3).
+/// `None` for anything else, which no caller refuses: a precondition ignores it
+/// (section 13.1.3), and a cache reads an unreadable `Expires` as past (RFC 9111
+/// section 5.3).
 #[must_use]
 pub(crate) fn parse(value: &str) -> Option<SystemTime> {
     let value = value.trim();

@@ -508,6 +508,152 @@ async fn a_request_saying_no_cache_is_answered_by_the_handler() {
     );
 }
 
+// --- What a response stated about its own lifetime -----------------------
+
+/// Freshness fields a handler states, verbatim.
+#[derive(Clone, Copy, Debug)]
+struct Stated(&'static [(&'static str, &'static str)]);
+
+impl kynos::extract::params::header::HeaderParams for Stated {
+    const NAMES: &'static [&'static str] = &["cache-control", "expires"];
+    const DESCRIBED: bool = false;
+}
+
+impl kynos::extract::params::header::EncodeHeaders for Stated {
+    fn encode(&self) -> Vec<(kynos::http::HeaderName, kynos::http::HeaderValue)> {
+        self.0
+            .iter()
+            .map(|(name, value)| {
+                (
+                    kynos::http::HeaderName::from_static(name),
+                    kynos::http::HeaderValue::from_static(value),
+                )
+            })
+            .collect()
+    }
+}
+
+/// Expired before it was sent.
+#[kynos::get("/expired")]
+async fn expired() -> WithHeaders<Json<Report>, Stated> {
+    CALLS.fetch_add(1, Ordering::SeqCst);
+    WithHeaders::new(
+        Json(Report { id: 4 }),
+        Stated(&[("expires", "Thu, 01 Dec 1994 16:00:00 GMT")]),
+    )
+}
+
+/// An `Expires` that is no date, which RFC 9111 section 5.3 reads as past.
+#[kynos::get("/expires-zero")]
+async fn expires_zero() -> WithHeaders<Json<Report>, Stated> {
+    CALLS.fetch_add(1, Ordering::SeqCst);
+    WithHeaders::new(Json(Report { id: 5 }), Stated(&[("expires", "0")]))
+}
+
+/// A `max-age` whose argument is no number.
+#[kynos::get("/non-integer")]
+async fn non_integer() -> WithHeaders<Json<Report>, Stated> {
+    CALLS.fetch_add(1, Ordering::SeqCst);
+    WithHeaders::new(
+        Json(Report { id: 6 }),
+        Stated(&[("cache-control", "max-age=abc")]),
+    )
+}
+
+/// Two `max-age` directives, on the one line a response header group writes.
+#[kynos::get("/duplicated")]
+async fn duplicated() -> WithHeaders<Json<Report>, Stated> {
+    CALLS.fetch_add(1, Ordering::SeqCst);
+    WithHeaders::new(
+        Json(Report { id: 7 }),
+        Stated(&[("cache-control", "max-age=60, max-age=120")]),
+    )
+}
+
+/// Expires long after any test runs, and says nothing else.
+#[kynos::get("/expires-later")]
+async fn expires_later() -> WithHeaders<Json<Report>, Stated> {
+    CALLS.fetch_add(1, Ordering::SeqCst);
+    WithHeaders::new(
+        Json(Report { id: 8 }),
+        Stated(&[("expires", "Fri, 01 Jan 2100 00:00:00 GMT")]),
+    )
+}
+
+/// A `max-age` in the quoted-string form a sender must not generate and a
+/// recipient ought to accept (RFC 9111 section 5.2).
+#[kynos::get("/quoted")]
+async fn quoted() -> WithHeaders<Json<Report>, Stated> {
+    CALLS.fetch_add(1, Ordering::SeqCst);
+    WithHeaders::new(
+        Json(Report { id: 9 }),
+        Stated(&[("cache-control", "max-age=\"60\"")]),
+    )
+}
+
+/// A service caching the stated-lifetime routes through a fresh store, under
+/// `default`.
+fn stating(default: Option<std::time::Duration>) -> kynos::router::service::Service<()> {
+    let cache = Cache::new(Stored::default()).namespace("test");
+    let cache = match default {
+        Some(lifetime) => cache.default_freshness(lifetime),
+        None => cache,
+    };
+
+    Router::<()>::new()
+        .mount(kynos::routes![
+            expired,
+            expires_zero,
+            non_integer,
+            duplicated,
+            expires_later,
+            quoted
+        ])
+        .intercept(cache)
+        .build(())
+        .expect("a describable router")
+}
+
+/// How many times the handler ran over two requests to `path`.
+async fn calls_over_two(service: &kynos::router::service::Service<()>, path: &str) -> usize {
+    let before = CALLS.load(Ordering::SeqCst);
+    for _ in 0..2 {
+        assert_eq!(get(service, path).call().await.status, StatusCode::OK);
+    }
+    calls_during(before)
+}
+
+/// A response whose stated lifetime is already over, or cannot be read, is
+/// stale (RFC 9111 sections 4.2.1 and 5.3): the configured default is for a
+/// response that stated none, and does not stand in for one that did.
+#[tokio::test]
+async fn a_past_or_invalid_lifetime_is_not_replaced_by_the_default() {
+    let service = stating(Some(std::time::Duration::from_secs(60)));
+
+    for path in ["/expired", "/expires-zero", "/non-integer", "/duplicated"] {
+        assert_eq!(
+            calls_over_two(&service, path).await,
+            2,
+            "{path} was served from the store under the default lifetime"
+        );
+    }
+}
+
+/// `Expires` is an explicit lifetime, and a quoted `max-age` a readable one:
+/// either is reused with no default configured.
+#[tokio::test]
+async fn an_expires_or_a_quoted_max_age_is_reused_without_a_default() {
+    let service = stating(None);
+
+    for path in ["/expires-later", "/quoted"] {
+        assert_eq!(
+            calls_over_two(&service, path).await,
+            1,
+            "{path} was not served from the store"
+        );
+    }
+}
+
 // --- Credentials outside `Authorization` ---------------------------------
 
 /// Who presented the key.

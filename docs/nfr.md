@@ -566,15 +566,18 @@ and raising it means saying in the same commit why a new module needs the room.
 
 Eleven of them crossed the line after v0.1.0, and each was argued for as it did.
 `response/status.rs` is the shape above rather than a new argument. It declares
-six public types — `Location`, `NoContent`, `Created`, `Accepted`, `Redirect`
-and `ValidRedirectCode` — so splitting it would turn `response::status::Created` into
-`response::status::created::Created` and do the same to the other five. What
+seven public types — `Location`, `InvalidLocation`, `NoContent`, `Created`,
+`Accepted`, `Redirect` and `ValidRedirectCode` — so splitting it would turn
+`response::status::Created` into `response::status::created::Created` and do
+the same to the other six. What
 pushed it over was the third case in the rule that decides a wrapper's declared
 response: a body may describe no 200, or one, or the wrapper's own status, and
 the last of those is the one whose absence let a `Created<T>` overwrite a
 representation the body had already declared. The case is four lines; the
 account of why the body's half wins is the rest, and it is the half a later
-reader needs.
+reader needs. It stays over because `Location` is a field value by
+construction: the check and its refusal belong to the type the two wrappers
+declare required, not to a module of their own.
 
 `error/problem.rs` is a different argument: splitting it would cost no public
 path at all. It holds the wire representation of an error — `Problem`, `IntoProblem`, the two writers every description of an error

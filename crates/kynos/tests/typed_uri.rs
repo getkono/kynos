@@ -32,7 +32,7 @@ use kynos::{
         self,
         model::schema::types::{SchemaType, TypeSet},
     },
-    response::status::Redirect,
+    response::status::{Location, Redirect},
     router::group::Group,
     schema::{Schema, registry::Registry},
 };
@@ -246,7 +246,7 @@ async fn file_report(report: Link<report>) -> Redirect<303> {
 /// Points at `report`'s mounted `paths` key rather than a rendered URI.
 #[kynos::post("/template")]
 async fn file_template(report: Link<report>) -> Redirect<303> {
-    Redirect::to(report.template())
+    Redirect::to(Location::from_static(report.template()))
 }
 
 /// `report` under `prefix` and a group, `file_report` at the root, so neither

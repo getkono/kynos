@@ -744,6 +744,7 @@ failure at each.
 | Input | Refusal | Pointer into |
 | --- | --- | --- |
 | `Json<T>`, `Form<T>` | 422 | the body |
+| `Protobuf<T>` | 422 | the message, a member under its schema property's name |
 | `MultipartForm<T>` | 422 | the form, a part under its field's name |
 | `JsonLines<Records<T>>`, `JsonSeq<Records<T>>` | 422 per record, reading on | the record, under `/{index}` |
 | `QueryString<T, Json>` | 400, `QueryRejection::Schema` | the decoded query string |
@@ -759,8 +760,7 @@ its parameter's schema as the `Schema` derive writes them into a property,
 beside a named type's `$ref`, and checks the value `FromStr` read against them
 and against the bounds its type declares. A derived `HeaderParams` writes them
 into its response headers too, but a header a handler sends is not checked, as
-no response body is. `Protobuf<T>` is described by its message rather than by
-`#[schema(...)]`, so it has no bound to run.
+no response body is.
 
 - **A keyword applies to its own kind only**, as in JSON Schema: an absent
   `Option` satisfies every bound. A bound on a type of another kind is a compile

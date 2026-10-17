@@ -107,17 +107,23 @@ pub fn query(attribute: TokenStream, item: TokenStream) -> TokenStream {
     route::expand("QUERY", attribute, item)
 }
 
-/// Declares an operation for a method with no dedicated attribute.
+/// Declares an operation whose method is an argument rather than the
+/// attribute's name.
+///
+/// Every method it accepts also has a per-method attribute such as
+/// [`get`](macro@get), which is the usual spelling.
 ///
 /// ```ignore
-/// #[kynos::operation(method = "PROPFIND", path = "/files/{id}")]
-/// async fn propfind(Path(id): Path<FileId>) -> Result<Json<Properties>, ApiError> {
+/// #[kynos::operation(method = "GET", path = "/files/{id}")]
+/// async fn file(Path(id): Path<FileId>) -> Result<Json<File>, ApiError> {
 ///     todo!()
 /// }
 /// ```
 ///
-/// A method outside the eight OpenAPI 3.1 names emits into
-/// `additionalOperations`, which requires the `openapi32` feature.
+/// `method` is one the router can mount: one of the eight OpenAPI 3.1 names,
+/// or `QUERY` under the `openapi32` feature, spelled exactly so, since method
+/// names are case-sensitive. Any other method is a compile error; a method
+/// outside these has no Path Item field and nothing to route it to.
 #[proc_macro_attribute]
 pub fn operation(attribute: TokenStream, item: TokenStream) -> TokenStream {
     route::expand_generic(attribute, item)

@@ -7,6 +7,7 @@ pub(crate) mod path;
 pub(crate) mod routes;
 pub(crate) mod uri;
 
+use kynos_openapi::Method;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use syn::{ItemFn, Meta, Token, parse::Parser, parse_macro_input, punctuated::Punctuated};
@@ -16,10 +17,41 @@ use crate::route::{
     emit::emit,
 };
 
-/// The methods that have a dedicated Path Item field in OpenAPI 3.1.
-const STANDARD_METHODS: &[&str] = &[
-    "GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE",
-];
+/// Why `#[kynos::operation]` refuses `method`, or `None` when the router can
+/// mount it.
+///
+/// Mountable means [`Method::from_wire_str`] returns it, since that is what
+/// `routes!` builds the endpoint from: reading the same function keeps the
+/// macro and the router from disagreeing, which is what let a method past this
+/// check and into a panic at router construction.
+fn unmountable(method: &str) -> Option<String> {
+    // Checked before the model, whose own `openapi32` could be on through
+    // another host dependency while this crate's, which `kynos` sets, is off.
+    if method == "QUERY" && !cfg!(feature = "openapi32") {
+        return Some(
+            "`QUERY` has no Path Item field in OpenAPI 3.1; enable the `openapi32` feature"
+                .to_owned(),
+        );
+    }
+    if Method::from_wire_str(method).is_some() {
+        return None;
+    }
+    let upper = method.to_ascii_uppercase();
+    if Method::from_wire_str(&upper).is_some() {
+        return Some(format!(
+            "method names are case-sensitive, so `{method}` is not `{upper}`; write \
+             `method = \"{upper}\"`"
+        ));
+    }
+    let mountable = Method::all()
+        .iter()
+        .map(|method| format!("`{}`", method.as_wire_str()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "the router cannot mount `{method}`; `#[kynos::operation]` accepts {mountable}"
+    ))
+}
 
 /// Expands a route attribute for a method with a dedicated Path Item field.
 pub(crate) fn expand(method: &str, attribute: TokenStream, item: TokenStream) -> TokenStream {
@@ -65,16 +97,10 @@ pub(crate) fn expand_generic(attribute: TokenStream, item: TokenStream) -> Token
     };
 
     let method_value = method.value();
-    if !STANDARD_METHODS.contains(&method_value.as_str()) && !cfg!(feature = "openapi32") {
-        return syn::Error::new(
-            method.span(),
-            format!(
-                "`{method_value}` has no Path Item field in OpenAPI 3.1, so it can only be \
-                 described through `additionalOperations`; enable the `openapi32` feature"
-            ),
-        )
-        .to_compile_error()
-        .into();
+    if let Some(refusal) = unmountable(&method_value) {
+        return syn::Error::new(method.span(), refusal)
+            .to_compile_error()
+            .into();
     }
 
     // `method` is removed here so the shared parser refuses it on

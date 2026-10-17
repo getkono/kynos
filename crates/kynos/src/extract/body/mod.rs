@@ -25,11 +25,6 @@ pub mod protobuf;
 
 use bytes::Bytes;
 
-#[cfg(any(feature = "json", feature = "form", feature = "multipart"))]
-use crate::schema::{
-    Schema,
-    constraints::{Pointer, Violations},
-};
 use crate::{
     error::rejection::BodyRejection,
     extract::{
@@ -180,9 +175,18 @@ async fn read_body(request: Request, media_type: &str) -> Result<Bytes, BodyReje
 }
 
 /// Holds a decoded body, or the record of one sitting at `at`, to the bounds
-/// its [`Schema`] declares: a broken bound is a 422 keyed by where it broke.
-#[cfg(any(feature = "json", feature = "form", feature = "multipart"))]
-fn checked<T: Schema>(value: T, at: Pointer<'_>) -> Result<T, BodyRejection> {
+/// its schema declares: a broken bound is a 422 keyed by where it broke.
+#[cfg(any(
+    feature = "json",
+    feature = "form",
+    feature = "multipart",
+    feature = "protobuf"
+))]
+fn checked<T: crate::schema::Schema>(
+    value: T,
+    at: crate::schema::constraints::Pointer<'_>,
+) -> Result<T, BodyRejection> {
+    use crate::schema::constraints::Violations;
     let mut violations = Violations::new();
     value.check_constraints(at, &mut violations);
     if violations.is_empty() {

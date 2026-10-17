@@ -1262,6 +1262,29 @@ mod encoding_policy {
         assert_eq!(reply.status, StatusCode::NOT_ACCEPTABLE);
     }
 
+    /// Repeated `Accept-Encoding` lines are one field (RFC 9110 section 5.3):
+    /// `br;q=0` and `identity;q=0` together leave nothing acceptable, though
+    /// each line alone leaves identity. Sent in both orders, so a reader of
+    /// only the first line or only the last is caught either way.
+    #[tokio::test]
+    async fn every_accept_encoding_line_is_read() {
+        let service = service();
+
+        for (first, second) in [("br;q=0", "identity;q=0"), ("identity;q=0", "br;q=0")] {
+            let reply = get(&service, "/report")
+                .header("accept-encoding", first)
+                .header("accept-encoding", second)
+                .call()
+                .await;
+
+            assert_eq!(
+                reply.status,
+                StatusCode::NOT_ACCEPTABLE,
+                "lines {first:?} then {second:?}"
+            );
+        }
+    }
+
     /// The control for it, and the one that shows `Required` is a per-response
     /// decision rather than something the interceptor does to every route: the
     /// same client, the same service, a response that did not ask.

@@ -308,14 +308,10 @@ where
 
         for quota in &self.enforced {
             let outcome = self.decide(quota, &partition, now).await;
-            match outcome {
-                Outcome::Unreachable { wait } => {
-                    denial.get_or_insert(wait);
-                }
-                Outcome::Refused { wait } => {
-                    denial = Some(denial.map_or(wait, |existing| existing.max(wait)));
-                }
-                Outcome::Unread { .. } | Outcome::Within { .. } => {}
+            // The longest wait, since only after it would every quota admit the
+            // request; a store failure denies on the same terms as a refusal.
+            if let Outcome::Refused { wait } | Outcome::Unreachable { wait } = outcome {
+                denial = Some(denial.map_or(wait, |existing| existing.max(wait)));
             }
             outcomes.push(outcome);
         }

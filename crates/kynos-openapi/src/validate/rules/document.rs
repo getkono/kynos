@@ -40,7 +40,7 @@ impl Validator {
 pub(in crate::validate) fn check_servers(document: &Document, violations: &mut Vec<Violation>) {
     for (index, server) in document.servers.iter().enumerate() {
         for (name, variable) in &server.variables {
-            let location = format!("#/servers/{index}/variables/{name}");
+            let location = format!("#/servers/{index}/variables/{}", pointer_token(name));
             if let Some(values) = &variable.enumeration {
                 if values.is_empty() {
                     violations.push(Violation::error(
@@ -161,7 +161,7 @@ pub(in crate::validate) fn check_component_names(
         for name in names {
             if !ComponentName::is_valid(name) {
                 violations.push(Violation::error(
-                    format!("#/components/{group}/{name}"),
+                    format!("#/components/{group}/{}", pointer_token(name)),
                     SpecError::InvalidComponentName { name: name.clone() },
                 ));
             }

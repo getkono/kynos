@@ -117,10 +117,10 @@ struct UserPath {
 
 /// Suspends a user, and points the client at the user it suspended.
 ///
-/// `operation` is the attribute for a method with no dedicated one. `PATCH` is
-/// one of the eight OpenAPI 3.1 names, so it needs nothing further; a method
-/// outside them — `PROPFIND`, `LOCK` — emits into `additionalOperations` and
-/// therefore requires the `openapi32` feature.
+/// `operation` takes the method as an argument; it is the same as `#[patch]`
+/// here. It accepts only a method the router can mount: one of the eight
+/// OpenAPI 3.1 names, such as `PATCH`, or `QUERY` under the `openapi32`
+/// feature. Any other method — `PROPFIND`, `LOCK` — is a compile error.
 #[kynos::operation(method = "PATCH", path = "/{id}/suspension", tag = Admin)]
 async fn suspend_user(user: Link<get_user>, Path(path): Path<UserPath>) -> Redirect<303> {
     println!("suspending {}", path.id);

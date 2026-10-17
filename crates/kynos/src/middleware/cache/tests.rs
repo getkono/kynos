@@ -305,6 +305,127 @@ fn a_response_that_said_nothing_is_not_reused_unless_a_default_was_set() {
     );
 }
 
+/// The same GET to an unguarded operation, under a configured default.
+fn storable_by_default(response: &[(&str, &str)]) -> Result<Duration, Unstorable> {
+    freshness::storable(
+        &Method::GET,
+        StatusCode::OK,
+        &HeaderMap::new(),
+        &map(response),
+        false,
+        Some(Duration::from_secs(30)),
+    )
+}
+
+/// RFC 9111 section 4.2.1's third source: `Expires` minus `Date`.
+#[test]
+fn expires_is_read_against_the_date_the_origin_stated() {
+    assert_eq!(
+        storable(
+            &[],
+            &[
+                ("date", "Sun, 06 Nov 1994 08:49:37 GMT"),
+                ("expires", "Sun, 06 Nov 1994 08:50:37 GMT"),
+            ]
+        ),
+        Ok(Duration::from_secs(60))
+    );
+    // Without a `Date`, against the time it was received.
+    assert_eq!(
+        storable(&[], &[("expires", "Thu, 01 Dec 1994 16:00:00 GMT")]),
+        Ok(Duration::ZERO)
+    );
+    assert!(
+        storable(&[], &[("expires", "Fri, 01 Jan 2100 00:00:00 GMT")])
+            .is_ok_and(|lifetime| lifetime > Duration::from_secs(60 * 60 * 24 * 365))
+    );
+}
+
+/// Section 5.3: either `Cache-Control` lifetime makes `Expires` ignored, even
+/// an `Expires` already past.
+#[test]
+fn a_cache_control_lifetime_wins_over_expires() {
+    let past = ("expires", "Thu, 01 Dec 1994 16:00:00 GMT");
+    assert_eq!(
+        storable(&[], &[("cache-control", "max-age=10"), past]),
+        Ok(Duration::from_secs(10))
+    );
+    assert_eq!(
+        storable(&[], &[("cache-control", "s-maxage=20"), past]),
+        Ok(Duration::from_secs(20))
+    );
+}
+
+/// Section 4.2.1: freshness information that cannot be read, or that is given
+/// twice, is stale, and is not replaced by the default meant for a response
+/// that stated none.
+#[test]
+fn an_invalid_lifetime_is_stale_rather_than_defaulted() {
+    let stale: &[&[(&str, &str)]] = &[
+        &[("cache-control", "max-age=abc")],
+        &[("cache-control", "max-age=-1")],
+        &[("cache-control", "max-age=+1")],
+        &[("cache-control", "max-age=")],
+        &[("cache-control", "max-age")],
+        &[("cache-control", "max-age=\"6")],
+        &[("cache-control", "max-age=60, max-age=60")],
+        &[
+            ("cache-control", "max-age=60"),
+            ("cache-control", "max-age=60"),
+        ],
+        // The higher-precedence directive decides, even where a lower one reads.
+        &[("cache-control", "s-maxage=abc, max-age=60")],
+        &[("expires", "0")],
+        &[("expires", "Sun, 06 Nov 1994 08:49:37 UTC")],
+        &[
+            ("expires", "Fri, 01 Jan 2100 00:00:00 GMT"),
+            ("expires", "Fri, 01 Jan 2100 00:00:00 GMT"),
+        ],
+        // A repeated `Date` is no date, so this is read against now.
+        &[
+            ("date", "Sun, 06 Nov 1994 08:00:00 GMT"),
+            ("date", "Sun, 06 Nov 1994 08:00:00 GMT"),
+            ("expires", "Sun, 06 Nov 1994 08:49:37 GMT"),
+        ],
+        // Expired before it was dated.
+        &[
+            ("date", "Sun, 06 Nov 1994 08:49:37 GMT"),
+            ("expires", "Sun, 06 Nov 1994 08:48:37 GMT"),
+        ],
+    ];
+
+    for fields in stale {
+        assert_eq!(
+            storable_by_default(fields),
+            Ok(Duration::ZERO),
+            "{fields:?} was not stale"
+        );
+    }
+}
+
+/// Section 5.2: a recipient ought to accept the quoted-string form a sender
+/// must not generate.
+#[test]
+fn a_quoted_lifetime_is_read() {
+    assert_eq!(
+        storable(&[], &[("cache-control", "max-age=\"60\"")]),
+        Ok(Duration::from_secs(60))
+    );
+    assert_eq!(
+        storable(&[], &[("cache-control", "s-maxage=\"60\"")]),
+        Ok(Duration::from_secs(60))
+    );
+}
+
+/// Section 1.2.2: a lifetime past what can be represented is 2^31 seconds.
+#[test]
+fn an_unrepresentable_lifetime_saturates() {
+    assert_eq!(
+        storable(&[], &[("cache-control", "max-age=99999999999999999999999")]),
+        Ok(Duration::from_secs(1 << 31))
+    );
+}
+
 /// Every cacheable status is one RFC 9110 lists, and 206 is not among them.
 #[test]
 fn the_cacheable_set_is_the_one_the_specification_names() {

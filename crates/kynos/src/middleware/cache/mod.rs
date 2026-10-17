@@ -236,6 +236,10 @@ impl<S, D> Cache<S, D> {
 
     /// A freshness lifetime for a response that stated none.
     ///
+    /// A response stating one through `s-maxage`, `max-age` or `Expires` is
+    /// never given this, even where what it stated is unreadable, repeated or
+    /// already past: RFC 9111 section 4.2.1 reads that response as stale.
+    ///
     /// Off by default: Kynos applies no RFC 9111 section 4.2.2 heuristic, so
     /// this is a guess only a deployment can make.
     #[must_use]

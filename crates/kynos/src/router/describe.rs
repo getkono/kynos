@@ -307,8 +307,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
     /// Refuses an interceptor configured with a combination it cannot honour;
     /// today only `Cors` (see [`cors_conflict`]). Covers every interceptor
-    /// that serves a request: the root's, and those each operation and
-    /// unchecked route was nested under.
+    /// that serves a request: the root's, those each operation and unchecked
+    /// route was nested under, and those an operation holds itself.
     fn refuse_unhonourable_interceptors(&self) -> Result<()>
     where
         C: 'static,
@@ -327,6 +327,13 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
         for interceptor in self.interceptors.iter().chain(nested) {
             if let Some(conflict) = cors_conflict(interceptor) {
+                return Err(Error::Middleware(conflict));
+            }
+        }
+
+        // An endpoint's own interceptors stay inside it, so it reports them.
+        for mounted in &self.mounted {
+            if let Some(conflict) = mounted.endpoint.unhonourable_interceptor() {
                 return Err(Error::Middleware(conflict));
             }
         }

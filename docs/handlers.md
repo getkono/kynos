@@ -116,9 +116,13 @@ carrying none.
 route attribute's `relative_uri` and a `Link`'s `uri` return an `http::Uri`,
 and neither that type
 nor `String` is Kynos's to write a conversion between. Naming the concept is
-what lets a typed URI and a string literal both arrive without a call-site
-conversion. It validates nothing: a `Location` field value is a URI reference,
-and relative forms are legal.
+what lets a typed URI arrive without a call-site conversion. Both wrappers
+declare the header `required`, so a `Location` is an RFC 9110 field value by
+construction: a string is checked by `TryFrom` or `parse`, a literal by
+`Location::from_static` (at compile time in a `const`), and a URI needs no
+check. Refusing at construction rather than dropping the field when sending
+keeps the description true. Nothing beyond the field is validated: a
+`Location` value is a URI reference, and relative forms are legal.
 
 `Redirect<CODE>` is bounded on `(): ValidRedirectCode<CODE>`, a witness
 implemented for exactly those five codes. Both the trait and `()` are foreign to

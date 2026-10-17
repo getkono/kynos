@@ -82,7 +82,8 @@ struct Receipt {
 /// without either being written twice.
 #[kynos::post("/samples")]
 async fn ingest(Protobuf(batch): Protobuf<Batch>) -> Protobuf<Receipt> {
-    // `max_items` is a schema constraint, so a batch that broke it never
+    // `max_items` is a schema constraint, and the extractor holds the decoded
+    // message to it: a batch that broke it was refused with 422 and never
     // reached here -- which is why this counts rather than checks.
     Protobuf(Receipt {
         stored: u32::try_from(batch.samples.len()).unwrap_or(u32::MAX),

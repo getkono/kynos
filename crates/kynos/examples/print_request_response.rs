@@ -172,7 +172,9 @@ impl<C: Sync + 'static> Interceptor<C> for Print {
 /// Creates a user.
 #[kynos::post("/users")]
 async fn create_user(Json(user): Json<User>) -> Created<Json<User>> {
-    Created::at(format!("/users/{}", user.id), Json(user))
+    // A string built at runtime is checked once, here; digits always pass.
+    let location = Location::try_from(format!("/users/{}", user.id)).expect("a field value");
+    Created::at(location, Json(user))
 }
 
 /// Lists users.

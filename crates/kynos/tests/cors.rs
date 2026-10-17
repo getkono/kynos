@@ -95,6 +95,27 @@ fn the_same_router_reports_the_conflict_from_validate_as_well() {
     assert!(refused.is_err(), "validate accepted what build must refuse");
 }
 
+/// The refusal has no scope exception: the endpoint's own `Cors` reflects
+/// every origin with credentials just as a router's would.
+#[test]
+fn an_endpoint_permitting_any_origin_with_credentials_refuses_to_build() {
+    let refused = Router::<()>::new()
+        .mount(kynos::routes![
+            list_widgets.intercept(Cors::new().allow_any_origin().allow_credentials())
+        ])
+        .build(());
+
+    assert!(
+        matches!(
+            refused,
+            Err(kynos::Error::Middleware(
+                kynos::middleware::MiddlewareError::CredentialedWildcardOrigin
+            ))
+        ),
+        "an endpoint-scoped wildcard origin with credentials was accepted"
+    );
+}
+
 /// The pass control: the same router, differing in exactly the property under
 /// test. Named origins with credentials is the ordinary credentialed
 /// deployment and has to keep working.

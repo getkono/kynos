@@ -913,8 +913,8 @@ Both are about a *value*. `allow_any_origin` and `allow_credentials` are
 `mut self -> Self` builders on purpose — an allow-list read from the environment
 at startup has to be applied conditionally — so whether they were both called is
 not a fact a `const` can see. The two questions are whether the pair was
-selected, which is refused (`Error::Middleware`), and what a preflight on the
-covered paths should answer.
+selected, which is refused (`Error::Middleware`) at every scope, an endpoint's
+own included, and what a preflight on the covered paths should answer.
 
 What stops this becoming a capability:
 
@@ -1192,6 +1192,14 @@ states no length — is not stored either, and is forwarded exactly as it arrive
 every heuristic is a guess that turns a correct origin into an incorrect cache.
 A response that did not say how long it may be reused is not reused;
 `default_freshness` is opt-in and documented as the guess it is.
+
+**A lifetime stated badly is stale, not defaulted.** Section 4.2.1 reads
+`s-maxage`, then `max-age`, then `Expires` minus `Date`, and the first present
+decides. Where it is unreadable (`max-age=abc`, `Expires: 0`), repeated, or
+already past, the response is stale — the section's encouraged reading — and
+`default_freshness`, which is for a response that stated nothing, does not
+stand in. A quoted `max-age="60"` is read as 60: section 5.2 has a recipient
+accept the form a sender must not generate.
 
 `stale-while-revalidate` and `stale-if-error` are absent, and not as an
 oversight: the revalidation is a background task — a `tokio::spawn` outside

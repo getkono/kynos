@@ -1,8 +1,8 @@
 //! What a shared cache may store, and for how long.
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
-use crate::http::{HeaderMap, StatusCode, header};
+use crate::http::{HeaderMap, StatusCode, date, header};
 
 /// Statuses a response may be stored under.
 ///
@@ -118,7 +118,7 @@ pub(super) fn storable(
         return Err(Unstorable::Authorized);
     }
 
-    freshness(&response_control, default_freshness).ok_or(Unstorable::NoFreshness)
+    freshness(&response_control, response, default_freshness).ok_or(Unstorable::NoFreshness)
 }
 
 /// Whether a stored response may be served for an operation declaring a
@@ -147,22 +147,81 @@ pub(super) fn forbids_reuse(request: &HeaderMap) -> bool {
     directives(request).iter().any(|value| value == "no-cache")
 }
 
+/// The lifetime RFC 9111 section 1.2.2 has a cache read a `delta-seconds` too
+/// large to represent as.
+const SATURATED: u64 = 1 << 31;
+
 /// How long a response may be reused.
 ///
-/// `s-maxage` wins over `max-age`, this being a shared cache. No RFC 9111
-/// section 4.2.2 heuristic; only a configured default.
-fn freshness(control: &[String], default: Option<Duration>) -> Option<Duration> {
-    for directive in ["s-maxage=", "max-age="] {
-        if let Some(seconds) = control
-            .iter()
-            .find_map(|value| value.strip_prefix(directive))
-            .and_then(|seconds| seconds.trim().parse::<u64>().ok())
-        {
+/// RFC 9111 section 4.2.1's order: `s-maxage`, this being a shared cache, then
+/// `max-age`, then `Expires` minus `Date`. The first of them present decides,
+/// and where it is unreadable or repeated the response is stale (zero), as
+/// that section encourages: the default is for a response that stated no
+/// lifetime, not one that stated a bad one. No section 4.2.2 heuristic; only a
+/// configured default.
+fn freshness(
+    control: &[String],
+    response: &HeaderMap,
+    default: Option<Duration>,
+) -> Option<Duration> {
+    for name in ["s-maxage", "max-age"] {
+        let mut stated = control.iter().filter_map(|value| argument(value, name));
+        if let Some(first) = stated.next() {
+            let seconds = match stated.next() {
+                None => delta_seconds(first).unwrap_or(0),
+                Some(_) => 0,
+            };
             return Some(Duration::from_secs(seconds));
         }
     }
 
+    let mut expires = response.get_all(header::EXPIRES).iter();
+    if let Some(first) = expires.next() {
+        // Section 5.3: an unreadable `Expires` is already past.
+        let Some(expiry) = expires
+            .next()
+            .is_none()
+            .then(|| first.to_str().ok().and_then(date::parse))
+            .flatten()
+        else {
+            return Some(Duration::ZERO);
+        };
+
+        // Without a readable `Date`, the time it was received.
+        let mut dates = response.get_all(header::DATE).iter();
+        let origin_now = match (dates.next(), dates.next()) {
+            (Some(value), None) => value.to_str().ok().and_then(date::parse),
+            _ => None,
+        }
+        .unwrap_or_else(SystemTime::now);
+
+        return Some(expiry.duration_since(origin_now).unwrap_or_default());
+    }
+
     default
+}
+
+/// The argument `directive` gives `name`: empty where it has none, and `None`
+/// where `directive` is another one.
+fn argument<'a>(directive: &'a str, name: &str) -> Option<&'a str> {
+    let rest = directive.strip_prefix(name)?;
+    if rest.is_empty() {
+        Some(rest)
+    } else {
+        rest.strip_prefix('=')
+    }
+}
+
+/// A `delta-seconds` argument, in the token form or the quoted-string form
+/// section 5.2 has a recipient accept; [`SATURATED`] past `u64`.
+fn delta_seconds(argument: &str) -> Option<u64> {
+    let digits = argument
+        .strip_prefix('"')
+        .and_then(|quoted| quoted.strip_suffix('"'))
+        .unwrap_or(argument);
+
+    (!digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit()))
+        .then(|| digits.parse().unwrap_or(SATURATED))
 }
 
 /// Every `Cache-Control` directive, lowercased.

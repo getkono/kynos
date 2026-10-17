@@ -93,6 +93,9 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
     ///
     /// The weaker validator, at one-second resolution; section 13.1.3 ranks it
     /// below `ETag`.
+    ///
+    /// An instant before the Unix epoch or past year 9999 has no HTTP-date
+    /// spelling (section 5.6.7), so the `Last-Modified` field is omitted for it.
     #[must_use]
     pub fn last_modified(mut self, at: SystemTime) -> Self {
         self.last_modified = Some(at);

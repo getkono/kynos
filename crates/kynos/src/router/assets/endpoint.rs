@@ -126,10 +126,7 @@ impl AssetEndpoint {
             return identity;
         }
 
-        let Some(accept) = headers
-            .get(header::ACCEPT_ENCODING)
-            .and_then(|value| value.to_str().ok())
-        else {
+        let Some(accept) = crate::http::coding::accept_encoding(headers) else {
             // No field (RFC 9110 section 12.5.3): identity, which every client reads.
             return identity;
         };
@@ -141,7 +138,7 @@ impl AssetEndpoint {
             .map(super::Encoded::coding)
             .collect();
 
-        let Some(coding) = crate::http::coding::preferred(accept, &available) else {
+        let Some(coding) = crate::http::coding::preferred(&accept, &available) else {
             return identity;
         };
 

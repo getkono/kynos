@@ -138,7 +138,7 @@ async fn live() -> Sse<Events> {
 /// An ordinary JSON body, so the corpus is not only streams.
 #[kynos::post("/readings")]
 async fn record(Json(reading): Json<Reading>) -> Created<Json<Reading>> {
-    Created::at("/readings/1", Json(reading))
+    Created::at(Location::from_static("/readings/1"), Json(reading))
 }
 
 /// The description the corpus holds.
