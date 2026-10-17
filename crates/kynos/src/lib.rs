@@ -164,7 +164,7 @@ pub mod prelude {
         extract::params::{header::Headers, path::Path, query::Query},
         response::{
             headers::WithHeaders,
-            status::{Accepted, Created, NoContent, Redirect},
+            status::{Accepted, Created, Location, NoContent, Redirect},
         },
         router::{Router, group::Group},
         // Unaliased: rustc names a trait by its shortest visible path in

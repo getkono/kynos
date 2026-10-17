@@ -1,5 +1,8 @@
 //! Responses whose status is fixed by their type.
 
+use std::{borrow::Cow, str::FromStr};
+
+use bytes::Bytes;
 use kynos_openapi::model::schema::types::SchemaType;
 
 use crate::{
@@ -10,29 +13,75 @@ use crate::{
 
 /// Where a response points a client next.
 ///
-/// The value of a `Location` header, converted from a string or from the
-/// [`http::Uri`] a route attribute's `relative_uri` or a [`Link`]'s `uri`
-/// returns.
+/// The value of a `Location` header: the [`http::Uri`] a route attribute's
+/// `relative_uri` or a [`Link`]'s `uri` returns, a literal through
+/// [`from_static`](Location::from_static), or any other string through
+/// [`TryFrom`] or [`str::parse`].
 ///
 /// ```
 /// use kynos::response::status::Location;
 ///
-/// let literal = Location::from("/users/42");
-/// let owned = Location::from(String::from("/users/42"));
+/// let literal = Location::from_static("/users/42");
+/// let owned = Location::try_from(format!("/users/{}", 42)).unwrap();
 /// let parsed = Location::from("/users/42".parse::<kynos::http::Uri>().unwrap());
 /// assert_eq!(literal, owned);
 /// assert_eq!(literal, parsed);
+/// assert!("/users\n42".parse::<Location>().is_err());
 /// ```
 ///
 /// [`http::Uri`]: crate::http::Uri
 /// [`Link`]: crate::extract::link::Link
 ///
-/// Not validated: a `Location` value is a URI reference, relative forms
-/// included.
+/// Always an RFC 9110 field value, since [`Created`] and [`Redirect`] declare
+/// the header required and so must always send it. Nothing beyond that is
+/// checked: a `Location` value is a URI reference, relative forms included.
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Location(String);
+pub struct Location(Cow<'static, str>);
+
+/// Why a string cannot be a [`Location`]: it is not an RFC 9110 field value
+/// (§5.5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, thiserror::Error)]
+#[non_exhaustive]
+pub enum InvalidLocation {
+    /// A control character other than a horizontal tab, or DEL, which could
+    /// end the field and forge the rest of the message.
+    #[error("a `Location` holds no control character but a tab")]
+    Control,
+    /// A space or tab at either end, which a recipient strips.
+    #[error("a `Location` neither starts nor ends with whitespace")]
+    Whitespace,
+}
 
 impl Location {
+    /// A location from a literal.
+    ///
+    /// In a `const` item, a value that is not a field value fails to compile.
+    ///
+    /// ```
+    /// use kynos::response::status::Location;
+    ///
+    /// const USERS: Location = Location::from_static("/users");
+    /// assert_eq!(USERS.as_str(), "/users");
+    /// ```
+    ///
+    /// ```compile_fail
+    /// use kynos::response::status::Location;
+    ///
+    /// const FORGED: Location = Location::from_static("/users\r\nSet-Cookie: a=b");
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// If `value` is not a field value, as [`InvalidLocation`] describes.
+    #[must_use]
+    pub const fn from_static(value: &'static str) -> Self {
+        assert!(
+            validate(value).is_ok(),
+            "a `Location` is a field value: no control character, no surrounding space"
+        );
+        Self(Cow::Borrowed(value))
+    }
+
     /// The location as it will appear in the header.
     #[must_use]
     pub fn as_str(&self) -> &str {
@@ -42,25 +91,69 @@ impl Location {
     /// Takes the string out.
     #[must_use]
     pub fn into_inner(self) -> String {
-        self.0
+        self.0.into_owned()
+    }
+
+    /// The header value, without copying.
+    fn into_header_value(self) -> HeaderValue {
+        let bytes = match self.0 {
+            Cow::Borrowed(value) => Bytes::from_static(value.as_bytes()),
+            Cow::Owned(value) => Bytes::from(value),
+        };
+        // Construction checked what `HeaderValue` checks, and more.
+        HeaderValue::from_maybe_shared(bytes).expect("a `Location` is a field value")
     }
 }
 
-impl From<String> for Location {
-    fn from(value: String) -> Self {
-        Self(value)
+/// Whether `value` is an RFC 9110 field value (§5.5).
+///
+/// `obs-text` is admitted, as [`HeaderValue`] admits it.
+const fn validate(value: &str) -> Result<(), InvalidLocation> {
+    let bytes = value.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if (byte < b' ' && byte != b'\t') || byte == 0x7f {
+            return Err(InvalidLocation::Control);
+        }
+        index += 1;
+    }
+    if let [b' ' | b'\t', ..] | [.., b' ' | b'\t'] = bytes {
+        return Err(InvalidLocation::Whitespace);
+    }
+    Ok(())
+}
+
+impl TryFrom<String> for Location {
+    type Error = InvalidLocation;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        validate(&value)?;
+        Ok(Self(Cow::Owned(value)))
     }
 }
 
-impl From<&str> for Location {
-    fn from(value: &str) -> Self {
-        Self(value.to_owned())
+impl TryFrom<&str> for Location {
+    type Error = InvalidLocation;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        validate(value)?;
+        Ok(Self(Cow::Owned(value.to_owned())))
     }
 }
 
+impl FromStr for Location {
+    type Err = InvalidLocation;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::try_from(value)
+    }
+}
+
+/// Infallible: a URI holds no control character and no whitespace.
 impl From<crate::http::Uri> for Location {
     fn from(value: crate::http::Uri) -> Self {
-        Self(value.to_string())
+        Self(Cow::Owned(value.to_string()))
     }
 }
 
@@ -90,7 +183,8 @@ pub struct Created<T> {
 impl<T> Created<T> {
     /// Creates a 201 response for a resource at `location`.
     ///
-    /// Takes a string, a route attribute's `relative_uri`, or a `Link`'s `uri`.
+    /// Takes a [`Location`], a route attribute's `relative_uri`, or a `Link`'s
+    /// `uri`.
     #[must_use]
     pub fn at(location: impl Into<Location>, body: T) -> Self {
         Self {
@@ -125,7 +219,8 @@ impl<T> Accepted<T> {
 ///
 /// ```compile_fail
 /// fn response<T: kynos::response::IntoResponse>(value: T) { drop(value); }
-/// response(kynos::response::status::Redirect::<304>::to("/cached"));
+/// use kynos::response::status::{Location, Redirect};
+/// response(Redirect::<304>::to(Location::from_static("/cached")));
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Redirect<const CODE: u16> {
@@ -136,7 +231,8 @@ pub struct Redirect<const CODE: u16> {
 impl<const CODE: u16> Redirect<CODE> {
     /// Redirects to `location`.
     ///
-    /// Takes a string, a route attribute's `relative_uri`, or a `Link`'s `uri`.
+    /// Takes a [`Location`], a route attribute's `relative_uri`, or a `Link`'s
+    /// `uri`.
     #[must_use]
     pub fn to(location: impl Into<Location>) -> Self {
         Self {
@@ -167,14 +263,11 @@ const CREATED: u16 = 201;
 /// The status [`Accepted`] fixes.
 const ACCEPTED: u16 = 202;
 
-/// Sets `Location` on `response`, unless the value cannot be a field value.
-///
-/// Only a control character is refused, since it could forge the rest of the
-/// message; the field is then omitted.
-fn set_location(response: &mut Response, location: &Location) {
-    if let Ok(value) = HeaderValue::from_str(location.as_str()) {
-        response.headers_mut().insert(header::LOCATION, value);
-    }
+/// Sets `Location` on `response`; a [`Location`] is always a field value.
+fn set_location(response: &mut Response, location: Location) {
+    response
+        .headers_mut()
+        .insert(header::LOCATION, location.into_header_value());
 }
 
 /// Whether the body answered with an error, which a success wrapper sends as
@@ -316,7 +409,7 @@ impl<T: IntoResponse> IntoResponse for Created<T> {
             return response;
         }
         *response.status_mut() = StatusCode::CREATED;
-        set_location(&mut response, &self.location);
+        set_location(&mut response, self.location);
         response
     }
 }
@@ -374,7 +467,7 @@ where
         // The witness admits only valid status codes.
         *response.status_mut() =
             StatusCode::from_u16(CODE).expect("a witnessed redirect code is a status code");
-        set_location(&mut response, &self.location);
+        set_location(&mut response, self.location);
         response
     }
 }
