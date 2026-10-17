@@ -113,6 +113,15 @@ impl std::fmt::Display for OpaqueReason {
 ///
 /// Serialized under [`OPAQUE_OPERATION_ANNOTATION`]. Marks the operation
 /// unverified; never removes it.
+///
+/// Fields a newer Kynos recorded are only ever read, never written, so none can
+/// shadow a field this version knows:
+///
+/// ```compile_fail
+/// # use kynos_openapi::annotation::{Opaque, OpaqueReason};
+/// let mut marker = Opaque::new(OpaqueReason::UntypedLayer);
+/// marker.unrecognized.insert("note".to_owned(), serde_json::json!(1));
+/// ```
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Opaque {
@@ -234,6 +243,15 @@ impl Opaque {
 /// `pattern` is the router's own matching syntax, verbatim, not a
 /// [`PathTemplate`](crate::PathTemplate): any template minted for a catch-all
 /// would claim something in `paths` the service does not honour.
+///
+/// Fields a newer Kynos recorded are read-only, for the reason [`Opaque`]
+/// gives:
+///
+/// ```compile_fail
+/// # use kynos_openapi::annotation::{OpaqueReason, OpaqueRoute};
+/// let mut route = OpaqueRoute::new("/{*path}", OpaqueReason::UntypedRoute);
+/// route.unrecognized.insert("reason".to_owned(), serde_json::json!(1));
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct OpaqueRoute {
