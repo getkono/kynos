@@ -5,7 +5,7 @@
 use crate::extract::describe::RequestContent;
 
 use crate::{
-    extract::body::{binary::Binary, text::Text},
+    extract::body::{OneOf, binary::Binary, text::Text},
     http::media::MediaType,
 };
 
@@ -200,6 +200,20 @@ const fn eq_ignore_ascii_case(left: &[u8], right: &[u8]) -> bool {
         at += 1;
     }
     true
+}
+
+/// A body beside a nested `OneOf` is an alternative to each of its sides.
+impl<L, R, N> Alternative<N> for OneOf<L, R>
+where
+    L: Alternative<R> + Alternative<N>,
+    R: Alternative<N>,
+    N: RequestContent,
+{
+    const DISTINCT: () = {
+        let () = <L as Alternative<R>>::DISTINCT;
+        let () = <L as Alternative<N>>::DISTINCT;
+        let () = <R as Alternative<N>>::DISTINCT;
+    };
 }
 
 // No `Binary<A>`/`Binary<B>` pair: any impl admitting it would also admit
