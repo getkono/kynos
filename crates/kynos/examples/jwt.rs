@@ -46,7 +46,9 @@
 //! * **Issuing a token is an ordinary operation.** `POST /session` is guarded
 //!   by `Auth<Basic<Credentials>>`, so both carriers are exercised, and the
 //!   password is compared with [`constant_time_eq`] because comparing a shared
-//!   secret with `==` leaks how much of it was right.
+//!   secret with `==` leaks how much of it was right. The token it answers with
+//!   is a credential, so the operation sits under [`SecurityHeaders`] and the
+//!   response says `Cache-Control: no-store`, as RFC 6749 section 5.1 requires.
 //!
 //! [`BearerToken`]: kynos::security::carrier::BearerToken
 //! [`constant_time_eq`]: kynos::security::constant_time_eq
@@ -60,6 +62,7 @@ use std::{
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use kynos::{
     error::rejection::AuthRejection,
+    middleware::security_headers::SecurityHeaders,
     prelude::*,
     router::service::Service,
     security::{
@@ -446,7 +449,17 @@ async fn feed(caller: MaybeAuth<AccessToken>) -> Json<Subject> {
 
 /// The whole API, built over a seeded key store.
 fn service() -> kynos::Result<Service<App>> {
-    let router = Router::<App>::new().mount(kynos::routes![sign_in, me, reports, feed]);
+    let router = Router::<App>::new()
+        // A token response is a credential, and RFC 6749 section 5.1 forbids
+        // every cache between here and the client from storing one.
+        // `SecurityHeaders` sends `Cache-Control: no-store` and declares it, at
+        // group scope so only the operation that issues a token says so.
+        .group(
+            Group::new("/")
+                .intercept(SecurityHeaders::new())
+                .mount(kynos::routes![sign_in]),
+        )
+        .mount(kynos::routes![me, reports, feed]);
 
     let context = App {
         keys: std::sync::Arc::new(Keys::seeded()),
