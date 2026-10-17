@@ -121,7 +121,7 @@ fn parse_size(value: &LitStr) -> syn::Result<Option<usize>> {
     ] {
         if let Some(number) = text.strip_suffix(suffix) {
             let number: usize = number.trim().parse().map_err(|_| malformed())?;
-            return Ok(Some(number * scale));
+            return number.checked_mul(scale).map(Some).ok_or_else(malformed);
         }
     }
 
