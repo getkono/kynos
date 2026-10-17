@@ -132,11 +132,11 @@ pub struct Opaque {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
 
-    /// Fields recorded by a version of Kynos that knows more than this one.
-    ///
     /// Preserved verbatim, in order, so rewriting the record never drops them.
+    /// Private, so only reading a record fills it: serde routes every field
+    /// this version knows to its own member first.
     #[serde(flatten)]
-    pub unrecognized: Map<Value>,
+    unrecognized: Map<Value>,
 }
 
 impl Opaque {
@@ -162,6 +162,12 @@ impl Opaque {
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
         self.note = Some(note.into());
         self
+    }
+
+    /// Fields recorded by a version of Kynos that knows more than this one.
+    #[must_use]
+    pub fn unrecognized(&self) -> &Map<Value> {
+        &self.unrecognized
     }
 
     /// Unions `other`'s reasons into this marker, keeping the first note.
@@ -273,12 +279,10 @@ pub struct OpaqueRoute {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
 
-    /// Fields recorded by a version of Kynos that knows more than this one.
-    ///
     /// Preserved verbatim, in order, so appending another route never drops
-    /// them.
+    /// them. Private for the reason [`Opaque`]'s is.
     #[serde(flatten)]
-    pub unrecognized: Map<Value>,
+    unrecognized: Map<Value>,
 }
 
 impl OpaqueRoute {
@@ -318,6 +322,12 @@ impl OpaqueRoute {
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
         self.note = Some(note.into());
         self
+    }
+
+    /// Fields recorded by a version of Kynos that knows more than this one.
+    #[must_use]
+    pub fn unrecognized(&self) -> &Map<Value> {
+        &self.unrecognized
     }
 
     /// Whether `document` carries the annotation at all.
