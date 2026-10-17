@@ -973,7 +973,9 @@ precedence wherever both appear, so a cookie carrying both is one attribute
 stating the lifetime and one being ignored. `Max-Age` is also a duration, which
 is what a server actually knows; `Expires` is an absolute HTTP-date, so
 emitting one means trusting the client's clock against the server's.
-`Max-Age=0` is the removal, so nothing needs a date in the past either.
+`Max-Age=0` is the removal, so nothing needs a date in the past either, and a
+fractional lifetime is rounded up to the next second so that only an explicit
+zero ever sends it.
 
 So a cookie's expiry is still expressible, and expressed once: it is `Max-Age`,
 stated as a duration.

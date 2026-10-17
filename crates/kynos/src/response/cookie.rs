@@ -120,6 +120,11 @@ impl Cookie {
     }
 
     /// How long the cookie lives.
+    ///
+    /// `Max-Age` counts whole seconds, so a fractional `age` is rounded up: a
+    /// cookie never lives shorter than asked, and only `Duration::ZERO` sends
+    /// `Max-Age=0`, which a user agent reads as removal. Use
+    /// [`Cookie::removal`] to say that on purpose.
     #[must_use]
     pub fn max_age(mut self, age: Duration) -> Self {
         self.max_age = Some(age);
@@ -213,7 +218,10 @@ impl Cookie {
         }
         if let Some(age) = self.max_age {
             rendered.push_str("; Max-Age=");
-            rendered.push_str(&age.as_secs().to_string());
+            let seconds = age
+                .as_secs()
+                .saturating_add(u64::from(age.subsec_nanos() > 0));
+            rendered.push_str(&seconds.to_string());
         }
         // `SameSite=None` and both name prefixes are silently dropped without
         // `Secure`, so it is added for them.
