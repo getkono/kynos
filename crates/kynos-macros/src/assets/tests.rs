@@ -292,6 +292,15 @@ fn every_grammar_refusal_has_a_case() {
             MALFORMED_SIZE,
         ),
         (
+            "a size too large for usize once scaled",
+            quote! {
+                struct Fixture;
+                dir = #FIXTURE,
+                warn_over = "99999999999GiB",
+            },
+            MALFORMED_SIZE,
+        ),
+        (
             "an empty exclusion",
             quote! {
                 struct Fixture;
