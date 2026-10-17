@@ -97,8 +97,7 @@ pub struct UntranslatablePattern {
 /// [`UntranslatablePattern`] where `source` is no regular expression, writes a
 /// construct the engine cannot run (lookaround, backreferences) or an escape
 /// it does not parse (`[\b]`, `\cX`), writes one the two dialects read
-/// apart, or translates to a pattern the engine cannot
-/// compile.
+/// apart, or translates to a pattern the engine cannot compile.
 pub fn translate(source: &str) -> Result<String, UntranslatablePattern> {
     translated(source).map_err(|reason| UntranslatablePattern { reason })
 }
