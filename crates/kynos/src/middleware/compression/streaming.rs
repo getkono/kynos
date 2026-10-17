@@ -17,7 +17,7 @@ use bytes::{Buf, Bytes};
 use http_body::{Body as HttpBody, Frame, SizeHint};
 use tokio::io::AsyncWrite;
 
-use crate::middleware::compression::{Coding, Levels, as_level};
+use crate::middleware::compression::{Coding, Levels, as_level, zstd_window};
 
 /// The error a body reports, whatever produced it.
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
@@ -70,9 +70,10 @@ impl Encoder {
                 Vec::new(),
                 Level::Precise(as_level(levels.brotli.get())),
             ))),
-            Coding::Zstd => Self::Zstd(Box::new(ZstdEncoder::with_quality(
+            Coding::Zstd => Self::Zstd(Box::new(ZstdEncoder::with_quality_and_params(
                 Vec::new(),
                 Level::Precise(levels.zstd.get()),
+                zstd_window(levels.zstd).as_slice(),
             ))),
         }
     }

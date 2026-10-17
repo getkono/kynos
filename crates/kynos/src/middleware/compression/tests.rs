@@ -209,10 +209,18 @@ mod zstd_window {
 
     /// A body large enough for every level to reach its matching strategy.
     fn body() -> Bytes {
-        (0..4_096)
-            .map(|line| format!("line {line} of a response, {}\n", line * 7_919 % 104_729))
-            .collect::<String>()
-            .into()
+        use std::fmt::Write as _;
+
+        let mut body = String::new();
+        for line in 0..4_096 {
+            writeln!(
+                body,
+                "line {line} of a response, {}",
+                line * 7_919 % 104_729
+            )
+            .expect("writing to a String");
+        }
+        body.into()
     }
 
     /// What a decoder that refuses windows above 8 MB makes of `encoded`.
@@ -228,7 +236,7 @@ mod zstd_window {
     }
 
     /// RFC 9659 section 3: an encoder "MUST NOT generate frames requiring a
-    /// Window_Size larger than 8 MB". zstd's own table gives levels 20 to 22
+    /// `Window_Size` larger than 8 MB". zstd's own table gives levels 20 to 22
     /// a 32 to 128 MB window when the input's size is unknown, which it is
     /// to both paths.
     ///
