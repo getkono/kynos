@@ -560,16 +560,13 @@ async fn non_integer() -> WithHeaders<Json<Report>, Stated> {
     )
 }
 
-/// Two `max-age` directives, across two field lines.
+/// Two `max-age` directives, on the one line a response header group writes.
 #[kynos::get("/duplicated")]
 async fn duplicated() -> WithHeaders<Json<Report>, Stated> {
     CALLS.fetch_add(1, Ordering::SeqCst);
     WithHeaders::new(
         Json(Report { id: 7 }),
-        Stated(&[
-            ("cache-control", "max-age=60"),
-            ("cache-control", "max-age=120"),
-        ]),
+        Stated(&[("cache-control", "max-age=60, max-age=120")]),
     )
 }
 
