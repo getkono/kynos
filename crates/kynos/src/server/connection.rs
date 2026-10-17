@@ -7,7 +7,7 @@
 //! accept loop and that method's bound.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::{convert::Infallible, net::SocketAddr, sync::Arc};
+use std::{convert::Infallible, future::Future, net::SocketAddr, pin::Pin, sync::Arc};
 
 use hyper::service::service_fn;
 use hyper_util::{
@@ -22,6 +22,7 @@ use tokio::{
 
 use crate::{
     extract::connection::Connection,
+    http::body::BoxError,
     middleware::limits::request_body,
     router::service::Service,
     server::{
@@ -148,21 +149,38 @@ async fn unheard(deadline: Option<Instant>, head_seen: Option<&AtomicBool>) {
     std::future::pending::<()>().await;
 }
 
-/// hyper's driver, tuned as `config` says.
+/// Tunes an HTTP/1 builder as `config` says: hyper-util's, which sniffs the
+/// protocol, and hyper's own, which serves a connection ALPN pinned to it.
+/// Their methods share names but no trait, so one list keeps them alike.
+#[cfg(feature = "http1")]
+macro_rules! tune_http1 {
+    ($http1:expr, $config:expr) => {{
+        let http1 = $http1;
+        let config = &$config.http1;
+        http1
+            .keep_alive(config.keep_alive)
+            .header_read_timeout(config.header_read_timeout)
+            .max_buf_size(config.max_buffer_size)
+            .timer(TokioTimer::new());
+        http1.max_headers(crate::server::protocol::http1::forwarded_max_headers(
+            config,
+        ));
+    }};
+}
+
+/// hyper's HTTP/1 driver alone, tuned as `config` says.
+#[cfg(feature = "http1")]
+fn http1(config: &TransportConfig) -> hyper::server::conn::http1::Builder {
+    let mut http1 = hyper::server::conn::http1::Builder::new();
+    tune_http1!(&mut http1, config);
+    http1
+}
+
+/// hyper-util's driver for either protocol, tuned as `config` says.
 fn builder(config: &TransportConfig) -> auto::Builder<TokioExecutor> {
     let mut builder = auto::Builder::new(TokioExecutor::new());
     #[cfg(feature = "http1")]
-    {
-        let mut http1 = builder.http1();
-        http1
-            .keep_alive(config.http1.keep_alive)
-            .header_read_timeout(config.http1.header_read_timeout)
-            .max_buf_size(config.http1.max_buffer_size)
-            .timer(TokioTimer::new());
-        http1.max_headers(crate::server::protocol::http1::forwarded_max_headers(
-            &config.http1,
-        ));
-    }
+    tune_http1!(&mut builder.http1(), config);
     #[cfg(feature = "http2")]
     {
         let mut http2 = builder.http2();
@@ -202,13 +220,11 @@ async fn serve_http<C, I>(
     connection_info: Connection,
     mut lifecycle: watch::Receiver<Lifecycle>,
     deadline: Option<Instant>,
-) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>
+) -> Result<(), BoxError>
 where
     C: 'static,
     I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let mut builder = builder(&config);
-
     // Pin the protocol ALPN settled rather than sniffing it again from the
     // wire; a connection without ALPN (every plaintext one) is sniffed.
     let pinned = match connection_info.alpn_protocol() {
@@ -263,34 +279,88 @@ where
     // server cannot shut down gracefully before the preface, so a silent
     // connection would hold a drain open for the whole shutdown timeout.
     let io = match pinned {
-        Some(protocol) => {
+        Some(_) => {
             let Some(io) = first_byte(io, &mut lifecycle, deadline).await else {
                 return Ok(());
-            };
-            builder = match protocol {
-                #[cfg(feature = "http1")]
-                Protocol::Http1 => builder.http1_only(),
-                #[cfg(feature = "http2")]
-                Protocol::Http2 => builder.http2_only(),
             };
             io
         }
         None => FirstByte { first: None, io },
     };
+    let io = TokioIo::new(io);
 
     // A connection with no request head is closed by dropping the codec, even
     // mid-drain: nothing is in flight, and hyper's HTTP/2 server cannot finish
     // a graceful shutdown before the preface arrives.
     let unheard = unheard(deadline, head_seen.as_deref());
-    tokio::pin!(unheard);
     #[cfg(feature = "http2")]
     let idle = || streams.idle(config.http2.idle_timeout);
     #[cfg(not(feature = "http2"))]
     let idle = std::future::pending::<()>;
+
+    // hyper-util's upgradeable driver always sniffs the protocol, ignoring
+    // `http1_only`, so a pin to HTTP/1 is hyper's own driver instead. HTTP/2
+    // has no `Upgrade` (RFC 9113 §8.6), so a pin to it needs no upgrades.
+    match pinned {
+        #[cfg(feature = "http1")]
+        Some(Protocol::Http1) => {
+            let connection = http1(&config).serve_connection(io, handler).with_upgrades();
+            drive(
+                connection,
+                hyper::server::conn::http1::UpgradeableConnection::graceful_shutdown,
+                lifecycle,
+                unheard,
+                idle,
+            )
+            .await
+        }
+        #[cfg(feature = "http2")]
+        Some(Protocol::Http2) => {
+            let builder = builder(&config).http2_only();
+            let connection = builder.serve_connection(io, handler);
+            drive(
+                connection,
+                auto::Connection::graceful_shutdown,
+                lifecycle,
+                unheard,
+                idle,
+            )
+            .await
+        }
+        None => {
+            let builder = builder(&config);
+            let connection = builder.serve_connection_with_upgrades(io, handler);
+            drive(
+                connection,
+                auto::UpgradeableConnection::graceful_shutdown,
+                lifecycle,
+                unheard,
+                idle,
+            )
+            .await
+        }
+    }
+}
+
+/// Drives `connection` to its end: `drain` asks it to stop gracefully once
+/// `lifecycle` says to stop or it stays quiet for a whole idle period, and it
+/// is dropped once `unheard` resolves or the stop is forced.
+async fn drive<D, E, R>(
+    connection: D,
+    drain: impl Fn(Pin<&mut D>),
+    mut lifecycle: watch::Receiver<Lifecycle>,
+    unheard: impl Future<Output = ()>,
+    idle: impl Fn() -> R,
+) -> Result<(), BoxError>
+where
+    D: Future<Output = Result<(), E>>,
+    E: Into<BoxError>,
+    R: Future<Output = ()>,
+{
+    tokio::pin!(connection);
+    tokio::pin!(unheard);
     let quiet = idle();
     tokio::pin!(quiet);
-    let connection = builder.serve_connection(TokioIo::new(io), handler);
-    tokio::pin!(connection);
     let mut draining = false;
     loop {
         tokio::select! {
@@ -299,12 +369,12 @@ where
                 if state == Lifecycle::Forced {
                     return Ok(());
                 }
-                connection.as_mut().graceful_shutdown();
+                drain(connection.as_mut());
                 draining = true;
                 // A drain gets a whole idle period of its own.
                 quiet.set(idle());
             }
-            result = &mut connection => return result,
+            result = &mut connection => return result.map_err(Into::into),
             () = &mut unheard => return Err(NO_REQUEST_HEAD.into()),
             // GOAWAY first, still serving streams opened before it was read; a
             // further idle period in the drain means the close never came.
@@ -312,7 +382,7 @@ where
                 if draining {
                     return Err(IDLE.into());
                 }
-                connection.as_mut().graceful_shutdown();
+                drain(connection.as_mut());
                 draining = true;
                 quiet.set(idle());
             }

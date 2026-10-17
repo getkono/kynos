@@ -157,6 +157,10 @@ impl<C: 'static> Server<C> {
     }
 
     /// Stops accepting when `shutdown` resolves, then drains active requests.
+    ///
+    /// A connection upgraded by a `Router::upgrade_unchecked` route leaves the
+    /// drain once its `101` is written: the socket then belongs to the
+    /// handler's task, which ends it on its own terms.
     #[must_use]
     pub fn graceful_shutdown(mut self, shutdown: Shutdown) -> Self {
         self.shutdown = Some(shutdown);
@@ -175,6 +179,10 @@ impl<C: 'static> Server<C> {
     }
 
     /// Caps accepted connections and TLS handshakes across all listeners.
+    ///
+    /// A connection upgraded by a `Router::upgrade_unchecked` route releases
+    /// its permit once its `101` is written, so upgraded sockets the handler
+    /// still holds do not count toward the cap.
     #[must_use]
     pub fn max_connections(mut self, limit: NonZeroUsize) -> Self {
         self.max_connections = limit;
@@ -337,7 +345,10 @@ impl<C: 'static> Server<C> {
     /// Nothing that belongs to listeners applies: no address is bound, and the
     /// connection limit, TCP keepalive, graceful shutdown and its timeout are
     /// ignored. The connection ends when the client closes `io` or when the
-    /// returned future is dropped, which closes it without draining.
+    /// returned future is dropped, which closes it without draining. A
+    /// connection upgraded by a `Router::upgrade_unchecked` route is the
+    /// exception: the future resolves once the `101` is written, handing `io`
+    /// to the handler's task, and dropping it no longer closes `io`.
     ///
     /// One server serves any number of connections, one per call, from the
     /// service it was built with: each connection shares that service while it
