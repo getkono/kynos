@@ -95,9 +95,10 @@ pub struct Http2Config {
     ///
     /// A stream is in flight from its request head until its response body
     /// ends or is reset, so a long download or event stream holds the
-    /// connection open however long it runs. In a build without `http1`, it
-    /// also bounds the wait for a connection's first request head, counted
-    /// from accept.
+    /// connection open however long it runs. No stream is in flight before a
+    /// connection's first request head, so it also bounds that wait, counted
+    /// from accept under either protocol, together with HTTP/1's
+    /// `header_read_timeout`: whichever passes first closes the connection.
     pub idle_timeout: Option<Duration>,
     /// Maximum decoded request header-list size.
     pub max_header_list_size: u32,
@@ -163,7 +164,9 @@ impl Http2Config {
     }
 
     /// Sets how long a connection may hold no stream in flight before it is
-    /// sent a GOAWAY and closed.
+    /// sent a GOAWAY and closed. A connection that has not yet sent its first
+    /// request head is closed once this passes from accept, even with HTTP/1's
+    /// header-read timeout disabled.
     ///
     /// `None` leaves a connection whose peer answers every keep-alive PING open
     /// for as long as the peer likes.
@@ -216,11 +219,9 @@ impl Http2Config {
 
 impl Http2Config {
     /// When a connection accepted at `accepted` must have produced its first
-    /// request head, in a build with no HTTP/1 header-read timeout to count.
+    /// request head, by the idle timeout: no stream is in flight before it.
     ///
     /// `None` when the idle timeout is disabled or would overflow the clock.
-    /// Compiled for tests in every build so mutation testing reaches it.
-    #[cfg(any(test, not(feature = "http1")))]
     pub(in crate::server) fn first_head_deadline(
         &self,
         accepted: std::time::Instant,
@@ -250,8 +251,9 @@ impl Streams {
     }
 
     /// Resolves once no stream has been in flight for `timeout`, and never
-    /// before the first stream opens: until then the first-head deadline is
-    /// what bounds the connection.
+    /// before the first stream opens: until then the first-head deadline,
+    /// which counts this same timeout from accept, is what bounds the
+    /// connection.
     pub(in crate::server) async fn idle(&self, timeout: Option<Duration>) {
         let Some(timeout) = timeout else {
             return std::future::pending().await;
