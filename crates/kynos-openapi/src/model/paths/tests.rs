@@ -83,6 +83,18 @@ fn a_query_or_fragment_delimiter_inside_an_expression_is_part_of_the_name() {
 
     let fragment = PathTemplate::parse("/items/{a#b}").expect("valid");
     assert_eq!(fragment.variables(), ["a#b"]);
+
+    // After an unclosed `{` the delimiter still counts as inside the
+    // expression, so the missing `}` is the reported mistake.
+    for unclosed in ["/a/{b?c", "/a/{b#c"] {
+        assert!(
+            matches!(
+                PathTemplate::parse(unclosed),
+                Err(InvalidPathTemplate::UnbalancedBraces(_))
+            ),
+            "{unclosed}"
+        );
+    }
 }
 
 #[test]
