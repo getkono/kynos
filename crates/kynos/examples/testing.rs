@@ -28,7 +28,10 @@
 //! happened that the document did not predict, the other says nothing the
 //! document predicts has gone unexercised.
 
-use kynos::{http::StatusCode, openapi::model::body::mime_names, prelude::*, test::TestClient};
+use kynos::{
+    extract::body::limit::DEFAULT_LIMIT, http::StatusCode, openapi::model::body::mime_names,
+    prelude::*, test::TestClient,
+};
 use serde::{Deserialize, Serialize};
 
 /// A user of the service.
@@ -133,13 +136,7 @@ pub(crate) async fn main() -> kynos::Result<()> {
     println!("every observed response conforms to the description");
 
     // The other direction: nothing the document predicts has gone unexercised.
-    //
-    // This reported a gap until recently, and the gap was not in this file:
-    // every body extractor declared a 413 through `BodyRejection` that only
-    // `middleware::limits` could ever send, so the description promised a
-    // response this service cannot produce. That is exactly the class of
-    // untruth this assertion exists to find, and it was fixed by removing the
-    // declaration rather than by lowering the bar.
+    // A declared response no request above produced is named here, and fails.
     client.assert_declared_responses_covered();
     println!("every declared response was exercised");
 
@@ -180,6 +177,18 @@ async fn exercise_the_rejections(client: &TestClient<()>) {
         .send()
         .await
         .assert_status(StatusCode::UNPROCESSABLE_ENTITY);
+
+    // A body over the cap every buffering extractor applies when no
+    // `BodySize` limit is mounted, which is the 413 `BodyRejection` declares.
+    client
+        .post("/users")
+        .json(&User {
+            id: 2,
+            name: "n".repeat(DEFAULT_LIMIT.try_into().expect("the cap fits in memory")),
+        })
+        .send()
+        .await
+        .assert_status(StatusCode::PAYLOAD_TOO_LARGE);
 
     // The successful creation, which is the response a suite is most likely to
     // have and least likely to notice missing.
