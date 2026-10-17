@@ -311,6 +311,45 @@ fn a_representation_is_offered_under_the_media_type_it_describes() {
     offered_under_what_it_describes::<crate::extract::body::multipart::MultipartForm<Fields>>();
 }
 
+/// Two offers are one media type to `Accept` when their type and subtype
+/// match ignoring case, whatever parameters either carries. `Accept` trims
+/// each half on its own, so whitespace beside the slash separates nothing.
+#[test]
+fn offers_accept_cannot_tell_apart_share_a_media_type() {
+    use super::representation::same_media_type;
+
+    for (left, right) in [
+        ("application/json", "application/json"),
+        ("text/plain", "TEXT/Plain"),
+        ("text/plain", "text/plain; charset=iso-8859-1"),
+        ("text/html; charset=utf-8", " text/html ;level=1"),
+        ("text/plain", "text/ plain"),
+        ("text /plain", "text/plain"),
+    ] {
+        assert!(same_media_type(left, right), "{left:?} and {right:?}");
+    }
+    // The controls: another subtype, a structured suffix, and another type.
+    for (left, right) in [
+        ("text/plain", "text/html; charset=utf-8"),
+        ("application/json", "application/problem+json"),
+        ("text/plain", "application/plain"),
+    ] {
+        assert!(!same_media_type(left, right), "{left:?} and {right:?}");
+    }
+}
+
+/// Every pair is compared, not only neighbours.
+#[test]
+#[should_panic(expected = "`Negotiated` offers two alternatives under one media type")]
+fn a_repeated_media_type_apart_from_its_twin_is_refused() {
+    super::representation::distinct(&["text/plain", "application/pdf", "Text/Plain"]);
+}
+
+#[test]
+fn distinct_media_types_are_admitted() {
+    super::representation::distinct(&["text/plain", "application/pdf", "text/html"]);
+}
+
 /// A multipart form with no fields, which is all an offer's description needs.
 #[cfg(feature = "multipart")]
 struct Fields;

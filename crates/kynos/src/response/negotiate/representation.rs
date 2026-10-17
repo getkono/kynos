@@ -8,7 +8,11 @@
 use kynos_openapi::model::body::mime_names;
 
 use crate::{
-    extract::body::{binary::Binary, text::Text},
+    extract::body::{
+        alternative::{eq_ignore_ascii_case, split_essence},
+        binary::Binary,
+        text::Text,
+    },
     http::{Response, media::MediaType},
     response::{IntoResponse, Responses},
     schema::registry::Registry,
@@ -23,8 +27,18 @@ use crate::extract::body::protobuf::Protobuf;
 
 /// What makes the set of offerable representations closed.
 mod sealed {
-    /// The private supertrait.
-    pub trait Sealed {}
+    /// The private supertrait of a representation.
+    pub trait SealedRepresentation {
+        /// The media type offered, a constant so a tuple can compare its
+        /// alternatives' in the build.
+        const MEDIA_TYPE: &'static str;
+    }
+
+    /// The private supertrait of a representation tuple.
+    pub trait Sealed {
+        /// Fails to evaluate when two alternatives share a media type.
+        const DISTINCT: ();
+    }
 
     /// The same for producer tuples; a separate trait because coherence sees
     /// both kinds of tuple as `(A, B)`.
@@ -34,85 +48,123 @@ mod sealed {
 /// A type offerable as one alternative in content negotiation.
 ///
 /// Sealed: the offerable set is exactly the codecs Kynos can describe.
-pub trait Representation: IntoResponse + Responses + sealed::Sealed {
+pub trait Representation: IntoResponse + Responses + sealed::SealedRepresentation {
     /// The media type this representation is offered under.
-    fn media_type() -> &'static str;
+    #[must_use]
+    fn media_type() -> &'static str {
+        Self::MEDIA_TYPE
+    }
 }
 
 #[cfg(feature = "json")]
-impl<T> sealed::Sealed for crate::extract::body::json::Json<T> {}
+impl<T> sealed::SealedRepresentation for crate::extract::body::json::Json<T> {
+    const MEDIA_TYPE: &'static str = mime_names::APPLICATION_JSON;
+}
 
 #[cfg(feature = "json")]
-impl<T> Representation for crate::extract::body::json::Json<T>
-where
-    T: serde::Serialize + crate::schema::Schema,
+impl<T> Representation for crate::extract::body::json::Json<T> where
+    T: serde::Serialize + crate::schema::Schema
 {
-    fn media_type() -> &'static str {
-        mime_names::APPLICATION_JSON
-    }
 }
 
-impl sealed::Sealed for Text {}
-
-impl Representation for Text {
-    fn media_type() -> &'static str {
-        mime_names::TEXT_PLAIN
-    }
+impl sealed::SealedRepresentation for Text {
+    const MEDIA_TYPE: &'static str = mime_names::TEXT_PLAIN;
 }
 
-impl<M> sealed::Sealed for Binary<M> {}
+impl Representation for Text {}
 
-impl<M: MediaType> Representation for Binary<M> {
-    fn media_type() -> &'static str {
-        M::MEDIA_TYPE
-    }
+impl<M: MediaType> sealed::SealedRepresentation for Binary<M> {
+    const MEDIA_TYPE: &'static str = M::MEDIA_TYPE;
+}
+
+impl<M: MediaType> Representation for Binary<M> {}
+
+#[cfg(feature = "form")]
+impl<T> sealed::SealedRepresentation for Form<T> {
+    const MEDIA_TYPE: &'static str = mime_names::APPLICATION_FORM_URLENCODED;
 }
 
 #[cfg(feature = "form")]
-impl<T> sealed::Sealed for Form<T> {}
+impl<T> Representation for Form<T> where T: serde::Serialize + crate::schema::Schema {}
 
-#[cfg(feature = "form")]
-impl<T> Representation for Form<T>
-where
-    T: serde::Serialize + crate::schema::Schema,
-{
-    fn media_type() -> &'static str {
-        mime_names::APPLICATION_FORM_URLENCODED
-    }
+#[cfg(feature = "multipart")]
+impl<T> sealed::SealedRepresentation for MultipartForm<T> {
+    const MEDIA_TYPE: &'static str = mime_names::MULTIPART_FORM_DATA;
 }
 
 #[cfg(feature = "multipart")]
-impl<T> sealed::Sealed for MultipartForm<T> {}
-
-#[cfg(feature = "multipart")]
-impl<T> Representation for MultipartForm<T>
-where
-    T: crate::response::codec::multipart::IntoMultipart + crate::schema::Schema,
+impl<T> Representation for MultipartForm<T> where
+    T: crate::response::codec::multipart::IntoMultipart + crate::schema::Schema
 {
-    fn media_type() -> &'static str {
-        mime_names::MULTIPART_FORM_DATA
-    }
 }
 
 // Bound through the codec so the protobuf crate stays named only where
 // `containment:check` allows it.
 #[cfg(feature = "protobuf")]
-impl<T> sealed::Sealed for Protobuf<T> {}
+impl<T> sealed::SealedRepresentation for Protobuf<T> {
+    const MEDIA_TYPE: &'static str = "application/protobuf";
+}
 
 #[cfg(feature = "protobuf")]
-impl<T> Representation for Protobuf<T>
-where
-    Protobuf<T>: IntoResponse + Responses,
-{
-    fn media_type() -> &'static str {
-        "application/protobuf"
+impl<T> Representation for Protobuf<T> where Protobuf<T>: IntoResponse + Responses {}
+
+/// Refuses, in the constant evaluation calling it, two of `media_types` that
+/// [`same_media_type`] cannot tell apart.
+pub(super) const fn distinct(media_types: &[&str]) {
+    let mut first = 0;
+    while first < media_types.len() {
+        let mut second = first + 1;
+        while second < media_types.len() {
+            assert!(
+                !same_media_type(media_types[first], media_types[second]),
+                "`Negotiated` offers two alternatives under one media type"
+            );
+            second += 1;
+        }
+        first += 1;
     }
+}
+
+/// Whether `Accept` can tell two offers apart: it compares only their type
+/// and subtype, ignoring ASCII case, so their parameters do not separate them.
+/// Two offers without a slash fall back to their trimmed essences, since no
+/// range matches either and only their `content` keys could still collide.
+pub(super) const fn same_media_type(left: &str, right: &str) -> bool {
+    match (type_and_subtype(left), type_and_subtype(right)) {
+        (Some((left_type, left_subtype)), Some((right_type, right_subtype))) => {
+            eq_ignore_ascii_case(left_type, right_type)
+                && eq_ignore_ascii_case(left_subtype, right_subtype)
+        }
+        (None, None) => eq_ignore_ascii_case(
+            split_essence(left.as_bytes()).0,
+            split_essence(right.as_bytes()).0,
+        ),
+        _ => false,
+    }
+}
+
+/// An offer's type and subtype, each trimmed, which is all `Accept` matches
+/// a range against; `None` when it has no slash.
+pub(super) const fn type_and_subtype(media_type: &str) -> Option<(&[u8], &[u8])> {
+    let essence = split_essence(media_type.as_bytes()).0;
+    let mut slash = 0;
+    while slash < essence.len() {
+        if essence[slash] == b'/' {
+            let (type_, rest) = essence.split_at(slash);
+            let (_, subtype) = rest.split_at(1);
+            return Some((type_.trim_ascii(), subtype.trim_ascii()));
+        }
+        slash += 1;
+    }
+    None
 }
 
 /// A tuple of [`Representation`]s, in the order they are offered.
 ///
 /// Sealed, and implemented for tuples of arity two through eight. Order breaks
-/// a tie when the client's `Accept` field ranks two alternatives equally.
+/// a tie when the client's `Accept` field ranks two alternatives equally. A
+/// tuple offering two alternatives under one type and subtype fails the build
+/// that uses it, since `Accept` could never choose the second.
 pub trait Representations: sealed::Sealed {
     /// The media types on offer, in tuple order.
     fn media_types() -> Vec<&'static str>;
@@ -177,14 +229,18 @@ seal_producers!(FA, FB, FC, FD, FE, FF, FG, FH);
 
 macro_rules! tuple_representations {
     ($($type:ident : $produce:ident : $value:ident = $index:literal),+ $(,)?) => {
-        impl<$($type: Representation),+> sealed::Sealed for ($($type,)+) {}
+        impl<$($type: Representation),+> sealed::Sealed for ($($type,)+) {
+            const DISTINCT: () = distinct(&[$($type::MEDIA_TYPE),+]);
+        }
 
         impl<$($type: Representation),+> Representations for ($($type,)+) {
             fn media_types() -> Vec<&'static str> {
-                vec![$($type::media_type()),+]
+                let () = <Self as sealed::Sealed>::DISTINCT;
+                vec![$($type::MEDIA_TYPE),+]
             }
 
             fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+                let () = <Self as sealed::Sealed>::DISTINCT;
                 let mut offered = kynos_openapi::Responses::new();
                 $(merge_content(&mut offered, $type::responses(registry));)+
                 offered

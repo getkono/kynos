@@ -152,21 +152,20 @@ impl<T> Accept<T> {
     fn score(&self, media_type: &str) -> Option<(u16, u8, std::cmp::Reverse<usize>)> {
         // RFC 9110 12.5.1: a range matches on type and subtype; the offer's
         // parameters, such as `charset`, are not part of its subtype.
-        let essence = media_type
-            .split_once(';')
-            .map_or(media_type, |(essence, _)| essence);
-        let (type_, subtype) = essence.split_once('/')?;
-        let (type_, subtype) = (type_.trim(), subtype.trim());
+        // `same_media_type` reads the same halves, so a tuple it admits is
+        // one this can tell apart.
+        let (type_, subtype) = representation::type_and_subtype(media_type)?;
         self.preferences
             .iter()
             .filter_map(|preference| {
                 let specificity = if preference.type_ == "*" && preference.subtype == "*" {
                     0
-                } else if preference.type_.eq_ignore_ascii_case(type_) && preference.subtype == "*"
+                } else if preference.type_.as_bytes().eq_ignore_ascii_case(type_)
+                    && preference.subtype == "*"
                 {
                     1
-                } else if preference.type_.eq_ignore_ascii_case(type_)
-                    && preference.subtype.eq_ignore_ascii_case(subtype)
+                } else if preference.type_.as_bytes().eq_ignore_ascii_case(type_)
+                    && preference.subtype.as_bytes().eq_ignore_ascii_case(subtype)
                 {
                     2
                 } else {
@@ -240,6 +239,32 @@ impl<T> Describe for Accept<T> {
 ///
 /// Every response this produces carries `Vary: accept`, merged into any `Vary`
 /// already present; it is not described.
+///
+/// Each alternative must be offered under its own type and subtype, compared
+/// without regard to case or parameters as `Accept` compares them. A tuple
+/// repeating one fails the build: negotiation could only ever send the first,
+/// and one `content` entry cannot describe both. That holds whether the route
+/// is described,
+///
+/// ```compile_fail
+/// use kynos::{
+///     extract::body::json::Json,
+///     response::{Responses, negotiate::Negotiated},
+///     schema::registry::Registry,
+/// };
+///
+/// <Negotiated<(Json<u64>, Json<String>)> as Responses>::responses(&mut Registry::new());
+/// ```
+///
+/// or a representation is chosen:
+///
+/// ```compile_fail
+/// use kynos::{extract::body::text::Text, response::negotiate::Accept};
+///
+/// let _ = Accept::<(Text, Text)>::parse("*/*")
+///     .expect("a valid Accept field")
+///     .respond_with(&(), (|(): &()| Text(String::new()), |(): &()| Text(String::new())));
+/// ```
 #[derive(Debug)]
 pub struct Negotiated<T> {
     response: Response,

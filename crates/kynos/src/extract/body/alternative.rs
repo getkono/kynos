@@ -127,7 +127,7 @@ pub(super) const fn same_requests(marker: &str, body: &str) -> bool {
 }
 
 /// A media type's trimmed type and subtype, and the parameters after them.
-const fn split_essence(media_type: &[u8]) -> (&[u8], &[u8]) {
+pub(crate) const fn split_essence(media_type: &[u8]) -> (&[u8], &[u8]) {
     let (essence, parameters) = split_at_byte(media_type, b';');
     (essence.trim_ascii(), parameters)
 }
@@ -188,7 +188,7 @@ const fn unquote(value: &[u8]) -> &[u8] {
 }
 
 /// Byte-wise ASCII case-insensitive equality, usable in a constant.
-const fn eq_ignore_ascii_case(left: &[u8], right: &[u8]) -> bool {
+pub(crate) const fn eq_ignore_ascii_case(left: &[u8], right: &[u8]) -> bool {
     if left.len() != right.len() {
         return false;
     }
