@@ -240,6 +240,32 @@ impl<T> Describe for Accept<T> {
 ///
 /// Every response this produces carries `Vary: accept`, merged into any `Vary`
 /// already present; it is not described.
+///
+/// Each alternative must be offered under its own type and subtype, compared
+/// without regard to case or parameters as `Accept` compares them. A tuple
+/// repeating one fails the build: negotiation could only ever send the first,
+/// and one `content` entry cannot describe both. That holds whether the route
+/// is described,
+///
+/// ```compile_fail
+/// use kynos::{
+///     extract::body::json::Json,
+///     response::{Responses, negotiate::Negotiated},
+///     schema::registry::Registry,
+/// };
+///
+/// <Negotiated<(Json<u64>, Json<String>)> as Responses>::responses(&mut Registry::new());
+/// ```
+///
+/// or a representation is chosen:
+///
+/// ```compile_fail
+/// use kynos::{extract::body::text::Text, response::negotiate::Accept};
+///
+/// let _ = Accept::<(Text, Text)>::parse("*/*")
+///     .expect("a valid Accept field")
+///     .respond_with(&(), (|(): &()| Text(String::new()), |(): &()| Text(String::new())));
+/// ```
 #[derive(Debug)]
 pub struct Negotiated<T> {
     response: Response,
