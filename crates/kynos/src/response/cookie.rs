@@ -218,10 +218,7 @@ impl Cookie {
         }
         if let Some(age) = self.max_age {
             rendered.push_str("; Max-Age=");
-            let seconds = age
-                .as_secs()
-                .saturating_add(u64::from(age.subsec_nanos() > 0));
-            rendered.push_str(&seconds.to_string());
+            rendered.push_str(&crate::middleware::whole_seconds(age).to_string());
         }
         // `SameSite=None` and both name prefixes are silently dropped without
         // `Secure`, so it is added for them.
