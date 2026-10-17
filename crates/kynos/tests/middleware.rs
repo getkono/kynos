@@ -1249,6 +1249,32 @@ mod encoding_policy {
         assert_eq!(reply.status, StatusCode::NOT_ACCEPTABLE);
     }
 
+    /// RFC 9110 section 12.5.3 rule 1: with no `Accept-Encoding`, "any content
+    /// coding is considered acceptable", so a response that excludes identity
+    /// still has one to be sent in, and it is the server's first preference.
+    #[tokio::test]
+    async fn a_required_encoding_is_applied_when_no_coding_is_named() {
+        let reply = get(&service(), "/export").call().await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(
+            reply.field(header::CONTENT_ENCODING.as_str()).as_deref(),
+            Some("zstd")
+        );
+    }
+
+    /// The control, and the other half of the decision: a response that does
+    /// not require a coding goes out as it is, since identity is acceptable
+    /// too and is what a client that named nothing is likeliest to read.
+    #[tokio::test]
+    async fn a_response_that_says_nothing_is_not_encoded_when_no_coding_is_named() {
+        let reply = get(&service(), "/report").call().await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(reply.field(header::CONTENT_ENCODING.as_str()), None);
+        assert_eq!(reply.body, octets());
+    }
+
     /// The point of `Required`. A client that will take only identity is told
     /// no, rather than handed the whole representation uncompressed.
     #[tokio::test]
