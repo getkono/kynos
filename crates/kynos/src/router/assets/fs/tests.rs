@@ -108,10 +108,8 @@ fn a_hidden_segment_is_refused() {
 /// A scratch directory of this test's own, removed when it drops.
 ///
 /// Named by process and test, so no two tests ever share one.
-#[cfg(unix)]
 struct Scratch(std::path::PathBuf);
 
-#[cfg(unix)]
 impl Scratch {
     fn new(test: &str) -> Self {
         let path = std::env::temp_dir().join(format!("kynos-fs-{}-{test}", std::process::id()));
@@ -128,12 +126,12 @@ impl Scratch {
     }
 
     /// Links `relative` to `target`.
+    #[cfg(unix)]
     fn link(&self, relative: &str, target: impl AsRef<std::path::Path>) {
         std::os::unix::fs::symlink(target, self.0.join(relative)).expect("a link");
     }
 }
 
-#[cfg(unix)]
 impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
@@ -195,12 +193,66 @@ async fn a_root_that_is_a_link_is_followed() {
     assert_eq!(path, scratch.0.join("current/app.css"));
 }
 
-/// A percent-encoded escape never reaches the resolver as one.
+/// A request for `path` under `/static/{*path}`, carrying what the router
+/// would have captured: everything after the prefix, still percent-encoded.
+fn routed(path: &'static str) -> crate::http::Request {
+    let mut request = crate::http::Request::new(crate::http::body::Body::empty());
+    *request.uri_mut() = path.parse().expect("a usable path");
+
+    let raw = path
+        .strip_prefix("/static/")
+        .expect("a path under the prefix");
+    let captures = crate::extract::params::path::PathCaptures::new(path, [("path", raw)]);
+    let forwarded = crate::http::forwarded::Forwarded::resolve(
+        request.headers(),
+        None,
+        &crate::http::forwarded::TrustedProxies::none(),
+    );
+    request
+        .extensions_mut()
+        .insert(crate::router::dispatch::Routed {
+            matched: Some(crate::extract::connection::MatchedPath("/static/{*path}")),
+            captures: Some(captures),
+            forwarded,
+            secured: false,
+            links: None,
+        });
+
+    request
+}
+
+/// A capture that names no file is a 404, never the root's index.
 ///
-/// `unchecked::captured` decodes before this sees it, so `%2e%2e` arrives as
-/// `..` and is refused by the same branch. Recorded because the alternative --
-/// resolving the *encoded* text -- is the classic traversal bug.
-#[test]
-fn a_decoded_escape_is_refused_the_same_way() {
-    assert_eq!(directory().resolve("../etc/passwd"), None);
+/// `%FF` decodes to an octet that is not UTF-8, so `unchecked::captured` has
+/// no text to give; reading that as an empty path would resolve to the root
+/// and serve its index. `%2e%2e` is decoded before resolving, so it arrives
+/// as `..` and is refused rather than climbing to the file beside the root.
+/// A request the router never matched carries no capture at all.
+#[tokio::test]
+async fn a_capture_naming_no_file_is_not_found() {
+    let scratch = Scratch::new("a_capture_naming_no_file_is_not_found");
+    scratch.file("root/index.html", "index");
+    scratch.file("root/app.css", "body {}");
+    scratch.file("etc/passwd", "secret");
+
+    let directory = Directory::new(scratch.0.join("root"));
+
+    for path in ["/static/%FF", "/static/%2e%2e/etc/passwd"] {
+        let response = super::serve(&directory, &routed(path)).await;
+        assert_eq!(
+            response.status(),
+            crate::http::StatusCode::NOT_FOUND,
+            "{path}"
+        );
+    }
+
+    let unrouted = crate::http::Request::new(crate::http::body::Body::empty());
+    let response = super::serve(&directory, &unrouted).await;
+    assert_eq!(response.status(), crate::http::StatusCode::NOT_FOUND);
+
+    // The control: the root's index and a file under it are served.
+    for path in ["/static/", "/static/app.css"] {
+        let response = super::serve(&directory, &routed(path)).await;
+        assert_eq!(response.status(), crate::http::StatusCode::OK, "{path}");
+    }
 }
