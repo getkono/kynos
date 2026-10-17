@@ -3357,7 +3357,7 @@ fn tls_rejects_an_empty_sni_name_list() {
 fn tls_rejects_an_empty_sni_name() {
     assert!(matches!(
         sni_refusal(&[], &["example.com", ""]),
-        Err(crate::server::tls::error::TlsError::ServerName(name)) if name == "example.com"
+        Err(crate::server::tls::error::TlsError::ServerName(name)) if name.is_empty()
     ));
 }
 
@@ -3370,6 +3370,13 @@ fn tls_rejects_an_sni_name_an_earlier_call_registered() {
         sni_refusal(&["example.com"], &["Example.COM"]),
         Err(crate::server::tls::error::TlsError::ServerName(name)) if name == "example.com"
     ));
+    assert!(
+        matches!(
+            sni_refusal(&["example.com"], &["example.org", "example.com"]),
+            Err(crate::server::tls::error::TlsError::ServerName(name)) if name == "example.com"
+        ),
+        "the refusal names the registered name, not the call's first"
+    );
     assert!(
         sni_refusal(&["example.com"], &["example.org"]).is_ok(),
         "a name no earlier call registered is accepted"
