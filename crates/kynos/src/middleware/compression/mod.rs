@@ -195,6 +195,10 @@ impl<T> Eq for NotAcceptable<T> {}
 enum Negotiated {
     /// Encode with this coding.
     Encode(Coding),
+    /// The request names no coding, so every one is acceptable, identity
+    /// included (rule 1). Sent as it is unless the response requires a coding,
+    /// which is then the server's first preference.
+    Unstated,
     /// Send the representation as it is.
     Identity,
     /// Nothing is acceptable, identity included; answered 406 (section 12.4.1).
@@ -206,7 +210,7 @@ fn negotiate(headers: &http::HeaderMap) -> Negotiated {
     let Some(accept) = crate::http::coding::accept_encoding(headers) else {
         // Rule 1: "If no Accept-Encoding header field is in the request, any
         // content coding is considered acceptable by the user agent."
-        return Negotiated::Identity;
+        return Negotiated::Unstated;
     };
     let accept = &*accept;
 
@@ -614,6 +618,9 @@ where
         let refused = policy == Encoding::Disabled || leave_alone;
         let coding = match negotiated {
             Negotiated::Encode(coding) if !refused => coding,
+            // Rule 1 leaves the choice to the server, which keeps identity
+            // unless the response excludes it.
+            Negotiated::Unstated if !refused && policy == Encoding::Required => Coding::ALL[0],
             // `Required` excludes identity, so nothing is left. `leave_alone`
             // reaches here deliberately: its demands conflict, and 406 says so.
             _ if policy == Encoding::Required => return Err(NotAcceptable::new()),
