@@ -8,13 +8,20 @@ use crate::{
     },
     http::Request,
     router::operation::OperationCx,
-    schema::{Schema, registry::Registry},
+    schema::{Schema, constraints::Pointer, registry::Registry},
 };
 
 /// An `application/protobuf` request or response body.
 ///
 /// Requires the `protobuf` feature. A missing or different content type
-/// rejects with 415 and an invalid protobuf message rejects with 400.
+/// rejects with 415 and an invalid protobuf message rejects with 400, while a
+/// message that decodes but breaks a bound `T`'s schema declares rejects with
+/// 422, keyed by the JSON Pointer of each member that broke one under the
+/// name the description gives it. Which bounds are enforced is
+/// [`constraints`](crate::schema::constraints)' to say.
+///
+/// Extracting one therefore requires `T: Schema` as well as
+/// `T: prost::Message`, as every codec that decodes a `Schema` type does.
 ///
 /// ```no_run
 /// # #[cfg(feature = "protobuf")]
@@ -32,18 +39,20 @@ pub struct Protobuf<T>(pub T);
 /// The media type decoded and described.
 pub(super) const MEDIA_TYPE: &str = "application/protobuf";
 
-impl<C: Sync, T: prost::Message + Default + Send> FromRequest<C> for Protobuf<T> {
+/// `T: Schema` because the bounds a derived field declares are checked once `T`
+/// is decoded.
+impl<C: Sync, T: prost::Message + Default + Schema + Send> FromRequest<C> for Protobuf<T> {
     type Rejection = BodyRejection;
 
     async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
         let bytes = super::read_body(request, MEDIA_TYPE).await?;
 
-        // Protobuf has no parse-then-fit stage, so every failure is a 400.
-        T::decode(bytes)
-            .map(Self)
-            .map_err(|error| BodyRejection::Syntax {
-                detail: error.to_string(),
-            })
+        // Bytes protobuf cannot decode are a 400; a decoded message that
+        // breaks a bound is a 422.
+        let value = T::decode(bytes).map_err(|error| BodyRejection::Syntax {
+            detail: error.to_string(),
+        })?;
+        super::checked(value, Pointer::root()).map(Self)
     }
 }
 
