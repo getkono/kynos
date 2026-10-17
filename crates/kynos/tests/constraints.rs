@@ -933,6 +933,64 @@ mod multipart {
     }
 }
 
+/// `Protobuf<T>` runs the same check on the message it decoded, each member
+/// under its field's name, since that is what the description names it.
+#[cfg(feature = "protobuf")]
+mod protobuf {
+    use kynos::{
+        Schema,
+        error::rejection::BodyRejection,
+        extract::{FromRequest, body::protobuf::Protobuf},
+        http::{HeaderValue, Request, body::Body, header},
+    };
+    use prost::Message as _;
+
+    #[derive(Clone, PartialEq, prost::Message, Schema)]
+    struct Batch {
+        #[prost(string, tag = "1")]
+        #[schema(max_length = 3)]
+        series: String,
+        #[prost(uint64, repeated, tag = "2")]
+        #[schema(max_items = 1)]
+        samples: Vec<u64>,
+    }
+
+    /// What `Protobuf<Batch>` makes of `batch`, encoded as a client sends it.
+    async fn read(batch: &Batch) -> Result<Batch, BodyRejection> {
+        let mut request = Request::new(Body::from_bytes(bytes::Bytes::from(batch.encode_to_vec())));
+        request.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/protobuf"),
+        );
+        Protobuf::<Batch>::from_request(request, &())
+            .await
+            .map(|Protobuf(batch)| batch)
+    }
+
+    #[tokio::test]
+    async fn a_protobuf_body_is_held_to_the_same_bounds() {
+        let inside = Batch {
+            series: "cpu".to_owned(),
+            samples: vec![7],
+        };
+        assert_eq!(read(&inside).await.expect("inside every bound"), inside);
+
+        let outside = Batch {
+            series: "disk".to_owned(),
+            samples: vec![7, 11],
+        };
+        match read(&outside).await {
+            Err(BodyRejection::Schema { failures }) => {
+                assert_eq!(
+                    failures.into_keys().collect::<Vec<_>>(),
+                    ["/samples", "/series"]
+                );
+            }
+            other => panic!("a message breaking its bounds was not refused at them: {other:?}"),
+        }
+    }
+}
+
 /// `pattern`, which is enforced with a regular expression engine compiled in
 /// only under its own feature.
 ///
