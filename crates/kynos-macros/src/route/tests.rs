@@ -132,6 +132,45 @@ mod doc_comments {
         assert_eq!(description.as_deref(), Some("First.\n\nSecond."));
     }
 
+    /// The description is CommonMark, so its indented code block, nested list
+    /// item and two-space hard break survive; only the indentation every line
+    /// of the comment shares is removed. The summary is plain text and stays
+    /// one line.
+    #[test]
+    fn the_description_keeps_its_markdown_indentation() {
+        let (summary, description) = split_doc(&lines(&[
+            " Create a user",
+            "   from a request.",
+            "",
+            " Example:",
+            "",
+            "     let user = User::new();",
+            "",
+            " - roles",
+            "   - admin",
+            "",
+            " ends here  ",
+            " and resumes here.",
+        ]));
+        assert_eq!(summary.as_deref(), Some("Create a user from a request."));
+        assert_eq!(
+            description.as_deref(),
+            Some(
+                "Example:\n\n    let user = User::new();\n\n- roles\n  - admin\n\n\
+                 ends here  \nand resumes here."
+            )
+        );
+    }
+
+    /// A description that opens with a code block keeps its indentation,
+    /// because the indentation removed is the whole comment's, not the
+    /// description's own.
+    #[test]
+    fn a_description_opening_with_a_code_block_keeps_it() {
+        let (_, description) = split_doc(&lines(&[" Summary.", "", "     cargo run"]));
+        assert_eq!(description.as_deref(), Some("    cargo run"));
+    }
+
     #[test]
     fn an_absent_doc_comment_yields_neither() {
         let (summary, description) = split_doc(&[]);
