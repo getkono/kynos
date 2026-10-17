@@ -294,3 +294,65 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+// --- The tests ------------------------------------------------------------
+
+/// What the carrier reads, and where the span is while a handler waits.
+#[cfg(test)]
+mod tests {
+    use std::{future::poll_fn, pin::pin, task::Poll};
+
+    use kynos::http::{Request, StatusCode, body::Body};
+    use tracing::Span;
+
+    use super::*;
+
+    /// W3C Trace Context section 3.3.1.1: field lines combine into one list.
+    #[test]
+    fn every_tracestate_line_is_read() {
+        let mut headers = HeaderMap::new();
+        headers.append("tracestate", HeaderValue::from_static("congo=t61rcWkgMzE"));
+        headers.append(
+            "tracestate",
+            HeaderValue::from_static("rojo=00f067aa0ba902b7"),
+        );
+
+        let context = TraceContext::decode(&headers).expect("the decode never refuses");
+
+        assert_eq!(
+            context.get("tracestate"),
+            Some("congo=t61rcWkgMzE,rojo=00f067aa0ba902b7"),
+        );
+    }
+
+    /// Yields once, inside the span either side of the yield.
+    #[kynos::get("/waits")]
+    async fn waits() -> NoContent {
+        assert!(!Span::current().is_none(), "entered before the yield");
+        tokio::task::yield_now().await;
+        assert!(!Span::current().is_none(), "entered after the yield");
+        NoContent
+    }
+
+    /// A span entered across an `.await` stays entered on the thread while the
+    /// task is parked, so whatever runs there next is recorded inside it.
+    #[tokio::test]
+    async fn the_span_is_left_while_the_handler_waits() {
+        let _subscriber = tracing::subscriber::set_default(tracing_subscriber::registry());
+        let service = Router::<()>::new()
+            .mount(kynos::routes![waits])
+            .intercept(Telemetry)
+            .build(())
+            .expect("a valid router");
+
+        let mut request = Request::new(Body::empty());
+        *request.uri_mut() = "/waits".parse().expect("a path");
+        let mut call = pin!(service.call(request));
+
+        let first = poll_fn(|cx| Poll::Ready(call.as_mut().poll(cx))).await;
+        assert!(first.is_pending(), "the handler yields once");
+        assert!(Span::current().is_none(), "no span outlives the poll");
+
+        assert_eq!(call.await.status(), StatusCode::NO_CONTENT);
+    }
+}

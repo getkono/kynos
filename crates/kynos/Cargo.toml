@@ -216,6 +216,8 @@ required-features = [
 [[example]]
 name = "opentelemetry"
 required-features = ["openapi31", "macros", "server", "http1", "json", "trace"]
+# Runs the propagation and span tests, which examples skip by default.
+test = true
 
 [[example]]
 name = "middleware"
