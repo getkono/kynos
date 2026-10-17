@@ -31,7 +31,8 @@ pub enum InvalidPathTemplate {
         name: String,
     },
 
-    /// The template contained a query string or fragment.
+    /// The template contained a query string or fragment: a `?` or `#`
+    /// outside a `{}` expression.
     #[error("path template `{0}` must not contain a query string or fragment")]
     NotAPath(String),
 
@@ -166,6 +167,23 @@ fn check_segments(raw: &str) -> Result<(), InvalidPathTemplate> {
     Ok(())
 }
 
+/// Whether a `?` or `#` appears outside every `{}` expression.
+///
+/// `template-expression-param-name` excludes only the braces, so between them
+/// both are part of a name. Brace balance is checked afterwards.
+fn has_query_or_fragment(raw: &str) -> bool {
+    let mut in_expression = false;
+    raw.chars().any(|character| {
+        match character {
+            '{' => in_expression = true,
+            '}' => in_expression = false,
+            '?' | '#' => return !in_expression,
+            _ => {}
+        }
+        false
+    })
+}
+
 impl PathTemplate {
     /// Parses a path template.
     ///
@@ -177,16 +195,17 @@ impl PathTemplate {
     ///
     /// Returns [`InvalidPathTemplate`] when the template does not start with
     /// `/`, has unbalanced or empty braces, repeats a variable, carries a query
-    /// string or fragment, or holds a character the path grammar does not allow
-    /// outside a `{}` expression.
+    /// string or fragment (a `?` or `#` outside a `{}` expression), or holds a
+    /// character the path grammar does not allow outside a `{}` expression.
     pub fn parse(raw: impl Into<String>) -> Result<Self, InvalidPathTemplate> {
         let raw = raw.into();
 
         if !raw.starts_with('/') {
             return Err(InvalidPathTemplate::MissingLeadingSlash(raw));
         }
-        // Likely a URL pasted whole, so it gets its own error.
-        if raw.contains('?') || raw.contains('#') {
+        // Likely a URL pasted whole, so it gets its own error. Inside `{}` the
+        // two are ordinary name characters.
+        if has_query_or_fragment(&raw) {
             return Err(InvalidPathTemplate::NotAPath(raw));
         }
 

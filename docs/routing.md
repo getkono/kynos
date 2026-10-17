@@ -12,7 +12,7 @@ What it enforces:
 | Rule | Rejected as |
 | --- | --- |
 | The template begins with `/` | `MissingLeadingSlash` |
-| No `?` and no `#` anywhere | `NotAPath` |
+| Outside `{}`, no `?` and no `#` | `NotAPath` |
 | Outside `{}`, only `pchar` and `/` | `IllegalLiteralCharacter` |
 | A `%` introduces two hex digits | `MalformedPercentEncoding` |
 | Braces balance; `{` inside a name is unbalanced | `UnbalancedBraces` |

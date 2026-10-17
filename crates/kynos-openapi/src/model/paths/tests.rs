@@ -68,6 +68,33 @@ fn query_strings_and_fragments_are_not_paths() {
         PathTemplate::parse("/users#top"),
         Err(InvalidPathTemplate::NotAPath(_))
     ));
+    assert!(matches!(
+        PathTemplate::parse("/items/{id}?x"),
+        Err(InvalidPathTemplate::NotAPath(_))
+    ));
+}
+
+#[test]
+fn a_query_or_fragment_delimiter_inside_an_expression_is_part_of_the_name() {
+    // `template-expression-param-name` excludes only `{` and `}`, so `?` and
+    // `#` between braces name a variable rather than end the path.
+    let query = PathTemplate::parse("/items/{a?b}").expect("valid");
+    assert_eq!(query.variables(), ["a?b"]);
+
+    let fragment = PathTemplate::parse("/items/{a#b}").expect("valid");
+    assert_eq!(fragment.variables(), ["a#b"]);
+
+    // After an unclosed `{` the delimiter still counts as inside the
+    // expression, so the missing `}` is the reported mistake.
+    for unclosed in ["/a/{b?c", "/a/{b#c"] {
+        assert!(
+            matches!(
+                PathTemplate::parse(unclosed),
+                Err(InvalidPathTemplate::UnbalancedBraces(_))
+            ),
+            "{unclosed}"
+        );
+    }
 }
 
 #[test]
