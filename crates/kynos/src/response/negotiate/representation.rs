@@ -8,7 +8,11 @@
 use kynos_openapi::model::body::mime_names;
 
 use crate::{
-    extract::body::{binary::Binary, text::Text},
+    extract::body::{
+        alternative::{eq_ignore_ascii_case, split_essence},
+        binary::Binary,
+        text::Text,
+    },
     http::{Response, media::MediaType},
     response::{IntoResponse, Responses},
     schema::registry::Registry,
@@ -123,13 +127,36 @@ pub(super) const fn distinct(media_types: &[&str]) {
 
 /// Whether `Accept` can tell two offers apart: it compares only their type
 /// and subtype, ignoring ASCII case, so their parameters do not separate them.
+/// Two offers without a slash fall back to their trimmed essences, since no
+/// range matches either and only their `content` keys could still collide.
 pub(super) const fn same_media_type(left: &str, right: &str) -> bool {
-    use crate::extract::body::alternative::{eq_ignore_ascii_case, split_essence};
+    match (type_and_subtype(left), type_and_subtype(right)) {
+        (Some((left_type, left_subtype)), Some((right_type, right_subtype))) => {
+            eq_ignore_ascii_case(left_type, right_type)
+                && eq_ignore_ascii_case(left_subtype, right_subtype)
+        }
+        (None, None) => eq_ignore_ascii_case(
+            split_essence(left.as_bytes()).0,
+            split_essence(right.as_bytes()).0,
+        ),
+        _ => false,
+    }
+}
 
-    eq_ignore_ascii_case(
-        split_essence(left.as_bytes()).0,
-        split_essence(right.as_bytes()).0,
-    )
+/// An offer's type and subtype, each trimmed, which is all `Accept` matches
+/// a range against; `None` when it has no slash.
+pub(super) const fn type_and_subtype(media_type: &str) -> Option<(&[u8], &[u8])> {
+    let essence = split_essence(media_type.as_bytes()).0;
+    let mut slash = 0;
+    while slash < essence.len() {
+        if essence[slash] == b'/' {
+            let (type_, rest) = essence.split_at(slash);
+            let (_, subtype) = rest.split_at(1);
+            return Some((type_.trim_ascii(), subtype.trim_ascii()));
+        }
+        slash += 1;
+    }
+    None
 }
 
 /// A tuple of [`Representation`]s, in the order they are offered.
