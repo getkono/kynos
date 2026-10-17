@@ -3902,7 +3902,7 @@ async fn a_unit_reply_variant_sends_its_status_and_no_content() {
 
 /// One variant per rung of the description's fallback: an explicit
 /// `description` over a doc comment, a doc comment, the status's reason phrase,
-/// and a fixed sentence for a status that has none.
+/// and a fixed sentence of its class for a status that has none.
 #[derive(Reply)]
 enum DescribedReply {
     /// Shadowed by the attribute.
@@ -3915,10 +3915,17 @@ enum DescribedReply {
     Reason,
     #[reply(status = 299)]
     Unnamed,
+    #[reply(status = 399)]
+    UnnamedRedirection,
+    #[reply(status = 499)]
+    UnnamedClientError,
+    #[reply(status = 599)]
+    UnnamedServerError,
 }
 
 /// A reply's description is its `description`, else its doc comment, else its
-/// status's reason phrase, else the fixed sentence `the request succeeded`.
+/// status's reason phrase, else a fixed sentence of its status's class: a
+/// status with no reason phrase never claims a success it did not have.
 #[test]
 fn a_reply_description_falls_back_from_attribute_to_doc_to_reason_phrase() {
     let responses = emitted_responses::<DescribedReply>();
@@ -3928,6 +3935,9 @@ fn a_reply_description_falls_back_from_attribute_to_doc_to_reason_phrase() {
         ("202", "From the doc comment."),
         ("204", "No Content"),
         ("299", "the request succeeded"),
+        ("399", "further action is needed to complete the request"),
+        ("499", "the request failed"),
+        ("599", "the request failed"),
     ] {
         assert_eq!(
             responses[status]["description"],
