@@ -1,0 +1,5 @@
+error: a tagged enum with no variant serde reads or writes has no branch for its `oneOf`, which JSON Schema requires to hold at least one. Declare a variant serde does not `#[serde(skip)]`, or drop `tag`
+ --> tests/ui/macros/schema_empty_tagged_enum.rs:7:6
+  |
+7 | enum Never {}
+  |      ^^^^^

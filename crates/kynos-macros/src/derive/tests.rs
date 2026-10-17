@@ -401,6 +401,17 @@ mod schema {
                 ),
                 "this variant's own name",
             ),
+            case(
+                "a tagged enum whose every variant serde skips both ways",
+                quote::quote!(
+                    #[serde(tag = "kind")]
+                    enum Signal {
+                        #[serde(skip)]
+                        Start,
+                    }
+                ),
+                "no branch for its `oneOf`",
+            ),
         ]
     }
 
@@ -3689,18 +3700,64 @@ mod schema {
             }
         )));
 
-        // An enum with no branch at all describes nothing to flatten.
+        // An enum with no branch at all describes nothing to flatten. Only
+        // the untagged form expands: a tagged one is refused.
         assert!(!claims_flatten(quote::quote!(
             enum Never {}
         )));
-        assert!(!claims_flatten(quote::quote!(
-            #[serde(tag = "kind", content = "value")]
-            enum Never {}
-        )));
-        assert!(!claims_flatten(quote::quote!(
-            #[serde(tag = "kind")]
-            enum Never {}
-        )));
+    }
+
+    /// A tagged enum with no variant to describe is refused under either
+    /// tagging and whether it declares none or skips every one, and an enum
+    /// without a tag, the empty `enum`, is not.
+    #[test]
+    fn a_tagged_enum_with_no_described_variant_is_refused() {
+        let refused = [
+            quote::quote!(
+                #[serde(tag = "kind")]
+                enum Never {}
+            ),
+            quote::quote!(
+                #[serde(tag = "kind", content = "value")]
+                enum Never {}
+            ),
+            quote::quote!(
+                #[serde(tag = "kind", content = "value")]
+                enum Signal {
+                    #[serde(skip)]
+                    Start,
+                    #[serde(skip_serializing, skip_deserializing)]
+                    Stop(u64),
+                }
+            ),
+        ];
+        for declaration in refused {
+            let input: DeriveInput = syn::parse2(declaration).expect("the case itself must parse");
+            let Err(error) = expand_inner(&input) else {
+                panic!("an empty tagged enum must be rejected");
+            };
+            assert!(error.to_string().contains("no branch for its `oneOf`"));
+        }
+
+        let accepted = [
+            quote::quote!(
+                enum Never {}
+            ),
+            // A variant serde only reads is still a branch.
+            quote::quote!(
+                #[serde(tag = "kind")]
+                enum Signal {
+                    #[serde(skip)]
+                    Start,
+                    #[serde(skip_serializing)]
+                    Stop,
+                }
+            ),
+        ];
+        for declaration in accepted {
+            let input: DeriveInput = syn::parse2(declaration).expect("the case itself must parse");
+            assert!(expand_inner(&input).is_ok());
+        }
     }
 
     /// A container that is itself open does not claim to be flattenable.

@@ -1,5 +1,6 @@
 //! Members serde leaves out in one direction only, where no schema is true of
-//! both the shape it writes and the shape it reads.
+//! both the shape it writes and the shape it reads, and the tagged enum whose
+//! skips leave it no variant at all.
 
 use syn::{Data, DeriveInput, Field, Fields, punctuated::Punctuated, token::Comma};
 
@@ -32,6 +33,25 @@ pub(super) fn reject_unread_variant(input: &DeriveInput) -> syn::Result<()> {
         }
     }
     Ok(())
+}
+
+/// A tagged enum left with no variant to describe, none declared or every one
+/// skipped both ways, would be a `oneOf` with no branch, which JSON Schema
+/// 2020-12 requires to be non-empty. An enum without a tag is the compact
+/// `enum`, whose empty form nothing satisfies, and is left alone.
+pub(super) fn reject_empty_tagged_enum(input: &DeriveInput) -> syn::Result<()> {
+    let Data::Enum(data) = &input.data else {
+        return Ok(());
+    };
+    if Container::read(input).tag.is_none() || !described_variants(data).is_empty() {
+        return Ok(());
+    }
+    Err(syn::Error::new(
+        input.ident.span(),
+        "a tagged enum with no variant serde reads or writes has no branch for its `oneOf`, \
+         which JSON Schema requires to hold at least one. Declare a variant serde does not \
+         `#[serde(skip)]`, or drop `tag`",
+    ))
 }
 
 /// `skip_serializing_if` on a field serde still requires on read has no

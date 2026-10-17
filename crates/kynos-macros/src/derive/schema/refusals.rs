@@ -19,6 +19,7 @@ pub(crate) fn check(input: &DeriveInput) -> syn::Result<()> {
     wire_form::reject_container_conversions(input)?;
     wire_form::reject_untagged(input)?;
     skips::reject_unread_variant(input)?;
+    skips::reject_empty_tagged_enum(input)?;
     naming::reject_split_rename_all(input)?;
     naming::reject_split_rename(input)?;
     naming::reject_shadowed_variant(input)?;

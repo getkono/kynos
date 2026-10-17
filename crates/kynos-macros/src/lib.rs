@@ -252,6 +252,9 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// constraints, prose and `#[deprecated]` as a named field does. A variant
 /// serde skips both ways is described nowhere, and one serde reads and never
 /// writes is described as serde reads it, under its prose and `#[deprecated]`.
+/// A tagged enum left with no variant to describe is a compile error, since
+/// its `oneOf` would hold no branch; without a tag it is the empty `enum`,
+/// which no value satisfies.
 ///
 /// Constraints go on fields, named or unnamed, and the grammar is exactly the
 /// keys of
