@@ -8,7 +8,7 @@ use crate::{
     handler::Handler,
     http::{Request, Response},
     middleware::{
-        Interceptor, Next,
+        Interceptor, MiddlewareError, Next,
         catch_panic::{Catch, PanicPolicy, Propagate},
         erased::{ErasedInterceptor, ErasedTerminal},
         stack::{CompatibleWith, Cons},
@@ -19,6 +19,7 @@ use crate::{
             Endpoint,
             set::{Endpoints, IntoEndpoints},
         },
+        install,
         operation::{DeclaredTag, OperationCx, Route, Tag},
     },
 };
@@ -326,6 +327,12 @@ where
         } else {
             served.await
         }
+    }
+
+    fn __unhonourable_interceptor(&self) -> Option<MiddlewareError> {
+        self.interceptors
+            .iter()
+            .find_map(|interceptor| install::cors_conflict(interceptor))
     }
 }
 

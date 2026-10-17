@@ -913,8 +913,8 @@ Both are about a *value*. `allow_any_origin` and `allow_credentials` are
 `mut self -> Self` builders on purpose — an allow-list read from the environment
 at startup has to be applied conditionally — so whether they were both called is
 not a fact a `const` can see. The two questions are whether the pair was
-selected, which is refused (`Error::Middleware`), and what a preflight on the
-covered paths should answer.
+selected, which is refused (`Error::Middleware`) at every scope, an endpoint's
+own included, and what a preflight on the covered paths should answer.
 
 What stops this becoming a capability:
 
