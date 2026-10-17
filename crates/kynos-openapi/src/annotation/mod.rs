@@ -14,7 +14,9 @@
 //! [`Document::restamp_authority`] — never authored.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
+use crate::Map;
 use crate::model::{
     document::Document,
     paths::{item::PathItem, operation::Operation},
@@ -120,6 +122,12 @@ pub struct Opaque {
     /// Where the waiver was taken, for a human reading the description.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+
+    /// Fields recorded by a version of Kynos that knows more than this one.
+    ///
+    /// Preserved verbatim, in order, so rewriting the record never drops them.
+    #[serde(flatten)]
+    pub unrecognized: Map<Value>,
 }
 
 impl Opaque {
@@ -129,6 +137,7 @@ impl Opaque {
         Self {
             reasons: vec![reason],
             note: None,
+            unrecognized: Map::new(),
         }
     }
 
@@ -147,12 +156,19 @@ impl Opaque {
     }
 
     /// Unions `other`'s reasons into this marker, keeping the first note.
+    ///
+    /// An unrecognized field this marker already holds keeps its value too.
     pub fn absorb(&mut self, other: &Self) {
         for reason in &other.reasons {
             self.add_reason(reason.clone());
         }
         if self.note.is_none() {
             self.note.clone_from(&other.note);
+        }
+        for (name, value) in &other.unrecognized {
+            self.unrecognized
+                .entry(name.clone())
+                .or_insert_with(|| value.clone());
         }
     }
 
@@ -238,6 +254,13 @@ pub struct OpaqueRoute {
     /// A human-readable note.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+
+    /// Fields recorded by a version of Kynos that knows more than this one.
+    ///
+    /// Preserved verbatim, in order, so appending another route never drops
+    /// them.
+    #[serde(flatten)]
+    pub unrecognized: Map<Value>,
 }
 
 impl OpaqueRoute {
@@ -250,6 +273,7 @@ impl OpaqueRoute {
             methods: Vec::new(),
             reason,
             note: None,
+            unrecognized: Map::new(),
         }
     }
 

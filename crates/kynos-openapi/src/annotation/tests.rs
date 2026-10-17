@@ -53,6 +53,30 @@ fn absorbing_unions_reasons_and_keeps_the_first_note() {
 }
 
 #[test]
+fn absorbing_unions_unrecognized_fields_and_keeps_the_first_value() {
+    let mut marker = Opaque::new(OpaqueReason::UntypedLayer);
+    marker
+        .unrecognized
+        .insert("since".to_owned(), json!("outer"));
+    let mut other = Opaque::new(OpaqueReason::UntypedHandler);
+    other
+        .unrecognized
+        .insert("since".to_owned(), json!("inner"));
+    other.unrecognized.insert("depth".to_owned(), json!(2));
+
+    marker.absorb(&other);
+
+    assert_eq!(
+        serde_json::to_value(&marker).expect("serializable"),
+        json!({
+            "reasons": ["untyped-layer", "untyped-handler"],
+            "since": "outer",
+            "depth": 2
+        })
+    );
+}
+
+#[test]
 fn applying_a_marker_merges_with_one_already_present() {
     let mut operation = Operation::new("listOrders");
     Opaque::new(OpaqueReason::UntypedLayer)
