@@ -401,6 +401,17 @@ mod schema {
                 ),
                 "this variant's own name",
             ),
+            case(
+                "a tagged enum whose every variant serde skips both ways",
+                quote::quote!(
+                    #[serde(tag = "kind")]
+                    enum Signal {
+                        #[serde(skip)]
+                        Start,
+                    }
+                ),
+                "no branch for its `oneOf`",
+            ),
         ]
     }
 
