@@ -312,7 +312,8 @@ fn a_representation_is_offered_under_the_media_type_it_describes() {
 }
 
 /// Two offers are one media type to `Accept` when their type and subtype
-/// match ignoring case, whatever parameters either carries.
+/// match ignoring case, whatever parameters either carries. `Accept` trims
+/// each half on its own, so whitespace beside the slash separates nothing.
 #[test]
 fn offers_accept_cannot_tell_apart_share_a_media_type() {
     use super::representation::same_media_type;
@@ -322,6 +323,8 @@ fn offers_accept_cannot_tell_apart_share_a_media_type() {
         ("text/plain", "TEXT/Plain"),
         ("text/plain", "text/plain; charset=iso-8859-1"),
         ("text/html; charset=utf-8", " text/html ;level=1"),
+        ("text/plain", "text/ plain"),
+        ("text /plain", "text/plain"),
     ] {
         assert!(same_media_type(left, right), "{left:?} and {right:?}");
     }
