@@ -192,11 +192,15 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
         let fields = response.headers_mut();
 
         // Section 14.3: advertised on every response carrying a representation,
-        // which a 304 does not.
+        // which a 304 does not; section 15.4.5 asks a 304 for no metadata
+        // beyond its validators and `Cache-Control`, so the name stays here too.
         if status != StatusCode::NOT_MODIFIED {
             crate::extract::params::header::write(fields, &AcceptRanges);
             if let Ok(value) = HeaderValue::from_str(M::MEDIA_TYPE) {
                 fields.insert(header::CONTENT_TYPE, value);
+            }
+            if let Some(disposition) = &self.disposition {
+                crate::extract::params::header::write(fields, disposition);
             }
         }
 
@@ -216,9 +220,6 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
             .and_then(|value| HeaderValue::from_str(value).ok())
         {
             fields.insert(header::CACHE_CONTROL, value);
-        }
-        if let Some(disposition) = &self.disposition {
-            crate::extract::params::header::write(fields, disposition);
         }
 
         match selection {
