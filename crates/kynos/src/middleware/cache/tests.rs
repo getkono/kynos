@@ -381,6 +381,12 @@ fn an_invalid_lifetime_is_stale_rather_than_defaulted() {
             ("expires", "Fri, 01 Jan 2100 00:00:00 GMT"),
             ("expires", "Fri, 01 Jan 2100 00:00:00 GMT"),
         ],
+        // A repeated `Date` is no date, so this is read against now.
+        &[
+            ("date", "Sun, 06 Nov 1994 08:00:00 GMT"),
+            ("date", "Sun, 06 Nov 1994 08:00:00 GMT"),
+            ("expires", "Sun, 06 Nov 1994 08:49:37 GMT"),
+        ],
         // Expired before it was dated.
         &[
             ("date", "Sun, 06 Nov 1994 08:49:37 GMT"),
