@@ -233,6 +233,56 @@ async fn a_short_read_is_finished_on_the_next_poll() {
     );
 }
 
+/// A source that answers with more than it was asked for is cut to the span.
+///
+/// The head already named the length, so an octet past the span is one the
+/// recipient was never promised. The surplus is not read as progress either:
+/// the next span starts where the last one asked to end, not where the source
+/// stopped, so no octet of the representation is skipped.
+#[tokio::test]
+async fn a_long_read_is_cut_to_the_span() {
+    /// Answers every span with two octets past it, each octet its offset.
+    struct Overreaching {
+        asked: std::sync::Mutex<Vec<(u64, u64)>>,
+    }
+
+    impl ByteSource for Overreaching {
+        type Error = std::convert::Infallible;
+
+        async fn complete_length(&self) -> Result<u64, Self::Error> {
+            Ok(SPAN * 2 + 5)
+        }
+
+        async fn read_span(&self, first: u64, last: u64) -> Result<Bytes, Self::Error> {
+            self.asked.lock().unwrap().push((first, last));
+            Ok((first..=last + 2).map(octet).collect())
+        }
+    }
+
+    fn octet(offset: u64) -> u8 {
+        u8::try_from(offset % 251).unwrap()
+    }
+
+    let source = Arc::new(Overreaching {
+        asked: std::sync::Mutex::new(Vec::new()),
+    });
+    let last = SPAN * 2 + 4;
+
+    let octets = drain(Spans::new(Arc::clone(&source), 0, last)).await;
+
+    // `assert!` rather than `assert_eq!`: a failure would print two
+    // 128 KiB vectors, and the length says enough.
+    assert!(
+        octets == (0..=last).map(octet).collect::<Vec<_>>(),
+        "exactly the representation, with nothing past a span and nothing skipped: {} octets",
+        octets.len()
+    );
+    assert_eq!(
+        *source.asked.lock().unwrap(),
+        [(0, SPAN - 1), (SPAN, SPAN * 2 - 1), (SPAN * 2, last)]
+    );
+}
+
 /// An exhausted body owes nothing.
 ///
 /// The span is inclusive, so the count remaining is one more than the

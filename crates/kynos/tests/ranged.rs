@@ -82,6 +82,35 @@ impl ByteSource for Catalogue {
     }
 }
 
+/// A source that answers every span with two octets past the one it was asked
+/// for, as one reading whole blocks might.
+struct Overreaching;
+
+impl ByteSource for Overreaching {
+    type Error = std::convert::Infallible;
+
+    async fn complete_length(&self) -> Result<u64, Self::Error> {
+        Ok(RECORDING.len() as u64)
+    }
+
+    async fn read_span(&self, first: u64, last: u64) -> Result<Bytes, Self::Error> {
+        let first = usize::try_from(first).expect("a small offset");
+        let last = usize::try_from(last).expect("a small offset");
+        let mut span = RECORDING[first..=last].to_vec();
+        span.extend_from_slice(b"!!");
+        Ok(Bytes::from(span))
+    }
+}
+
+/// Serves the recording from a source that reads past the span.
+#[kynos::get("/recordings/overreaching")]
+async fn overreaching(conditions: Conditions) -> Delivery<Mpeg> {
+    Served::<_, Mpeg>::new(Overreaching)
+        .deliver(&conditions)
+        .await
+        .expect("this source cannot fail")
+}
+
 /// Serves the recording, conditionally and rangeably.
 #[kynos::get("/recordings/current")]
 async fn recording(conditions: Conditions) -> Delivery<Mpeg> {
@@ -126,7 +155,12 @@ async fn untagged(conditions: Conditions) -> Delivery<Mpeg> {
 
 fn service() -> kynos::router::service::Service<()> {
     Router::<()>::new()
-        .mount(kynos::routes![recording, recording_head, untagged])
+        .mount(kynos::routes![
+            recording,
+            recording_head,
+            untagged,
+            overreaching
+        ])
         .build(())
         .expect("a describable router")
 }
@@ -195,6 +229,26 @@ async fn a_suffix_range_counts_from_the_end() {
         reply.field("content-range").as_deref(),
         Some("bytes 30-35/36")
     );
+}
+
+/// A source answering past the span it was asked for is cut back to it.
+///
+/// Section 14.4: a 206's content is exactly the octets its `Content-Range`
+/// names, and the `Content-Length` is already sent before anything is read.
+#[tokio::test]
+async fn a_read_past_the_span_is_cut_to_the_span() {
+    let reply = get(&service(), "/recordings/overreaching")
+        .header("range", "bytes=10-19")
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(
+        reply.field("content-range").as_deref(),
+        Some("bytes 10-19/36")
+    );
+    assert_eq!(reply.field("content-length").as_deref(), Some("10"));
+    assert_eq!(reply.body, &RECORDING[10..=19]);
 }
 
 /// 416, stating the complete length rather than a part.
