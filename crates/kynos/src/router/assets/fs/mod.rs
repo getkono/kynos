@@ -43,10 +43,15 @@ impl Directory {
     ///
     /// The path is resolved once, here, so a relative one is relative to the
     /// process's working directory at build time rather than at request time.
+    /// Resolution is lexical, as [`std::path::absolute`]: no link is followed
+    /// and the root need not exist yet. Where it cannot be made absolute (an
+    /// empty path, or a working directory that cannot be read) it is kept as
+    /// given.
     #[must_use]
     pub fn new(root: impl Into<PathBuf>) -> Self {
+        let root = root.into();
         Self {
-            root: root.into(),
+            root: std::path::absolute(&root).unwrap_or(root),
             cache_control: Some(super::DEFAULT_CACHE_CONTROL),
             index: Some("index.html"),
         }
