@@ -54,9 +54,37 @@ where
     /// wherever it is used, so such a pair fails the build that instantiates
     /// it rather than the description of its route.
     ///
-    /// A marker parameter that the other body refuses keeps the pair: beside
-    /// [`Text`], `text/plain; charset=iso-8859-1` is offered the Latin-1
-    /// requests `Text` turns away.
+    /// A marker parameter does not keep the pair: a request need not repeat
+    /// it, so a bare `text/plain` would reach both [`Text`] and a marker
+    /// spelled `text/plain; charset=iso-8859-1`, in either order,
+    ///
+    /// ```compile_fail
+    /// use kynos::{
+    ///     extract::{body::{OneOf, binary::Binary, text::Text}, describe::RequestContent},
+    ///     http::media::MediaType,
+    /// };
+    ///
+    /// struct Latin1;
+    /// impl MediaType for Latin1 {
+    ///     const MEDIA_TYPE: &'static str = "text/plain; charset=iso-8859-1";
+    /// }
+    ///
+    /// OneOf::<Text, Binary<Latin1>>::media_types();
+    /// ```
+    ///
+    /// ```compile_fail
+    /// use kynos::{
+    ///     extract::{body::{OneOf, binary::Binary, text::Text}, describe::RequestContent},
+    ///     http::media::MediaType,
+    /// };
+    ///
+    /// struct Latin1;
+    /// impl MediaType for Latin1 {
+    ///     const MEDIA_TYPE: &'static str = "text/plain; charset=iso-8859-1";
+    /// }
+    ///
+    /// OneOf::<Binary<Latin1>, Text>::media_types();
+    /// ```
     ///
     /// The refusal holds on each path that reaches the pair on its own:
     /// describing the route,
