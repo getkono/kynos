@@ -61,6 +61,7 @@ use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, deco
 use kynos::{
     error::rejection::AuthRejection,
     prelude::*,
+    router::service::Service,
     security::{
         Authenticates, Authenticator, Scope,
         auth::{Auth, MaybeAuth, Scoped, Scopes},
@@ -443,18 +444,25 @@ async fn feed(caller: MaybeAuth<AccessToken>) -> Json<Subject> {
     })
 }
 
-#[tokio::main]
-async fn main() -> kynos::Result<()> {
+/// The whole API, built over a seeded key store.
+fn service() -> kynos::Result<Service<App>> {
     let router = Router::<App>::new().mount(kynos::routes![sign_in, me, reports, feed]);
-
-    println!("{}", router.openapi()?.to_json()?);
 
     let context = App {
         keys: std::sync::Arc::new(Keys::seeded()),
         passwords: Passwords,
     };
 
-    Server::new(router.build(context)?)
+    router.build(context)
+}
+
+#[tokio::main]
+async fn main() -> kynos::Result<()> {
+    let service = service()?;
+
+    println!("{}", service.openapi().to_json()?);
+
+    Server::new(service)
         .bind((Ipv4Addr::UNSPECIFIED, 3000))
         .serve()
         .await
