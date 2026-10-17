@@ -2,8 +2,9 @@
 //!
 //! Two round trips. Whatever instant the input parses to, its IMF-fixdate
 //! parses back to it. And the input's first eight octets, read as seconds
-//! since the epoch and kept within the four-digit years IMF-fixdate spells,
-//! name an instant that renders to an IMF-fixdate and parses back unchanged.
+//! since the epoch, name an instant that renders to an IMF-fixdate and parses
+//! back unchanged exactly when it falls within the four-digit years
+//! IMF-fixdate spells.
 
 #![no_main]
 
@@ -30,9 +31,17 @@ fuzz_target!(|data: &[u8]| {
     let mut seconds = [0; 8];
     let prefix = data.len().min(8);
     seconds[..prefix].copy_from_slice(&data[..prefix]);
-    let time = UNIX_EPOCH + Duration::from_secs(u64::from_le_bytes(seconds) % YEAR_10000);
+    let seconds = u64::from_le_bytes(seconds);
+    // Past the platform's `SystemTime` there is no instant to render.
+    let Some(time) = UNIX_EPOCH.checked_add(Duration::from_secs(seconds)) else {
+        return;
+    };
 
-    let rendered = fuzz::format_date(time).expect("an instant after the epoch renders");
+    let Some(rendered) = fuzz::format_date(time) else {
+        assert!(seconds >= YEAR_10000, "{seconds} s did not render");
+        return;
+    };
+    assert!(seconds < YEAR_10000, "{seconds} s rendered as {rendered:?}");
     assert_eq!(
         rendered.len(),
         "Sun, 06 Nov 1994 08:49:37 GMT".len(),
