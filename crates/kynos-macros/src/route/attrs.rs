@@ -8,24 +8,30 @@ use crate::route::args::expect_str;
 /// Splits a doc comment into its summary and description.
 ///
 /// The first paragraph becomes the operation's `summary` and the remainder its
-/// `description`, matching how the specification distinguishes the two.
-pub(crate) fn split_doc(lines: &[String]) -> (Option<String>, Option<String>) {
-    let trimmed: Vec<&str> = lines.iter().map(|line| line.trim()).collect();
-    let first_blank = trimmed.iter().position(|line| line.is_empty());
+/// `description`, matching how the specification distinguishes the two. The
+/// summary is plain text, so its lines join into one; the description is
+/// CommonMark, so it keeps the indentation its Markdown depends on, less what
+/// every line of the comment shares (see
+/// [`doc_markdown`](crate::derive::common::doc_markdown)).
+pub(crate) fn split_doc(texts: &[String]) -> (Option<String>, Option<String>) {
+    let lines = crate::derive::common::doc_markdown(texts);
+    let first_blank = lines.iter().position(|line| line.is_empty());
+    let (summary, rest) = match first_blank {
+        Some(index) => (&lines[..index], &lines[index + 1..]),
+        None => (&lines[..], &[][..]),
+    };
 
-    match first_blank {
-        None if trimmed.is_empty() => (None, None),
-        None => (Some(trimmed.join(" ")), None),
-        Some(index) => {
-            let summary = trimmed[..index].join(" ");
-            let rest = trimmed[index + 1..].join("\n");
-            let rest = rest.trim().to_owned();
-            (
-                (!summary.is_empty()).then_some(summary),
-                (!rest.is_empty()).then_some(rest),
-            )
-        }
-    }
+    let summary = summary
+        .iter()
+        .map(|line| line.trim())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let rest = rest.join("\n");
+    let rest = rest.trim_start_matches('\n').trim_end();
+    (
+        (!summary.is_empty()).then_some(summary),
+        (!rest.is_empty()).then(|| rest.to_owned()),
+    )
 }
 
 /// Collects the text of every `#[doc]` attribute on an item.

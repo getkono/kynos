@@ -206,10 +206,10 @@ fn serde_rename(field: &Field) -> syn::Result<Option<String>> {
     Ok(found)
 }
 
-/// The text of an item's doc comment, with its paragraphs intact; the fallback
-/// for an unwritten description.
+/// The text of an item's doc comment as the CommonMark it was written in; the
+/// fallback for an unwritten description.
 pub(crate) fn doc_string(attrs: &[syn::Attribute]) -> Option<String> {
-    let text = attrs
+    let texts: Vec<String> = attrs
         .iter()
         .filter_map(|attribute| match &attribute.meta {
             syn::Meta::NameValue(pair) if pair.path.is_ident("doc") => match &pair.value {
@@ -221,12 +221,50 @@ pub(crate) fn doc_string(attrs: &[syn::Attribute]) -> Option<String> {
             },
             _ => None,
         })
-        .map(|line| line.trim().to_owned())
-        .collect::<Vec<_>>()
-        .join("\n");
+        .collect();
 
-    let text = text.trim().to_owned();
-    (!text.is_empty()).then_some(text)
+    let text = doc_markdown(&texts).join("\n");
+    let text = text.trim_start_matches('\n').trim_end();
+    (!text.is_empty()).then(|| text.to_owned())
+}
+
+/// The lines of a doc comment's `#[doc]` texts, with the indentation every
+/// non-blank line shares removed and each blank line emptied.
+///
+/// Only the shared indentation goes - rustdoc's one space after `///` - so an
+/// indented code block, a nested list item and a trailing two-space hard break
+/// reach a CommonMark description as written. One text spanning several lines
+/// contributes each of them. Indentation is counted in ASCII spaces and tabs,
+/// so the shared prefix removed is a whole number of characters on every line.
+pub(crate) fn doc_markdown(texts: &[String]) -> Vec<&str> {
+    // `split` rather than `lines`, which yields nothing for `#[doc = ""]`.
+    let lines: Vec<&str> = texts
+        .iter()
+        .flat_map(|text| text.split('\n'))
+        .map(|line| line.strip_suffix('\r').unwrap_or(line))
+        .collect();
+    let indent = |line: &str| {
+        line.bytes()
+            .take_while(|byte| matches!(byte, b' ' | b'\t'))
+            .count()
+    };
+    let shared = lines
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| indent(line))
+        .min()
+        .unwrap_or(0);
+
+    lines
+        .into_iter()
+        .map(|line| {
+            if line.trim().is_empty() {
+                ""
+            } else {
+                &line[shared..]
+            }
+        })
+        .collect()
 }
 
 /// A `const NAMES` item listing the wire names of every field, in order.
