@@ -1194,6 +1194,29 @@ async fn negotiation_picks_what_the_client_asked_for() {
     );
 }
 
+/// Repeated `Accept-Encoding` lines are one field (RFC 9110 section 5.3), so
+/// `gzip;q=0.1` on one line and `br` on another choose brotli. Sent in both
+/// orders, so a reader of only the first line or only the last is caught
+/// either way.
+#[tokio::test]
+async fn every_accept_encoding_line_is_read() {
+    let service = served().build(()).expect("a servable router");
+
+    for (first, second) in [("gzip;q=0.1", "br"), ("br", "gzip;q=0.1")] {
+        let reply = get(&service, "/static/css/app.css")
+            .header("accept-encoding", first)
+            .header("accept-encoding", second)
+            .call()
+            .await;
+
+        assert_eq!(
+            reply.field("content-encoding").as_deref(),
+            Some("br"),
+            "lines {first:?} then {second:?}"
+        );
+    }
+}
+
 /// A range is taken from the octets actually sent, guarded by that form's tag.
 ///
 /// The case this whole feature exists for. Before it, a client resuming an
