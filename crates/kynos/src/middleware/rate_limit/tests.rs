@@ -246,6 +246,13 @@ fn a_legacy_refusal_reports_the_refusing_quota_with_the_longest_reset() {
     ];
 
     assert_eq!(refused_ceiling(hour, &limits), "100");
+
+    // Of equal waits, the first consulted.
+    let tied = [
+        ServiceLimit::new("hourly", 100, 0, hour),
+        ServiceLimit::new("tenants", 400, 0, hour),
+    ];
+    assert_eq!(refused_ceiling(hour, &tied), "100");
 }
 
 /// A policy may refuse without reporting any limit as exhausted; the first
