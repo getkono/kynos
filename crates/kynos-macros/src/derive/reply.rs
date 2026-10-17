@@ -9,7 +9,7 @@
 //!
 //! `status` is required on every variant, names a final response, and is
 //! unique. `description` falls back to the variant's doc comment, then the
-//! reason phrase.
+//! reason phrase, then a sentence of the status's class.
 //!
 //! A bodied variant is described and written as `application/json`, so its
 //! payload must be `serde::Serialize` (not `IntoResponse`, which `u32` or
@@ -131,11 +131,12 @@ fn response(variant: &Variant, status: u16, description: Option<&str>) -> TokenS
         .or_else(|| doc_string(&variant.attrs));
     let description = description.map_or_else(
         || {
+            let fallback = class_sentence(status);
             quote! {
                 ::kynos::http::StatusCode::from_u16(#status)
                     .ok()
                     .and_then(|status| status.canonical_reason())
-                    .unwrap_or("the request succeeded")
+                    .unwrap_or(#fallback)
             }
         },
         |text| quote!(#text),
@@ -163,6 +164,15 @@ fn response(variant: &Variant, status: u16, description: Option<&str>) -> TokenS
     );
 
     quote!(responses = responses.with(#status, #built);)
+}
+
+/// What a status with no reason phrase means, by its class (RFC 9110 §15).
+fn class_sentence(status: u16) -> &'static str {
+    match status {
+        200..=299 => "the request succeeded",
+        300..=399 => "further action is needed to complete the request",
+        _ => "the request failed",
+    }
 }
 
 /// One variant, as the match arm that writes it; the mirror of [`response`].
