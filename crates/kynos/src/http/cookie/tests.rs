@@ -42,6 +42,8 @@ fn a_jar_is_split_the_way_the_grammar_writes_it() {
         // agent serialises one as its bare value (RFC 6265bis section 5.8.3).
         (&["flag"], &[("", "flag")]),
         (&["a=1; flag"], &[("a", "1"), ("", "flag")]),
+        // A nameless value is unquoted like any other value.
+        (&[r#""x""#], &[("", "x")]),
         // An explicitly empty value is the same thing spelled out.
         (&["a="], &[("a", "")]),
         // Empty entries are skipped rather than yielding empty names.
