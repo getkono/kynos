@@ -1,0 +1,5 @@
+error: a `flatten`ed field is described as its own members, and a form carries each field as parts under the field's own name. Declare those members as fields of the form
+  --> tests/ui/macros/multipart_flatten.rs:11:13
+   |
+11 |     #[serde(flatten)]
+   |             ^^^^^^^

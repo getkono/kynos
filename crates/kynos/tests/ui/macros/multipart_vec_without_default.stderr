@@ -1,0 +1,5 @@
+error: a `Vec` field is carried by no part when it is empty, and its description, without `default`, requires it. Mark it `#[serde(default)]`, so an empty list and a missing part are one value in both directions
+ --> tests/ui/macros/multipart_vec_without_default.rs:7:13
+  |
+7 |     images: Vec<kynos::extract::body::multipart::FilePart>,
+  |             ^^^

@@ -98,6 +98,7 @@ struct Session {
 struct Upload {
     name: String,
     caption: Option<String>,
+    #[serde(default)]
     images: Vec<kynos::extract::body::multipart::FilePart>,
 }
 

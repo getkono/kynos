@@ -20,7 +20,9 @@ use super::{App, Echo, echo_value, octets, post, request};
 struct EchoParts {
     id: String,
     message: String,
+    #[serde(default)]
     values: Vec<String>,
+    #[serde(default)]
     labels: Vec<String>,
 }
 

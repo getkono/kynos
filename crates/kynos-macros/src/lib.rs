@@ -835,6 +835,7 @@ pub fn derive_cookies(item: TokenStream) -> TokenStream {
 /// struct Upload {
 ///     name: String,
 ///     caption: Option<String>,
+///     #[serde(default)]
 ///     images: Vec<FilePart>,
 /// }
 /// ```
@@ -849,18 +850,27 @@ pub fn derive_cookies(item: TokenStream) -> TokenStream {
 /// ignored. The element type converts through `FromPart` and `IntoPart`, which
 /// Kynos implements for `FilePart`, `String` and `Bytes`.
 ///
-/// A part naming no declared field is ignored.
+/// A part naming no declared field is ignored, unless the struct carries
+/// `#[serde(deny_unknown_fields)]`, which closes its description and makes such
+/// a part a 422.
 ///
-/// There is no attribute of its own. Derive [`Schema`](macro@Schema) alongside
-/// to put the parts in the description; both read the part names from the
-/// field's identifier, or serde's `rename` and `rename_all` when present.
-/// A split `rename(serialize = ..., deserialize = ...)` whose sides differ is
-/// refused on any field, even one serde uses one way, and so is a split
-/// container `rename_all(serialize = ..., deserialize = ...)` whose sides
-/// differ or which names one side only: the part is read and written under one
-/// name, so neither side can be it. Sides that agree are the one name or style
-/// they spell.
-#[proc_macro_derive(MultipartForm)]
+/// There is no attribute of its own; it reads serde's, without requiring a
+/// serde derive. Derive [`Schema`](macro@Schema) alongside to put the parts in
+/// the description; both read the part names from the field's identifier, or
+/// serde's `rename` and `rename_all` when present, and agree on which parts
+/// are required. A field's `#[serde(default)]` or `#[serde(default = "path")]`
+/// makes its part optional, filled from that default when left out. A `Vec<T>`
+/// field must carry one: an empty list is written as no part, so without it
+/// the description would require a part the type need not produce.
+///
+/// Refused, since the part is read and written under one name with no serde in
+/// between: a split `rename(serialize = ..., deserialize = ...)` whose sides
+/// differ on any field, even one serde uses one way, and a split container
+/// `rename_all(serialize = ..., deserialize = ...)` whose sides differ or which
+/// names one side only (sides that agree are the one name or style they
+/// spell); a field's `alias`, `flatten`, `skip`, `skip_serializing`,
+/// `skip_deserializing` and `skip_serializing_if`; and a container `default`.
+#[proc_macro_derive(MultipartForm, attributes(serde))]
 pub fn derive_multipart_form(item: TokenStream) -> TokenStream {
     derive::multipart::expand(item)
 }

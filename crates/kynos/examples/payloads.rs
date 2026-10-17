@@ -108,11 +108,14 @@ struct ProductForm {
 /// No serde derives: a multipart body is decoded part by part rather than
 /// through a `Deserializer`, so `MultipartForm` is what says how the parts
 /// travel — in both directions, from this one declaration — and `Schema` what
-/// puts them in the description.
+/// puts them in the description. Both still read serde's attributes, so
+/// `default` is how a field says its part may be left out: an empty `images`
+/// is written as no part at all, so the description must not require one.
 #[allow(dead_code)]
 #[derive(Schema, MultipartForm)]
 struct Upload {
     name: String,
+    #[serde(default)]
     #[schema(max_items = 8)]
     images: Vec<kynos::extract::body::multipart::FilePart>,
 }

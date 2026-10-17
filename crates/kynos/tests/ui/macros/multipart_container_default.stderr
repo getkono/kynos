@@ -1,0 +1,5 @@
+error: a container `default` fills a field left out from the form's own `Default`, and a form is read one part at a time, never built whole. Put `#[serde(default)]` on each field that may be left out
+ --> tests/ui/macros/multipart_container_default.rs:6:9
+  |
+6 | #[serde(default)]
+  |         ^^^^^^^

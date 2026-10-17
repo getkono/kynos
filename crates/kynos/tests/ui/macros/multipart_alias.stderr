@@ -1,0 +1,5 @@
+error: an `alias` gives this field a second part name, and a part is read and written under one. Drop the `alias`, or make the name it carries the field's `rename`
+ --> tests/ui/macros/multipart_alias.rs:7:13
+  |
+7 |     #[serde(alias = "title")]
+  |             ^^^^^

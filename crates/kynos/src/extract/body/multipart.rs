@@ -28,7 +28,12 @@ use crate::{
 /// field names, per-part media types, and encodings in both directions.
 /// There is no dynamic-field iterator: a handler that accepts arbitrary part
 /// names cannot describe them. For a variable number of uploads, declare one
-/// field of type `Vec<FilePart>`.
+/// field of type `Vec<FilePart>`, marked `#[serde(default)]`: an empty list is
+/// no part at all, which the description then admits.
+///
+/// The parts `T`'s description requires are the parts the decoder requires:
+/// `#[derive(MultipartForm)]` documents the serde attributes that decide
+/// which, and the ones it refuses because a part cannot follow them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MultipartForm<T>(pub T);
 
