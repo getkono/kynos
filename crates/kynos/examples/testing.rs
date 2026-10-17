@@ -91,8 +91,10 @@ fn service() -> kynos::Result<kynos::router::service::Service<()>> {
         .build(())
 }
 
+// `pub(crate)` so `tests/examples.rs`, which includes this file as a module,
+// can run it.
 #[tokio::main]
-async fn main() -> kynos::Result<()> {
+pub(crate) async fn main() -> kynos::Result<()> {
     let client = TestClient::new(service()?);
 
     // A response is asserted on the way past. `assert_status` returns `&Self`
