@@ -48,7 +48,7 @@ jobs:
         shard: [0, 1, 2, 3]
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # The diff is taken from the merge base, which a shallow clone lacks.
           fetch-depth: 0
@@ -82,7 +82,7 @@ jobs:
         job: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Set up
         uses: ./.github/actions/setup
       - name: Test this night's shard
