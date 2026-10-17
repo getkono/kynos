@@ -63,6 +63,10 @@ fn a_translated_pattern_matches_as_ecma_262_reads_it() {
         (r"^(?:a{2})*$", "aaaa", true),
         (r"^(?:a{2})*$", "aaa", false),
         (r"^(?<año>a)$", "a", true),
+        // `\0` with no digit after it: NUL, inside a class as outside one.
+        (r"^a\0b$", "a\0b", true),
+        (r"^a\0b$", "a0b", false),
+        (r"^[\0-\x1F]+$", "\0\x1F", true),
         // Not anchored unless it says so.
         ("b", "abc", true),
         ("", "anything", true),
@@ -100,7 +104,48 @@ fn refusals() -> Vec<(&'static str, &'static str)> {
             "(?<a.b>x)",
             "a group name that is not an ECMA-262 identifier",
         ),
+        (r"\01", "`\\0` followed by a digit"),
+        (r"[\1]", "a decimal escape such as `\\1` in a class"),
     ]
+}
+
+/// `\0` is rewritten, and the rest of the pattern copied as written.
+#[test]
+fn a_nul_escape_is_written_as_the_engine_reads_nul() {
+    assert_eq!(translate(r"^a\0b[\0]$").as_deref(), Ok(r"^a\x00b[\x00]$"));
+}
+
+/// What ECMA-262 reads and the engine does not parse is refused by its
+/// name, with what to write instead.
+#[test]
+fn an_escape_only_ecma_262_parses_is_refused_by_name() {
+    for (pattern, named, instead) in [
+        (r"[\b]", "`[\\b]`", "`\\x08`"),
+        (r"\cJ", "`\\cJ`", "`\\x0A`"),
+        (r"[\cj]", "`\\cj`", "`\\x0A`"),
+        (r"\cZ", "`\\cZ`", "`\\x1A`"),
+    ] {
+        let reason = translate(pattern).expect_err(pattern);
+        assert!(
+            reason.contains(named) && reason.contains(instead),
+            "`{pattern}`: expected {named} and {instead}, got {reason:?}"
+        );
+    }
+}
+
+/// `\c` without an ASCII letter after it is no control escape in either
+/// dialect, so it is refused as no regular expression, at the escape.
+#[test]
+fn a_control_escape_without_a_letter_is_refused_at_the_escape() {
+    for (pattern, at) in [(r"\c1", 0), (r"\c", 0), (r"ab\c", 2)] {
+        let reason = translate(pattern).expect_err(pattern);
+        let expects =
+            format!("not a regular expression: `\\c` takes an ASCII letter, at byte {at}");
+        assert!(
+            reason.contains(&expects),
+            "`{pattern}`: expected {expects:?}, got {reason:?}"
+        );
+    }
 }
 
 #[test]
@@ -128,6 +173,9 @@ fn each_spelling_of_a_refused_construct_is_refused() {
         (r"\B{2}", "a quantified assertion"),
         ("[^]a]", "a `]` first in a class"),
         ("[]-a]", "a `]` first in a class"),
+        (r"\08", "`\\0` followed by a digit"),
+        (r"[\0123]", "`\\0` followed by a digit"),
+        (r"[a\7]", "a decimal escape such as `\\1` in a class"),
         (
             "(?<a[0]>x)",
             "a group name that is not an ECMA-262 identifier",
@@ -277,7 +325,15 @@ fn every_dialect_refusal_has_a_case() {
 /// no regular expression at all as that.
 #[test]
 fn a_pattern_the_engine_cannot_run_is_refused() {
-    for pattern in ["a(?=b)", "a(?!b)", "(?<=a)b", "(?<!a)b", r"(a)\1"] {
+    for pattern in [
+        "a(?=b)",
+        "a(?!b)",
+        "(?<=a)b",
+        "(?<!a)b",
+        r"(a)\1",
+        r"(a)\12",
+        r"(a)(b)(c)(d)(e)(f)(g)(h)\8",
+    ] {
         let reason = translate(pattern).expect_err(pattern);
         assert!(
             reason.contains("lookaround and backreferences"),

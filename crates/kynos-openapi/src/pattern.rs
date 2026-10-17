@@ -19,6 +19,9 @@
 //! - Where ECMA-262 reads a construct the engine cannot — lookaround and
 //!   backreferences, which need a backtracking search — it is refused, since
 //!   no check could enforce it.
+//! - Where ECMA-262 reads an escape the engine does not parse, it is rewritten
+//!   when it stands alone (`\0`, NUL) and otherwise refused by its name with
+//!   the escape to write instead (`[\b]`, `\cX`).
 //!
 //! A pattern [`translate`] returns has been compiled, so the engine runs it.
 //! Kynos translates a derived field's pattern when the derive expands, and a
@@ -27,7 +30,7 @@
 use regex_syntax::ast::{
     self, Assertion, AssertionKind, Ast, ClassPerl, ClassPerlKind, ClassSetBinaryOp, ClassSetItem,
     ClassUnicode, ClassUnicodeKind, ClassUnicodeOpKind, ErrorKind, GroupKind, HexLiteralKind,
-    Literal, LiteralKind, Span, SpecialLiteralKind, parse::Parser,
+    Literal, LiteralKind, Span, SpecialLiteralKind, parse::ParserBuilder,
 };
 
 use std::sync::LazyLock;
@@ -47,6 +50,14 @@ const DOT: &str = r"[^\n\r\x{2028}\x{2029}]";
 /// `\b` and `\B`, between ASCII word characters.
 const WORD_BOUNDARY: &str = r"(?-u:\b)";
 const NOT_WORD_BOUNDARY: &str = r"(?-u:\B)";
+/// `\0` with no digit after it: NUL, which the engine reads only as octal.
+const NUL: &str = r"\x00";
+
+/// Why lookaround and backreferences are refused.
+const BACKTRACKING: &str = "lookaround and backreferences are ECMA-262, but the `regex` engine \
+    the check runs with does not implement them: both need a backtracking search, and it matches \
+    in time linear in the input instead. Express the bound without them, or check it in the \
+    handler and describe it in prose";
 
 /// An ECMA-262 group name: an identifier. The engine's names are a letter or
 /// `_` and then letters, digits, `_`, `.`, `[` and `]`, so this refuses what
@@ -84,19 +95,30 @@ pub struct UntranslatablePattern {
 /// # Errors
 ///
 /// [`UntranslatablePattern`] where `source` is no regular expression, writes a
-/// construct the engine cannot run (lookaround, backreferences), writes one
-/// the two dialects read apart, or translates to a pattern the engine cannot
-/// compile.
+/// construct the engine cannot run (lookaround, backreferences) or an escape
+/// it does not parse (`[\b]`, `\cX`), writes one the two dialects read
+/// apart, or translates to a pattern the engine cannot compile.
 pub fn translate(source: &str) -> Result<String, UntranslatablePattern> {
     translated(source).map_err(|reason| UntranslatablePattern { reason })
 }
 
 /// [`translate`], refusing with the reason alone.
 fn translated(source: &str) -> Result<String, String> {
-    let ast = Parser::new()
+    // Octal makes `\0` a literal the translator rewrites, and `\1` one it
+    // refuses as the backreference ECMA-262 reads it as; no octal escape
+    // reaches the engine.
+    let ast = ParserBuilder::new()
+        .octal(true)
+        .build()
         .parse(source)
         .map_err(|error| unreadable(&error))?;
-    let mut replacements = ast::visit(&ast, Translator::default())?;
+    let mut replacements = ast::visit(
+        &ast,
+        Translator {
+            source,
+            replacements: Vec::new(),
+        },
+    )?;
     replacements.sort_by_key(|(span, _)| span.start.offset);
 
     let mut translated = String::with_capacity(source.len());
@@ -113,15 +135,36 @@ fn translated(source: &str) -> Result<String, String> {
     Ok(translated)
 }
 
-/// Why the parser refused `source`.
+/// Why the parser refused its pattern, naming an escape ECMA-262 reads and
+/// the parser does not.
 fn unreadable(error: &ast::Error) -> String {
+    let pattern = error.pattern();
+    let span = error.span();
+    let written = &pattern[span.start.offset..span.end.offset];
     match error.kind() {
-        ErrorKind::UnsupportedLookAround | ErrorKind::UnsupportedBackreference => {
-            "lookaround and backreferences are ECMA-262, but the `regex` engine the check runs \
-             with does not implement them: both need a backtracking search, and it matches in \
-             time linear in the input instead. Express the bound without them, or check it in \
-             the handler and describe it in prose"
+        ErrorKind::UnsupportedLookAround => BACKTRACKING.to_owned(),
+        // With octal on, the parser reads `\1` to `\7` as octal and refuses
+        // `\8` and `\9`, which ECMA-262 reads as backreferences too.
+        ErrorKind::EscapeUnrecognized if matches!(written, r"\8" | r"\9") => {
+            BACKTRACKING.to_owned()
+        }
+        ErrorKind::ClassEscapeInvalid if written == r"\b" => {
+            "this pattern writes `[\\b]`, which ECMA-262 reads as U+0008 BACKSPACE and the \
+             `regex` engine refuses; write `\\x08`"
                 .to_owned()
+        }
+        ErrorKind::EscapeUnrecognized if written == r"\c" => {
+            match pattern[span.end.offset..].chars().next() {
+                Some(letter) if letter.is_ascii_alphabetic() => format!(
+                    "this pattern writes `\\c{letter}`, ECMA-262's control escape, which the \
+                     `regex` engine does not read; write `\\x{:02X}`",
+                    u32::from(letter) % 32
+                ),
+                _ => format!(
+                    "this is not a regular expression: `\\c` takes an ASCII letter, at byte {}",
+                    span.start.offset
+                ),
+            }
         }
         kind => format!(
             "this is not a regular expression: {kind}, at byte {}",
@@ -132,12 +175,13 @@ fn unreadable(error: &ast::Error) -> String {
 
 /// Collects each rewrite, in source order, and refuses what the two dialects
 /// read differently.
-#[derive(Default)]
-struct Translator {
+struct Translator<'a> {
+    /// The pattern the visited AST was parsed from.
+    source: &'a str,
     replacements: Vec<(Span, &'static str)>,
 }
 
-impl ast::Visitor for Translator {
+impl ast::Visitor for Translator<'_> {
     type Output = Vec<(Span, &'static str)>;
     type Err = String;
 
@@ -161,7 +205,7 @@ impl ast::Visitor for Translator {
                 _ => Ok(()),
             },
             Ast::Flags(_) => Err(not_ecma("an inline flag group such as `(?i)`")),
-            Ast::Literal(literal) => literal_escape(literal, false),
+            Ast::Literal(literal) => self.literal(literal, false),
             Ast::Dot(span) => {
                 self.replacements.push((**span, DOT));
                 Ok(())
@@ -205,10 +249,10 @@ impl ast::Visitor for Translator {
     fn visit_class_set_item_pre(&mut self, item: &ClassSetItem) -> Result<(), String> {
         match item {
             ClassSetItem::Empty(_) | ClassSetItem::Union(_) => Ok(()),
-            ClassSetItem::Literal(literal) => literal_escape(literal, true),
+            ClassSetItem::Literal(literal) => self.literal(literal, true),
             ClassSetItem::Range(range) => {
-                literal_escape(&range.start, true)?;
-                literal_escape(&range.end, true)
+                self.literal(&range.start, true)?;
+                self.literal(&range.end, true)
             }
             ClassSetItem::Ascii(_) => Err(not_ecma(
                 "a POSIX class such as `[[:alpha:]]`, which ECMA-262 reads as a class of the \
@@ -233,7 +277,34 @@ impl ast::Visitor for Translator {
     }
 }
 
-impl Translator {
+impl Translator<'_> {
+    /// Rewrites `\0`, and refuses the other octal escapes and what
+    /// [`literal_escape`] refuses.
+    fn literal(&mut self, literal: &Literal, in_class: bool) -> Result<(), String> {
+        if literal.kind != LiteralKind::Octal {
+            return literal_escape(literal, in_class);
+        }
+        let escape = &self.source[literal.span.start.offset..literal.span.end.offset];
+        let digit_follows =
+            self.source[literal.span.end.offset..].starts_with(|c: char| c.is_ascii_digit());
+        if escape == r"\0" && !digit_follows {
+            self.replacements.push((literal.span, NUL));
+            Ok(())
+        } else if escape.starts_with(r"\0") {
+            Err(not_ecma(
+                "`\\0` followed by a digit, such as `\\01`, which ECMA-262 refuses; write NUL \
+                 as `\\x00` and the digit after it",
+            ))
+        } else if in_class {
+            Err(not_ecma(
+                "a decimal escape such as `\\1` in a class, which ECMA-262 refuses; write the \
+                 character as `\\u{...}`",
+            ))
+        } else {
+            Err(BACKTRACKING.to_owned())
+        }
+    }
+
     fn perl(&mut self, class: &ClassPerl) {
         let replacement = match (&class.kind, class.negated) {
             (ClassPerlKind::Digit, false) => DIGIT,
@@ -319,6 +390,7 @@ fn literal_escape(literal: &Literal, in_class: bool) -> Result<(), String> {
         | LiteralKind::HexBrace(HexLiteralKind::X | HexLiteralKind::UnicodeLong) => Err(not_ecma(
             "a `\\U` or `\\x{...}` escape; ECMA-262 writes a code point as `\\u{...}`",
         )),
+        // `Translator::literal` reads an octal escape before this does.
         LiteralKind::Octal
         | LiteralKind::Special(SpecialLiteralKind::Bell | SpecialLiteralKind::Space) => Err(
             not_ecma("an escape such as `\\a`; write the character as `\\u{...}`"),
