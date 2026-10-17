@@ -367,7 +367,8 @@ mod tests;
 /// The statuses and fields a [`Served`](served::Served) delivery can produce.
 ///
 /// 200, 206, 304, 412 and [`RangeRejection`]'s 416; no 400, since section 14.2
-/// ignores an unusable `Range`.
+/// ignores an unusable `Range`. The fields the builder adds only on request,
+/// `Cache-Control` and `Content-Disposition`, are declared optional.
 #[must_use]
 pub(crate) fn delivery_responses(
     registry: &mut Registry,
@@ -381,6 +382,15 @@ pub(crate) fn delivery_responses(
             kynos_openapi::model::schema::types::SchemaType::String,
         ))
     };
+    // The type's own description, optional here: a delivery names a file only
+    // where its builder asked for one. A drift away from an inline header must
+    // fail loudly rather than declare an undescribed field.
+    let mut disposition =
+        crate::response::disposition::ContentDisposition::response_headers(registry)
+            .into_values()
+            .find_map(|header| header.as_item().cloned())
+            .expect("ContentDisposition declares its header inline");
+    disposition.required = None;
 
     let mut responses = kynos_openapi::Responses::new()
         .with(
@@ -406,6 +416,13 @@ pub(crate) fn delivery_responses(
         (200, "Last-Modified", string()),
         (206, "Last-Modified", string()),
         (304, "Last-Modified", string()),
+        // Section 15.4.5: a 304 owes `Cache-Control` wherever the 200 carries
+        // it, and no other metadata, so `Content-Disposition` stops at 206.
+        (200, "Cache-Control", string()),
+        (206, "Cache-Control", string()),
+        (304, "Cache-Control", string()),
+        (200, "Content-Disposition", disposition.clone()),
+        (206, "Content-Disposition", disposition),
         (
             206,
             "Content-Range",

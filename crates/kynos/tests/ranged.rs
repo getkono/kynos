@@ -243,6 +243,13 @@ async fn a_current_copy_is_answered_with_304() {
     // Section 14.3: a 304 carries no representation, so it advertises no range
     // of one.
     assert_eq!(reply.field("accept-ranges"), None);
+    // Section 15.4.5: `Cache-Control` is owed wherever the 200 would carry
+    // it, and no other metadata is, so the download's name stays behind.
+    assert_eq!(
+        reply.field("cache-control").as_deref(),
+        Some("public, max-age=3600")
+    );
+    assert_eq!(reply.field("content-disposition"), None);
 }
 
 /// 304 from a date, where there is no tag to prefer.
