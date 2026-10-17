@@ -35,31 +35,33 @@ fn every_escape_is_refused() {
 /// The control: a path that stays inside resolves under the root.
 ///
 /// Without it, "every escape is refused" would pass for a resolver that refused
-/// everything.
+/// everything. Expectations are relative to the resolved root, since
+/// `Directory::new` makes `/srv/assets` absolute against the current drive on
+/// Windows.
 #[test]
 fn a_path_inside_the_root_resolves_under_it() {
     let directory = directory();
 
     for (requested, expected) in [
-        ("app.css", "/srv/assets/app.css"),
-        ("css/app.css", "/srv/assets/css/app.css"),
-        ("a/b/c.png", "/srv/assets/a/b/c.png"),
+        ("app.css", "app.css"),
+        ("css/app.css", "css/app.css"),
+        ("a/b/c.png", "a/b/c.png"),
         // A `.` segment and an empty one are noise rather than an escape.
-        ("./css/./app.css", "/srv/assets/css/app.css"),
-        ("css//app.css", "/srv/assets/css/app.css"),
-        ("", "/srv/assets"),
+        ("./css/./app.css", "css/app.css"),
+        ("css//app.css", "css/app.css"),
+        ("", ""),
         // A capture that looks absolute is not: an empty leading segment is
         // skipped rather than replacing the base, so it stays inside the root.
         // Worth pinning, because the obvious implementation --
         // `root.join(requested)` -- would have `/etc/passwd` *replace* the
         // root entirely, which is `Path::join`'s documented behaviour and the
         // classic way this goes wrong.
-        ("/etc/passwd", "/srv/assets/etc/passwd"),
-        ("//etc/passwd", "/srv/assets/etc/passwd"),
+        ("/etc/passwd", "etc/passwd"),
+        ("//etc/passwd", "etc/passwd"),
     ] {
         assert_eq!(
-            directory.resolve(requested).as_deref(),
-            Some(std::path::Path::new(expected)),
+            directory.resolve(requested),
+            Some(directory.root.join(expected)),
             "{requested}"
         );
     }
