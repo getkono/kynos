@@ -384,7 +384,7 @@ async fn create_user(Json(user): Json<User>) -> Result<Created<Json<User>>, Stor
 /// A permanent redirect, which is a status no handler body produces.
 #[kynos::get("/old-users")]
 async fn moved() -> Redirect<308> {
-    Redirect::to("/users")
+    Redirect::to(Location::from_static("/users"))
 }
 
 /// Guarded by a credential, and reaching both statuses the guard declares.

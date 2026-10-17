@@ -252,7 +252,10 @@ async fn list_users(Query(page): Query<Page>) -> Result<Json<Vec<User>>, StoreEr
 #[kynos::post("/users")]
 async fn create_user(Json(user): Json<User>) -> Result<Created<Json<User>>, StoreError> {
     let stored = insert(user)?;
-    Ok(Created::at(format!("/users/{}", stored.id), Json(stored)))
+    Ok(Created::at(
+        get_user::relative_uri(UserPath { id: stored.id }),
+        Json(stored),
+    ))
 }
 
 fn load(id: u64) -> Result<User, RowMissing> {

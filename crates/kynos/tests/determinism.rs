@@ -130,7 +130,7 @@ async fn put_customer(
 /// Places an order.
 #[kynos::post("/orders")]
 async fn create_order(Json(order): Json<Order>) -> Created<Json<Order>> {
-    Created::at("/orders/1", Json(order))
+    Created::at(Location::from_static("/orders/1"), Json(order))
 }
 
 /// The fixture description, as pretty-printed JSON.

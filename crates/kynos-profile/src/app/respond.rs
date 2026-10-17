@@ -52,7 +52,7 @@ async fn negotiated(
 /// `json-small`'s document, as a 201 naming where it lives.
 #[kynos::get("/json/created")]
 async fn created() -> Created<Json<Small>> {
-    Created::at("/json/small", Json(small()))
+    Created::at(Location::from_static("/json/small"), Json(small()))
 }
 
 /// Mounts this group's handlers.

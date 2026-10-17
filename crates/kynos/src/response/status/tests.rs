@@ -1,5 +1,5 @@
-/// A location arrives from three spellings, and the third is the reason the
-/// type exists.
+/// A location arrives from four spellings, and the URI is the reason the type
+/// exists.
 ///
 /// `relative_uri` returns an `http::Uri`, and neither that type nor `String`
 /// belongs to Kynos — so without a type of its own here, the sanctioned way to
@@ -9,13 +9,18 @@ mod a_location_takes_every_spelling {
     use crate::response::status::{Created, Location, Redirect};
 
     #[test]
-    fn the_three_spellings_agree() {
+    fn the_four_spellings_agree() {
         let uri: crate::http::Uri = "/users/42".parse().expect("a valid reference");
+        let literal = Location::from_static("/users/42");
 
-        assert_eq!(Location::from("/users/42"), Location::from(uri));
+        assert_eq!(literal, Location::from(uri));
         assert_eq!(
-            Location::from("/users/42"),
-            Location::from(String::from("/users/42"))
+            literal,
+            Location::try_from(String::from("/users/42")).expect("a field value")
+        );
+        assert_eq!(
+            literal,
+            "/users/42".parse::<Location>().expect("a field value")
         );
     }
 
@@ -40,7 +45,80 @@ mod a_location_takes_every_spelling {
     /// here would refuse a value the specification permits.
     #[test]
     fn a_relative_reference_is_not_refused() {
-        assert_eq!(Location::from("../sibling").as_str(), "../sibling");
+        assert_eq!(Location::from_static("../sibling").as_str(), "../sibling");
+    }
+}
+
+/// A `Location` is a field value by construction (RFC 9110 §5.5).
+///
+/// `Created` and `Redirect` declare the header `required`, so a value that
+/// cannot be sent must never reach them: refused where it is made, rather
+/// than dropped where it is sent.
+mod a_location_is_a_field_value {
+    use crate::{
+        http::header,
+        response::{
+            IntoResponse,
+            status::{Created, Location, Redirect},
+        },
+    };
+
+    /// Each would forge or truncate the message, or be stripped on receipt:
+    /// a control character, DEL, and whitespace at either end.
+    const REFUSED: &[&str] = &["/a\nb", "/a\rb", "/a\0b", "/a\u{7f}b", " /a", "/a\t"];
+
+    /// Field values that are not URI references are still sent as written;
+    /// grammar beyond the field is the caller's.
+    const SENT: &[&str] = &["", "/a b", "/a\tb", "/caf\u{e9}"];
+
+    #[test]
+    fn a_value_that_is_not_a_field_value_is_refused() {
+        for &value in REFUSED {
+            assert!(Location::try_from(value).is_err(), "{value:?}");
+            assert!(Location::try_from(value.to_owned()).is_err(), "{value:?}");
+            assert!(value.parse::<Location>().is_err(), "{value:?}");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "a `Location` is a field value")]
+    fn a_literal_that_is_not_a_field_value_panics() {
+        let _ = Location::from_static("/a\nb");
+    }
+
+    /// `From<Uri>` cannot refuse, so every URI `http` parses must already be
+    /// a field value, raw UTF-8 and the quotes and braces it tolerates
+    /// included.
+    #[test]
+    fn every_uri_is_a_field_value() {
+        let uri: crate::http::Uri = "/caf\u{e9}/\"{}\"?q=\u{e9}"
+            .parse()
+            .expect("a URI http tolerates");
+
+        let location = Location::from(uri);
+
+        assert_eq!(crate::response::status::validate(location.as_str()), Ok(()));
+    }
+
+    #[test]
+    fn every_accepted_value_is_sent_as_written() {
+        for &value in SENT {
+            let location = Location::try_from(value).expect("a field value");
+
+            let created = Created::at(location.clone(), ()).into_response();
+            let redirect = Redirect::<303>::to(location).into_response();
+
+            for response in [created, redirect] {
+                assert_eq!(
+                    response
+                        .headers()
+                        .get(header::LOCATION)
+                        .map(crate::http::HeaderValue::as_bytes),
+                    Some(value.as_bytes()),
+                    "{value:?}"
+                );
+            }
+        }
     }
 }
 
@@ -56,7 +134,7 @@ mod a_wrapper_produces_and_declares_one_status {
         http::{StatusCode, header},
         response::{
             IntoResponse, Responses,
-            status::{Accepted, Created, NoContent, Redirect},
+            status::{Accepted, Created, Location, NoContent, Redirect},
         },
         schema::registry::Registry,
     };
@@ -95,7 +173,8 @@ mod a_wrapper_produces_and_declares_one_status {
 
     #[test]
     fn created_sends_201_and_says_where() {
-        let response = Created::at("/users/42", Text("body".to_owned())).into_response();
+        let response = Created::at(Location::from_static("/users/42"), Text("body".to_owned()))
+            .into_response();
 
         assert_eq!(response.status(), StatusCode::CREATED);
         assert_eq!(
@@ -139,7 +218,8 @@ mod a_wrapper_produces_and_declares_one_status {
         where
             (): crate::response::status::ValidRedirectCode<CODE>,
         {
-            let response = Redirect::<CODE>::to("/elsewhere").into_response();
+            let response =
+                Redirect::<CODE>::to(Location::from_static("/elsewhere")).into_response();
 
             assert_eq!(response.status().as_u16(), CODE);
             assert_eq!(
@@ -236,7 +316,7 @@ mod a_wrapper_declares_the_body_it_forwards {
         http::{Response, StatusCode, body::Body, header},
         response::{
             IntoResponse, Responses,
-            status::{Accepted, Created},
+            status::{Accepted, Created, Location},
         },
         schema::registry::Registry,
     };
@@ -478,7 +558,11 @@ mod a_wrapper_declares_the_body_it_forwards {
     /// disagreement in the direction the wrapper is meant to close, not open.
     #[test]
     fn a_bodiless_status_beside_a_representation_leaves_the_wrapper_empty() {
-        let sent = Created::at("/things/1", ARepresentationAndABodilessStatus).into_response();
+        let sent = Created::at(
+            Location::from_static("/things/1"),
+            ARepresentationAndABodilessStatus,
+        )
+        .into_response();
 
         assert_eq!(sent.status(), StatusCode::CREATED);
         assert!(
@@ -507,7 +591,7 @@ mod a_wrapper_keeps_what_the_body_declared_for_its_own_status {
         http::{Response, StatusCode, body::Body, header},
         response::{
             IntoResponse, Responses,
-            status::{Accepted, Created},
+            status::{Accepted, Created, Location},
         },
         schema::registry::Registry,
     };
@@ -648,7 +732,7 @@ mod a_wrapper_keeps_what_the_body_declared_for_its_own_status {
     /// nothing created there is no `Location` to send.
     #[test]
     fn the_bodys_conflict_is_sent_as_a_conflict() {
-        let sent = Created::at("/users/1", CreateReply).into_response();
+        let sent = Created::at(Location::from_static("/users/1"), CreateReply).into_response();
 
         assert_eq!(sent.status(), StatusCode::CONFLICT);
         assert!(sent.headers().get(header::LOCATION).is_none());
@@ -697,7 +781,7 @@ mod a_failed_body_keeps_its_status {
         http::{Response, StatusCode, header},
         response::{
             IntoResponse,
-            status::{Accepted, Created},
+            status::{Accepted, Created, Location},
         },
     };
 
@@ -723,7 +807,8 @@ mod a_failed_body_keeps_its_status {
 
     #[test]
     fn created_sends_the_failure_and_no_location() {
-        let response = Created::at("/x", Json(Unserializable)).into_response();
+        let response =
+            Created::at(Location::from_static("/x"), Json(Unserializable)).into_response();
 
         assert_problem(&response);
         // Nothing was created, so there is nothing to point at.
