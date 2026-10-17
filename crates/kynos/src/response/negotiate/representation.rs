@@ -46,6 +46,7 @@ mod sealed {
 /// Sealed: the offerable set is exactly the codecs Kynos can describe.
 pub trait Representation: IntoResponse + Responses + sealed::SealedRepresentation {
     /// The media type this representation is offered under.
+    #[must_use]
     fn media_type() -> &'static str {
         Self::MEDIA_TYPE
     }
