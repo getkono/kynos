@@ -49,6 +49,30 @@ pub fn offers(headers: &HeaderMap, media_type: &str) -> bool {
     crate::extract::body::offers(headers, media_type)
 }
 
+/// The `range-spec`s a `Range` field `value` asks for, as written, or why it
+/// is ignored.
+///
+/// An `int-range` is `(Some(first), last)` and a `suffix-range` is
+/// `(None, Some(length))`.
+///
+/// # Errors
+///
+/// The reason the reader ignores the field for.
+pub fn range_specs(
+    value: &str,
+) -> Result<Vec<(Option<u64>, Option<u64>)>, crate::response::range::spec::Ignored> {
+    use crate::response::range::spec::Spec;
+
+    let specs = crate::response::range::spec::parse(value)?;
+    Ok(specs
+        .into_iter()
+        .map(|spec| match spec {
+            Spec::Offsets { first, last } => (Some(first), last),
+            Spec::Suffix { length } => (None, Some(length)),
+        })
+        .collect())
+}
+
 /// Whether the `const` check refusing a `OneOf` pair finds that a `Binary`
 /// `marker` and a codec's parameterless `body` type share a request.
 #[must_use]

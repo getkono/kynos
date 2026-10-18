@@ -828,7 +828,7 @@ are reached through `kynos::__private::fuzz`, which exists only under the
 | `forwarded` | `Forwarded::resolve` | trusting nobody answers with the peer, a scheme is lowercased, and `client_is_secure` follows it; trusting `n` hops answers with the `n`th of three known nearest hops written after the input, and under `X-Forwarded-For` with what its rightmost `n` members alone resolve to |
 | `media_type` | the codec matcher `offers` in `extract/body/mod.rs`, and the `const` `shares_requests` in `extract/body/alternative.rs` | a match agrees on type and subtype, a bare media type offers itself, and `shares_requests` finds a marker and a codec's type share a request exactly when `offers` hands one to both |
 | `query` | `__private::uri::query_pairs` | the pairs equal a byte-at-a-time form decoder's |
-| `range` | `Range::parse` and `select` | a field is ignored only for a reason this constructor can see, and a part lies inside the representation |
+| `range` | `Range::parse` and `select` | the specs read, or the reason the field is ignored, are a recogniser's transcribed from section 14.1.1's grammar plus the leniencies it lists, and the part selected is the first satisfiable spec cut to the representation |
 
 The search runs nightly rather than on a pull request because its verdict
 depends on how long it ran: a gate that fails on an input a longer run found is
