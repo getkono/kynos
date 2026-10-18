@@ -6,6 +6,9 @@
 //! reaches the absorbed operations alone while its metadata reaches the
 //! document, a security scheme is registered in the document, and
 //! `deny_unchecked_schemas` refuses the whole build.
+//!
+//! Below those, what a router makes of a malformed mount site, and the
+//! `operationId`s a mounted reference publishes.
 
 use std::{
     sync::{Arc, Mutex},
