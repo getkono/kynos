@@ -70,6 +70,7 @@ pub enum ServerError {
     #[error("graceful shutdown was forced by a repeated termination signal")]
     ShutdownForced,
     /// Mutual TLS conflicts with the existing description.
+    #[cfg(feature = "tls")]
     #[error("the OpenAPI component `MutualTls` conflicts with mandatory client authentication")]
     MutualTlsConflict,
     /// TLS configuration was invalid.
