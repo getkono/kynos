@@ -252,6 +252,9 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// constraints, prose and `#[deprecated]` as a named field does. A variant
 /// serde skips both ways is described nowhere, and one serde reads and never
 /// writes is described as serde reads it, under its prose and `#[deprecated]`.
+/// A `#[serde(field_identifier)]` or `#[serde(variant_identifier)]` enum's
+/// variants are all described whatever they skip, since serde's identifier
+/// visitor reads every declared variant.
 /// A tagged enum left with no variant to describe is a compile error, since
 /// its `oneOf` would hold no branch; without a tag it is the empty `enum`,
 /// which no value satisfies.
@@ -436,7 +439,9 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   describes a request serde refuses, and one leaving it out describes a
 ///   response serde writes. `#[serde(skip)]` leaves the variant out both ways.
 ///   `skip_serializing` alone on a variant is accepted, since every variant serde
-///   writes is one it reads.
+///   writes is one it reads. In a `#[serde(field_identifier)]` or
+///   `#[serde(variant_identifier)]` enum it is accepted and the variant
+///   described, since serde reads every variant of one and never writes it.
 /// - `#[serde(skip_deserializing)]` without `skip_serializing` on a named field
 ///   of an object that `deny_unknown_fields` closes, or beside a
 ///   `#[schema(open)]` flattened field whose type does not implement
