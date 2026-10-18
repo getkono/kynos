@@ -797,6 +797,124 @@ fn an_encoding_header_named_content_type_is_reported() {
     );
 }
 
+/// A response whose only defect is a `Content-Type` header the specification
+/// says shall be ignored.
+fn response_with_ignored_header() -> Response {
+    use crate::model::parameter::header::Header;
+
+    Response::new("ok").with_header(
+        "Content-Type",
+        Header::new(Schema::of_type(SchemaType::String)),
+    )
+}
+
+/// The content rules do not depend on where the object sits, so the `default`
+/// response is held to them as a keyed one is.
+#[test]
+fn the_default_responses_headers_are_checked() {
+    let item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("listUsers")
+            .with_responses(ok_responses().with_default(response_with_ignored_header())),
+    );
+
+    assert_eq!(
+        located_errors(&document_with(&[("/users", item)])),
+        vec![(
+            "#/paths/~1users/get/responses/default/headers".to_owned(),
+            SpecError::IgnoredHeader {
+                name: "Content-Type".to_owned()
+            },
+        )]
+    );
+}
+
+/// A reusable response is checked once, where it is defined, whether or not
+/// anything references it.
+#[test]
+fn a_reusable_responses_headers_are_checked_at_its_definition() {
+    let mut document = document_with(&[]);
+    document.components.responses.insert(
+        "Typed".to_owned(),
+        crate::RefOr::Item(response_with_ignored_header()),
+    );
+
+    assert_eq!(
+        located_errors(&document),
+        vec![(
+            "#/components/responses/Typed/headers".to_owned(),
+            SpecError::IgnoredHeader {
+                name: "Content-Type".to_owned()
+            },
+        )]
+    );
+}
+
+/// A media type declaring both `encoding` and `prefixEncoding`.
+#[cfg(feature = "openapi32")]
+fn conflicting_media_type() -> crate::model::body::media_type::MediaType {
+    use crate::model::body::{encoding::Encoding, media_type::MediaType};
+
+    let mut content = MediaType::new(Schema::of_type(SchemaType::Object));
+    content
+        .encoding
+        .insert("part".to_owned(), Encoding::new("text/plain"));
+    content.prefix_encoding = Some(vec![Encoding::new("text/plain")]);
+    content
+}
+
+/// Each error a 3.2 validation raises, with where it was raised.
+#[cfg(feature = "openapi32")]
+fn located_errors_3_2(document: &Document) -> Vec<(String, SpecError)> {
+    Validator::new(SpecVersion::V3_2)
+        .validate(document)
+        .into_iter()
+        .filter(|v| v.severity == super::Severity::Error)
+        .map(|v| (v.location, v.error))
+        .collect()
+}
+
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_reusable_request_bodys_media_types_are_checked_at_its_definition() {
+    use crate::model::body::RequestBody;
+
+    let mut document = document_with(&[]);
+    document.components.request_bodies.insert(
+        "Upload".to_owned(),
+        crate::RefOr::Item(RequestBody::new(
+            "multipart/mixed",
+            conflicting_media_type(),
+        )),
+    );
+
+    assert_eq!(
+        located_errors_3_2(&document),
+        vec![(
+            "#/components/requestBodies/Upload/content/multipart~1mixed".to_owned(),
+            SpecError::ConflictingEncoding,
+        )]
+    );
+}
+
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_reusable_media_type_is_checked_at_its_definition() {
+    let mut document = document_with(&[]);
+    document.components.media_types.insert(
+        "Parts".to_owned(),
+        crate::RefOr::Item(conflicting_media_type()),
+    );
+
+    assert_eq!(
+        located_errors_3_2(&document),
+        vec![(
+            "#/components/mediaTypes/Parts".to_owned(),
+            SpecError::ConflictingEncoding,
+        )]
+    );
+}
+
 /// Every component section's keys are checked, not five of them.
 ///
 /// `references/3.1.2.md:593`: "**All** the fixed fields declared above are

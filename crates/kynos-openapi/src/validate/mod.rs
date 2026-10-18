@@ -17,6 +17,7 @@ use crate::{
     model::document::{Document, SpecVersion},
     validate::{
         rules::{
+            content::check_component_content,
             document::{
                 check_component_names, check_component_parameters, check_servers, check_tags,
             },
@@ -59,6 +60,7 @@ impl Validator {
         check_tags(document, &mut violations);
         check_component_names(document, &mut violations);
         check_component_parameters(document, &mut violations);
+        check_component_content(document, &mut violations);
         self.check_security(document, &mut violations);
         self.check_paths(document, &mut violations);
         check_unchecked_schemas(document, &mut violations);
