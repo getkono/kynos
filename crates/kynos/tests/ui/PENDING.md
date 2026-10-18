@@ -51,6 +51,7 @@ feature sets, only require them.
 | `#[kynos::operation(method = "QUERY")]` rejected | `QUERY` is mountable only under `openapi32`, so a 3.1 build refuses it with the feature hint |
 | `#[security(oauth2(device_authorization(..)))]` rejected | the RFC 8628 flow was introduced in OpenAPI 3.2, so a 3.1 build has no field to hold it |
 | `#[security(oauth2(.., metadata_url = ".."))]` rejected | `oauth2MetadataUrl` was introduced in OpenAPI 3.2, and was silently dropped before |
+| `#[cookie(style = "cookie")]` rejected | the `cookie` parameter style was introduced in OpenAPI 3.2, so a 3.1 build has no style to state |
 | `#[schema(pattern = "..")]` rejected | without the `pattern` feature there is no engine to enforce it, so it is refused rather than described unchecked |
 
 The `QUERY` row is checked, not only its wording missing: the
@@ -58,7 +59,10 @@ The `QUERY` row is checked, not only its wording missing: the
 [`route/tests.rs`](../../../kynos-macros/src/route/tests.rs) asserts in both
 builds that `QUERY` is refused exactly when `openapi32` is off.
 
-None of the last three rows is unchecked, only unsnapshotted. The `pattern`
+None of the last four rows is unchecked, only unsnapshotted. The `cookie`
+style row's ledger case in `derive/tests.rs` is gated as the security-scheme
+rows' are below, and `every_cookies_diagnostic_has_a_case` adds it back under
+`openapi32` the same way. The `pattern`
 row's ledger case is gated on `not(feature = "pattern")`, and the schema
 ledger has exactly one `pattern` case in either build, as the site has one
 message per build. Both security-scheme rows have a

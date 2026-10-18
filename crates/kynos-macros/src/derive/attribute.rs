@@ -20,6 +20,8 @@ pub(crate) struct FieldArgs {
     pub(crate) rename: Option<LitStr>,
     /// `value = "..."`, which `#[header]` alone takes.
     pub(crate) value: Option<LitStr>,
+    /// `style = "..."`, which `#[cookie]` alone takes.
+    pub(crate) style: Option<LitStr>,
 }
 
 /// Reads a field's `#[param]`, `#[header]` or `#[cookie]` lists, named by
@@ -44,6 +46,7 @@ pub(crate) fn field_args(field: &Field, attribute: &str) -> syn::Result<FieldArg
             match key.as_str() {
                 "rename" => args.rename = Some(meta.value()?.parse()?),
                 "value" if attribute == "header" => args.value = Some(meta.value()?.parse()?),
+                "style" if attribute == "cookie" => args.style = Some(meta.value()?.parse()?),
                 _ => {
                     return Err(syn::Error::new(
                         meta.path.span(),

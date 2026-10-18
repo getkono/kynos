@@ -2,9 +2,10 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{DeriveInput, parse_macro_input};
+use syn::{DeriveInput, Field, parse_macro_input};
 
 use crate::derive::{
+    attribute::field_args,
     common::{
         NameCase, named_fields, names_const, reject_duplicate_names, reject_non_token_names,
         wire_names,
@@ -61,14 +62,25 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         false,
     );
     // `value_of` removes no percent-encoding, which OpenAPI 3.2's `cookie` style
-    // states (the default `form` would not); 3.1 has no such style.
-    let parameters = if cfg!(feature = "openapi32") {
+    // states and the default `form` does not. Stating it is opt-in, since it
+    // raises the description to 3.2 and the `openapi32` feature must not.
+    let styled = fields
+        .named
+        .iter()
+        .map(cookie_style)
+        .collect::<syn::Result<Vec<bool>>>()?;
+    let parameters = if styled.contains(&true) {
         quote! {
-            let parameters = { #parameters };
+            let parameters: ::std::vec::Vec<::kynos::openapi::Parameter> = { #parameters };
             parameters
                 .into_iter()
-                .map(|parameter| {
-                    parameter.with_style(::kynos::openapi::Style::Cookie, true)
+                .zip([#(#styled),*])
+                .map(|(parameter, styled)| {
+                    if styled {
+                        parameter.with_style(::kynos::openapi::Style::Cookie, true)
+                    } else {
+                        parameter
+                    }
                 })
                 .collect()
         }
@@ -96,4 +108,27 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
             }
         }
     })
+}
+
+/// Whether the field states `#[cookie(style = "cookie")]`, the one style this
+/// derive reads values as; a 3.1 build has no such style, so it is refused there.
+fn cookie_style(field: &Field) -> syn::Result<bool> {
+    let Some(literal) = field_args(field, "cookie")?.style else {
+        return Ok(false);
+    };
+    if literal.value() != "cookie" {
+        return Err(syn::Error::new(
+            literal.span(),
+            "a derived cookie is read as sent, with no percent-encoding removed, so the one \
+             style it can state is `style = \"cookie\"`",
+        ));
+    }
+    if cfg!(not(feature = "openapi32")) {
+        return Err(syn::Error::new(
+            literal.span(),
+            "`style = \"cookie\"` was introduced in OpenAPI 3.2, and this build describes 3.1; \
+             enable the `openapi32` feature, or drop it",
+        ));
+    }
+    Ok(true)
 }
