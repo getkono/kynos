@@ -14,6 +14,13 @@
 //! from a build with `openapi32` enabled, use [`Document::emit`], which fails
 //! with the 3.2-only constructs that block the downgrade.
 //!
+//! # Optional features
+//!
+//! - `yaml`: `Document::to_yaml`, beside the JSON emission every build has.
+//! - `http`: conversions between `Method` and `http::Method`.
+//! - `pattern`: the `pattern` module, translating an ECMA-262 `pattern` into
+//!   the `regex` crate's dialect.
+//!
 //! # A note on the JSON Schema dialect
 //!
 //! OpenAPI 3.2 did *not* mint a new JSON Schema dialect. Both 3.1 and 3.2 use

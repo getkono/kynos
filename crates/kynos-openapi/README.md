@@ -14,6 +14,12 @@ cannot construct a document it would be unable to emit; the model types they
 extend are `#[non_exhaustive]`, so a downstream `match` compiles under either
 build.
 
+Three further features are off by default:
+
+- `yaml`: `Document::to_yaml`, beside the JSON emission every build has.
+- `http`: conversions between `Method` and `http::Method`.
+- `pattern`: an ECMA-262 `pattern` translated into the `regex` crate's dialect.
+
 Both versions use the same JSON Schema dialect,
 `https://spec.openapis.org/oas/3.1/dialect/base`. OpenAPI 3.0 and older are
 permanently out of scope.
