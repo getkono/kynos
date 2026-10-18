@@ -1,0 +1,5 @@
+error: path template `/users/a%2gb` contains a `%` that does not introduce a percent-encoded triple
+ --> tests/ui/macros/path_malformed_percent_encoding.rs:3:18
+  |
+3 |     kynos::path!("/users/a%2gb");
+  |                  ^^^^^^^^^^^^^^

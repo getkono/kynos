@@ -955,3 +955,6 @@ pub fn derive_security_scheme(item: TokenStream) -> TokenStream {
 pub fn derive_provider(item: TokenStream) -> TokenStream {
     derive::provider::expand(item)
 }
+
+#[cfg(test)]
+mod tests;

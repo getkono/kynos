@@ -8,7 +8,8 @@
 //!
 //! One ledger rather than one test module per derive, because the counters are
 //! the point and they are the same counter six times over. A rule added to any
-//! grammar without a row fails the build.
+//! grammar without a row fails the build, and the sweep in the crate root's
+//! `tests.rs` fails one added to a file no counter names.
 
 use proc_macro2::TokenStream as TokenStream2;
 use syn::DeriveInput;
@@ -1586,15 +1587,9 @@ mod schema {
         ] {
             let input: syn::DeriveInput =
                 syn::parse2(declaration).expect("the case itself must parse");
-            let Err(error) = expand_inner(&input) else {
-                continue;
-            };
-            let reported = error.to_string();
-            assert!(
-                !reported.contains("refuses every document the struct writes")
-                    && !reported.contains("is also this struct's"),
-                "a struct serde refuses the tag on was refused for the tag: {reported}"
-            );
+            if let Err(error) = expand_inner(&input) {
+                panic!("a struct serde refuses the tag on was refused: {error}");
+            }
         }
     }
 
@@ -1611,14 +1606,9 @@ mod schema {
         ))
         .expect("the case itself must parse");
 
-        let Err(error) = expand_inner(&input) else {
-            return;
-        };
-
-        assert!(
-            !error.to_string().contains("newtype variant's payload"),
-            "a tuple variant's member was refused as a newtype payload: {error}"
-        );
+        if let Err(error) = expand_inner(&input) {
+            panic!("a tuple variant serde refuses the tag on was refused: {error}");
+        }
     }
 
     /// `#[serde(untagged)]` on a struct is serde's diagnostic to raise, not ours.
@@ -1640,14 +1630,9 @@ mod schema {
         ))
         .expect("the case itself must parse");
 
-        let Err(error) = expand_inner(&input) else {
-            return;
-        };
-
-        assert!(
-            !error.to_string().contains("untagged enum"),
-            "a struct was refused with a sentence about enums: {error}"
-        );
+        if let Err(error) = expand_inner(&input) {
+            panic!("a struct serde refuses `untagged` on was refused: {error}");
+        }
     }
 
     /// An untagged variant serde skips both ways is in no schema, so it has no
@@ -2431,14 +2416,9 @@ mod schema {
             let input: syn::DeriveInput =
                 syn::parse2(declaration).expect("the case itself must parse");
 
-            let Err(error) = expand_inner(&input) else {
-                continue;
-            };
-
-            assert!(
-                !error.to_string().contains("`#[serde(transparent)]`"),
-                "a struct serde refuses both ways drew a second refusal: {error}"
-            );
+            if let Err(error) = expand_inner(&input) {
+                panic!("a struct serde refuses both ways drew a refusal of its own: {error}");
+            }
         }
     }
 
@@ -6636,6 +6616,37 @@ mod cookies {
         if let Err(error) = expand_inner(&input) {
             panic!("two cookie names differing in case were refused: {error}");
         }
+    }
+}
+
+mod path_params {
+    use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
+    use crate::derive::path_params::expand_inner;
+
+    fn ledger() -> Vec<Case> {
+        vec![case(
+            "an optional field, when a captured variable is always present",
+            quote::quote!(
+                struct ReportPath {
+                    name: Option<String>,
+                }
+            ),
+            "a path parameter is always present",
+        )]
+    }
+
+    #[test]
+    fn each_case_raises_the_diagnostic_it_names() {
+        each_case_is_refused(ledger(), expand_inner);
+    }
+
+    #[test]
+    fn every_path_params_diagnostic_has_a_case() {
+        every_diagnostic_has_a_case(
+            "path_params.rs",
+            include_str!("path_params.rs"),
+            ledger().len(),
+        );
     }
 }
 
