@@ -63,17 +63,25 @@ pub(super) fn respond<H: EncodeHeaders>(
         Selection::Part { first, last, .. } => clamped(&octets, first, last),
     };
 
-    assembled(body, selection, media_type, headers)
+    assembled(
+        crate::http::body::Body::from_bytes(body),
+        selection,
+        media_type,
+        headers,
+    )
 }
 
 /// The response carrying `body`, which is whatever `selection` said to send.
+///
+/// A body rather than octets, so a file on disk can hand over one that reads
+/// a span at a time once polled; its exact size hint is what frames it.
 pub(super) fn assembled<H: EncodeHeaders>(
-    body: Bytes,
+    body: crate::http::body::Body,
     selection: Selection,
     media_type: &str,
     headers: &H,
 ) -> Response {
-    let mut response = Response::new(crate::http::body::Body::from_bytes(body));
+    let mut response = Response::new(body);
 
     if let Ok(value) = HeaderValue::from_str(media_type) {
         response.headers_mut().insert(header::CONTENT_TYPE, value);
