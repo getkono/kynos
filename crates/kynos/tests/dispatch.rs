@@ -364,6 +364,100 @@ async fn a_head_states_no_length_of_zero() {
     }
 }
 
+/// Records what an observer is handed once a response exists: the operation
+/// it names, the status, and the content length the response states exactly,
+/// or `None` where it states none.
+#[derive(Clone, Default)]
+struct Endings(Arc<Mutex<Vec<String>>>);
+
+impl Endings {
+    fn taken(&self) -> Vec<String> {
+        self.0.lock().expect("an unpoisoned record").clone()
+    }
+
+    fn push(&self, event: String) {
+        self.0.lock().expect("an unpoisoned record").push(event);
+    }
+}
+
+/// An operation an observer was handed, by its `operationId` and its path.
+fn named(route: Option<Route<'_>>) -> String {
+    route.map_or_else(
+        || "<unmatched>".to_owned(),
+        |route| format!("{} {}", route.operation_id(), route.path()),
+    )
+}
+
+impl Observer<App> for Endings {
+    fn on_request(&self, _: &Request, _: Option<Route<'_>>, _: &App) {}
+
+    fn on_response(&self, response: &Response, route: Option<Route<'_>>, _: Duration) {
+        use hyper::body::Body as _;
+
+        self.push(format!(
+            "response {} {} {:?}",
+            named(route),
+            response.status().as_u16(),
+            response.body().size_hint().exact()
+        ));
+    }
+
+    fn on_disconnect(&self, route: Option<Route<'_>>, _: Duration) {
+        self.push(format!("disconnect {}", named(route)));
+    }
+}
+
+/// `on_response` is handed the operation that answered, or none where no
+/// operation did, and a HEAD's response with its content already shed, since
+/// that is what the peer will receive.
+#[tokio::test]
+async fn an_observer_sees_the_route_and_the_response_the_peer_will_get() {
+    let endings = Endings::default();
+    let service = support::router()
+        .mount(kynos::routes![loud_head])
+        .observe(endings.clone())
+        .build(App::new())
+        .expect("a describable router");
+
+    send(&service, Method::HEAD, "/loud").call().await;
+    get(&service, "/loud").call().await;
+    get(&service, "/widgets").call().await;
+
+    assert_eq!(
+        endings.taken(),
+        [
+            "response loud_head /loud 200 Some(0)",
+            "response <unmatched> 405 Some(64)",
+            "response <unmatched> 404 Some(55)",
+        ]
+    );
+}
+
+/// A response whose body is dropped before its end is reported to
+/// `on_disconnect`, after `on_response`, under the same operation.
+#[tokio::test]
+async fn an_observer_hears_a_dropped_body_under_the_operation_that_sent_it() {
+    let endings = Endings::default();
+    let service = support::router()
+        .observe(endings.clone())
+        .build(App::new())
+        .expect("a describable router");
+
+    let mut request = Request::new(kynos::http::body::Body::empty());
+    *request.uri_mut() = "/users/42".parse().expect("a usable request target");
+    let response = service.call(request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    drop(response);
+
+    assert_eq!(
+        endings.taken(),
+        [
+            "response get_user /users/{id} 200 Some(35)",
+            "disconnect get_user /users/{id}",
+        ]
+    );
+}
+
 /// A path declaring `post` and nothing else.
 #[kynos::post("/submissions")]
 async fn submit() -> NoContent {
