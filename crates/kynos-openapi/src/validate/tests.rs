@@ -4363,6 +4363,37 @@ fn a_component_reached_twice_is_followed_once() {
     );
 }
 
+/// A verdict reached by assuming a component still being followed requires
+/// the property is not remembered past that component: `B` counts as
+/// requiring while `A` is followed, but `A` turns out optional, so `B`, and
+/// `Pet` through both, is optional.
+#[test]
+fn a_verdict_reached_through_a_cut_cycle_is_not_remembered() {
+    let pet = SchemaObject {
+        all_of: Some(vec![Schema::component("A"), Schema::component("B")]),
+        discriminator: Some(Discriminator::new("kind")),
+        ..SchemaObject::default()
+    };
+    let a = SchemaObject {
+        any_of: Some(vec![Schema::component("B"), Schema::Bool(true)]),
+        ..SchemaObject::default()
+    };
+    let b = SchemaObject {
+        all_of: Some(vec![Schema::component("A")]),
+        ..SchemaObject::default()
+    };
+    let document =
+        document_with_schemas([("Pet", object(pet)), ("A", object(a)), ("B", object(b))]);
+
+    assert_eq!(
+        discriminator_errors(&document, SpecVersion::V3_1),
+        [(
+            "#/components/schemas/Pet/discriminator".to_owned(),
+            NOT_REQUIRED
+        )]
+    );
+}
+
 /// The discriminator violations validating, as 3.1, a `Pet` discriminated
 /// over `branch` alone raises, each at its `discriminator`.
 fn single_branch_errors(branch: SchemaObject) -> Vec<&'static str> {
