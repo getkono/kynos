@@ -528,6 +528,48 @@ fn every_standard_type_the_docs_promise_is_describable() {
     describable::<Vec<Option<HashMap<String, Vec<u32>>>>>();
 }
 
+/// What a std tuple, sequence and set describe, beyond existing.
+///
+/// A tuple names each position in `prefixItems` and forbids both a longer
+/// array (`items: false`) and a shorter one (`minItems`), since `prefixItems`
+/// alone constrains only the members present. A sequence describes its items;
+/// a set adds `uniqueItems`, which only a set promises.
+#[test]
+fn tuples_sequences_and_sets_describe_their_shape() {
+    let described = |schema: OpenApiSchema| serde_json::to_value(schema).expect("JSON");
+
+    assert_eq!(
+        described(schema_of::<(bool,)>()),
+        serde_json::json!({
+            "type": "array",
+            "prefixItems": [{ "type": "boolean" }],
+            "items": false,
+            "minItems": 1,
+        })
+    );
+    assert_eq!(
+        described(schema_of::<(bool, String)>()),
+        serde_json::json!({
+            "type": "array",
+            "prefixItems": [{ "type": "boolean" }, { "type": "string" }],
+            "items": false,
+            "minItems": 2,
+        })
+    );
+
+    let sequence = serde_json::json!({ "type": "array", "items": { "type": "boolean" } });
+    assert_eq!(described(schema_of::<Vec<bool>>()), sequence);
+    assert_eq!(described(schema_of::<VecDeque<bool>>()), sequence);
+
+    let set = serde_json::json!({
+        "type": "array",
+        "items": { "type": "boolean" },
+        "uniqueItems": true,
+    });
+    assert_eq!(described(schema_of::<HashSet<bool>>()), set);
+    assert_eq!(described(schema_of::<BTreeSet<bool>>()), set);
+}
+
 #[test]
 fn a_string_is_a_map_key() {
     keyable::<String>();

@@ -205,6 +205,48 @@ fn an_extended_parameter_value_decodes_back_to_what_it_encoded() {
     }
 }
 
+/// One path variable holding whatever it was given.
+struct Value(String);
+
+impl PathParams for Value {
+    const NAMES: &'static [&'static str] = &["value"];
+}
+
+impl EncodePath for Value {
+    fn encode(&self) -> Vec<(&'static str, String)> {
+        vec![("value", self.0.clone())]
+    }
+}
+
+/// A rendered path segment decodes back to the value it was rendered from,
+/// for every ASCII character inside a value: the path encoder and
+/// `decode_path_value` are the two halves of one typed URI, and a character
+/// one writes and the other reads differently is a link to somewhere else.
+///
+/// Each character sits between two letters, so no value is empty or a dot
+/// segment, which the encoder refuses rather than renders.
+#[test]
+fn every_ascii_character_in_a_path_value_decodes_back_to_itself() {
+    for byte in 0u8..=0x7f {
+        let value = format!("a{}b", char::from(byte));
+        let uri = endpoint_uri_with_path("/v/{value}", &Value(value.clone()));
+        let segment = uri
+            .path()
+            .strip_prefix("/v/")
+            .expect("the literal half of the template");
+
+        assert!(
+            !segment.contains('/'),
+            "{byte:#04x} split the segment: {segment}"
+        );
+        assert_eq!(
+            decode_path_value(segment).expect("an encoded UTF-8 value"),
+            value,
+            "{byte:#04x} rendered as {segment}"
+        );
+    }
+}
+
 /// The pairs `query` carries, as owned octets, for comparing against literals.
 fn pairs_of(query: Option<&str>) -> Vec<(Vec<u8>, Vec<u8>)> {
     query_pairs(query)
@@ -282,6 +324,82 @@ async fn a_reply_body_is_written_as_json_under_its_declared_status() {
         .expect("a readable body")
         .to_bytes();
     assert_eq!(&body[..], b"[1,2]");
+}
+
+/// A body JSON cannot hold -- here a map keyed by a pair -- answers the
+/// documented 500 problem rather than the declared status with a truncated
+/// body: it is serialized in full before the status is chosen.
+#[tokio::test]
+async fn a_reply_body_that_cannot_be_serialized_answers_500() {
+    use http_body_util::BodyExt;
+
+    use crate::http::{StatusCode, header};
+
+    let body = std::collections::BTreeMap::from([((1_u8, 2_u8), 3_u8)]);
+    let response = crate::__private::reply::json(201, &body);
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        response.headers().get(header::CONTENT_TYPE),
+        Some(&crate::http::HeaderValue::from_static(
+            "application/problem+json"
+        ))
+    );
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("a readable body")
+        .to_bytes();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body).expect("a problem document"),
+        serde_json::json!({
+            "type": "about:blank",
+            "title": "Internal Server Error",
+            "status": 500,
+            "detail": "the response body could not be serialized",
+        })
+    );
+}
+
+/// A key pattern no engine can check is reported against every key rather
+/// than read as met, naming the pattern and why; a pattern that compiles
+/// reports only the keys it refuses. A router refuses the first kind while it
+/// is built, so this branch is reached only by a check run outside one.
+#[cfg(feature = "pattern")]
+#[test]
+fn a_key_pattern_that_cannot_be_checked_refuses_every_key() {
+    use crate::{
+        __private::constraints::pattern::{KeyPattern, key},
+        schema::constraints::{Pointer, Violations},
+    };
+
+    let checked = |pattern: &str, text: &str| {
+        let mut violations = Violations::new();
+        KeyPattern::new(pattern.to_owned()).check(text, Pointer::root(), &mut violations);
+        violations.into_each().collect::<Vec<_>>()
+    };
+
+    let refusal = key("a(?=b)").expect_err("lookaround has no translation");
+    for text in ["ab", "", "anything"] {
+        assert_eq!(
+            checked("a(?=b)", text),
+            [(
+                String::new(),
+                format!("cannot be checked against the pattern `a(?=b)`: {refusal}")
+            )],
+            "{text:?}"
+        );
+    }
+
+    assert_eq!(checked("^[a-z]+$", "abc"), []);
+    assert_eq!(
+        checked("^[a-z]+$", "ABC"),
+        [(
+            String::new(),
+            "must match the pattern `^[a-z]+$`".to_owned()
+        )]
+    );
 }
 
 /// JSON Schema validates a number against a bound only where it compares to

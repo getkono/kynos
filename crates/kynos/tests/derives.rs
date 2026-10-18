@@ -1463,7 +1463,7 @@ fn a_query_value_that_is_not_utf8_is_refused_naming_its_parameter() {
         match <Named as DecodeQuery>::decode(Some(query)) {
             Err(QueryRejection::Invalid { name, detail }) => {
                 assert_eq!(name, parameter, "{query}");
-                assert!(detail.contains("UTF-8"), "{query}: {detail}");
+                assert_eq!(detail, "the percent-decoded value is not UTF-8", "{query}");
             }
             Err(other) => panic!("{query}: refused for another reason: {other}"),
             Ok(decoded) => panic!("{query}: accepted as {:?}", decoded.name),
@@ -1918,7 +1918,7 @@ fn a_cookie_value_that_is_not_ascii_is_refused_naming_its_cookie() {
         match Session::decode(&jar(fields)) {
             Err(CookieRejection::Invalid { name, detail }) => {
                 assert_eq!(name, "session_id", "{shown:?}");
-                assert!(detail.contains("ASCII"), "{shown:?}: {detail}");
+                assert_eq!(detail, "the cookie value is not ASCII", "{shown:?}");
             }
             Err(other) => panic!("{shown:?}: refused for another reason: {other}"),
             Ok(decoded) => panic!("{shown:?}: accepted as {:?}", decoded.session),
@@ -2074,7 +2074,7 @@ fn the_derived_header_decoder_refuses_a_non_ascii_value_naming_it() {
         match Traced::decode(&header_map(fields)) {
             Err(HeaderRejection::Invalid { name, detail }) => {
                 assert_eq!(name, header, "{fields:?}");
-                assert!(detail.contains("ASCII"), "{fields:?}: {detail}");
+                assert_eq!(detail, "the value is not printable ASCII", "{fields:?}");
             }
             Err(other) => panic!("{fields:?}: refused for another reason: {other}"),
             Ok(decoded) => panic!("{fields:?}: accepted as {:?}", decoded.parent),

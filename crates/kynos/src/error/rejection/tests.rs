@@ -830,6 +830,29 @@ fn every_variant_produces_a_status_its_type_declares() {
 
     assert_eq!(named, witnessed, "a variant was added or renamed");
 
+    // Declared ⊆ produced as well: a status a type declares and no variant
+    // produces is a response every operation using it promises and never
+    // sends, which the per-row containment below cannot see.
+    let mut by_type = std::collections::BTreeMap::<&str, (Vec<StatusCode>, &[StatusCode])>::new();
+    for row in &rows {
+        let type_name = row.name.split("::").next().expect("a qualified name");
+        by_type
+            .entry(type_name)
+            .or_insert((Vec::new(), row.declared))
+            .0
+            .push(row.produced);
+    }
+    for (type_name, (mut produced, declared)) in by_type {
+        produced.sort();
+        produced.dedup();
+        let mut declared = declared.to_vec();
+        declared.sort();
+        assert_eq!(
+            produced, declared,
+            "{type_name}'s variants produce one set and its type declares another"
+        );
+    }
+
     for Row {
         name,
         expected,

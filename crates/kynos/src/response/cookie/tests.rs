@@ -165,64 +165,210 @@ fn the_other_same_site_values_imply_no_attribute() {
     }
 }
 
-/// One case per way `encode` refuses, counted against the refusals.
-///
-/// Refusing rather than escaping: a value carrying `;` would silently become an
-/// *attribute* rather than part of the value, which is a cookie the service
-/// believes it set and a different one the client stored.
-#[test]
-fn every_refusal_has_a_case() {
-    let cases: &[(&str, Cookie)] = &[
-        ("a name outside the token grammar", Cookie::new("a b", "1")),
-        ("an empty name", Cookie::new("", "1")),
+/// Each place `encode` refuses, by what it checks.
+const REFUSALS: [&str; 6] = [
+    "name or value outside its grammar",
+    "name and value over 4096 octets",
+    "__Host- with a Domain",
+    "__Host- with a Path other than /",
+    "path outside the attribute grammar",
+    "domain outside the domain grammar",
+];
+
+/// One case per way `encode` refuses, and per clause of each grammar it
+/// refuses by: the refusal it reaches, what it is, and the cookie.
+#[expect(clippy::too_many_lines)]
+fn refused() -> Vec<(&'static str, &'static str, Cookie)> {
+    let long_label = "a".repeat(64);
+    vec![
         (
+            REFUSALS[0],
+            "a name carrying a space",
+            Cookie::new("a b", "1"),
+        ),
+        (REFUSALS[0], "an empty name", Cookie::new("", "1")),
+        (
+            REFUSALS[0],
+            "a name carrying a control",
+            Cookie::new("a\u{1}", "1"),
+        ),
+        (
+            REFUSALS[0],
+            "a name that is not ASCII",
+            Cookie::new("caf\u{e9}", "1"),
+        ),
+        (
+            REFUSALS[0],
             "a value carrying a semicolon",
             Cookie::new("a", "1; Path=/"),
         ),
-        ("a value carrying a comma", Cookie::new("a", "1,2")),
-        ("a value carrying a quote", Cookie::new("a", "\"1\"")),
-        ("a value carrying a backslash", Cookie::new("a", "1\\2")),
-        ("a value carrying a space", Cookie::new("a", "1 2")),
         (
-            "a path carrying a semicolon",
-            Cookie::new("a", "1").path("/x;y"),
+            REFUSALS[0],
+            "a value carrying a comma",
+            Cookie::new("a", "1,2"),
         ),
         (
-            "a domain carrying a semicolon",
-            Cookie::new("a", "1").domain("x;y"),
+            REFUSALS[0],
+            "a value carrying a quote",
+            Cookie::new("a", "\"1\""),
         ),
         (
-            "a domain carrying a space",
-            Cookie::new("a", "1").domain("example .com"),
+            REFUSALS[0],
+            "a value carrying a backslash",
+            Cookie::new("a", "1\\2"),
         ),
         (
+            REFUSALS[0],
+            "a value carrying a space",
+            Cookie::new("a", "1 2"),
+        ),
+        (
+            REFUSALS[0],
+            "a value carrying a control",
+            Cookie::new("a", "1\u{1}"),
+        ),
+        (
+            REFUSALS[0],
+            "a value carrying DEL",
+            Cookie::new("a", "1\u{7f}"),
+        ),
+        (
+            REFUSALS[0],
+            "a value that is not ASCII",
+            Cookie::new("a", "caf\u{e9}"),
+        ),
+        (
+            REFUSALS[1],
+            "a name and value over 4096 octets",
+            Cookie::new("a", "x".repeat(4096)),
+        ),
+        (
+            REFUSALS[2],
             "a __Host- cookie with a Domain",
             Cookie::new("__Host-a", "1").domain("example.com"),
         ),
         (
+            REFUSALS[3],
             "a __Host- cookie scoped to a path other than /",
             Cookie::new("__Host-a", "1").path("/admin"),
         ),
         (
-            "a name and value over 4096 octets",
-            Cookie::new("a", "x".repeat(4096)),
+            REFUSALS[4],
+            "a path carrying a semicolon",
+            Cookie::new("a", "1").path("/x;y"),
         ),
-    ];
+        (REFUSALS[4], "an empty path", Cookie::new("a", "1").path("")),
+        (
+            REFUSALS[4],
+            "a path carrying a control",
+            Cookie::new("a", "1").path("/x\u{1}"),
+        ),
+        (
+            REFUSALS[4],
+            "a path that is not ASCII",
+            Cookie::new("a", "1").path("/caf\u{e9}"),
+        ),
+        (
+            REFUSALS[5],
+            "a domain carrying a semicolon",
+            Cookie::new("a", "1").domain("x;y"),
+        ),
+        (
+            REFUSALS[5],
+            "a domain carrying a space",
+            Cookie::new("a", "1").domain("example .com"),
+        ),
+        (
+            REFUSALS[5],
+            "a domain carrying an underscore",
+            Cookie::new("a", "1").domain("exa_mple.com"),
+        ),
+        (
+            REFUSALS[5],
+            "an empty domain",
+            Cookie::new("a", "1").domain(""),
+        ),
+        (
+            REFUSALS[5],
+            "a domain that is a dot",
+            Cookie::new("a", "1").domain("."),
+        ),
+        (
+            REFUSALS[5],
+            "a domain with an empty label",
+            Cookie::new("a", "1").domain("example..com"),
+        ),
+        (
+            REFUSALS[5],
+            "a domain with a label over 63 octets",
+            Cookie::new("a", "1").domain(format!("{long_label}.com")),
+        ),
+        (
+            REFUSALS[5],
+            "a domain label starting with a hyphen",
+            Cookie::new("a", "1").domain("-example.com"),
+        ),
+        (
+            REFUSALS[5],
+            "a domain label ending with a hyphen",
+            Cookie::new("a", "1").domain("example-.com"),
+        ),
+    ]
+}
 
-    for (description, cookie) in cases {
+/// Every case [`refused`] holds renders no field, and the cases are counted
+/// against the refusals.
+///
+/// Refusing rather than escaping: a value carrying `;` would silently become an
+/// *attribute* rather than part of the value, which is a cookie the service
+/// believes it set and a different one the client stored.
+///
+/// The count is of `return None` in `encode`'s own source, each of which is a
+/// refusal [`REFUSALS`] names, so a refusal added there without a case here
+/// fails rather than passing on the cases that already exist.
+#[test]
+fn every_refusal_has_a_case() {
+    let cases = refused();
+    for (refusal, description, cookie) in &cases {
         assert_eq!(
             rendered(cookie),
             None,
-            "{description} must not render a field"
+            "{description} must not render a field ({refusal})"
         );
     }
 
-    // The control for each grammar: the same shapes, legal.
+    let covered: std::collections::BTreeSet<&str> =
+        cases.iter().map(|(refusal, ..)| *refusal).collect();
+    assert_eq!(covered, std::collections::BTreeSet::from(REFUSALS));
+
+    let source = include_str!("../cookie.rs");
+    let encode = source
+        .split_once("pub fn encode(")
+        .and_then(|(_, rest)| rest.split_once("\n    }\n"))
+        .map(|(body, _)| body)
+        .expect("`encode` is declared in `cookie.rs`");
+    assert_eq!(
+        encode.matches("return None").count(),
+        REFUSALS.len(),
+        "`encode` refuses in a place `REFUSALS` does not name; name it and give it a case"
+    );
+}
+
+/// The control for each grammar [`refused`] reaches: the same shapes, legal,
+/// at the edge of each clause where the clause has one.
+#[test]
+fn each_refused_grammar_admits_its_legal_edge() {
+    let longest_label = "a".repeat(63);
     for legal in [
         Cookie::new("a-b_c", "1"),
         Cookie::new("a", "abc-123_%"),
+        Cookie::new("a", "!#$%&'()*+-./:<=>?@[]^_`{|}~"),
         Cookie::new("a", "1").path("/x/y"),
+        Cookie::new("a", "1").path("/x y"),
         Cookie::new("a", "1").domain("sub.example.com"),
+        Cookie::new("a", "1").domain(".example.com"),
+        Cookie::new("a", "1").domain("ex-ample.com"),
+        Cookie::new("a", "1").domain(format!("{longest_label}.com")),
         Cookie::new("__Host-a", "1"),
         Cookie::new("__Host-a", "1").path("/"),
         Cookie::new("__Secure-a", "1"),
