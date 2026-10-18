@@ -1,0 +1,5 @@
+error: `device_authorization_url` applies only to the `device_authorization` flow, and the `client_credentials` flow has no device authorization endpoint; drop it
+ --> tests/ui/macros/security_scheme_oauth2_device_url_on_another_flow.rs:4:5
+  |
+4 |     device_authorization_url = "https://auth.example.com/device"
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^

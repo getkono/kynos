@@ -1,8 +1,9 @@
-//! The control for the four `oauth2` refusals beside it.
+//! The control for the five `oauth2` refusals beside it.
 //!
 //! Differs in exactly the property each one tests: a flow is declared, it is
-//! one OAuth 2.0 defines, it carries both URLs its grant needs, and no flow
-//! appears twice. Both `scopes` spellings are here, since the described form is
+//! one OAuth 2.0 defines, it carries both URLs its grant needs, no flow appears
+//! twice, and no flow but the device grant declares `device_authorization_url`.
+//! Both `scopes` spellings are here, since the described form is
 //! what the flow map exists for.
 #[derive(kynos::SecurityScheme)]
 #[security(oauth2(

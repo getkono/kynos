@@ -4946,6 +4946,18 @@ mod security_scheme {
                 "authorization_url",
             ),
             case(
+                "a device authorization URL on a flow other than the device grant",
+                quote::quote!(
+                    #[security(oauth2(authorization_code(
+                        authorization_url = "https://auth.example.com/authorize",
+                        token_url = "https://auth.example.com/token",
+                        device_authorization_url = "https://auth.example.com/device"
+                    )))]
+                    struct Delegated;
+                ),
+                "applies only to the `device_authorization` flow",
+            ),
+            case(
                 "a carrier setting that is not the one word it takes",
                 quote::quote!(
                     #[security(bearer)]
@@ -5086,6 +5098,88 @@ mod security_scheme {
                 + oauth2_ledger().len()
                 + version_gated_ledger().len()
                 + UNREACHABLE_HERE,
+        );
+    }
+
+    /// `deviceAuthorizationUrl` applies to the `deviceAuthorization` flow alone
+    /// (OpenAPI 3.2's OAuth Flow Object), so the ledger's one row is repeated
+    /// on every other flow, each otherwise complete; in a 3.1 build too, where
+    /// the key used to be dropped rather than refused.
+    #[test]
+    fn a_device_authorization_url_is_refused_on_every_other_flow() {
+        let device = "https://auth.example.com/device";
+        each_case_is_refused(
+            vec![
+                case(
+                    "a device authorization URL on the implicit flow",
+                    quote::quote!(
+                        #[security(oauth2(implicit(
+                            authorization_url = "https://auth.example.com/authorize",
+                            device_authorization_url = #device
+                        )))]
+                        struct Delegated;
+                    ),
+                    "applies only to the `device_authorization` flow",
+                ),
+                case(
+                    "a device authorization URL on the password flow",
+                    quote::quote!(
+                        #[security(oauth2(password(
+                            token_url = "https://auth.example.com/token",
+                            device_authorization_url = #device
+                        )))]
+                        struct Delegated;
+                    ),
+                    "applies only to the `device_authorization` flow",
+                ),
+                case(
+                    "a device authorization URL on the client credentials flow",
+                    quote::quote!(
+                        #[security(oauth2(client_credentials(
+                            token_url = "https://auth.example.com/token",
+                            device_authorization_url = #device
+                        )))]
+                        struct Delegated;
+                    ),
+                    "applies only to the `device_authorization` flow",
+                ),
+                case(
+                    "a device authorization URL on the authorization code flow",
+                    quote::quote!(
+                        #[security(oauth2(authorization_code(
+                            authorization_url = "https://auth.example.com/authorize",
+                            token_url = "https://auth.example.com/token",
+                            device_authorization_url = #device
+                        )))]
+                        struct Delegated;
+                    ),
+                    "applies only to the `device_authorization` flow",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
+    /// The device grant, the one flow the key applies to, still carries it.
+    #[cfg(feature = "openapi32")]
+    #[test]
+    fn a_device_authorization_url_reaches_the_device_flow() {
+        let input: syn::DeriveInput = syn::parse_quote!(
+            #[security(oauth2(device_authorization(
+                device_authorization_url = "https://auth.example.com/device",
+                token_url = "https://auth.example.com/token"
+            )))]
+            struct Delegated;
+        );
+
+        let expanded = expand_inner(&input)
+            .expect("a well-formed device flow")
+            .to_string();
+
+        assert!(
+            expanded
+                .contains("with_device_authorization_url (\"https://auth.example.com/device\")"),
+            "the device flow drops its URL: {expanded}"
         );
     }
 

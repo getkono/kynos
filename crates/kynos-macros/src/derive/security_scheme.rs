@@ -474,10 +474,10 @@ fn build_flow(flow: &FlowArgs) -> proc_macro2::TokenStream {
     if let Some(url) = &flow.refresh_url {
         built = quote!(#built.with_refresh_url(#url));
     }
-    if cfg!(feature = "openapi32") {
-        if let Some(url) = &flow.device_authorization_url {
-            built = quote!(#built.with_device_authorization_url(#url));
-        }
+    // Only the device grant carries one, and `read_flow` refuses that flow
+    // under 3.1, so a 3.1 build never reaches the 3.2-only builder.
+    if let Some(url) = &flow.device_authorization_url {
+        built = quote!(#built.with_device_authorization_url(#url));
     }
 
     built
@@ -728,6 +728,20 @@ fn read_flow(
             match name.to_string().as_str() {
                 "authorization_url" => args.authorization_url = Some(field.value()?.parse()?),
                 "token_url" => args.token_url = Some(field.value()?.parse()?),
+                // The OAuth Flow Object applies the key to the device grant
+                // alone, the one flow whose row requires it.
+                "device_authorization_url"
+                    if !flow.required.contains(&"device_authorization_url") =>
+                {
+                    return Err(syn::Error::new(
+                        name.span(),
+                        format!(
+                            "`device_authorization_url` applies only to the `device_authorization` \
+                             flow, and the `{}` flow has no device authorization endpoint; drop it",
+                            flow.name
+                        ),
+                    ));
+                }
                 "device_authorization_url" => {
                     args.device_authorization_url = Some(field.value()?.parse()?);
                 }
