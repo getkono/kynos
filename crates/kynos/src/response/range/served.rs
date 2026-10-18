@@ -144,40 +144,36 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
     /// ([`Truncated`](super::source::Truncated)), fails the body stream instead,
     /// since the head has already been sent.
     pub async fn deliver(self, conditions: &Conditions) -> Result<Delivery<M>, S::Error> {
-        // Before any precondition reads the tag: one that cannot be spelled
-        // would otherwise be evaluated as no tag at all. Before the source is
-        // read too, since no answer it gives changes this one.
-        if self
-            .etag
-            .as_ref()
-            .is_some_and(|etag| ETag::encode(etag).is_none())
-        {
-            return Ok(Delivery::new(crate::extract::params::header::refused()));
-        }
+        // Encoded once, before any precondition reads the tag: one that cannot
+        // be spelled would otherwise be evaluated as no tag at all. Before the
+        // source is read too, since no answer it gives changes this one.
+        let tag = match self.etag.as_ref().map(ETag::encode) {
+            Some(None) => return Ok(Delivery::new(crate::extract::params::header::refused())),
+            Some(Some(tag)) => Some(tag),
+            None => None,
+        };
+        // As it is spelled on the wire, for the three fields that compare it.
+        let current = tag.as_ref().and_then(|tag| tag.to_str().ok());
 
         let complete_length = self.source.complete_length().await?;
 
         // Section 13.2.2 steps 1 and 2: the lost-update preconditions first.
-        if self.precondition_failed(conditions) {
+        if self.precondition_failed(conditions, current) {
             let mut response = Response::new(crate::http::body::Body::empty());
             *response.status_mut() = StatusCode::PRECONDITION_FAILED;
             return Ok(Delivery::new(response));
         }
 
         // Steps 3 and 4: the cache validations.
-        if self.unmodified(conditions) {
+        if self.unmodified(conditions, current) {
             let response = self
-                .head(StatusCode::NOT_MODIFIED, None, complete_length)
+                .head(StatusCode::NOT_MODIFIED, None, complete_length, tag)
                 .unwrap_or_else(crate::extract::params::header::refused);
             return Ok(Delivery::new(response));
         }
 
         // Section 14.2: the field is read only where a 200 was owed.
-        let requested = spec::read(
-            &conditions.method,
-            &conditions.fields,
-            self.tag().as_deref(),
-        );
+        let requested = spec::read(&conditions.method, &conditions.fields, current);
         let selection = match crate::response::range::select(&requested, complete_length) {
             Ok(selection) => selection,
             Err(rejection) => return Ok(Delivery::new(rejection.into_response())),
@@ -190,7 +186,8 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
 
         // A refused head is answered as it is: the content goes only under
         // the fields that describe it.
-        let Some(mut response) = self.head(selection.status(), Some(selection), complete_length)
+        let Some(mut response) =
+            self.head(selection.status(), Some(selection), complete_length, tag)
         else {
             return Ok(Delivery::new(crate::extract::params::header::refused()));
         };
@@ -209,13 +206,16 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
 
     /// The response fields, for whichever status is being sent.
     ///
-    /// `None` where a field cannot be encoded: the caller sends the shared
-    /// refusal in its place, and never with the content.
+    /// `tag` is [`etag`](Self::etag) as `deliver` encoded it, moved in so it
+    /// is not encoded twice. `None` where a field cannot be encoded: the
+    /// caller sends the shared refusal in its place, and never with the
+    /// content.
     fn head(
         &self,
         status: StatusCode,
         selection: Option<Selection>,
         complete_length: u64,
+        tag: Option<HeaderValue>,
     ) -> Option<Response> {
         let mut response = Response::new(crate::http::body::Body::empty());
         *response.status_mut() = status;
@@ -228,7 +228,15 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
             if crate::extract::params::header::write(fields, &AcceptRanges).is_err() {
                 return None;
             }
-            if let Ok(value) = HeaderValue::from_str(M::MEDIA_TYPE) {
+            // Static where `from_static` takes it, so it costs no allocation;
+            // anything else is copied, and a marker that is no field value is
+            // omitted, as before.
+            let content_type = if const { visible_ascii(M::MEDIA_TYPE) } {
+                Some(HeaderValue::from_static(M::MEDIA_TYPE))
+            } else {
+                HeaderValue::from_str(M::MEDIA_TYPE).ok()
+            };
+            if let Some(value) = content_type {
                 fields.insert(header::CONTENT_TYPE, value);
             }
             if let Some(disposition) = &self.disposition {
@@ -238,10 +246,10 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
             }
         }
 
-        if let Some(etag) = &self.etag {
-            if crate::extract::params::header::write(fields, etag).is_err() {
-                return None;
-            }
+        // `ETag` declares no `Vary` and does not repeat, so inserting it is
+        // what writing the group would do.
+        if let Some(tag) = tag {
+            fields.insert(header::ETAG, tag);
         }
         if let Some(value) = self
             .last_modified
@@ -275,14 +283,10 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
                 {
                     return None;
                 }
-                if let Ok(value) = HeaderValue::from_str(&(last - first + 1).to_string()) {
-                    fields.insert(header::CONTENT_LENGTH, value);
-                }
+                fields.insert(header::CONTENT_LENGTH, decimal(last - first + 1));
             }
             Some(Selection::Whole(_)) => {
-                if let Ok(value) = HeaderValue::from_str(&complete_length.to_string()) {
-                    fields.insert(header::CONTENT_LENGTH, value);
-                }
+                fields.insert(header::CONTENT_LENGTH, decimal(complete_length));
             }
             None => {}
         }
@@ -290,21 +294,13 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
         Some(response)
     }
 
-    /// The tag as it is spelled on the wire, for `If-Range`.
-    fn tag(&self) -> Option<String> {
-        self.etag
-            .as_ref()
-            .and_then(ETag::encode)
-            .and_then(|value| value.to_str().ok().map(str::to_owned))
-    }
-
     /// Whether section 13.2.2's first two steps refuse the request.
     ///
     /// `If-Unmodified-Since` is ignored when `If-Match` is present (section
     /// 13.1.4).
-    fn precondition_failed(&self, conditions: &Conditions) -> bool {
+    fn precondition_failed(&self, conditions: &Conditions, current: Option<&str>) -> bool {
         // Section 13.1.1, the same evaluation an asset makes.
-        if let Some(holds) = crate::http::etag::if_match(&conditions.fields, || self.tag()) {
+        if let Some(holds) = crate::http::etag::if_match(&conditions.fields, || current) {
             return !holds;
         }
 
@@ -328,11 +324,11 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
     }
 
     /// Whether section 13.1's preconditions say the client's copy is current.
-    fn unmodified(&self, conditions: &Conditions) -> bool {
+    fn unmodified(&self, conditions: &Conditions, current: Option<&str>) -> bool {
         // Section 13.1.3: `If-None-Match` overrides `If-Modified-Since`.
         // Section 13.1.2: `*` names any current representation, which the
         // length `deliver` read proves exists; a tag list needs a tag.
-        if let Some(named) = crate::http::etag::if_none_match(&conditions.fields, || self.tag()) {
+        if let Some(named) = crate::http::etag::if_none_match(&conditions.fields, || current) {
             return named;
         }
 
@@ -357,6 +353,37 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
         // At the field's one-second resolution.
         seconds(modified) <= seconds(since)
     }
+}
+
+/// Whether [`HeaderValue::from_static`] takes `text` without panicking: tab or
+/// visible ASCII throughout.
+const fn visible_ascii(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if !(byte == b'\t' || (byte >= 0x20 && byte < 0x7f)) {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
+/// `length` as a `Content-Length` value, in the one allocation the value
+/// copies its octets into.
+fn decimal(length: u64) -> HeaderValue {
+    use std::io::Write;
+
+    // `u64::MAX` has twenty digits, so the write always fits.
+    let mut digits = [0; 20];
+    let mut rest = &mut digits[..];
+    let _ = write!(rest, "{length}");
+    let unwritten = rest.len();
+    let written = digits.len() - unwritten;
+    // Digits are always a field value; the fallback is the same value, built
+    // the costlier way.
+    HeaderValue::from_bytes(&digits[..written]).unwrap_or_else(|_| HeaderValue::from(length))
 }
 
 /// Whole seconds since the epoch, or zero for anything before it.
