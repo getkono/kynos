@@ -544,7 +544,7 @@ fn every_walk_refusal_has_a_case() {
 #[test]
 fn every_assets_diagnostic_has_a_case() {
     let source = [include_str!("args.rs"), include_str!("walk.rs")].concat();
-    let sites = source.matches("syn::Error::new(").count();
+    let sites = source.matches("syn::Error::new(").count() + source.matches("meta.error(").count();
     let covered = grammar_cases().len() + walk_cases().len() + UNREACHABLE_HERE;
     assert_eq!(
         covered, sites,

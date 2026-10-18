@@ -632,7 +632,8 @@ mod typed_uri {
     fn every_typed_uri_diagnostic_has_a_case() {
         const SOURCE: &str = include_str!("uri.rs");
 
-        let sites = SOURCE.matches("syn::Error::new(").count();
+        let sites =
+            SOURCE.matches("syn::Error::new(").count() + SOURCE.matches("meta.error(").count();
         assert_eq!(
             cases().len(),
             sites,
@@ -739,7 +740,8 @@ mod arguments {
     fn every_route_argument_diagnostic_has_a_case() {
         const SOURCE: &str = include_str!("args.rs");
 
-        let sites = SOURCE.matches("syn::Error::new(").count();
+        let sites =
+            SOURCE.matches("syn::Error::new(").count() + SOURCE.matches("meta.error(").count();
         assert_eq!(
             cases().len(),
             sites,
@@ -956,7 +958,8 @@ mod routes {
     fn every_routes_diagnostic_has_a_case() {
         const SOURCE: &str = include_str!("routes.rs");
 
-        let sites = SOURCE.matches("syn::Error::new(").count();
+        let sites =
+            SOURCE.matches("syn::Error::new(").count() + SOURCE.matches("meta.error(").count();
         assert_eq!(
             cases().len(),
             sites,
@@ -1069,7 +1072,8 @@ mod operation_method {
     fn every_operation_method_diagnostic_has_a_case() {
         const SOURCE: &str = include_str!("mod.rs");
 
-        let sites = SOURCE.matches("syn::Error::new(").count();
+        let sites =
+            SOURCE.matches("syn::Error::new(").count() + SOURCE.matches("meta.error(").count();
         assert_eq!(
             cases().len(),
             sites,
@@ -1166,7 +1170,8 @@ mod templates {
     fn every_emit_diagnostic_has_a_case() {
         const SOURCE: &str = include_str!("emit.rs");
 
-        let sites = SOURCE.matches("syn::Error::new(").count();
+        let sites =
+            SOURCE.matches("syn::Error::new(").count() + SOURCE.matches("meta.error(").count();
         assert_eq!(
             emit_cases().len(),
             sites,
@@ -1180,7 +1185,8 @@ mod templates {
     fn every_path_diagnostic_has_a_case() {
         const SOURCE: &str = include_str!("path.rs");
 
-        let sites = SOURCE.matches("syn::Error::new(").count();
+        let sites =
+            SOURCE.matches("syn::Error::new(").count() + SOURCE.matches("meta.error(").count();
         assert_eq!(
             path_cases().len(),
             sites,

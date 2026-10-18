@@ -8,7 +8,8 @@
 //!
 //! One ledger rather than one test module per derive, because the counters are
 //! the point and they are the same counter six times over. A rule added to any
-//! grammar without a row fails the build.
+//! grammar without a row fails the build, and the sweep in the crate root's
+//! `tests.rs` fails one added to a file no counter names.
 
 use proc_macro2::TokenStream as TokenStream2;
 use syn::DeriveInput;

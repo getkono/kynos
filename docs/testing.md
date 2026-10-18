@@ -258,8 +258,10 @@ without it: the attribute grammars, the shape checks the derives share, and
 both the signature and the documentation the typed-URI emitter writes.
 
 Its diagnostics are held twice on purpose, and the halves do different jobs.
-`derive/tests.rs` asserts *which* rule fired, counted against the
-`syn::Error::new` sites so a rule added without a case fails the build;
+Each module's ledger asserts *which* rule fired, counted against the
+`syn::Error::new` sites of the files it names, and a sweep in `src/tests.rs`
+fails a file raising one that no ledger names, so a rule added without a case
+fails the build;
 `tests/ui/macros/` asserts what that rule *says*. Neither substitutes for the
 other: a count cannot read a message, and a snapshot suite cannot notice a rule
 nobody wrote a case for.
