@@ -45,7 +45,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// this API without loss.
     ///
     /// 3.1 for an API using no 3.2-only construct, and 3.2 for one that does —
-    /// a `QUERY` operation, a streamed response, an `in: querystring`
+    /// a `QUERY` operation, an item stream such as `Sse`, an `in: querystring`
     /// parameter. The `openapi32` feature does not decide it, since Cargo
     /// unifies features across the dependency graph.
     ///

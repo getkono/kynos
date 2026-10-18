@@ -778,7 +778,6 @@ mod partial {
     ///
     /// The encoder cannot restate the length here, since it is not known until
     /// after the head has gone, so the only true length field is none.
-    #[cfg(feature = "openapi32")]
     mod streamed {
         use std::convert::Infallible;
 
@@ -1339,7 +1338,7 @@ mod encoding_policy {
 /// stands between `Watched` and the body that failed: whether the response was
 /// delivered is a question it answers, and an `Observer` is the only place the
 /// answer is visible.
-#[cfg(all(feature = "compression", feature = "openapi32"))]
+#[cfg(feature = "compression")]
 mod streamed_failure {
     use std::sync::{
         Arc,

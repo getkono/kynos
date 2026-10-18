@@ -64,8 +64,9 @@
 //! # Feature flags
 //!
 //! `openapi31` is the baseline; `openapi32` is a strict superset that unlocks
-//! Server-Sent Events, streaming bodies and whole-query-string parameters,
-//! none of which OpenAPI 3.1 can describe. Enabling it is additive: the model
+//! Server-Sent Events, item streams such as JSON Lines, and whole-query-string
+//! parameters, none of which OpenAPI 3.1 can describe. A streamed binary body
+//! needs no flag, since 3.1 describes it as it does a buffered one. Enabling it is additive: the model
 //! types it extends are [`non_exhaustive`](openapi::SpecVersion). The
 //! default-on `json` feature adds
 //! application JSON request and response codecs; it does not control OpenAPI

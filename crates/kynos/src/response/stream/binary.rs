@@ -8,19 +8,18 @@ use crate::{
 
 /// A streamed binary response with a declared media type.
 ///
-/// Requires OpenAPI 3.2, whose sequential body vocabulary can describe a
-/// representation processed incrementally. Stream failures terminate the body
-/// because the successful status has already been committed.
+/// Described exactly as [`Binary<M>`](crate::extract::body::binary::Binary):
+/// the chunks are one binary representation, not a sequence of items, so the
+/// description is the same under OpenAPI 3.1 and 3.2. Stream failures
+/// terminate the body because the successful status has already been
+/// committed.
 ///
 /// ```no_run
-/// # #[cfg(feature = "openapi32")]
-/// # {
 /// use kynos::{http::media::OctetStream, response::stream::binary::BinaryStream};
 ///
 /// fn download<S>(chunks: S) -> BinaryStream<S, OctetStream> {
 ///     BinaryStream::new(chunks)
 /// }
-/// # }
 /// ```
 #[derive(Debug)]
 pub struct BinaryStream<S, M> {
@@ -61,15 +60,16 @@ where
     S: futures_core::Stream,
     M: MediaType,
 {
-    // Each item is the empty Schema Object, as for `Binary<M>`: raw bytes are
-    // outside what JSON Schema describes.
+    // The empty Schema Object as `schema`, as for `Binary<M>`: raw bytes are
+    // outside what JSON Schema describes, and `itemSchema` is defined only for
+    // sequential media types, which an arbitrary `M` is not.
     fn responses(_registry: &mut Registry) -> kynos_openapi::Responses {
         kynos_openapi::Responses::new().with(
             200,
             kynos_openapi::Response::with_content(
                 "OK",
                 M::MEDIA_TYPE,
-                kynos_openapi::MediaType::sequential(kynos_openapi::Schema::Object(Box::default())),
+                kynos_openapi::MediaType::new(kynos_openapi::Schema::Object(Box::default())),
             ),
         )
     }

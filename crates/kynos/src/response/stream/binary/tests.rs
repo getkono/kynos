@@ -67,11 +67,12 @@ async fn a_binary_stream_sends_its_media_type_and_its_chunks() {
     );
 }
 
-/// In the description: one 200 under the declared media type, each item the
-/// empty Schema Object as `itemSchema` and no `schema` beside it, since the
-/// bytes are a sequence rather than one value JSON Schema could describe.
+/// In the description: one 200 under the declared media type whose `schema` is
+/// the empty Schema Object and no `itemSchema` beside it, exactly as for
+/// `Binary<M>`. The chunks are one representation, not a sequence of items, and
+/// `itemSchema` is defined only for sequential media types.
 #[test]
-fn a_binary_stream_is_described_by_its_item_schema() {
+fn a_binary_stream_is_described_as_a_binary_body() {
     let described = BinaryStream::<Chunks, Png>::responses(&mut Registry::new());
 
     assert_eq!(
@@ -79,8 +80,16 @@ fn a_binary_stream_is_described_by_its_item_schema() {
         serde_json::json!({
             "200": {
                 "description": "OK",
-                "content": { "image/png": { "itemSchema": {} } },
+                "content": { "image/png": { "schema": {} } },
             },
         })
+    );
+    assert_eq!(
+        serde_json::to_value(&described).expect("serializable responses"),
+        serde_json::to_value(crate::extract::body::binary::Binary::<Png>::responses(
+            &mut Registry::new()
+        ))
+        .expect("serializable responses"),
+        "a streamed binary body is described differently from a buffered one"
     );
 }

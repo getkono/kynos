@@ -205,8 +205,8 @@ router returned that way is finished, which is what such a function means.
 ### Which version `openapi` emits
 
 The lowest one that expresses the API without loss: 3.1 for an API using no
-3.2-only construct, and 3.2 for one that uses a `QUERY` operation, a streamed
-response, an `in: querystring` parameter or a cookie marked
+3.2-only construct, and 3.2 for one that uses a `QUERY` operation, an item
+stream (`Sse` or JSON Lines), an `in: querystring` parameter or a cookie marked
 `#[cookie(style = "cookie")]`. Lowest rather than highest, because
 a description a consumer's toolchain can read is worth more than one
 advertising a version number, and nothing is lost by saying 3.1 when 3.1 is

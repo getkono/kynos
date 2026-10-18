@@ -101,7 +101,7 @@ the examples, each about a page and all listed in
 - [x] Compile-time-resolved dependency injection
 - [x] `Interceptor` and `Observer` middleware with declared contributions
 - [x] Security schemes that cannot be enforced without being documented
-- [x] Server-Sent Events and streaming bodies, under `openapi32`
+- [x] Streaming bodies, with Server-Sent Events and other item streams under `openapi32`
 - [x] In-process test client with contract-conformance assertions
 
 Permanently out-of-scope
@@ -141,7 +141,7 @@ Each of these is something another Rust framework offers and Kynos does not. Mos
 
 `openapi31` is the baseline and is enabled by default. `openapi32` is a strict superset — enabling it is additive for a program that uses no 3.2-only construct. Because Cargo unifies features across a dependency graph, any crate in the build can turn it on for every crate, so the model types it extends are `#[non_exhaustive]`: matching one takes a wildcard arm in either build. The one thing it does not survive is a struct literal naming every field of a model type, which is why the model's own examples end theirs with `..Default::default()`.
 
-3.2-only fields are `#[cfg]`-gated rather than runtime-optional, so a 3.1-only build cannot construct a description it is unable to emit. That is also why `Sse`, `JsonLines` and `QueryString` require `openapi32`: OpenAPI 3.1 has no `itemSchema` and no `in: querystring`, so under 3.1 those payloads can only be described as opaque strings. Kynos would rather not compile than describe your stream inaccurately.
+3.2-only fields are `#[cfg]`-gated rather than runtime-optional, so a 3.1-only build cannot construct a description it is unable to emit. That is also why `Sse`, `JsonLines` and `QueryString` require `openapi32`: OpenAPI 3.1 has no `itemSchema` and no `in: querystring`, so under 3.1 those payloads can only be described as opaque strings. Kynos would rather not compile than describe your stream inaccurately. A stream of raw bytes, `BinaryStream`, is the exception: 3.1 describes it exactly as it does a buffered `Binary` body, so it is in every build.
 
 | Flag | Default | What it adds |
 | --- | --- | --- |
@@ -210,7 +210,8 @@ The core is what every operation passes through, so it freezes at 1.0: a change 
 | Panic policy | — | settling |
 | Request tracing | `trace` | settling |
 | YAML emission | `yaml` | settling |
-| Server-Sent Events and streaming bodies | `openapi32` | settling |
+| Server-Sent Events and item streams | `openapi32` | settling |
+| Streamed binary bodies | — | settling |
 | Rate limiting | — | open |
 | Compression, and request decompression | `compression` | open |
 | Response cache and conditional requests | `cache` | open |

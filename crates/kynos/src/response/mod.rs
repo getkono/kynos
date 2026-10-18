@@ -43,7 +43,6 @@ pub mod status;
 #[cfg(any(feature = "multipart", feature = "openapi32"))]
 mod framing;
 
-#[cfg(feature = "openapi32")]
 pub mod stream;
 
 use crate::{
