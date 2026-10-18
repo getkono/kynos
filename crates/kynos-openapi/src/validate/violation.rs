@@ -328,6 +328,20 @@ pub enum SpecError {
         name: String,
     },
 
+    /// A Callback Object's Path Item was keyed like a specification extension.
+    ///
+    /// Items and extensions share the callback's one object, told apart by the
+    /// `x-` prefix, so a reader takes such an item for an extension and drops
+    /// the operations under it.
+    #[error(
+        "callback expression `{expression}` begins with `x-`, so its Path Item is read back as \
+         a specification extension"
+    )]
+    CallbackKeyedAsExtension {
+        /// The offending key.
+        expression: String,
+    },
+
     /// A schema was deliberately left unconstrained.
     ///
     /// Located at the schema itself: one carrying the `x-kynos-unchecked`

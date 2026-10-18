@@ -37,6 +37,10 @@ impl Callback {
     }
 
     /// Declares the operations performed against the URL named by `expression`.
+    ///
+    /// An `expression` beginning `x-` would be read back as an extension, so
+    /// [`Validator`](crate::validate::Validator) refuses it with
+    /// [`SpecError::CallbackKeyedAsExtension`](crate::validate::violation::SpecError::CallbackKeyedAsExtension).
     #[must_use]
     pub fn with(mut self, expression: impl Into<String>, path_item: PathItem) -> Self {
         self.items.insert(expression.into(), RefOr::Item(path_item));

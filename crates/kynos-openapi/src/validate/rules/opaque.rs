@@ -2,7 +2,8 @@
 //! consumer is entitled to be told about it.
 //!
 //! The rules check only that a waiver's record is present, readable, and
-//! summarized at the root.
+//! summarized at the root. The callback walk they need also carries the rule
+//! on callback keys.
 
 use crate::{
     annotation::{
@@ -12,6 +13,7 @@ use crate::{
     model::{
         callback::Callback,
         document::Document,
+        extensions::EXTENSION_PREFIX,
         paths::{item::PathItem, operation::Operation},
         reference::RefOr,
     },
@@ -79,17 +81,26 @@ fn check_item(location: &str, item: &PathItem, violations: &mut Vec<Violation>) 
 
 /// A callback holds path items of its own, and an operation inside one is as
 /// much part of the service as any other.
+///
+/// This walk reaches every callback that is not a `$ref` exactly once, so it
+/// also carries the one rule about a callback's keys: an item keyed `x-` would
+/// be read back as an extension.
 fn check_callback(location: &str, callback: &RefOr<Callback>, violations: &mut Vec<Violation>) {
     let Some(callback) = callback.as_item() else {
         return;
     };
     for (expression, item) in &callback.items {
+        let location = format!("{location}/{}", pointer_token(expression));
+        if expression.starts_with(EXTENSION_PREFIX) {
+            violations.push(Violation::error(
+                &location,
+                SpecError::CallbackKeyedAsExtension {
+                    expression: expression.clone(),
+                },
+            ));
+        }
         if let Some(item) = item.as_item() {
-            check_item(
-                &format!("{location}/{}", pointer_token(expression)),
-                item,
-                violations,
-            );
+            check_item(&location, item, violations);
         }
     }
 }
