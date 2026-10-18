@@ -439,7 +439,8 @@ pub(super) fn collect_media_type_blockers(
     }
 }
 
-/// The Encoding Object's own three 3.2 fields.
+/// The Encoding Object's own three 3.2 fields, and those of the headers it
+/// carries.
 ///
 /// Nested encodings are not walked: each of these three *is* the nesting.
 pub(super) fn collect_encoding_blockers(
@@ -456,6 +457,12 @@ pub(super) fn collect_encoding_blockers(
             blockers.push(format!("{location}/{field}"));
         }
     }
+
+    for_each_item(
+        &format!("{location}/headers"),
+        &encoding.headers,
+        |at, header| collect_header_blockers(&at, header, blockers),
+    );
 }
 
 /// The two example forms 3.2 added beside `value`.
