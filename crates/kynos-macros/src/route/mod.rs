@@ -63,7 +63,9 @@ pub(crate) fn expand(method: &str, attribute: TokenStream, item: TokenStream) ->
         Ok(args) => args,
         Err(error) => return error.to_compile_error().into(),
     };
-    emit(method, &args, &function).into()
+    emit(method, &args, &function)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
 
 /// Expands `#[kynos::operation(method = "...", path = "...")]`.
@@ -74,22 +76,18 @@ pub(crate) fn expand_generic(attribute: TokenStream, item: TokenStream) -> Token
         Err(error) => return error.to_compile_error().into(),
     };
 
-    let method_value = method.value();
-    if let Some(refusal) = unmountable(&method_value) {
-        return syn::Error::new(method.span(), refusal)
-            .to_compile_error()
-            .into();
-    }
-
     let args = match RouteArgs::parse(remaining) {
         Ok(args) => args,
         Err(error) => return error.to_compile_error().into(),
     };
-    emit(&method_value, &args, &function).into()
+    emit(&method.value(), &args, &function)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
 
 /// Splits `#[kynos::operation]`'s arguments into its `method` and the rest,
-/// which the shared route parser reads.
+/// which the shared route parser reads, refusing a method the router cannot
+/// mount.
 ///
 /// `method` is removed here so the shared parser refuses it on
 /// `#[kynos::get("/x", method = "POST")]`.
@@ -119,6 +117,9 @@ fn split_method(tokens: TokenStream2) -> syn::Result<(LitStr, TokenStream2)> {
              `#[kynos::get]` are the usual way to declare an operation",
         ));
     };
+    if let Some(refusal) = unmountable(&method.value()) {
+        return Err(syn::Error::new(method.span(), refusal));
+    }
 
     let remaining: Punctuated<Meta, Token![,]> = items
         .into_iter()

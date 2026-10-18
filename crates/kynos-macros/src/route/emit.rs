@@ -11,20 +11,14 @@ use crate::route::{
 };
 
 /// Emits the endpoint type alongside the original handler.
-pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> TokenStream2 {
+pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> syn::Result<TokenStream2> {
     let raw_path = args.path.value();
 
     // The document model's parser, so there is one notion of a valid template.
-    let variables = match kynos_openapi::PathTemplate::parse(raw_path.clone()) {
-        Ok(template) => template
-            .variables()
-            .iter()
-            .map(String::clone)
-            .collect::<Vec<_>>(),
-        Err(error) => {
-            return syn::Error::new(args.path.span(), error.to_string()).to_compile_error();
-        }
-    };
+    let variables = kynos_openapi::PathTemplate::parse(raw_path.clone())
+        .map_err(|error| syn::Error::new(args.path.span(), error.to_string()))?
+        .variables()
+        .to_vec();
 
     let name = &function.sig.ident;
     let visibility = &function.vis;
@@ -38,10 +32,7 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> TokenSt
 
     let summary = option_str(summary.as_deref());
     let description = option_str(description.as_deref());
-    let uri_impl = match endpoint_uri_impl(function, &raw_path, &variables) {
-        Ok(uri_impl) => uri_impl,
-        Err(error) => return error.to_compile_error(),
-    };
+    let uri_impl = endpoint_uri_impl(function, &raw_path, &variables)?;
     let variables = variables.iter().map(String::as_str);
 
     // A braced struct occupies only the type namespace, so it shares the
@@ -67,7 +58,7 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> TokenSt
         |tag| quote!(&[::kynos::router::operation::DeclaredTag::of::<#tag>()]),
     );
 
-    quote! {
+    Ok(quote! {
         #function
 
         #[doc(hidden)]
@@ -91,7 +82,7 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> TokenSt
         #uri_impl
 
         #panic_strategy_check
-    }
+    })
 }
 
 fn option_str(value: Option<&str>) -> TokenStream2 {

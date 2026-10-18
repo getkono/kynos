@@ -1000,7 +1000,7 @@ mod operation_method {
         assert_eq!(unmountable("QUERY").is_none(), cfg!(feature = "openapi32"));
     }
 
-    /// One row per `syn::Error::new` site in `split_method`, counted below.
+    /// One row per `syn::Error::new` site in `mod.rs`, counted below.
     fn cases() -> Vec<(&'static str, proc_macro2::TokenStream, &'static str)> {
         vec![
             (
@@ -1013,12 +1013,35 @@ mod operation_method {
                 quote!(method = "GET", path = "/health", method = "POST"),
                 "`method` is already given",
             ),
+            (
+                "a method the router has no Path Item field for",
+                quote!(method = "PROPFIND", path = "/files"),
+                "the router cannot mount `PROPFIND`",
+            ),
         ]
+    }
+
+    /// More ways to the unmountable site, each answered in its own words.
+    fn unmountable_cases() -> Vec<(&'static str, proc_macro2::TokenStream, &'static str)> {
+        let mut cases = vec![(
+            "a mountable method in the wrong case",
+            quote!(method = "get", path = "/health"),
+            "method names are case-sensitive, so `get` is not `GET`",
+        )];
+        // `QUERY` has a Path Item field only from OpenAPI 3.2 on.
+        if !cfg!(feature = "openapi32") {
+            cases.push((
+                "`QUERY`, which OpenAPI 3.1 has no field for",
+                quote!(method = "QUERY", path = "/search"),
+                "`QUERY` has no Path Item field in OpenAPI 3.1; enable the `openapi32` feature",
+            ));
+        }
+        cases
     }
 
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
-        for (description, tokens, expected) in cases() {
+        for (description, tokens, expected) in cases().into_iter().chain(unmountable_cases()) {
             let Err(error) = split_method(tokens) else {
                 panic!("{description} must be rejected");
             };
@@ -1030,22 +1053,27 @@ mod operation_method {
         }
     }
 
-    /// A count, not a mapping, as for the route arguments: `split_method`'s
-    /// sites, the text between its signature and the function after it.
+    /// Under `openapi32`, `QUERY` is the one method outside the 3.1 fields
+    /// that is mounted.
+    #[cfg(feature = "openapi32")]
+    #[test]
+    fn query_is_accepted_under_openapi32() {
+        let (method, _) = split_method(quote!(method = "QUERY", path = "/search"))
+            .expect("`QUERY` has a Path Item field in OpenAPI 3.2");
+        assert_eq!(method.value(), "QUERY");
+    }
+
+    /// A count, not a mapping, as for the route arguments, over the whole of
+    /// `mod.rs`, so a site added beside `split_method` is counted too.
     #[test]
     fn every_operation_method_diagnostic_has_a_case() {
         const SOURCE: &str = include_str!("mod.rs");
 
-        let body = SOURCE
-            .split_once("fn split_method(")
-            .and_then(|(_, rest)| rest.split_once("\n}\n"))
-            .map(|(body, _)| body)
-            .expect("`split_method` is in `mod.rs`");
-        let sites = body.matches("syn::Error::new(").count();
+        let sites = SOURCE.matches("syn::Error::new(").count();
         assert_eq!(
             cases().len(),
             sites,
-            "`split_method` raises {sites} diagnostic(s) and {} have a case",
+            "`mod.rs` raises {sites} diagnostic(s) and {} have a case",
             cases().len()
         );
     }
@@ -1057,5 +1085,107 @@ mod operation_method {
 
         assert_eq!(method.value(), "PATCH");
         assert_eq!(remaining.to_string(), quote!(path = "/health").to_string());
+    }
+}
+
+/// The templates a route attribute and `path!` refuse.
+///
+/// Both hand the template to the document model's parser, whose own tests
+/// hold every way a template is malformed; what each site here owes is that
+/// the parser's refusal reaches the user at all.
+mod templates {
+    use quote::quote;
+    use syn::ItemFn;
+
+    use super::RouteArgs;
+    use crate::route::{emit::emit, path::expand_template};
+
+    /// A `%` the parser refuses.
+    const MALFORMED: &str = "does not introduce a percent-encoded triple";
+
+    /// One row per `syn::Error::new` site in `emit.rs`.
+    fn emit_cases() -> Vec<(&'static str, proc_macro2::TokenStream, &'static str)> {
+        vec![(
+            "a route attribute's malformed path",
+            quote!(path = "/files/%zz"),
+            MALFORMED,
+        )]
+    }
+
+    /// One row per `syn::Error::new` site in `path.rs`.
+    fn path_cases() -> Vec<(&'static str, syn::LitStr, &'static str)> {
+        vec![(
+            "a malformed `path!` template",
+            syn::parse_quote!("/files/%zz"),
+            MALFORMED,
+        )]
+    }
+
+    fn handler() -> ItemFn {
+        syn::parse_quote!(
+            async fn files() {}
+        )
+    }
+
+    #[test]
+    fn each_case_raises_the_diagnostic_it_names() {
+        for (description, tokens, expected) in emit_cases() {
+            let args = RouteArgs::parse(tokens).expect("the arguments themselves parse");
+            let Err(error) = emit("GET", &args, &handler()) else {
+                panic!("{description} must be rejected");
+            };
+            let reported = error.to_string();
+            assert!(
+                reported.contains(expected),
+                "{description}: expected a diagnostic containing {expected:?}, got {reported:?}"
+            );
+        }
+
+        for (description, literal, expected) in path_cases() {
+            let Err(error) = expand_template(&literal) else {
+                panic!("{description} must be rejected");
+            };
+            let reported = error.to_string();
+            assert!(
+                reported.contains(expected),
+                "{description}: expected a diagnostic containing {expected:?}, got {reported:?}"
+            );
+        }
+    }
+
+    /// The controls: a well-formed percent-encoded triple passes both.
+    #[test]
+    fn a_well_formed_template_is_accepted() {
+        let args = RouteArgs::parse(quote!(path = "/files/%20")).expect("well-formed arguments");
+        assert!(emit("GET", &args, &handler()).is_ok());
+        assert!(expand_template(&syn::parse_quote!("/files/%20")).is_ok());
+    }
+
+    /// A count, not a mapping, as for the route arguments.
+    #[test]
+    fn every_emit_diagnostic_has_a_case() {
+        const SOURCE: &str = include_str!("emit.rs");
+
+        let sites = SOURCE.matches("syn::Error::new(").count();
+        assert_eq!(
+            emit_cases().len(),
+            sites,
+            "`emit.rs` raises {sites} diagnostic(s) and {} have a case",
+            emit_cases().len()
+        );
+    }
+
+    /// As for `emit.rs`.
+    #[test]
+    fn every_path_diagnostic_has_a_case() {
+        const SOURCE: &str = include_str!("path.rs");
+
+        let sites = SOURCE.matches("syn::Error::new(").count();
+        assert_eq!(
+            path_cases().len(),
+            sites,
+            "`path.rs` raises {sites} diagnostic(s) and {} have a case",
+            path_cases().len()
+        );
     }
 }
