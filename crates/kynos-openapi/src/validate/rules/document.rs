@@ -1,5 +1,6 @@
 //! Rules that apply to the document as a whole: servers, tags, component
-//! names, reusable parameters, the root security requirements.
+//! names, reusable parameters, the root security requirements. The Server
+//! Object rule is shared with every other scope a server is declared at.
 
 use std::collections::HashSet;
 
@@ -7,7 +8,7 @@ use std::collections::HashSet;
 use std::collections::HashMap;
 
 use crate::{
-    model::{components::ComponentName, document::Document},
+    model::{components::ComponentName, document::Document, link::Link, server::Server},
     validate::{
         Validator,
         rules::parameters::check_parameter,
@@ -37,22 +38,63 @@ impl Validator {
     }
 }
 
+/// Checks the root `servers`, and the server of each reusable link once, where
+/// it is defined.
+///
+/// A Path Item's, an Operation's and an inline Link's servers are checked by
+/// the walk that reaches them.
 pub(in crate::validate) fn check_servers(document: &Document, violations: &mut Vec<Violation>) {
-    for (index, server) in document.servers.iter().enumerate() {
-        for (name, variable) in &server.variables {
-            let location = format!("#/servers/{index}/variables/{}", pointer_token(name));
-            if let Some(values) = &variable.enumeration {
-                if values.is_empty() {
-                    violations.push(Violation::error(
-                        &location,
-                        SpecError::EmptyServerVariableEnum { name: name.clone() },
-                    ));
-                } else if !values.contains(&variable.default_value) {
-                    violations.push(Violation::error(
-                        &location,
-                        SpecError::ServerVariableDefaultNotInEnum { name: name.clone() },
-                    ));
-                }
+    check_server_list("#", &document.servers, violations);
+    for (name, link) in &document.components.links {
+        if let Some(link) = link.as_item() {
+            check_link(
+                &format!("#/components/links/{}", pointer_token(name)),
+                link,
+                violations,
+            );
+        }
+    }
+}
+
+/// Checks each Server Object in the `servers` field of the object at
+/// `location`.
+pub(in crate::validate) fn check_server_list(
+    location: &str,
+    servers: &[Server],
+    violations: &mut Vec<Violation>,
+) {
+    for (index, server) in servers.iter().enumerate() {
+        check_server(&format!("{location}/servers/{index}"), server, violations);
+    }
+}
+
+/// Checks the server of the Link Object at `location`.
+pub(in crate::validate) fn check_link(
+    location: &str,
+    link: &Link,
+    violations: &mut Vec<Violation>,
+) {
+    if let Some(server) = &link.server {
+        check_server(&format!("{location}/server"), server, violations);
+    }
+}
+
+/// Checks one Server Object's variables: an `enum` MUST NOT be empty, and the
+/// `default` MUST be one of its values.
+fn check_server(location: &str, server: &Server, violations: &mut Vec<Violation>) {
+    for (name, variable) in &server.variables {
+        let location = format!("{location}/variables/{}", pointer_token(name));
+        if let Some(values) = &variable.enumeration {
+            if values.is_empty() {
+                violations.push(Violation::error(
+                    &location,
+                    SpecError::EmptyServerVariableEnum { name: name.clone() },
+                ));
+            } else if !values.contains(&variable.default_value) {
+                violations.push(Violation::error(
+                    &location,
+                    SpecError::ServerVariableDefaultNotInEnum { name: name.clone() },
+                ));
             }
         }
     }

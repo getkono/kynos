@@ -12,7 +12,10 @@ use crate::{
     },
     validate::{
         Validator,
-        rules::parameters::{Resolved, check_parameter_list, resolve_parameter},
+        rules::{
+            document::check_server_list,
+            parameters::{Resolved, check_parameter_list, resolve_parameter},
+        },
         violation::{SpecError, Violation, pointer_token},
     },
 };
@@ -147,6 +150,7 @@ impl Validator {
         operation_ids: &mut HashMap<&'doc str, String>,
         violations: &mut Vec<Violation>,
     ) {
+        check_server_list(location, &item.servers, violations);
         check_parameter_list(location, &item.parameters, components, violations);
         #[cfg(feature = "openapi32")]
         super::parameters::check_querystring(
