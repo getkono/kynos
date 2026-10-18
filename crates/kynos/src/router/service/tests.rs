@@ -11,8 +11,9 @@ fn operation() -> Box<Operation> {
 ///
 /// The destructure is exhaustive, so a slot added to `PathItem` stops this
 /// compiling until it is either asserted here or named as holding no
-/// operation — the list `flag_opaque` walks is written by hand, and this is
-/// what holds it to the type.
+/// operation. `flag_opaque` walks `PathItem::operations_mut`, which
+/// `kynos-openapi` holds to the type itself; this case pins that
+/// `flag_opaque` marks each operation that walk yields.
 #[test]
 fn flagging_marks_every_operation_slot_a_path_item_has() {
     let mut document = Document::new(SpecVersion::V3_1, Info::new("Test", "1"));
