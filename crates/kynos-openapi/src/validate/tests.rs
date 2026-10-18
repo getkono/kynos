@@ -4266,7 +4266,55 @@ fn a_discriminating_property_is_required_through_what_composes_the_schema() {
             "DiscriminatorPropertyNotRequired"
         )]
     );
+
+    // A `$dynamicRef` resolves against the dynamic scope, which could require
+    // the property unseen.
+    let dynamic = SchemaObject {
+        dynamic_ref: Some("#node".to_owned()),
+        ..SchemaObject::default()
+    };
+    assert_eq!(single_branch_errors(dynamic), Vec::<&str>::new());
+
+    // An `anyOf` requires the property when every branch does, and only then.
+    let every = SchemaObject {
+        any_of: Some(vec![object(kinded(true)), object(kinded(true))]),
+        ..SchemaObject::default()
+    };
+    assert_eq!(single_branch_errors(every), Vec::<&str>::new());
+    let some = SchemaObject {
+        any_of: Some(vec![object(kinded(true)), object(kinded(false))]),
+        ..SchemaObject::default()
+    };
+    assert_eq!(single_branch_errors(some), [NOT_REQUIRED]);
+
+    // A conditional requires it only through both arms.
+    let one_armed = SchemaObject {
+        if_schema: Some(Box::new(Schema::of_type(SchemaType::Object))),
+        then_schema: Some(Box::new(object(kinded(true)))),
+        else_schema: Some(Box::new(object(kinded(false)))),
+        ..SchemaObject::default()
+    };
+    assert_eq!(single_branch_errors(one_armed), [NOT_REQUIRED]);
 }
+
+/// The discriminator violations validating, as 3.1, a `Pet` discriminated
+/// over `branch` alone raises, each at its `discriminator`.
+fn single_branch_errors(branch: SchemaObject) -> Vec<&'static str> {
+    let pet = discriminated(vec![object(branch)]);
+    discriminator_errors(
+        &document_with_schemas([("Pet", object(pet))]),
+        SpecVersion::V3_1,
+    )
+    .into_iter()
+    .map(|(location, name)| {
+        assert_eq!(location, "#/components/schemas/Pet/discriminator");
+        name
+    })
+    .collect()
+}
+
+/// `Pet`'s discriminating property reported optional under 3.1.
+const NOT_REQUIRED: &str = "DiscriminatorPropertyNotRequired";
 
 /// What the `Schema` derive writes for a tagged enum, transcribed from
 /// `kynos-macros/src/derive/schema/shape.rs`, is clean: a `oneOf` of inline
