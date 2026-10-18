@@ -25,7 +25,10 @@ use kynos_openapi::{
     annotation::{
         NOT_AUTHORITATIVE_ANNOTATION, OPAQUE_OPERATION_ANNOTATION, OPAQUE_ROUTES_ANNOTATION,
     },
-    model::schema::types::{SchemaType, TypeSet},
+    model::{
+        paths::template::InvalidPathTemplate,
+        schema::types::{SchemaType, TypeSet},
+    },
 };
 use proptest::{prelude::*, sample::select};
 use serde_json::{Value, json};
@@ -332,28 +335,97 @@ pub(crate) fn arb_template() -> impl Strategy<Value = String> {
     arb_template_case().prop_map(|case| case.raw)
 }
 
-/// Templates the grammar must reject, curated and derived.
-pub(crate) const MALFORMED_TEMPLATES: &[&str] = &[
-    "", "users", "/{", "/}", "/{}", "/a}b", "/{a{b}", "/a%zz", "/a%", "/a b", "/ä", "/a|b",
-    "/a\"b", "//", "/a//b", "/?", "/#", "/{a}/{a}", "/a?q=1",
-];
+/// Templates the grammar must reject, each with the refusal that names what
+/// malforms it, built from the template.
+pub(crate) fn malformed_templates() -> Vec<(&'static str, fn(String) -> InvalidPathTemplate)> {
+    use InvalidPathTemplate::{
+        DuplicateVariable, EmptyExpression, EmptySegment, IllegalLiteralCharacter,
+        MalformedPercentEncoding, MissingLeadingSlash, NotAPath, UnbalancedBraces,
+    };
 
-pub(crate) fn arb_malformed_template() -> impl Strategy<Value = String> {
+    vec![
+        ("", MissingLeadingSlash),
+        ("users", MissingLeadingSlash),
+        ("/{", UnbalancedBraces),
+        ("/}", UnbalancedBraces),
+        ("/{}", EmptyExpression),
+        ("/a}b", UnbalancedBraces),
+        ("/{a{b}", UnbalancedBraces),
+        ("/a%zz", MalformedPercentEncoding),
+        ("/a%", MalformedPercentEncoding),
+        ("/a b", |template| IllegalLiteralCharacter {
+            template,
+            character: ' ',
+        }),
+        ("/ä", |template| IllegalLiteralCharacter {
+            template,
+            character: 'ä',
+        }),
+        ("/a|b", |template| IllegalLiteralCharacter {
+            template,
+            character: '|',
+        }),
+        ("/a\"b", |template| IllegalLiteralCharacter {
+            template,
+            character: '"',
+        }),
+        ("//", EmptySegment),
+        ("/a//b", EmptySegment),
+        ("/?", NotAPath),
+        ("/#", NotAPath),
+        ("/{a}/{a}", |template| DuplicateVariable {
+            template,
+            name: "a".to_owned(),
+        }),
+        ("/a?q=1", NotAPath),
+    ]
+}
+
+/// A malformed template, and the refusal parsing it must return.
+pub(crate) fn arb_malformed_template_case() -> impl Strategy<Value = (String, InvalidPathTemplate)>
+{
     prop_oneof![
-        select(MALFORMED_TEMPLATES).prop_map(str::to_owned),
+        select(malformed_templates())
+            .prop_map(|(raw, refusal)| (raw.to_owned(), refusal(raw.to_owned()))),
         // A query string or fragment is never part of a path.
-        arb_template().prop_map(|raw| format!("{raw}?q=1")),
-        arb_template().prop_map(|raw| format!("{raw}#f")),
+        arb_template().prop_map(|raw| {
+            let raw = format!("{raw}?q=1");
+            (raw.clone(), InvalidPathTemplate::NotAPath(raw))
+        }),
+        arb_template().prop_map(|raw| {
+            let raw = format!("{raw}#f");
+            (raw.clone(), InvalidPathTemplate::NotAPath(raw))
+        }),
         // Without the leading `/` nothing is a template.
-        arb_template().prop_map(|raw| raw[1..].to_owned()),
+        arb_template().prop_map(|raw| {
+            let raw = raw[1..].to_owned();
+            (raw.clone(), InvalidPathTemplate::MissingLeadingSlash(raw))
+        }),
         // `//` always meets two separators with nothing between them.
-        arb_template().prop_map(|raw| format!("{raw}//x")),
-        // Repeating a variable that is already there.
-        arb_template_case().prop_map(|case| match case.variables.first() {
-            Some(name) => format!("{}/{{{name}}}", case.raw),
-            None => "/{dup}/{dup}".to_owned(),
+        arb_template().prop_map(|raw| {
+            let raw = format!("{raw}//x");
+            (raw.clone(), InvalidPathTemplate::EmptySegment(raw))
+        }),
+        // Repeating a variable that is already there, which is found before
+        // the empty segment a trailing `/` would leave.
+        arb_template_case().prop_map(|case| {
+            let (raw, name) = match case.variables.first() {
+                Some(name) => (format!("{}/{{{name}}}", case.raw), name.clone()),
+                None => ("/{dup}/{dup}".to_owned(), "dup".to_owned()),
+            };
+            (
+                raw.clone(),
+                InvalidPathTemplate::DuplicateVariable {
+                    template: raw,
+                    name,
+                },
+            )
         }),
     ]
+}
+
+pub(crate) fn arb_malformed_template() -> impl Strategy<Value = String> {
+    arb_malformed_template_case().prop_map(|(raw, _)| raw)
 }
 
 // --- Patterns ------------------------------------------------------------
