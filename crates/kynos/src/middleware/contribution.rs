@@ -5,43 +5,14 @@
 //! one security scheme name with different schemes, reported while the router
 //! is built.
 
-use kynos_openapi::{ComponentName, ParameterIn, StatusPattern};
+use kynos_openapi::ComponentName;
 
-/// Two interceptors disagreed about the same part of the description.
+/// Two contributions to the description disagreed about the same part of it.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ContributionConflict {
-    /// Both declared a different response for the same status.
-    #[error("two interceptors declare different responses for `{status}`")]
-    Response {
-        /// The contested status pattern.
-        status: StatusPattern,
-    },
-
-    /// Both declared a different `default` response.
-    #[error("two interceptors declare different `default` responses")]
-    DefaultResponse,
-
-    /// Both declared a different header under the same name and status.
-    #[error("two interceptors declare different `{name}` headers on `{status}`")]
-    ResponseHeader {
-        /// The contested header name.
-        name: String,
-        /// The status it appears on.
-        status: StatusPattern,
-    },
-
-    /// Both declared a different parameter with the same name and location.
-    #[error("two interceptors declare different `in: {location}` parameters named `{name}`")]
-    Parameter {
-        /// The contested parameter name.
-        name: String,
-        /// Where it is carried.
-        location: ParameterIn,
-    },
-
-    /// Both registered a different scheme under one component name.
-    #[error("two interceptors register different security schemes named `{name}`")]
+    /// Two different security schemes were registered under one component name.
+    #[error("two different security schemes are registered under the name `{name}`")]
     SecurityScheme {
         /// The contested component name.
         name: ComponentName,

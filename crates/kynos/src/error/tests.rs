@@ -1,7 +1,14 @@
-use kynos_openapi::{Severity, SpecError, Violation};
+use kynos_openapi::{ComponentName, Severity, SpecError, Violation};
 
 use super::Error;
 use crate::middleware::contribution::ContributionConflict;
+
+/// The one conflict the registry raises, under a name the tests can spell out.
+fn scheme_conflict() -> ContributionConflict {
+    ContributionConflict::SecurityScheme {
+        name: ComponentName::new("bearer").expect("a legal component name"),
+    }
+}
 
 /// Two violations of different severities, which is the shape a real validation
 /// run produces and the one a fixed sentence hides.
@@ -64,7 +71,7 @@ fn an_invalid_router_offers_no_cause() {
 /// reported.
 #[test]
 fn a_contribution_conflict_becomes_a_build_failure() {
-    let error = Error::from(ContributionConflict::DefaultResponse);
+    let error = Error::from(scheme_conflict());
 
     assert!(matches!(error, Error::Contribution(_)));
 }
@@ -74,13 +81,9 @@ fn a_contribution_conflict_becomes_a_build_failure() {
 /// not describe a valid API".
 #[test]
 fn the_conflict_speaks_for_itself() {
-    let conflict = ContributionConflict::DefaultResponse;
-    let expected = conflict.to_string();
+    let expected = scheme_conflict().to_string();
 
-    assert_eq!(
-        Error::from(ContributionConflict::DefaultResponse).to_string(),
-        expected
-    );
+    assert_eq!(Error::from(scheme_conflict()).to_string(), expected);
 }
 
 /// `From` is not transitive. Both hops existed -- `TlsError` into `ServerError`
@@ -121,7 +124,7 @@ fn a_tls_failure_still_speaks_for_itself() {
 mod variants {
     use std::collections::BTreeSet;
 
-    use super::{Error, invalid};
+    use super::{Error, invalid, scheme_conflict};
 
     /// Every variant, named. An exhaustive match, so a variant added to
     /// [`Error`] stops this file compiling until it is given a case.
@@ -160,8 +163,7 @@ mod variants {
             pattern: "a(?=b)".to_owned(),
             reason: "lookaround".to_owned(),
         };
-        let contribution =
-            || crate::middleware::contribution::ContributionConflict::DefaultResponse;
+        let contribution = scheme_conflict;
         let middleware = || crate::middleware::MiddlewareError::CredentialedWildcardOrigin;
         let link = || crate::extract::link::UnresolvedLink::Unmounted {
             from: "create_user".to_owned(),
@@ -252,11 +254,8 @@ mod variants {
              lookaround"
         );
         assert_eq!(
-            Error::Contribution(
-                crate::middleware::contribution::ContributionConflict::DefaultResponse
-            )
-            .to_string(),
-            "two interceptors declare different `default` responses"
+            Error::Contribution(scheme_conflict()).to_string(),
+            "two different security schemes are registered under the name `bearer`"
         );
         assert_eq!(
             Error::Middleware(crate::middleware::MiddlewareError::CredentialedWildcardOrigin)
