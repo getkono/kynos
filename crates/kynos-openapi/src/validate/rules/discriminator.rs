@@ -5,7 +5,7 @@
 //! `allOf` form depends on every other schema in the document, so that MUST
 //! is judged once the walk is complete.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     model::{
@@ -52,7 +52,7 @@ impl Discriminators {
         }
 
         let property = &discriminator.property_name;
-        if requires(object, property, components, &mut HashSet::new()) {
+        if requires(object, property, components, &mut HashMap::new()) {
             return;
         }
         let location = format!("{location}/discriminator");
@@ -100,18 +100,24 @@ impl Discriminators {
 /// Read are `required`, every `allOf` member, every `oneOf` or `anyOf` branch
 /// together, both arms of a conditional, and the `#/components/schemas` entry a
 /// `$ref` names, looked up as written. A `false` branch admits nothing, so
-/// requires anything. A `$dynamicRef`, a reference elsewhere, one already
-/// being `following`, `not`, `dependentSchemas` and `dependentRequired` could
-/// each require it unseen.
+/// requires anything. A `$dynamicRef`, a reference elsewhere, one to a
+/// component still being followed, `not`, `dependentSchemas` and
+/// `dependentRequired` could each require it unseen.
+///
+/// `judged` holds each component followed so far for this `property`: `None`
+/// while it is being followed, then its verdict, so each is followed once
+/// however many paths reach it. Remembering a verdict reached through a cut
+/// cycle is sound, because a cut only ever counts as requiring.
 fn requires<'doc>(
     object: &'doc SchemaObject,
     property: &str,
     components: &'doc Components,
-    following: &mut HashSet<&'doc str>,
+    judged: &mut HashMap<&'doc str, Option<bool>>,
 ) -> bool {
-    let schema = |schema: &'doc Schema, following: &mut HashSet<&'doc str>| match schema {
+    let schema = |schema: &'doc Schema, judged: &mut HashMap<&'doc str, Option<bool>>| match schema
+    {
         Schema::Bool(admits) => !admits,
-        Schema::Object(object) => requires(object, property, components, following),
+        Schema::Object(object) => requires(object, property, components, judged),
     };
 
     if object
@@ -133,11 +139,14 @@ fn requires<'doc>(
         else {
             return true;
         };
-        if !following.insert(name) {
-            return true;
-        }
-        let required = schema(target, following);
-        following.remove(name.as_str());
+        let required = if let Some(verdict) = judged.get(name.as_str()) {
+            verdict.unwrap_or(true)
+        } else {
+            judged.insert(name, None);
+            let required = schema(target, judged);
+            judged.insert(name, Some(required));
+            required
+        };
         if required {
             return true;
         }
@@ -147,14 +156,14 @@ fn requires<'doc>(
         .all_of
         .iter()
         .flatten()
-        .any(|member| schema(member, following))
+        .any(|member| schema(member, judged))
         || [&object.one_of, &object.any_of]
             .into_iter()
             .flatten()
-            .any(|branches| branches.iter().all(|branch| schema(branch, following)))
+            .any(|branches| branches.iter().all(|branch| schema(branch, judged)))
         || match (&object.if_schema, &object.then_schema, &object.else_schema) {
             (Some(_), Some(then), Some(otherwise)) => {
-                schema(then, following) && schema(otherwise, following)
+                schema(then, judged) && schema(otherwise, judged)
             }
             _ => false,
         }
