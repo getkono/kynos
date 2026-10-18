@@ -299,7 +299,7 @@ fn a_ranged_operation_declares_the_field_it_reads() {
         panic!("described by a boolean schema");
     };
     let pattern = schema.pattern.clone().expect("a pattern");
-    assert!(pattern.starts_with("^bytes="), "{pattern}");
+    assert!(pattern.starts_with("^[Bb][Yy][Tt][Ee][Ss]="), "{pattern}");
 
     // The control declares no such parameter.
     let whole = operation(&document, "/recordings/whole");

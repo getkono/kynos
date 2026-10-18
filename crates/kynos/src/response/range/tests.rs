@@ -380,8 +380,46 @@ fn a_range_set_longer_than_the_cap_is_ignored() {
     assert_eq!(MAX_RANGES, 8);
     assert_eq!(
         spec::pattern(),
-        r"^bytes=(?:\d+-\d*|-\d+)(?:\s*,\s*(?:\d+-\d*|-\d+)){0,7}$"
+        r"^[Bb][Yy][Tt][Ee][Ss]=[ \t]*(?:\d+-\d*|-\d+)(?:[ \t]*,[ \t]*(?:\d+-\d*|-\d+)){0,7}$"
     );
+}
+
+/// The emitted pattern admits what a sender may write, and nothing a sender
+/// may not: the recipient lenience of
+/// [`the_specifications_own_examples_are_read_as_written`] stays the parser's.
+#[cfg(feature = "pattern")]
+#[test]
+fn the_range_pattern_is_the_senders_grammar() {
+    let pattern = regex::Regex::new(&spec::pattern()).expect("the pattern compiles");
+    let eight = (0..MAX_RANGES)
+        .map(|index| format!("{index}-{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    for admitted in [
+        "bytes=0-499",
+        "bytes=0-0,-1",
+        "bytes= 0-999, 4500-5499, -1000",
+        "BYTES=0-1",
+        "Bytes=9500-",
+        "bytes=0-1\t,\t2-3",
+        &format!("bytes={eight}"),
+    ] {
+        assert!(pattern.is_match(admitted), "`{admitted}` is refused");
+    }
+
+    for refused in [
+        "bytes=0-1,,2-3",
+        "bytes=,0-1",
+        "bytes=0-1,",
+        "bytes=",
+        "bytes =0-1",
+        "items=0-1",
+        "bytes=0-1\n,2-3",
+        &format!("bytes={eight}, 99-99"),
+    ] {
+        assert!(!pattern.is_match(refused), "`{refused}` is admitted");
+    }
 }
 
 /// Section 14.1.2: *recipients MUST anticipate potentially large decimal
