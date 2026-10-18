@@ -389,7 +389,10 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   beside the tag in an `allOf` the same way.
 /// - A `#[serde(other)]` catch-all on a variant serde reads, which only 3.2's
 ///   `defaultMapping` could describe and the derive does not emit. On a variant
-///   serde skips both ways it catches nothing, and is accepted.
+///   serde skips both ways it catches nothing, and is accepted. A
+///   `#[serde(field_identifier)]` enum whose last variant is a newtype or
+///   carries `#[serde(other)]` is refused whatever that variant skips, since
+///   serde reads every identifier the enum does not name as it.
 /// - `skip_serializing_if` on a non-`Option` field with no `#[serde(default)]`
 ///   on the field or its struct, and `#[serde(skip_serializing)]` alone on such
 ///   a field. serde may leave the field out of what it writes but still
