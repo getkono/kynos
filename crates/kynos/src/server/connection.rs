@@ -44,7 +44,7 @@ pub(in crate::server) async fn serve_connection<C: 'static>(
     config: TransportConfig,
     lifecycle: watch::Receiver<Lifecycle>,
 ) {
-    let deadline = first_head_deadline(&config);
+    let deadline = first_head_deadline_from_now(&config);
 
     #[cfg(feature = "tls")]
     let mut lifecycle = lifecycle;
@@ -106,7 +106,7 @@ where
     C: 'static,
     I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let deadline = first_head_deadline(&config);
+    let deadline = first_head_deadline_from_now(&config);
     // Held until the connection ends: a dropped sender reads as `Forced`.
     let (_running, lifecycle) = watch::channel(Lifecycle::Running);
     let connection = Connection::from_peer(peer_addr, unbound_local_addr(peer_addr));
@@ -125,15 +125,26 @@ fn unbound_local_addr(peer_addr: SocketAddr) -> SocketAddr {
     SocketAddr::new(ip, 0)
 }
 
-/// When a connection accepted now must have sent its first request head.
-///
-/// Without HTTP/1's header-read timeout, the idle timeout bounds the head.
-fn first_head_deadline(config: &TransportConfig) -> Option<Instant> {
-    #[cfg(feature = "http1")]
-    let deadline = (config.http1).first_head_deadline(std::time::Instant::now());
-    #[cfg(not(feature = "http1"))]
-    let deadline = (config.http2).first_head_deadline(std::time::Instant::now());
-    deadline.map(Instant::from_std)
+/// When a connection accepted at `accepted` must have sent its first request
+/// head: the earlier of HTTP/1's header-read deadline and HTTP/2's idle
+/// deadline, since no stream is in flight before that head under either
+/// protocol. `None` when every compiled timeout is disabled.
+pub(in crate::server) fn first_head_deadline(
+    config: &TransportConfig,
+    accepted: std::time::Instant,
+) -> Option<std::time::Instant> {
+    let deadlines: &[Option<std::time::Instant>] = &[
+        #[cfg(feature = "http1")]
+        (config.http1).first_head_deadline(accepted),
+        #[cfg(feature = "http2")]
+        (config.http2).first_head_deadline(accepted),
+    ];
+    deadlines.iter().flatten().copied().min()
+}
+
+/// [`first_head_deadline`] for a connection accepted now, on tokio's clock.
+fn first_head_deadline_from_now(config: &TransportConfig) -> Option<Instant> {
+    first_head_deadline(config, std::time::Instant::now()).map(Instant::from_std)
 }
 
 /// Resolves once `deadline` passes unless `head_seen` says a request head

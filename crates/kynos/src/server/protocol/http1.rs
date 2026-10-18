@@ -25,8 +25,9 @@ pub struct Http1Config {
     /// How long a client may take to send the request head.
     ///
     /// The first request head on any connection is held to it from accept,
-    /// whatever protocol the connection turns out to speak, over TLS too.
-    /// Past the first head, it bounds each later HTTP/1 head; an
+    /// whatever protocol the connection turns out to speak, over TLS too; in a
+    /// build with `http2`, to the HTTP/2 idle timeout as well, whichever passes
+    /// first. Past the first head, it bounds each later HTTP/1 head; an
     /// HTTP/2 connection is then held to the HTTP/2 idle timeout instead.
     pub header_read_timeout: Option<Duration>,
     /// The maximum number of request headers.
@@ -58,7 +59,8 @@ impl Http1Config {
     /// accept for a connection's first head under either protocol.
     ///
     /// `None` waits indefinitely: a client that never finishes a request head
-    /// holds the connection open.
+    /// holds the connection open, unless, in a build with `http2`, the HTTP/2
+    /// idle timeout, which also bounds a connection's first head, closes it.
     ///
     /// [`Server::prepare`](crate::server::Server::prepare) refuses
     /// `Some(Duration::ZERO)`.
