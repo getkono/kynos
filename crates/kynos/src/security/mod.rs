@@ -190,16 +190,14 @@ pub fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 ///
 /// Derived with `#[derive(SecurityScheme)]` on a unit struct:
 ///
-/// ```no_run
-/// # use kynos::security::SecurityScheme;
-/// # struct Bearer;
-/// # impl SecurityScheme for Bearer {
-/// #     const NAME: &'static str = "Bearer";
-/// #     type Credential = String;
-/// #     type Scope = kynos::security::Unscoped;
-/// #     fn describe() -> kynos::openapi::SecurityScheme {
-/// #         kynos::openapi::SecurityScheme::bearer(None)
-/// #     }
+/// ```
+/// # #[cfg(feature = "macros")]
+/// # {
+/// use kynos::SecurityScheme;
+///
+/// #[derive(SecurityScheme)]
+/// #[security(bearer(format = "JWT"))]
+/// struct AccessToken;
 /// # }
 /// ```
 ///

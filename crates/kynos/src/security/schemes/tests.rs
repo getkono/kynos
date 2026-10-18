@@ -54,9 +54,7 @@ fn every_configuration_free_scheme_has_a_row() {
     /// `Bearer`, `Basic` and `MutualTls`.
     const WITNESSED: usize = 3;
 
-    // Spelled in two pieces: `SOURCE` is this file, so a contiguous
-    // literal would count itself.
-    const NEEDLE: &str = concat!("> SecurityScheme", " for ");
+    const NEEDLE: &str = "> SecurityScheme for ";
 
     let declared = SOURCE.matches(NEEDLE).count();
 
