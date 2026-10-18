@@ -41,7 +41,6 @@ pub struct Quota {
     limit: u64,
     window: Duration,
     burst: u64,
-    unit: QuotaUnit,
 }
 
 impl Quota {
@@ -53,7 +52,6 @@ impl Quota {
             limit,
             window,
             burst: 0,
-            unit: QuotaUnit::default(),
         }
     }
 
@@ -91,13 +89,6 @@ impl Quota {
         self
     }
 
-    /// What this quota counts.
-    #[must_use]
-    pub fn unit(mut self, unit: QuotaUnit) -> Self {
-        self.unit = unit;
-        self
-    }
-
     /// The number a response reports, burst included.
     #[must_use]
     pub fn ceiling(&self) -> u64 {
@@ -111,7 +102,7 @@ impl Quota {
             self.name.clone(),
             self.ceiling(),
             Some(self.window),
-            self.unit,
+            QuotaUnit::Requests,
         )
     }
 }
