@@ -1758,7 +1758,8 @@ fn document_linking(link: crate::model::link::Link) -> Document {
 /// `operationId` "MUST be resolved within the scope of the OpenAPI
 /// Description", and an `operationRef` "MUST point to an Operation Object".
 /// Both are reported at the link, wherever it sits: inline under an
-/// operation's response, a webhook's included, or as a component.
+/// operation's response, `default` and a webhook's included, or as a
+/// component.
 #[test]
 fn a_link_naming_no_described_operation_is_reported_at_the_link() {
     use crate::model::{link::Link, reference::RefOr};
@@ -1800,10 +1801,25 @@ fn a_link_naming_no_described_operation_is_reported_at_the_link() {
         ),
     );
 
+    let fallback = document_with(&[(
+        "/users",
+        PathItem::new().with_operation(
+            Method::Get,
+            Operation::new("listUsers").with_responses(Responses::new().with_default(
+                Response::new("ok").with_link("next", Link::to_operation("missing")),
+            )),
+        ),
+    )]);
+
     let cases = [
         (
             document_linking(Link::to_operation("missing")),
             inline,
+            unknown_id(),
+        ),
+        (
+            fallback,
+            "#/paths/~1users/get/responses/default/links/next",
             unknown_id(),
         ),
         (
@@ -1849,6 +1865,7 @@ fn a_link_naming_no_described_operation_is_reported_at_the_link() {
 /// `operationRef` into another document, or through a `$ref` this walk does
 /// not follow, likewise.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn a_link_to_a_described_or_unknowable_operation_is_not_reported() {
     use crate::model::{
         callback::Callback,
@@ -1896,6 +1913,20 @@ fn a_link_to_a_described_or_unknowable_operation_is_not_reported() {
     proxy.reference = Some("#/components/pathItems/Shared".to_owned());
     let template = PathTemplate::parse("/proxy").expect("valid template");
     document.paths.insert(&template, proxy);
+    // A component callback declares `relayNotify` only there, and its second
+    // Path Item is given by reference.
+    let mut relay = Callback::new().with(
+        "{$request.body#/url}",
+        PathItem::new().with_operation(Method::Post, operation("relayNotify")),
+    );
+    relay.items.insert(
+        "{$request.query.cb}".to_owned(),
+        RefOr::Ref(Ref::new("#/components/pathItems/Shared")),
+    );
+    document
+        .components
+        .callbacks
+        .insert("Relay".to_owned(), RefOr::Item(relay));
 
     let links = [
         Link::to_operation("listUsers"),
@@ -1911,6 +1942,9 @@ fn a_link_to_a_described_or_unknowable_operation_is_not_reported() {
         Link::to_operation_ref("#/components/pathItems/Shared/get"),
         Link::to_operation_ref("#/paths/~1proxy/get"),
         Link::to_operation_ref("#/paths/~1users/get/callbacks/relay/x/post"),
+        Link::to_operation("relayNotify"),
+        Link::to_operation_ref("#/components/callbacks/Relay/%7B$request.body%23~1url%7D/post"),
+        Link::to_operation_ref("#/components/callbacks/Relay/%7B$request.query.cb%7D/get"),
         Link::to_operation_ref("https://example.com/openapi.json#/paths/~1nope/get"),
         Link::to_operation_ref("other.json#/paths/~1nope/get"),
     ];
