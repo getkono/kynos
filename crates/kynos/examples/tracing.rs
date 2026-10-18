@@ -11,7 +11,7 @@
 //! [`print_request_response.rs`](print_request_response.rs) is the counterpart
 //! to this file — the exchange an observer is not permitted to touch.
 //!
-//! Five things are worth noticing:
+//! Worth noticing:
 //!
 //! * **An observer declares nothing, which is why it may see everything.** It
 //!   cannot change a request or a response, so no operation's description gains

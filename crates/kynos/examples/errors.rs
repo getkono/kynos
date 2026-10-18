@@ -28,8 +28,10 @@
 //!   turns into dead retry logic.
 //! * **Five of the responses below come from no handler at all.** A fallback
 //!   policy produces the 404, the 405 and the 501, `catch_panics` produces the 500, and
-//!   an interceptor produces the 503. Each reaches the description by a
-//!   different route, and not one of them appears in a signature.
+//!   an interceptor produces the 503. The 500 and the 503 reach the description
+//!   by different routes; the fallback 404, 405 and 501 never do, since they
+//!   answer requests no operation describes. Not one of them appears in a
+//!   signature.
 //!
 //! [`middleware.rs`](middleware.rs) covers contributions properly, and
 //! [`composition.rs`](composition.rs) covers the fallback policies as router
