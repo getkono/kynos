@@ -823,6 +823,7 @@ are reached through `kynos::__private::fuzz`, which exists only under the
 | `basic` | `security::carrier::basic`, and its base64 decoder | the credential read is the one the `base64` crate's strict engine decodes, or neither reads one |
 | `cookie` | `http::cookie::jar` and `value_of` | every pair is ASCII without `;`, and a name the jar yields is found by `value_of` |
 | `date` | the HTTP-date reader and writer in `http/date.rs` | whatever the reader produces the writer renders back to it, and the reverse for every instant before the year 10000 |
+| `disposition` | a multipart part's `Content-Disposition` reader in `extract/body/multipart.rs` | the response writer's quoting of the `name` and `filename` it reads reads back to them, for values without the `\`, CR and LF the writer drops |
 | `etag` | the entity-tag list reader and both comparisons in `http/etag.rs` | each member is trimmed and non-empty, and both comparisons find it in the field it came from |
 | `forwarded` | `Forwarded::resolve` | trusting nobody answers with the peer, a scheme is lowercased, and `client_is_secure` follows it |
 | `media_type` | the codec matcher `offers` in `extract/body/mod.rs` | a match agrees on type and subtype, and a bare media type offers itself |
