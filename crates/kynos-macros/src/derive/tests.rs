@@ -6639,6 +6639,37 @@ mod cookies {
     }
 }
 
+mod path_params {
+    use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
+    use crate::derive::path_params::expand_inner;
+
+    fn ledger() -> Vec<Case> {
+        vec![case(
+            "an optional field, when a captured variable is always present",
+            quote::quote!(
+                struct ReportPath {
+                    name: Option<String>,
+                }
+            ),
+            "a path parameter is always present",
+        )]
+    }
+
+    #[test]
+    fn each_case_raises_the_diagnostic_it_names() {
+        each_case_is_refused(ledger(), expand_inner);
+    }
+
+    #[test]
+    fn every_path_params_diagnostic_has_a_case() {
+        every_diagnostic_has_a_case(
+            "path_params.rs",
+            include_str!("path_params.rs"),
+            ledger().len(),
+        );
+    }
+}
+
 mod multipart {
     use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
     use crate::derive::multipart::expand_inner;
