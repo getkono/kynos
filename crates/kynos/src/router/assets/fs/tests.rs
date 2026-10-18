@@ -266,3 +266,133 @@ async fn a_capture_naming_no_file_is_not_found() {
         assert_eq!(response.status(), crate::http::StatusCode::OK, "{path}");
     }
 }
+
+/// A file of `length` octets that differ from one offset to the next, so a
+/// span read from the wrong place does not pass for the right one.
+fn patterned(length: usize, seed: u8) -> Vec<u8> {
+    (0..length)
+        .map(|offset| u8::try_from(offset % 251).expect("under 256") ^ seed)
+        .collect()
+}
+
+/// The file is read only once the body is polled, so a HEAD, whose body is
+/// dropped unpolled (RFC 9110 section 9.3.2), reads none of it.
+///
+/// Witnessed by rewriting the file between the response and its first poll:
+/// a body read while the response was being built still holds what was there
+/// before.
+#[tokio::test]
+async fn a_file_is_read_only_once_its_body_is_polled() {
+    use http_body_util::BodyExt;
+
+    let scratch = Scratch::new("a_file_is_read_only_once_its_body_is_polled");
+    let path = scratch.0.join("root/large.bin");
+    std::fs::create_dir_all(path.parent().expect("a parent")).expect("its parents");
+    let length = 3 * 64 * 1024 + 1;
+    std::fs::write(&path, patterned(length, 0)).expect("a file");
+
+    let directory = Directory::new(scratch.0.join("root"));
+
+    for range in [None, Some("bytes=0-"), Some("bytes=10-70000")] {
+        let mut request = routed("/static/large.bin");
+        if let Some(range) = range {
+            request.headers_mut().insert(
+                crate::http::header::RANGE,
+                crate::http::HeaderValue::from_static(range),
+            );
+        }
+        std::fs::write(&path, patterned(length, 0)).expect("the original");
+
+        let response = super::serve(&directory, &request).await;
+        assert!(response.status().is_success(), "{range:?}");
+
+        let rewritten = patterned(length, 0x5a);
+        std::fs::write(&path, &rewritten).expect("the same length, rewritten");
+
+        let expected = match range {
+            Some("bytes=10-70000") => &rewritten[10..=70000],
+            _ => &rewritten[..],
+        };
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("a readable body")
+            .to_bytes();
+        assert!(
+            body == expected,
+            "{range:?}: the body was read before it was polled"
+        );
+    }
+}
+
+/// A whole file, asked for with or without `bytes=0-`, arrives in spans no
+/// larger than [`SPAN`](crate::response::range::source::SPAN) rather than as
+/// one buffer the size of the file, and still announces its exact length.
+#[tokio::test]
+async fn a_whole_file_is_streamed_in_spans() {
+    use http_body_util::BodyExt;
+
+    let scratch = Scratch::new("a_whole_file_is_streamed_in_spans");
+    let path = scratch.0.join("root/large.bin");
+    std::fs::create_dir_all(path.parent().expect("a parent")).expect("its parents");
+    let contents = patterned(3 * 64 * 1024 + 1, 0);
+    std::fs::write(&path, &contents).expect("a file");
+
+    let directory = Directory::new(scratch.0.join("root"));
+    let span = usize::try_from(crate::response::range::source::SPAN).expect("a usize span");
+
+    for range in [None, Some("bytes=0-")] {
+        let mut request = routed("/static/large.bin");
+        if let Some(range) = range {
+            request.headers_mut().insert(
+                crate::http::header::RANGE,
+                crate::http::HeaderValue::from_static(range),
+            );
+        }
+
+        let mut body = super::serve(&directory, &request).await.into_body();
+        assert_eq!(
+            http_body::Body::size_hint(&body).exact(),
+            u64::try_from(contents.len()).ok(),
+            "{range:?}"
+        );
+
+        let mut read = Vec::with_capacity(contents.len());
+        while let Some(frame) = body.frame().await {
+            let data = frame
+                .expect("a readable frame")
+                .into_data()
+                .expect("a data frame");
+            assert!(
+                data.len() <= span,
+                "{range:?}: a frame of {} octets, past the {span}-octet span",
+                data.len()
+            );
+            read.extend_from_slice(&data);
+        }
+        assert!(read == contents, "{range:?}: the octets differ");
+    }
+}
+
+/// An empty file is a 200 with an empty body, not a one-octet read that the
+/// file cannot fill.
+#[tokio::test]
+async fn an_empty_file_is_served_empty() {
+    use http_body_util::BodyExt;
+
+    let scratch = Scratch::new("an_empty_file_is_served_empty");
+    scratch.file("root/empty.txt", "");
+
+    let directory = Directory::new(scratch.0.join("root"));
+    let response = super::serve(&directory, &routed("/static/empty.txt")).await;
+    assert_eq!(response.status(), crate::http::StatusCode::OK);
+
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("an empty body")
+        .to_bytes();
+    assert!(body.is_empty());
+}
