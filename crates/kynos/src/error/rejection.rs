@@ -1,15 +1,13 @@
 //! Every way a built-in extractor can fail — one type per extractor.
 //!
 //! Each type names only the statuses that extractor can actually produce, and
-//! [`FromRequestParts::Rejection`](crate::extract::FromRequestParts::Rejection)
-//! is bound by [`Responses`], so those statuses reach the operation's
-//! `responses` without an author restating them.
+//! every extractor's rejection is bound by [`Responses`], so those statuses
+//! reach the operation's `responses` without an author restating them — see
+//! [Rejections describe themselves too](crate::extract#rejections-describe-themselves-too).
 //!
-//! Statuses raised by an interceptor rather than an extractor — 429, 503 and
-//! 408 — are not here. [`RateLimit`](crate::middleware::rate_limit::RateLimit),
-//! [`Concurrency`](crate::middleware::limits::concurrency::Concurrency) and
-//! [`Timeout`](crate::middleware::limits::timeout::Timeout) return a response directly
-//! and declare it through `OperationContribution`.
+//! Statuses an interceptor refuses with rather than an extractor are not here:
+//! an interceptor declares them through its
+//! [`Interceptor::Short`](crate::middleware::Interceptor::Short).
 //!
 //! # What a rejection says
 //!
