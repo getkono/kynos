@@ -89,6 +89,33 @@ async fn a_form_writes_an_array_as_one_pair_per_item() {
     assert_eq!(&body(response).await[..], b"tag=a&tag=b");
 }
 
+/// A value the form encoder refuses -- here a bare number, which has no name
+/// to pair it with -- answers a 500 problem rather than a 200 with a partial
+/// or empty body: it is encoded in full before the status is committed.
+#[cfg(feature = "form")]
+#[tokio::test]
+async fn a_form_that_cannot_be_encoded_answers_500() {
+    use crate::extract::body::form::Form;
+
+    let response = Form(42_u32).into_response();
+
+    assert_eq!(
+        response.status(),
+        crate::http::StatusCode::INTERNAL_SERVER_ERROR
+    );
+    assert_eq!(media_type(&response), "application/problem+json");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body(response).await)
+            .expect("a problem document"),
+        serde_json::json!({
+            "type": "about:blank",
+            "title": "Internal Server Error",
+            "status": 500,
+            "detail": "the response body could not be encoded as a form",
+        })
+    );
+}
+
 #[tokio::test]
 async fn text_writes_the_string_and_states_its_charset() {
     use crate::extract::body::text::Text;
