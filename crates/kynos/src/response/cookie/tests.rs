@@ -176,19 +176,11 @@ const REFUSALS: [&str; 6] = [
 ];
 
 /// One case per way `encode` refuses, and per clause of each grammar it
-/// refuses by, counted against the refusals.
-///
-/// Refusing rather than escaping: a value carrying `;` would silently become an
-/// *attribute* rather than part of the value, which is a cookie the service
-/// believes it set and a different one the client stored.
-///
-/// The count is of `return None` in `encode`'s own source, each of which is a
-/// refusal [`REFUSALS`] names, so a refusal added there without a case here
-/// fails rather than passing on the cases that already exist.
-#[test]
-fn every_refusal_has_a_case() {
+/// refuses by: the refusal it reaches, what it is, and the cookie.
+#[expect(clippy::too_many_lines)]
+fn refused() -> Vec<(&'static str, &'static str, Cookie)> {
     let long_label = "a".repeat(64);
-    let cases: Vec<(&str, &str, Cookie)> = vec![
+    vec![
         (
             REFUSALS[0],
             "a name carrying a space",
@@ -321,8 +313,22 @@ fn every_refusal_has_a_case() {
             "a domain label ending with a hyphen",
             Cookie::new("a", "1").domain("example-.com"),
         ),
-    ];
+    ]
+}
 
+/// Every case [`refused`] holds renders no field, and the cases are counted
+/// against the refusals.
+///
+/// Refusing rather than escaping: a value carrying `;` would silently become an
+/// *attribute* rather than part of the value, which is a cookie the service
+/// believes it set and a different one the client stored.
+///
+/// The count is of `return None` in `encode`'s own source, each of which is a
+/// refusal [`REFUSALS`] names, so a refusal added there without a case here
+/// fails rather than passing on the cases that already exist.
+#[test]
+fn every_refusal_has_a_case() {
+    let cases = refused();
     for (refusal, description, cookie) in &cases {
         assert_eq!(
             rendered(cookie),
@@ -346,9 +352,12 @@ fn every_refusal_has_a_case() {
         REFUSALS.len(),
         "`encode` refuses in a place `REFUSALS` does not name; name it and give it a case"
     );
+}
 
-    // The control for each grammar: the same shapes, legal, at the edge of
-    // each clause above where the clause has one.
+/// The control for each grammar [`refused`] reaches: the same shapes, legal,
+/// at the edge of each clause where the clause has one.
+#[test]
+fn each_refused_grammar_admits_its_legal_edge() {
     let longest_label = "a".repeat(63);
     for legal in [
         Cookie::new("a-b_c", "1"),

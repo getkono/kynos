@@ -3,8 +3,8 @@ use kynos_openapi::{Document, Info, Opaque, OpaqueReason, Operation, PathItem, S
 use super::Service;
 
 /// One operation, carrying nothing a marker could collide with.
-fn operation() -> Option<Box<Operation>> {
-    Some(Box::default())
+fn operation() -> Box<Operation> {
+    Box::default()
 }
 
 /// `flag_opaque` marks every operation a Path Item can hold, slot by slot.
@@ -19,16 +19,16 @@ fn flagging_marks_every_operation_slot_a_path_item_has() {
     document.paths.items.insert(
         "/things".to_owned(),
         PathItem {
-            get: operation(),
-            put: operation(),
-            post: operation(),
-            delete: operation(),
-            options: operation(),
-            head: operation(),
-            patch: operation(),
-            trace: operation(),
+            get: Some(operation()),
+            put: Some(operation()),
+            post: Some(operation()),
+            delete: Some(operation()),
+            options: Some(operation()),
+            head: Some(operation()),
+            patch: Some(operation()),
+            trace: Some(operation()),
             #[cfg(feature = "openapi32")]
-            query: operation(),
+            query: Some(operation()),
             #[cfg(feature = "openapi32")]
             additional_operations: [("COPY".to_owned(), Box::default())].into_iter().collect(),
             ..PathItem::default()
