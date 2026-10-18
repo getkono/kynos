@@ -346,7 +346,12 @@ mod a_part_disposition_is_read_quote_aware {
 
     /// What `MultipartForm` makes of one part carrying `disposition`.
     async fn read(disposition: &str) -> Result<Names, BodyRejection> {
-        let body = format!("--x\r\nContent-Disposition: {disposition}\r\n\r\nb\r\n--x--\r\n");
+        read_head(format!("Content-Disposition: {disposition}").as_bytes()).await
+    }
+
+    /// What `MultipartForm` makes of one part whose header block is `head`.
+    async fn read_head(head: &[u8]) -> Result<Names, BodyRejection> {
+        let body = [b"--x\r\n", head, b"\r\n\r\nb\r\n--x--\r\n"].concat();
         let mut request = Request::new(Body::from_bytes(bytes::Bytes::from(body)));
         request.headers_mut().insert(
             header::CONTENT_TYPE,
@@ -388,6 +393,38 @@ mod a_part_disposition_is_read_quote_aware {
             assert!(
                 matches!(rejection, BodyRejection::Syntax { .. }),
                 "`{disposition}`: {rejection:?}"
+            );
+        }
+    }
+
+    /// The detail of the 400 `head` earns, which must be a syntax rejection.
+    async fn refused(head: &[u8]) -> String {
+        match read_head(head).await {
+            Err(BodyRejection::Syntax { detail }) => detail,
+            other => panic!("{:?}: {other:?}", String::from_utf8_lossy(head)),
+        }
+    }
+
+    /// A part with no `Content-Disposition` names no field: 400.
+    #[tokio::test]
+    async fn a_part_without_a_disposition_is_refused() {
+        assert_eq!(
+            refused(b"Content-Type: text/plain").await,
+            "a part carries no `Content-Disposition`"
+        );
+    }
+
+    /// A `Content-Disposition` that is not UTF-8 is 400, the file name's
+    /// bytes included, since both names are `String`s.
+    #[tokio::test]
+    async fn a_disposition_that_is_not_utf8_is_refused() {
+        for head in [
+            &b"Content-Disposition: form-data; name=\"\xff\""[..],
+            b"Content-Disposition: form-data; name=\"a\"; filename=\"\xff.txt\"",
+        ] {
+            assert_eq!(
+                refused(head).await,
+                "a part's `Content-Disposition` is not UTF-8"
             );
         }
     }
