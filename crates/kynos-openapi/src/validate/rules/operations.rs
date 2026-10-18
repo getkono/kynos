@@ -8,6 +8,7 @@ use crate::{
         components::Components,
         paths::{item::PathItem, operation::Operation, template::PathTemplate},
         reference::RefOr,
+        response::status::StatusPattern,
     },
     validate::{
         Validator,
@@ -17,7 +18,7 @@ use crate::{
             parameters::check_parameter_list,
             paths::check_path_correspondence,
         },
-        violation::{SpecError, Violation},
+        violation::{SpecError, Violation, pointer_token},
     },
 };
 
@@ -58,6 +59,18 @@ impl Validator {
 
         if !operation.responses.declares_a_response() {
             violations.push(Violation::error(location, SpecError::NoResponses));
+        }
+
+        // The reader's own grammar, so a key accepted here is one it reads
+        // back as a status rather than refusing it or taking it for `default`
+        // or an extension.
+        for key in operation.responses.responses.keys() {
+            if key.parse::<StatusPattern>().is_err() {
+                violations.push(Violation::error(
+                    format!("{location}/responses/{}", pointer_token(key)),
+                    SpecError::InvalidResponseKey { key: key.clone() },
+                ));
+            }
         }
 
         // A response's `description`, REQUIRED by 3.1 alone, is checked with

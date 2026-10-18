@@ -243,6 +243,22 @@ pub enum SpecError {
     #[error("an operation must declare at least one response")]
     NoResponses,
 
+    /// A Responses Object key is not one a reader takes back as a status.
+    ///
+    /// Only `1XX`-`5XX` and three digits beginning `1`-`5` are status keys:
+    /// `600` or `42` does not parse, `default` reads back as the fallback
+    /// response, and an `x-` key as an extension. Reachable through
+    /// [`Responses::with`](crate::model::response::Responses::with), which
+    /// takes any `u16`, or the public `responses` map.
+    #[error(
+        "`{key}` is not a response key a reader takes back: expected a status code from \
+         `100` to `599`, or one of `1XX`, `2XX`, `3XX`, `4XX`, `5XX`"
+    )]
+    InvalidResponseKey {
+        /// The offending key.
+        key: String,
+    },
+
     /// `encoding` was declared beside `prefixEncoding` or `itemEncoding`.
     ///
     /// 3.2 makes the three mutually exclusive: the first names properties, the

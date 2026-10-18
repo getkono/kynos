@@ -50,6 +50,10 @@ impl Responses {
     }
 
     /// Declares a response for an exact status code.
+    ///
+    /// A code outside `100..=599` is not a key a reader takes back, so
+    /// [`crate::validate`] refuses it as
+    /// [`SpecError::InvalidResponseKey`](crate::validate::violation::SpecError::InvalidResponseKey).
     #[must_use]
     pub fn with(mut self, status: u16, response: Response) -> Self {
         self.responses.insert(
