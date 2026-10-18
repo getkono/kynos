@@ -53,7 +53,9 @@ pub(super) fn reject_shadowed_variant(input: &DeriveInput) -> syn::Result<()> {
 /// one (an `alias` of the written name makes it true both ways).
 ///
 /// A member serde uses one way is named by that side and exempt, as are
-/// flattened and transparent fields, whose own names are not on the wire.
+/// flattened and transparent fields, whose own names are not on the wire. An
+/// identifier enum's variants are all read-only: serde never writes the enum,
+/// so [`variant_name`] gives each the name it is read under.
 pub(super) fn reject_split_rename(input: &DeriveInput) -> syn::Result<()> {
     let container = Container::read(input);
     // Each group of fields serde writes, under the container naming them.
@@ -141,9 +143,11 @@ pub(super) fn reject_split_rename(input: &DeriveInput) -> syn::Result<()> {
 ///
 /// Such a rule gives a member two wire names. A rule naming no field serde both
 /// writes and reads is not refused: a variant serde only reads, or one whose
-/// sides resolve to one style. Runs before any check that reads a
-/// [`Container`].
+/// sides resolve to one style, or the container rule of an identifier enum,
+/// which serde never writes and [`Container`] reads by its deserialize side.
+/// Runs before any other check that reads a [`Container`].
 pub(super) fn reject_split_rename_all(input: &DeriveInput) -> syn::Result<()> {
+    let identifier = Container::read(input).visitor == Visitor::Identifier;
     let variants = match &input.data {
         Data::Enum(data) => data.variants.iter().collect(),
         _ => Vec::new(),
@@ -171,7 +175,8 @@ pub(super) fn reject_split_rename_all(input: &DeriveInput) -> syn::Result<()> {
         })
         .flatten()
         .flatten();
-    let rules = std::iter::once((&input.attrs, "rename_all", "every member")).chain(variant_rules);
+    let container_rule = (!identifier).then_some((&input.attrs, "rename_all", "every member"));
+    let rules = container_rule.into_iter().chain(variant_rules);
     for (attrs, key, reach) in rules {
         if let Some(span) = split_rule(attrs, key) {
             return Err(syn::Error::new(

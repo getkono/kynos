@@ -1,7 +1,8 @@
 //! `#[derive(ParamValue)]`.
 //!
 //! A field-less enum's text form is the names the `Schema` derive gives its
-//! variants: `Display` writes the one serde writes, and `FromStr` reads every
+//! variants: `Display` writes the one serde writes, or for an identifier enum,
+//! which serde never writes, the one serde reads it by; `FromStr` reads every
 //! one serde reads, aliases included, which is the schema's `enum`. The
 //! `Schema` derive's refusals run first, so the names it would refuse never
 //! reach a decoder.
