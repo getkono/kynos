@@ -163,3 +163,6 @@ impl<C> Service<C> {
         self
     }
 }
+
+#[cfg(all(test, feature = "unchecked"))]
+mod tests;

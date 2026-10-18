@@ -255,14 +255,24 @@ async fn the_description_route_serves_the_flags_a_tower_conversion_adds() {
     use tower::ServiceExt as _;
 
     let unchecked = served(Docs::scalar()).into_tower_unchecked();
+    // The premise: the conversion flagged every operation, not merely one.
+    let mut flagged = 0;
+    for (path, item) in &unchecked.openapi().paths.items {
+        for (method, operation) in item.operations() {
+            assert!(
+                kynos::openapi::Opaque::of(operation)
+                    .expect("a well-formed marker")
+                    .is_some(),
+                "{method:?} {path} was not flagged by the conversion"
+            );
+            flagged += 1;
+        }
+    }
+    assert!(flagged > 0, "the document holds operations to flag");
     let expected = unchecked
         .openapi()
         .to_json()
         .expect("a serializable document");
-    assert!(
-        expected.contains(kynos::openapi::annotation::OPAQUE_OPERATION_ANNOTATION),
-        "the premise of this case is that the conversion flagged the document"
-    );
 
     let mut request = kynos::http::Request::new(kynos::http::body::Body::empty());
     *request.uri_mut() = "/openapi.json".parse().expect("a usable request target");
