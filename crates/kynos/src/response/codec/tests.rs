@@ -183,8 +183,8 @@ async fn multipart_states_the_boundary_the_body_is_framed_with() {
 #[test]
 fn every_codec_has_a_wire_case() {
     const SOURCE: &str = include_str!("mod.rs");
-    /// `binary`, `text`, `form`, `json`, `multipart`, `protobuf`.
-    const WITNESSED: usize = 6;
+    /// The codecs a case above pins the bytes of, in declaration order.
+    const WITNESSED: [&str; 6] = ["binary", "text", "form", "json", "multipart", "protobuf"];
 
     // Either visibility. What is counted is codecs, and whether a codec's
     // module is `pub` says only whether it declares an item of its own --
@@ -197,12 +197,13 @@ fn every_codec_has_a_wire_case() {
             line.strip_prefix("pub mod ")
                 .or_else(|| line.strip_prefix("mod "))
         })
-        .filter(|declaration| *declaration != "tests;")
-        .count();
+        .filter_map(|declaration| declaration.strip_suffix(';'))
+        .filter(|name| *name != "tests")
+        .collect::<Vec<_>>();
 
     assert_eq!(
         declared, WITNESSED,
-        "`codec/` holds {declared} codec(s) and {WITNESSED} have a wire case; a codec added \
-         without one is a codec whose bytes nothing pins"
+        "`codec/` holds one set of codecs and another has a wire case; a codec added without \
+         one is a codec whose bytes nothing pins"
     );
 }
