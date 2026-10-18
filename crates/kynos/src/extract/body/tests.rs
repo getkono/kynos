@@ -77,6 +77,10 @@ fn a_marker_is_refused_wherever_a_request_reaches_both_sides() {
         ("application/jsonl", "application/json", false),
         ("application/json-seq", "application/json", false),
         ("image/png", "application/json", false),
+        // Whitespace is ASCII on both sides: a no-break space is part of
+        // the type, so it keeps the pair rather than vanishing in `offers`.
+        ("\u{a0}application/json", "application/json", false),
+        ("application/json\u{2003}", "application/json", false),
     ];
     #[cfg(feature = "multipart")]
     let pairs = pairs.into_iter().chain([(

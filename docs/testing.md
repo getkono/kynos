@@ -817,14 +817,17 @@ are reached through `kynos::__private::fuzz`, which exists only under the
 | --- | --- | --- |
 | `accept` | `Accept::parse`, and the qvalue reader in `http/quality.rs` | the qvalue reader agrees with section 12.4.2's grammar, transcribed by character class |
 | `basic` | `security::carrier::basic`, and its base64 decoder | the credential read is the one the `base64` crate's strict engine decodes, or neither reads one |
-| `cookie` | `http::cookie::jar` and `value_of` | every pair is ASCII without `;`, and a name the jar yields is found by `value_of` |
+| `cookie` | `http::cookie::jar` and `value_of` | the jar is exactly the ASCII pairs a split of the raw octets finds, and `value_of` answers any ASCII name with the first pair filed under it, `Unreadable` where that one's value is not ASCII |
 | `date` | the HTTP-date reader and writer in `http/date.rs` | whatever the reader produces the writer renders back to it, and the reverse for every instant before the year 10000 |
+| `decompression` | `Decompression`'s bounded decode of a whole body, in `middleware/decompression/mod.rs` | a coded body is handed on no longer than the limit nor `max_ratio` times what arrived, and an uncoded one as it arrived; a payload coded by the `flate2`, `brotli` and `zstd` reference encoders decodes back to itself unless a layer passes that bound, and a byte after the coded stream is refused |
 | `disposition` | a multipart part's `Content-Disposition` reader in `extract/body/multipart.rs` | the response writer's quoting of the `name` and `filename` it reads reads back to them, for values without the `\`, CR and LF the writer drops |
 | `etag` | the entity-tag list reader and both comparisons in `http/etag.rs` | each member is trimmed and non-empty, and both comparisons find it in the field it came from |
-| `forwarded` | `Forwarded::resolve` | trusting nobody answers with the peer, a scheme is lowercased, and `client_is_secure` follows it |
-| `media_type` | the codec matcher `offers` in `extract/body/mod.rs` | a match agrees on type and subtype, and a bare media type offers itself |
+| `forwarded` | `Forwarded::resolve` | trusting nobody answers with the peer, a scheme is lowercased, and `client_is_secure` follows it; trusting `n` hops answers with the `n`th of three known nearest hops written after the input, and under `X-Forwarded-For` with what its rightmost `n` members alone resolve to |
+| `json_lines` | the `JsonLines` and `JsonSeq` record framer in `extract/body/json_lines/records.rs` | a body split into chunks anywhere reads, under either framing, as the whole buffer framed at once reads: the same records, 422s and the failure that ends the stream |
+| `language` | `AcceptLanguage::parse` and `choose`, and `LanguageTag::parse` | the tag chosen is one the offer declares, and a tag read is the same tag in any case and from its own normalized text, as the `const` `is_well_formed` agrees |
+| `media_type` | the codec matcher `offers` in `extract/body/mod.rs`, and the `const` `shares_requests` in `extract/body/alternative.rs` | a match agrees on type and subtype, a bare media type offers itself, and `shares_requests` finds a marker and a codec's type share a request exactly when `offers` hands one to both |
 | `query` | `__private::uri::query_pairs` | the pairs equal a byte-at-a-time form decoder's |
-| `range` | `Range::parse` and `select` | a field is ignored only for a reason this constructor can see, and a part lies inside the representation |
+| `range` | `Range::parse` and `select` | the specs read, or the reason the field is ignored, are a recogniser's transcribed from section 14.1.1's grammar plus the leniencies it lists, and the part selected is the first satisfiable spec cut to the representation |
 
 The search runs nightly rather than on a pull request because its verdict
 depends on how long it ran: a gate that fails on an input a longer run found is
