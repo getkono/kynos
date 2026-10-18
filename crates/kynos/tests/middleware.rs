@@ -423,7 +423,7 @@ mod security_headers {
 
     use kynos::{
         Router,
-        extract::params::header::{EncodeHeaders, HeaderParams},
+        extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
         http::{HeaderName, HeaderValue, header},
         middleware::security_headers::{SecurityHeaders, StrictTransportSecurity},
         response::{headers::WithHeaders, status::NoContent},
@@ -441,11 +441,11 @@ mod security_headers {
     }
 
     impl EncodeHeaders for OwnPolicy {
-        fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
-            vec![(
+        fn encode(&self) -> Result<Vec<(HeaderName, HeaderValue)>, UnencodableHeader> {
+            Ok(vec![(
                 header::STRICT_TRANSPORT_SECURITY,
                 HeaderValue::from_static("max-age=60"),
-            )]
+            )])
         }
     }
 
@@ -572,11 +572,16 @@ mod partial {
     }
 
     impl kynos::extract::params::header::EncodeHeaders for StatedLength {
-        fn encode(&self) -> Vec<(kynos::http::HeaderName, kynos::http::HeaderValue)> {
-            vec![(
+        fn encode(
+            &self,
+        ) -> Result<
+            Vec<(kynos::http::HeaderName, kynos::http::HeaderValue)>,
+            kynos::extract::params::header::UnencodableHeader,
+        > {
+            Ok(vec![(
                 header::CONTENT_LENGTH,
                 kynos::http::HeaderValue::from_str(&self.0.to_string()).expect("a decimal length"),
-            )]
+            )])
         }
     }
 
@@ -1602,7 +1607,9 @@ mod decompression {
         error::problem::ProblemType,
         extract::{
             body::text::Text,
-            params::header::{DecodeHeaders, EncodeHeaders, HeaderParams, Headers},
+            params::header::{
+                DecodeHeaders, EncodeHeaders, HeaderParams, Headers, UnencodableHeader,
+            },
         },
         http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header},
         middleware::{compression::Compression, decompression::Decompression},
@@ -1663,8 +1670,8 @@ mod decompression {
     }
 
     impl EncodeHeaders for CodedForm {
-        fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
-            Vec::new()
+        fn encode(&self) -> Result<Vec<(HeaderName, HeaderValue)>, UnencodableHeader> {
+            Ok(Vec::new())
         }
     }
 

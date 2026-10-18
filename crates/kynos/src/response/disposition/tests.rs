@@ -112,6 +112,7 @@ fn no_filename_can_split_the_field_it_is_written_into() {
         let group = ContentDisposition::inline().filename(fixture);
         let (_, value) = group
             .encode()
+            .expect("encoding is total")
             .pop()
             .expect("the group always sends one field");
 

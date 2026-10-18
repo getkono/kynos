@@ -656,8 +656,8 @@ fn both_groups_describe_the_fields_they_send() {
 /// The field each group writes matches the pattern it declares.
 #[test]
 fn each_group_writes_a_value_its_own_grammar_admits() {
-    let sent = |group: &dyn Fn() -> Vec<(HeaderName, HeaderValue)>| {
-        let fields = group();
+    let sent = |group: &dyn Fn() -> Result<Vec<(HeaderName, HeaderValue)>, _>| {
+        let fields = group().expect("a range group always encodes");
         assert_eq!(fields.len(), 1);
         fields[0].1.to_str().expect("a printable field").to_owned()
     };

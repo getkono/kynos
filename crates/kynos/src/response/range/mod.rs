@@ -300,7 +300,9 @@ impl<T: Rangeable> IntoResponse for Ranged<T> {
         let selection = self.selection;
         let mut response = self.body.into_response();
 
-        crate::extract::params::header::write(response.headers_mut(), &AcceptRanges);
+        if crate::extract::params::header::write(response.headers_mut(), &AcceptRanges).is_err() {
+            return crate::extract::params::header::refused();
+        }
 
         if let Selection::Part {
             first,
@@ -308,15 +310,19 @@ impl<T: Rangeable> IntoResponse for Ranged<T> {
             complete_length,
         } = selection
         {
-            *response.status_mut() = StatusCode::PARTIAL_CONTENT;
-            crate::extract::params::header::write(
+            if crate::extract::params::header::write(
                 response.headers_mut(),
                 &ContentRange::Satisfied {
                     first,
                     last,
                     complete_length,
                 },
-            );
+            )
+            .is_err()
+            {
+                return crate::extract::params::header::refused();
+            }
+            *response.status_mut() = StatusCode::PARTIAL_CONTENT;
         }
 
         response

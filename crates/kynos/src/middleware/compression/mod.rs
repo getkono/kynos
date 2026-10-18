@@ -16,7 +16,7 @@ use tokio::io::{AsyncRead, ReadBuf};
 
 use crate::{
     error::problem::ProblemType,
-    extract::params::header::{EncodeHeaders, HeaderParams},
+    extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http,
     middleware::{
         Continued, Interceptor, Next,
@@ -72,9 +72,9 @@ impl HeaderParams for ContentEncoding {
 }
 
 impl EncodeHeaders for ContentEncoding {
-    fn encode(&self) -> Vec<(http::HeaderName, http::HeaderValue)> {
+    fn encode(&self) -> Result<Vec<(http::HeaderName, http::HeaderValue)>, UnencodableHeader> {
         let Some(coding) = self.coding else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
 
         let mut fields = vec![(
@@ -91,7 +91,7 @@ impl EncodeHeaders for ContentEncoding {
             }
         }
 
-        fields
+        Ok(fields)
     }
 }
 

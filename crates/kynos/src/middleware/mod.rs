@@ -272,10 +272,14 @@ impl Continued<()> {
     /// Changes the type, so an interceptor whose `Adds` names a group has to
     /// call this to return at all. Available on `Continued<()>` alone, so a
     /// response carries exactly one group.
+    ///
+    /// A group that refuses to [`encode`](EncodeHeaders::encode) replaces
+    /// what the chain produced with a 500, rather than letting it go out
+    /// without a field the group declares.
     // By value so the call reads `.with_headers(Group { .. })`.
     #[allow(clippy::needless_pass_by_value)]
     pub fn with_headers<G: EncodeHeaders>(mut self, headers: G) -> Continued<G> {
-        crate::extract::params::header::write(self.response.headers_mut(), &headers);
+        crate::extract::params::header::write_or_refuse(&mut self.response, &headers);
 
         Continued {
             response: self.response,

@@ -78,26 +78,32 @@ pub(super) fn assembled<H: EncodeHeaders>(
     if let Ok(value) = HeaderValue::from_str(media_type) {
         response.headers_mut().insert(header::CONTENT_TYPE, value);
     }
-    crate::extract::params::header::write(response.headers_mut(), headers);
-
-    // Section 14.3: advertised on every representation served.
-    crate::extract::params::header::write(response.headers_mut(), &AcceptRanges);
-
-    if let Selection::Part {
-        first,
-        last,
-        complete_length,
-    } = selection
-    {
-        *response.status_mut() = StatusCode::PARTIAL_CONTENT;
-        crate::extract::params::header::write(
-            response.headers_mut(),
-            &ContentRange::Satisfied {
+    let fields = response.headers_mut();
+    // Section 14.3: `Accept-Ranges` is advertised on every representation
+    // served.
+    let written = crate::extract::params::header::write(fields, headers)
+        .and_then(|()| crate::extract::params::header::write(fields, &AcceptRanges))
+        .and_then(|()| match selection {
+            Selection::Part {
                 first,
                 last,
                 complete_length,
-            },
-        );
+            } => crate::extract::params::header::write(
+                fields,
+                &ContentRange::Satisfied {
+                    first,
+                    last,
+                    complete_length,
+                },
+            ),
+            Selection::Whole(_) => Ok(()),
+        });
+    if written.is_err() {
+        return crate::extract::params::header::refused();
+    }
+
+    if matches!(selection, Selection::Part { .. }) {
+        *response.status_mut() = StatusCode::PARTIAL_CONTENT;
     }
 
     response

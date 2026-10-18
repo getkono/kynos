@@ -5,7 +5,7 @@ use std::convert::Infallible;
 use kynos_openapi::model::schema::types::SchemaType;
 
 use crate::{
-    extract::params::header::{EncodeHeaders, HeaderParams},
+    extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http,
     middleware::{Continued, Interceptor, Next},
     response::cookie::Cookie,
@@ -48,12 +48,13 @@ impl HeaderParams for SetCookieHeaders {
 }
 
 impl EncodeHeaders for SetCookieHeaders {
-    fn encode(&self) -> Vec<(http::HeaderName, http::HeaderValue)> {
-        self.cookies
+    fn encode(&self) -> Result<Vec<(http::HeaderName, http::HeaderValue)>, UnencodableHeader> {
+        Ok(self
+            .cookies
             .iter()
             // Dropped rather than panicking on the response path.
             .filter_map(|cookie| Some((http::header::SET_COOKIE, cookie.encode()?)))
-            .collect()
+            .collect())
     }
 }
 

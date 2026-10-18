@@ -42,12 +42,12 @@
 //! `filename` is always sent, as a `quoted-string`; `filename*` follows only
 //! when the quoted fallback lost something (RFC 6266 Appendix D).
 //!
-//! Encoding is total: no filename is refused, so there is no `Result`.
+//! Encoding is total: no filename is refused, so `encode` never returns `Err`.
 
 use kynos_openapi::model::schema::types::SchemaType;
 
 use crate::{
-    extract::params::header::{EncodeHeaders, HeaderParams},
+    extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http::{HeaderName, HeaderValue, header},
     schema::registry::Registry,
 };
@@ -221,13 +221,13 @@ impl HeaderParams for ContentDisposition {
 }
 
 impl EncodeHeaders for ContentDisposition {
-    fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
+    fn encode(&self) -> Result<Vec<(HeaderName, HeaderValue)>, UnencodableHeader> {
         let value = self.field_value();
-        vec![(
+        Ok(vec![(
             header::CONTENT_DISPOSITION,
             // `field_value` emits printable ASCII only.
             HeaderValue::from_str(&value).expect("a field value of printable ASCII"),
-        )]
+        )])
     }
 }
 

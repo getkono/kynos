@@ -7,7 +7,7 @@
 use std::convert::Infallible;
 
 use kynos::{
-    extract::params::header::{EncodeHeaders, HeaderParams},
+    extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http::{HeaderName, HeaderValue, Request},
     middleware::{Continued, Interceptor, Next, request_id::RequestId},
     prelude::*,
@@ -20,8 +20,8 @@ impl HeaderParams for AlsoRequestId {
 }
 
 impl EncodeHeaders for AlsoRequestId {
-    fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
-        vec![(HeaderName::from_static("x-request-id"), self.0.clone())]
+    fn encode(&self) -> Result<Vec<(HeaderName, HeaderValue)>, UnencodableHeader> {
+        Ok(vec![(HeaderName::from_static("x-request-id"), self.0.clone())])
     }
 }
 

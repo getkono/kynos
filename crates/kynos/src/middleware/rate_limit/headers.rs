@@ -8,7 +8,7 @@ use std::time::Duration;
 use kynos_openapi::model::schema::types::SchemaType;
 
 use crate::{
-    extract::params::header::{EncodeHeaders, HeaderParams},
+    extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http,
     middleware::{
         rate_limit::decision::{QuotaPolicy, ServiceLimit},
@@ -106,8 +106,8 @@ impl HeaderParams for RateLimitHeaders {
 }
 
 impl EncodeHeaders for RateLimitHeaders {
-    fn encode(&self) -> Vec<(http::HeaderName, http::HeaderValue)> {
-        [
+    fn encode(&self) -> Result<Vec<(http::HeaderName, http::HeaderValue)>, UnencodableHeader> {
+        Ok([
             ("x-ratelimit-limit", self.limit),
             ("x-ratelimit-remaining", self.remaining),
             ("x-ratelimit-reset", whole_seconds(self.reset)),
@@ -119,7 +119,7 @@ impl EncodeHeaders for RateLimitHeaders {
                 http::HeaderValue::from_str(&value.to_string()).ok()?,
             ))
         })
-        .collect()
+        .collect())
     }
 }
 
@@ -162,7 +162,7 @@ impl HeaderParams for RateLimitFields {
 }
 
 impl EncodeHeaders for RateLimitFields {
-    fn encode(&self) -> Vec<(http::HeaderName, http::HeaderValue)> {
+    fn encode(&self) -> Result<Vec<(http::HeaderName, http::HeaderValue)>, UnencodableHeader> {
         let mut fields = Vec::new();
 
         if let Some(value) = render_limits(&self.limits) {
@@ -172,7 +172,7 @@ impl EncodeHeaders for RateLimitFields {
             fields.push((http::HeaderName::from_static("ratelimit-policy"), value));
         }
 
-        fields
+        Ok(fields)
     }
 }
 

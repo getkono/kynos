@@ -118,13 +118,19 @@ impl kynos::extract::params::header::HeaderParams for Cacheable {
 // The writing half is its own trait: this group only ever *adds* a header, so
 // it implements `EncodeHeaders` and never `DecodeHeaders`.
 impl kynos::extract::params::header::EncodeHeaders for Cacheable {
-    fn encode(&self) -> Vec<(kynos::http::HeaderName, kynos::http::HeaderValue)> {
-        vec![(
+    // A fixed value is always a field value, so this never refuses.
+    fn encode(
+        &self,
+    ) -> Result<
+        Vec<(kynos::http::HeaderName, kynos::http::HeaderValue)>,
+        kynos::extract::params::header::UnencodableHeader,
+    > {
+        Ok(vec![(
             kynos::http::header::CACHE_CONTROL,
             // `s-maxage` rather than `max-age`: this is what a *shared* cache
             // is told, and it is the one Kynos reads first.
             kynos::http::HeaderValue::from_static("public, s-maxage=60"),
-        )]
+        )])
     }
 }
 

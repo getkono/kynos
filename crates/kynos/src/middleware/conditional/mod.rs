@@ -4,7 +4,7 @@ use kynos_openapi::model::schema::types::SchemaType;
 
 use crate::{
     error::rejection::HeaderRejection,
-    extract::params::header::{DecodeHeaders, EncodeHeaders, HeaderParams},
+    extract::params::header::{DecodeHeaders, EncodeHeaders, HeaderParams, UnencodableHeader},
     http::{self, HeaderMap, HeaderValue, etag, header},
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
@@ -84,8 +84,8 @@ impl DecodeHeaders for Preconditions {
 }
 
 impl EncodeHeaders for Preconditions {
-    fn encode(&self) -> Vec<(http::HeaderName, HeaderValue)> {
-        Vec::new()
+    fn encode(&self) -> Result<Vec<(http::HeaderName, HeaderValue)>, UnencodableHeader> {
+        Ok(Vec::new())
     }
 }
 

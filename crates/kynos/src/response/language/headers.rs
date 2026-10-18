@@ -24,7 +24,7 @@ use kynos_openapi::{
 use serde_json::Value;
 
 use crate::{
-    extract::params::header::{EncodeHeaders, HeaderParams},
+    extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http::{HeaderName, HeaderValue, header},
     response::language::tag::LanguageTag,
     schema::registry::Registry,
@@ -123,12 +123,12 @@ impl HeaderParams for ContentLanguage {
 }
 
 impl EncodeHeaders for ContentLanguage {
-    fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
+    fn encode(&self) -> Result<Vec<(HeaderName, HeaderValue)>, UnencodableHeader> {
         // Both constructors take a well-formed tag: letters, digits, hyphens.
         let value = HeaderValue::from_str(&self.0)
             .expect("a well-formed language tag is a valid field value");
 
-        vec![(header::CONTENT_LANGUAGE, value)]
+        Ok(vec![(header::CONTENT_LANGUAGE, value)])
     }
 }
 

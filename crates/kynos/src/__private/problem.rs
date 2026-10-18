@@ -48,9 +48,10 @@ pub fn union_responses(responses: &mut kynos_openapi::Responses, held: &kynos_op
 }
 
 /// Writes a failure's header group onto the problem response it answers with,
-/// as `WithHeaders` writes its own.
+/// as `WithHeaders` writes its own, a group that refuses to encode answering
+/// 500 in its place.
 pub fn write_headers<H: EncodeHeaders>(response: &mut crate::http::Response, group: &H) {
-    crate::extract::params::header::write(response.headers_mut(), group);
+    crate::extract::params::header::write_or_refuse(response, group);
 }
 
 /// `base` followed by `slug`, as the bytes of a `const`: how a type URI under

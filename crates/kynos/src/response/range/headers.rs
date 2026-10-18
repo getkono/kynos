@@ -30,7 +30,7 @@ use kynos_openapi::{
 };
 
 use crate::{
-    extract::params::header::{EncodeHeaders, HeaderParams},
+    extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http::{HeaderName, HeaderValue, header},
     schema::registry::Registry,
 };
@@ -95,11 +95,11 @@ impl HeaderParams for AcceptRanges {
 }
 
 impl EncodeHeaders for AcceptRanges {
-    fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
-        vec![(
+    fn encode(&self) -> Result<Vec<(HeaderName, HeaderValue)>, UnencodableHeader> {
+        Ok(vec![(
             header::ACCEPT_RANGES,
             HeaderValue::from_static(super::spec::UNIT),
-        )]
+        )])
     }
 }
 
@@ -184,10 +184,10 @@ impl HeaderParams for ContentRange {
 }
 
 impl EncodeHeaders for ContentRange {
-    fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
+    fn encode(&self) -> Result<Vec<(HeaderName, HeaderValue)>, UnencodableHeader> {
         // Printable ASCII by construction.
         let value =
             HeaderValue::from_str(&self.field_value()).expect("a field value of printable ASCII");
-        vec![(header::CONTENT_RANGE, value)]
+        Ok(vec![(header::CONTENT_RANGE, value)])
     }
 }

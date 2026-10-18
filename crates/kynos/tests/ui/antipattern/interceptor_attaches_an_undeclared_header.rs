@@ -13,7 +13,7 @@
 use std::convert::Infallible;
 
 use kynos::{
-    extract::params::header::{EncodeHeaders, HeaderParams},
+    extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http::{HeaderName, HeaderValue, Request},
     middleware::{Continued, Interceptor, Next},
 };
@@ -25,8 +25,8 @@ impl HeaderParams for Stamp {
 }
 
 impl EncodeHeaders for Stamp {
-    fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
-        vec![(HeaderName::from_static("x-stamp"), self.0.clone())]
+    fn encode(&self) -> Result<Vec<(HeaderName, HeaderValue)>, UnencodableHeader> {
+        Ok(vec![(HeaderName::from_static("x-stamp"), self.0.clone())])
     }
 }
 

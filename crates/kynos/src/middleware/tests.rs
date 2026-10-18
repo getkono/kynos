@@ -1,6 +1,6 @@
 use super::{Continued, EncodeHeaders};
 use crate::{
-    extract::params::header::HeaderParams,
+    extract::params::header::{HeaderParams, UnencodableHeader},
     http::{HeaderName, HeaderValue, Response, header},
 };
 
@@ -14,8 +14,8 @@ impl HeaderParams for VariesOnOrigin {
 }
 
 impl EncodeHeaders for VariesOnOrigin {
-    fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
-        Vec::new()
+    fn encode(&self) -> Result<Vec<(HeaderName, HeaderValue)>, UnencodableHeader> {
+        Ok(Vec::new())
     }
 }
 
@@ -158,8 +158,11 @@ fn a_group_that_is_not_repeatable_replaces_the_value_already_set() {
     }
 
     impl EncodeHeaders for OneEncoding {
-        fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
-            vec![(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"))]
+        fn encode(&self) -> Result<Vec<(HeaderName, HeaderValue)>, UnencodableHeader> {
+            Ok(vec![(
+                header::CONTENT_ENCODING,
+                HeaderValue::from_static("gzip"),
+            )])
         }
     }
 
@@ -190,12 +193,54 @@ fn a_group_that_varies_on_nothing_writes_no_vary() {
     }
 
     impl EncodeHeaders for Silent {
-        fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
-            Vec::new()
+        fn encode(&self) -> Result<Vec<(HeaderName, HeaderValue)>, UnencodableHeader> {
+            Ok(Vec::new())
         }
     }
 
     assert_eq!(vary_after(None, Silent), None);
+}
+
+/// A group refusing to encode replaces what the chain produced with a 500,
+/// its `VARIES` merged nowhere, rather than letting the response go out
+/// without the field it declares.
+#[test]
+fn a_group_that_refuses_to_encode_answers_500() {
+    struct Refusing;
+
+    impl HeaderParams for Refusing {
+        const NAMES: &'static [&'static str] = &["x-declared"];
+        const VARIES: &'static [&'static str] = &["origin"];
+    }
+
+    impl EncodeHeaders for Refusing {
+        fn encode(&self) -> Result<Vec<(HeaderName, HeaderValue)>, UnencodableHeader> {
+            Err(UnencodableHeader::new(HeaderName::from_static(
+                "x-declared",
+            )))
+        }
+    }
+
+    let mut chained = Response::new(crate::http::body::Body::empty());
+    chained.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("max-age=60"),
+    );
+
+    let response = Continued::new(chained)
+        .with_headers(Refusing)
+        .into_response();
+
+    assert_eq!(
+        response.status(),
+        crate::http::StatusCode::INTERNAL_SERVER_ERROR
+    );
+    assert_eq!(response.headers().get(header::CACHE_CONTROL), None);
+    assert_eq!(response.headers().get(header::VARY), None);
+    assert_eq!(
+        response.headers().get(header::CONTENT_TYPE),
+        Some(&HeaderValue::from_static("application/problem+json"))
+    );
 }
 
 /// A group encoding a field its `NAMES` never declared fails the build.
@@ -219,8 +264,11 @@ fn a_group_encoding_an_undeclared_field_is_refused() {
     }
 
     impl EncodeHeaders for Lying {
-        fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
-            vec![(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"))]
+        fn encode(&self) -> Result<Vec<(HeaderName, HeaderValue)>, UnencodableHeader> {
+            Ok(vec![(
+                header::CONTENT_ENCODING,
+                HeaderValue::from_static("gzip"),
+            )])
         }
     }
 
@@ -240,8 +288,11 @@ fn a_group_encoding_what_it_declared_is_written() {
     }
 
     impl EncodeHeaders for Honest {
-        fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
-            vec![(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"))]
+        fn encode(&self) -> Result<Vec<(HeaderName, HeaderValue)>, UnencodableHeader> {
+            Ok(vec![(
+                header::CONTENT_ENCODING,
+                HeaderValue::from_static("gzip"),
+            )])
         }
     }
 
@@ -410,6 +461,7 @@ mod security_headers {
         fn written<G: EncodeHeaders>(group: &G) -> Vec<String> {
             let mut names: Vec<_> = group
                 .encode()
+                .expect("a security group always encodes")
                 .into_iter()
                 .map(|(name, _)| name.as_str().to_owned())
                 .collect();

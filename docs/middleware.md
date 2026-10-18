@@ -36,6 +36,13 @@ an equality: a group legitimately writes fewer fields than it declares —
 `ContentEncoding` with no coding chosen, a `Cors` permitting no origin. `VARIES`
 is outside it, since a `Vary` name is deliberately not in `NAMES`.
 
+**A group that cannot encode is refused, not trimmed.** A derived group's field
+is whatever its type's `ToString` renders, so a value carrying a control
+character is no field value. Dropping that field would send a response its
+description says carries it; `encode` returns `UnencodableHeader` instead, and
+every writer — `with_headers`, `WithHeaders`, an `ApiError` failure's group —
+answers 500 in place of the response, as a body that failed to serialize does.
+
 ## Soundness, not exactness
 
 The invariant is that the emitted document is a superset of observable
@@ -1114,11 +1121,17 @@ and is the right validator for revalidation anyway.
 declares, so a cache invents nothing and contributes no response of its own.
 What it adds is `Age`, and under `deriving_etags` an `ETag`.
 
-That does mean the cache is the one place outside `Next::run` that constructs a
-`Continued`. The constructor is `pub(crate)`, so a third-party interceptor still
-cannot mint one; and the invariant it protects is intact, because what is
-replayed is a response *the operation itself produced* and that passed the
-storability rules before it was stored.
+That does mean the cache constructs a `Continued` outside `Next::run`. The
+constructor is `pub(crate)`, so a third-party interceptor still cannot mint one;
+and the invariant it protects is intact, because what is replayed is a response
+*the operation itself produced* and that passed the storability rules before it
+was stored.
+
+The only other such place is `RequestId` when its correlation group refuses to
+encode. It mints the 500 a refused group answers with in place of any response
+(see [the rule](#the-rule)) without running the chain, so no handler acts on a
+request the response refuses. It invents nothing either: running the chain and
+attaching the group would have replaced whatever came back with that same 500.
 
 `Conditional::Short` is `NotModified`, and 304 *is* a new status, so it is
 declared. It is answered **after** the chain runs, because RFC 9110 section 13

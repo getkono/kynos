@@ -39,6 +39,9 @@ impl<T, H> WithHeaders<T, H> {
 ///
 /// Written as [`Continued::with_headers`](crate::middleware::Continued::with_headers)
 /// writes them: a repeated `Set-Cookie` is appended, `Content-Encoding` replaced.
+/// A group that refuses to [`encode`](EncodeHeaders::encode) answers 500 in
+/// place of the body's response, rather than sending it without a field the
+/// description declares.
 impl<T, H> IntoResponse for WithHeaders<T, H>
 where
     T: IntoResponse,
@@ -46,7 +49,7 @@ where
 {
     fn into_response(self) -> Response {
         let mut response = self.body.into_response();
-        crate::extract::params::header::write(response.headers_mut(), &self.headers);
+        crate::extract::params::header::write_or_refuse(&mut response, &self.headers);
         response
     }
 }

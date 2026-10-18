@@ -82,8 +82,9 @@ fn decode_fixed(param: &Param<'_>, value: &str, found: &TokenStream2) -> TokenSt
 /// The `HeaderParams::encode` body.
 ///
 /// The name is lower-cased at expansion for `HeaderName::from_static`; a value
-/// that is not a valid field value is dropped rather than written. A fixed
-/// value was checked at expansion, so it is written as it stands.
+/// that is not a valid field value refuses the whole group, since every field
+/// is one the description declares. A fixed value was checked at expansion, so
+/// it is written as it stands.
 fn encode_body(params: &[Param<'_>]) -> TokenStream2 {
     let entries = params.iter().map(|param| {
         let folded = param.name().to_ascii_lowercase();
@@ -104,10 +105,14 @@ fn encode_body(params: &[Param<'_>]) -> TokenStream2 {
         let rendered = render(param);
         quote! {
             if let ::core::option::Option::Some(rendered) = #rendered {
-                if let ::core::result::Result::Ok(value) =
-                    ::kynos::http::HeaderValue::from_str(&rendered)
-                {
-                    fields.push((::kynos::http::HeaderName::from_static(#folded), value));
+                let name = ::kynos::http::HeaderName::from_static(#folded);
+                match ::kynos::http::HeaderValue::from_str(&rendered) {
+                    ::core::result::Result::Ok(value) => fields.push((name, value)),
+                    ::core::result::Result::Err(_) => {
+                        return ::core::result::Result::Err(
+                            ::kynos::extract::params::header::UnencodableHeader::new(name),
+                        );
+                    }
                 }
             }
         }
@@ -116,7 +121,7 @@ fn encode_body(params: &[Param<'_>]) -> TokenStream2 {
     quote! {
         let mut fields = ::std::vec::Vec::new();
         #(#entries)*
-        fields
+        ::core::result::Result::Ok(fields)
     }
 }
 
@@ -289,7 +294,10 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         {
             fn encode(
                 &self,
-            ) -> ::std::vec::Vec<(::kynos::http::HeaderName, ::kynos::http::HeaderValue)> {
+            ) -> ::core::result::Result<
+                ::std::vec::Vec<(::kynos::http::HeaderName, ::kynos::http::HeaderValue)>,
+                ::kynos::extract::params::header::UnencodableHeader,
+            > {
                 #encode
             }
         }

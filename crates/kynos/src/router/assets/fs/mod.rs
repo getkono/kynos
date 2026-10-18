@@ -20,7 +20,7 @@ use bytes::Bytes;
 use kynos_openapi::{OpaqueReason, OpaqueRoute};
 
 use crate::{
-    extract::params::header::{EncodeHeaders, HeaderParams},
+    extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http::{HeaderValue, Request, Response, StatusCode, header},
     middleware::catch_panic::PanicPolicy,
     response::range::{Selection, spec},
@@ -196,7 +196,7 @@ impl HeaderParams for FileHeaders {
 }
 
 impl EncodeHeaders for FileHeaders {
-    fn encode(&self) -> Vec<(crate::http::HeaderName, HeaderValue)> {
+    fn encode(&self) -> Result<Vec<(crate::http::HeaderName, HeaderValue)>, UnencodableHeader> {
         let mut fields = Vec::with_capacity(2);
 
         if let Some(etag) = self
@@ -213,7 +213,7 @@ impl EncodeHeaders for FileHeaders {
             fields.push((header::CACHE_CONTROL, value));
         }
 
-        fields
+        Ok(fields)
     }
 }
 
@@ -246,7 +246,7 @@ async fn serve(directory: &Directory, request: &Request) -> Response {
     {
         let mut response = Response::new(crate::http::body::Body::empty());
         *response.status_mut() = StatusCode::NOT_MODIFIED;
-        crate::extract::params::header::write(response.headers_mut(), &headers);
+        crate::extract::params::header::write_or_refuse(&mut response, &headers);
         return response;
     }
 
