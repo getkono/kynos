@@ -161,8 +161,11 @@ fn headers(part: &Part) -> Vec<u8> {
 /// A `Content-Disposition` parameter, as the quoted-string it travels in.
 ///
 /// UTF-8 text is kept (RFC 7578). `"` is escaped; line endings are dropped so a
-/// name cannot inject a header; `\` is dropped because readers, `multer`
-/// included, do not unescape `\\` and a trailing one breaks the header.
+/// name cannot inject a header; `\` is dropped rather than escaped as `\\`.
+/// Kynos's own reader unescapes a `quoted-pair`, but `multer` and readers
+/// following the HTML form encoding do not, and to them a value ending in
+/// `\\` escapes its closing quote and breaks the header: lossy everywhere
+/// beats unreadable to some.
 fn quoted(value: &str) -> String {
     let mut quoted = String::with_capacity(value.len());
     for character in value.chars() {
