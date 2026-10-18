@@ -825,7 +825,7 @@ are reached through `kynos::__private::fuzz`, which exists only under the
 | `date` | the HTTP-date reader and writer in `http/date.rs` | whatever the reader produces the writer renders back to it, and the reverse for every instant before the year 10000 |
 | `disposition` | a multipart part's `Content-Disposition` reader in `extract/body/multipart.rs` | the response writer's quoting of the `name` and `filename` it reads reads back to them, for values without the `\`, CR and LF the writer drops |
 | `etag` | the entity-tag list reader and both comparisons in `http/etag.rs` | each member is trimmed and non-empty, and both comparisons find it in the field it came from |
-| `forwarded` | `Forwarded::resolve` | trusting nobody answers with the peer, a scheme is lowercased, and `client_is_secure` follows it |
+| `forwarded` | `Forwarded::resolve` | trusting nobody answers with the peer, a scheme is lowercased, and `client_is_secure` follows it; trusting `n` hops answers with the `n`th of three known nearest hops written after the input, and under `X-Forwarded-For` with what its rightmost `n` members alone resolve to |
 | `media_type` | the codec matcher `offers` in `extract/body/mod.rs` | a match agrees on type and subtype, and a bare media type offers itself |
 | `query` | `__private::uri::query_pairs` | the pairs equal a byte-at-a-time form decoder's |
 | `range` | `Range::parse` and `select` | a field is ignored only for a reason this constructor can see, and a part lies inside the representation |
