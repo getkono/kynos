@@ -828,13 +828,10 @@ async fn a_directly_driven_service_reports_an_in_process_connection() {
     let reply = get(&service, "/who").call().await;
 
     assert_eq!(reply.status, StatusCode::OK);
-    // Port zero is never a peer port, so the value reads as "no socket" rather
-    // than as an address a reader might try to connect back to.
-    assert!(
-        reply.text().ends_with(":0"),
-        "an in-process connection reported `{}`",
-        reply.text()
-    );
+    // The documented sentinel, whole: port zero is never a peer port, so the
+    // value reads as "no socket" rather than as an address a reader might try
+    // to connect back to.
+    assert_eq!(reply.text(), "0.0.0.0:0");
 }
 
 // --- Fallbacks under the router's interceptors -----------------------------
