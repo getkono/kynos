@@ -1,45 +1,19 @@
-//! What it means for two interceptors to disagree.
+//! What it means for two contributions to the description to disagree.
 //!
-//! `Router::intercept` rejects such a conflict at compile time; the escape
-//! hatches, where the types are erased, report it while the router is built.
+//! Interceptors cannot: `Router::intercept` rejects two that claim one status
+//! or header at compile time. What remains is a component name, which
+//! [`Router::security_scheme`](crate::router::Router::security_scheme) and
+//! [`OperationCx::add_security_scheme`](crate::router::operation::OperationCx::add_security_scheme)
+//! may both claim, and which the router reports while it is built.
 
-use kynos_openapi::{ComponentName, ParameterIn, StatusPattern};
+use kynos_openapi::ComponentName;
 
-/// Two interceptors disagreed about the same part of the description.
+/// Two contributions to the description disagreed about the same part of it.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ContributionConflict {
-    /// Both declared a different response for the same status.
-    #[error("two interceptors declare different responses for `{status}`")]
-    Response {
-        /// The contested status pattern.
-        status: StatusPattern,
-    },
-
-    /// Both declared a different `default` response.
-    #[error("two interceptors declare different `default` responses")]
-    DefaultResponse,
-
-    /// Both declared a different header under the same name and status.
-    #[error("two interceptors declare different `{name}` headers on `{status}`")]
-    ResponseHeader {
-        /// The contested header name.
-        name: String,
-        /// The status it appears on.
-        status: StatusPattern,
-    },
-
-    /// Both declared a different parameter with the same name and location.
-    #[error("two interceptors declare different `in: {location}` parameters named `{name}`")]
-    Parameter {
-        /// The contested parameter name.
-        name: String,
-        /// Where it is carried.
-        location: ParameterIn,
-    },
-
-    /// Both registered a different scheme under one component name.
-    #[error("two interceptors register different security schemes named `{name}`")]
+    /// Two different security schemes were registered under one component name.
+    #[error("two different security schemes are registered under the name `{name}`")]
     SecurityScheme {
         /// The contested component name.
         name: ComponentName,

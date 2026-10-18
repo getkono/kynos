@@ -94,10 +94,10 @@ compares declarations — one `Short::STATUSES` against the other, one `Adds`
 group's `NAMES` against the other — so a header written on a short-circuit
 response is outside it, because it is in no `const`. That gap is named under
 [what the framework computes](#what-the-framework-computes-and-what-it-does-not).
-What survives in
-[`ContributionConflict`](../crates/kynos/src/middleware/contribution.rs) is
-the vocabulary for the subtrees where the types are erased and the check cannot
-run — those taken under `layer_unchecked`.
+No interceptor conflict survives to build time:
+[`ContributionConflict`](../crates/kynos/src/middleware/contribution.rs) holds
+only a security scheme registered twice under one name with different
+definitions, which the router reports when it is built.
 
 *Covering one route* is the whole of it, and it is wider than *mounted on one
 scope*. A router's interceptors cover the operations in every
