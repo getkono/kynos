@@ -190,14 +190,13 @@ fn every_short_filename_encodes_to_a_field_that_gives_it_back() {
             "{name:?} sent {sent:?}"
         );
 
-        let recovered = match rest.strip_prefix("; filename*=UTF-8''") {
-            Some(encoded) => crate::__private::uri::decode_path_value(encoded)
+        let recovered = if let Some(encoded) = rest.strip_prefix("; filename*=UTF-8''") {
+            crate::__private::uri::decode_path_value(encoded)
                 .unwrap_or_else(|error| panic!("{name:?} sent {sent:?}: {error}"))
-                .into_owned(),
-            None => {
-                assert_eq!(rest, "", "{name:?} sent {sent:?}");
-                fallback.to_owned()
-            }
+                .into_owned()
+        } else {
+            assert_eq!(rest, "", "{name:?} sent {sent:?}");
+            fallback.to_owned()
         };
         assert_eq!(recovered, name, "{name:?} sent {sent:?}");
     }
