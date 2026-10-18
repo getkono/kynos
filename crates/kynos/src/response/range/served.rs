@@ -83,6 +83,9 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
     ///
     /// A resumable download needs a strong tag: without one, `If-Range` cannot
     /// hold and a resume gets the whole representation (section 13.1.5).
+    ///
+    /// A tag [`ETag::encode`] cannot spell has [`deliver`](Self::deliver)
+    /// answer 500, whatever the request's preconditions.
     #[must_use]
     pub fn etag(mut self, etag: ETag) -> Self {
         self.etag = Some(etag);
@@ -130,11 +133,24 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
     ///
     /// # Errors
     ///
-    /// Returns the source's own error if the length cannot be read. A failed
+    /// Returns the source's own error if the length cannot be read; a tag
+    /// that cannot be spelled is answered with a 500 before the source is
+    /// asked, so it is never that error. A failed
     /// span read, or a source that stops short of the length it reported
     /// ([`Truncated`](super::source::Truncated)), fails the body stream instead,
     /// since the head has already been sent.
     pub async fn deliver(self, conditions: &Conditions) -> Result<Delivery<M>, S::Error> {
+        // Before any precondition reads the tag: one that cannot be spelled
+        // would otherwise be evaluated as no tag at all. Before the source is
+        // read too, since no answer it gives changes this one.
+        if self
+            .etag
+            .as_ref()
+            .is_some_and(|etag| ETag::encode(etag).is_none())
+        {
+            return Ok(Delivery::new(crate::extract::params::header::refused()));
+        }
+
         let complete_length = self.source.complete_length().await?;
 
         // Section 13.2.2 steps 1 and 2: the lost-update preconditions first.
@@ -211,8 +227,10 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
             }
         }
 
-        if let Some(etag) = self.etag.as_ref().and_then(ETag::encode) {
-            fields.insert(header::ETAG, etag);
+        if let Some(etag) = &self.etag {
+            if crate::extract::params::header::write(fields, etag).is_err() {
+                return crate::extract::params::header::refused();
+            }
         }
         if let Some(value) = self
             .last_modified
