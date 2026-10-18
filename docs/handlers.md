@@ -142,7 +142,8 @@ variants may not share a status, which is where `Reply` is stricter than
 [`ApiError`](errors.md): a problem carries a `detail` telling two occurrences of
 one status apart, and a reply's variants are keyed by status alone. A variant's
 fields are its response body, so it holds exactly one described type, or none
-for the empty body.
+for the empty body — and none at 204, 205 or 304, whose responses RFC 9110
+gives no content.
 
 ## Negotiation, on both sides
 

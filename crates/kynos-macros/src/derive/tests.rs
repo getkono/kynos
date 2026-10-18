@@ -4646,6 +4646,16 @@ mod reply {
                 ),
                 "carries its response body",
             ),
+            case(
+                "a body at a status whose response carries no content",
+                quote::quote!(
+                    enum DeleteReply {
+                        #[reply(status = 204)]
+                        Deleted(u32),
+                    }
+                ),
+                "a `204` response carries no content",
+            ),
         ]
     }
 

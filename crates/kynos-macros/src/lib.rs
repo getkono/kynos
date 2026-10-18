@@ -620,7 +620,9 @@ pub fn derive_api_error(item: TokenStream) -> TokenStream {
 /// telling two occurrences apart.
 ///
 /// A variant's fields are its response body, so a variant holds either nothing,
-/// for the empty body, or exactly one type describing the body.
+/// for the empty body, or exactly one type describing the body. A variant at
+/// 204, 205 or 304 holds nothing, since RFC 9110 gives those responses no
+/// content.
 #[proc_macro_derive(Reply, attributes(reply))]
 pub fn derive_reply(item: TokenStream) -> TokenStream {
     derive::reply::expand(item)

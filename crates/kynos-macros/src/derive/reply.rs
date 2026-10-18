@@ -8,7 +8,8 @@
 //! ```
 //!
 //! `status` is required on every variant, names a final response, and is
-//! unique. `description` falls back to the variant's doc comment, then the
+//! unique. A variant at 204, 205 or 304 is a unit variant, since those
+//! responses carry no content. `description` falls back to the variant's doc comment, then the
 //! reason phrase, then a sentence of the status's class.
 //!
 //! A bodied variant is described and written as `application/json`, so its
@@ -27,6 +28,10 @@ use crate::derive::common::doc_string;
 
 /// The range a reply's status may fall in: final responses only, never 1xx.
 const STATUS_RANGE: std::ops::RangeInclusive<u16> = 200..=599;
+
+/// The final statuses whose response carries no content, each with the RFC
+/// 9110 section saying so.
+const WITHOUT_CONTENT: [(u16, &str); 3] = [(204, "15.3.5"), (205, "15.3.6"), (304, "15.4.5")];
 
 pub(crate) fn expand(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
@@ -95,6 +100,24 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
             ));
         }
         seen.push((status, span));
+
+        // A body at a status without content would be described and written
+        // anyway, so the variant answering with one is refused instead.
+        if let (Fields::Unnamed(fields), Some((_, section))) = (
+            &variant.fields,
+            WITHOUT_CONTENT.iter().find(|(code, _)| *code == status),
+        ) {
+            return Err(syn::Error::new(
+                fields.span(),
+                format!(
+                    "a `{status}` response carries no content (RFC 9110 §{section}), so variant \
+                     `{}` cannot hold a body. Make it a unit variant, or answer with a status \
+                     whose response has content",
+                    variant.ident
+                ),
+            ));
+        }
+
         declared.push(response(variant, status, args.description.as_deref()));
         written.push(write(variant, status));
     }
