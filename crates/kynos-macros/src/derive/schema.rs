@@ -524,8 +524,9 @@ struct Container {
     /// The container `rename`, serialize side: the name serde writes a
     /// struct's `#[serde(tag = "...")]` as.
     rename: Option<String>,
-    /// The container `rename_all` style, serialize side; a split one is refused
-    /// first ([`split_rule`]). In [`Container::fields_of`], a variant's.
+    /// The container `rename_all` style, serialize side, or deserialize side for
+    /// an identifier enum, which serde only reads; a split one is otherwise
+    /// refused first ([`split_rule`]). In [`Container::fields_of`], a variant's.
     rename_all: Option<String>,
     /// An enum's `rename_all_fields`, each side: names a variant's fields on
     /// each side the variant's own `rename_all` leaves.
@@ -561,6 +562,7 @@ impl Container {
             doc: doc_string(&input.attrs),
             ..Self::default()
         };
+        let mut rename_all = Sides::default();
 
         for attr in &input.attrs {
             if !attr.path().is_ident("serde") {
@@ -573,7 +575,7 @@ impl Container {
                 };
                 match key.to_string().as_str() {
                     "rename" => container.rename = sides(&meta)?.serialize,
-                    "rename_all" => container.rename_all = sides(&meta)?.serialize,
+                    "rename_all" => rename_all = sides(&meta)?,
                     "rename_all_fields" => container.rename_all_fields = sides(&meta)?,
                     "tag" => container.tag = string_value(&meta)?,
                     "content" => container.content = string_value(&meta)?,
@@ -588,6 +590,11 @@ impl Container {
             });
         }
 
+        // Taken once every key is read: `field_identifier` may follow it.
+        container.rename_all = match container.visitor {
+            Visitor::Enum => rename_all.serialize,
+            Visitor::Identifier => rename_all.deserialize,
+        };
         container.default = matches!(&input.data, Data::Struct(data) if !matches!(data.fields, Fields::Unit))
             && serde_flag(&input.attrs, &["default"]);
 

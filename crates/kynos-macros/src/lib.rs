@@ -494,7 +494,8 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   writes the member under a name it never reads back, so no one schema is
 ///   true in both directions. Give both sides one name. A member serde uses
 ///   one way is named by that side: a field it skips in either direction, any
-///   field of a variant it never writes, and a variant it only reads.
+///   field of a variant it never writes, and a variant it only reads, as is
+///   every variant of a `field_identifier` or `variant_identifier` enum.
 /// - A split container `rename_all(serialize = ..., deserialize = ...)` whose
 ///   two sides differ, or which names one side only. A struct variant serde
 ///   both writes and reads is judged the same way by the sides it resolves,
@@ -510,7 +511,10 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   `rename_all_fields`. Sides that agree are read as that one style. A
 ///   variant serde only reads names its fields by the deserialize side of its
 ///   own rule, else of `rename_all_fields`; one it skips both ways is in no
-///   schema, and a unit or tuple variant's own rule names no field.
+///   schema, and a unit or tuple variant's own rule names no field. A
+///   `field_identifier` or `variant_identifier` enum's container rule is not
+///   refused: serde only reads the enum, so its deserialize side names every
+///   variant.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::schema::expand(item)

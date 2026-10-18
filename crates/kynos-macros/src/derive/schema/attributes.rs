@@ -1,7 +1,7 @@
 use super::{
     ANNOTATIONS, COUNTS, Container, DeriveInput, Field, Fields, IdentExt, Lit, LitFloat, LitInt,
-    LitStr, NUMERIC, Span, Spanned, TokenStream2, Type, Variant, aliases::variants_read_names,
-    quote, skip_value, string_value,
+    LitStr, NUMERIC, Span, Spanned, TokenStream2, Type, Variant, Visitor,
+    aliases::variants_read_names, quote, skip_value, string_value,
 };
 
 /// The name serde writes a named field under: the serialize side of its
@@ -21,7 +21,13 @@ pub(super) fn field_read_name(field: &Field, container: &Container) -> String {
 }
 
 /// The name serde writes a variant under, as [`field_name`] is for a field.
+///
+/// An identifier enum's is its [`variant_read_name`]: serde never writes one,
+/// so the name it reads is the variant's only name on the wire.
 pub(super) fn variant_name(variant: &Variant, container: &Container) -> String {
+    if container.visitor == Visitor::Identifier {
+        return variant_read_name(variant, container);
+    }
     serde_renames(&variant.attrs)
         .serialize
         .unwrap_or_else(|| default_variant_name(variant, container))
