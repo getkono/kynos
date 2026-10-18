@@ -66,29 +66,40 @@ impl Writer {
             bytes::Bytes::from(self.spilled)
         }
     }
+
+    /// Moves what the stack holds to the heap, with room for `more` after it.
+    #[cold]
+    #[inline(never)]
+    fn spill(&mut self, more: usize) {
+        self.spilled = Vec::with_capacity((self.len + more).max(2 * STACK_OCTETS));
+        self.spilled.extend_from_slice(&self.stack[..self.len]);
+    }
 }
 
+// Inlined, as `Vec<u8>`'s are: `serde_json` writes in pieces of a few octets,
+// and an out-of-line call per piece costs more than the piece.
 impl std::io::Write for Writer {
+    #[inline]
     fn write(&mut self, octets: &[u8]) -> std::io::Result<usize> {
         self.write_all(octets)?;
         Ok(octets.len())
     }
 
+    #[inline]
     fn write_all(&mut self, octets: &[u8]) -> std::io::Result<()> {
         if self.spilled.is_empty() {
-            let end = self.len + octets.len();
-            if let Some(free) = self.stack.get_mut(self.len..end) {
+            if let Some(free) = self.stack.get_mut(self.len..self.len + octets.len()) {
                 free.copy_from_slice(octets);
-                self.len = end;
+                self.len += octets.len();
                 return Ok(());
             }
-            self.spilled = Vec::with_capacity(end.max(2 * STACK_OCTETS));
-            self.spilled.extend_from_slice(&self.stack[..self.len]);
+            self.spill(octets.len());
         }
         self.spilled.extend_from_slice(octets);
         Ok(())
     }
 
+    #[inline]
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }
