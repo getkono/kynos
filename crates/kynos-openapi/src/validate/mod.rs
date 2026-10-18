@@ -23,6 +23,7 @@ use crate::{
             },
             extensions::check_extensions,
             opaque::check_opaque,
+            operations::check_link_targets,
             schemas::check_unchecked_schemas,
             security::check_security_schemes,
         },
@@ -88,6 +89,7 @@ impl Validator {
         check_security_schemes(document, &mut violations);
         self.check_security(document, &mut violations);
         self.check_paths(document, &mut violations);
+        check_link_targets(document, &mut violations);
         check_unchecked_schemas(document, &mut violations);
         check_opaque(document, &mut violations);
         check_extensions("#", &document.extensions, &mut violations);

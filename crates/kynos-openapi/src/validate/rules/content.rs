@@ -109,8 +109,10 @@ pub(in crate::validate) fn check_response(
             );
         }
     }
-    // A link's target and a header's shape hold by construction; a header's
-    // name is a map key no type reaches, so it is still checked.
+    // That a link names exactly one target, and a header's shape, hold by
+    // construction; whether the target resolves needs every operation, so
+    // `check_link_targets` judges it. A header's name is a map key no type
+    // reaches, so it is still checked.
     check_header_map(
         &format!("{location}/headers"),
         &response.headers,

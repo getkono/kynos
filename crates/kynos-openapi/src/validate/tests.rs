@@ -1772,10 +1772,10 @@ fn a_link_naming_no_described_operation_is_reported_at_the_link() {
     let inline = "#/paths/~1users/get/responses/200/links/next";
 
     let mut component_link = document_linking(Link::to_operation("listUsers"));
-    component_link
-        .components
-        .links
-        .insert("a/b".to_owned(), RefOr::Item(Link::to_operation("missing")));
+    component_link.components.links.insert(
+        "Next".to_owned(),
+        RefOr::Item(Link::to_operation("missing")),
+    );
 
     let mut component_response = document_linking(Link::to_operation("listUsers"));
     component_response.components.responses.insert(
@@ -1817,7 +1817,7 @@ fn a_link_naming_no_described_operation_is_reported_at_the_link() {
             inline,
             unresolved_ref("#/paths/~1users/%zzget"),
         ),
-        (component_link, "#/components/links/a~1b", unknown_id()),
+        (component_link, "#/components/links/Next", unknown_id()),
         // A Path Item is not an Operation Object.
         (
             component_response,
@@ -1850,7 +1850,11 @@ fn a_link_naming_no_described_operation_is_reported_at_the_link() {
 /// not follow, likewise.
 #[test]
 fn a_link_to_a_described_or_unknowable_operation_is_not_reported() {
-    use crate::model::{callback::Callback, link::Link, reference::RefOr};
+    use crate::model::{
+        callback::Callback,
+        link::Link,
+        reference::{Ref, RefOr},
+    };
 
     let operation = |id: &str| Operation::new(id).with_responses(ok_responses());
     let mut listing = operation("listUsers");
@@ -1860,6 +1864,10 @@ fn a_link_to_a_described_or_unknowable_operation_is_not_reported() {
             "{$request.body#/url}",
             PathItem::new().with_operation(Method::Post, operation("notify")),
         )),
+    );
+    listing.callbacks.insert(
+        "relay".to_owned(),
+        RefOr::Ref(Ref::new("#/components/callbacks/Relay")),
     );
 
     let mut document = document_with(&[
@@ -1902,6 +1910,7 @@ fn a_link_to_a_described_or_unknowable_operation_is_not_reported() {
         Link::to_operation_ref("#/webhooks/hook/post"),
         Link::to_operation_ref("#/components/pathItems/Shared/get"),
         Link::to_operation_ref("#/paths/~1proxy/get"),
+        Link::to_operation_ref("#/paths/~1users/get/callbacks/relay/x/post"),
         Link::to_operation_ref("https://example.com/openapi.json#/paths/~1nope/get"),
         Link::to_operation_ref("other.json#/paths/~1nope/get"),
     ];
@@ -1921,6 +1930,35 @@ fn a_link_to_a_described_or_unknowable_operation_is_not_reported() {
     let mut elsewhere = document_linking(Link::to_operation("remoteOnly"));
     elsewhere.paths.insert(&template, remote);
     assert_eq!(located_errors(&elsewhere), vec![]);
+
+    // As may the document a Callback refers to.
+    let mut relayed = operation("relayed");
+    relayed.callbacks.insert(
+        "remote".to_owned(),
+        RefOr::Ref(Ref::new("other.json#/components/callbacks/Remote")),
+    );
+    let mut elsewhere = document_linking(Link::to_operation("remoteOnly"));
+    elsewhere.paths.insert(
+        &PathTemplate::parse("/relayed").expect("valid template"),
+        PathItem::new().with_operation(Method::Get, relayed),
+    );
+    assert_eq!(located_errors(&elsewhere), vec![]);
+
+    // 3.2's `additionalOperations` are described operations too.
+    #[cfg(feature = "openapi32")]
+    {
+        let mut item = PathItem::new();
+        item.additional_operations
+            .insert("COPY".to_owned(), Box::new(operation("copyUsers")));
+        let mut document = document_with(&[("/users", item)]);
+        document.components.links.insert(
+            "Copy".to_owned(),
+            RefOr::Item(Link::to_operation_ref(
+                "#/paths/~1users/additionalOperations/COPY",
+            )),
+        );
+        assert_eq!(located_errors_3_2(&document), vec![]);
+    }
 }
 
 #[test]
@@ -3119,7 +3157,7 @@ fn ledger() -> Vec<(&'static str, SpecVersion, Document)> {
     cases
 }
 
-/// Cases for the path, template and parameter rules.
+/// Cases for the path, template, parameter and link target rules.
 fn ledger_paths() -> Vec<(&'static str, SpecVersion, Document)> {
     use crate::model::schema::Schema;
 
@@ -3194,6 +3232,16 @@ fn ledger_paths() -> Vec<(&'static str, SpecVersion, Document)> {
             .insert("POST".to_owned(), Box::new(operation()));
         document_with(&[("/users", item)])
     });
+    push(
+        "UnknownLinkOperationId",
+        document_linking(crate::model::link::Link::to_operation("missing")),
+    );
+    push(
+        "UnresolvedLinkOperationRef",
+        document_linking(crate::model::link::Link::to_operation_ref(
+            "#/paths/~1nope/get",
+        )),
+    );
     cases
 }
 
@@ -3387,16 +3435,6 @@ fn ledger_document() -> Vec<(&'static str, SpecVersion, Document)> {
             "/users",
             get(operation().with_security(SecurityRequirement::scheme("Undeclared"))),
         )]),
-    );
-    push(
-        "UnknownLinkOperationId",
-        document_linking(crate::model::link::Link::to_operation("missing")),
-    );
-    push(
-        "UnresolvedLinkOperationRef",
-        document_linking(crate::model::link::Link::to_operation_ref(
-            "#/paths/~1nope/get",
-        )),
     );
     push("MissingOAuthFlowUrl", {
         let mut document = document_with(&[("/users", get(operation()))]);
