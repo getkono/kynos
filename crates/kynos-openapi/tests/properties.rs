@@ -1,8 +1,9 @@
 //! Properties over a whole generated document.
 //!
 //! Round-tripping, determinism, the totality of validation, and the two
-//! emission rules. The path-template properties are in `templates.rs`; the
-//! generators both files draw on are in `support/`.
+//! emission rules; beside them, the totality of `pattern::translate`, whose
+//! input is a Schema Object's `pattern`. The path-template properties are in
+//! `templates.rs`; the generators both files draw on are in `support/`.
 
 use kynos_openapi::{
     Document, Info, Method, Operation, PathItem, PathTemplate, RefOr, Response, Responses,
@@ -238,5 +239,25 @@ proptest! {
         prop_assert_eq!(&emitted.openapi, "3.2.0");
         prop_assert_eq!(emitted.emit(SpecVersion::V3_2).ok(), Some(emitted.clone()));
         prop_assert_eq!(emitted.spec_version(), Some(SpecVersion::V3_2));
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(2048))]
+
+    /// `translate` answers every string without panicking, and every
+    /// translation it returns is one the `regex` engine compiles, as its
+    /// documentation promises.
+    #[cfg(feature = "pattern")]
+    #[test]
+    fn translating_a_pattern_is_total(source in arb_pattern_source()) {
+        if let Ok(translated) = kynos_openapi::pattern::translate(&source) {
+            prop_assert!(
+                regex::Regex::new(&translated).is_ok(),
+                "`{}` translated to `{}`, which does not compile",
+                source,
+                translated
+            );
+        }
     }
 }

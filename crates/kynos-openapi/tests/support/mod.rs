@@ -356,6 +356,28 @@ pub(crate) fn arb_malformed_template() -> impl Strategy<Value = String> {
     ]
 }
 
+// --- Patterns ------------------------------------------------------------
+
+/// What a `pattern` is written in, weighted to its metacharacters.
+///
+/// Each regex metacharacter and escape letter either dialect reads, the
+/// digits that make an escape octal, a backreference or a repetition count,
+/// the letters a Unicode property or a group name begins with, and a
+/// non-ASCII character, so that concatenations reach every construct
+/// `pattern::translate` rewrites or refuses.
+pub(crate) const PATTERN_ALPHABET: &[char] = &[
+    '\\', '^', '$', '.', '|', '?', '*', '+', '(', ')', '[', ']', '{', '}', '-', ',', ':', '=', '!',
+    '<', '>', '&', '~', '#', ' ', '0', '1', '2', '8', 'p', 'P', 'b', 'B', 'd', 'D', 'w', 'W', 's',
+    'S', 'A', 'z', 'c', 'u', 'U', 'x', 'k', 'a', 'L', 'g', '_', 'é',
+];
+
+/// A string over [`PATTERN_ALPHABET`], most of which are no regular
+/// expression at all.
+pub(crate) fn arb_pattern_source() -> impl Strategy<Value = String> {
+    prop::collection::vec(select(PATTERN_ALPHABET), 0..=12)
+        .prop_map(|characters| characters.into_iter().collect())
+}
+
 // --- Schemas -------------------------------------------------------------
 
 pub(crate) fn arb_type_set() -> impl Strategy<Value = TypeSet> {
