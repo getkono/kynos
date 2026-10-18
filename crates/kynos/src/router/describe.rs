@@ -353,8 +353,9 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
         self.declare_security_schemes(&mut registry, &mut violations);
 
-        // Scope-declared metadata first, so it wins over an operation's under
-        // `unique_tags` and a tag covering no operation is still documented.
+        // Scope-declared metadata first, so the document lists it in
+        // declaration order and a tag covering no operation is still
+        // documented.
         let mut tag_metadata = self.tag_metadata.clone();
 
         let mut links = crate::extract::link::Resolver::default();
