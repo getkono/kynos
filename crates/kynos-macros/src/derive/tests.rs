@@ -1232,6 +1232,29 @@ mod schema {
         }
     }
 
+    /// serde fills each side a variant's own `rename_all` leaves from the
+    /// enum's `rename_all_fields`, so a one-sided rule that side completes to
+    /// the same style is one name, described under it.
+    #[test]
+    fn a_one_sided_variant_rule_completed_by_rename_all_fields_is_accepted() {
+        let input: syn::DeriveInput = syn::parse2(quote::quote!(
+            #[serde(rename_all_fields = "camelCase")]
+            enum Change {
+                #[serde(rename_all(serialize = "camelCase"))]
+                Created { user_id: u8 },
+            }
+        ))
+        .expect("the case itself must parse");
+        let expansion = match expand_inner(&input) {
+            Ok(expansion) => expansion.to_string(),
+            Err(error) => panic!("a field serde writes and reads as `userId` was refused: {error}"),
+        };
+        assert!(
+            expansion.contains("\"userId\"") && !expansion.contains("\"user_id\""),
+            "the field is described under a name other than `userId`: {expansion}"
+        );
+    }
+
     /// A variant serde only reads claims the name it is read under, so its
     /// split `rename` shadows an earlier variant by the deserialize side
     /// alone: a serialize side naming the earlier variant is never used, and a
