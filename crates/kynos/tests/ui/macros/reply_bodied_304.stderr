@@ -1,0 +1,5 @@
+error: a `304` response carries no content (RFC 9110 §15.4.5), so variant `NotModified` cannot hold a body. Make it a unit variant, or answer with a status whose response has content
+ --> tests/ui/macros/reply_bodied_304.rs:9:16
+  |
+9 |     NotModified(u32),
+  |                ^^^^^

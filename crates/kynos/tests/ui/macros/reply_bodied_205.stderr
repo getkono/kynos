@@ -1,0 +1,5 @@
+error: a `205` response carries no content (RFC 9110 §15.3.6), so variant `Reset` cannot hold a body. Make it a unit variant, or answer with a status whose response has content
+ --> tests/ui/macros/reply_bodied_205.rs:9:10
+  |
+9 |     Reset(u32),
+  |          ^^^^^

@@ -1,0 +1,5 @@
+error: a `204` response carries no content (RFC 9110 §15.3.5), so variant `Deleted` cannot hold a body. Make it a unit variant, or answer with a status whose response has content
+ --> tests/ui/macros/reply_bodied_204.rs:9:12
+  |
+9 |     Deleted(u32),
+  |            ^^^^^
