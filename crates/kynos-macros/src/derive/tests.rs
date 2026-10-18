@@ -5125,8 +5125,14 @@ mod api_error {
     #[test]
     fn every_api_error_diagnostic_has_a_case() {
         every_diagnostic_has_a_case(
-            "api_error.rs",
-            include_str!("api_error.rs"),
+            "api_error.rs` and `api_error/",
+            &[
+                include_str!("api_error.rs"),
+                include_str!("api_error/args.rs"),
+                include_str!("api_error/emit.rs"),
+                include_str!("api_error/outcomes.rs"),
+            ]
+            .concat(),
             ledger().len()
                 + transparent_ledger().len()
                 + headers_ledger().len()
