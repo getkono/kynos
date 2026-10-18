@@ -83,9 +83,10 @@ impl<C: Sync> CacheStore<C> for MokaCache {
 
     async fn put(&self, key: PrimaryKey, response: StoredResponse, _: &C) {
         // Replace the variant this one supersedes, and append otherwise. A
-        // store that only appended would grow one entry per request.
+        // store that only appended would grow one entry per request; one that
+        // replaced by `vary()` would keep one negotiation of each resource.
         let mut variants = self.stored.get(&key).await.unwrap_or_default();
-        variants.retain(|stored| stored.vary() != response.vary());
+        variants.retain(|stored| !stored.same_variant(&response));
         variants.push(response);
         self.stored.insert(key, variants).await;
     }

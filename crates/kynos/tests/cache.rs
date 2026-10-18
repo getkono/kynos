@@ -62,13 +62,12 @@ impl<C: Sync> CacheStore<C> for Stored {
             .unwrap_or_default()
     }
 
-    /// Replaces what `key` held, which is the contract's "replaces the variant
-    /// whose selecting values match" for a fixture none of whose routes vary.
+    /// Replaces the variant `response` supersedes, and appends otherwise.
     async fn put(&self, key: PrimaryKey, response: StoredResponse, _: &C) {
-        self.0
-            .lock()
-            .expect("no test panics while holding this")
-            .insert(key, vec![response]);
+        let mut stored = self.0.lock().expect("no test panics while holding this");
+        let variants = stored.entry(key).or_default();
+        variants.retain(|variant| !variant.same_variant(&response));
+        variants.push(response);
     }
 
     async fn invalidate(&self, key: &PrimaryKey, _: &C) {
@@ -106,6 +105,18 @@ async fn numbered() -> WithHeaders<Json<Report>, CacheControl> {
             id: u64::try_from(id).expect("a call count fits"),
         }),
         CacheControl,
+    )
+}
+
+/// Cacheable per `Accept-Language`, and numbered as `numbered` is.
+#[kynos::get("/negotiated")]
+async fn negotiated() -> WithHeaders<Json<Report>, Negotiated> {
+    let id = CALLS.fetch_add(1, Ordering::SeqCst);
+    WithHeaders::new(
+        Json(Report {
+            id: u64::try_from(id).expect("a call count fits"),
+        }),
+        Negotiated,
     )
 }
 
@@ -156,12 +167,37 @@ impl kynos::extract::params::header::EncodeHeaders for CacheControl {
     }
 }
 
+/// A `Cache-Control` and a `Vary: Accept-Language` a handler attaches.
+#[derive(Clone, Copy, Debug)]
+struct Negotiated;
+
+impl kynos::extract::params::header::HeaderParams for Negotiated {
+    const NAMES: &'static [&'static str] = &["cache-control", "vary"];
+    const DESCRIBED: bool = false;
+}
+
+impl kynos::extract::params::header::EncodeHeaders for Negotiated {
+    fn encode(&self) -> Result<Fields, UnencodableHeader> {
+        Ok(vec![
+            (
+                header::CACHE_CONTROL,
+                kynos::http::HeaderValue::from_static("max-age=60"),
+            ),
+            (
+                header::VARY,
+                kynos::http::HeaderValue::from_static("accept-language"),
+            ),
+        ])
+    }
+}
+
 /// A service caching through `store`.
 fn cached(store: Stored) -> kynos::router::service::Service<()> {
     Router::<()>::new()
         .mount(kynos::routes![
             reports,
             numbered,
+            negotiated,
             uncacheable,
             tagged,
             create,
@@ -197,6 +233,38 @@ async fn a_cacheable_response_is_served_from_the_store_the_second_time() {
         1,
         "the handler ran twice, so nothing was served from the store"
     );
+}
+
+/// Storing one negotiation of a resource keeps the others: a store replacing
+/// by [`StoredResponse::same_variant`] holds an English and a French variant
+/// side by side, and each is served to the request that selects it.
+#[tokio::test]
+async fn sibling_variants_survive_each_others_storage() {
+    let service = cached(Stored::default());
+    let before = CALLS.load(Ordering::SeqCst);
+    let in_language = |language| {
+        get(&service, "/negotiated")
+            .header("accept-language", language)
+            .call()
+    };
+
+    let english = in_language("en").await;
+    let french = in_language("fr").await;
+    assert_eq!(
+        calls_during(before),
+        2,
+        "a French request hit the English variant"
+    );
+
+    let english_again = in_language("en").await;
+    let french_again = in_language("fr").await;
+    assert_eq!(
+        calls_during(before),
+        2,
+        "storing one variant evicted its sibling"
+    );
+    assert_eq!(english_again.json()["id"], english.json()["id"]);
+    assert_eq!(french_again.json()["id"], french.json()["id"]);
 }
 
 /// A hit replays a status the operation already declares, which is why the

@@ -169,7 +169,7 @@ impl CacheStore<App> for Responses {
         if self.retain {
             let mut held = self.held.lock().expect("an unpoisoned store");
             let variants = held.entry(key).or_default();
-            variants.retain(|stored| stored.vary() != response.vary());
+            variants.retain(|stored| !stored.same_variant(&response));
             variants.push(response);
         }
     }
