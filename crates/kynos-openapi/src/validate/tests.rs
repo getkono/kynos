@@ -505,27 +505,36 @@ fn a_reusable_header_parameter_the_spec_ignores_is_reported() {
     );
 }
 
+/// The violation names the style as a description spells it, so every
+/// multi-word style is a row.
 #[test]
 fn a_reusable_parameters_style_is_checked_against_its_location() {
-    let document = document_with_component_parameter(
-        &[],
-        "Trace",
-        crate::RefOr::Item(
-            Parameter::header("X-Trace", Schema::of_type(SchemaType::String))
-                .with_style(Style::DeepObject, false),
-        ),
-    );
+    for (style, spelled) in [
+        (Style::DeepObject, "deepObject"),
+        (Style::SpaceDelimited, "spaceDelimited"),
+        (Style::PipeDelimited, "pipeDelimited"),
+    ] {
+        let document = document_with_component_parameter(
+            &[],
+            "Trace",
+            crate::RefOr::Item(
+                Parameter::header("X-Trace", Schema::of_type(SchemaType::String))
+                    .with_style(style, false),
+            ),
+        );
 
-    assert_eq!(
-        located_errors(&document),
-        vec![(
-            "#/components/parameters/Trace".to_owned(),
-            SpecError::IllegalStyle {
-                style: "deepobject".to_owned(),
-                location: "header".to_owned(),
-            },
-        )]
-    );
+        assert_eq!(
+            located_errors(&document),
+            vec![(
+                "#/components/parameters/Trace".to_owned(),
+                SpecError::IllegalStyle {
+                    style: spelled.to_owned(),
+                    location: "header".to_owned(),
+                },
+            )],
+            "{spelled}"
+        );
+    }
 }
 
 /// A component's name is a pointer token, escaped as one. The extension-name
