@@ -214,11 +214,11 @@ const FORM_DATA: &str = "form-data";
 
 /// What a part's `Content-Disposition` says about the field it carries.
 #[derive(Debug, PartialEq, Eq)]
-pub(super) struct Disposition {
+pub(crate) struct Disposition {
     /// The `name` parameter.
-    pub(super) name: String,
+    pub(crate) name: String,
     /// The `filename` parameter, if any.
-    pub(super) file_name: Option<String>,
+    pub(crate) file_name: Option<String>,
 }
 
 /// Reads a part's `Content-Disposition` value, or says why it names no field.
@@ -234,7 +234,7 @@ pub(super) struct Disposition {
 /// included, which RFC 7578 section 4.2 tells senders not to use. A value is
 /// returned as sent, unescaped but not percent-decoded: RFC 7578 section
 /// 5.1.3 leaves a percent-encoded name indistinguishable from a literal one.
-pub(super) fn disposition(field: &str) -> Result<Disposition, String> {
+pub(crate) fn disposition(field: &str) -> Result<Disposition, String> {
     let (kind, mut rest) = token(skip_ows(field));
     if !kind.eq_ignore_ascii_case(FORM_DATA) {
         return Err(format!("a part's disposition is not `{FORM_DATA}`"));

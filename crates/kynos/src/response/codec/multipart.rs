@@ -166,7 +166,7 @@ fn headers(part: &Part) -> Vec<u8> {
 /// following the HTML form encoding do not, and to them a value ending in
 /// `\\` escapes its closing quote and breaks the header: lossy everywhere
 /// beats unreadable to some.
-fn quoted(value: &str) -> String {
+pub(crate) fn quoted(value: &str) -> String {
     let mut quoted = String::with_capacity(value.len());
     for character in value.chars() {
         match character {
