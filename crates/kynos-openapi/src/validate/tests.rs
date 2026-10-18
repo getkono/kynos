@@ -1602,6 +1602,57 @@ fn a_three_two_document_requirement_may_name_a_scheme_by_uri() {
     assert_eq!(unknown_schemes("Bearer", SpecVersion::V3_2), 1);
 }
 
+/// A same-document pointer into the Security Schemes is a URI this document
+/// alone resolves, so under 3.2 it must land on a declared scheme:
+/// `references/3.2.0.md:4703` says "Each name or URI MUST correspond to a
+/// security scheme". Both the root and an operation's requirements are held
+/// to it; a URI into another document still passes, since nothing here can
+/// follow it.
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_three_two_requirement_pointer_must_resolve_to_a_declared_scheme() {
+    let reported = |name: &str| {
+        let item = PathItem::new().with_operation(
+            Method::Get,
+            Operation::new("listUsers")
+                .with_responses(ok_responses())
+                .with_security(SecurityRequirement::scheme(name)),
+        );
+        let mut document =
+            document_with(&[("/users", item)]).with_security(SecurityRequirement::scheme(name));
+        document.components.security_schemes.insert(
+            "Bearer".to_owned(),
+            crate::RefOr::Item(crate::SecurityScheme::bearer(None)),
+        );
+        Validator::new(SpecVersion::V3_2)
+            .validate(&document)
+            .into_iter()
+            .filter_map(|v| match v.error {
+                SpecError::UnknownSecurityScheme { name } => Some((v.location, name)),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let dangling = "#/components/securitySchemes/Typo";
+    assert_eq!(
+        reported(dangling),
+        [
+            ("#/security/0".to_owned(), dangling.to_owned()),
+            ("#/paths/~1users/get".to_owned(), dangling.to_owned()),
+        ],
+        "a pointer to an undeclared scheme is reported at the root and on the operation"
+    );
+
+    for name in [
+        "#/components/securitySchemes/Bearer",
+        "https://example.com/schemes#/components/securitySchemes/Typo",
+        "./other.yaml#/components/securitySchemes/Typo",
+    ] {
+        assert_eq!(reported(name), [], "`{name}` passes");
+    }
+}
+
 #[test]
 fn an_unconstrained_schema_is_a_warning_not_an_error() {
     let mut operation = Operation::new("ingest").with_responses(ok_responses());

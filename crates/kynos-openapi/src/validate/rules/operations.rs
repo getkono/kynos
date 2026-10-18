@@ -24,13 +24,26 @@ use crate::{
 };
 
 impl Validator {
-    /// Whether `name` is a Security Scheme Object's URI rather than a
-    /// component name, by the predicate `Document::emit` refuses 3.1 on.
+    /// Whether the security requirement key `name` corresponds to a security
+    /// scheme, given the component names in `declared`.
     ///
-    /// 3.2 admits both; 3.1 admits only a component name, so this is always
-    /// `false` there.
-    pub(in crate::validate) fn names_a_scheme_by_uri(self, name: &str) -> bool {
-        self.version.supports_3_2() && crate::emit::downgrade::names_a_scheme_by_uri(name)
+    /// A declared component name takes precedence under either version. 3.2
+    /// also admits a scheme's URI, read by the predicate `Document::emit`
+    /// refuses 3.1 on; 3.1 admits only a component name. A same-document
+    /// pointer into the Security Schemes resolves here, so it must land on a
+    /// declared one; a URI into another document cannot be followed, and
+    /// passes. A pointer name escaped with `~` or `%` passes undecoded, since
+    /// no valid component name needs either.
+    pub(in crate::validate) fn names_a_scheme(self, name: &str, declared: &HashSet<&str>) -> bool {
+        if declared.contains(name) {
+            return true;
+        }
+        if !self.version.supports_3_2() || !crate::emit::downgrade::names_a_scheme_by_uri(name) {
+            return false;
+        }
+        name.strip_prefix("#/components/securitySchemes/")
+            .filter(|component| !component.contains(['/', '~', '%']))
+            .is_none_or(|component| declared.contains(component))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -88,9 +101,7 @@ impl Validator {
 
         for requirement in operation.security.iter().flatten() {
             for name in requirement.0.keys() {
-                if !declared_schemes.contains(name.as_str())
-                    && !self.names_a_scheme_by_uri(name.as_str())
-                {
+                if !self.names_a_scheme(name, declared_schemes) {
                     violations.push(Violation::error(
                         location,
                         SpecError::UnknownSecurityScheme { name: name.clone() },
