@@ -14,7 +14,27 @@ use crate::{
     router::operation::Route,
 };
 
-/// One named window.
+/// One named window, counted in requests.
+///
+/// A quota advertises the unit it counts, and [`Quotas`] counts requests, so
+/// that is the only unit a quota advertises:
+///
+/// ```
+/// use kynos::middleware::rate_limit::{decision::QuotaUnit, quota::Quota};
+///
+/// let quota = Quota::per_minute("uploads", 1_000);
+/// assert_eq!(quota.policy().unit, QuotaUnit::Requests);
+/// ```
+///
+/// Advertising another unit does not compile, since nothing here would count
+/// it:
+///
+/// ```compile_fail
+/// use kynos::middleware::rate_limit::{decision::QuotaUnit, quota::Quota};
+///
+/// let quota = Quota::per_minute("uploads", 1_000).unit(QuotaUnit::ContentBytes);
+/// assert_eq!(quota.policy().unit, QuotaUnit::Requests);
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Quota {
     name: Cow<'static, str>,
