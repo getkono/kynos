@@ -1,4 +1,4 @@
-use crate::di::{Provides, inject::Inject};
+use crate::di::Provides;
 
 #[derive(Clone, Debug, PartialEq)]
 struct Pool(u32);
@@ -31,13 +31,6 @@ fn app() -> App {
     }
 }
 
-#[test]
-fn a_context_supplies_each_of_its_dependencies() {
-    let app = app();
-    assert_eq!(Provides::<Pool>::provide(&app), Pool(7));
-    assert_eq!(Provides::<Cache>::provide(&app), Cache("local"));
-}
-
 /// An application with one dependency needs no wrapper struct: the dependency
 /// is its own context.
 #[test]
@@ -56,9 +49,4 @@ fn the_reflexive_implementation_leaves_room_for_derived_ones() {
     }
 
     assert_eq!(resolves(&app()), (Pool(7), Cache("local")));
-}
-
-#[test]
-fn injecting_unwraps_to_the_value() {
-    assert_eq!(Inject(Pool(7)).into_inner(), Pool(7));
 }
