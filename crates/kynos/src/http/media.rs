@@ -15,7 +15,9 @@ use kynos_openapi::model::body::mime_names;
 /// declare for a vendor type. A marker offered a request the body beside its
 /// `Binary` in a [`OneOf`](crate::extract::body::OneOf) is offered too fails
 /// the build: one naming that body's type and subtype, whatever parameters it
-/// declares.
+/// declares. So does a `QueryString` marker naming neither `application/json`
+/// nor an RFC 6839 `+json` type, since JSON is the only media type a query
+/// string is decoded as.
 pub trait MediaType {
     /// The media type, as it appears in a `Content-Type` header.
     const MEDIA_TYPE: &'static str;

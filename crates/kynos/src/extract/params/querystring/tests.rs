@@ -54,6 +54,8 @@ fn a_json_suffixed_media_type_is_read_as_json() {
     assert!(is_json("application/json; charset=utf-8"));
     assert!(is_json("APPLICATION/JSON"));
     assert!(is_json("application/vnd.acme.filter+json"));
+    // The suffix in any case, and the essence trimmed of whitespace.
+    assert!(is_json(" application/vnd.acme.filter+JSON ; version=2"));
 
     assert!(!is_json("application/xml"));
     assert!(!is_json("text/plain"));
