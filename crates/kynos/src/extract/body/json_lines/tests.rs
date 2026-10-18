@@ -442,8 +442,8 @@ async fn a_record_past_the_limit_is_refused_before_it_ends() {
     assert_eq!(rejection.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
 
-/// Bytes that are not JSON are a framing failure: after one, where the next
-/// record starts is a guess.
+/// Bytes that are not JSON end the stream by policy: the newline still frames
+/// the record after them, and the reader stops anyway.
 #[tokio::test]
 async fn a_record_that_is_not_json_ends_the_stream() {
     let mut records = ndjson(one_frame(b"{\"at\":1}\n{\"at\":\n{\"at\":3}\n")).await;
@@ -471,7 +471,7 @@ async fn a_record_that_is_not_json_ends_the_stream() {
 
     assert!(
         records.next().await.is_none(),
-        "after a framing failure the record boundaries are no longer trustworthy"
+        "a record that is not JSON fails the stream fast, though the next record is framed"
     );
 }
 

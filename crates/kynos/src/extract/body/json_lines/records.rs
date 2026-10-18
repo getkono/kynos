@@ -63,7 +63,7 @@ enum State {
 ///
 /// | The record | Answer | Afterwards |
 /// | --- | --- | --- |
-/// | is not well-formed JSON | 400 | the stream ends — after a framing failure the record boundaries are no longer trustworthy |
+/// | is not well-formed JSON | 400 | the stream ends — a policy, not a necessity: the separator still marks where the next record starts, but a body that breaks its media type is rejected rather than salvaged |
 /// | is JSON that does not fit `T` | 422 at JSON Pointer `/{index}` | the stream continues — the boundaries held, so a bulk ingest can report every bad record at once |
 /// | breaks a bound `T`'s schema declares | 422 at each offending member, under `/{index}` | the stream continues, for the same reason |
 /// | did not arrive, because the transport failed | 400 | the stream ends |
@@ -289,6 +289,9 @@ impl<T: serde::de::DeserializeOwned + Schema> Records<T> {
                     failures: BTreeMap::from([(format!("/{index}"), error.to_string())]),
                 }
             } else {
+                // Fail-fast by policy: the separator framed this record, so
+                // the next boundary is known, but a body that is not JSON
+                // where it claims to be is rejected rather than salvaged.
                 self.state = State::Fused;
                 BodyRejection::Syntax {
                     detail: format!("record {index}: {error}"),
