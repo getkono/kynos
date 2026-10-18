@@ -11,3 +11,4 @@ pub(in crate::validate) mod operations;
 pub(in crate::validate) mod parameters;
 pub(in crate::validate) mod paths;
 pub(in crate::validate) mod schemas;
+pub(in crate::validate) mod security;

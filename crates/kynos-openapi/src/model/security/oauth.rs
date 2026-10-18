@@ -87,9 +87,11 @@ impl OAuthFlows {
 
 /// The configuration of one OAuth 2.0 flow.
 ///
-/// Which URL fields are required depends on the flow this is attached to. That
-/// pairing is *not* checked here, so any description round-trips;
-/// `#[derive(SecurityScheme)]` enforces it.
+/// Which URL fields are required depends on the flow this is attached to. The
+/// type admits any pairing, so any description round-trips; validation
+/// reports each required URL a flow omits as
+/// [`SpecError::MissingOAuthFlowUrl`](crate::validate::violation::SpecError::MissingOAuthFlowUrl),
+/// and `#[derive(SecurityScheme)]` refuses to compile without them.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OAuthFlow {
     /// The authorization URL. Required for the implicit and authorization code
