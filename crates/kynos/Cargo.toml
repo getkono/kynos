@@ -318,7 +318,8 @@ cookie = []
 compression = ["dep:async-compression"]
 
 # --- Scalar formats --------------------------------------------------------
-# The mapping to JSON Schema `format` is normative in `docs/schema.md`.
+# The mapping to JSON Schema `format` is the `kynos::schema` rustdoc's
+# "Behind a feature flag" table.
 uuid = ["dep:uuid"]
 
 # Umbrellas holding the shapes their backends share; neither compiles alone.
