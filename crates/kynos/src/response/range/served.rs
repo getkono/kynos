@@ -465,7 +465,19 @@ impl<C: Sync> crate::extract::FromRequestParts<C> for Conditions {
     async fn from_request_parts(parts: &mut Parts, _context: &C) -> Result<Self, Self::Rejection> {
         // Only the six fields, every line of each: a request carrying none of
         // them costs no allocation, and the rest of the head is not copied.
-        let mut fields = crate::http::HeaderMap::new();
+        // Sized to the lines sent, since a first `append` would reserve six.
+        let lines = READ
+            .into_iter()
+            .map(|name| parts.headers.get_all(name).iter().count())
+            .sum();
+        if lines == 0 {
+            return Ok(Self {
+                method: parts.method.clone(),
+                fields: crate::http::HeaderMap::new(),
+            });
+        }
+
+        let mut fields = crate::http::HeaderMap::with_capacity(lines);
         for name in READ {
             for value in parts.headers.get_all(&name) {
                 fields.append(name.clone(), value.clone());
