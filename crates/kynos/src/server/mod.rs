@@ -1,27 +1,22 @@
 //! Serving a built router.
 //!
-//! Listener addresses describe where this process accepts traffic. They are
-//! deliberately separate from the public server URLs in the OpenAPI document.
-//! Mutual TLS is the exception: requiring a client certificate changes who may
-//! call every operation, so [`TlsConfig::require_client_certificate`] adds that
-//! requirement to the prepared server's description.
-//!
 //! Kynos supports HTTP/1 and HTTP/2, and HTTP/3 is outside the current server
 //! contract. Listeners are TCP; a stream accepted any other way, such as from
 //! a Unix socket or an in-memory pipe, is served by [`Server::serve_io`], one
 //! connection per call.
 //!
 //! Kynos runs on tokio and does not abstract over it, so serving requires a
-//! tokio runtime. This module tree is the only place the runtime is named;
-//! apart from [`address::Listener::Tokio`] and the I/O bound on
-//! [`Server::serve_io`], no public item mentions a tokio type.
+//! tokio runtime. Apart from [`address::Listener::Tokio`], its
+//! `From<tokio::net::TcpListener>` conversion and the I/O bound on
+//! [`Server::serve_io`], no public item mentions a tokio type. This module tree
+//! is not the only place the runtime is named: `docs/architecture.md`'s runtime
+//! allowance table lists every site that is.
 //!
 //! # How this module is laid out
 //!
-//! The runtime coupling is five points, and each has a module: [`address`] for
-//! the listener, the private `accept` module for the accept loop, the private
-//! `connection` module for socket read and write, [`shutdown`] for the signal,
-//! and the timers that live with the work they bound. [`protocol`], [`tcp`] and
+//! [`address`] holds the listener, the private `accept` module the accept loop,
+//! the private `connection` module socket read and write, and [`shutdown`] the
+//! signal; timers live with the work they bound. [`protocol`], [`tcp`] and
 //! [`tls`] are configuration; the private `lifecycle` module is the state every
 //! part observes.
 

@@ -16,9 +16,9 @@ use http_body_util::{BodyExt, Empty, Full, combinators::UnsyncBoxBody};
 
 pub(crate) type BoxError = Box<dyn StdError + Send + Sync>;
 
-/// The request body.
+/// The body of a request or a response.
 ///
-/// Opaque by design. Bodies are consumed through a typed extractor such as
+/// Opaque by design. A request's is consumed through a typed extractor such as
 /// [`Json`](crate::extract::body::json::Json), never read directly.
 pub struct Body {
     inner: Mutex<UnsyncBoxBody<Bytes, BoxError>>,

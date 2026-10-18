@@ -56,7 +56,8 @@ macro_rules! describe_parts {
     }};
 }
 
-/// Emits both implementations for one arity.
+/// Emits the four implementations for one arity: with or without a guard, and
+/// with the last argument consuming the body or reading the head only.
 macro_rules! impl_handler {
     ( $($head:ident),* ; $last:ident ) => {
         // --- the last argument consumes the body ---------------------------

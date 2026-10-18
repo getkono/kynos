@@ -1,7 +1,9 @@
-//! What it means for two interceptors to disagree.
+//! What it means for two declarations to disagree about one operation.
 //!
-//! `Router::intercept` rejects such a conflict at compile time; the escape
-//! hatches, where the types are erased, report it while the router is built.
+//! Interceptors that disagree are refused at compile time by
+//! `Router::intercept`'s bound. The conflict left is two declarations claiming
+//! one security scheme name with different schemes, reported while the router
+//! is built.
 
 use kynos_openapi::{ComponentName, ParameterIn, StatusPattern};
 

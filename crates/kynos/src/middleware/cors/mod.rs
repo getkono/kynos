@@ -306,6 +306,12 @@ impl<D> Cors<D> {
     }
 
     /// Permits any request header.
+    ///
+    /// Uncredentialed, a preflight is answered `*, authorization`, since Fetch
+    /// never lets `*` cover `Authorization`. Beside
+    /// [`allow_credentials`](Self::allow_credentials), where `*` is a literal
+    /// name, it echoes the preflight's `Access-Control-Request-Headers`
+    /// instead, so the combination is permitted rather than refused.
     #[must_use]
     pub fn allow_any_header(mut self) -> Self {
         self.config.any.header = true;

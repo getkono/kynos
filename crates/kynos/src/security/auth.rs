@@ -313,8 +313,9 @@ pub trait Scopes: Send + Sync + 'static {
 ///
 /// The scope set is a type implementing [`Scopes`], since a slice is not a
 /// permitted const parameter type, and its [`Scope`](Scopes::Scope) must be
-/// `S`'s. The marker is private, so a handler destructures `Scoped(claims)`
-/// the way it destructures [`Auth`] and [`MaybeAuth`].
+/// `S`'s. The marker field is private, so outside this crate a handler cannot
+/// destructure `Scoped(claims)` as it does [`Auth`]: it reads the credential
+/// through `.0` or [`into_inner`](Self::into_inner).
 ///
 /// ```no_run
 /// # use kynos::security::{Scope, auth::{Scoped, Scopes}, schemes::Bearer};

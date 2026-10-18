@@ -185,21 +185,15 @@ struct Generations {
 ///
 /// # What a key exposes
 ///
-/// These keys outlive the process, wherever the operator stores them, and
-/// Kynos rotates nothing.
+/// What [`SessionResumption::Tickets`](crate::server::tls::SessionResumption::Tickets)
+/// says a ticket key exposes holds here: TLS 1.2 forward secrecy and every
+/// mutual-TLS identity. These keys, though, outlive the process, wherever the
+/// operator stores them, and Kynos rotates nothing.
 ///
-/// * **Forward secrecy.** A TLS 1.2 ticket carries the session's master
-///   secret, so a key that leaks decrypts every recorded TLS 1.2 session whose
-///   ticket it sealed, however long ago. TLS 1.3 resumption always runs a
-///   fresh key exchange, so those sessions stay secret. What bounds the
-///   exposure is erasing the key everywhere it was stored, not the ticket
-///   lifetime.
-/// * **Identity.** A resumed session takes its client certificate chain from
-///   the ticket, so a key holder can resume as any mutual-TLS identity on
-///   every replica, over either version, until the key is dropped. A
-///   resumption is also not a re-verification: each one issues fresh tickets,
-///   so a client that keeps returning within the lifetime keeps its identity
-///   past its certificate's expiry, across restarts as well.
+/// * **Reach.** What bounds the exposure is erasing the key everywhere it was
+///   stored, not the ticket lifetime. Until then a key holder resumes on every
+///   replica, and a client that keeps returning keeps its identity past its
+///   certificate's expiry across restarts as well.
 /// * **Rotation.** Issue under a key for no longer than the ticket lifetime,
 ///   keep it accepted for one lifetime after it stops issuing, then erase it.
 ///   A key is then held for two lifetimes, as the built-in tickets hold theirs
