@@ -101,7 +101,7 @@ the examples, each about a page and all listed in
 - [x] Compile-time-resolved dependency injection
 - [x] `Interceptor` and `Observer` middleware with declared contributions
 - [x] Security schemes that cannot be enforced without being documented
-- [x] Server-Sent Events and streaming bodies, under `openapi32`
+- [x] Streaming bodies, with Server-Sent Events and other item streams under `openapi32`
 - [x] In-process test client with contract-conformance assertions
 
 Permanently out-of-scope
