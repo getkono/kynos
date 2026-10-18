@@ -43,6 +43,7 @@
 //! operation demands, and takes values of `scope = Type`, which is
 //! `Unscoped` when omitted; a value of any other type fails to typecheck.
 
+use kynos_openapi::model::parameter::header::is_ignored_header_parameter;
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
@@ -56,10 +57,6 @@ use crate::derive::{
 
 /// Locations an API key may travel in; not `path` or 3.2's `querystring`.
 const API_KEY_LOCATIONS: &[&str] = &["header", "query", "cookie"];
-
-/// Header names a parameter definition may not claim; the OpenAPI Parameter
-/// Object says such a definition shall be ignored.
-const RESERVED_HEADERS: &[&str] = &["authorization", "accept", "content-type"];
 
 /// Every OAuth 2.0 flow, and the URLs its own grant cannot work without.
 ///
@@ -705,10 +702,8 @@ fn check_kind(
     {
         return Err(syn::Error::new(field.span(), message));
     }
-    // HTTP field names are case-insensitive, so the check must be too.
-    if location.value() == "header"
-        && RESERVED_HEADERS.contains(&field.value().to_ascii_lowercase().as_str())
-    {
+    // The OpenAPI Parameter Object says such a definition shall be ignored.
+    if location.value() == "header" && is_ignored_header_parameter(&field.value()) {
         return Err(syn::Error::new(
             field.span(),
             format!(

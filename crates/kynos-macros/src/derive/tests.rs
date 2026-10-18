@@ -6481,6 +6481,19 @@ mod headers {
     fn every_headers_diagnostic_has_a_case() {
         every_diagnostic_has_a_case("headers.rs", include_str!("headers.rs"), ledger().len());
     }
+
+    /// The model says which headers are refused and the derive only what to
+    /// reach for instead, so a header the model adds needs advice here before
+    /// the refusal can name it.
+    #[test]
+    fn every_header_the_model_ignores_has_advice() {
+        for name in kynos_openapi::model::parameter::header::IGNORED_HEADER_PARAMETERS {
+            assert!(
+                crate::derive::headers::advice(name).is_some(),
+                "`{name}` is refused with no advice"
+            );
+        }
+    }
 }
 
 mod cookies {
