@@ -31,35 +31,85 @@ use crate::model::{
 
 /// Lists the constructs in a document that OpenAPI 3.1 cannot express.
 ///
-/// Each entry is a location. Two kinds are listed:
+/// Each entry is a location. Four kinds are listed, in this order:
 ///
 /// - each 3.2-only field the model types, which only a build with the
 ///   `openapi32` feature can hold;
 /// - in every build, each field the model does not recognise, kept in an
 ///   object's [`Extensions`](crate::model::extensions::Extensions) because its
 ///   name lacks the `x-` prefix (where a build without `openapi32` keeps every
-///   3.2 field).
+///   3.2 field);
+/// - in every build, each inline response without a `description`, which 3.1
+///   requires and 3.2 does not, located at the `description` it lacks;
+/// - in every build, each security requirement name that names a scheme by
+///   URI rather than by a declared component name, which only 3.2 admits,
+///   located at the name.
 #[must_use]
 pub fn three_two_only_constructs(document: &Document) -> Vec<String> {
-    let mut blockers = Vec::new();
+    let ThreeOneObstacles {
+        mut fields,
+        undescribed_responses,
+        scheme_uris,
+    } = three_one_obstacles(document);
+    fields.extend(
+        undescribed_responses
+            .into_iter()
+            .map(|response| response + "/description"),
+    );
+    fields.extend(scheme_uris);
+    fields
+}
+
+/// What [`three_two_only_constructs`] lists, kept apart by kind so that
+/// validation can report each the way its own rule names it.
+pub(crate) struct ThreeOneObstacles {
+    /// The 3.2 fields the model types, then the fields it does not recognise.
+    pub(crate) fields: Vec<String>,
+    /// Each inline response without a `description`, at the response itself.
+    pub(crate) undescribed_responses: Vec<String>,
+    /// Each security requirement name that is a scheme URI, at the name.
+    pub(crate) scheme_uris: Vec<String>,
+}
+
+/// Collects what stands in the way of emitting `document` as 3.1.
+pub(crate) fn three_one_obstacles(document: &Document) -> ThreeOneObstacles {
+    let found = unrecognised::walk(document);
+    let mut fields = Vec::new();
     #[cfg(feature = "openapi32")]
-    collect_three_two_fields(document, &mut blockers);
-    unrecognised::collect_unrecognised_fields(document, &mut blockers);
-    blockers
+    collect_three_two_fields(document, &mut fields);
+    fields.extend(found.fields);
+    ThreeOneObstacles {
+        fields,
+        undescribed_responses: found.undescribed_responses,
+        scheme_uris: found.scheme_uris,
+    }
+}
+
+/// Whether a security requirement name, if no scheme is declared under it,
+/// reads as a Security Scheme Object's URI.
+///
+/// 3.2 admits a URI there (`references/3.2.0.md:4685`); 3.1 admits only a
+/// declared component name (`references/3.1.2.md:4128`).
+///
+/// A *bare* single-segment name is not read as a URI: 3.2 spells a
+/// single-segment relative reference `./foo`, so an undeclared `Bearer` is a
+/// misspelling under either version, never something 3.2 expresses.
+pub(crate) fn names_a_scheme_by_uri(name: &str) -> bool {
+    name.contains('/') || name.contains(':') || name.contains('#')
 }
 
 /// Lists the fields in a document that the model does not recognise.
 ///
 /// Each is a key without the `x-` prefix kept in an object's
 /// [`Extensions`](crate::model::extensions::Extensions), at the location it was
-/// written: the blockers [`three_two_only_constructs`] lists in every build.
-/// With `openapi32`, each is a field neither version holds, such as a
+/// written: the blockers [`three_two_only_constructs`] lists in every build
+/// for a field, as opposed to an undescribed response or a requirement naming
+/// a scheme by URI. With `openapi32`, each is a field neither version holds,
+/// such as a
 /// misspelling or an extension missing its prefix.
 #[must_use]
 pub fn unrecognised_fields(document: &Document) -> Vec<String> {
-    let mut found = Vec::new();
-    unrecognised::collect_unrecognised_fields(document, &mut found);
-    found
+    unrecognised::walk(document).fields
 }
 
 /// The 3.2-only fields the model types, which a build without `openapi32`

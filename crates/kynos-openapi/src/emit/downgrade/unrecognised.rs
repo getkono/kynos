@@ -1,9 +1,13 @@
-//! Fields no object in the model recognises, wherever an `extensions` map
-//! absorbed one.
+//! What stands in the way of 3.1 in every build: fields no object in the model
+//! recognises, and what 3.2 relaxed rather than added.
 //!
 //! A flattened [`Extensions`] keeps any key its object leaves unclaimed,
 //! including every 3.2 field in a build without `openapi32`. A key lacking the
 //! `x-` prefix is no extension and 3.1 cannot read it, so each is reported.
+//!
+//! The model holds the two relaxations in every build: a response without a
+//! `description`, which 3.1 requires, and a security requirement naming a
+//! scheme by URI, which 3.1 does not admit.
 //!
 //! Each struct whose fields are all visible here is destructured without `..`,
 //! so a field added to the model is a compile error in this file.
@@ -11,6 +15,7 @@
 use std::fmt::Write as _;
 
 use crate::{
+    Map,
     model::{
         body::{RequestBody, encoding::Encoding, media_type::MediaType},
         callback::Callback,
@@ -29,6 +34,7 @@ use crate::{
         security::{
             SecurityScheme,
             oauth::{OAuthFlow, OAuthFlows},
+            requirement::SecurityRequirement,
         },
         server::{Server, ServerVariable},
         tag::Tag,
@@ -91,19 +97,59 @@ impl<'a> At<'a> {
     }
 }
 
+impl At<'_> {
+    fn pointer(&self) -> String {
+        let mut pointer = String::new();
+        self.render(&mut pointer);
+        pointer
+    }
+}
+
+/// What the walk collects, each kind at the pointer it lives at.
+pub(super) struct Found<'d> {
+    /// Each field without the `x-` prefix kept in an `extensions` map.
+    pub(super) fields: Vec<String>,
+    /// Each inline response without a `description`, at the response itself.
+    pub(super) undescribed_responses: Vec<String>,
+    /// Each security requirement name that is a scheme URI, at the name.
+    pub(super) scheme_uris: Vec<String>,
+    /// The document's declared scheme names, which no URI reading displaces.
+    schemes: &'d Map<RefOr<SecurityScheme>>,
+}
+
 /// Reports each key of `extensions` that lacks the `x-` prefix.
-fn check(at: At<'_>, extensions: &Extensions, found: &mut Vec<String>) {
+fn check(at: At<'_>, extensions: &Extensions, found: &mut Found<'_>) {
     for key in extensions.0.keys() {
         if !key.starts_with(EXTENSION_PREFIX) {
-            let mut pointer = String::new();
-            at.key(key).render(&mut pointer);
-            found.push(pointer);
+            found.fields.push(at.key(key).pointer());
         }
     }
 }
 
-/// Every unrecognised field in `document`, at the pointer it was written at.
-pub(super) fn collect_unrecognised_fields(document: &Document, found: &mut Vec<String>) {
+/// Reports each name in `requirements` that names a scheme by URI.
+fn security_fields(at: At<'_>, requirements: &[SecurityRequirement], found: &mut Found<'_>) {
+    for (index, requirement) in requirements.iter().enumerate() {
+        for name in requirement.0.keys() {
+            if !found.schemes.contains_key(name) && super::names_a_scheme_by_uri(name) {
+                found.scheme_uris.push(at.index(index).key(name).pointer());
+            }
+        }
+    }
+}
+
+/// Everything in `document` that stands in the way of 3.1 in every build.
+pub(super) fn walk(document: &Document) -> Found<'_> {
+    let mut found = Found {
+        fields: Vec::new(),
+        undescribed_responses: Vec::new(),
+        scheme_uris: Vec::new(),
+        schemes: &document.components.security_schemes,
+    };
+    document_fields(document, &mut found);
+    found
+}
+
+fn document_fields(document: &Document, found: &mut Found<'_>) {
     let Document {
         openapi: _,
         #[cfg(feature = "openapi32")]
@@ -114,7 +160,7 @@ pub(super) fn collect_unrecognised_fields(document: &Document, found: &mut Vec<S
         paths,
         webhooks,
         components,
-        security: _,
+        security,
         tags,
         external_docs,
         extensions,
@@ -122,6 +168,7 @@ pub(super) fn collect_unrecognised_fields(document: &Document, found: &mut Vec<S
     let at = At::ROOT;
 
     check(at, extensions, found);
+    security_fields(at.key("security"), security, found);
     info_fields(at.key("info"), info, found);
     servers_fields(at.key("servers"), servers, found);
 
@@ -147,7 +194,7 @@ pub(super) fn collect_unrecognised_fields(document: &Document, found: &mut Vec<S
     }
 }
 
-fn info_fields(at: At<'_>, info: &Info, found: &mut Vec<String>) {
+fn info_fields(at: At<'_>, info: &Info, found: &mut Found<'_>) {
     let Info {
         title: _,
         summary: _,
@@ -176,13 +223,13 @@ fn info_fields(at: At<'_>, info: &Info, found: &mut Vec<String>) {
     }
 }
 
-fn servers_fields(at: At<'_>, servers: &[Server], found: &mut Vec<String>) {
+fn servers_fields(at: At<'_>, servers: &[Server], found: &mut Found<'_>) {
     for (index, server) in servers.iter().enumerate() {
         server_fields(at.index(index), server, found);
     }
 }
 
-fn server_fields(at: At<'_>, server: &Server, found: &mut Vec<String>) {
+fn server_fields(at: At<'_>, server: &Server, found: &mut Found<'_>) {
     let Server {
         url: _,
         #[cfg(feature = "openapi32")]
@@ -205,7 +252,7 @@ fn server_fields(at: At<'_>, server: &Server, found: &mut Vec<String>) {
     }
 }
 
-fn external_docs_fields(at: At<'_>, docs: &ExternalDocumentation, found: &mut Vec<String>) {
+fn external_docs_fields(at: At<'_>, docs: &ExternalDocumentation, found: &mut Found<'_>) {
     let ExternalDocumentation {
         description: _,
         url: _,
@@ -214,7 +261,7 @@ fn external_docs_fields(at: At<'_>, docs: &ExternalDocumentation, found: &mut Ve
     check(at, extensions, found);
 }
 
-fn tag_fields(at: At<'_>, tag: &Tag, found: &mut Vec<String>) {
+fn tag_fields(at: At<'_>, tag: &Tag, found: &mut Found<'_>) {
     let Tag {
         name: _,
         #[cfg(feature = "openapi32")]
@@ -234,7 +281,7 @@ fn tag_fields(at: At<'_>, tag: &Tag, found: &mut Vec<String>) {
     }
 }
 
-fn components_fields(at: At<'_>, components: &Components, found: &mut Vec<String>) {
+fn components_fields(at: At<'_>, components: &Components, found: &mut Found<'_>) {
     let Components {
         schemas,
         responses,
@@ -292,8 +339,8 @@ fn components_fields(at: At<'_>, components: &Components, found: &mut Vec<String
 fn for_each_item<'a, T: 'a>(
     at: At<'_>,
     entries: impl IntoIterator<Item = (&'a String, &'a RefOr<T>)>,
-    found: &mut Vec<String>,
-    visit: fn(At<'_>, &T, &mut Vec<String>),
+    found: &mut Found<'_>,
+    visit: fn(At<'_>, &T, &mut Found<'_>),
 ) {
     for (name, entry) in entries {
         if let Some(item) = entry.as_item() {
@@ -302,7 +349,7 @@ fn for_each_item<'a, T: 'a>(
     }
 }
 
-fn path_item_fields(at: At<'_>, item: &PathItem, found: &mut Vec<String>) {
+fn path_item_fields(at: At<'_>, item: &PathItem, found: &mut Found<'_>) {
     let PathItem {
         reference: _,
         summary: _,
@@ -355,7 +402,7 @@ fn path_item_fields(at: At<'_>, item: &PathItem, found: &mut Vec<String>) {
     parameters_fields(at.key("parameters"), parameters, found);
 }
 
-fn parameters_fields(at: At<'_>, parameters: &[RefOr<Parameter>], found: &mut Vec<String>) {
+fn parameters_fields(at: At<'_>, parameters: &[RefOr<Parameter>], found: &mut Found<'_>) {
     for (index, parameter) in parameters.iter().enumerate() {
         if let Some(parameter) = parameter.as_item() {
             parameter_fields(at.index(index), parameter, found);
@@ -363,7 +410,7 @@ fn parameters_fields(at: At<'_>, parameters: &[RefOr<Parameter>], found: &mut Ve
     }
 }
 
-fn operation_fields(at: At<'_>, operation: &Operation, found: &mut Vec<String>) {
+fn operation_fields(at: At<'_>, operation: &Operation, found: &mut Found<'_>) {
     let Operation {
         tags: _,
         summary: _,
@@ -375,12 +422,15 @@ fn operation_fields(at: At<'_>, operation: &Operation, found: &mut Vec<String>) 
         responses,
         callbacks,
         deprecated: _,
-        security: _,
+        security,
         servers,
         extensions,
     } = operation;
 
     check(at, extensions, found);
+    if let Some(security) = security {
+        security_fields(at.key("security"), security, found);
+    }
     if let Some(docs) = external_docs {
         external_docs_fields(at.key("externalDocs"), docs, found);
     }
@@ -393,7 +443,7 @@ fn operation_fields(at: At<'_>, operation: &Operation, found: &mut Vec<String>) 
     servers_fields(at.key("servers"), servers, found);
 }
 
-fn request_body_fields(at: At<'_>, body: &RequestBody, found: &mut Vec<String>) {
+fn request_body_fields(at: At<'_>, body: &RequestBody, found: &mut Found<'_>) {
     let RequestBody {
         description: _,
         content,
@@ -408,14 +458,14 @@ fn request_body_fields(at: At<'_>, body: &RequestBody, found: &mut Vec<String>) 
 fn content_fields<'a>(
     at: At<'_>,
     content: impl IntoIterator<Item = (&'a String, &'a MediaType)>,
-    found: &mut Vec<String>,
+    found: &mut Found<'_>,
 ) {
     for (media_type, value) in content {
         media_type_fields(at.key(media_type), value, found);
     }
 }
 
-fn responses_fields(at: At<'_>, responses: &Responses, found: &mut Vec<String>) {
+fn responses_fields(at: At<'_>, responses: &Responses, found: &mut Found<'_>) {
     let Responses {
         default_response,
         responses,
@@ -429,24 +479,27 @@ fn responses_fields(at: At<'_>, responses: &Responses, found: &mut Vec<String>) 
     for_each_item(at, responses, found, response_fields);
 }
 
-fn response_fields(at: At<'_>, response: &Response, found: &mut Vec<String>) {
+fn response_fields(at: At<'_>, response: &Response, found: &mut Found<'_>) {
     let Response {
         #[cfg(feature = "openapi32")]
             summary: _,
-        description: _,
+        description,
         headers,
         content,
         links,
         extensions,
     } = response;
 
+    if description.is_none() {
+        found.undescribed_responses.push(at.pointer());
+    }
     check(at, extensions, found);
     for_each_item(at.key("headers"), headers, found, header_fields);
     content_fields(at.key("content"), content, found);
     for_each_item(at.key("links"), links, found, link_fields);
 }
 
-fn callback_fields(at: At<'_>, callback: &Callback, found: &mut Vec<String>) {
+fn callback_fields(at: At<'_>, callback: &Callback, found: &mut Found<'_>) {
     let Callback { items, extensions } = callback;
 
     check(at, extensions, found);
@@ -454,7 +507,7 @@ fn callback_fields(at: At<'_>, callback: &Callback, found: &mut Vec<String>) {
 }
 
 /// `Link` keeps its target private, and the target is a string.
-fn link_fields(at: At<'_>, link: &Link, found: &mut Vec<String>) {
+fn link_fields(at: At<'_>, link: &Link, found: &mut Found<'_>) {
     check(at, &link.extensions, found);
     if let Some(server) = &link.server {
         server_fields(at.key("server"), server, found);
@@ -462,18 +515,18 @@ fn link_fields(at: At<'_>, link: &Link, found: &mut Vec<String>) {
 }
 
 /// `Example` keeps its value private, and no form of the value holds a map.
-fn example_fields(at: At<'_>, example: &Example, found: &mut Vec<String>) {
+fn example_fields(at: At<'_>, example: &Example, found: &mut Found<'_>) {
     check(at, &example.extensions, found);
 }
 
-fn examples_fields(at: At<'_>, examples: Option<&Examples>, found: &mut Vec<String>) {
+fn examples_fields(at: At<'_>, examples: Option<&Examples>, found: &mut Found<'_>) {
     if let Some(Examples::Named(examples)) = examples {
         for_each_item(at.key("examples"), examples, found, example_fields);
     }
 }
 
 /// `Parameter` keeps its shape private; the accessors reach all of it.
-fn parameter_fields(at: At<'_>, parameter: &Parameter, found: &mut Vec<String>) {
+fn parameter_fields(at: At<'_>, parameter: &Parameter, found: &mut Found<'_>) {
     check(at, &parameter.extensions, found);
     if let Some(schema) = parameter.schema() {
         schema_fields(at.key("schema"), schema, found);
@@ -485,7 +538,7 @@ fn parameter_fields(at: At<'_>, parameter: &Parameter, found: &mut Vec<String>) 
 }
 
 /// The same for a `Header`, which keeps its shape private for the same reason.
-fn header_fields(at: At<'_>, header: &Header, found: &mut Vec<String>) {
+fn header_fields(at: At<'_>, header: &Header, found: &mut Found<'_>) {
     check(at, &header.extensions, found);
     if let Some(schema) = header.schema() {
         schema_fields(at.key("schema"), schema, found);
@@ -497,7 +550,7 @@ fn header_fields(at: At<'_>, header: &Header, found: &mut Vec<String>) {
 }
 
 /// `MediaType` keeps its examples private, behind [`MediaType::examples`].
-fn media_type_fields(at: At<'_>, media_type: &MediaType, found: &mut Vec<String>) {
+fn media_type_fields(at: At<'_>, media_type: &MediaType, found: &mut Found<'_>) {
     check(at, &media_type.extensions, found);
     if let Some(schema) = &media_type.schema {
         schema_fields(at.key("schema"), schema, found);
@@ -525,14 +578,14 @@ fn media_type_fields(at: At<'_>, media_type: &MediaType, found: &mut Vec<String>
 fn encodings_fields<'a>(
     at: At<'_>,
     encodings: impl IntoIterator<Item = (&'a String, &'a Encoding)>,
-    found: &mut Vec<String>,
+    found: &mut Found<'_>,
 ) {
     for (property, encoding) in encodings {
         encoding_fields(at.key(property), encoding, found);
     }
 }
 
-fn encoding_fields(at: At<'_>, encoding: &Encoding, found: &mut Vec<String>) {
+fn encoding_fields(at: At<'_>, encoding: &Encoding, found: &mut Found<'_>) {
     let Encoding {
         content_type: _,
         headers,
@@ -568,7 +621,7 @@ fn encoding_fields(at: At<'_>, encoding: &Encoding, found: &mut Vec<String>) {
 
 /// Every security scheme type, matched rather than read through an accessor so
 /// that a sixth one is a compile error here.
-fn security_scheme_fields(at: At<'_>, scheme: &SecurityScheme, found: &mut Vec<String>) {
+fn security_scheme_fields(at: At<'_>, scheme: &SecurityScheme, found: &mut Found<'_>) {
     match scheme {
         SecurityScheme::ApiKey { extensions, .. }
         | SecurityScheme::Http { extensions, .. }
@@ -583,7 +636,7 @@ fn security_scheme_fields(at: At<'_>, scheme: &SecurityScheme, found: &mut Vec<S
     }
 }
 
-fn oauth_flows_fields(at: At<'_>, flows: &OAuthFlows, found: &mut Vec<String>) {
+fn oauth_flows_fields(at: At<'_>, flows: &OAuthFlows, found: &mut Found<'_>) {
     let OAuthFlows {
         implicit,
         password,
@@ -627,7 +680,7 @@ fn oauth_flows_fields(at: At<'_>, flows: &OAuthFlows, found: &mut Vec<String>) {
     clippy::too_many_lines,
     reason = "the length is the exhaustive list of a Schema Object's keywords"
 )]
-fn schema_fields(at: At<'_>, schema: &Schema, found: &mut Vec<String>) {
+fn schema_fields(at: At<'_>, schema: &Schema, found: &mut Found<'_>) {
     let Schema::Object(object) = schema else {
         return;
     };

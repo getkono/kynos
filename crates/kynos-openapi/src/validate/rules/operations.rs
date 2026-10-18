@@ -8,7 +8,6 @@ use crate::{
         components::Components,
         paths::{item::PathItem, operation::Operation, template::PathTemplate},
         reference::RefOr,
-        response::Response,
     },
     validate::{
         Validator,
@@ -24,17 +23,12 @@ use crate::{
 
 impl Validator {
     /// Whether `name` is a Security Scheme Object's URI rather than a
-    /// component name.
+    /// component name, by the predicate `Document::emit` refuses 3.1 on.
     ///
-    /// 3.2 admits both (`references/3.2.0.md:4685`); 3.1 admits only a
-    /// component name, so this is always `false` there.
-    ///
-    /// A *bare* single-segment name is not read as a URI: 3.2 spells a
-    /// single-segment relative reference `./foo`, so an undeclared `Bearer` is
-    /// a misspelling, which accepting would leave the rule unable to catch.
+    /// 3.2 admits both; 3.1 admits only a component name, so this is always
+    /// `false` there.
     pub(in crate::validate) fn names_a_scheme_by_uri(self, name: &str) -> bool {
-        self.version.supports_3_2()
-            && (name.contains('/') || name.contains(':') || name.contains('#'))
+        self.version.supports_3_2() && crate::emit::downgrade::names_a_scheme_by_uri(name)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -66,28 +60,8 @@ impl Validator {
             violations.push(Violation::error(location, SpecError::NoResponses));
         }
 
-        // 3.1 marks a response's `description` REQUIRED and 3.2 does not, so
-        // the model holds an `Option` and the claimed version decides here.
-        if !self.version.supports_3_2() {
-            let mut require_description = |status: &str, response: &RefOr<Response>| {
-                if response
-                    .as_item()
-                    .is_some_and(|response| response.description.is_none())
-                {
-                    violations.push(Violation::error(
-                        format!("{location}/responses/{status}"),
-                        SpecError::MissingResponseDescription,
-                    ));
-                }
-            };
-
-            for (status, response) in &operation.responses.responses {
-                require_description(status, response);
-            }
-            if let Some(default) = &operation.responses.default_response {
-                require_description("default", default);
-            }
-        }
+        // A response's `description`, REQUIRED by 3.1 alone, is checked with
+        // the rest of what 3.1 cannot express, wherever the response sits.
 
         for tag in &operation.tags {
             if !declared_tags.contains(tag.as_str()) {

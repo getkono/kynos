@@ -47,12 +47,25 @@ impl Validator {
     pub fn validate(&self, document: &Document) -> Vec<Violation> {
         let mut violations = Vec::new();
 
-        // Validating as 3.1 refuses 3.2 constructs by the same walk
-        // `Document::emit` refuses on, so validating and emitting agree.
+        // Validating as 3.1 refuses what 3.1 cannot express by the same walk
+        // `Document::emit` refuses on, so validating and emitting agree. A
+        // requirement naming a scheme by URI is the security rules' to report,
+        // as an undeclared scheme, by the same predicate the walk applies.
         if !self.version.supports_3_2() {
-            let blockers = crate::emit::downgrade::three_two_only_constructs(document);
-            if !blockers.is_empty() {
-                violations.push(Violation::error("#", SpecError::RequiresV3_2 { blockers }));
+            let obstacles = crate::emit::downgrade::three_one_obstacles(document);
+            if !obstacles.fields.is_empty() {
+                violations.push(Violation::error(
+                    "#",
+                    SpecError::RequiresV3_2 {
+                        blockers: obstacles.fields,
+                    },
+                ));
+            }
+            for response in obstacles.undescribed_responses {
+                violations.push(Violation::error(
+                    response,
+                    SpecError::MissingResponseDescription,
+                ));
             }
         }
 
