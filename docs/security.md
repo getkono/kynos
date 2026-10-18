@@ -65,14 +65,21 @@ beside its documentation has two statements that agree until someone edits one.
 ### A derived scheme's challenge follows from its kind
 
 The kind fixes the `WWW-Authenticate` a 401 carries, and `challenge = "..."`
-replaces it, typically to add a `realm`:
+replaces it, typically to name another `realm`:
 
 | Kind | Default challenge | Because |
 | --- | --- | --- |
 | `bearer`, `oauth2`, `openid_connect` | `Bearer` | Each reads an access token from `Authorization`; RFC 6750 section 3 |
-| `basic` | `Basic charset="UTF-8"` | RFC 7617 section 2 |
+| `basic` | `Basic realm="api", charset="UTF-8"` | RFC 7617 section 2 requires `realm`; the same string `Basic` sends |
 | `http(scheme = ..)` | none | Its parameters are the application's to know |
 | `api_key`, `mutual_tls` | none | Travels outside `Authorization`, so no registered scheme names it |
+
+`Basic<T, P, R>` names its realm as a type, `R: Realm`, `ApiRealm` unless
+named. A realm is fixed per scheme, so it composes into the challenge at compile
+time. A realm is US-ASCII only, a deliberate policy: a control fails the build
+instead of a 401 silently losing its challenge, and a byte beyond ASCII, which
+RFC 9110 section 5.5 leaves opaque to a recipient, fails it too, since no client
+can be relied on to show it as written.
 
 ### The three states of a presented credential
 
@@ -150,7 +157,7 @@ string a `filter_map` silently drops.
 | Where | Scope type |
 | --- | --- |
 | `#[derive(SecurityScheme)]` | `scope = Type`; `Unscoped` when omitted |
-| `Bearer<T, P>`, `Basic<T, P>`, `MutualTls<T, P>` | `P`, `Unscoped` by default |
+| `Bearer<T, P>`, `Basic<T, P, R>`, `MutualTls<T, P>` | `P`, `Unscoped` by default |
 | A scheme's default `scopes(..)` | values of that type, never strings |
 
 `Unscoped` is uninhabited, so a scheme that never names a scope type has no

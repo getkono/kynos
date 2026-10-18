@@ -462,6 +462,48 @@ fn a_combination_challenges_with_its_first_scheme_that_has_one() {
     assert_eq!(header["example"], serde_json::json!("Bearer"), "{header}");
 }
 
+impl Authenticates<Basic<String>> for Recording {
+    type Authenticator = Recorder;
+
+    fn authenticator(&self) -> &Recorder {
+        &self.0
+    }
+}
+
+/// RFC 7617 section 2: "The authentication parameter 'realm' is REQUIRED", so
+/// a `Basic` guard's 401 names one, on the wire and in the description alike.
+#[tokio::test]
+async fn a_basic_challenge_names_a_realm() {
+    let anonymous = Request::new(Body::empty()).into_parts().0;
+    let Err(refused) =
+        <Auth<Basic<String>> as Guard<_>>::guard(&anonymous, &Recording::admitting()).await
+    else {
+        panic!("an anonymous request is refused");
+    };
+    assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
+
+    let sent = refused.challenge().expect("a 401 carries a challenge");
+    let parameters = sent.strip_prefix("Basic ").expect("a Basic challenge");
+    assert!(
+        parameters
+            .split(',')
+            .any(|parameter| parameter.trim_start().starts_with("realm=\"")),
+        "{sent}"
+    );
+
+    let (operation, _) = described::<Auth<Basic<String>>>();
+    let header = serde_json::to_value(
+        operation.responses.responses["401"]
+            .as_item()
+            .expect("an inline 401")
+            .headers
+            .get("WWW-Authenticate")
+            .expect("a challenge"),
+    )
+    .expect("a serializable header");
+    assert_eq!(header["example"], serde_json::json!(sent), "{header}");
+}
+
 /// The guard sets `security` whole, and a second declaration is refused rather
 /// than appended as an alternative it never was.
 #[test]

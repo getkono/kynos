@@ -71,11 +71,11 @@ use kynos::{
     error::rejection::AuthRejection,
     prelude::*,
     security::{
-        Authenticates, Authenticator, Scope,
+        Authenticates, Authenticator, Scope, Unscoped,
         auth::{Auth, MaybeAuth, Scoped, Scopes},
         carrier::{BearerToken, Carries, Credentials},
         requirement::{AllOf, AnyOf, Either2},
-        schemes::{Basic, MutualTls},
+        schemes::{Basic, MutualTls, Realm},
     },
     server::Server,
 };
@@ -147,6 +147,16 @@ struct SessionCookie;
 #[security(basic)]
 #[security(credential = Credentials, challenge = "Basic realm=\"admin\", charset=\"UTF-8\"")]
 struct AdminLogin;
+
+/// The realm `Basic` names on `/admin/session`, instead of its default `api`.
+///
+/// RFC 7617 requires a realm on every Basic challenge; a browser keys the
+/// credentials it remembers by it, so one realm per protection space.
+struct AdminRealm;
+
+impl Realm for AdminRealm {
+    const REALM: &'static str = "admin";
+}
 
 /// A client certificate, presented during the TLS handshake.
 ///
@@ -348,7 +358,7 @@ macro_rules! verifies {
 verifies!(
     ServiceKey,
     SessionCookie,
-    Basic<Credentials>,
+    Basic<Credentials, Unscoped, AdminRealm>,
     MutualTls,
     DelegatedAccess,
     Federated,
@@ -398,7 +408,7 @@ async fn get_preferences(auth: Auth<SessionCookie>) -> NoContent {
 
 /// Signs an administrator in.
 #[kynos::post("/admin/session")]
-async fn admin_sign_in(auth: Auth<Basic<Credentials>>) -> NoContent {
+async fn admin_sign_in(auth: Auth<Basic<Credentials, Unscoped, AdminRealm>>) -> NoContent {
     let _ = auth.into_inner();
     NoContent
 }

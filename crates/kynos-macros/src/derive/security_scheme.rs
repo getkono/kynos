@@ -486,12 +486,16 @@ fn build_flow(flow: &FlowArgs) -> proc_macro2::TokenStream {
 /// The challenge a kind sends without being told.
 ///
 /// `bearer`, `oauth2` and `openid_connect` answer `Bearer` (RFC 6750 section
-/// 3); `basic` answers with `charset="UTF-8"` (RFC 7617 section 2). No `realm`;
-/// `challenge = "..."` sets one. The other kinds have no default.
+/// 3); `basic` answers what `kynos::security::schemes::Basic` does, naming
+/// its default realm and `charset="UTF-8"` (RFC 7617 section 2), so the two
+/// cannot drift; `challenge = "..."` names another realm. The other kinds have
+/// no default.
 fn default_challenge(kind: &Ident) -> proc_macro2::TokenStream {
     match kind.to_string().as_str() {
         "bearer" | "oauth2" | "openid_connect" => quote!(::core::option::Option::Some("Bearer")),
-        "basic" => quote!(::core::option::Option::Some(r#"Basic charset="UTF-8""#)),
+        "basic" => quote! {
+            <::kynos::security::schemes::Basic as ::kynos::security::SecurityScheme>::challenge()
+        },
         _ => quote!(::core::option::Option::None),
     }
 }

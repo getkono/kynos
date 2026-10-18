@@ -347,6 +347,16 @@ fn an_http_scheme_supplies_its_challenge() {
     assert_eq!(<SessionCookie as SecuritySchemeTrait>::challenge(), None);
 }
 
+/// A derived `basic` scheme challenges as `Basic` does, realm included, since
+/// RFC 7617 section 2 requires one on every Basic challenge.
+#[test]
+fn a_derived_basic_scheme_challenges_with_a_realm() {
+    assert_eq!(
+        <BasicLogin as SecuritySchemeTrait>::challenge(),
+        Some(r#"Basic realm="api", charset="UTF-8""#)
+    );
+}
+
 /// An OAuth 2.0 access token and an OpenID Connect one are bearer tokens read
 /// from `Authorization`, so a 401 refusing either names `Bearer`, as RFC 6750
 /// section 3 says.
