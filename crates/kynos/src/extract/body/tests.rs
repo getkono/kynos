@@ -802,3 +802,28 @@ mod two_content_type_lines_are_refused {
         );
     }
 }
+
+/// A `Content-Type` carrying obs-text is still a declared one: the 415 quotes
+/// it lossily rather than telling the client it declared none.
+#[test]
+fn an_unreadable_content_type_is_quoted_lossily() {
+    use crate::{
+        error::problem::IntoProblem,
+        extract::body::unsupported_media_type,
+        http::{HeaderMap, HeaderValue, header},
+    };
+
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_bytes(b"text/plain; x=\xff").expect("obs-text is a valid field value"),
+    );
+
+    let problem = serde_json::to_value(unsupported_media_type(&headers).into_problem())
+        .expect("a problem serializes");
+
+    assert_eq!(
+        problem["detail"],
+        "unsupported media type: `text/plain; x=\u{fffd}`"
+    );
+}

@@ -107,15 +107,15 @@ pub(crate) fn offers(headers: &HeaderMap, media_type: &str) -> bool {
 
 /// Whether the request offers any of `media_types`.
 fn offers_any(headers: &HeaderMap, media_types: &[&str]) -> bool {
-    media_types
-        .iter()
-        .any(|media_type| offers(headers, media_type))
+    media_types.iter().any(|media| offers(headers, media))
 }
 
-/// The 415 a body extractor raises, quoting each text `Content-Type` line sent.
+/// The 415 a body extractor raises, quoting each `Content-Type` line, lossily.
 fn unsupported_media_type(headers: &HeaderMap) -> BodyRejection {
     let lines = headers.get_all(header::CONTENT_TYPE).iter();
-    let received: Vec<_> = lines.filter_map(|value| value.to_str().ok()).collect();
+    let received: Vec<_> = lines
+        .map(|value| String::from_utf8_lossy(value.as_bytes()))
+        .collect();
     BodyRejection::UnsupportedMediaType {
         received: (!received.is_empty()).then(|| received.join(", ")),
     }
