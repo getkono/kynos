@@ -623,9 +623,38 @@ def scanned(allowance, exists=None):
 
 
 # --- The module-size budget -------------------------------------------------
-# Modules past ~400 lines excluding tests are a debt `nfr.md` counts. Sibling
-# `tests.rs` files are excluded; an inline `mod tests` counts, read off `raw`.
+# Modules past ~400 lines excluding tests are a debt `nfr.md` lists by path.
+# Sibling `tests.rs` files are excluded; an inline `mod tests` counts, read off
+# `raw`.
 NFR = (ROOT / "docs/nfr.md").read_text()
+BUDGET = "### The module-size budget"
+# One list item per budgeted path, nothing else on the line.
+BUDGETED = re.compile(r"^- `(crates/[^`]+\.rs)`$", re.MULTILINE)
+MODULE_LINES = 400
+
+
+def budget_failures(listed_paths, oversized):
+    """What the budget's `listed_paths` and the `oversized` files disagree on.
+
+    Compared as sets, so each failure names its paths and a split cannot
+    cancel a regression out.
+    """
+    problems = []
+    if unlisted := sorted(set(oversized) - set(listed_paths)):
+        problems.append(
+            f"a module is past ~{MODULE_LINES} lines and nfr.md's module-size "
+            "budget does not list it. Either split it, or list it there with the "
+            "argument for why it stays one file, in the same commit:\n    "
+            + "\n    ".join(unlisted)
+        )
+    if stale := sorted(set(listed_paths) - set(oversized)):
+        problems.append(
+            "nfr.md's module-size budget lists a path that is no longer past "
+            f"~{MODULE_LINES} lines, or no longer there. The budget only shrinks: "
+            "drop the path in the commit that split or moved it:\n    "
+            + "\n    ".join(stale)
+        )
+    return problems
 
 # --- The feature grading -----------------------------------------------------
 # Every flag `crates/kynos` declares must be graded in `docs/performance.md`.
@@ -1243,19 +1272,18 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
     oversized = sorted(
         path
         for path, _ in corpus.files
-        if corpus.raw[path].count("\n") > 400
+        if corpus.raw[path].count("\n") > MODULE_LINES
     )
 
-    budget = re.search(r"a module-size budget of (\d+) files", nfr)
-    if budget is None:
-        failures.append("nfr.md no longer states the module-size budget")
-    elif int(budget.group(1)) != len(oversized):
-        failures.append(
-            f"nfr.md budgets {budget.group(1)} files over ~400 lines and there are "
-            f"{len(oversized)}. Splitting one means lowering the budget in the same "
-            "commit; adding one means arguing for it there.\n    "
-            + "\n    ".join(oversized)
-        )
+    budget = section(
+        nfr,
+        BUDGET,
+        failures,
+        "\n## ",
+        unrun="no module's size is held against the list of those allowed past the line",
+    )
+    if budget is not None:
+        failures += budget_failures(BUDGETED.findall(budget), oversized)
 
     # --- The feature grading -------------------------------------------------
     grading = section(

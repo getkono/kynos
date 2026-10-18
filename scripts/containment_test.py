@@ -293,6 +293,7 @@ class ImportTime(unittest.TestCase):
         "| Element | Named by | Named only in | Why a request cannot reach it |",
         "| Kind | Lives in | Runs under | Proves | Status |",
         "| Category | Requirement | Method | Status |",
+        "### The module-size budget",
     )
 
     def test_the_module_holds_no_failure_list_at_import(self):
@@ -2561,31 +2562,38 @@ class Main(unittest.TestCase):
             len(self.naming(failures, f"claims {gate.NUMBERS[wrong]} off-path rows")), 1
         )
 
-    def test_a_moved_module_size_budget_is_reported(self):
-        # `nfr`. The budget is a number in prose, and the rule holds it against
-        # the count of files over the line.
-        broken = re.sub(
-            r"a module-size budget of \d+ files",
-            "a module-size budget of 99 files",
-            gate.NFR,
-        )
+    def test_an_oversized_module_the_budget_does_not_list_is_named(self):
+        # `nfr`. The budget is a list of paths, and the rule names the one the
+        # tree has and the list does not.
+        broken = self.rewriting(gate.NFR, "- `crates/kynos/src/unchecked.rs`\n", "")
         status, failures = self.report(nfr=broken)
         self.assertEqual(status, 1)
-        self.assertEqual(len(self.naming(failures, "nfr.md budgets 99 files")), 1)
+        reported = self.naming(failures, "budget does not list it")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/unchecked.rs", reported[0])
 
-    def test_a_reworded_module_size_budget_claim_is_reported(self):
-        # The other half of the budget rule: the case above holds the
-        # comparison, this holds the sentence the comparison reads.
-        broken = re.sub(
-            r"a module-size budget of (\d+) files",
-            r"a module-size budget covering \1 files",
+    def test_a_budgeted_path_no_longer_oversized_is_named(self):
+        # The other direction, and the one a count could not see beside the
+        # first: a split and a new oversized module in one commit.
+        broken = self.rewriting(
             gate.NFR,
+            "- `crates/kynos/src/unchecked.rs`\n",
+            "- `crates/kynos/src/unchecked.rs`\n- `crates/kynos/src/lib.rs`\n",
         )
         status, failures = self.report(nfr=broken)
         self.assertEqual(status, 1)
-        self.assertEqual(
-            len(self.naming(failures, "no longer states the module-size budget")), 1
-        )
+        reported = self.naming(failures, "no longer past")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/lib.rs", reported[0])
+
+    def test_a_renamed_module_size_budget_heading_is_reported(self):
+        broken = self.rewriting(gate.NFR, gate.BUDGET, "### Module sizes")
+        status, failures = self.report(nfr=broken)
+        self.assertEqual(status, 1)
+        self.assertEqual(len(self.naming(failures, repr(gate.BUDGET))), 1)
+        # Skipped rather than read as an empty list, which would name all of
+        # them.
+        self.assertEqual(self.naming(failures, "budget does not list it"), [])
 
     def test_an_optional_dependency_named_by_no_dep_is_reported(self):
         # `crates/kynos/Cargo.toml`, which `main` reads rather than takes.
