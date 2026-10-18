@@ -2418,6 +2418,86 @@ mod schema {
         }
     }
 
+    /// An identifier enum's skipped variant is described, never refused.
+    ///
+    /// serde reads a `#[serde(field_identifier)]` or `variant_identifier`
+    /// enum through its identifier visitor, which names every declared
+    /// variant and reads no `skip`, `skip_serializing` or
+    /// `skip_deserializing`; and it refuses `Serialize` on one, so the enum is
+    /// only ever read. Every variant is a name serde accepts, so each is in the
+    /// expansion, and rule 28's "refuse to read it back" does not hold.
+    #[test]
+    fn an_identifier_enums_skipped_variant_is_described() {
+        for (declaration, skipped) in [
+            (
+                quote::quote!(
+                    #[serde(field_identifier)]
+                    enum Key {
+                        Id,
+                        #[serde(skip)]
+                        Legacy,
+                    }
+                ),
+                "\"Legacy\"",
+            ),
+            (
+                quote::quote!(
+                    #[serde(field_identifier)]
+                    enum Key {
+                        Id,
+                        #[serde(skip_serializing)]
+                        #[serde(skip_deserializing)]
+                        Legacy,
+                    }
+                ),
+                "\"Legacy\"",
+            ),
+            (
+                quote::quote!(
+                    #[serde(field_identifier)]
+                    enum Key {
+                        Id,
+                        #[serde(skip_deserializing)]
+                        Draft,
+                    }
+                ),
+                "\"Draft\"",
+            ),
+            (
+                quote::quote!(
+                    #[serde(variant_identifier)]
+                    enum Kind {
+                        Web,
+                        #[serde(skip)]
+                        Fax,
+                    }
+                ),
+                "\"Fax\"",
+            ),
+            (
+                quote::quote!(
+                    #[serde(variant_identifier)]
+                    enum Kind {
+                        Web,
+                        #[serde(skip_deserializing)]
+                        Fax,
+                    }
+                ),
+                "\"Fax\"",
+            ),
+        ] {
+            let input: DeriveInput = syn::parse2(declaration).expect("the case itself must parse");
+            let expansion = match expand_inner(&input) {
+                Ok(expansion) => expansion.to_string(),
+                Err(error) => panic!("an identifier enum's skipped variant must expand: {error}"),
+            };
+            assert!(
+                expansion.contains(skipped),
+                "an identifier enum must describe its skipped variant {skipped}: {expansion}"
+            );
+        }
+    }
+
     /// `skip_serializing_if` is accepted wherever serde may leave the field out
     /// in both directions, or never reads it at all.
     ///

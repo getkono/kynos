@@ -3680,6 +3680,53 @@ fn a_variant_serde_skips_both_ways_is_described_nowhere() {
     assert_eq!(emitted::<Hidden>(), names);
 }
 
+#[derive(Debug, PartialEq, Schema, serde::Deserialize)]
+#[serde(field_identifier)]
+enum Key {
+    Id,
+    #[serde(skip)]
+    Legacy,
+    #[serde(skip_serializing)]
+    #[serde(skip_deserializing)]
+    Retired,
+}
+
+#[derive(Debug, PartialEq, Schema, serde::Deserialize)]
+#[serde(variant_identifier)]
+enum Medium {
+    Web,
+    #[serde(skip)]
+    Fax,
+}
+
+/// An identifier enum's variant is described whatever it skips: serde's
+/// identifier visitor reads every declared variant, so a skip leaves out no
+/// name serde accepts.
+#[test]
+fn an_identifier_enums_skipped_variant_is_described() {
+    assert_eq!(
+        emitted::<Key>(),
+        serde_json::json!({"type": "string", "enum": ["Id", "Legacy", "Retired"]})
+    );
+    assert_eq!(
+        serde_json::from_str::<Key>(r#""Legacy""#).ok(),
+        Some(Key::Legacy)
+    );
+    assert_eq!(
+        serde_json::from_str::<Key>(r#""Retired""#).ok(),
+        Some(Key::Retired)
+    );
+
+    assert_eq!(
+        emitted::<Medium>(),
+        serde_json::json!({"type": "string", "enum": ["Web", "Fax"]})
+    );
+    assert_eq!(
+        serde_json::from_str::<Medium>(r#""Fax""#).ok(),
+        Some(Medium::Fax)
+    );
+}
+
 // --- What a derived error response declares ---------------------------------
 //
 // A problem body carries the type URI the declaration named, so the response
