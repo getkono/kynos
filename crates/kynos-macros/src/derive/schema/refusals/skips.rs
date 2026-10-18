@@ -4,13 +4,16 @@
 
 use syn::{Data, DeriveInput, Field, Fields, punctuated::Punctuated, token::Comma};
 
-use crate::derive::schema::{
-    Container, Visitor,
-    attributes::{
-        is_described, is_flattened, is_open, is_option, is_required, is_unit_like, serde_flag,
-        serde_key_span,
+use crate::derive::{
+    common::wrapped,
+    schema::{
+        Container, Visitor,
+        attributes::{
+            is_described, is_flattened, is_open, is_required, is_unit_like, serde_flag,
+            serde_key_span,
+        },
+        described_variants, is_written, one_way_skip_span, positional_members,
     },
-    described_variants, is_written, one_way_skip_span, positional_members,
 };
 
 /// A variant serde writes and never reads has no closed schema true of both.
@@ -230,7 +233,7 @@ pub(super) fn reject_skipped_adjacent_payload(input: &DeriveInput) -> syn::Resul
         let Some(member) = unnamed.unnamed.first() else {
             continue;
         };
-        if !is_unit_like(&variant.fields) || is_option(&member.ty) {
+        if !is_unit_like(&variant.fields) || wrapped(&member.ty, "Option").is_some() {
             continue;
         }
         let keys = &["skip", "skip_serializing", "skip_deserializing"];
