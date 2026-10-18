@@ -653,11 +653,15 @@ fn check_kind(
             }
         })?;
     } else if meta.input.peek(Token![=]) {
-        // A kind's options go in its list; a value here would be dropped.
-        return Err(syn::Error::new(
-            meta.path.span(),
-            format!("`{kind}` takes its options in a list, as `{kind}(...)`, not a value"),
-        ));
+        // A kind's options go in its list; a value here would be dropped. A
+        // kind with no options is pointed at its bare form, since its list
+        // refuses every option too.
+        let message = if kind == "basic" || kind == "mutual_tls" {
+            format!("`{kind}` takes no options; write it bare, as `{kind}`, not with a value")
+        } else {
+            format!("`{kind}` takes its options in a list, as `{kind}(...)`, not a value")
+        };
+        return Err(syn::Error::new(meta.path.span(), message));
     }
 
     if kind == "oauth2" {
