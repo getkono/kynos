@@ -1,7 +1,11 @@
 use super::{
-    Callback, Components, Encoding, Example, ExampleValue, Examples, Header, Link, MediaType,
-    OAuthFlows, Operation, Parameter, ParameterIn, PathItem, RefOr, Response, Responses, Schema,
+    Components, Encoding, Example, ExampleValue, Examples, Header, Link, MediaType, OAuthFlows,
+    Operation, Parameter, ParameterIn, PathItem, RefOr, Response, Responses, Schema,
     SecurityScheme, Server, for_each, for_each_item, pointer_token,
+};
+use crate::{
+    pointer::At,
+    visit::{self, Visit},
 };
 
 /// The 3.2-only fields one security scheme can carry.
@@ -95,10 +99,11 @@ pub(super) fn collect_link_blockers(location: &str, link: &Link, blockers: &mut 
 ///
 /// `mediaTypes` is not descended into: the section itself is 3.2-only.
 pub(super) fn collect_components_blockers(
-    location: &str,
+    at: At<'_>,
     components: &Components,
     blockers: &mut Vec<String>,
 ) {
+    let location = at.pointer();
     if !components.media_types.is_empty() {
         blockers.push(format!("{location}/mediaTypes"));
     }
@@ -146,16 +151,19 @@ pub(super) fn collect_components_blockers(
             }
         },
     );
-    for_each(
-        &format!("{location}/pathItems"),
-        &components.path_items,
-        |at, item| collect_path_item_blockers(&at, item, blockers),
-    );
-    for_each_item(
-        &format!("{location}/callbacks"),
-        &components.callbacks,
-        |at, callback| collect_callback_blockers(&at, callback, blockers),
-    );
+    let mut walk = Blockers {
+        blockers: &mut *blockers,
+    };
+    let path_items = at.key("pathItems");
+    for (name, item) in &components.path_items {
+        visit::path_item(path_items.key(name), item, &mut walk);
+    }
+    let callbacks = at.key("callbacks");
+    for (name, callback) in &components.callbacks {
+        if let Some(callback) = callback.as_item() {
+            visit::callback(callbacks.key(name), callback, &mut walk);
+        }
+    }
     for_each_item(
         &format!("{location}/links"),
         &components.links,
@@ -165,92 +173,53 @@ pub(super) fn collect_components_blockers(
     );
 }
 
-/// One Path Item, wherever it hangs: `paths`, `webhooks`, a component, or a
-/// callback expression.
-pub(super) fn collect_path_item_blockers(
-    location: &str,
-    item: &PathItem,
-    blockers: &mut Vec<String>,
-) {
-    if item.query.is_some() {
-        blockers.push(format!("{location}/query"));
-    }
-    if !item.additional_operations.is_empty() {
-        blockers.push(format!("{location}/additionalOperations"));
-    }
-
-    // Path-level parameters can carry a 3.2 location too.
-    collect_parameters_blockers(location, &item.parameters, blockers);
-
-    collect_servers_blockers(location, &item.servers, blockers);
-
-    for (method, operation) in item.operations() {
-        collect_operation_blockers(
-            &format!("{location}/{}", method.as_wire_str().to_lowercase()),
-            operation,
-            blockers,
-        );
-    }
-
-    // `operations()` stops at the methods with a field of their own; a
-    // construct is reported where it lives, even under a map already reported.
-    for (method, operation) in &item.additional_operations {
-        collect_operation_blockers(
-            &format!("{location}/additionalOperations/{}", pointer_token(method)),
-            operation,
-            blockers,
-        );
-    }
+/// The 3.2 constructs each Path Item and operation holds, wherever it hangs:
+/// `paths`, `webhooks`, a component, or a callback expression.
+///
+/// The walk reaches every operation, `additionalOperations` included, so a
+/// construct is reported where it lives, even under a map already reported.
+pub(super) struct Blockers<'b> {
+    pub(super) blockers: &'b mut Vec<String>,
 }
 
-/// The Path Items a callback expression maps to.
-pub(super) fn collect_callback_blockers(
-    location: &str,
-    callback: &Callback,
-    blockers: &mut Vec<String>,
-) {
-    for (expression, item) in &callback.items {
-        if let RefOr::Item(item) = item {
-            collect_path_item_blockers(
-                &format!("{location}/{}", pointer_token(expression)),
-                item,
-                blockers,
-            );
+impl<'doc> Visit<'doc> for Blockers<'_> {
+    fn path_item(&mut self, at: At<'_>, item: &'doc PathItem, _path: Option<&'doc str>) -> bool {
+        let Self { blockers } = self;
+        let location = at.pointer();
+        if item.query.is_some() {
+            blockers.push(format!("{location}/query"));
         }
-    }
-}
-
-pub(super) fn collect_operation_blockers(
-    location: &str,
-    operation: &Operation,
-    blockers: &mut Vec<String>,
-) {
-    collect_parameters_blockers(location, &operation.parameters, blockers);
-
-    if let Some(RefOr::Item(body)) = &operation.request_body {
-        for (media_type, content) in &body.content {
-            collect_media_type_blockers(
-                &format!(
-                    "{location}/requestBody/content/{}",
-                    pointer_token(media_type)
-                ),
-                content,
-                blockers,
-            );
+        if !item.additional_operations.is_empty() {
+            blockers.push(format!("{location}/additionalOperations"));
         }
+
+        // Path-level parameters can carry a 3.2 location too.
+        collect_parameters_blockers(&location, &item.parameters, blockers);
+
+        collect_servers_blockers(&location, &item.servers, blockers);
+        true
     }
 
-    collect_responses_blockers(location, &operation.responses, blockers);
-    collect_servers_blockers(location, &operation.servers, blockers);
+    fn operation(&mut self, at: At<'_>, _item: &'doc PathItem, operation: &'doc Operation) {
+        let Self { blockers } = self;
+        let location = at.pointer();
+        collect_parameters_blockers(&location, &operation.parameters, blockers);
 
-    for (name, callback) in &operation.callbacks {
-        if let RefOr::Item(callback) = callback {
-            collect_callback_blockers(
-                &format!("{location}/callbacks/{}", pointer_token(name)),
-                callback,
-                blockers,
-            );
+        if let Some(RefOr::Item(body)) = &operation.request_body {
+            for (media_type, content) in &body.content {
+                collect_media_type_blockers(
+                    &format!(
+                        "{location}/requestBody/content/{}",
+                        pointer_token(media_type)
+                    ),
+                    content,
+                    blockers,
+                );
+            }
         }
+
+        collect_responses_blockers(&location, &operation.responses, blockers);
+        collect_servers_blockers(&location, &operation.servers, blockers);
     }
 }
 
