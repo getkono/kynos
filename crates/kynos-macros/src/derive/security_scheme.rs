@@ -51,7 +51,7 @@ use syn::{
 
 use crate::derive::{
     attribute::key_name,
-    common::{doc_string, non_token_message, skip_value, unit_struct},
+    common::{doc_string, non_token_message, unit_struct},
 };
 
 /// Locations an API key may travel in; not `path` or 3.2's `querystring`.
@@ -652,9 +652,12 @@ fn check_kind(
                 )),
             }
         })?;
-    } else {
-        // A bare kind such as `bearer` has no list to read.
-        skip_value(meta)?;
+    } else if meta.input.peek(Token![=]) {
+        // A kind's options go in its list; a value here would be dropped.
+        return Err(syn::Error::new(
+            meta.path.span(),
+            format!("`{kind}` takes its options in a list, as `{kind}(...)`, not a value"),
+        ));
     }
 
     if kind == "oauth2" {

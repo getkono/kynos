@@ -1007,6 +1007,20 @@ fn check_field_markers(fields: &Fields) -> syn::Result<()> {
                              field has none. Give the variant named fields",
                         ));
                     }
+                    // A marker is bare; a value would otherwise reach only
+                    // syn's "expected `,`".
+                    "extension" | "headers"
+                        if meta.input.peek(syn::Token![=])
+                            || meta.input.peek(syn::token::Paren) =>
+                    {
+                        return Err(syn::Error::new(
+                            meta.path.span(),
+                            format!(
+                                "`{key}` is a bare marker and takes no value; write \
+                                 `#[problem({key})]`"
+                            ),
+                        ));
+                    }
                     "extension" | "headers" => {}
                     other => {
                         return Err(syn::Error::new(
