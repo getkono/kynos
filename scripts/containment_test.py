@@ -2113,6 +2113,19 @@ class Main(unittest.TestCase):
         self.assertEqual(len(reported), 1)
         self.assertIn("the multipart extractor", reported[0])
 
+    def test_a_malformed_dependency_row_is_reported(self):
+        # A row naming this gate that the four-cell read would otherwise skip.
+        broken = self.rewriting(
+            gate.NFR,
+            "`socket2` is named only in `server/tcp.rs` |",
+            "`socket2` is named only in `server/tcp.rs` | extra |",
+        )
+        status, failures = self.report(nfr=broken)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "Dependencies table has a malformed row")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("socket2", reported[0])
+
     def test_a_dependencies_table_assigning_this_gate_nothing_is_reported(self):
         start = gate.NFR.index(gate.DEPENDENCIES)
         end = gate.NFR.index("\n## ", start + 1)

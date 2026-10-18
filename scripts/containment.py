@@ -388,7 +388,12 @@ def dependency_rules(nfr, failures, members=MEMBERS):
         if not line.startswith("|"):
             break
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if CONTAINMENT_METHOD not in line:
+            continue
         if len(cells) != 4 or cells[2] != CONTAINMENT_METHOD:
+            failures.append(
+                f"nfr.md's Dependencies table has a malformed row: {line.strip()}"
+            )
             continue
         read = confinement(cells[1], members)
         if read is None:
