@@ -52,9 +52,12 @@ impl Document {
     /// Returns [`SpecError::RequiresV3_2`] when the document uses a construct
     /// that `version` cannot express.
     pub fn emit(&self, version: SpecVersion) -> Result<Self, SpecError> {
-        let blockers = downgrade::three_two_only_constructs(self);
-        if !version.supports_3_2() && !blockers.is_empty() {
-            return Err(SpecError::RequiresV3_2 { blockers });
+        // A version expressing every 3.2 construct has nothing to look for.
+        if !version.supports_3_2() {
+            let blockers = downgrade::three_two_only_constructs(self);
+            if !blockers.is_empty() {
+                return Err(SpecError::RequiresV3_2 { blockers });
+            }
         }
 
         let mut emitted = self.clone();

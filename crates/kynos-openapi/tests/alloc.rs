@@ -70,7 +70,7 @@
 //! [`nfr.md`](../../../docs/nfr.md#thresholds) refuses; a per-operation
 //! allocation added to `three_two_only_constructs`'s baseline arm, which
 //! `--all-features` never compiles, would fit inside the slack. So
-//! `EMIT_CEILINGS` is the one `#[cfg]`-gated item in the file and every other
+//! `EMIT_CEILINGS` is the one `#[cfg]`-gated number in the file and every other
 //! number is shared: stage one and the byte counts are identical under both,
 //! since neither feature changes what 3.1 serializes.
 //!
@@ -164,7 +164,7 @@ struct Size {
 /// What one [`Document::emit`] allocates at each of [`SIZES`]'s points, at
 /// `--all-features`.
 ///
-/// The only `#[cfg]`-gated item here, and it is gated because the cost it
+/// The only `#[cfg]`-gated number here, and it is gated because the cost it
 /// records is: `emit::downgrade::three_two_only_constructs` builds a pointer
 /// per node of `paths` under `openapi32` and none without it, so one table
 /// enforced under both would be more than twice as loose as its own
@@ -585,6 +585,29 @@ fn one_emission_allocates_what_was_recorded() {
             A_CEILING_MOVES_BY_DECISION,
         );
     }
+}
+
+/// Emitting at 3.2 looks for nothing 3.1 cannot express, so it costs exactly
+/// the copy it returns.
+///
+/// Gated because 3.2 is: without `openapi32` there is no version to emit at
+/// whose walk could be skipped. Compared with a copy counted here rather than
+/// with a recorded number, so it holds whatever a copy comes to cost.
+#[cfg(feature = "openapi32")]
+#[test]
+fn emitting_at_three_two_walks_nothing() {
+    let document = document(SIZES[SIZES.len() - 1].operations);
+
+    let (copied, copy) = counted(|| document.clone());
+    drop(copy);
+    let (emitted, emission) = counted(|| document.emit(SpecVersion::V3_2));
+    drop(emission.expect("a 3.1 document emits as 3.2"));
+
+    assert_eq!(
+        emitted, copied,
+        "emitting at 3.2 allocated {emitted} times and a copy {copied}; the difference is a \
+         search for 3.2-only constructs that 3.2 expresses anyway"
+    );
 }
 
 /// The requirement itself, over both stages: cost per operation does not grow
