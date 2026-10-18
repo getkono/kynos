@@ -1586,15 +1586,9 @@ mod schema {
         ] {
             let input: syn::DeriveInput =
                 syn::parse2(declaration).expect("the case itself must parse");
-            let Err(error) = expand_inner(&input) else {
-                continue;
-            };
-            let reported = error.to_string();
-            assert!(
-                !reported.contains("refuses every document the struct writes")
-                    && !reported.contains("is also this struct's"),
-                "a struct serde refuses the tag on was refused for the tag: {reported}"
-            );
+            if let Err(error) = expand_inner(&input) {
+                panic!("a struct serde refuses the tag on was refused: {error}");
+            }
         }
     }
 
@@ -1611,14 +1605,9 @@ mod schema {
         ))
         .expect("the case itself must parse");
 
-        let Err(error) = expand_inner(&input) else {
-            return;
-        };
-
-        assert!(
-            !error.to_string().contains("newtype variant's payload"),
-            "a tuple variant's member was refused as a newtype payload: {error}"
-        );
+        if let Err(error) = expand_inner(&input) {
+            panic!("a tuple variant serde refuses the tag on was refused: {error}");
+        }
     }
 
     /// `#[serde(untagged)]` on a struct is serde's diagnostic to raise, not ours.
@@ -1640,14 +1629,9 @@ mod schema {
         ))
         .expect("the case itself must parse");
 
-        let Err(error) = expand_inner(&input) else {
-            return;
-        };
-
-        assert!(
-            !error.to_string().contains("untagged enum"),
-            "a struct was refused with a sentence about enums: {error}"
-        );
+        if let Err(error) = expand_inner(&input) {
+            panic!("a struct serde refuses `untagged` on was refused: {error}");
+        }
     }
 
     /// An untagged variant serde skips both ways is in no schema, so it has no
@@ -2431,14 +2415,9 @@ mod schema {
             let input: syn::DeriveInput =
                 syn::parse2(declaration).expect("the case itself must parse");
 
-            let Err(error) = expand_inner(&input) else {
-                continue;
-            };
-
-            assert!(
-                !error.to_string().contains("`#[serde(transparent)]`"),
-                "a struct serde refuses both ways drew a second refusal: {error}"
-            );
+            if let Err(error) = expand_inner(&input) {
+                panic!("a struct serde refuses both ways drew a refusal of its own: {error}");
+            }
         }
     }
 
