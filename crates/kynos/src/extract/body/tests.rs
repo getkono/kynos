@@ -696,3 +696,109 @@ mod an_undecoded_content_coding_is_refused {
         .await;
     }
 }
+
+/// `Content-Type` is a singleton field, and a recipient that meets it twice
+/// may take either line (RFC 9110 section 8.3), so an intermediary and Kynos
+/// could read one body as two types: every body refuses the request with 415,
+/// even where both lines agree, and quotes every line it was sent.
+mod two_content_type_lines_are_refused {
+    use crate::{
+        error::rejection::BodyRejection,
+        extract::{
+            FromRequest,
+            body::{OneOf, binary::Binary, offers, text::Text},
+        },
+        http::{
+            HeaderMap, HeaderValue, Request, StatusCode, body::Body, header, media::OctetStream,
+        },
+    };
+
+    /// Headers carrying one `Content-Type` field line per entry of `lines`.
+    fn headers(lines: &[&'static str]) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        for line in lines {
+            headers.append(header::CONTENT_TYPE, HeaderValue::from_static(line));
+        }
+        headers
+    }
+
+    /// What `T` refuses an empty body under `lines` with, or `None` where it
+    /// reads it.
+    async fn refusal<T: FromRequest<(), Rejection = BodyRejection>>(
+        lines: &[&'static str],
+    ) -> Option<BodyRejection> {
+        let mut request = Request::new(Body::from_bytes(bytes::Bytes::new()));
+        *request.headers_mut() = headers(lines);
+        T::from_request(request, &()).await.err()
+    }
+
+    /// The pairs refused: the same line twice, and two different types the
+    /// body reads either of.
+    const TWICE: &[&[&str]] = &[
+        &["text/plain", "text/plain"],
+        &["text/plain", "application/octet-stream"],
+        &["application/octet-stream", "text/plain"],
+    ];
+
+    #[test]
+    fn no_media_type_is_offered() {
+        for lines in TWICE {
+            let headers = headers(lines);
+            for media_type in *lines {
+                assert!(
+                    !offers(&headers, media_type),
+                    "{lines:?} offers `{media_type}`"
+                );
+            }
+        }
+        assert!(offers(&headers(&["text/plain"]), "text/plain"));
+    }
+
+    /// Asserts that `T` answers every [`TWICE`] pair with a 415 quoting both
+    /// lines in order.
+    async fn holds<T: FromRequest<(), Rejection = BodyRejection>>() {
+        for lines in TWICE {
+            let rejection = refusal::<T>(lines).await;
+            assert_eq!(
+                rejection.as_ref().map(BodyRejection::status),
+                Some(StatusCode::UNSUPPORTED_MEDIA_TYPE),
+                "{lines:?}: {rejection:?}"
+            );
+            let expected = lines.join(", ");
+            assert!(
+                matches!(
+                    rejection,
+                    Some(BodyRejection::UnsupportedMediaType { received: Some(ref received) })
+                        if *received == expected
+                ),
+                "{lines:?}: {rejection:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn by_a_text_body() {
+        holds::<Text>().await;
+    }
+
+    #[tokio::test]
+    async fn by_a_binary_body() {
+        holds::<Binary<OctetStream>>().await;
+    }
+
+    #[tokio::test]
+    async fn by_either_side_of_a_one_of() {
+        holds::<OneOf<Text, Binary<OctetStream>>>().await;
+    }
+
+    /// One line still reads, so the refusal is the count and nothing else.
+    #[tokio::test]
+    async fn one_line_is_read() {
+        assert!(refusal::<Text>(&["text/plain"]).await.is_none());
+        assert!(
+            refusal::<Binary<OctetStream>>(&["application/octet-stream"])
+                .await
+                .is_none()
+        );
+    }
+}
