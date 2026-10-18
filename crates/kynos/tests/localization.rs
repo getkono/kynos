@@ -77,79 +77,32 @@ async fn a_localized_response_varies_on_the_field_it_read() {
         .call()
         .await;
 
-    let vary = reply.field(header::VARY.as_str()).expect("a `Vary`");
-    assert!(
-        vary.split(',')
-            .any(|name| name.trim().eq_ignore_ascii_case("accept-language")),
-        "{vary}"
-    );
+    assert_eq!(varied_on(&reply), ["accept-language"]);
 }
 
-/// The truncation half of the matcher, end to end.
-#[tokio::test]
-async fn a_client_asking_for_a_dialect_is_served_the_language_the_service_offers() {
-    let service = service();
-
-    let reply = get(&service, "/greeting")
-        .header("accept-language", "fr-CA, en;q=0.5")
-        .call()
-        .await;
-
-    assert_eq!(
-        reply.field(header::CONTENT_LANGUAGE.as_str()).as_deref(),
-        Some("fr")
-    );
-    assert_eq!(reply.text(), "Bonjour");
+/// Every field name `Vary` lists across all its field lines, lowercased and
+/// sorted, so a name sent twice or one nobody asked for shows.
+fn varied_on(reply: &support::Reply) -> Vec<String> {
+    let mut names: Vec<String> = reply
+        .fields(header::VARY.as_str())
+        .iter()
+        .flat_map(|value| {
+            value
+                .split(',')
+                .map(|name| name.trim().to_ascii_lowercase())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    names.sort();
+    names
 }
 
-/// The 406 that is not raised, over a real exchange.
-#[tokio::test]
-async fn a_client_asking_for_a_language_nobody_offers_is_served_the_default() {
-    let service = service();
-
-    let reply = get(&service, "/greeting")
-        .header("accept-language", "ja")
-        .call()
-        .await;
-
-    assert_eq!(reply.status, StatusCode::OK);
-    assert_eq!(
-        reply.field(header::CONTENT_LANGUAGE.as_str()).as_deref(),
-        Some("en")
-    );
-    assert_eq!(reply.text(), "Hello");
-}
-
-/// A field the server can only partly read is one it partly honours.
-#[tokio::test]
-async fn an_unreadable_range_does_not_refuse_the_request() {
-    let service = service();
-
-    let reply = get(&service, "/greeting")
-        .header("accept-language", "!!!, de")
-        .call()
-        .await;
-
-    assert_eq!(reply.status, StatusCode::OK);
-    assert_eq!(
-        reply.field(header::CONTENT_LANGUAGE.as_str()).as_deref(),
-        Some("de")
-    );
-}
-
-/// A request carrying nothing takes the default rather than failing to extract.
-#[tokio::test]
-async fn a_request_carrying_no_preference_is_served_the_default() {
-    let service = service();
-
-    let reply = get(&service, "/greeting").call().await;
-
-    assert_eq!(reply.status, StatusCode::OK);
-    assert_eq!(
-        reply.field(header::CONTENT_LANGUAGE.as_str()).as_deref(),
-        Some("en")
-    );
-}
+// The matcher's own cases -- a dialect served the offered language, an
+// unoffered language served the default, an unreadable range dropped, and an
+// absent field served the default -- are `response/language/tests.rs`'s, which
+// pins each to the tag chosen. They are not restated here: the tag chosen
+// reaching `Content-Language` is the one property of theirs only the wire sees,
+// and the first case above holds it.
 
 /// RFC 9110 section 5.3: a field that may repeat is equivalent to one field
 /// holding the comma-separated list. Only a real request can carry two lines,
@@ -193,17 +146,5 @@ async fn a_localized_response_keeps_the_vary_a_compressing_interceptor_added() {
         .call()
         .await;
 
-    let names: Vec<String> = reply
-        .fields(header::VARY.as_str())
-        .iter()
-        .flat_map(|value| {
-            value
-                .split(',')
-                .map(|name| name.trim().to_ascii_lowercase())
-                .collect::<Vec<_>>()
-        })
-        .collect();
-
-    assert!(names.contains(&"accept-language".to_owned()), "{names:?}");
-    assert!(names.contains(&"accept-encoding".to_owned()), "{names:?}");
+    assert_eq!(varied_on(&reply), ["accept-encoding", "accept-language"]);
 }
