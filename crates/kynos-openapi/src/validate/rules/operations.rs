@@ -14,6 +14,7 @@ use crate::{
         Validator,
         rules::{
             content::{check_request_body, check_response},
+            document::check_server_list,
             extensions::check_extensions,
             parameters::check_parameter_list,
             paths::check_path_correspondence,
@@ -98,6 +99,7 @@ impl Validator {
             }
         }
 
+        check_server_list(location, &operation.servers, violations);
         check_parameter_list(location, &operation.parameters, components, violations);
         #[cfg(feature = "openapi32")]
         super::parameters::check_querystring(

@@ -1215,6 +1215,106 @@ fn a_server_variable_is_located_at_its_escaped_pointer() {
     assert_eq!(located, ["#/servers/0/variables/a~1b~0c"]);
 }
 
+/// Every Server Object is held to the Server Variable MUSTs, not only the
+/// root `servers`.
+///
+/// `references/3.1.2.md:565-566`: `enum` "MUST NOT be empty" and `default`
+/// "MUST exist in the enum's values". A Path Item, an Operation and a Link
+/// each carry a Server Object of the same type, and `check_servers` walked
+/// `document.servers` alone. One case per scope, each with both violations,
+/// each at its escaped pointer.
+#[test]
+fn a_server_variable_is_checked_at_every_scope() {
+    use crate::model::{
+        link::Link,
+        reference::RefOr,
+        server::{Server, ServerVariable},
+    };
+
+    let bad_server = || {
+        Server::new("https://example.com/{a/b~c}/{d}")
+            .with_variable(
+                "a/b~c",
+                ServerVariable::enumerated("eu", Vec::<String>::new()),
+            )
+            .with_variable("d", ServerVariable::enumerated("eu", ["us"]))
+    };
+    let link = || {
+        let mut link = Link::to_operation("listUsers");
+        link.server = Some(bad_server());
+        link
+    };
+    let operation = || Operation::new("listUsers").with_responses(ok_responses());
+
+    let mut path_item = PathItem::new().with_operation(Method::Get, operation());
+    path_item.servers = vec![bad_server()];
+
+    let mut on_operation = operation();
+    on_operation.servers = vec![bad_server()];
+
+    let linked = operation().with_responses(
+        Responses::new().with(200, Response::new("ok").with_link("next/page", link())),
+    );
+
+    let mut component_link = document_with(&[]);
+    component_link
+        .components
+        .links
+        .insert("a/b".to_owned(), RefOr::Item(link()));
+
+    let mut component_response = document_with(&[]);
+    component_response.components.responses.insert(
+        "a/b".to_owned(),
+        RefOr::Item(Response::new("ok").with_link("next", link())),
+    );
+
+    let cases = [
+        (
+            document_with(&[("/users", path_item)]),
+            "#/paths/~1users/servers/0",
+        ),
+        (
+            document_with(&[(
+                "/users",
+                PathItem::new().with_operation(Method::Get, on_operation),
+            )]),
+            "#/paths/~1users/get/servers/0",
+        ),
+        (
+            document_with(&[(
+                "/users",
+                PathItem::new().with_operation(Method::Get, linked),
+            )]),
+            "#/paths/~1users/get/responses/200/links/next~1page/server",
+        ),
+        (component_link, "#/components/links/a~1b/server"),
+        (
+            component_response,
+            "#/components/responses/a~1b/links/next/server",
+        ),
+    ];
+
+    for (document, server) in cases {
+        let located: Vec<(String, &str)> = violations(&document)
+            .into_iter()
+            .filter_map(|v| match v.error {
+                SpecError::EmptyServerVariableEnum { .. } => Some((v.location, "empty")),
+                SpecError::ServerVariableDefaultNotInEnum { .. } => Some((v.location, "default")),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            located,
+            [
+                (format!("{server}/variables/a~1b~0c"), "empty"),
+                (format!("{server}/variables/d"), "default"),
+            ],
+            "{server}"
+        );
+    }
+}
+
 #[test]
 fn an_operation_must_declare_a_response() {
     let item = PathItem::new().with_operation(Method::Get, Operation::new("listUsers"));

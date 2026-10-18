@@ -10,7 +10,7 @@ use crate::{
         response::Response,
     },
     validate::{
-        rules::parameters::check_header_map,
+        rules::{document::check_link, parameters::check_header_map},
         violation::{Violation, pointer_token},
     },
 };
@@ -81,8 +81,18 @@ pub(in crate::validate) fn check_response(
             violations,
         );
     }
-    // Links and a header's shape hold by construction; a header's name is a
-    // map key no type reaches, so it is still checked.
+    // An inline link's server; a referenced one is checked at its component.
+    for (name, link) in &response.links {
+        if let Some(link) = link.as_item() {
+            check_link(
+                &format!("{location}/links/{}", pointer_token(name)),
+                link,
+                violations,
+            );
+        }
+    }
+    // A link's target and a header's shape hold by construction; a header's
+    // name is a map key no type reaches, so it is still checked.
     check_header_map(
         &format!("{location}/headers"),
         &response.headers,
