@@ -203,10 +203,15 @@ fn a_configuration_prepare_refuses_is_refused_before_the_stream_is_read() {
         .serve_io(io, peer_addr())
         .err()
         .expect("a zero request-body idle timeout is refused");
-    assert!(matches!(
-        refused,
-        Error::Server(ServerError::InvalidConfiguration(_))
-    ));
+    assert!(
+        matches!(
+            refused,
+            Error::Server(ServerError::InvalidConfiguration(
+                "request_body_idle_timeout must be non-zero when enabled"
+            ))
+        ),
+        "{refused:?}"
+    );
 }
 
 /// A stream handed over as plaintext is never served as TLS, nor as plaintext
@@ -228,8 +233,13 @@ fn a_server_configured_for_tls_is_refused() {
         .serve_io(io, peer_addr())
         .err()
         .expect("a TLS server is refused");
-    assert!(matches!(
-        refused,
-        Error::Server(ServerError::InvalidConfiguration(_))
-    ));
+    assert!(
+        matches!(
+            refused,
+            Error::Server(ServerError::InvalidConfiguration(
+                "serve_io serves plaintext, so TLS must not be configured"
+            ))
+        ),
+        "{refused:?}"
+    );
 }

@@ -4203,6 +4203,129 @@ mod protocol_configuration {
     }
 }
 
+/// Every [`InvalidConfiguration`](crate::server::error::ServerError::InvalidConfiguration)
+/// the crate constructs, as the file under `src/` that constructs it and its
+/// message.
+///
+/// Each message is asserted exactly by the case that reaches it: the
+/// `protocol_configuration` table, the TCP keepalive and request-body idle
+/// timeout cases, the mutual-TLS case here, and `tests/serve_io.rs`.
+const CONFIGURATION_REFUSALS: &[(&str, &str)] = &[
+    (
+        "middleware/limits/request_body.rs",
+        "request_body_idle_timeout must be non-zero when enabled",
+    ),
+    (
+        "server/mod.rs",
+        "mutual TLS adds itself to the document, so no serve_io connection may still share the service",
+    ),
+    (
+        "server/mod.rs",
+        "serve_io serves plaintext, so TLS must not be configured",
+    ),
+    ("server/protocol.rs", "HTTP/1 max_headers must be non-zero"),
+    (
+        "server/protocol.rs",
+        "HTTP/1 max_buffer_size must be at least 8192",
+    ),
+    (
+        "server/protocol.rs",
+        "HTTP/1 header_read_timeout must be non-zero when enabled",
+    ),
+    (
+        "server/protocol.rs",
+        "HTTP/2 limits must be non-zero and fit their protocol fields",
+    ),
+    (
+        "server/protocol.rs",
+        "HTTP/2 fixed flow-control windows must be non-zero",
+    ),
+    (
+        "server/protocol.rs",
+        "HTTP/2 fixed flow-control windows must not exceed 2147483647",
+    ),
+    (
+        "server/protocol.rs",
+        "HTTP/2 keep-alive durations must be non-zero",
+    ),
+    (
+        "server/protocol.rs",
+        "HTTP/2 idle_timeout must be non-zero when enabled",
+    ),
+    (
+        "server/tcp.rs",
+        "TCP keepalive durations must be between 1 and 32767 seconds",
+    ),
+];
+
+/// The configuration refusals in `src/`, read from the source, are exactly
+/// [`CONFIGURATION_REFUSALS`].
+///
+/// Read crate-wide rather than per file, so a refusal added in a module no
+/// count covered fails here instead of going unasserted; and by message, so
+/// one reworded without its case moving fails too. Test files are skipped, as
+/// are comment lines, so a doc example cannot count.
+#[test]
+fn every_configuration_refusal_in_the_crate_is_listed() {
+    const CONSTRUCTOR: &str = "ServerError::InvalidConfiguration(";
+
+    fn sources(directory: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(directory).expect("a readable source directory") {
+            let path = entry.expect("a readable directory entry").path();
+            if path.is_dir() {
+                if path.file_name().is_some_and(|name| name != "tests") {
+                    sources(&path, found);
+                }
+            } else if path.extension().is_some_and(|extension| extension == "rs")
+                && path.file_name().is_some_and(|name| name != "tests.rs")
+            {
+                found.push(path);
+            }
+        }
+    }
+
+    let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src"));
+    let mut files = Vec::new();
+    sources(root, &mut files);
+
+    let mut constructed = Vec::new();
+    for file in files {
+        let source = std::fs::read_to_string(&file).expect("a readable source file");
+        let code = source
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let relative = file
+            .strip_prefix(root)
+            .expect("a file under `src/`")
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+
+        for (at, _) in code.match_indices(CONSTRUCTOR) {
+            let message = code[at + CONSTRUCTOR.len()..]
+                .split('"')
+                .nth(1)
+                .expect("a refusal's message is a string literal");
+            constructed.push((relative.clone(), message.to_owned()));
+        }
+    }
+    constructed.sort();
+
+    let mut listed = CONFIGURATION_REFUSALS
+        .iter()
+        .map(|(file, message)| ((*file).to_owned(), (*message).to_owned()))
+        .collect::<Vec<_>>();
+    listed.sort();
+
+    assert_eq!(
+        constructed, listed,
+        "the configuration refusals `src/` constructs and the ones listed here differ"
+    );
+}
+
 /// An accept loop that ended without returning is its own failure, not an
 /// invalid setting, and the error says which way it ended.
 #[tokio::test]
