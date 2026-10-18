@@ -11,8 +11,8 @@
 //! The decoder accepts what the `Schema` derive describes: a field's
 //! `#[serde(default)]` fills a part left out, and `deny_unknown_fields`
 //! refuses a part no field declares. A serde key the description honours and
-//! a part cannot — a container `default`, an `alias`, any `skip`, a `flatten` —
-//! is refused, and so is a `Vec<T>` without `default`, whose empty value is
+//! a part cannot — a container `default`, `tag` or `transparent`, an `alias`,
+//! any `skip`, a `flatten` — is refused, and so is a `Vec<T>` without `default`, whose empty value is
 //! written as no part although its description requires one.
 
 use proc_macro::TokenStream;
@@ -130,6 +130,21 @@ fn reject_unfollowed_keys(input: &DeriveInput, fields: &FieldsNamed) -> syn::Res
             "a container `default` fills a field left out from the form's own `Default`, and a \
              form is read one part at a time, never built whole. Put `#[serde(default)]` on each \
              field that may be left out",
+        ));
+    }
+    if let Some((_, span)) = serde_key_span(&input.attrs, &["tag"]) {
+        return Err(syn::Error::new(
+            span,
+            "a container `tag` describes a required property named by the tag and holding the \
+             struct's name, which no part carries in either direction. Drop `tag`, or declare \
+             that property as a field of the form",
+        ));
+    }
+    if let Some((_, span)) = serde_key_span(&input.attrs, &["transparent"]) {
+        return Err(syn::Error::new(
+            span,
+            "`transparent` describes the form as its one field's schema, and a form carries that \
+             field as a part under the field's own name. Drop `transparent`",
         ));
     }
     for field in &fields.named {

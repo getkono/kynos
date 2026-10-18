@@ -869,7 +869,9 @@ pub fn derive_cookies(item: TokenStream) -> TokenStream {
 /// `rename_all(serialize = ..., deserialize = ...)` whose sides differ or which
 /// names one side only (sides that agree are the one name or style they
 /// spell); a field's `alias`, `flatten`, `skip`, `skip_serializing`,
-/// `skip_deserializing` and `skip_serializing_if`; and a container `default`.
+/// `skip_deserializing` and `skip_serializing_if`; and a container `default`,
+/// `tag` (described as a required property no part carries) or `transparent`
+/// (described as the one field's schema, while that field is still a part).
 #[proc_macro_derive(MultipartForm, attributes(serde))]
 pub fn derive_multipart_form(item: TokenStream) -> TokenStream {
     derive::multipart::expand(item)
