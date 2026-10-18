@@ -1183,7 +1183,7 @@ mod schema {
                     "a split `rename_all` whose sides differ gives every field of this variant",
                 ),
                 case(
-                    "a split `rename_all_fields` reaching a variant's side its own rule leaves",
+                    "a split `rename_all_fields` reaching a side a written variant's rule leaves",
                     quote::quote!(
                         #[serde(rename_all_fields(
                             serialize = "camelCase",
@@ -1191,7 +1191,7 @@ mod schema {
                         ))]
                         enum Change {
                             A,
-                            #[serde(skip_serializing, rename_all(serialize = "snake_case"))]
+                            #[serde(rename_all(serialize = "snake_case"))]
                             B {
                                 user_id: u8,
                             },
@@ -1317,6 +1317,79 @@ mod schema {
             expansion.contains("\"userId\"") && !expansion.contains("\"user_id\""),
             "the field is described under a name other than `userId`: {expansion}"
         );
+    }
+
+    /// serde resolves each side of a variant's field rule as its own
+    /// `rename_all`, else the enum's `rename_all_fields`, so a split
+    /// `rename_all_fields` is judged per variant by the sides that variant
+    /// resolves: one that names no field two ways is accepted, and a variant
+    /// serde only reads names its fields by the deserialize side.
+    #[test]
+    fn a_split_rename_all_fields_is_judged_by_the_sides_each_variant_resolves() {
+        let cases = [
+            (
+                "a written variant whose own rule matches the side it leaves",
+                quote::quote!(
+                    #[serde(rename_all_fields(
+                        serialize = "camelCase",
+                        deserialize = "snake_case"
+                    ))]
+                    enum E {
+                        #[serde(rename_all(serialize = "snake_case"))]
+                        V { user_id: u8 },
+                    }
+                ),
+                "\"user_id\"",
+                ["\"userId\"", "\"user-id\""],
+            ),
+            (
+                "a read-only variant whose own rule leaves the deserialize side",
+                quote::quote!(
+                    #[serde(rename_all_fields(
+                        serialize = "camelCase",
+                        deserialize = "kebab-case"
+                    ))]
+                    enum E {
+                        A,
+                        #[serde(skip_serializing, rename_all(serialize = "snake_case"))]
+                        V {
+                            user_id: u8,
+                        },
+                    }
+                ),
+                "\"user-id\"",
+                ["\"userId\"", "\"user_id\""],
+            ),
+            (
+                "a read-only variant with no rule of its own",
+                quote::quote!(
+                    #[serde(rename_all_fields(
+                        serialize = "camelCase",
+                        deserialize = "kebab-case"
+                    ))]
+                    enum E {
+                        A,
+                        #[serde(skip_serializing)]
+                        V {
+                            user_id: u8,
+                        },
+                    }
+                ),
+                "\"user-id\"",
+                ["\"userId\"", "\"user_id\""],
+            ),
+        ];
+        for (label, tokens, named, unnamed) in cases {
+            let input: syn::DeriveInput = syn::parse2(tokens).expect("the case itself must parse");
+            let expansion = match expand_inner(&input) {
+                Ok(expansion) => expansion.to_string(),
+                Err(error) => panic!("{label} was refused: {error}"),
+            };
+            assert!(
+                expansion.contains(named) && unnamed.iter().all(|name| !expansion.contains(name)),
+                "{label}: the field is described under a name other than {named}: {expansion}"
+            );
+        }
     }
 
     /// A variant serde only reads claims the name it is read under, so its
