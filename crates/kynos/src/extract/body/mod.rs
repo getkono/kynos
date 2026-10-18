@@ -96,13 +96,9 @@ fn parameters_are_acceptable(media_type: &str, declared: &str, parameters: &str)
 /// Parameters are then held to [`parameters_are_acceptable`]; the request need
 /// not repeat declared ones, nor contradict them. A structured suffix never
 /// matches: `application/vnd.x+json` is not `application/json`.
-///
-/// Only ASCII whitespace around the declared type is dropped, as the `const`
-/// comparison refusing a `OneOf` pair drops it, so the two agree on which
-/// declarations share a request.
 pub(crate) fn offers(headers: &HeaderMap, media_type: &str) -> bool {
     let (essence, declared) = media_type.split_once(';').unwrap_or((media_type, ""));
-    let essence = essence.trim_ascii();
+    let essence = essence.trim_ascii(); // ASCII only, as `shares_requests` trims.
     content_type(headers).is_some_and(|(offered, parameters)| {
         offered.eq_ignore_ascii_case(essence)
             && parameters_are_acceptable(essence, declared, parameters)
