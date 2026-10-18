@@ -99,7 +99,7 @@ pub(in crate::validate) fn check_parameter_list(
                 location,
                 SpecError::DuplicateParameter {
                     name: resolved.name.clone(),
-                    location: format!("{:?}", resolved.location).to_lowercase(),
+                    location: resolved.location.as_str().to_owned(),
                 },
             ));
         }
@@ -151,8 +151,8 @@ pub(in crate::validate) fn check_parameter(
             violations.push(Violation::error(
                 location,
                 SpecError::IllegalStyle {
-                    style: format!("{style:?}").to_lowercase(),
-                    location: format!("{:?}", parameter.location).to_lowercase(),
+                    style: style.as_str().to_owned(),
+                    location: parameter.location.as_str().to_owned(),
                 },
             ));
         }

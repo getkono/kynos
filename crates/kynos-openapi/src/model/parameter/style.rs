@@ -86,6 +86,22 @@ impl From<EncodingStyle> for Style {
 }
 
 impl Style {
+    /// The style as it is spelled in a description.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Matrix => "matrix",
+            Self::Label => "label",
+            Self::Simple => "simple",
+            Self::Form => "form",
+            Self::SpaceDelimited => "spaceDelimited",
+            Self::PipeDelimited => "pipeDelimited",
+            Self::DeepObject => "deepObject",
+            #[cfg(feature = "openapi32")]
+            Self::Cookie => "cookie",
+        }
+    }
+
     /// The style applied when none is stated, given a parameter location.
     #[must_use]
     pub fn default_for(location: ParameterIn) -> Self {

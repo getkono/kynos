@@ -123,6 +123,26 @@ fn the_style_and_location_lists_are_complete() {
     );
 }
 
+/// A violation names a style or location by `as_str`, so it must be the
+/// spelling the description itself carries.
+#[test]
+fn styles_and_locations_are_named_as_a_description_spells_them() {
+    for &style in ALL_STYLES {
+        assert_eq!(
+            serde_json::to_value(style).expect("a style serializes"),
+            style.as_str(),
+            "{style:?}"
+        );
+    }
+    for &location in ALL_LOCATIONS {
+        assert_eq!(
+            serde_json::to_value(location).expect("a location serializes"),
+            location.as_str(),
+            "{location:?}"
+        );
+    }
+}
+
 #[test]
 fn style_defaults_follow_the_parameter_location() {
     // The four the specification gives a default for. `querystring` is absent
