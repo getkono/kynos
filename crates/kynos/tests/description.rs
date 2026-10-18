@@ -1144,9 +1144,10 @@ fn an_operation_with_no_tag_of_its_own_lists_its_enclosing_scopes_outermost_firs
 
 /// One name declared at two scopes is one entry, in both places it appears.
 ///
-/// `tags` is a set spelled as an array, and the document's `tags` keeps the
-/// first claim on a name. Green before and after: the fix must not turn a tag
-/// repeated at an enclosing scope into a duplicate.
+/// `tags` is a set spelled as an array, and the document's `tags` keeps one
+/// copy of a description however many scopes repeat it. Green before and
+/// after: the fix must not turn a tag repeated at an enclosing scope into a
+/// duplicate.
 #[test]
 fn a_tag_named_at_two_scopes_appears_once() {
     let document = Router::<()>::new()
