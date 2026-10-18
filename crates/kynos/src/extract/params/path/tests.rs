@@ -1,7 +1,7 @@
 use super::{DecodePath, Path, PathCaptures, PathParams, decode_capture};
 use crate::{
     error::rejection::PathRejection,
-    extract::FromRequestParts,
+    extract::{FromRequestParts, describe::Describe},
     http::{Request, body::Body},
 };
 
@@ -127,6 +127,19 @@ async fn a_capture_that_is_not_utf8_once_decoded_is_rejected() {
         matches!(&rejection, PathRejection::Invalid { detail, .. } if detail.contains("UTF-8")),
         "{rejection:?}"
     );
+}
+
+/// Witnesses that an extractor describes itself into an operation.
+fn assert_describe<T: Describe>() {}
+
+/// A group that is only `PathParams` describes itself: the description reads
+/// [`PathParams::parameters`] alone, so `Named`, which implements no `Schema`,
+/// is enough. Bound by `Schema` too, such a group compiled as a handler
+/// argument and then failed at registration with an error blaming the
+/// response.
+#[test]
+fn a_group_without_a_schema_describes_its_path() {
+    assert_describe::<Path<Named>>();
 }
 
 /// A capture with nothing to decode is handed back untouched, which is what

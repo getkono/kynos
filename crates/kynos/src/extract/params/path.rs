@@ -7,7 +7,7 @@ use crate::{
     extract::{FromRequestParts, describe::Describe},
     http::Parts,
     router::operation::OperationCx,
-    schema::{Schema, registry::Registry},
+    schema::registry::Registry,
 };
 
 /// Variables captured from the path template.
@@ -193,7 +193,7 @@ impl<C: Sync, T: DecodePath + Send> FromRequestParts<C> for Path<T> {
     }
 }
 
-impl<T: PathParams + Schema> Describe for Path<T> {
+impl<T: PathParams> Describe for Path<T> {
     fn describe(operation: &mut OperationCx<'_>) {
         let parameters = T::parameters(operation.registry());
         for parameter in parameters {
