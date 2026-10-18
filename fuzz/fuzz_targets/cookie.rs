@@ -42,7 +42,11 @@ fuzz_target!(|data: &[u8]| {
             None => Ok(None),
             Some(value) => ascii(value).map(Some).ok_or(cookie::Unreadable),
         };
-        assert_eq!(cookie::value_of(&headers, name), expected, "cookie {name:?}");
+        assert_eq!(
+            cookie::value_of(&headers, name),
+            expected,
+            "cookie {name:?}"
+        );
     }
 });
 
@@ -77,12 +81,21 @@ fn pairs(data: &[u8]) -> Vec<(&[u8], &[u8])> {
 /// `octets` without leading or trailing SP and HTAB.
 fn ows(octets: &[u8]) -> &[u8] {
     let blank = |byte: &u8| *byte == b' ' || *byte == b'\t';
-    let start = octets.iter().position(|byte| !blank(byte)).unwrap_or(octets.len());
-    let end = octets.iter().rposition(|byte| !blank(byte)).map_or(start, |at| at + 1);
+    let start = octets
+        .iter()
+        .position(|byte| !blank(byte))
+        .unwrap_or(octets.len());
+    let end = octets
+        .iter()
+        .rposition(|byte| !blank(byte))
+        .map_or(start, |at| at + 1);
     &octets[start..end]
 }
 
 /// `octets` as text, where every one is ASCII.
 fn ascii(octets: &[u8]) -> Option<&str> {
-    octets.is_ascii().then(|| std::str::from_utf8(octets).ok()).flatten()
+    octets
+        .is_ascii()
+        .then(|| std::str::from_utf8(octets).ok())
+        .flatten()
 }
