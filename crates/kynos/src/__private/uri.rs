@@ -110,10 +110,20 @@ pub(crate) fn check_percent_decoded_utf8(text: &str) -> Result<(), usize> {
     let mut index = 0;
 
     while index < octets.len() {
+        if held == 0 {
+            // Holding nothing, the literal text before the next `%` is UTF-8
+            // already. `index` only ever steps past `%` and escapes, so it is
+            // always on a character boundary.
+            let Some(skipped) = text[index..].find('%') else {
+                break;
+            };
+            index += skipped;
+        }
         let Some(octet) = escaped_octet(octets, index) else {
             if held > 0 {
                 return Err(began);
             }
+            // A malformed escape: its `%` is literal.
             index += 1;
             continue;
         };
