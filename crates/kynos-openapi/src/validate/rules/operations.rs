@@ -1,11 +1,16 @@
 //! Operation-level rules: identifier uniqueness, declared responses, tags,
-//! security, and the content of a request body and every response.
+//! security, the content of a request body and every response, and the
+//! operation each link names.
 
 use std::collections::{HashMap, HashSet};
 
 use crate::{
+    Map,
     model::{
+        callback::Callback,
         components::Components,
+        document::Document,
+        link::{Link, LinkTarget},
         paths::{item::PathItem, operation::Operation, template::PathTemplate},
         reference::RefOr,
         response::status::StatusPattern,
@@ -126,6 +131,218 @@ impl Validator {
         check_operation_content(location, operation, components, violations);
 
         check_extensions(location, &operation.extensions, violations);
+    }
+}
+
+/// Every operation a link can name, found by its own walk so a link anywhere
+/// is judged against all of them.
+#[derive(Default)]
+struct Targets<'doc> {
+    /// Each declared `operationId`.
+    ids: HashSet<&'doc str>,
+    /// The pointer each operation is described at, with the operation.
+    operations: Vec<(String, &'doc Operation)>,
+    /// Pointers to a Path Item, Callback or callback Path Item given by
+    /// reference: the walk stops there, so what lies past one is unknown.
+    references: Vec<String>,
+    /// Whether one of those references leaves this document, which may then
+    /// describe any `operationId`.
+    elsewhere: bool,
+}
+
+impl<'doc> Targets<'doc> {
+    fn of(document: &'doc Document) -> Self {
+        let mut targets = Self::default();
+        for (raw, item) in &document.paths.items {
+            targets.item(&format!("#/paths/{}", pointer_token(raw)), item);
+        }
+        for (name, item) in &document.webhooks {
+            targets.item(&format!("#/webhooks/{}", pointer_token(name)), item);
+        }
+        for (name, item) in &document.components.path_items {
+            targets.item(
+                &format!("#/components/pathItems/{}", pointer_token(name)),
+                item,
+            );
+        }
+        for (name, callback) in &document.components.callbacks {
+            targets.callback(
+                &format!("#/components/callbacks/{}", pointer_token(name)),
+                callback,
+            );
+        }
+        targets
+    }
+
+    fn reference(&mut self, location: &str, uri: &str) {
+        self.elsewhere |= !uri.starts_with('#');
+        self.references.push(location.to_owned());
+    }
+
+    fn item(&mut self, location: &str, item: &'doc PathItem) {
+        if let Some(uri) = &item.reference {
+            self.reference(location, uri);
+        }
+        let named = item
+            .operations()
+            .map(|(method, operation)| (method.as_wire_str().to_lowercase(), operation));
+        #[cfg(feature = "openapi32")]
+        let named = named.chain(
+            item.additional_operations
+                .iter()
+                .map(|(method, operation)| {
+                    (
+                        format!("additionalOperations/{}", pointer_token(method)),
+                        &**operation,
+                    )
+                }),
+        );
+        for (segment, operation) in named {
+            let location = format!("{location}/{segment}");
+            if let Some(id) = &operation.operation_id {
+                self.ids.insert(id);
+            }
+            for (name, callback) in &operation.callbacks {
+                self.callback(
+                    &format!("{location}/callbacks/{}", pointer_token(name)),
+                    callback,
+                );
+            }
+            self.operations.push((location, operation));
+        }
+    }
+
+    fn callback(&mut self, location: &str, callback: &'doc RefOr<Callback>) {
+        let callback = match callback {
+            RefOr::Ref(reference) => {
+                return self.reference(location, &reference.location);
+            }
+            RefOr::Item(callback) => callback,
+        };
+        for (expression, item) in &callback.items {
+            let location = format!("{location}/{}", pointer_token(expression));
+            match item {
+                RefOr::Ref(reference) => self.reference(&location, &reference.location),
+                RefOr::Item(item) => self.item(&location, item),
+            }
+        }
+    }
+
+    /// Whether `operation_ref`, a same-document reference, may point at an
+    /// Operation Object: it lands on one, or passes through a reference.
+    fn resolves(&self, operation_ref: &str) -> bool {
+        let Some(pointer) = operation_ref
+            .strip_prefix('#')
+            .and_then(percent_decode)
+            .map(|fragment| format!("#{fragment}"))
+        else {
+            return false;
+        };
+        self.operations.iter().any(|(at, _)| *at == pointer)
+            || self.references.iter().any(|at| {
+                pointer
+                    .strip_prefix(at.as_str())
+                    .is_some_and(|rest| rest.starts_with('/'))
+            })
+    }
+}
+
+/// Decodes a URI fragment's percent-encoded octets, or `None` where an escape
+/// is malformed or the octets are not UTF-8.
+fn percent_decode(fragment: &str) -> Option<String> {
+    let mut octets = Vec::with_capacity(fragment.len());
+    let mut rest = fragment.as_bytes();
+    while let Some((&octet, tail)) = rest.split_first() {
+        if octet == b'%' {
+            let (hex, tail) = tail.split_at_checked(2)?;
+            let hex = std::str::from_utf8(hex).ok()?;
+            if !hex.bytes().all(|digit| digit.is_ascii_hexdigit()) {
+                return None;
+            }
+            octets.push(u8::from_str_radix(hex, 16).ok()?);
+            rest = tail;
+        } else {
+            octets.push(octet);
+            rest = tail;
+        }
+    }
+    String::from_utf8(octets).ok()
+}
+
+/// Checks that every link names an operation the description describes.
+///
+/// An `operationId` must be one some operation declares, and a same-document
+/// `operationRef` must point at an Operation Object. A link is reported where
+/// it is defined: inline under an operation's response, or as a reusable
+/// response's or link component; one given by reference is judged at its
+/// component.
+pub(in crate::validate) fn check_link_targets(
+    document: &Document,
+    violations: &mut Vec<Violation>,
+) {
+    let targets = Targets::of(document);
+
+    let mut check = |location: String, links: &Map<RefOr<Link>>| {
+        for (name, link) in links {
+            if let Some(link) = link.as_item() {
+                check_link_target(
+                    &format!("{location}/links/{}", pointer_token(name)),
+                    link,
+                    &targets,
+                    violations,
+                );
+            }
+        }
+    };
+
+    for (location, operation) in &targets.operations {
+        if let Some(RefOr::Item(response)) = &operation.responses.default_response {
+            check(format!("{location}/responses/default"), &response.links);
+        }
+        for (status, response) in &operation.responses.responses {
+            if let Some(response) = response.as_item() {
+                check(format!("{location}/responses/{status}"), &response.links);
+            }
+        }
+    }
+    for (name, response) in &document.components.responses {
+        if let Some(response) = response.as_item() {
+            check(
+                format!("#/components/responses/{}", pointer_token(name)),
+                &response.links,
+            );
+        }
+    }
+    check("#/components".to_owned(), &document.components.links);
+}
+
+fn check_link_target(
+    location: &str,
+    link: &Link,
+    targets: &Targets<'_>,
+    violations: &mut Vec<Violation>,
+) {
+    match link.target() {
+        LinkTarget::Id(id) => {
+            if !targets.elsewhere && !targets.ids.contains(id.as_str()) {
+                violations.push(Violation::error(
+                    location,
+                    SpecError::UnknownLinkOperationId {
+                        operation_id: id.clone(),
+                    },
+                ));
+            }
+        }
+        LinkTarget::Uri(uri) => {
+            if uri.starts_with('#') && !targets.resolves(uri) {
+                violations.push(Violation::error(
+                    location,
+                    SpecError::UnresolvedLinkOperationRef {
+                        operation_ref: uri.clone(),
+                    },
+                ));
+            }
+        }
     }
 }
 

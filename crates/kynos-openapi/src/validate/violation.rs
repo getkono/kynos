@@ -357,6 +357,29 @@ pub enum SpecError {
         name: String,
     },
 
+    /// A Link Object's `operationId` names no operation the description
+    /// describes.
+    ///
+    /// Not judged where a Path Item or Callback is a reference into another
+    /// document, which may describe the operation.
+    #[error("link `operationId` `{operation_id}` names no operation this description describes")]
+    UnknownLinkOperationId {
+        /// The identifier the link names.
+        operation_id: String,
+    },
+
+    /// A Link Object's same-document `operationRef` points at no Operation
+    /// Object.
+    ///
+    /// Only a reference beginning `#` is followed, percent-decoded. One into
+    /// another document is not judged, and nor is one passing through a Path
+    /// Item or Callback given by reference, whose target is not walked here.
+    #[error("link `operationRef` `{operation_ref}` points at no Operation Object in this document")]
+    UnresolvedLinkOperationRef {
+        /// The reference, as the link spells it.
+        operation_ref: String,
+    },
+
     /// An OAuth flow omitted a URL its flow requires.
     ///
     /// Reported once per missing URL, at the flow. `authorizationUrl` is
