@@ -685,11 +685,12 @@ fn a_reusable_parameters_style_is_checked_against_its_location() {
 }
 
 /// A component's name is a pointer token, escaped as one. The extension-name
-/// rule warns rather than errs, so every severity is read here.
+/// rule warns of a reserved prefix rather than erring, so every severity is
+/// read here.
 #[test]
 fn a_reusable_parameters_extensions_are_checked_at_its_escaped_pointer() {
     let mut parameter = Parameter::query("page", Schema::of_type(SchemaType::Integer));
-    parameter.extensions.insert("not-prefixed", true);
+    parameter.extensions.insert("x-oai-reserved", true);
     let document = document_with_component_parameter(&[], "a/b", crate::RefOr::Item(parameter));
 
     let found = Validator::new(SpecVersion::V3_1).validate(&document);
@@ -1028,6 +1029,65 @@ fn located_errors_3_2(document: &Document) -> Vec<(String, SpecError)> {
         .filter(|v| v.severity == super::Severity::Error)
         .map(|v| (v.location, v.error))
         .collect()
+}
+
+/// A key without the `x-` prefix is no field either version defines and no
+/// extension (`references/3.2.0.md:4747`), so 3.2 refuses it as 3.1 does: at
+/// the object holding it, by the name it was written under, and once.
+#[cfg(feature = "openapi32")]
+#[test]
+fn an_unrecognised_field_is_an_error_under_3_2() {
+    let mut response = Response::new("ok");
+    response.extensions.insert("descripton", "typo");
+    let mut operation =
+        Operation::new("getUser").with_responses(Responses::new().with(200, response));
+    operation.extensions.insert("opertionId", "typo");
+    operation.extensions.insert("odd/key~", true);
+    let document = document_with(&[(
+        "/users",
+        PathItem::new().with_operation(Method::Get, operation),
+    )]);
+
+    let unrecognised = |location: &str, name: &str| Violation {
+        location: location.to_owned(),
+        severity: super::Severity::Error,
+        error: SpecError::InvalidExtensionName {
+            name: name.to_owned(),
+        },
+    };
+    assert_eq!(
+        Validator::new(SpecVersion::V3_2).validate(&document),
+        vec![
+            unrecognised("#/paths/~1users/get", "opertionId"),
+            unrecognised("#/paths/~1users/get", "odd/key~"),
+            unrecognised("#/paths/~1users/get/responses/200", "descripton"),
+        ]
+    );
+}
+
+/// An `x-oai-` or `x-oas-` name is an extension the OpenAPI Initiative
+/// reserves: weaker than it could be, not unreadable, so it stays a warning
+/// under 3.2.
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_reserved_extension_name_stays_a_warning_under_3_2() {
+    let mut operation = Operation::new("getUser").with_responses(ok_responses());
+    operation.extensions.insert("x-oai-thing", true);
+    let document = document_with(&[(
+        "/users",
+        PathItem::new().with_operation(Method::Get, operation),
+    )]);
+
+    assert_eq!(
+        Validator::new(SpecVersion::V3_2).validate(&document),
+        vec![Violation {
+            location: "#/paths/~1users/get".to_owned(),
+            severity: super::Severity::Warning,
+            error: SpecError::InvalidExtensionName {
+                name: "x-oai-thing".to_owned(),
+            },
+        }]
+    );
 }
 
 #[cfg(feature = "openapi32")]
@@ -2703,7 +2763,7 @@ fn ledger_document() -> Vec<(&'static str, SpecVersion, Document)> {
             "/users",
             get(operation().with_parameter({
                 let mut parameter = Parameter::query("q", Schema::of_type(SchemaType::String));
-                parameter.extensions.insert("not-prefixed", true);
+                parameter.extensions.insert("x-oai-reserved", true);
                 parameter
             })),
         )]),

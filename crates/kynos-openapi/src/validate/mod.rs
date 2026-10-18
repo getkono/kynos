@@ -51,7 +51,17 @@ impl Validator {
         // `Document::emit` refuses on, so validating and emitting agree. A
         // requirement naming a scheme by URI is the security rules' to report,
         // as an undeclared scheme, by the same predicate the walk applies.
-        if !self.version.supports_3_2() {
+        // Validating as 3.2 refuses the walk's unrecognised fields alone, since
+        // both versions require an extension's name to begin with `x-`.
+        if self.version.supports_3_2() {
+            for field in crate::emit::downgrade::unrecognised_fields(document) {
+                let (location, name) = holder_and_key(&field);
+                violations.push(Violation::error(
+                    location,
+                    SpecError::InvalidExtensionName { name },
+                ));
+            }
+        } else {
             let obstacles = crate::emit::downgrade::three_one_obstacles(document);
             if !obstacles.fields.is_empty() {
                 violations.push(Violation::error(
@@ -82,6 +92,13 @@ impl Validator {
 
         violations
     }
+}
+
+/// Splits a field's pointer into its holding object's pointer and the field's
+/// name, unescaped: the location and name every extension-name violation uses.
+fn holder_and_key(pointer: &str) -> (&str, String) {
+    let (holder, token) = pointer.rsplit_once('/').unwrap_or(("#", pointer));
+    (holder, token.replace("~1", "/").replace("~0", "~"))
 }
 
 impl Document {
