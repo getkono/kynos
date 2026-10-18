@@ -14,13 +14,15 @@ fn a_license_serializes_only_the_link_it_carries() {
 
 #[test]
 fn a_license_setting_both_links_does_not_deserialize() {
-    let error = serde_json::from_str::<License>(
-        r#"{"name":"MIT","identifier":"MIT","url":"https://example.com/LICENSE"}"#,
-    )
+    let error = serde_json::from_value::<License>(serde_json::json!({
+        "name": "MIT",
+        "identifier": "MIT",
+        "url": "https://example.com/LICENSE",
+    }))
     .expect_err("`identifier` and `url` are mutually exclusive");
 
-    assert!(
-        error.to_string().contains("mutually exclusive"),
-        "the rejection should say why: {error}"
+    assert_eq!(
+        error.to_string(),
+        "`identifier` and `url` are mutually exclusive on a License Object"
     );
 }

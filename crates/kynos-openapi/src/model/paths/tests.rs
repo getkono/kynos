@@ -97,36 +97,54 @@ fn a_query_or_fragment_delimiter_inside_an_expression_is_part_of_the_name() {
     }
 }
 
-#[test]
-fn literal_segments_accept_every_character_the_grammar_allows() {
-    // `unreserved`, `sub-delims`, `:` and `@` are all `pchar`.
-    let template =
-        PathTemplate::parse("/a-b.c_d~e/f!g$h&i'j(k)l*m+n,o;p=q/r:s@t/%2Fu").expect("valid");
-    assert!(template.variables().is_empty());
-}
+/// RFC 3986's `pchar` (section 3.3), transcribed from its ABNF rather than
+/// from the parser: `unreserved` (section 2.3), `sub-delims` (section 2.2),
+/// `:` and `@`. `pct-encoded` begins with `%`, which the sweep reads apart.
+const PCHAR: &str =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~!$&'()*+,;=:@";
 
+/// Every ASCII character, between two literal ones, is read as the path
+/// grammar reads it: `pchar` and the segment separator parse; `%` must open
+/// a triple; `?` and `#` end the path; a brace is an expression's; anything
+/// else is refused by the character itself.
 #[test]
-fn literal_segments_reject_characters_outside_pchar() {
-    for raw in [
-        "/users/a b",
-        "/users/a<b",
-        "/users/a>b",
-        "/users/a\"b",
-        "/users/a\\b",
-        "/users/a^b",
-        "/users/a`b",
-        "/users/a|b",
-        // `pchar` is ASCII; anything else must arrive percent-encoded.
-        "/café",
-    ] {
-        assert!(
-            matches!(
-                PathTemplate::parse(raw),
-                Err(InvalidPathTemplate::IllegalLiteralCharacter { .. })
-            ),
-            "`{raw}` should not parse"
+fn each_ascii_character_in_a_literal_is_read_as_the_path_grammar_reads_it() {
+    for character in '\0'..='\x7f' {
+        let raw = format!("/a{character}b");
+        let expected = match character {
+            _ if PCHAR.contains(character) => Ok(()),
+            '/' => Ok(()),
+            '%' => Err(InvalidPathTemplate::MalformedPercentEncoding(raw.clone())),
+            '?' | '#' => Err(InvalidPathTemplate::NotAPath(raw.clone())),
+            '{' | '}' => Err(InvalidPathTemplate::UnbalancedBraces(raw.clone())),
+            _ => Err(InvalidPathTemplate::IllegalLiteralCharacter {
+                template: raw.clone(),
+                character,
+            }),
+        };
+        assert_eq!(
+            PathTemplate::parse(raw.as_str()).map(|_| ()),
+            expected,
+            "{character:?}"
         );
     }
+}
+
+/// `pchar` is ASCII; anything else must arrive percent-encoded, and is
+/// refused by the character itself.
+#[test]
+fn a_non_ascii_literal_character_is_refused_by_name() {
+    assert_eq!(
+        PathTemplate::parse("/café"),
+        Err(InvalidPathTemplate::IllegalLiteralCharacter {
+            template: "/café".to_owned(),
+            character: 'é',
+        })
+    );
+    assert_eq!(
+        PathTemplate::parse("/caf%C3%A9").map(|template| template.as_str().to_owned()),
+        Ok("/caf%C3%A9".to_owned())
+    );
 }
 
 #[test]

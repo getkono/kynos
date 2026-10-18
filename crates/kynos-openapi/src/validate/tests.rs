@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use super::{SpecError, Validator, Violation};
 use crate::model::{
     document::{Document, SpecVersion},
@@ -1435,6 +1437,53 @@ fn a_reusable_media_type_is_checked_at_its_definition() {
             SpecError::ConflictingEncoding,
         )]
     );
+}
+
+/// `encoding` "MUST NOT be present if `prefixEncoding` or `itemEncoding` are
+/// present" (`references/3.2.0.md:1265-1267`), and nothing else is excluded:
+/// each row sets `encoding`, `prefixEncoding` and `itemEncoding` or not, on a
+/// media type otherwise clean, and states whether the exclusion is reported.
+#[cfg(feature = "openapi32")]
+#[test]
+fn encoding_excludes_each_positional_field_and_nothing_else() {
+    use crate::model::body::encoding::Encoding;
+
+    for (encoding, prefix, item, conflicts) in [
+        (true, true, false, true),
+        (true, false, true, true),
+        (false, true, true, false),
+        (true, false, false, false),
+    ] {
+        let mut content = conflicting_media_type();
+        if !encoding {
+            content.encoding.clear();
+        }
+        if !prefix {
+            content.prefix_encoding = None;
+        }
+        if item {
+            content.item_encoding = Some(Box::new(Encoding::new("text/plain")));
+        }
+        let mut document = document_with(&[]);
+        document
+            .components
+            .media_types
+            .insert("Parts".to_owned(), crate::RefOr::Item(content));
+
+        let expected = if conflicts {
+            vec![(
+                "#/components/mediaTypes/Parts".to_owned(),
+                SpecError::ConflictingEncoding,
+            )]
+        } else {
+            vec![]
+        };
+        assert_eq!(
+            located_errors_3_2(&document),
+            expected,
+            "encoding {encoding}, prefixEncoding {prefix}, itemEncoding {item}"
+        );
+    }
 }
 
 /// An `additionalOperations` key is refused exactly when its method has a
@@ -3671,33 +3720,62 @@ fn each_ledger_case_raises_the_variant_it_names() {
     }
 }
 
+/// The name of each [`SpecError`] variant, read off `violation.rs`: the first
+/// line indented as a variant after each `#[error` attribute, whatever `cfg`
+/// stands between them.
+fn declared_variants() -> BTreeSet<&'static str> {
+    let mut declared = BTreeSet::new();
+    let mut attributed = false;
+    for line in include_str!("violation.rs").lines() {
+        if line.starts_with("    #[error") {
+            attributed = true;
+        } else if attributed
+            && let Some(variant) = line.strip_prefix("    ")
+            && variant.starts_with(|c: char| c.is_ascii_uppercase())
+        {
+            let end = variant
+                .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .unwrap_or(variant.len());
+            declared.insert(&variant[..end]);
+            attributed = false;
+        }
+    }
+    declared
+}
+
 /// Every variant the validator can raise has a ledger entry raising it.
 ///
-/// The count comes from the source rather than from a second list, so a variant
-/// added without a case fails here instead of being silently uncovered. That is
-/// the same instrument as `every_rejected_schema_type_has_a_case` in
-/// `crates/kynos/tests/ui.rs`, pointed at this enum.
+/// The set comes from the source rather than from a second list, so a variant
+/// added without a case fails here, by name, instead of being silently
+/// uncovered. That is the same instrument as
+/// `every_rejected_schema_type_has_a_case` in `crates/kynos/tests/ui.rs`,
+/// pointed at this enum, and names the set as `docs/testing.md` asks wherever
+/// the set has names.
 #[test]
 fn every_variant_has_a_case() {
-    let declared = include_str!("violation.rs")
-        .matches("\n    #[error")
-        .count();
+    let declared = declared_variants();
+    let elsewhere: BTreeSet<&str> = RAISED_ELSEWHERE.iter().copied().collect();
+    assert_eq!(
+        elsewhere.len(),
+        RAISED_ELSEWHERE.len(),
+        "`RAISED_ELSEWHERE` names a variant twice"
+    );
+    assert!(
+        elsewhere.is_subset(&declared),
+        "`RAISED_ELSEWHERE` names no variant: {:?}",
+        elsewhere.difference(&declared).collect::<Vec<_>>()
+    );
 
-    let mut raised: Vec<&'static str> = ledger()
+    let raised: BTreeSet<&'static str> = ledger()
         .iter()
         .flat_map(|(_, version, document)| Validator::new(*version).validate(document))
         .map(|violation| variant_name(&violation.error))
         .collect();
-    raised.sort_unstable();
-    raised.dedup();
 
-    let uncovered = declared - RAISED_ELSEWHERE.len();
     assert_eq!(
-        raised.len(),
-        uncovered,
-        "{declared} variants declared, {} raised elsewhere, {} covered here: {raised:?}",
-        RAISED_ELSEWHERE.len(),
-        raised.len()
+        raised,
+        &declared - &elsewhere,
+        "the ledger raises exactly the variants not raised elsewhere"
     );
 }
 
