@@ -1439,6 +1439,53 @@ fn a_reusable_media_type_is_checked_at_its_definition() {
     );
 }
 
+/// `encoding` "MUST NOT be present if `prefixEncoding` or `itemEncoding` are
+/// present" (`references/3.2.0.md:1265-1267`), and nothing else is excluded:
+/// each row sets `encoding`, `prefixEncoding` and `itemEncoding` or not, on a
+/// media type otherwise clean, and states whether the exclusion is reported.
+#[cfg(feature = "openapi32")]
+#[test]
+fn encoding_excludes_each_positional_field_and_nothing_else() {
+    use crate::model::body::encoding::Encoding;
+
+    for (encoding, prefix, item, conflicts) in [
+        (true, true, false, true),
+        (true, false, true, true),
+        (false, true, true, false),
+        (true, false, false, false),
+    ] {
+        let mut content = conflicting_media_type();
+        if !encoding {
+            content.encoding.clear();
+        }
+        if !prefix {
+            content.prefix_encoding = None;
+        }
+        if item {
+            content.item_encoding = Some(Box::new(Encoding::new("text/plain")));
+        }
+        let mut document = document_with(&[]);
+        document
+            .components
+            .media_types
+            .insert("Parts".to_owned(), crate::RefOr::Item(content));
+
+        let expected = if conflicts {
+            vec![(
+                "#/components/mediaTypes/Parts".to_owned(),
+                SpecError::ConflictingEncoding,
+            )]
+        } else {
+            vec![]
+        };
+        assert_eq!(
+            located_errors_3_2(&document),
+            expected,
+            "encoding {encoding}, prefixEncoding {prefix}, itemEncoding {item}"
+        );
+    }
+}
+
 /// An `additionalOperations` key is refused exactly when its method has a
 /// fixed field of its own.
 ///
