@@ -79,8 +79,13 @@ fn a_router_permitting_any_origin_with_credentials_refuses_to_build() {
         .build(());
 
     assert!(
-        refused.is_err(),
-        "a wildcard origin with credentials was accepted"
+        matches!(
+            refused,
+            Err(kynos::Error::Middleware(
+                kynos::middleware::MiddlewareError::CredentialedWildcardOrigin
+            ))
+        ),
+        "a wildcard origin with credentials was not refused as one"
     );
 }
 
@@ -92,7 +97,54 @@ fn the_same_router_reports_the_conflict_from_validate_as_well() {
         .intercept(Cors::new().allow_any_origin().allow_credentials())
         .validate();
 
-    assert!(refused.is_err(), "validate accepted what build must refuse");
+    assert!(
+        matches!(
+            refused,
+            Err(kynos::Error::Middleware(
+                kynos::middleware::MiddlewareError::CredentialedWildcardOrigin
+            ))
+        ),
+        "validate did not refuse what build must refuse"
+    );
+}
+
+/// The second conflict, through a router: exposing every header beside
+/// credentials is read by the protocol as exposing a header literally named
+/// `*`, so it exposes nothing and is refused rather than shipped.
+#[test]
+fn a_router_exposing_every_header_with_credentials_refuses_to_build() {
+    let refused = router()
+        .intercept(
+            Cors::new()
+                .allow_origins(["https://app.example.com"])
+                .expose_any_header()
+                .allow_credentials(),
+        )
+        .build(());
+
+    assert!(
+        matches!(
+            refused,
+            Err(kynos::Error::Middleware(
+                kynos::middleware::MiddlewareError::CredentialedWildcardExposure
+            ))
+        ),
+        "every header exposed with credentials was not refused as such"
+    );
+}
+
+/// Its control: the same configuration without credentials, where the
+/// wildcard means what it says.
+#[test]
+fn a_router_exposing_every_header_without_credentials_builds() {
+    router()
+        .intercept(
+            Cors::new()
+                .allow_origins(["https://app.example.com"])
+                .expose_any_header(),
+        )
+        .build(())
+        .expect("exposing every header to an uncredentialed request is legal");
 }
 
 /// The refusal has no scope exception: the endpoint's own `Cors` reflects
