@@ -42,6 +42,11 @@ character is no field value. Dropping that field would send a response its
 description says carries it; `encode` returns `UnencodableHeader` instead, and
 every writer — `with_headers`, `WithHeaders`, an `ApiError` failure's group —
 answers 500 in place of the response, as a body that failed to serialize does.
+`ETag` and `SetCookies` refuse the same way: an `ETag` that is no
+`entity-tag`, and a `SetCookies` group holding one cookie that is no field
+value, which refuses the whole group rather than sending the others. A
+`Cache-Control` given to an asset set, a `Directory`, or a `Served` is not yet
+held to this: one that is no field value is omitted.
 
 ## Soundness, not exactness
 

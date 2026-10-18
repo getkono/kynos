@@ -47,14 +47,19 @@ impl HeaderParams for SetCookieHeaders {
     }
 }
 
+/// Refuses the whole group where any one cookie has no
+/// [`Cookie::encode`] spelling, rather than sending the others without it.
 impl EncodeHeaders for SetCookieHeaders {
     fn encode(&self) -> Result<Vec<(http::HeaderName, http::HeaderValue)>, UnencodableHeader> {
-        Ok(self
-            .cookies
+        self.cookies
             .iter()
-            // Dropped rather than panicking on the response path.
-            .filter_map(|cookie| Some((http::header::SET_COOKIE, cookie.encode()?)))
-            .collect())
+            .map(|cookie| {
+                cookie
+                    .encode()
+                    .map(|value| (http::header::SET_COOKIE, value))
+                    .ok_or_else(|| UnencodableHeader::new(http::header::SET_COOKIE))
+            })
+            .collect()
     }
 }
 
@@ -86,7 +91,9 @@ where
 
 /// Attaches `Set-Cookie` to every response the covered operations produce.
 ///
-/// Declares the field and nothing else: `Short` is [`Infallible`].
+/// Declares the field and nothing else: `Short` is [`Infallible`]. A source
+/// supplying a cookie with no [`Cookie::encode`] spelling has the response
+/// answered with a 500 in its place, none of the cookies set.
 ///
 /// ```no_run
 /// use kynos::{

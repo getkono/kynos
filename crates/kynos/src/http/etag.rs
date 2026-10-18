@@ -62,7 +62,11 @@ impl ETag {
         }
     }
 
-    /// The field value.
+    /// The field value, or `None` where [`value`](Self::value) holds a byte
+    /// `etagc` does not admit: a `"`, or anything outside visible ASCII.
+    ///
+    /// Attached as a header group, such a tag answers 500 rather than going
+    /// out without the field (see [`EncodeHeaders::encode`]).
     #[must_use]
     pub fn encode(&self) -> Option<HeaderValue> {
         // RFC 9110 section 8.8.3: `etagc` is printable ASCII without `"`.
@@ -99,11 +103,13 @@ impl HeaderParams for ETag {
     }
 }
 
+/// Refuses a tag [`ETag::encode`] cannot spell, rather than sending the
+/// response untagged.
 impl EncodeHeaders for ETag {
     fn encode(&self) -> Result<Vec<(http::HeaderName, HeaderValue)>, UnencodableHeader> {
-        Ok(Self::encode(self)
+        Self::encode(self)
             .map(|value| vec![(header::ETAG, value)])
-            .unwrap_or_default())
+            .ok_or_else(|| UnencodableHeader::new(header::ETAG))
     }
 }
 
