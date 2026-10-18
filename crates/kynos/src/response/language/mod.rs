@@ -57,7 +57,6 @@ use crate::{
 /// only the `Accept-Language` parameter.
 ///
 /// [`Infallible`]: std::convert::Infallible
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AcceptLanguage<L> {
     preferences: Vec<Preference>,
     offer: std::marker::PhantomData<fn() -> L>,
@@ -188,7 +187,6 @@ impl<L: Languages> AcceptLanguage<L> {
 ///     offer: core::marker::PhantomData,
 /// };
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Localized<T, L> {
     body: T,
     language: &'static str,
@@ -256,3 +254,93 @@ impl<L: Languages> Describe for AcceptLanguage<L> {
         operation.add_parameter(headers::parameter(L::TAGS));
     }
 }
+
+// Not derived: a derive would bound each on the offer marker, which only a
+// `PhantomData` holds. Destructured, so a new field is a compile error here.
+
+impl<L> Clone for AcceptLanguage<L> {
+    fn clone(&self) -> Self {
+        let Self {
+            preferences,
+            offer: _,
+        } = self;
+
+        Self {
+            preferences: preferences.clone(),
+            offer: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<L> std::fmt::Debug for AcceptLanguage<L> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            preferences,
+            offer: _,
+        } = self;
+
+        formatter
+            .debug_struct("AcceptLanguage")
+            .field("preferences", preferences)
+            .finish()
+    }
+}
+
+impl<L> PartialEq for AcceptLanguage<L> {
+    fn eq(&self, other: &Self) -> bool {
+        let Self {
+            preferences,
+            offer: _,
+        } = self;
+
+        *preferences == other.preferences
+    }
+}
+
+impl<L> Eq for AcceptLanguage<L> {}
+
+impl<T: Clone, L> Clone for Localized<T, L> {
+    fn clone(&self) -> Self {
+        let Self {
+            body,
+            language,
+            offer: _,
+        } = self;
+
+        Self {
+            body: body.clone(),
+            language,
+            offer: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<T: std::fmt::Debug, L> std::fmt::Debug for Localized<T, L> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            body,
+            language,
+            offer: _,
+        } = self;
+
+        formatter
+            .debug_struct("Localized")
+            .field("body", body)
+            .field("language", language)
+            .finish()
+    }
+}
+
+impl<T: PartialEq, L> PartialEq for Localized<T, L> {
+    fn eq(&self, other: &Self) -> bool {
+        let Self {
+            body,
+            language,
+            offer: _,
+        } = self;
+
+        *body == other.body && *language == other.language
+    }
+}
+
+impl<T: Eq, L> Eq for Localized<T, L> {}

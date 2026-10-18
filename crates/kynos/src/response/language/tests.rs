@@ -575,6 +575,41 @@ impl Languages for Supported {
 }
 
 #[test]
+fn an_offer_marker_deriving_nothing_leaves_both_types_clone_debug_and_eq() {
+    // `Supported` derives nothing, as every example writes it: the marker sits
+    // only in a `PhantomData`, so no trait here may be bounded on it.
+    let preferred = AcceptLanguage::<Supported>::parse("");
+    assert_eq!(preferred.clone(), preferred);
+    assert_eq!(
+        AcceptLanguage::<Supported>::parse("fr"),
+        AcceptLanguage::<Supported>::parse("fr")
+    );
+    assert_ne!(
+        AcceptLanguage::<Supported>::parse("fr"),
+        AcceptLanguage::<Supported>::parse("de")
+    );
+    assert_eq!(
+        format!("{preferred:?}"),
+        "AcceptLanguage { preferences: [] }"
+    );
+
+    let localized = AcceptLanguage::<Supported>::parse("fr").respond_with(|_| "Bonjour");
+    assert_eq!(localized.clone(), localized);
+    assert_ne!(
+        localized,
+        AcceptLanguage::<Supported>::parse("de").respond_with(|_| "Bonjour")
+    );
+    assert_ne!(
+        localized,
+        AcceptLanguage::<Supported>::parse("fr").respond_with(|_| "Salut")
+    );
+    assert_eq!(
+        format!("{localized:?}"),
+        r#"Localized { body: "Bonjour", language: "fr" }"#
+    );
+}
+
+#[test]
 fn a_client_whose_preferences_match_nothing_is_served_the_first_tag_offered() {
     // The 406 that is deliberately not raised. RFC 9110 section 15.5.7 defines
     // that status as the server being *unwilling* to supply a default; Kynos is
