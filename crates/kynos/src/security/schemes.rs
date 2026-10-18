@@ -36,7 +36,10 @@ pub struct Bearer<T = String, P = Unscoped>(PhantomData<fn() -> (T, P)>);
 /// `Basic<Credentials, Unscoped, Admin>` challenges with `realm="admin"` for
 /// an `Admin` whose [`Realm::REALM`] is `"admin"`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Basic<T = Credentials, P = Unscoped, R = ApiRealm>(PhantomData<fn() -> (T, P, R)>);
+pub struct Basic<T = Credentials, P = Unscoped, R = ApiRealm>(Markers<T, P, R>);
+
+/// [`Basic`]'s parameters, owning none of them.
+type Markers<T, P, R> = PhantomData<fn() -> (T, P, R)>;
 
 /// The protection space a [`Basic`] challenge names.
 ///

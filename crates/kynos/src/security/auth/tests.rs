@@ -475,10 +475,11 @@ impl Authenticates<Basic<String>> for Recording {
 #[tokio::test]
 async fn a_basic_challenge_names_a_realm() {
     let anonymous = Request::new(Body::empty()).into_parts().0;
-    let refused = <Auth<Basic<String>> as Guard<_>>::guard(&anonymous, &Recording::admitting())
-        .await
-        .err()
-        .expect("an anonymous request is refused");
+    let Err(refused) =
+        <Auth<Basic<String>> as Guard<_>>::guard(&anonymous, &Recording::admitting()).await
+    else {
+        panic!("an anonymous request is refused");
+    };
     assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
 
     let sent = refused.challenge().expect("a 401 carries a challenge");
