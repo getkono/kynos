@@ -80,12 +80,14 @@ async fn a_cookie_may_depend_on_the_request_that_asked_for_it() {
     assert_eq!(cookies_on(&reply), ["locale=fr; Path=/"]);
 }
 
-/// A cookie that cannot be a field value is dropped, and the rest survive.
+/// A cookie that cannot be a field value refuses the whole group, and the
+/// writer answers 500 with none of the cookies.
 ///
-/// `Cookie::encode` refuses it rather than escaping, and a response path that
-/// panicked over one would be worse than a response short a cookie.
+/// `Cookie::encode` refuses it rather than escaping. Sending the others would
+/// answer success short a cookie the source meant to set, as a derived group
+/// short a field would; `EncodeHeaders` refuses both the same way.
 #[tokio::test]
-async fn a_cookie_that_cannot_be_a_field_is_dropped_without_taking_the_others() {
+async fn a_cookie_that_cannot_be_a_field_answers_500_without_the_others() {
     let service = Router::<()>::new()
         .mount(kynos::routes![visit])
         .intercept(SetCookies::new(vec![
@@ -97,8 +99,8 @@ async fn a_cookie_that_cannot_be_a_field_is_dropped_without_taking_the_others() 
         .build(())
         .expect("a describable router");
 
-    assert_eq!(
-        cookies_on(&get(&service, "/visit").call().await),
-        ["good=1", "also-good=2"]
-    );
+    let reply = get(&service, "/visit").call().await;
+
+    assert_eq!(reply.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(cookies_on(&reply).is_empty(), "{:?}", cookies_on(&reply));
 }

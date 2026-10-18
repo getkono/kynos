@@ -212,3 +212,21 @@ fn if_match_is_one_list_across_its_field_lines() {
         None
     );
 }
+
+/// A tag that is no `entity-tag` refuses its group naming `ETag`, where it
+/// was once encoded as no field at all and the response went out untagged.
+#[test]
+fn an_unencodable_tag_refuses_its_group() {
+    use crate::extract::params::header::{EncodeHeaders, UnencodableHeader};
+
+    assert_eq!(
+        EncodeHeaders::encode(&super::ETag::strong("a\"b")),
+        Err(UnencodableHeader::new(header::ETAG))
+    );
+
+    // The control: a tag that is one encodes as one field.
+    assert_eq!(
+        EncodeHeaders::encode(&super::ETag::weak("a")),
+        Ok(vec![(header::ETAG, HeaderValue::from_static(r#"W/"a""#))])
+    );
+}
