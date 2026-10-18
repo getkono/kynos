@@ -7,6 +7,7 @@ use std::{io, marker::PhantomData, pin::Pin, task::Poll};
 use async_compression::{
     Level,
     tokio::bufread::{BrotliEncoder, GzipEncoder, ZstdEncoder},
+    zstd::CParameter,
 };
 use bytes::{Bytes, BytesMut};
 use http_body::Body as _;
@@ -283,9 +284,10 @@ async fn drain<R: AsyncRead + Unpin>(mut source: R) -> io::Result<Bytes> {
 async fn encode(coding: Coding, bytes: Bytes, levels: Levels) -> io::Result<Bytes> {
     match coding {
         Coding::Zstd => {
-            drain(ZstdEncoder::with_quality(
+            drain(ZstdEncoder::with_quality_and_params(
                 io::Cursor::new(bytes),
                 Level::Precise(levels.zstd.get()),
+                zstd_window(levels.zstd).as_slice(),
             ))
             .await
         }
@@ -306,6 +308,23 @@ async fn encode(coding: Coding, bytes: Bytes, levels: Levels) -> io::Result<Byte
             .await
         }
     }
+}
+
+/// The window cap zstd needs beside `level`, if it needs one.
+///
+/// RFC 9659 section 3: an HTTP encoder "MUST NOT generate frames requiring a
+/// `Window_Size` larger than 8 MB". On an input of unknown size, which both
+/// paths hand it, zstd's own table gives levels 20 to 22 a 32 to 128 MB
+/// window, so theirs is capped at 2^23. Levels up to 19 already stay within
+/// it and keep the smaller window they choose: capping every level at 2^23
+/// would raise the default's 2 MB fourfold, per concurrent encode.
+fn zstd_window(level: ZstdLevel) -> Option<CParameter> {
+    /// The highest level whose own window fits in 8 MB.
+    const WITHIN_WINDOW: i32 = 19;
+    /// 8 MB, as the base-2 logarithm zstd takes.
+    const HTTP_WINDOW_LOG: u32 = 23;
+
+    (level.get() > WITHIN_WINDOW).then(|| CParameter::window_log(HTTP_WINDOW_LOG))
 }
 
 /// The level as `async-compression` spells one. The fallback is unreachable:
