@@ -14,6 +14,9 @@
 //!         | type = "<absolute URI>"
 //! ```
 //!
+//! A key outside its position's grammar, a qualified key, and a key written
+//! twice on one item or field, across lists too, are refused.
+//!
 //! `status` is read once into `statuses()`, the `ShortCircuit` const and the
 //! `Responses` keys, so the three agree. `base` is the prefix a variant without
 //! its own `type` hangs its slug under; a literal is joined here, a `const`
@@ -36,7 +39,10 @@ use syn::{
     Index, Lit, LitInt, LitStr, Member, Type, Variant, parse_macro_input, spanned::Spanned,
 };
 
-use crate::derive::common::{doc_string, skip_value};
+use crate::derive::{
+    attribute::key_name,
+    common::{doc_string, skip_value},
+};
 
 /// The range a problem detail's status may fall in: RFC 9457 errors, 4xx and
 /// 5xx.
@@ -508,7 +514,7 @@ fn outcomes(input: &DeriveInput) -> syn::Result<Vec<Outcome>> {
             data.variants
                 .iter()
                 .map(|variant| {
-                    reject_unnamed_extensions(&variant.fields)?;
+                    check_field_markers(&variant.fields)?;
 
                     let args = parse_problem(&variant.attrs, Position::Variant)?;
                     if let Some(span) = args.transparent {
@@ -543,7 +549,7 @@ fn outcomes(input: &DeriveInput) -> syn::Result<Vec<Outcome>> {
         }
 
         Data::Struct(data) => {
-            reject_unnamed_extensions(&data.fields)?;
+            check_field_markers(&data.fields)?;
 
             let args = parse_problem(&input.attrs, Position::Type)?;
             let Some((status, _)) = args.status else {
@@ -853,17 +859,18 @@ struct ProblemArgs {
 /// Reads one item's `#[problem(...)]` lists, validating every member.
 fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Result<ProblemArgs> {
     let mut args = ProblemArgs::default();
+    // Across every list, so a second list cannot overwrite the first.
+    let mut seen: Vec<String> = Vec::new();
 
     for attr in attrs {
         if !attr.path().is_ident("problem") {
             continue;
         }
         attr.parse_nested_meta(|meta| {
-            let Some(key) = meta.path.get_ident() else {
-                return Ok(());
-            };
+            let key = first_time(&meta.path, &mut seen)?;
+            let span = meta.path.span();
 
-            match key.to_string().as_str() {
+            match key.as_str() {
                 "status" => {
                     let literal: LitInt = meta.value()?.parse()?;
                     let code: u16 = literal.base10_parse()?;
@@ -912,37 +919,37 @@ fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Result<Problem
                 }
                 "base" => {
                     return Err(syn::Error::new(
-                        key.span(),
+                        span,
                         "`base` is the prefix every type URI shares, so it belongs on the type \
                          rather than on one variant",
                     ));
                 }
                 "transparent" if position == Position::Variant => {
-                    args.transparent = Some(key.span());
+                    args.transparent = Some(span);
                 }
                 "transparent" => {
                     return Err(syn::Error::new(
-                        key.span(),
+                        span,
                         "`transparent` hands one variant to the error it holds, so it belongs on \
                          a variant of an enum",
                     ));
                 }
                 "extension" => {
                     return Err(syn::Error::new(
-                        key.span(),
+                        span,
                         "`extension` marks a field to publish, so it belongs on a field",
                     ));
                 }
                 "headers" => {
                     return Err(syn::Error::new(
-                        key.span(),
+                        span,
                         "`headers` marks the field holding the header group a failure sends, so \
                          it belongs on that field, whose type is the group",
                     ));
                 }
                 other => {
                     return Err(syn::Error::new(
-                        key.span(),
+                        span,
                         format!("`{other}` is not part of the `#[problem(...)]` grammar"),
                     ));
                 }
@@ -954,27 +961,65 @@ fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Result<Problem
     Ok(args)
 }
 
-/// Refuses `#[problem(extension)]` on an unnamed field, which has no member
-/// name.
-fn reject_unnamed_extensions(fields: &Fields) -> syn::Result<()> {
-    let Fields::Unnamed(unnamed) = fields else {
-        return Ok(());
-    };
+/// An item key as written, refused where `seen` already holds it and recorded
+/// otherwise. A second `status` is left to its own refusal, which names the
+/// response it duplicates.
+fn first_time(path: &syn::Path, seen: &mut Vec<String>) -> syn::Result<String> {
+    let key = key_name(path);
+    if key != "status" && seen.contains(&key) {
+        return Err(syn::Error::new(
+            path.span(),
+            format!("`{key}` is already set, and `#[problem(...)]` takes each key once"),
+        ));
+    }
+    seen.push(key.clone());
+    Ok(key)
+}
 
-    for field in &unnamed.unnamed {
+/// Checks each field's `#[problem(...)]` markers: `extension` or `headers`,
+/// each once, and `extension` only on a named field, which has a member name.
+fn check_field_markers(fields: &Fields) -> syn::Result<()> {
+    let named = matches!(fields, Fields::Named(_));
+
+    for field in fields {
+        // Across every list on the field, as on the item.
+        let mut seen: Vec<String> = Vec::new();
         for attr in &field.attrs {
             if !attr.path().is_ident("problem") {
                 continue;
             }
             attr.parse_nested_meta(|meta| {
-                if meta.path.is_ident("extension") {
+                let key = key_name(&meta.path);
+                if seen.contains(&key) {
                     return Err(syn::Error::new(
-                        attr.span(),
-                        "an extension member is published under its field's name, and this field \
-                         has none. Give the variant named fields",
+                        meta.path.span(),
+                        format!(
+                            "`{key}` is already set, and a field's `#[problem(...)]` takes each \
+                             marker once"
+                        ),
                     ));
                 }
-                skip_value(&meta)
+                match key.as_str() {
+                    "extension" if !named => {
+                        return Err(syn::Error::new(
+                            attr.span(),
+                            "an extension member is published under its field's name, and this \
+                             field has none. Give the variant named fields",
+                        ));
+                    }
+                    "extension" | "headers" => {}
+                    other => {
+                        return Err(syn::Error::new(
+                            meta.path.span(),
+                            format!(
+                                "`{other}` is not part of a field's `#[problem(...)]` grammar, \
+                                 which is `extension` or `headers`"
+                            ),
+                        ));
+                    }
+                }
+                seen.push(key);
+                Ok(())
             })?;
         }
     }

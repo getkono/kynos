@@ -1,0 +1,17 @@
+error: `extention` is not part of a field's `#[problem(...)]` grammar, which is `extension` or `headers`
+  --> tests/ui/macros/problem_unknown_qualified_and_repeated_keys.rs:13:19
+   |
+13 |         #[problem(extention)]
+   |                   ^^^^^^^^^
+
+error: `kynos::title` is not part of the `#[problem(...)]` grammar
+  --> tests/ui/macros/problem_unknown_qualified_and_repeated_keys.rs:21:29
+   |
+21 |     #[problem(status = 404, kynos::title = "User not found")]
+   |                             ^^^^^
+
+error: `title` is already set, and `#[problem(...)]` takes each key once
+  --> tests/ui/macros/problem_unknown_qualified_and_repeated_keys.rs:29:15
+   |
+29 |     #[problem(title = "Unknown user")]
+   |               ^^^^^

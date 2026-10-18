@@ -1,0 +1,17 @@
+error: `formt` is not part of the `bearer(...)` grammar
+ --> tests/ui/macros/security_unknown_qualified_and_repeated_keys.rs:7:19
+  |
+7 | #[security(bearer(formt = "JWT"))]
+  |                   ^^^^^
+
+error: `kynos::name` is not part of the `#[security(...)]` grammar
+  --> tests/ui/macros/security_unknown_qualified_and_repeated_keys.rs:11:20
+   |
+11 | #[security(bearer, kynos::name = "AccessToken")]
+   |                    ^^^^^
+
+error: `description` is already set, and `#[security(...)]` takes each key once
+  --> tests/ui/macros/security_unknown_qualified_and_repeated_keys.rs:16:12
+   |
+16 | #[security(description = "An opaque access token")]
+   |            ^^^^^^^^^^^
