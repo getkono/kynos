@@ -104,11 +104,11 @@ fn a_named_realm_is_sent_as_a_quoted_string() {
     );
 }
 
-/// Exactly the bytes a header value carries are admitted, swept over all of
-/// ASCII: tab, space and the visible characters; the other controls and DEL
-/// are refused, as is anything beyond ASCII.
+/// Exactly visible US-ASCII, space and tab are admitted, swept over all of
+/// ASCII; the other controls and DEL are refused, and so is anything beyond
+/// ASCII, which a field value could hold as `obs-text` but the policy refuses.
 #[test]
-fn a_realm_admits_exactly_what_a_header_carries() {
+fn a_realm_admits_exactly_visible_ascii_space_and_tab() {
     for byte in 0..=0x7f_u8 {
         let realm = char::from(byte).to_string();
         let admitted = std::panic::catch_unwind(|| compose(&realm)).is_ok();

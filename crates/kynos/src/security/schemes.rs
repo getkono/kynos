@@ -47,7 +47,10 @@ type Markers<T, P, R> = PhantomData<fn() -> (T, P, R)>;
 /// client keys the credentials it remembers by it. The challenge sends
 /// [`REALM`](Self::REALM) as a quoted-string, escaping `"` and `\`.
 ///
-/// A realm a header cannot carry fails the build wherever the scheme is used:
+/// A realm is US-ASCII only: a control or DEL is invalid in a field value, and
+/// RFC 9110 section 5.5 leaves any octet beyond ASCII (`obs-text`) as opaque
+/// data to a recipient, which no client can be relied on to show as the text
+/// written. Either fails the build wherever the scheme is used:
 ///
 /// ```compile_fail
 /// use kynos::security::{SecurityScheme, Unscoped, carrier::Credentials, schemes::{Basic, Realm}};
@@ -119,10 +122,11 @@ impl<R: Realm> Challenge<R> {
 ///
 /// # Panics
 ///
-/// Where `realm` holds a byte outside RFC 9110's `qdtext` and `quoted-pair`
-/// (a control, DEL or non-ASCII, which a header value cannot carry), or does
-/// not fit [`CHALLENGE_CAPACITY`] once composed. Evaluated in a constant, either is
-/// a build error.
+/// Where `realm` holds a control other than tab or DEL, which a field value
+/// cannot hold, or a byte beyond ASCII, which RFC 9110's `qdtext` admits as
+/// `obs-text` but section 5.5 leaves opaque and this policy refuses; or where
+/// it does not fit [`CHALLENGE_CAPACITY`] once composed. Evaluated in a
+/// constant, either is a build error.
 const fn compose(realm: &str) -> ([u8; CHALLENGE_CAPACITY], usize) {
     let mut out = [0; CHALLENGE_CAPACITY];
     let mut len = append(&mut out, 0, CHALLENGE_PREFIX);
@@ -133,7 +137,7 @@ const fn compose(realm: &str) -> ([u8; CHALLENGE_CAPACITY], usize) {
         let byte = realm[index];
         assert!(
             byte == b'\t' || matches!(byte, b' '..=b'~'),
-            "a realm is visible ASCII, space and tab: a header value cannot carry anything else"
+            "a realm is visible US-ASCII, space and tab (RFC 9110 section 5.5)"
         );
         if byte == b'"' || byte == b'\\' {
             len = append(&mut out, len, b"\\");

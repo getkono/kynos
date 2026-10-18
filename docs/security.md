@@ -76,8 +76,10 @@ replaces it, typically to name another `realm`:
 
 `Basic<T, P, R>` names its realm as a type, `R: Realm`, `ApiRealm` unless
 named. A realm is fixed per scheme, so it composes into the challenge at compile
-time, and a byte a header cannot carry fails the build instead of a 401
-silently losing its challenge.
+time. A realm is US-ASCII only, a deliberate policy: a control fails the build
+instead of a 401 silently losing its challenge, and a byte beyond ASCII, which
+RFC 9110 section 5.5 leaves opaque to a recipient, fails it too, since no client
+can be relied on to show it as written.
 
 ### The three states of a presented credential
 
