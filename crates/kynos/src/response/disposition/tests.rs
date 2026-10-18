@@ -126,6 +126,82 @@ fn no_filename_can_split_the_field_it_is_written_into() {
     }
 }
 
+/// Encoding is total, swept over every filename of up to three characters
+/// from a closed alphabet holding one of each kind the encoder treats
+/// differently: a graphic, a space, the three it replaces, a separator, the
+/// three that could end a field, DEL, and a two- and a four-byte character.
+///
+/// The oracle reads the field back rather than restating the encoder: every
+/// value is printable ASCII, the quoted fallback holds one character per
+/// character of the name and none that would escape or end the
+/// `quoted-string`, and the name is recovered exactly -- from `filename*`
+/// where one was sent, else from the fallback itself.
+#[test]
+fn every_short_filename_encodes_to_a_field_that_gives_it_back() {
+    const ALPHABET: [char; 12] = [
+        'a',
+        ' ',
+        '"',
+        '\\',
+        '%',
+        ';',
+        '\r',
+        '\n',
+        '\0',
+        '\u{7f}',
+        '\u{e9}',
+        '\u{1f4c4}',
+    ];
+
+    let mut names = vec![String::new()];
+    let mut frontier = vec![String::new()];
+    for _ in 0..3 {
+        frontier = frontier
+            .iter()
+            .flat_map(|name| {
+                ALPHABET.iter().map(move |character| {
+                    let mut longer = name.clone();
+                    longer.push(*character);
+                    longer
+                })
+            })
+            .collect();
+        names.extend(frontier.iter().cloned());
+    }
+    assert_eq!(names.len(), 1 + 12 + 144 + 1728);
+
+    for name in names {
+        let sent = sent(&ContentDisposition::inline().filename(name.as_str()));
+        assert!(
+            sent.bytes().all(|byte| (0x20..=0x7e).contains(&byte)),
+            "{name:?} sent {sent:?}"
+        );
+
+        let quoted = sent
+            .strip_prefix("inline; filename=\"")
+            .unwrap_or_else(|| panic!("{name:?} sent {sent:?}"));
+        let (fallback, rest) = quoted
+            .split_once('"')
+            .unwrap_or_else(|| panic!("{name:?} sent an unterminated {sent:?}"));
+        assert!(!fallback.contains(['\\', '%']), "{name:?} sent {sent:?}");
+        assert_eq!(
+            fallback.chars().count(),
+            name.chars().count(),
+            "{name:?} sent {sent:?}"
+        );
+
+        let recovered = if let Some(encoded) = rest.strip_prefix("; filename*=UTF-8''") {
+            crate::__private::uri::decode_path_value(encoded)
+                .unwrap_or_else(|error| panic!("{name:?} sent {sent:?}: {error}"))
+                .into_owned()
+        } else {
+            assert_eq!(rest, "", "{name:?} sent {sent:?}");
+            fallback.to_owned()
+        };
+        assert_eq!(recovered, name, "{name:?} sent {sent:?}");
+    }
+}
+
 /// What the group sends is what the group declares.
 #[test]
 fn the_group_describes_the_field_it_sends() {

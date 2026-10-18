@@ -824,15 +824,6 @@ mod query_string {
         assert_refused(read::<Option<Filter>, media::Json>("/search?").await);
     }
 
-    /// A marker naming a media type that is not JSON has no decoder, and is
-    /// refused before the query string is read — even one that is valid
-    /// JSON.
-    #[tokio::test]
-    async fn a_non_json_marker_is_refused_with_400_naming_querystring() {
-        assert_refused(read::<Payload, media::Pdf>("/search?%7B%22limit%22%3A3%7D").await);
-        assert_refused(read::<Payload, media::OctetStream>("/search?%7B%22limit%22%3A3%7D").await);
-    }
-
     /// Every way a JSON query string fails to decode is the same 400, under
     /// the same name: octets that are not UTF-8, text that is not JSON, and
     /// JSON that does not fit the type.

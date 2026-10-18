@@ -711,3 +711,6 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         self
     }
 }
+
+#[cfg(test)]
+mod tests;

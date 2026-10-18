@@ -41,9 +41,12 @@ jobs:
           - basic
           - cookie
           - date
+          - decompression
           - disposition
           - etag
           - forwarded
+          - json_lines
+          - language
           - media_type
           - query
           - range

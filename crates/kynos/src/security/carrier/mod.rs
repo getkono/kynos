@@ -276,6 +276,10 @@ pub fn http_scheme(
 ///
 /// # Errors
 ///
+/// When `location` is [`KeyLocation::Header`] and `name` is `Authorization`
+/// in any case, whether or not the request carries it: that field belongs to
+/// the HTTP authentication schemes above, so it is never an API key.
+///
 /// When the key is present and cannot be read: a header field or the first
 /// cookie of that name whose value is not ASCII, or a first query pair of that
 /// name whose percent-decoded value is not UTF-8. A later pair or cookie never
@@ -287,12 +291,11 @@ pub fn api_key(
 ) -> Result<Option<ApiKey>, AuthRejection> {
     match location {
         KeyLocation::Header => {
-            // `Authorization` is refused as an API key field at compile time,
-            // so a key read here never collides with one of the schemes above.
-            debug_assert!(
-                !name.eq_ignore_ascii_case(AUTHORIZATION.as_str()),
-                "`#[derive(SecurityScheme)]` refuses `Authorization` as an API key field"
-            );
+            // `#[derive(SecurityScheme)]` refuses this at compile time; a
+            // hand-written `Carries` reaches it here, in every build.
+            if name.eq_ignore_ascii_case(AUTHORIZATION.as_str()) {
+                return Err(AuthRejection::unauthenticated());
+            }
 
             let Some(field) = parts.headers.get(name) else {
                 return Ok(None);

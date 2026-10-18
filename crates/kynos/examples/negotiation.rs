@@ -4,7 +4,7 @@
 //! cargo run -p kynos --example negotiation
 //! ```
 //!
-//! Three things are worth noticing:
+//! Worth noticing:
 //!
 //! * **`Accept` is never a parameter.** The specification says a parameter
 //!   definition for that field shall be ignored, so declaring one would put a

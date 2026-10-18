@@ -6,9 +6,9 @@
 //! `scripts/containment.py` holds one half of that proof: each element the
 //! table in `docs/testing.md#the-off-path-proof` lists is named only at the
 //! sites that row allows, and nothing under `router/` that a request runs
-//! through is one of them. The table holds the document model, the schema
-//! registry and the validators; the emitters and `describe` are graded and not
-//! yet held, and that section says so.
+//! through is one of them. Which of the four graded elements a row holds, and
+//! how the emitters and `describe` are held without one of their own, is that
+//! section's to say rather than this file's.
 //!
 //! A scan cannot hold the other half. The table hands every request to a trait
 //! object -- `dyn ErasedTerminal`, `dyn ErasedInterceptor`, `dyn Observer`,

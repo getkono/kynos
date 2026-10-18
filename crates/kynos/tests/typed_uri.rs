@@ -218,6 +218,47 @@ fn affixed_dots_that_are_not_a_dot_segment_are_rendered() {
     assert_eq!(backup::relative_uri(file_path("tar")), "/backups/tar./raw");
 }
 
+/// A path group read back as the value it was rendered from.
+#[derive(kynos::Schema, kynos::PathParams)]
+struct EchoPath {
+    name: String,
+}
+
+/// Answers with the value its path carried, decoded.
+#[kynos::get("/echo/{name}")]
+async fn echo(Path(EchoPath { name }): Path<EchoPath>) -> kynos::extract::body::text::Text {
+    kynos::extract::body::text::Text(name)
+}
+
+/// A rendered URI routed back through `Path<T>` arrives as the value it was
+/// rendered from, the characters that would otherwise split, end or escape
+/// its segment included.
+#[tokio::test]
+async fn a_relative_uri_routes_back_to_the_value_it_was_rendered_from() {
+    use http_body_util::BodyExt as _;
+
+    let service = Router::<()>::new()
+        .mount(kynos::routes![echo])
+        .build(())
+        .expect("a buildable router");
+    let value = "a/b c%25?#&+=\u{e9}";
+
+    let mut request = Request::new(Body::empty());
+    *request.uri_mut() = echo::relative_uri(EchoPath {
+        name: value.to_owned(),
+    });
+    let response = service.call(request).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("a readable body")
+        .to_bytes();
+    assert_eq!(String::from_utf8_lossy(&body), value);
+}
+
 /// The fixture describes, so `ReportQuery::schema` is a body something runs.
 ///
 /// Without this the schema above would be written and never called, which is
@@ -232,9 +273,29 @@ fn the_fixture_describes_the_query_it_encodes() {
         .openapi()
         .expect("a describable router");
 
-    let emitted = format!("{document:?}");
+    let document = serde_json::to_value(&document).expect("a serializable document");
 
-    assert!(emitted.contains("download"), "{emitted}");
+    // Exactly the two parameters `encode` writes. `download` is typed by the
+    // query group's own schema, as `true` is; `name` by `PathParams`'s
+    // default, which describes each declared name with an unconstrained
+    // schema whatever the group's `Schema` says.
+    assert_eq!(
+        document["paths"]["/reports/{name}"]["get"]["parameters"],
+        serde_json::json!([
+            {
+                "name": "name",
+                "in": "path",
+                "required": true,
+                "schema": true,
+            },
+            {
+                "name": "download",
+                "in": "query",
+                "required": true,
+                "schema": { "type": "boolean" },
+            },
+        ])
+    );
 }
 
 /// Points at `report`, wherever the router mounted it.

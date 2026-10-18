@@ -17,12 +17,12 @@
 //!
 //! Five things are worth noticing:
 //!
-//! * **One line, and no context.** Two handlers, two page constants, an enum, a
-//!   `Provider` context and the `Inject` that read it were what this file
-//!   needed to serve its own description. `Router::docs` is all of it now, and
-//!   this router's context is `()`. What the framework owns is the ordering:
-//!   the page fetches a description that has to describe the two routes serving
-//!   it, so the bytes cannot exist until the router is built.
+//! * **One line, and no context.** `Router::docs` mounts the page and the
+//!   description it fetches, so this file declares no handler, page constant or
+//!   context of its own, and this router's context is `()`. What the framework
+//!   owns is the ordering: the page fetches a description that has to describe
+//!   the two routes serving it, so the bytes cannot exist until the router is
+//!   built.
 //! * **The switch is a build profile, and the feature is not the switch.** Two
 //!   decisions in two places, on purpose. `docs` decides whether the wiring is
 //!   *compiled*; `debug_assertions` decides whether this deployment *mounts*

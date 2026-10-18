@@ -109,8 +109,9 @@ what makes `fixture.rs` attribute a delta to a feature; here the program is
 being weighed and it cannot exist in a build with the flag off. The two fixtures
 therefore answer opposite questions and neither subsumes the other, which the
 two files' `compression` rows show side by side.
-`mise run cost:codecs` runs this half alone; `mise run cost:record` writes its
-baseline with the other two.
+`mise run cost:codecs` runs this half alone, as `mise run cost:codegen` runs
+the monomorphized-IR half of `fixture.rs`'s sweep alone; `mise run cost:record`
+writes their baselines with the binary one.
 
 **An instruction count is exact only in the program object, so that is the
 number recorded.** Callgrind's total for one request moves between runs of one

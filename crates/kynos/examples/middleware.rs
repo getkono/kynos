@@ -104,7 +104,12 @@ impl CorrelationHeaders for CorrelationId {
     }
 }
 
-/// Identifiers minted from a monotonic clock rather than a counter.
+/// A fixed stand-in for a fleet's own identifier format.
+///
+/// Despite the name, it returns the same UUID for every request: it only shows
+/// where a custom source plugs in. Do not copy it into a service as written,
+/// where every request would share one identifier; a real source mints a fresh
+/// value per call, from a monotonic clock or otherwise.
 ///
 /// `Counter` is unique within one process and no further; `Random` is unique
 /// across a fleet, and is what the `tracing` example mounts. A fleet that

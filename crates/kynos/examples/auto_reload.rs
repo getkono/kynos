@@ -51,8 +51,8 @@ use kynos::{
 
 /// Reports the running build.
 ///
-/// Edit the string, save, and watch the response change without the port ever
-/// going away.
+/// Edit the string, save, request `/` again, and watch the server log change
+/// without the port ever going away. The response is a bare 204 either way.
 #[kynos::get("/")]
 async fn version() -> NoContent {
     println!("served by build 1");

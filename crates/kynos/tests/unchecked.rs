@@ -286,8 +286,13 @@ fn a_nested_routers_unhonourable_cors_over_unchecked_routes_refuses_to_build() {
         .build(());
 
     assert!(
-        refused.is_err(),
-        "a nested wildcard origin with credentials over an unchecked route was accepted"
+        matches!(
+            refused,
+            Err(kynos::Error::Middleware(
+                kynos::middleware::MiddlewareError::CredentialedWildcardOrigin
+            ))
+        ),
+        "a nested wildcard origin with credentials over an unchecked route was not refused as one"
     );
 }
 

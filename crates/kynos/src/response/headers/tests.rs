@@ -159,3 +159,72 @@ fn an_undescribed_group_declares_no_header() {
         ["content-encoding"]
     );
 }
+
+/// A body describing a `default` response, an inline 200, and a 404 that is a
+/// `$ref` to a response the document holds elsewhere.
+struct ThreeShapes;
+
+impl crate::response::Responses for ThreeShapes {
+    fn responses(_: &mut crate::schema::registry::Registry) -> kynos_openapi::Responses {
+        let mut responses = kynos_openapi::Responses::new()
+            .with_default(kynos_openapi::Response::new("anything else"))
+            .with(200, kynos_openapi::Response::new("the thing"));
+        responses.responses.insert(
+            "404".to_owned(),
+            RefOr::Ref(kynos_openapi::Ref::response("NotFound")),
+        );
+        responses
+    }
+}
+
+/// The header names an inline response declares, or `None` for a `$ref`.
+fn declared_on(response: Option<&RefOr<kynos_openapi::Response>>) -> Option<Vec<&String>> {
+    match response.expect("the status is described") {
+        RefOr::Item(response) => Some(response.headers.keys().collect()),
+        RefOr::Ref(_) => None,
+    }
+}
+
+/// `WithHeaders` declares its group on every inline response the body
+/// describes, `default` included, and leaves a `$ref` as it found it: a field
+/// declared there would be declared on every other use of that response.
+#[test]
+fn a_described_group_joins_every_inline_response_and_no_reference() {
+    use crate::response::Responses as _;
+
+    let mut registry = crate::schema::registry::Registry::new();
+    let described = WithHeaders::<ThreeShapes, OneEncoding>::responses(&mut registry);
+
+    assert_eq!(
+        declared_on(described.default_response.as_ref()),
+        Some(vec![&"content-encoding".to_owned()])
+    );
+    assert_eq!(
+        declared_on(described.responses.get("200")),
+        Some(vec![&"content-encoding".to_owned()])
+    );
+    assert_eq!(
+        described.responses.get("404"),
+        Some(&RefOr::Ref(kynos_openapi::Ref::response("NotFound")))
+    );
+}
+
+/// A group whose `DESCRIBED` is `false` leaves the body's responses exactly as
+/// the body described them.
+#[test]
+fn an_undescribed_group_leaves_the_bodys_responses_untouched() {
+    use crate::response::Responses as _;
+
+    struct Undescribed;
+
+    impl HeaderParams for Undescribed {
+        const NAMES: &'static [&'static str] = &["retry-after"];
+        const DESCRIBED: bool = false;
+    }
+
+    let mut registry = crate::schema::registry::Registry::new();
+    assert_eq!(
+        WithHeaders::<ThreeShapes, Undescribed>::responses(&mut registry),
+        ThreeShapes::responses(&mut registry)
+    );
+}

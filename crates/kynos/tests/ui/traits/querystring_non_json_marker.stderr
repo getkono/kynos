@@ -1,0 +1,38 @@
+error[E0080]: evaluation panicked: a `QueryString` marker names neither `application/json` nor a `+json` type, and only JSON has a decoder
+ --> $RUST/core/src/panic.rs
+  |
+  |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `kynos::extract::params::querystring::QueryString::<std::option::Option<u32>, Filter>::JSON` failed here
+  |
+ ::: src/extract/params/querystring.rs
+  |
+  |       const JSON: () = assert!(
+  |  ______________________-
+  | |         is_json(M::MEDIA_TYPE),
+  | |         "a `QueryString` marker names neither `application/json` nor a `+json` type, and only \
+  | |          JSON has a decoder"
+  | |     );
+  | |_____- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/extract/params/querystring.rs
+  |
+  |         let () = Self::JSON;
+  |                  ^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn <QueryString<Option<u32>, Filter> as Describe>::describe`
+ --> src/handler/impls.rs
+  |
+  |         <$ty as Describe>::describe($operation);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+  | impl_handler!(; T1);
+  | ------------------- in this macro invocation
+  |
+  = note: this note originates in the macro `describe_parts` which comes from the expansion of the macro `impl_handler` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: erroneous constant encountered
+ --> src/extract/params/querystring.rs
+  |
+  |         let () = Self::JSON;
+  |                  ^^^^^^^^^^

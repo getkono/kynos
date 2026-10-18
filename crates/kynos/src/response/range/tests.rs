@@ -375,8 +375,13 @@ fn a_range_set_longer_than_the_cap_is_ignored() {
     );
 
     // Section 14.2 names many small ranges as an attack indicator and permits
-    // ignoring the field, so the cap is a stated fact rather than a surprise.
-    assert!(spec::pattern().contains(&format!("{{0,{}}}", MAX_RANGES - 1)));
+    // ignoring the field, so the cap is a stated fact rather than a surprise:
+    // the first range and seven more is the eight `MAX_RANGES` admits.
+    assert_eq!(MAX_RANGES, 8);
+    assert_eq!(
+        spec::pattern(),
+        r"^bytes=(?:\d+-\d*|-\d+)(?:\s*,\s*(?:\d+-\d*|-\d+)){0,7}$"
+    );
 }
 
 /// Section 14.1.2: *recipients MUST anticipate potentially large decimal
@@ -612,6 +617,32 @@ fn each_declared_status_carries_the_fields_it_actually_sends() {
     assert_eq!(headers("206"), ["Accept-Ranges", "Content-Range"]);
 }
 
+/// The pattern a range header is described by, with the shape every one of
+/// them shares asserted on the way: required, and `text/plain` content.
+fn pattern(header: &kynos_openapi::Header) -> String {
+    let (media_type, content) = header.content().expect("described as `text/plain` content");
+    assert_eq!(media_type, "text/plain");
+    assert_eq!(header.required, Some(true));
+
+    let kynos_openapi::Schema::Object(schema) = content.schema.clone().expect("a schema") else {
+        panic!("described by a boolean schema");
+    };
+    schema.pattern.clone().expect("a pattern")
+}
+
+/// `Accept-Ranges`'s description, as the group declares it.
+fn accept_ranges_header() -> kynos_openapi::Header {
+    let advertised = AcceptRanges::response_headers(&mut Registry::default());
+    let kynos_openapi::RefOr::Item(header) = advertised
+        .get("Accept-Ranges")
+        .cloned()
+        .expect("the canonical spelling")
+    else {
+        panic!("described as a `$ref`");
+    };
+    header
+}
+
 /// Both groups are described, and each states the grammar it writes.
 #[test]
 fn both_groups_describe_the_fields_they_send() {
@@ -622,18 +653,6 @@ fn both_groups_describe_the_fields_they_send() {
         <ContentRange as HeaderParams>::DESCRIBED
     ));
 
-    let pattern = |header: &kynos_openapi::Header| {
-        let (media_type, content) = header.content().expect("described as `text/plain` content");
-        assert_eq!(media_type, "text/plain");
-        assert_eq!(header.required, Some(true));
-
-        let kynos_openapi::Schema::Object(schema) = content.schema.clone().expect("a schema")
-        else {
-            panic!("described by a boolean schema");
-        };
-        schema.pattern.clone().expect("a pattern")
-    };
-
     assert_eq!(
         pattern(&ContentRange::satisfied_header()),
         r"^bytes \d+-\d+/\d+$"
@@ -643,14 +662,7 @@ fn both_groups_describe_the_fields_they_send() {
         r"^bytes \*/\d+$"
     );
 
-    let advertised = AcceptRanges::response_headers(&mut Registry::default());
-    let kynos_openapi::RefOr::Item(header) = advertised
-        .get("Accept-Ranges")
-        .expect("the canonical spelling")
-    else {
-        panic!("described as a `$ref`");
-    };
-    assert_eq!(pattern(header), "^bytes$");
+    assert_eq!(pattern(&accept_ranges_header()), "^bytes$");
 }
 
 /// The field each group writes matches the pattern it declares.
@@ -662,25 +674,45 @@ fn each_group_writes_a_value_its_own_grammar_admits() {
         fields[0].1.to_str().expect("a printable field").to_owned()
     };
 
-    assert_eq!(sent(&|| AcceptRanges.encode()), "bytes");
-    assert_eq!(
-        sent(&|| ContentRange::Satisfied {
+    let accept_ranges = sent(&|| AcceptRanges.encode());
+    let satisfied = sent(&|| {
+        ContentRange::Satisfied {
             first: 42,
             last: 1233,
-            complete_length: 1234
+            complete_length: 1234,
         }
-        .encode()),
-        // Section 14.4's own worked example.
-        "bytes 42-1233/1234"
-    );
-    assert_eq!(
-        sent(&|| ContentRange::Unsatisfied {
-            complete_length: 47022
+        .encode()
+    });
+    let unsatisfied = sent(&|| {
+        ContentRange::Unsatisfied {
+            complete_length: 47022,
         }
-        .encode()),
-        // Section 15.5.17's own worked example.
-        "bytes */47022"
-    );
+        .encode()
+    });
+
+    assert_eq!(accept_ranges, "bytes");
+    // Section 14.4's own worked example.
+    assert_eq!(satisfied, "bytes 42-1233/1234");
+    // Section 15.5.17's own worked example.
+    assert_eq!(unsatisfied, "bytes */47022");
+
+    // And each is admitted by the pattern its group declares, which is the
+    // half of the name the exact values above cannot say. Behind `pattern`,
+    // the feature that carries a regular expression engine.
+    #[cfg(feature = "pattern")]
+    for (written, header) in [
+        (accept_ranges, accept_ranges_header()),
+        (satisfied, ContentRange::satisfied_header()),
+        (unsatisfied, ContentRange::unsatisfied_header()),
+    ] {
+        let declared = pattern(&header);
+        assert!(
+            regex::Regex::new(&declared)
+                .expect("a declared pattern compiles")
+                .is_match(&written),
+            "`{written}` is not admitted by `{declared}`"
+        );
+    }
 }
 
 // --- Delivery preconditions ------------------------------------------------

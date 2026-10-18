@@ -329,3 +329,6 @@ fn header_from(parameter: &Parameter) -> Header {
 
     header
 }
+
+#[cfg(test)]
+mod tests;

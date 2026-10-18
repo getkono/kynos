@@ -302,12 +302,118 @@ def permitted(path, allowed):
 
 
 # --- The dependency graph ---------------------------------------------------
-UNDER = "under"
-ONLY_IN = "only in"
+# `nfr.md`'s Dependencies table: each row whose Method is this gate is one
+# confinement, read off its Requirement sentence.
+DEPENDENCIES = "\n## Dependencies\n"
+REQUIREMENTS_HEADER = "| Category | Requirement | Method | Status |"
+CONTAINMENT_METHOD = "`mise run containment:check`"
+# Crates, then where they may be named; `never named` lists no site.
+REQUIREMENT = re.compile(
+    r"(?P<crates>.*?)\b(?:is|are|may be) "
+    r"(?:(?P<never>never named)|named only (?:in|under|at) (?P<sites>.*))"
+)
+CRATE_RESIDUE = re.compile(r"(?:[\s,]|\band\b)*")
+SITE_RESIDUE = re.compile(r"(?:[\s,]|\b(?:and|in|under)\b)*")
+CRATE_TOKEN = re.compile(r"[\w-]+")
+# Bare sites are relative to this; one opening with a member's name is that
+# member's `src/`.
+DEPENDENCY_SCOPE = "crates/kynos/src/"
+#: Workspace members with a `src/` tree, by directory name.
+MEMBERS = frozenset(
+    crate.name for crate in (ROOT / "crates").iterdir() if (crate / "src").is_dir()
+)
+
+
+def site_path(site, members=MEMBERS):
+    """`kynos-openapi/emit/` -> `crates/kynos-openapi/src/emit/`; `router/` ->
+    `crates/kynos/src/router/`."""
+    head, _, rest = site.partition("/")
+    if head in members:
+        return f"crates/{head}/src/{rest}"
+    return DEPENDENCY_SCOPE + site.lstrip("/")
+
+
+def confinement(requirement, members=MEMBERS):
+    """One Requirement sentence as `(identifiers, sites)`, or `None`.
+
+    `identifiers` are the backticked crates before `is`/`are`, as Rust spells
+    them (`hyper-util` -> `hyper_util`); `sites` are the backticked paths after
+    `named only in`/`under`/`at`, through `site_path`, and empty for `never
+    named`. `None` when anything but commas and the joining words sits outside
+    the backticks, so a site written as prose is refused rather than dropped.
+    """
+    read = REQUIREMENT.fullmatch(requirement.strip())
+    if read is None:
+        return None
+    crates = BACKTICKED.findall(read["crates"])
+    if not crates or not CRATE_RESIDUE.fullmatch(BACKTICKED.sub("", read["crates"])):
+        return None
+    if not all(CRATE_TOKEN.fullmatch(crate) for crate in crates):
+        return None
+    sites = []
+    if read["sites"] is not None:
+        sites = BACKTICKED.findall(read["sites"])
+        if not sites or not SITE_RESIDUE.fullmatch(BACKTICKED.sub("", read["sites"])):
+            return None
+    identifiers = tuple(crate.replace("-", "_") for crate in crates)
+    return identifiers, {site_path(site, members) for site in sites}
+
+
+def dependency_rules(nfr, failures, members=MEMBERS):
+    """Every confinement `nfr.md`'s Dependencies table assigns this gate.
+
+    `(identifiers, sites, requirement)` per row whose Method is
+    `CONTAINMENT_METHOD`. A missing section or header, an unreadable row, or
+    no row at all is appended to `failures`.
+    """
+    unrun = (
+        "the dependency graph goes unchecked: every crate it confines may be "
+        "named anywhere"
+    )
+    text = section(nfr, DEPENDENCIES, failures, unrun=unrun)
+    if text is None:
+        return []
+    # Up to the next section, so another section's table is never read as this.
+    if (end := text.find("\n## ", 1)) >= 0:
+        text = text[:end]
+    header = text.find(REQUIREMENTS_HEADER)
+    if header < 0:
+        failures.append(
+            f"nfr.md's Dependencies section no longer holds a table headed "
+            f"`{REQUIREMENTS_HEADER}`, so {unrun}"
+        )
+        return []
+    rules = []
+    for line in text[header:].split("\n")[2:]:
+        if not line.startswith("|"):
+            break
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if CONTAINMENT_METHOD not in line:
+            continue
+        if len(cells) != 4 or cells[2] != CONTAINMENT_METHOD:
+            failures.append(
+                f"nfr.md's Dependencies table has a malformed row: {line.strip()}"
+            )
+            continue
+        read = confinement(cells[1], members)
+        if read is None:
+            failures.append(
+                f"nfr.md's Dependencies table states {cells[1]!r}, which this rule "
+                "cannot read as backticked crates that `are named only in`, "
+                "`under` or `at` backticked sites, or `are never named`. The row "
+                "holds nothing until it can"
+            )
+            continue
+        rules.append((*read, cells[1]))
+    if not rules:
+        failures.append(
+            "nfr.md's Dependencies table assigns this gate no row, so " + unrun
+        )
+    return rules
 
 
 def listed(path, sites):
-    """Whether `path` is one of an `ONLY_IN` row's `sites`.
+    """Whether `path` is one of a dependency row's `sites`.
 
     A site ending in `/` is a tree and holds every file under it; any other
     site is one file, matched exactly.
@@ -522,9 +628,38 @@ def scanned(allowance, exists=None):
 
 
 # --- The module-size budget -------------------------------------------------
-# Modules past ~400 lines excluding tests are a debt `nfr.md` counts. Sibling
-# `tests.rs` files are excluded; an inline `mod tests` counts, read off `raw`.
+# Modules past ~400 lines excluding tests are a debt `nfr.md` lists by path.
+# Sibling `tests.rs` files are excluded; an inline `mod tests` counts, read off
+# `raw`.
 NFR = (ROOT / "docs/nfr.md").read_text()
+BUDGET = "### The module-size budget"
+# One list item per budgeted path, nothing else on the line.
+BUDGETED = re.compile(r"^- `(crates/[^`]+\.rs)`$", re.MULTILINE)
+MODULE_LINES = 400
+
+
+def budget_failures(listed_paths, oversized):
+    """What the budget's `listed_paths` and the `oversized` files disagree on.
+
+    Compared as sets, so each failure names its paths and a split cannot
+    cancel a regression out.
+    """
+    problems = []
+    if unlisted := sorted(set(oversized) - set(listed_paths)):
+        problems.append(
+            f"a module is past ~{MODULE_LINES} lines and nfr.md's module-size "
+            "budget does not list it. Either split it, or list it there with the "
+            "argument for why it stays one file, in the same commit:\n    "
+            + "\n    ".join(unlisted)
+        )
+    if stale := sorted(set(listed_paths) - set(oversized)):
+        problems.append(
+            "nfr.md's module-size budget lists a path that is no longer past "
+            f"~{MODULE_LINES} lines, or no longer there. The budget only shrinks: "
+            "drop the path in the commit that split or moved it:\n    "
+            + "\n    ".join(stale)
+        )
+    return problems
 
 # --- The feature grading -----------------------------------------------------
 # Every flag `crates/kynos` declares must be graded in `docs/performance.md`.
@@ -969,75 +1104,8 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
             )
 
     # --- The dependency graph ------------------------------------------------
-    for crates, rule, where, description in [
-        (("hyper", "hyper_util"), ONLY_IN,
-         {"crates/kynos/src/server/connection.rs", "crates/kynos/src/http/body.rs"},
-         "`hyper` and `hyper-util` are named only in `server/connection.rs` and `http/body.rs`"),
-        (("rustls", "tokio_rustls"), UNDER, "crates/kynos/src/server/tls/",
-         "`tokio-rustls` and `rustls` are named only under `server/tls/`"),
-        (("socket2",), ONLY_IN, {"crates/kynos/src/server/tcp.rs"},
-         "`socket2` is named only in `server/tcp.rs`"),
-        (("matchit",), UNDER, "crates/kynos/src/router/",
-         "`matchit` may be named only under `router/`"),
-        (("h2", "httparse"), ONLY_IN, set(), "`h2` and `httparse` are never named"),
-        (("tower", "tower_layer", "tower_service"), ONLY_IN, {"crates/kynos/src/unchecked.rs"},
-         "`tower`, `tower-layer` and `tower-service` are named only in `unchecked.rs`"),
-        (("http_body", "http_body_util"), ONLY_IN,
-         {"crates/kynos/src/http/body.rs", "crates/kynos/src/http/body/watched.rs",
-          "crates/kynos/src/extract/body/",
-          "crates/kynos/src/middleware/cache/mod.rs", "crates/kynos/src/middleware/compression/",
-          "crates/kynos/src/middleware/decompression/", "crates/kynos/src/middleware/limits/",
-          "crates/kynos/src/response/range/source.rs", "crates/kynos/src/router/dispatch.rs",
-          "crates/kynos/src/test/mod.rs"},
-         "`http-body` and `http-body-util` are named only at the body sites architecture.md lists"),
-        (("async_compression",), ONLY_IN,
-         {"crates/kynos/src/middleware/compression/", "crates/kynos/src/middleware/decompression/"},
-         "`async-compression` is named only under `middleware/compression/` and "
-         "`middleware/decompression/`"),
-        (("serde_html_form",), ONLY_IN,
-         {"crates/kynos/src/extract/body/form.rs", "crates/kynos/src/response/codec/form.rs",
-          "crates/kynos/src/test/mod.rs"},
-         "`serde_html_form` is named only in `extract/body/form.rs`, `response/codec/form.rs` "
-         "and `test/mod.rs`"),
-        (("tracing",), ONLY_IN,
-         {"crates/kynos/src/server/", "crates/kynos/src/middleware/trace.rs"},
-         "`tracing` is named only under `server/` and in `middleware/trace.rs`"),
-        (("futures_core",), ONLY_IN,
-         {"crates/kynos/src/response/stream/", "crates/kynos/src/extract/body/json_lines/",
-          "crates/kynos/src/http/body.rs", "crates/kynos/src/test/mod.rs"},
-         "`futures-core` is named only under `response/stream/` and `extract/body/json_lines/` "
-         "and in `http/body.rs` and `test/mod.rs`"),
-        (("multer",), ONLY_IN, {"crates/kynos/src/extract/body/multipart.rs"},
-         "`multer` is named only in `extract/body/multipart.rs`"),
-        (("prost",), ONLY_IN,
-         {"crates/kynos/src/extract/body/protobuf.rs", "crates/kynos/src/response/codec/protobuf.rs"},
-         "`prost` is named only in `extract/body/protobuf.rs` and `response/codec/protobuf.rs`"),
-        (("uuid",), ONLY_IN, {"crates/kynos/src/schema/impls/identifier.rs"},
-         "`uuid` is named only in `schema/impls/identifier.rs`"),
-        (("chrono", "jiff"), UNDER, "crates/kynos/src/schema/impls/temporal/",
-         "`chrono` and `jiff` are named only under `schema/impls/temporal/`"),
-        (("rust_decimal", "bigdecimal"), UNDER, "crates/kynos/src/schema/impls/decimal/",
-         "`rust_decimal` and `bigdecimal` are named only under `schema/impls/decimal/`"),
-        (("percent_encoding",), ONLY_IN, {"crates/kynos/src/__private/uri.rs"},
-         "`percent-encoding` is named only in `__private/uri.rs`"),
-        (("jsonschema",), ONLY_IN, {"crates/kynos/src/test/conformance.rs"},
-         "`jsonschema` is named only in `test/conformance.rs`"),
-        (("regex", "regex_syntax"), ONLY_IN,
-         {"crates/kynos/src/__private/constraints/pattern.rs",
-          "crates/kynos-openapi/src/pattern.rs"},
-         "`regex` and `regex-syntax` are named only in `__private/constraints/pattern.rs` and "
-         "`kynos-openapi`'s `pattern.rs`"),
-        (("serde_norway",), ONLY_IN,
-         {"crates/kynos-openapi/src/emit/", "crates/kynos/src/error/mod.rs"},
-         "`serde_norway` is named only under `kynos-openapi/emit/` and in `error/mod.rs`"),
-        (("indexmap",), UNDER, "crates/kynos-openapi/src/",
-         "`indexmap` is named only in `kynos-openapi`"),
-        (("proc_macro2", "quote", "syn"), UNDER, "crates/kynos-macros/src/",
-         "`proc-macro2`, `quote` and `syn` are named only in `kynos-macros`"),
-    ]:
-        found = corpus.naming(*crates)
-        stray = sorted(f for f in found if not f.startswith(where)) if rule == UNDER else sorted(f for f in found if not listed(f, where))
-        if stray:
+    for crates, where, description in dependency_rules(nfr, failures):
+        if stray := sorted(f for f in corpus.naming(*crates) if not listed(f, where)):
             failures.append(f"{description}, but it is also named in:\n    " + "\n    ".join(stray))
 
     # --- The off-path elements -----------------------------------------------
@@ -1209,19 +1277,18 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
     oversized = sorted(
         path
         for path, _ in corpus.files
-        if corpus.raw[path].count("\n") > 400
+        if corpus.raw[path].count("\n") > MODULE_LINES
     )
 
-    budget = re.search(r"a module-size budget of (\d+) files", nfr)
-    if budget is None:
-        failures.append("nfr.md no longer states the module-size budget")
-    elif int(budget.group(1)) != len(oversized):
-        failures.append(
-            f"nfr.md budgets {budget.group(1)} files over ~400 lines and there are "
-            f"{len(oversized)}. Splitting one means lowering the budget in the same "
-            "commit; adding one means arguing for it there.\n    "
-            + "\n    ".join(oversized)
-        )
+    budget = section(
+        nfr,
+        BUDGET,
+        failures,
+        "\n## ",
+        unrun="no module's size is held against the list of those allowed past the line",
+    )
+    if budget is not None:
+        failures += budget_failures(BUDGETED.findall(budget), oversized)
 
     # --- The feature grading -------------------------------------------------
     grading = section(

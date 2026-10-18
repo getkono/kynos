@@ -702,7 +702,7 @@ async fn a_map_key_is_held_to_its_property_names_at_the_map() {
     .await;
 }
 
-/// `Form<T>` runs the same check after `serde_urlencoded` reads the body.
+/// `Form<T>` runs the same check after `serde_html_form` reads the body.
 #[cfg(feature = "form")]
 mod form {
     use kynos::{

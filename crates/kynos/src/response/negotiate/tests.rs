@@ -66,6 +66,29 @@ fn an_offer_carrying_parameters_matches_its_type_and_subtype() {
     }
 }
 
+/// At equal quality the offer a more specific range matched wins, whichever
+/// was offered first, and between ranges equally specific the one the client
+/// listed first wins.
+#[test]
+fn at_equal_quality_specificity_then_the_clients_order_decides() {
+    let chosen = |field: &str| {
+        Accept::<(Text, Binary<Pdf>)>::parse(field)
+            .expect("valid Accept header")
+            .choose::<(Text, Binary<Pdf>)>()
+            .expect("a representation matches")
+    };
+
+    // `text/plain` is offered first and matches only `text/*`.
+    assert_eq!(chosen("text/*, application/pdf"), 1);
+    assert_eq!(chosen("application/pdf, text/*"), 1);
+    assert_eq!(chosen("*/*, application/pdf"), 1);
+    // Both exact: the client's order, not the offer's.
+    assert_eq!(chosen("application/pdf, text/plain"), 1);
+    assert_eq!(chosen("text/plain, application/pdf"), 0);
+    // Both behind the same wildcard: the offer's order is all that is left.
+    assert_eq!(chosen("*/*"), 0);
+}
+
 #[test]
 fn accept_rejects_zero_quality_and_malformed_values() {
     assert!(
@@ -309,6 +332,101 @@ fn a_representation_is_offered_under_the_media_type_it_describes() {
     offered_under_what_it_describes::<crate::extract::body::form::Form<String>>();
     #[cfg(feature = "multipart")]
     offered_under_what_it_describes::<crate::extract::body::multipart::MultipartForm<Fields>>();
+    // `()` is the empty message, which `prost` implements `Message` for.
+    #[cfg(feature = "protobuf")]
+    offered_under_what_it_describes::<crate::extract::body::protobuf::Protobuf<()>>();
+}
+
+/// The handler [`negotiation_end_to_end`] mounts.
+async fn report(
+    accept: Accept<(Text, Binary<Pdf>)>,
+) -> Result<crate::response::negotiate::Negotiated<(Text, Binary<Pdf>)>, NegotiationRejection> {
+    accept.respond_with(
+        &(),
+        (
+            |(): &()| Text("report".to_owned()),
+            |(): &()| Binary::<Pdf>::new(b"%PDF".to_vec()),
+        ),
+    )
+}
+
+/// Negotiation through a built router: a request with no `Accept` is served
+/// as `*/*` would be, the offer's first alternative; one asking for the second
+/// gets it; one asking for neither is a live 406 problem. And the description
+/// states the alternatives as one 200 carrying both media types, beside the
+/// 400 and 406 the extractor declares.
+#[tokio::test]
+async fn negotiation_end_to_end() {
+    use http_body_util::BodyExt as _;
+
+    let router =
+        crate::Router::<()>::new().mount(crate::router::endpoint::builder::EndpointBuilder::<
+            (),
+            _,
+            _,
+        >::new(
+            kynos_openapi::Method::Get,
+            kynos_openapi::PathTemplate::parse("/report").expect("a usable path template"),
+            report,
+        ));
+
+    let document =
+        serde_json::to_value(router.openapi().expect("a describable router")).expect("JSON");
+    let responses = &document["paths"]["/report"]["get"]["responses"];
+    let statuses: Vec<&String> = responses.as_object().expect("a map").keys().collect();
+    assert_eq!(statuses, ["200", "400", "406"]);
+    let offered: Vec<&String> = responses["200"]["content"]
+        .as_object()
+        .expect("a content map")
+        .keys()
+        .collect();
+    // Keyed, so read in key order rather than the offer's.
+    assert_eq!(offered, ["application/pdf", "text/plain"]);
+
+    let service = router.build(()).expect("a describable router");
+    let call = |accept: Option<&'static str>| {
+        let mut request = ::http::Request::builder().uri("/report");
+        if let Some(accept) = accept {
+            request = request.header(header::ACCEPT, accept);
+        }
+        let request = request
+            .body(crate::http::body::Body::empty())
+            .expect("a well-formed request");
+        let service = &service;
+        async move {
+            let response = service.call(request).await;
+            let status = response.status();
+            let content_type = response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .map(|value| value.to_str().expect("a printable field").to_owned());
+            let body = response
+                .into_body()
+                .collect()
+                .await
+                .expect("a readable body")
+                .to_bytes();
+            (status, content_type, body)
+        }
+    };
+
+    let (status, content_type, body) = call(None).await;
+    assert_eq!(status, ::http::StatusCode::OK);
+    assert_eq!(content_type.as_deref(), Some("text/plain; charset=utf-8"));
+    assert_eq!(body.as_ref(), b"report");
+
+    let (status, content_type, body) = call(Some("application/pdf")).await;
+    assert_eq!(status, ::http::StatusCode::OK);
+    assert_eq!(content_type.as_deref(), Some("application/pdf"));
+    assert_eq!(body.as_ref(), b"%PDF");
+
+    let (status, content_type, body) = call(Some("image/png")).await;
+    assert_eq!(status, ::http::StatusCode::NOT_ACCEPTABLE);
+    assert_eq!(content_type.as_deref(), Some("application/problem+json"));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body).expect("a problem document")["status"],
+        406
+    );
 }
 
 /// Two offers are one media type to `Accept` when their type and subtype

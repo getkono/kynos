@@ -36,7 +36,7 @@ use kynos::{
 #[path = "support/mod.rs"]
 mod support;
 
-use support::get;
+use support::{Reply, get};
 
 /// The operation under test. Nothing else in the fixture panics, so a 500 here
 /// can only have come from this.
@@ -68,6 +68,11 @@ async fn fine() -> NoContent {
 /// its message, and a suite that prints a backtrace on a passing test teaches a
 /// reader to ignore backtraces.
 fn outcome(service: &Service<()>, path: &'static str) -> Result<StatusCode, ()> {
+    reply(service, path).map(|reply| reply.status)
+}
+
+/// [`outcome`], keeping the whole response rather than its status.
+fn reply(service: &Service<()>, path: &'static str) -> Result<Reply, ()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -76,7 +81,7 @@ fn outcome(service: &Service<()>, path: &'static str) -> Result<StatusCode, ()> 
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
     let caught = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        runtime.block_on(async { get(service, path).call().await.status })
+        runtime.block_on(async { get(service, path).call().await })
     }));
     std::panic::set_hook(hook);
 
@@ -264,6 +269,128 @@ fn a_panic_recovered_at_any_scope_is_reported_to_observers() {
     }
 }
 
+/// Records every observer event in the order it arrived, a panic with its
+/// payload.
+#[derive(Clone, Default)]
+struct Log(Arc<Mutex<Vec<String>>>);
+
+impl Log {
+    fn events(&self) -> Vec<String> {
+        self.0.lock().expect("an unpoisoned record").clone()
+    }
+
+    fn push(&self, event: String) {
+        self.0.lock().expect("an unpoisoned record").push(event);
+    }
+}
+
+impl Observer<()> for Log {
+    fn on_request(&self, _: &Request, _: Option<Route<'_>>, (): &()) {
+        self.push("request".to_owned());
+    }
+
+    fn on_response(&self, response: &Response, _: Option<Route<'_>>, _: Duration) {
+        self.push(format!("response {}", response.status().as_u16()));
+    }
+
+    fn on_panic(&self, payload: &(dyn Any + Send), _: Option<Route<'_>>) {
+        let message = payload
+            .downcast_ref::<&str>()
+            .copied()
+            .expect("a panic! with a literal message carries a `&str`");
+        self.push(format!("panic {message}"));
+    }
+}
+
+/// What a recovered panic answers with: a problem document naming the status
+/// and nothing else, so the payload — whatever the panicking code put in it —
+/// never reaches the client, in the body or in a field.
+#[test]
+fn a_recovered_panic_answers_a_bare_problem_that_exposes_no_payload() {
+    let service = Router::<()>::new()
+        .catch_panics()
+        .mount(kynos::routes![boom])
+        .build(())
+        .expect("a describable router");
+
+    let reply = reply(&service, "/boom").expect("a recovered panic");
+
+    assert_eq!(reply.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        reply.field("content-type").as_deref(),
+        Some("application/problem+json")
+    );
+    assert_eq!(
+        reply.json(),
+        serde_json::json!({
+            "type": "about:blank",
+            "title": "Internal Server Error",
+            "status": 500,
+        })
+    );
+    for (name, value) in &reply.headers {
+        assert!(
+            !String::from_utf8_lossy(value.as_bytes()).contains("the handler failed"),
+            "{name} carries the panic's payload"
+        );
+    }
+}
+
+/// An observer is handed the payload the code panicked with, and hears of the
+/// panic before it hears of the 500 the panic became — at every scope, the
+/// endpoint's included, whose payload travels back to the dispatcher on the
+/// response rather than being reported where it was caught.
+#[test]
+fn an_observer_hears_the_payload_before_the_500_it_became() {
+    let at = |path: &str| PathTemplate::parse(path).expect("a usable path template");
+
+    let router = Log::default();
+    let router_scope = Router::<()>::new()
+        .catch_panics()
+        .mount(kynos::routes![boom])
+        .observe(router.clone())
+        .build(())
+        .expect("a describable router");
+
+    let group = Log::default();
+    let group_scope = Router::<()>::new()
+        .group(
+            Group::<()>::new("/guarded")
+                .catch_panics()
+                .mount(kynos::routes![boom]),
+        )
+        .observe(group.clone())
+        .build(())
+        .expect("a describable router");
+
+    let endpoint = Log::default();
+    let endpoint_scope = Router::<()>::new()
+        .mount(
+            EndpointBuilder::<(), _, _>::new(OpenApiMethod::Get, at("/guarded"), guarded_endpoint)
+                .catch_panics(),
+        )
+        .observe(endpoint.clone())
+        .build(())
+        .expect("a describable router");
+
+    for (scope, service, path, log) in [
+        ("router", &router_scope, "/boom", &router),
+        ("group", &group_scope, "/guarded/boom", &group),
+        ("endpoint", &endpoint_scope, "/guarded", &endpoint),
+    ] {
+        assert_eq!(
+            outcome(service, path),
+            Ok(StatusCode::INTERNAL_SERVER_ERROR),
+            "{scope} scope"
+        );
+        assert_eq!(
+            log.events(),
+            ["request", "panic the handler failed", "response 500"],
+            "{scope} scope"
+        );
+    }
+}
+
 /// An interceptor that panics on every request, whatever answers it.
 struct Exploding;
 
@@ -392,4 +519,45 @@ fn a_recovered_operation_declares_the_status_recovery_produces() {
         !declares_500(&bare),
         "an operation with no recovery declared a status only recovery produces"
     );
+}
+
+/// Below router scope the 500 is declared on exactly the operations the
+/// recovery covers: a group's and an endpoint's, and on neither sibling
+/// mounted beside them without it.
+#[test]
+fn recovery_below_the_router_declares_its_500_on_what_it_covers_alone() {
+    let at = |path: &str| PathTemplate::parse(path).expect("a usable path template");
+
+    let document = Router::<()>::new()
+        .group(
+            Group::<()>::new("/guarded")
+                .catch_panics()
+                .mount(kynos::routes![boom]),
+        )
+        .group(Group::<()>::new("/bare").mount(kynos::routes![also_boom]))
+        .mount((
+            EndpointBuilder::<(), _, _>::new(OpenApiMethod::Get, at("/guarded"), guarded_endpoint)
+                .catch_panics(),
+            EndpointBuilder::<(), _, _>::new(OpenApiMethod::Get, at("/bare"), bare_endpoint),
+        ))
+        .openapi()
+        .expect("a describable router");
+    let document = serde_json::to_value(&document).expect("a serializable document");
+
+    for (path, recovered) in [
+        ("/guarded/boom", true),
+        ("/bare/boom", false),
+        ("/guarded", true),
+        ("/bare", false),
+    ] {
+        let declared = &document["paths"][path]["get"]["responses"]["500"];
+        if recovered {
+            assert_eq!(
+                declared["description"], "the operation failed unexpectedly and was recovered",
+                "{path}"
+            );
+        } else {
+            assert!(declared.is_null(), "{path} declares {declared}");
+        }
+    }
 }

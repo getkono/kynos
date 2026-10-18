@@ -280,6 +280,80 @@ fn a_key_pattern_that_does_not_translate_is_refused_once() {
     );
 }
 
+/// A third `Item`, unrelated to the other two and described differently.
+mod c {
+    use super::{OpenApiSchema, Registry, Schema, SchemaType, item, object_with};
+
+    pub(super) struct Item;
+
+    impl Schema for Item {
+        fn schema(_registry: &mut Registry) -> OpenApiSchema {
+            object_with("name", OpenApiSchema::of_type(SchemaType::String))
+        }
+
+        fn name() -> Option<kynos_openapi::ComponentName> {
+            item()
+        }
+    }
+}
+
+/// A response whose only content is `T`, so an operation returning it puts
+/// `T` in the registry `Router::build` describes with.
+struct Described<T>(std::marker::PhantomData<fn() -> T>);
+
+impl<T: Schema> crate::response::Responses for Described<T> {
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        kynos_openapi::Responses::new().with(
+            200,
+            kynos_openapi::Response::with_content(
+                "OK",
+                "application/json",
+                kynos_openapi::MediaType::new(registry.resolve::<T>()),
+            ),
+        )
+    }
+}
+
+impl<T> crate::response::IntoResponse for Described<T> {
+    fn into_response(self) -> crate::http::Response {
+        crate::response::status::NoContent.into_response()
+    }
+}
+
+async fn first() -> Described<b::Item> {
+    Described(std::marker::PhantomData)
+}
+
+async fn second() -> Described<c::Item> {
+    Described(std::marker::PhantomData)
+}
+
+/// Two unrelated types claiming one component name with different bodies,
+/// each reached from its own operation, refuse the build as the schema
+/// conflict naming it, rather than one silently describing the other.
+#[test]
+fn two_types_claiming_one_name_refuse_the_build() {
+    use crate::router::endpoint::builder::EndpointBuilder;
+
+    let path = |path: &str| kynos_openapi::PathTemplate::parse(path).expect("a usable path");
+    let built = crate::Router::<()>::new()
+        .mount((
+            EndpointBuilder::<(), _, _>::new(kynos_openapi::Method::Get, path("/b"), first),
+            EndpointBuilder::<(), _, _>::new(kynos_openapi::Method::Get, path("/c"), second),
+        ))
+        .build(());
+
+    let Err(crate::Error::Schema(conflict)) = built else {
+        panic!("two bodies under one name were built");
+    };
+    assert_eq!(
+        conflict,
+        SchemaConflict {
+            name: "Item".to_owned(),
+        }
+    );
+}
+
 /// Without the engine no key pattern can be checked, so every one is refused
 /// rather than described as though it were.
 #[cfg(not(feature = "pattern"))]
