@@ -487,6 +487,19 @@ pub enum SpecError {
     )]
     AuthorityNotStamped,
 
+    /// The description is marked non-authoritative but nothing in it is
+    /// opaque.
+    ///
+    /// The stamp is derived, so one left behind after the last opaque part was
+    /// removed understates the description rather than overstating it.
+    /// [`Document::restamp_authority`](crate::model::document::Document::restamp_authority)
+    /// removes it.
+    #[error(
+        "this description is marked non-authoritative but contains no opaque operation or \
+         route, so the mark is stale"
+    )]
+    StaleAuthorityStamp,
+
     /// A Kynos annotation was present but not in the shape Kynos emits.
     ///
     /// `detail` is text because the cause, a `serde_json::Error`, is neither
