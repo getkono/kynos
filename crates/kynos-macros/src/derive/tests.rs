@@ -368,6 +368,18 @@ mod schema {
                 "an untagged variant",
             ),
             case(
+                "a `#[serde(field_identifier)]` enum's trailing newtype variant, a catch-all serde \
+                 reads but the description cannot state",
+                quote::quote!(
+                    #[serde(field_identifier)]
+                    enum Field {
+                        Id,
+                        Other(String),
+                    }
+                ),
+                "`#[serde(field_identifier)]` reads every identifier",
+            ),
+            case(
                 "a skipped non-`Option` member of an adjacently tagged newtype variant",
                 quote::quote!(
                     #[serde(tag = "t", content = "c")]
@@ -2294,6 +2306,48 @@ mod schema {
                 ),
                 "`#[serde(other)]` accepts",
             )],
+            expand_inner,
+        );
+    }
+
+    /// A `#[serde(field_identifier)]` enum's catch-all is refused whatever
+    /// serde skips.
+    ///
+    /// serde reads such an enum through its identifier visitor, which takes
+    /// the last variant as the fallthrough when it is a newtype or carries
+    /// `#[serde(other)]`, and reads no variant's `skip` attributes, so a
+    /// skipped catch-all still catches every identifier the enum does not
+    /// name.
+    #[test]
+    fn a_field_identifier_catch_all_serde_skips_is_still_refused() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "a skipped trailing newtype variant of a `#[serde(field_identifier)]` enum",
+                    quote::quote!(
+                        #[serde(field_identifier)]
+                        enum Field {
+                            Id,
+                            #[serde(skip)]
+                            Other(String),
+                        }
+                    ),
+                    "`#[serde(field_identifier)]` reads every identifier",
+                ),
+                case(
+                    "a skipped `#[serde(other)]` variant of a `#[serde(field_identifier)]` enum",
+                    quote::quote!(
+                        #[serde(field_identifier)]
+                        enum Field {
+                            Id,
+                            #[serde(skip)]
+                            #[serde(other)]
+                            Unknown,
+                        }
+                    ),
+                    "`#[serde(field_identifier)]` reads every identifier",
+                ),
+            ],
             expand_inner,
         );
     }

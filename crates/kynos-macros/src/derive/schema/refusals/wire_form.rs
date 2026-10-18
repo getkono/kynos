@@ -186,10 +186,33 @@ pub(super) fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()>
 ///
 /// Only OpenAPI 3.2's `discriminator.defaultMapping` can say where unnamed tags
 /// go, and this derive emits none, so every build refuses it.
+///
+/// A `#[serde(field_identifier)]` enum catches too: serde reads every
+/// identifier it does not name as its last variant where that is a newtype or
+/// carries `other`, and its identifier visitor reads no `skip`, so the last
+/// variant is judged whatever serde skips.
 pub(super) fn reject_catch_all(input: &DeriveInput) -> syn::Result<()> {
     let Data::Enum(data) = &input.data else {
         return Ok(());
     };
+
+    if serde_flag(&input.attrs, &["field_identifier"])
+        && let Some(last) = data.variants.last()
+        && (matches!(&last.fields, Fields::Unnamed(fields) if fields.unnamed.len() == 1)
+            || serde_flag(&last.attrs, &["other"]))
+    {
+        return Err(syn::Error::new(
+            last.ident.span(),
+            format!(
+                "`#[serde(field_identifier)]` reads every identifier this enum does not name as \
+                 its last variant `{}`, a catch-all no closed `oneOf` or `enum` can state, so the \
+                 description would refuse identifiers the type accepts. Name every identifier \
+                 the API accepts as a unit variant, or publish the value as `Unchecked` on \
+                 purpose",
+                last.ident
+            ),
+        ));
+    }
 
     for variant in described_variants(data) {
         if let Some((_, span)) = serde_key_span(&variant.attrs, &["other"]) {
