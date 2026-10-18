@@ -29,7 +29,7 @@ use kynos_openapi::model::schema::types::SchemaType;
 
 use crate::middleware::cache::store::{CacheStore, PrimaryKey, StoredResponse};
 use crate::{
-    extract::params::header::{EncodeHeaders, HeaderParams},
+    extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http::{self, HeaderMap, HeaderValue, header},
     middleware::{Continued, Interceptor, Next},
     schema::registry::Registry,
@@ -103,7 +103,9 @@ impl<const TAGGED: bool> HeaderParams for CacheHeaders<TAGGED> {
 }
 
 impl<const TAGGED: bool> EncodeHeaders for CacheHeaders<TAGGED> {
-    fn encode(&self) -> Vec<(http::HeaderName, HeaderValue)> {
+    // Both values come from the stored response or the derived tag, so
+    // neither is ever refused.
+    fn encode(&self) -> Result<Vec<(http::HeaderName, HeaderValue)>, UnencodableHeader> {
         let mut fields = Vec::with_capacity(2);
 
         if let Ok(value) = HeaderValue::from_str(&self.age.as_secs().to_string()) {
@@ -119,7 +121,7 @@ impl<const TAGGED: bool> EncodeHeaders for CacheHeaders<TAGGED> {
             }
         }
 
-        fields
+        Ok(fields)
     }
 }
 

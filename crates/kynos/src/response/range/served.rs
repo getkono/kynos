@@ -198,12 +198,16 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
         // which a 304 does not; section 15.4.5 asks a 304 for no metadata
         // beyond its validators and `Cache-Control`, so the name stays here too.
         if status != StatusCode::NOT_MODIFIED {
-            crate::extract::params::header::write(fields, &AcceptRanges);
+            if crate::extract::params::header::write(fields, &AcceptRanges).is_err() {
+                return crate::extract::params::header::refused();
+            }
             if let Ok(value) = HeaderValue::from_str(M::MEDIA_TYPE) {
                 fields.insert(header::CONTENT_TYPE, value);
             }
             if let Some(disposition) = &self.disposition {
-                crate::extract::params::header::write(fields, disposition);
+                if crate::extract::params::header::write(fields, disposition).is_err() {
+                    return crate::extract::params::header::refused();
+                }
             }
         }
 
@@ -231,14 +235,18 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
                 last,
                 complete_length,
             }) => {
-                crate::extract::params::header::write(
+                if crate::extract::params::header::write(
                     fields,
                     &ContentRange::Satisfied {
                         first,
                         last,
                         complete_length,
                     },
-                );
+                )
+                .is_err()
+                {
+                    return crate::extract::params::header::refused();
+                }
                 if let Ok(value) = HeaderValue::from_str(&(last - first + 1).to_string()) {
                     fields.insert(header::CONTENT_LENGTH, value);
                 }

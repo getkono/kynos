@@ -2,7 +2,7 @@ use kynos_openapi::{Header, Map, RefOr};
 
 use super::WithHeaders;
 use crate::{
-    extract::params::header::{EncodeHeaders, HeaderParams},
+    extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http::{HeaderName, HeaderValue, Response, header},
     middleware::Continued,
     response::IntoResponse,
@@ -18,11 +18,11 @@ impl HeaderParams for TwoCookies {
 }
 
 impl EncodeHeaders for TwoCookies {
-    fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
-        vec![
+    fn encode(&self) -> Result<Vec<(HeaderName, HeaderValue)>, UnencodableHeader> {
+        Ok(vec![
             (header::SET_COOKIE, HeaderValue::from_static("first=1")),
             (header::SET_COOKIE, HeaderValue::from_static("second=2")),
-        ]
+        ])
     }
 }
 
@@ -36,8 +36,11 @@ impl HeaderParams for OneEncoding {
 }
 
 impl EncodeHeaders for OneEncoding {
-    fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
-        vec![(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"))]
+    fn encode(&self) -> Result<Vec<(HeaderName, HeaderValue)>, UnencodableHeader> {
+        Ok(vec![(
+            header::CONTENT_ENCODING,
+            HeaderValue::from_static("gzip"),
+        )])
     }
 }
 

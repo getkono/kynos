@@ -158,7 +158,7 @@ fn described_refusal<T: ProblemType>(
 /// Writes a group onto a short-circuit response, through the same writer a
 /// forwarded response uses.
 fn write_group<G: EncodeHeaders>(response: &mut http::Response, group: &G) {
-    crate::extract::params::header::write(response.headers_mut(), group);
+    crate::extract::params::header::write_or_refuse(response, group);
 }
 
 // Written out because `#[derive]` would bound the phantom marker `T`.

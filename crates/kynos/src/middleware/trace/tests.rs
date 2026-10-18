@@ -1,6 +1,6 @@
 use super::{DEFAULT_CORRELATION, REDACTED, Trace};
 use crate::{
-    extract::params::header::{EncodeHeaders, HeaderParams},
+    extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http::{HeaderMap, HeaderValue},
     middleware::{
         Observer,
@@ -197,11 +197,11 @@ impl HeaderParams for Pair {
 }
 
 impl EncodeHeaders for Pair {
-    fn encode(&self) -> Vec<(crate::http::HeaderName, HeaderValue)> {
-        Self::NAMES
+    fn encode(&self) -> Result<Vec<(crate::http::HeaderName, HeaderValue)>, UnencodableHeader> {
+        Ok(Self::NAMES
             .iter()
             .map(|name| (crate::http::HeaderName::from_static(name), self.0.clone()))
-            .collect()
+            .collect())
     }
 }
 

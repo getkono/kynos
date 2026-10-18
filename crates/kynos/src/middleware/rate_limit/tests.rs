@@ -153,6 +153,7 @@ fn policies() -> Vec<QuotaPolicy> {
 fn rendered<G: EncodeHeaders>(group: &G) -> Vec<(String, String)> {
     group
         .encode()
+        .expect("a rate-limit group always encodes")
         .into_iter()
         .map(|(name, value)| {
             (

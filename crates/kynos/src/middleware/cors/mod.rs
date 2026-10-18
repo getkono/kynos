@@ -13,7 +13,7 @@ pub(crate) mod preflight;
 use std::{borrow::Cow, convert::Infallible, marker::PhantomData, time::Duration};
 
 use crate::{
-    extract::params::header::{EncodeHeaders, HeaderParams},
+    extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http,
     middleware::{Continued, Interceptor, Next},
 };
@@ -60,10 +60,10 @@ impl<const DESCRIBED: bool> HeaderParams for CorsHeaders<DESCRIBED> {
 }
 
 impl<const DESCRIBED: bool> EncodeHeaders for CorsHeaders<DESCRIBED> {
-    fn encode(&self) -> Vec<(http::HeaderName, http::HeaderValue)> {
+    fn encode(&self) -> Result<Vec<(http::HeaderName, http::HeaderValue)>, UnencodableHeader> {
         let Some(origin) = self.origin.clone() else {
             // Nothing permitted: an uncalled-for CORS header reads as permission.
-            return Vec::new();
+            return Ok(Vec::new());
         };
 
         let mut headers = vec![(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, origin)];
@@ -80,7 +80,7 @@ impl<const DESCRIBED: bool> EncodeHeaders for CorsHeaders<DESCRIBED> {
             headers.push((http::header::ACCESS_CONTROL_EXPOSE_HEADERS, expose));
         }
 
-        headers
+        Ok(headers)
     }
 }
 

@@ -4,7 +4,7 @@
 //! carrying one identifier means for the name it declares.
 
 use kynos::{
-    extract::params::header::{EncodeHeaders, HeaderParams},
+    extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http::{HeaderName, HeaderValue},
     middleware::request_id::{CorrelationHeaders, RequestId},
     prelude::*,
@@ -17,8 +17,8 @@ impl HeaderParams for TraceId {
 }
 
 impl EncodeHeaders for TraceId {
-    fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
-        vec![(HeaderName::from_static("x-trace-id"), self.0.clone())]
+    fn encode(&self) -> Result<Vec<(HeaderName, HeaderValue)>, UnencodableHeader> {
+        Ok(vec![(HeaderName::from_static("x-trace-id"), self.0.clone())])
     }
 }
 

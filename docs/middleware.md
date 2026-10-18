@@ -36,6 +36,13 @@ an equality: a group legitimately writes fewer fields than it declares —
 `ContentEncoding` with no coding chosen, a `Cors` permitting no origin. `VARIES`
 is outside it, since a `Vary` name is deliberately not in `NAMES`.
 
+**A group that cannot encode is refused, not trimmed.** A derived group's field
+is whatever its type's `ToString` renders, so a value carrying a control
+character is no field value. Dropping that field would send a response its
+description says carries it; `encode` returns `UnencodableHeader` instead, and
+every writer — `with_headers`, `WithHeaders`, an `ApiError` failure's group —
+answers 500 in place of the response, as a body that failed to serialize does.
+
 ## Soundness, not exactness
 
 The invariant is that the emitted document is a superset of observable

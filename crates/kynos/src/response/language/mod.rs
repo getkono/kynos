@@ -213,8 +213,8 @@ impl<T, L: Languages> Localized<T, L> {
 impl<T: IntoResponse, L: Languages> IntoResponse for Localized<T, L> {
     fn into_response(self) -> Response {
         let mut response = self.body.into_response();
-        crate::extract::params::header::write(
-            response.headers_mut(),
+        crate::extract::params::header::write_or_refuse(
+            &mut response,
             &headers::ContentLanguage::offered(self.language),
         );
         response

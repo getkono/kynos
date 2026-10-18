@@ -18,7 +18,7 @@ use kynos::{
     Router,
     extract::{
         body::text::Text,
-        params::header::{EncodeHeaders, HeaderParams, Headers},
+        params::header::{EncodeHeaders, HeaderParams, Headers, UnencodableHeader},
     },
     http::{HeaderName, HeaderValue, StatusCode},
     middleware::{
@@ -210,11 +210,11 @@ impl HeaderParams for Correlation {
 }
 
 impl EncodeHeaders for Correlation {
-    fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
-        vec![
+    fn encode(&self) -> Result<Vec<(HeaderName, HeaderValue)>, UnencodableHeader> {
+        Ok(vec![
             (HeaderName::from_static("x-request-id"), self.0.clone()),
             (HeaderName::from_static("x-correlation-id"), self.0.clone()),
-        ]
+        ])
     }
 }
 
@@ -251,6 +251,58 @@ async fn a_group_naming_two_headers_sets_both_to_one_identifier() {
         .await;
     assert_eq!(trusted.fields("x-request-id"), ["first-name"]);
     assert_eq!(trusted.fields("x-correlation-id"), ["first-name"]);
+}
+
+/// A correlation group that refuses every identifier it is given.
+struct Unencodable;
+
+impl HeaderParams for Unencodable {
+    const NAMES: &'static [&'static str] = &["x-trace-id"];
+}
+
+impl EncodeHeaders for Unencodable {
+    fn encode(&self) -> Result<Vec<(HeaderName, HeaderValue)>, UnencodableHeader> {
+        Err(UnencodableHeader::new(HeaderName::from_static(
+            "x-trace-id",
+        )))
+    }
+}
+
+impl CorrelationHeaders for Unencodable {
+    fn from_id(id: HeaderValue) -> Self {
+        let _ = id;
+        Self
+    }
+}
+
+/// How often [`uncorrelated`] ran.
+static UNCORRELATED_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Counts its calls.
+#[kynos::get("/uncorrelated")]
+async fn uncorrelated() -> Text {
+    UNCORRELATED_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    Text("ran".to_owned())
+}
+
+/// A group that cannot carry the identifier answers 500 without running the
+/// handler, which would otherwise act on a request its response then refuses.
+#[tokio::test]
+async fn a_correlation_group_that_refuses_to_encode_answers_500_unhandled() {
+    let service = Router::<App>::new()
+        .mount(kynos::routes![uncorrelated])
+        .intercept(RequestId::new().header::<Unencodable>())
+        .build(App::new())
+        .expect("a describable router");
+
+    let reply = get(&service, "/uncorrelated").call().await;
+
+    assert_eq!(reply.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(reply.field("x-trace-id"), None);
+    assert_eq!(
+        UNCORRELATED_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
 }
 
 /// `Cors` adds its own names to a permitted cross-origin response and nothing

@@ -22,7 +22,7 @@ use serde_json::Value;
 use crate::{
     extract::{
         connection::Connection,
-        params::header::{EncodeHeaders, HeaderParams},
+        params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     },
     http::{self, HeaderName, HeaderValue, forwarded::Forwarded, header},
     middleware::{Continued, Interceptor, Next},
@@ -238,7 +238,7 @@ impl<const HSTS: bool, const DENY_FRAMING: bool> HeaderParams
 impl<const HSTS: bool, const DENY_FRAMING: bool> EncodeHeaders
     for SecurityFields<HSTS, DENY_FRAMING>
 {
-    fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
+    fn encode(&self) -> Result<Vec<(HeaderName, HeaderValue)>, UnencodableHeader> {
         let mut fields = vec![
             (header::CACHE_CONTROL, HeaderValue::from_static(NO_STORE)),
             (
@@ -259,7 +259,7 @@ impl<const HSTS: bool, const DENY_FRAMING: bool> EncodeHeaders
             fields.push((header::X_FRAME_OPTIONS, HeaderValue::from_static(DENY)));
         }
 
-        fields
+        Ok(fields)
     }
 }
 

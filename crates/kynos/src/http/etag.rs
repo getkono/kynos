@@ -22,7 +22,7 @@
 use kynos_openapi::model::schema::types::SchemaType;
 
 use crate::{
-    extract::params::header::{EncodeHeaders, HeaderParams},
+    extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http::{HeaderMap, HeaderValue, header},
     schema::registry::Registry,
 };
@@ -100,10 +100,10 @@ impl HeaderParams for ETag {
 }
 
 impl EncodeHeaders for ETag {
-    fn encode(&self) -> Vec<(http::HeaderName, HeaderValue)> {
-        Self::encode(self)
+    fn encode(&self) -> Result<Vec<(http::HeaderName, HeaderValue)>, UnencodableHeader> {
+        Ok(Self::encode(self)
             .map(|value| vec![(header::ETAG, value)])
-            .unwrap_or_default()
+            .unwrap_or_default())
     }
 }
 

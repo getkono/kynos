@@ -3,7 +3,7 @@
 use kynos_openapi::{Method, PathTemplate};
 
 use crate::{
-    extract::params::header::{EncodeHeaders, HeaderParams},
+    extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http::{HeaderValue, Request, Response, StatusCode, etag, header},
     response::range::spec,
     router::{
@@ -41,7 +41,7 @@ impl HeaderParams for AssetHeaders {
 }
 
 impl EncodeHeaders for AssetHeaders {
-    fn encode(&self) -> Vec<(crate::http::HeaderName, HeaderValue)> {
+    fn encode(&self) -> Result<Vec<(crate::http::HeaderName, HeaderValue)>, UnencodableHeader> {
         let mut fields = Vec::with_capacity(4);
 
         if let Ok(value) = HeaderValue::from_str(self.etag) {
@@ -61,7 +61,7 @@ impl EncodeHeaders for AssetHeaders {
             fields.push((header::VARY, HeaderValue::from_static("accept-encoding")));
         }
 
-        fields
+        Ok(fields)
     }
 }
 
@@ -324,8 +324,8 @@ impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
         if etag::if_none_match(request.headers(), || Some(chosen.etag)) == Some(true) {
             let mut response = Response::new(crate::http::body::Body::empty());
             *response.status_mut() = StatusCode::NOT_MODIFIED;
-            crate::extract::params::header::write(
-                response.headers_mut(),
+            crate::extract::params::header::write_or_refuse(
+                &mut response,
                 &self.headers(&chosen).not_modified(),
             );
             return response;

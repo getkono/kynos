@@ -18,6 +18,7 @@ use std::{
 use kynos::{
     Router,
     error::rejection::AuthRejection,
+    extract::params::header::UnencodableHeader,
     http::etag::ETag,
     http::{Method, StatusCode, header},
     middleware::{
@@ -42,6 +43,9 @@ use serde::{Deserialize, Serialize};
 mod support;
 
 use support::{get, send};
+
+/// What a header group encodes to.
+type Fields = Vec<(kynos::http::HeaderName, kynos::http::HeaderValue)>;
 
 // --- A store, which is the half Kynos does not ship ----------------------
 
@@ -144,11 +148,11 @@ impl kynos::extract::params::header::HeaderParams for CacheControl {
 }
 
 impl kynos::extract::params::header::EncodeHeaders for CacheControl {
-    fn encode(&self) -> Vec<(kynos::http::HeaderName, kynos::http::HeaderValue)> {
-        vec![(
+    fn encode(&self) -> Result<Fields, UnencodableHeader> {
+        Ok(vec![(
             header::CACHE_CONTROL,
             kynos::http::HeaderValue::from_static("max-age=60"),
-        )]
+        )])
     }
 }
 
@@ -520,8 +524,9 @@ impl kynos::extract::params::header::HeaderParams for Stated {
 }
 
 impl kynos::extract::params::header::EncodeHeaders for Stated {
-    fn encode(&self) -> Vec<(kynos::http::HeaderName, kynos::http::HeaderValue)> {
-        self.0
+    fn encode(&self) -> Result<Fields, UnencodableHeader> {
+        Ok(self
+            .0
             .iter()
             .map(|(name, value)| {
                 (
@@ -529,7 +534,7 @@ impl kynos::extract::params::header::EncodeHeaders for Stated {
                     kynos::http::HeaderValue::from_static(value),
                 )
             })
-            .collect()
+            .collect())
     }
 }
 

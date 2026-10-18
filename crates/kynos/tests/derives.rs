@@ -13,8 +13,9 @@
 //! a `+`; the cookie
 //! decoder's refusal of a declared cookie that is not ASCII; the header
 //! decoder's refusal of a missing required header or a value that is not
-//! ASCII, its reading of an absent optional header as `None`, and the value a
-//! fixed header is written, compared and described as; the text a
+//! ASCII, its reading of an absent optional header as `None`, the value a
+//! fixed header is written, compared and described as, and the 500 a value
+//! that is no field value is refused with; the text a
 //! derived `ParamValue` reads and writes; and the response a derived `Reply` or
 //! `ApiError` writes. Their tests call the
 //! derived code directly, with no server. What *is* checked
@@ -2184,6 +2185,7 @@ fn the_derived_header_encoder_writes_a_fixed_value() {
     let written = |hardened: &Hardened| {
         hardened
             .encode()
+            .expect("every value is a field value")
             .into_iter()
             .map(|(name, value)| {
                 (
@@ -4448,6 +4450,32 @@ async fn a_struct_sends_its_header_group_beside_its_extensions() {
     let body: serde_json::Value = serde_json::from_slice(&body).expect("a JSON body");
     assert_eq!(body["limit"], 10);
     assert_eq!(body.get("retry"), None, "{body}");
+}
+
+/// A failure sending a group whose field renders as text.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[error("the session is held elsewhere")]
+#[problem(status = 409)]
+struct Held {
+    #[problem(headers)]
+    trace: Hardened,
+}
+
+/// A failure whose group refuses to encode answers 500, as `WithHeaders`
+/// does, rather than its own status without a field that status declares.
+#[test]
+fn a_failure_whose_header_group_refuses_to_encode_answers_500() {
+    let response = Held {
+        trace: Hardened {
+            nosniff: (),
+            no_store: None,
+            request_id: "a\nb".to_owned(),
+        },
+    }
+    .into_response();
+
+    assert_eq!(response.status(), 500);
+    assert_eq!(response.headers().get("x-request-id"), None);
 }
 
 /// A group is declared under the status of the failure sending it and no
