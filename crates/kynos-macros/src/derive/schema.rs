@@ -41,7 +41,7 @@ pub(crate) mod refusals;
 mod shape;
 
 use attributes::{
-    constraints, described_members, field_name, field_read_name, is_described, is_flattened,
+    Sides, constraints, described_members, field_name, field_read_name, is_described, is_flattened,
     is_open, is_phantom, is_required, is_skipped_both_ways, is_unit_like, serde_flag,
     serde_key_span, sides, transparent_member, variant_read_name, variant_rename_all,
 };
@@ -527,9 +527,9 @@ struct Container {
     /// The container `rename_all` style, serialize side; a split one is refused
     /// first ([`split_rule`]). In [`Container::fields_of`], a variant's.
     rename_all: Option<String>,
-    /// An enum's `rename_all_fields`: names a variant's fields where the
-    /// variant has no `rename_all` of its own.
-    rename_all_fields: Option<String>,
+    /// An enum's `rename_all_fields`, each side: names a variant's fields on
+    /// each side the variant's own `rename_all` leaves.
+    rename_all_fields: Sides,
     tag: Option<String>,
     content: Option<String>,
     /// `#[serde(transparent)]`: the wire form is the one field's value.
@@ -574,9 +574,7 @@ impl Container {
                 match key.to_string().as_str() {
                     "rename" => container.rename = sides(&meta)?.serialize,
                     "rename_all" => container.rename_all = sides(&meta)?.serialize,
-                    "rename_all_fields" => {
-                        container.rename_all_fields = sides(&meta)?.serialize;
-                    }
+                    "rename_all_fields" => container.rename_all_fields = sides(&meta)?,
                     "tag" => container.tag = string_value(&meta)?,
                     "content" => container.content = string_value(&meta)?,
                     "transparent" => container.transparent = true,
@@ -599,16 +597,19 @@ impl Container {
     /// The container a variant's fields are named under: the variant's own
     /// `rename_all`, else the enum's `rename_all_fields`, in place of the enum's
     /// `rename_all`, which serde applies to variant names alone. Serialize side
-    /// for a written variant, deserialize side for a read-only one.
+    /// for a written variant, deserialize side for a read-only one, each rule
+    /// on that side, as serde fills it.
     fn fields_of(&self, variant: &Variant) -> Self {
         let own = variant_rename_all(variant);
-        let own = if is_written(variant) {
+        let rename_all = if is_written(variant) {
             own.serialize
+                .or_else(|| self.rename_all_fields.serialize.clone())
         } else {
             own.deserialize
+                .or_else(|| self.rename_all_fields.deserialize.clone())
         };
         Self {
-            rename_all: own.or_else(|| self.rename_all_fields.clone()),
+            rename_all,
             ..self.clone()
         }
     }

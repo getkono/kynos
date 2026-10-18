@@ -133,51 +133,45 @@ pub(super) fn reject_split_rename(input: &DeriveInput) -> syn::Result<()> {
 
 /// A split case rule whose sides differ, one side left out included, where it
 /// names a member serde both writes and reads: a container
-/// `rename_all(serialize = ..., deserialize = ...)`, an enum's
-/// `rename_all_fields(...)` that reaches a struct variant, or the own
-/// `rename_all(...)` of a struct variant serde writes, judged once each side
-/// it leaves takes the enum's `rename_all_fields`.
+/// `rename_all(serialize = ..., deserialize = ...)`, or, for a struct variant
+/// serde writes whose two sides differ once each side its own `rename_all`
+/// leaves takes the enum's `rename_all_fields`, as serde fills it, that
+/// `rename_all_fields(...)` where the variant leaves it a side, else the
+/// variant's own `rename_all(...)`.
 ///
 /// Such a rule gives a member two wire names. A rule naming no field serde both
-/// writes and reads is not refused. Runs before any check that reads a
+/// writes and reads is not refused: a variant serde only reads, or one whose
+/// sides resolve to one style. Runs before any check that reads a
 /// [`Container`].
 pub(super) fn reject_split_rename_all(input: &DeriveInput) -> syn::Result<()> {
     let variants = match &input.data {
         Data::Enum(data) => data.variants.iter().collect(),
         _ => Vec::new(),
     };
-    // A struct variant whose own rule leaves a side to `rename_all_fields`.
-    let fields_reached = variants.iter().any(|variant| {
-        let own = variant_rename_all(variant);
-        matches!(variant.fields, Fields::Named(_))
-            && (own.serialize.is_none() || own.deserialize.is_none())
-    });
-    // serde fills each side a variant's own rule leaves from
-    // `rename_all_fields`, so the variant's rule is judged by what each side
-    // resolves to.
     let fields_rule = rename_all_fields(input);
-    let resolves_split = |variant: &&Variant| {
-        let own = variant_rename_all(variant);
-        own.serialize.or_else(|| fields_rule.serialize.clone())
-            != own.deserialize.or_else(|| fields_rule.deserialize.clone())
-    };
-    let rules = [
-        Some((&input.attrs, "rename_all", "every member")),
-        fields_reached.then_some((
-            &input.attrs,
-            "rename_all_fields",
-            "every variant field it reaches",
-        )),
-    ]
-    .into_iter()
-    .flatten()
-    .chain(
-        variants
-            .into_iter()
-            .filter(|variant| matches!(variant.fields, Fields::Named(_)) && is_written(variant))
-            .filter(resolves_split)
-            .map(|variant| (&variant.attrs, "rename_all", "every field of this variant")),
-    );
+    // Each struct variant serde writes whose sides differ once filled, and the
+    // rules that give it them: `rename_all_fields` only where the variant's
+    // own rule leaves it a side.
+    let variant_rules = variants
+        .into_iter()
+        .filter(|variant| matches!(variant.fields, Fields::Named(_)) && is_written(variant))
+        .filter_map(|variant: &Variant| {
+            let own = variant_rename_all(variant);
+            let leaves_a_side = own.serialize.is_none() || own.deserialize.is_none();
+            let resolves_split = own.serialize.or_else(|| fields_rule.serialize.clone())
+                != own.deserialize.or_else(|| fields_rule.deserialize.clone());
+            resolves_split.then_some([
+                leaves_a_side.then_some((
+                    &input.attrs,
+                    "rename_all_fields",
+                    "the fields of a variant it reaches",
+                )),
+                Some((&variant.attrs, "rename_all", "every field of this variant")),
+            ])
+        })
+        .flatten()
+        .flatten();
+    let rules = std::iter::once((&input.attrs, "rename_all", "every member")).chain(variant_rules);
     for (attrs, key, reach) in rules {
         if let Some(span) = split_rule(attrs, key) {
             return Err(syn::Error::new(

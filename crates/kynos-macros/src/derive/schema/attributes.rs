@@ -75,7 +75,7 @@ fn default_variant_name(variant: &Variant, container: &Container) -> String {
 }
 
 /// What one serde key gives each direction, where it gives one.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct Sides {
     pub(super) serialize: Option<String>,
     pub(super) deserialize: Option<String>,
