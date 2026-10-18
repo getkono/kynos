@@ -387,10 +387,16 @@ fn a_range_set_longer_than_the_cap_is_ignored() {
 /// The emitted pattern admits what a sender may write, and nothing a sender
 /// may not: the recipient lenience of
 /// [`the_specifications_own_examples_are_read_as_written`] stays the parser's.
+///
+/// OpenAPI tooling reads the pattern as ECMA-262, so it is compiled through
+/// the translation a declared `pattern` takes: `\d` there is `[0-9]`, where
+/// the `regex` dialect's admits any Unicode digit.
 #[cfg(feature = "pattern")]
 #[test]
 fn the_range_pattern_is_the_senders_grammar() {
-    let pattern = regex::Regex::new(&spec::pattern()).expect("the pattern compiles");
+    let translated =
+        kynos_openapi::pattern::translate(&spec::pattern()).expect("the pattern translates");
+    let pattern = regex::Regex::new(&translated).expect("the pattern compiles");
     let eight = (0..MAX_RANGES)
         .map(|index| format!("{index}-{index}"))
         .collect::<Vec<_>>()
@@ -416,6 +422,7 @@ fn the_range_pattern_is_the_senders_grammar() {
         "bytes =0-1",
         "items=0-1",
         "bytes=0-1\n,2-3",
+        "bytes=١-٢",
         &format!("bytes={eight}, 99-99"),
     ] {
         assert!(!pattern.is_match(refused), "`{refused}` is admitted");
