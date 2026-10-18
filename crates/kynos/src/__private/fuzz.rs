@@ -109,6 +109,67 @@ pub fn decompress(
     ready(layer.undo(&codings, arrived)).map(|decoded| decoded.to_vec())
 }
 
+/// What a `JsonLines` body, or with `sequence` a `JsonSeq` one, reads as
+/// when it arrives split into `chunks` under a body limit of `limit`: every
+/// record in order, up to and including the failure that ends the stream.
+#[cfg(all(feature = "json", feature = "openapi32"))]
+#[must_use]
+pub fn json_records(
+    sequence: bool,
+    chunks: &[&[u8]],
+    limit: u64,
+) -> Vec<Result<serde_json::Value, crate::error::rejection::BodyRejection>> {
+    use crate::{
+        extract::{
+            FromRequest,
+            body::{
+                json_lines::{
+                    JsonLines, JsonSeq, LINES_MEDIA_TYPE, SEQUENCE_MEDIA_TYPE, records::Records,
+                },
+                limit::BodyLimit,
+            },
+        },
+        http::{Request, body::Body, header::CONTENT_TYPE},
+        schema::unchecked::Unchecked,
+    };
+
+    let chunks = chunks
+        .iter()
+        .map(|chunk| bytes::Bytes::copy_from_slice(chunk));
+    let mut request = Request::new(Body::from_chunks(chunks.collect()));
+    let media_type = if sequence {
+        SEQUENCE_MEDIA_TYPE
+    } else {
+        LINES_MEDIA_TYPE
+    };
+    request
+        .headers_mut()
+        .insert(CONTENT_TYPE, HeaderValue::from_static(media_type));
+    request.extensions_mut().insert(BodyLimit(limit));
+
+    type Items = Records<Unchecked<serde_json::Value>>;
+    let mut records = if sequence {
+        ready(<JsonSeq<Items> as FromRequest<()>>::from_request(
+            request,
+            &(),
+        ))
+        .map(|body| body.items)
+    } else {
+        ready(<JsonLines<Items> as FromRequest<()>>::from_request(
+            request,
+            &(),
+        ))
+        .map(|body| body.items)
+    }
+    .expect("a body of the codec's own media type");
+
+    let mut read = Vec::new();
+    while let Some(record) = ready(records.next()) {
+        read.push(record.map(|Unchecked(value)| value));
+    }
+    read
+}
+
 /// Runs `future`, which reads only memory and so never waits, to its end.
 #[cfg(any(feature = "compression", all(feature = "json", feature = "openapi32")))]
 fn ready<F: std::future::Future>(future: F) -> F::Output {

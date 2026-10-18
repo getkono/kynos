@@ -298,10 +298,12 @@ version = "0.4.0"
 dependencies = [
  "async-compression",
  "bytes",
+ "futures-core",
  "http",
  "http-body",
  "http-body-util",
  "hyper",
+ "kynos-macros",
  "kynos-openapi",
  "matchit",
  "multer",
@@ -321,7 +323,18 @@ dependencies = [
  "flate2",
  "kynos",
  "libfuzzer-sys",
+ "serde_json",
  "zstd",
+]
+
+[[package]]
+name = "kynos-macros"
+version = "0.4.0"
+dependencies = [
+ "kynos-openapi",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -483,7 +496,7 @@ checksum = "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -531,6 +544,17 @@ checksum = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e"
 
 [[package]]
 name = "syn"
+version = "2.0.119"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "872831b642d1a07999a962a351ed35b955ea2cfc8f3862091e2a240a84f17297"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
+name = "syn"
 version = "3.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8593e8e72159ed2257d083c7a454a85cbf854f37a0966d8d483aff8c8a3ebcee"
@@ -557,7 +581,7 @@ checksum = "fe5197923287db20a58125f0bc85c062f7f2c892de97b18c356f9efb14b28524"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 3.0.6",
 ]
 
 [[package]]

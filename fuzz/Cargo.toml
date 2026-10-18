@@ -28,15 +28,18 @@ base64 = "0.23.1"
 brotli = "9.0.0"
 flate2 = "1.1.10"
 libfuzzer-sys = "0.4.13"
+# The values the `json_lines` target expects each framed record to decode to.
+serde_json = "1.0.145"
 zstd = "0.14.2"
 
 # The baseline, plus only the features a fuzzed parser lives behind, since a
 # smaller graph is a faster instrumented build: `multipart` for its
-# `Content-Disposition` reader and `compression` for request decompression.
+# `Content-Disposition` reader, `compression` for request decompression, and
+# `json` with `openapi32` for the `JsonLines` and `JsonSeq` record framer.
 [dependencies.kynos]
 path = "../crates/kynos"
 default-features = false
-features = ["openapi31", "multipart", "compression"]
+features = ["openapi32", "multipart", "compression", "json"]
 
 [[bin]]
 name = "accept"
@@ -90,6 +93,13 @@ bench = false
 [[bin]]
 name = "forwarded"
 path = "fuzz_targets/forwarded.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "json_lines"
+path = "fuzz_targets/json_lines.rs"
 test = false
 doc = false
 bench = false
