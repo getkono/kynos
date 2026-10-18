@@ -6,7 +6,9 @@ use crate::{
         Observer,
         request_id::{CorrelationHeaders, RequestId, XRequestId},
     },
+    router::operation::Route,
 };
+use kynos_openapi::Method;
 
 /// A header map from pairs.
 fn map(fields: &[(&str, &str)]) -> HeaderMap {
@@ -187,6 +189,29 @@ fn the_closing_event_carries_the_assigned_identifier() {
     assert!(lines.contains("response sent"), "{lines}");
     assert!(lines.contains("status=200"), "{lines}");
     assert!(lines.contains("request_id=\"minted\""), "{lines}");
+}
+
+/// The closing event names the matched operation's method, so it joins on its
+/// own, and the placeholder where nothing matched, so its shape never varies.
+#[test]
+fn the_closing_event_carries_the_method() {
+    let response = crate::http::Response::new(crate::http::body::Body::empty());
+    let route = Route::new("/users/{id}", "deleteUser", Method::Delete);
+
+    let matched = captured(|| {
+        Observer::<()>::on_response(
+            &Trace::new(),
+            &response,
+            Some(route),
+            std::time::Duration::ZERO,
+        );
+    });
+    let unmatched = captured(|| {
+        Observer::<()>::on_response(&Trace::new(), &response, None, std::time::Duration::ZERO);
+    });
+
+    assert!(matched.contains("method=DELETE "), "{matched}");
+    assert!(unmatched.contains("method=<unmatched> "), "{unmatched}");
 }
 
 /// A group of two names, to tell the first declared from the first present.
