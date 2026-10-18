@@ -2498,6 +2498,50 @@ mod schema {
         }
     }
 
+    /// serde never writes an identifier enum, so a variant whose own name an
+    /// earlier one claims puts nothing on the wire: the name reads as the
+    /// earlier variant, and the description lists it once.
+    #[test]
+    fn an_identifier_enums_shadowed_variant_is_accepted() {
+        for declaration in [
+            quote::quote!(
+                #[serde(field_identifier)]
+                enum Key {
+                    A,
+                    #[serde(skip, rename = "A")]
+                    B,
+                }
+            ),
+            quote::quote!(
+                #[serde(field_identifier)]
+                enum Key {
+                    A,
+                    #[serde(rename = "A")]
+                    B,
+                }
+            ),
+            quote::quote!(
+                #[serde(variant_identifier)]
+                enum Kind {
+                    A,
+                    #[serde(skip_deserializing, rename = "A")]
+                    B,
+                }
+            ),
+        ] {
+            let input: DeriveInput = syn::parse2(declaration).expect("the case itself must parse");
+            let expansion = match expand_inner(&input) {
+                Ok(expansion) => expansion.to_string(),
+                Err(error) => panic!("an identifier enum's shadowed variant must expand: {error}"),
+            };
+            assert_eq!(
+                expansion.matches("\"A\"").count(),
+                1,
+                "the shared name must be described once: {expansion}"
+            );
+        }
+    }
+
     /// `skip_serializing_if` is accepted wherever serde may leave the field out
     /// in both directions, or never reads it at all.
     ///
