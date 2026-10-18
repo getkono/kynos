@@ -142,6 +142,15 @@ fn the_index_is_whichever_file_the_set_named() {
     assert_eq!(directories, ["css/"]);
 }
 
+/// A `Cache-Control` that is no field value is refused where the set is
+/// configured, rather than left off every asset the set then describes as
+/// carrying it.
+#[test]
+#[should_panic(expected = "is not a Cache-Control field value")]
+fn a_cache_control_that_is_no_field_value_is_refused_where_it_is_set() {
+    let _ = AssetSet::embedded(SET).cache_control("max-age=60\n");
+}
+
 // --- A hand-built asset, checked ------------------------------------------
 
 /// The variant's name, by an exhaustive `match`: a variant added to

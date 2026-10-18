@@ -34,7 +34,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct Directory {
     root: PathBuf,
-    cache_control: Option<&'static str>,
+    cache_control: Option<HeaderValue>,
     index: Option<&'static str>,
 }
 
@@ -52,22 +52,29 @@ impl Directory {
         let root = root.into();
         Self {
             root: std::path::absolute(&root).unwrap_or(root),
-            cache_control: Some(super::DEFAULT_CACHE_CONTROL),
+            cache_control: Some(super::default_cache_control()),
             index: Some("index.html"),
         }
     }
 
     /// The `Cache-Control` every file carries.
+    ///
+    /// # Panics
+    ///
+    /// If `value` is not a field value (RFC 9110 section 5.5), such as one
+    /// holding a control character. It is configuration, so it is refused here
+    /// rather than left off every file served.
     #[must_use]
+    #[track_caller]
     pub fn cache_control(mut self, value: &'static str) -> Self {
-        self.cache_control = Some(value);
+        self.cache_control = Some(super::cache_control(value));
         self
     }
 
     /// `public, max-age=31536000, immutable`, for a fingerprinted directory.
     #[must_use]
     pub fn immutable(mut self) -> Self {
-        self.cache_control = Some("public, max-age=31536000, immutable");
+        self.cache_control = Some(super::immutable_cache_control());
         self
     }
 
@@ -188,7 +195,7 @@ fn etag(metadata: &std::fs::Metadata) -> Option<String> {
 #[derive(Clone, Debug)]
 struct FileHeaders {
     etag: Option<String>,
-    cache_control: Option<&'static str>,
+    cache_control: Option<HeaderValue>,
 }
 
 impl HeaderParams for FileHeaders {
@@ -206,11 +213,8 @@ impl EncodeHeaders for FileHeaders {
         {
             fields.push((header::ETAG, etag));
         }
-        if let Some(value) = self
-            .cache_control
-            .and_then(|value| HeaderValue::from_str(value).ok())
-        {
-            fields.push((header::CACHE_CONTROL, value));
+        if let Some(value) = &self.cache_control {
+            fields.push((header::CACHE_CONTROL, value.clone()));
         }
 
         Ok(fields)
@@ -232,7 +236,7 @@ async fn serve(directory: &Directory, request: &Request) -> Response {
 
     let headers = FileHeaders {
         etag: etag(&metadata),
-        cache_control: directory.cache_control,
+        cache_control: directory.cache_control.clone(),
     };
 
     // Section 13.2.2 step 1, which a weak tag passes only as `*`: see `etag`.

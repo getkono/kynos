@@ -106,6 +106,10 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
     }
 
     /// How long this representation may be reused.
+    ///
+    /// A value that is no field value (RFC 9110 section 5.5) has
+    /// [`deliver`](Self::deliver) answer 500 in place of each response that
+    /// would carry it: the 200, the 206 and the 304.
     #[must_use]
     pub fn cache_control(mut self, value: impl Into<String>) -> Self {
         self.cache_control = Some(value.into());
@@ -162,11 +166,10 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
 
         // Steps 3 and 4: the cache validations.
         if self.unmodified(conditions) {
-            return Ok(Delivery::new(self.head(
-                StatusCode::NOT_MODIFIED,
-                None,
-                complete_length,
-            )));
+            let response = self
+                .head(StatusCode::NOT_MODIFIED, None, complete_length)
+                .unwrap_or_else(crate::extract::params::header::refused);
+            return Ok(Delivery::new(response));
         }
 
         // Section 14.2: the field is read only where a 200 was owed.
@@ -185,7 +188,12 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
             Selection::Part { first, last, .. } => (first, last),
         };
 
-        let mut response = self.head(selection.status(), Some(selection), complete_length);
+        // A refused head is answered as it is: the content goes only under
+        // the fields that describe it.
+        let Some(mut response) = self.head(selection.status(), Some(selection), complete_length)
+        else {
+            return Ok(Delivery::new(crate::extract::params::header::refused()));
+        };
 
         // Section 9.3.2: a HEAD sends every field above but no content.
         if conditions.method != Method::HEAD && complete_length > 0 {
@@ -200,12 +208,15 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
     }
 
     /// The response fields, for whichever status is being sent.
+    ///
+    /// `None` where a field cannot be encoded: the caller sends the shared
+    /// refusal in its place, and never with the content.
     fn head(
         &self,
         status: StatusCode,
         selection: Option<Selection>,
         complete_length: u64,
-    ) -> Response {
+    ) -> Option<Response> {
         let mut response = Response::new(crate::http::body::Body::empty());
         *response.status_mut() = status;
         let fields = response.headers_mut();
@@ -215,21 +226,21 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
         // beyond its validators and `Cache-Control`, so the name stays here too.
         if status != StatusCode::NOT_MODIFIED {
             if crate::extract::params::header::write(fields, &AcceptRanges).is_err() {
-                return crate::extract::params::header::refused();
+                return None;
             }
             if let Ok(value) = HeaderValue::from_str(M::MEDIA_TYPE) {
                 fields.insert(header::CONTENT_TYPE, value);
             }
             if let Some(disposition) = &self.disposition {
                 if crate::extract::params::header::write(fields, disposition).is_err() {
-                    return crate::extract::params::header::refused();
+                    return None;
                 }
             }
         }
 
         if let Some(etag) = &self.etag {
             if crate::extract::params::header::write(fields, etag).is_err() {
-                return crate::extract::params::header::refused();
+                return None;
             }
         }
         if let Some(value) = self
@@ -239,11 +250,10 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
         {
             fields.insert(header::LAST_MODIFIED, value);
         }
-        if let Some(value) = self
-            .cache_control
-            .as_deref()
-            .and_then(|value| HeaderValue::from_str(value).ok())
-        {
+        if let Some(value) = &self.cache_control {
+            let Ok(value) = HeaderValue::from_str(value) else {
+                return None;
+            };
             fields.insert(header::CACHE_CONTROL, value);
         }
 
@@ -263,7 +273,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
                 )
                 .is_err()
                 {
-                    return crate::extract::params::header::refused();
+                    return None;
                 }
                 if let Ok(value) = HeaderValue::from_str(&(last - first + 1).to_string()) {
                     fields.insert(header::CONTENT_LENGTH, value);
@@ -277,7 +287,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
             None => {}
         }
 
-        response
+        Some(response)
     }
 
     /// The tag as it is spelled on the wire, for `If-Range`.

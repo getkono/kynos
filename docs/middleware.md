@@ -45,8 +45,10 @@ answers 500 in place of the response, as a body that failed to serialize does.
 `ETag` and `SetCookies` refuse the same way: an `ETag` that is no
 `entity-tag`, and a `SetCookies` group holding one cookie that is no field
 value, which refuses the whole group rather than sending the others. A
-`Cache-Control` given to an asset set, a `Directory`, or a `Served` is not yet
-held to this: one that is no field value is omitted.
+`Cache-Control` that is no field value is refused too: `Served` takes it at run
+time, so `deliver` answers 500 in place of each response that would carry it;
+an asset set and a `Directory` take a `&'static str`, so `cache_control`
+panics where it is configured, before any response is served.
 
 ## Soundness, not exactness
 
