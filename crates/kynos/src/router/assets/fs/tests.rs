@@ -375,6 +375,38 @@ async fn a_whole_file_is_streamed_in_spans() {
     }
 }
 
+/// A file that shrinks after its head was built fails the body rather than
+/// ending it short of the `Content-Length` already sent (RFC 9110 section
+/// 14.4).
+#[tokio::test]
+async fn a_file_that_shrank_fails_its_body() {
+    use http_body_util::BodyExt;
+
+    let scratch = Scratch::new("a_file_that_shrank_fails_its_body");
+    let path = scratch.0.join("root/large.bin");
+    std::fs::create_dir_all(path.parent().expect("a parent")).expect("its parents");
+    let length = 2 * 64 * 1024;
+    std::fs::write(&path, patterned(length, 0)).expect("a file");
+
+    let directory = Directory::new(scratch.0.join("root"));
+    let response = super::serve(&directory, &routed("/static/large.bin")).await;
+    assert_eq!(response.status(), crate::http::StatusCode::OK);
+
+    std::fs::write(&path, patterned(length / 2, 0)).expect("a shorter file");
+
+    let error = response
+        .into_body()
+        .collect()
+        .await
+        .expect_err("a body shorter than its length");
+    assert!(
+        error
+            .downcast_ref::<crate::response::range::source::Truncated>()
+            .is_some(),
+        "{error}"
+    );
+}
+
 /// An empty file is a 200 with an empty body, not a one-octet read that the
 /// file cannot fill.
 #[tokio::test]

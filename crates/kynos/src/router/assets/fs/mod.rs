@@ -23,7 +23,11 @@ use crate::{
     extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http::{HeaderValue, Request, Response, StatusCode, header},
     middleware::catch_panic::PanicPolicy,
-    response::range::{Selection, spec},
+    response::range::{
+        Selection,
+        source::{ByteSource, Spans},
+        spec,
+    },
     router::{
         Router,
         assets::{media, range},
@@ -263,33 +267,69 @@ async fn serve(directory: &Directory, request: &Request) -> Response {
         Err(rejection) => return range::unsatisfiable(rejection),
     };
 
-    let read = match selection {
-        Selection::Whole(_) => tokio::fs::read(&path).await.map(Bytes::from),
-        Selection::Part { first, last, .. } => span(&path, first, last).await,
-    };
-    let Ok(body) = read else {
+    // Opened here, so a file that cannot be opened is still a 404 rather than
+    // a head followed by a failed body. Opening reads nothing: the body reads
+    // once polled, so a HEAD, whose body is dropped (section 9.3.2), reads
+    // none of the file. Just opened, so its cursor is at 0.
+    let Ok(file) = tokio::fs::File::open(&path).await else {
         return refused(StatusCode::NOT_FOUND);
     };
+    let source = std::sync::Arc::new(Opened(tokio::sync::Mutex::new((file, 0))));
+
+    // An empty file has no last offset, so it gets an empty body.
+    let body = match selection {
+        Selection::Whole(_) => metadata.len().checked_sub(1).map(|last| (0, last)),
+        Selection::Part { first, last, .. } => Some((first, last)),
+    }
+    .map_or_else(crate::http::body::Body::empty, |(first, last)| {
+        crate::http::body::Body::from_body(Spans::new(source, first, last))
+    });
 
     range::assembled(body, selection, media_type(&path), &headers)
 }
 
-/// The bytes from `first` to `last` inclusive, without reading the rest.
+/// A located file, read one [`SPAN`](crate::response::range::source::SPAN)
+/// at a time as its body is polled.
 ///
-/// `read_exact`, so a file that shrank since `stat` is a failed read rather
-/// than fewer octets than `Content-Range` names (RFC 9110 section 14.4).
-async fn span(path: &Path, first: u64, last: u64) -> std::io::Result<Bytes> {
-    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+/// Held open for the whole response, so a file renamed over mid-response is
+/// not spliced into it. One that shrank since `stat` fails the body with
+/// [`Truncated`](crate::response::range::source::Truncated) rather than ending
+/// short of the length the head named (RFC 9110 section 14.4).
+///
+/// Holds the file and the offset its cursor is at, so a read continuing where
+/// the last one stopped does not seek. A mutex only because `read_span` takes
+/// `&self`: `Spans` keeps one read in flight, so it is never contended.
+#[derive(Debug)]
+struct Opened(tokio::sync::Mutex<(tokio::fs::File, u64)>);
 
-    let mut file = tokio::fs::File::open(path).await?;
-    file.seek(std::io::SeekFrom::Start(first)).await?;
+impl ByteSource for Opened {
+    type Error = std::io::Error;
 
-    // `first <= last < length`, so this cannot wrap.
-    let length = usize::try_from(last - first + 1).unwrap_or(usize::MAX);
-    let mut buffer = vec![0_u8; length];
-    file.read_exact(&mut buffer).await?;
+    /// What `fstat` says; [`serve`] sizes the body from its `stat`, so never asks.
+    async fn complete_length(&self) -> Result<u64, Self::Error> {
+        Ok(self.0.lock().await.0.metadata().await?.len())
+    }
 
-    Ok(Bytes::from(buffer))
+    async fn read_span(&self, first: u64, last: u64) -> Result<Bytes, Self::Error> {
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+        let mut guard = self.0.lock().await;
+        let (file, cursor) = &mut *guard;
+
+        if *cursor != first {
+            file.seek(std::io::SeekFrom::Start(first)).await?;
+            *cursor = first;
+        }
+
+        // `first <= last`, so this cannot wrap; `Spans` asks for one span at
+        // most, so it is never more than that.
+        let length = usize::try_from(last - first + 1).unwrap_or(usize::MAX);
+        let mut buffer = bytes::BytesMut::with_capacity(length);
+        let read = file.read_buf(&mut buffer).await?;
+        *cursor = cursor.saturating_add(u64::try_from(read).unwrap_or(u64::MAX));
+
+        Ok(buffer.freeze())
+    }
 }
 
 /// An empty response with `status`.

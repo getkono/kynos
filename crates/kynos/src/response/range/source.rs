@@ -177,7 +177,7 @@ fn clamped(octets: &Bytes, first: u64, last: u64) -> Bytes {
 ///
 /// An [`http_body::Body`] rather than a `Stream`: `futures_core` is gated on
 /// `openapi32` and ranged delivery is not.
-pub(super) struct Spans<S: ByteSource> {
+pub(crate) struct Spans<S: ByteSource> {
     source: std::sync::Arc<S>,
     /// The next offset to read, and the last one enclosed.
     cursor: u64,
@@ -205,7 +205,7 @@ impl<S: ByteSource> std::fmt::Debug for Spans<S> {
 
 impl<S: ByteSource> Spans<S> {
     /// Reads `first..=last` from `source`, one [`SPAN`] at a time.
-    pub(super) fn new(source: std::sync::Arc<S>, first: u64, last: u64) -> Self {
+    pub(crate) fn new(source: std::sync::Arc<S>, first: u64, last: u64) -> Self {
         Self {
             source,
             cursor: first,
