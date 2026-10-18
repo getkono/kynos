@@ -3733,6 +3733,38 @@ fn an_identifier_enums_skipped_variant_is_described() {
     );
 }
 
+// serde's derive matches the shared name twice, and the second arm is the
+// unreachable pattern this module allows: serde reads it as `A` alone.
+#[allow(unreachable_patterns)]
+mod shadowed {
+    use kynos::Schema;
+
+    #[derive(Debug, PartialEq, Schema, serde::Deserialize)]
+    #[serde(field_identifier)]
+    pub(super) enum Shadowed {
+        A,
+        #[serde(skip, rename = "A")]
+        B,
+    }
+}
+
+/// An identifier enum's variant under a name an earlier one claims is
+/// accepted: serde never writes the enum and reads the name as the earlier
+/// variant, which is all the description states.
+#[test]
+fn an_identifier_enums_shadowed_variant_is_described_once() {
+    use shadowed::Shadowed;
+
+    assert_eq!(
+        emitted::<Shadowed>(),
+        serde_json::json!({"type": "string", "enum": ["A"]})
+    );
+    assert_eq!(
+        serde_json::from_str::<Shadowed>(r#""A""#).ok(),
+        Some(Shadowed::A)
+    );
+}
+
 // --- What a derived error response declares ---------------------------------
 //
 // A problem body carries the type URI the declaration named, so the response
