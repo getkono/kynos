@@ -39,10 +39,16 @@ use crate::{
 
 /// The media type a request declares, split from its parameters.
 ///
-/// `None` when the header is absent or not text, which codecs treat as
-/// unacceptable.
+/// `None` when the header is absent, not text, or sent on more than one field
+/// line, which codecs treat as unacceptable. `Content-Type` is a singleton
+/// field whose repeats recipients resolve inconsistently (RFC 9110 section
+/// 8.3), so reading either line could disagree with an intermediary.
 fn content_type(headers: &HeaderMap) -> Option<(&str, &str)> {
-    let value = headers.get(header::CONTENT_TYPE)?.to_str().ok()?;
+    let mut lines = headers.get_all(header::CONTENT_TYPE).iter();
+    let value = lines.next()?.to_str().ok()?;
+    if lines.next().is_some() {
+        return None;
+    }
     let (media_type, parameters) = value.split_once(';').unwrap_or((value, ""));
     Some((media_type.trim(), parameters))
 }
@@ -111,13 +117,16 @@ fn offers_any(headers: &HeaderMap, media_types: &[&str]) -> bool {
         .any(|media_type| offers(headers, media_type))
 }
 
-/// The 415 a body extractor raises, quoting what the client offered.
+/// The 415 a body extractor raises, quoting what the client offered: every
+/// `Content-Type` line that is text, in order and joined by `, `.
 fn unsupported_media_type(headers: &HeaderMap) -> BodyRejection {
+    let received: Vec<_> = headers
+        .get_all(header::CONTENT_TYPE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .collect();
     BodyRejection::UnsupportedMediaType {
-        received: headers
-            .get(header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_owned),
+        received: (!received.is_empty()).then(|| received.join(", ")),
     }
 }
 
