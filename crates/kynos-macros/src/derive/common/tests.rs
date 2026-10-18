@@ -193,52 +193,99 @@ fn a_split_rename_all_is_refused_even_where_its_sides_agree() {
     assert!(error.to_string().contains("split `rename_all`"), "{error}");
 }
 
-/// Each shape of value `skip_value` has to step over, with a `rename`
-/// behind it.
-///
-/// The whole reason `skip_value` exists is that consuming the rest of the
-/// input would swallow every later item, so an attribute would silently
-/// lose everything after its first unrecognized key. That defect is
-/// invisible from the outside -- the name simply falls back to the
-/// identifier -- which is why the `rename` sits *after* the key being
-/// skipped in every row.
+/// A key the attribute does not take is refused in every shape it may be
+/// written in, `rename` behind it or not: skipped, a misspelled `rename` was a
+/// name that silently fell back to the identifier.
 #[test]
-fn an_unrecognized_key_does_not_swallow_the_keys_after_it() {
-    for (shape, skipped) in [
-        ("a named value", quote!(unknown = 1)),
+fn an_unrecognized_key_is_refused_whatever_its_shape() {
+    for (shape, unknown) in [
+        ("a named value", quote!(renam = "chosen")),
         ("a parenthesized group", quote!(unknown(a, b))),
         ("a bare path", quote!(unknown)),
+        ("a qualified path", quote!(serde::rename = "chosen")),
     ] {
+        for written in [quote!(#unknown), quote!(#unknown, rename = "chosen")] {
+            let declaration = quote! {
+                struct Holder {
+                    #[param(#written)]
+                    user_id: u64
+                }
+            };
+
+            let error = name_of(declaration, "param").expect_err(shape);
+            assert!(
+                error
+                    .to_string()
+                    .contains("is not part of the `#[param(...)]` grammar"),
+                "{shape}: {error}"
+            );
+        }
+    }
+}
+
+/// `value` fixes a header's value, so `#[header]` takes it and the other
+/// locations' attributes refuse it.
+#[test]
+fn value_is_a_header_key_alone() {
+    for attribute in ["param", "cookie"] {
+        let path = syn::Ident::new(attribute, proc_macro2::Span::call_site());
         let declaration = quote! {
             struct Holder {
-                #[param(#skipped, rename = "chosen")]
+                #[#path(value = "fixed")]
                 user_id: u64
             }
         };
 
-        assert_eq!(
-            name_of(declaration, "param").expect("a wire name"),
-            "chosen",
-            "{shape} must be stepped over, not consumed"
+        let error = name_of(declaration, attribute).expect_err(attribute);
+        assert!(
+            error.to_string().contains("`value` is not part of"),
+            "{attribute}: {error}"
         );
     }
-}
 
-/// An attribute this derive does not model is not a mistake, so a key it
-/// does not know is skipped rather than refused.
-#[test]
-fn an_unrecognized_key_alone_is_not_an_error() {
     let declaration = quote! {
         struct Holder {
-            #[param(unknown = 1)]
-            user_id: u64
+            #[header(value = "fixed")]
+            user_id: ()
         }
     };
-
     assert_eq!(
-        name_of(declaration, "param").expect("a wire name"),
+        name_of(declaration, "header").expect("a wire name"),
         "user_id"
     );
+}
+
+/// A key is read once per field, across every list of its attribute, so a
+/// second `rename` is refused rather than silently replacing the first.
+#[test]
+fn a_repeated_key_is_refused_within_and_across_lists() {
+    for (shape, declaration) in [
+        (
+            "within one list",
+            quote! {
+                struct Holder {
+                    #[param(rename = "first", rename = "second")]
+                    user_id: u64
+                }
+            },
+        ),
+        (
+            "across two lists",
+            quote! {
+                struct Holder {
+                    #[param(rename = "first")]
+                    #[param(rename = "second")]
+                    user_id: u64
+                }
+            },
+        ),
+    ] {
+        let error = name_of(declaration, "param").expect_err(shape);
+        assert!(
+            error.to_string().contains("`rename` is already set"),
+            "{shape}: {error}"
+        );
+    }
 }
 
 /// A Kynos attribute belonging to another derive is not this one's to read.
@@ -472,6 +519,26 @@ fn cases() -> Vec<(&'static str, syn::Result<()>, &'static str)> {
                 }
             )),
             "split `rename_all`",
+        ),
+        (
+            "a key the location's attribute does not take",
+            named_by(quote!(
+                struct Holder {
+                    #[param(renam = "userId")]
+                    user_id: u64,
+                }
+            )),
+            "is not part of the `#[param(...)]` grammar",
+        ),
+        (
+            "a key written twice, the second silently replacing the first",
+            named_by(quote!(
+                struct Holder {
+                    #[param(rename = "userId", rename = "user")]
+                    user_id: u64,
+                }
+            )),
+            "`rename` is already set",
         ),
         (
             "two fields on one wire name",

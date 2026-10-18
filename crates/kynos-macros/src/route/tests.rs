@@ -674,6 +674,15 @@ mod arguments {
                 "already names a tag",
             ),
             (
+                "a second argument of the same name, which would silently replace the first",
+                quote!(
+                    path = "/health",
+                    operation_id = "getHealth",
+                    operation_id = "health"
+                ),
+                "`operation_id` is already given",
+            ),
+            (
                 "an argument no attribute reads",
                 quote!(path = "/health", nonsense = "x"),
                 "unknown route argument",
@@ -750,6 +759,34 @@ mod arguments {
         };
 
         assert!(error.to_string().contains("unknown route argument"));
+    }
+
+    /// Each argument is read once. The bare path literal becomes `path = ...`
+    /// before this parser sees it, so `#[kynos::get("/a", path = "/b")]` is
+    /// the first row; a second `tag` has its own diagnostic, counted above.
+    #[test]
+    fn every_argument_is_refused_a_second_time() {
+        for (argument, tokens) in [
+            ("path", quote!(path = "/health", path = "/status")),
+            (
+                "operation_id",
+                quote!(path = "/health", operation_id = "a", operation_id = "b"),
+            ),
+            (
+                "catch_panics",
+                quote!(path = "/health", catch_panics, catch_panics),
+            ),
+        ] {
+            let Err(error) = RouteArgs::parse(tokens) else {
+                panic!("a second `{argument}` must be rejected");
+            };
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("`{argument}` is already given")),
+                "{argument}: {error}"
+            );
+        }
     }
 
     #[test]
@@ -954,10 +991,71 @@ mod routes {
 /// the one answer that moves with a feature, which only `test:baseline`'s
 /// build sees from the other side.
 mod operation_method {
-    use crate::route::unmountable;
+    use quote::quote;
+
+    use crate::route::{split_method, unmountable};
 
     #[test]
     fn query_is_mountable_exactly_under_openapi32() {
         assert_eq!(unmountable("QUERY").is_none(), cfg!(feature = "openapi32"));
+    }
+
+    /// One row per `syn::Error::new` site in `split_method`, counted below.
+    fn cases() -> Vec<(&'static str, proc_macro2::TokenStream, &'static str)> {
+        vec![
+            (
+                "no method at all",
+                quote!(path = "/health"),
+                "needs `method = \"...\"`",
+            ),
+            (
+                "a second method, which would silently replace the first",
+                quote!(method = "GET", path = "/health", method = "POST"),
+                "`method` is already given",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_case_raises_the_diagnostic_it_names() {
+        for (description, tokens, expected) in cases() {
+            let Err(error) = split_method(tokens) else {
+                panic!("{description} must be rejected");
+            };
+            let reported = error.to_string();
+            assert!(
+                reported.contains(expected),
+                "{description}: expected a diagnostic containing {expected:?}, got {reported:?}"
+            );
+        }
+    }
+
+    /// A count, not a mapping, as for the route arguments: `split_method`'s
+    /// sites, the text between its signature and the function after it.
+    #[test]
+    fn every_operation_method_diagnostic_has_a_case() {
+        const SOURCE: &str = include_str!("mod.rs");
+
+        let body = SOURCE
+            .split_once("fn split_method(")
+            .and_then(|(_, rest)| rest.split_once("\n}\n"))
+            .map(|(body, _)| body)
+            .expect("`split_method` is in `mod.rs`");
+        let sites = body.matches("syn::Error::new(").count();
+        assert_eq!(
+            cases().len(),
+            sites,
+            "`split_method` raises {sites} diagnostic(s) and {} have a case",
+            cases().len()
+        );
+    }
+
+    #[test]
+    fn the_method_is_taken_out_of_the_shared_arguments() {
+        let (method, remaining) =
+            split_method(quote!(method = "PATCH", path = "/health")).expect("a method and a path");
+
+        assert_eq!(method.value(), "PATCH");
+        assert_eq!(remaining.to_string(), quote!(path = "/health").to_string());
     }
 }
