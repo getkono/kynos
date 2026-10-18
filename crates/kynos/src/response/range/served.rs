@@ -442,9 +442,20 @@ impl<M: MediaType> crate::response::Responses for Delivery<M> {
 pub struct Conditions {
     /// The method.
     pub(super) method: Method,
-    /// The request head, read by `spec::read` and the precondition checks.
+    /// The fields [`READ`] names, read by `spec::read` and the precondition
+    /// checks.
     pub(super) fields: crate::http::HeaderMap,
 }
+
+/// The fields a ranged delivery reads, which [`Conditions`] keeps.
+const READ: [crate::http::HeaderName; 6] = [
+    header::RANGE,
+    header::IF_RANGE,
+    header::IF_MATCH,
+    header::IF_UNMODIFIED_SINCE,
+    header::IF_NONE_MATCH,
+    header::IF_MODIFIED_SINCE,
+];
 
 impl<C: Sync> crate::extract::FromRequestParts<C> for Conditions {
     type Rejection = std::convert::Infallible;
@@ -452,9 +463,18 @@ impl<C: Sync> crate::extract::FromRequestParts<C> for Conditions {
     /// Infallible: every unusable value among the six is ignored or fails its
     /// condition (RFC 9110 sections 13.1, 14.2).
     async fn from_request_parts(parts: &mut Parts, _context: &C) -> Result<Self, Self::Rejection> {
+        // Only the six fields, every line of each: a request carrying none of
+        // them costs no allocation, and the rest of the head is not copied.
+        let mut fields = crate::http::HeaderMap::new();
+        for name in READ {
+            for value in parts.headers.get_all(&name) {
+                fields.append(name.clone(), value.clone());
+            }
+        }
+
         Ok(Self {
             method: parts.method.clone(),
-            fields: parts.headers.clone(),
+            fields,
         })
     }
 }

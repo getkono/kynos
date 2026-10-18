@@ -704,6 +704,66 @@ async fn untagged_status(fields: &[(HeaderName, &str)]) -> StatusCode {
         .status()
 }
 
+/// The extractor keeps every line of the six fields it reads, in order, and
+/// nothing else of the head.
+///
+/// Every line, because the readers count them: a second `Range` line is
+/// [`Ignored::Repeated`], and a second `If-Modified-Since` voids the date.
+#[tokio::test]
+async fn conditions_keep_every_line_of_the_fields_they_read_and_nothing_else() {
+    use crate::extract::FromRequestParts;
+
+    let read = [
+        (header::RANGE, "bytes=0-1"),
+        (header::RANGE, "bytes=2-3"),
+        (header::IF_RANGE, "\"b\""),
+        (header::IF_MATCH, "\"a\""),
+        (header::IF_MATCH, "\"b\""),
+        (header::IF_UNMODIFIED_SINCE, "Sun, 06 Nov 1994 08:49:37 GMT"),
+        (header::IF_NONE_MATCH, "\"c\""),
+        (header::IF_MODIFIED_SINCE, "Sun, 06 Nov 1994 08:49:37 GMT"),
+    ];
+    let mut parts = http::Request::new(()).into_parts().0;
+    parts
+        .headers
+        .append(header::ACCEPT, HeaderValue::from_static("*/*"));
+    for (name, value) in &read {
+        parts.headers.append(name, HeaderValue::from_static(value));
+    }
+
+    let Ok(conditions) = Conditions::from_request_parts(&mut parts, &()).await;
+
+    let kept: Vec<(&HeaderName, &str)> = conditions
+        .fields
+        .iter()
+        .map(|(name, value)| (name, value.to_str().expect("visible ASCII")))
+        .collect();
+    let expected: Vec<(&HeaderName, &str)> =
+        read.iter().map(|(name, value)| (name, *value)).collect();
+    assert_eq!(kept, expected);
+    assert_eq!(
+        parts.headers.len(),
+        read.len() + 1,
+        "extracting reads the head and leaves it whole"
+    );
+}
+
+/// No precondition field, no allocation: the map stays the empty one.
+#[tokio::test]
+async fn conditions_over_a_head_without_the_fields_hold_an_empty_map() {
+    use crate::extract::FromRequestParts;
+
+    let mut parts = http::Request::new(()).into_parts().0;
+    parts
+        .headers
+        .append(header::ACCEPT, HeaderValue::from_static("*/*"));
+
+    let Ok(conditions) = Conditions::from_request_parts(&mut parts, &()).await;
+
+    assert!(conditions.fields.is_empty());
+    assert_eq!(conditions.fields.capacity(), 0);
+}
+
 /// Section 13.1.2: `If-None-Match: *` is false wherever a current
 /// representation exists, which a readable length proves with or without an
 /// entity tag. A list of tags still needs a tag to name.
