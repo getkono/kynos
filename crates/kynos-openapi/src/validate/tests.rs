@@ -4394,6 +4394,46 @@ fn a_verdict_reached_through_a_cut_cycle_is_not_remembered() {
     );
 }
 
+/// A verdict reached by assuming a component still being followed is reused
+/// while that component is followed, so a chain whose every link references
+/// the next twice and whose last link closes the cycle is judged in linear
+/// rather than exponential time: at 64 links the latter never finishes, and
+/// nextest's bound reports it.
+#[test]
+fn a_verdict_reached_through_a_cut_cycle_is_reused_within_it() {
+    const LINKS: usize = 64;
+    let link = |index: usize| format!("Link{index}");
+    let mut schemas: Vec<(String, Schema)> = (0..LINKS)
+        .map(|index| {
+            let next = Schema::component(&link(index + 1));
+            let doubled = SchemaObject {
+                any_of: Some(vec![next.clone(), next]),
+                ..SchemaObject::default()
+            };
+            (link(index), object(doubled))
+        })
+        .collect();
+    let closing = SchemaObject {
+        all_of: Some(vec![Schema::component(&link(0))]),
+        ..SchemaObject::default()
+    };
+    schemas.push((link(LINKS), object(closing)));
+    schemas.push((
+        "Pet".to_owned(),
+        object(discriminated(vec![Schema::component(&link(0))])),
+    ));
+    let document = document_with_schemas(
+        schemas
+            .iter()
+            .map(|(name, schema)| (name.as_str(), schema.clone())),
+    );
+
+    assert_eq!(
+        discriminator_errors(&document, SpecVersion::V3_1),
+        Vec::<(String, &str)>::new()
+    );
+}
+
 /// The discriminator violations validating, as 3.1, a `Pet` discriminated
 /// over `branch` alone raises, each at its `discriminator`.
 fn single_branch_errors(branch: SchemaObject) -> Vec<&'static str> {
