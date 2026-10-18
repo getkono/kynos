@@ -4012,6 +4012,7 @@ mod protocol_configuration {
     }
 
     /// One row per condition: what was set, and what it must be told.
+    #[expect(clippy::too_many_lines)]
     fn cases() -> Vec<(&'static str, Http1Config, Http2Config, &'static str)> {
         vec![
             (
@@ -4519,11 +4520,14 @@ async fn a_request_head_past_the_http1_header_cap_is_answered_431() {
 /// and `Connection: close` among them.
 #[cfg(feature = "http1")]
 fn request_http1_with_fields(address: std::net::SocketAddr, fields: usize) -> String {
-    use std::io::{Read as _, Write as _};
+    use std::{
+        fmt::Write as _,
+        io::{Read as _, Write as _},
+    };
 
     let mut head = String::from("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n");
     for field in 2..fields {
-        head.push_str(&format!("X-Field-{field}: {field}\r\n"));
+        write!(head, "X-Field-{field}: {field}\r\n").expect("a String takes any write");
     }
     head.push_str("\r\n");
 
