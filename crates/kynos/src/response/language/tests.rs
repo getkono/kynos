@@ -719,6 +719,17 @@ fn the_order_a_client_lists_its_ranges_in_is_a_preference() {
     assert_eq!(chosen("en, fr-CA", &["en", "fr"]), Some("en"));
 }
 
+/// Client order ranks above match kind, so Lookup only wins within one range.
+///
+/// `de-AT` merely extends the first range and `en` is an exact match for the
+/// second, yet the client who listed `de` first is served German: the match
+/// kind separates tags the same range reaches, never two ranges the client
+/// ranked.
+#[test]
+fn a_filtering_first_choice_beats_an_exact_second_one() {
+    assert_eq!(chosen("de, en", &["en", "de-AT"]), Some("de-AT"));
+}
+
 /// A weight still outranks the order, because section 12.4.2 is normative
 /// about what a weight means and the order is a convention on top of it.
 #[test]
