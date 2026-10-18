@@ -369,7 +369,7 @@ mod relaxed {
             response::{Response, Responses},
             security::{SecurityScheme, requirement::SecurityRequirement},
         },
-        validate::violation::SpecError,
+        validate::violation::{Severity, SpecError, Violation},
     };
 
     /// A document whose one operation answers `200` with `response`.
@@ -500,6 +500,46 @@ mod relaxed {
             );
             assert!(three_two_only_constructs(&declared).is_empty());
         }
+    }
+
+    /// A name declared under `components.securitySchemes` is that scheme's
+    /// name, however much it looks like a URI, so requiring it is no blocker.
+    #[test]
+    fn a_declared_name_shaped_like_a_uri_is_no_blocker() {
+        for document in [
+            answering(
+                Response::new("ok"),
+                Some(SecurityRequirement::scheme("./bearer")),
+            ),
+            described().with_security(SecurityRequirement::scheme("./bearer")),
+        ] {
+            let mut declared = document;
+            declared.components.security_schemes.insert(
+                "./bearer".to_owned(),
+                RefOr::Item(SecurityScheme::bearer(None)),
+            );
+            assert!(three_two_only_constructs(&declared).is_empty());
+        }
+    }
+
+    /// Validating as 3.1 reports an undescribed component response as the
+    /// missing description it is, at the response, not at its `description`.
+    #[test]
+    fn an_undescribed_component_response_fails_validation_at_the_response() {
+        let mut reusable = described();
+        reusable
+            .components
+            .responses
+            .insert("NotFound".to_owned(), RefOr::Item(Response::default()));
+
+        assert_eq!(
+            reusable.validate(SpecVersion::V3_1),
+            Err(vec![Violation {
+                location: "#/components/responses/NotFound".to_owned(),
+                severity: Severity::Error,
+                error: SpecError::MissingResponseDescription,
+            }])
+        );
     }
 }
 
