@@ -12,10 +12,10 @@ use kynos_openapi::model::body::mime_names;
 /// [`QueryString`](crate::extract::params::querystring::QueryString).
 ///
 /// Implemented by the marker types in this module, and by any unit struct you
-/// declare for a vendor type. A marker offered exactly the requests of the
-/// body beside its `Binary` in a [`OneOf`](crate::extract::body::OneOf) fails
-/// the build: one naming that body's media type with no parameter the body
-/// refuses.
+/// declare for a vendor type. A marker offered a request the body beside its
+/// `Binary` in a [`OneOf`](crate::extract::body::OneOf) is offered too fails
+/// the build: one naming that body's type and subtype, whatever parameters it
+/// declares.
 pub trait MediaType {
     /// The media type, as it appears in a `Content-Type` header.
     const MEDIA_TYPE: &'static str;

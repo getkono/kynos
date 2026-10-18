@@ -54,9 +54,37 @@ where
     /// wherever it is used, so such a pair fails the build that instantiates
     /// it rather than the description of its route.
     ///
-    /// A marker parameter that the other body refuses keeps the pair: beside
-    /// [`Text`], `text/plain; charset=iso-8859-1` is offered the Latin-1
-    /// requests `Text` turns away.
+    /// A marker parameter does not keep the pair: a request need not repeat
+    /// it, so a bare `text/plain` would reach both [`Text`] and a marker
+    /// spelled `text/plain; charset=iso-8859-1`, in either order,
+    ///
+    /// ```compile_fail
+    /// use kynos::{
+    ///     extract::{body::{OneOf, binary::Binary, text::Text}, describe::RequestContent},
+    ///     http::media::MediaType,
+    /// };
+    ///
+    /// struct Latin1;
+    /// impl MediaType for Latin1 {
+    ///     const MEDIA_TYPE: &'static str = "text/plain; charset=iso-8859-1";
+    /// }
+    ///
+    /// OneOf::<Text, Binary<Latin1>>::media_types();
+    /// ```
+    ///
+    /// ```compile_fail
+    /// use kynos::{
+    ///     extract::{body::{OneOf, binary::Binary, text::Text}, describe::RequestContent},
+    ///     http::media::MediaType,
+    /// };
+    ///
+    /// struct Latin1;
+    /// impl MediaType for Latin1 {
+    ///     const MEDIA_TYPE: &'static str = "text/plain; charset=iso-8859-1";
+    /// }
+    ///
+    /// OneOf::<Binary<Latin1>, Text>::media_types();
+    /// ```
     ///
     /// The refusal holds on each path that reaches the pair on its own:
     /// describing the route,
@@ -95,35 +123,27 @@ where
     const DISTINCT: () = ();
 }
 
-/// Refuses, in the constant evaluation calling it, a marker offered exactly
-/// the requests `body` is.
+/// Refuses, in the constant evaluation calling it, a marker offered a request
+/// `body` is offered too.
 const fn distinct(marker: &str, body: &str) {
     assert!(
-        !same_requests(marker, body),
-        "a `Binary` marker is offered the same requests as the body beside it in `OneOf`"
+        !shares_requests(marker, body),
+        "a `Binary` marker is offered requests the body beside it in `OneOf` is offered too"
     );
 }
 
-/// Whether [`offers`](super::offers) hands a marker exactly the requests it
-/// hands `body`, a codec's own parameterless media type.
+/// Whether [`offers`](super::offers) hands some request to both a marker and
+/// `body`, a codec's own parameterless media type.
 ///
 /// True when the two share a type and subtype, ignoring ASCII case and
-/// surrounding whitespace, and every parameter the marker declares is one a
-/// request may already carry to `body`: `charset=utf-8`, or a parameter the
-/// codec reads. A structured suffix is a different subtype.
-pub(super) const fn same_requests(marker: &str, body: &str) -> bool {
-    let (essence, mut parameters) = split_essence(marker.as_bytes());
-    if !eq_ignore_ascii_case(essence, split_essence(body.as_bytes()).0) {
-        return false;
-    }
-    while !parameters.is_empty() {
-        let (parameter, rest) = split_at_byte(parameters, b';');
-        if !carried_to_codec(essence, parameter) {
-            return false;
-        }
-        parameters = rest;
-    }
-    true
+/// surrounding whitespace, whatever parameters the marker declares: a request
+/// need not repeat them, so `body` itself reaches both. A structured suffix is
+/// a different subtype.
+pub(super) const fn shares_requests(marker: &str, body: &str) -> bool {
+    eq_ignore_ascii_case(
+        split_essence(marker.as_bytes()).0,
+        split_essence(body.as_bytes()).0,
+    )
 }
 
 /// A media type's trimmed type and subtype, and the parameters after them.
@@ -143,48 +163,6 @@ const fn split_at_byte(bytes: &[u8], byte: u8) -> (&[u8], &[u8]) {
         [_, rest @ ..] => (before, rest),
         [] => (before, after),
     }
-}
-
-/// Whether a request may carry a marker's declared `parameter` to the codec
-/// owning `essence` too, as `parameters_are_acceptable` decides; one without
-/// `=` widens nothing, since a request's own such parameter is refused.
-const fn carried_to_codec(essence: &[u8], parameter: &[u8]) -> bool {
-    let (name, value) = split_at_byte(parameter, b'=');
-    if name.len() == parameter.len() {
-        return true;
-    }
-    let name = name.trim_ascii();
-    if eq_ignore_ascii_case(name, b"charset") && eq_ignore_ascii_case(unquote(value), b"utf-8") {
-        return true;
-    }
-    let mut codec = 0;
-    while codec < super::CODEC_PARAMETERS.len() {
-        let (media_type, read) = super::CODEC_PARAMETERS[codec];
-        if eq_ignore_ascii_case(media_type.as_bytes(), essence) {
-            let mut at = 0;
-            while at < read.len() {
-                if eq_ignore_ascii_case(read[at].as_bytes(), name) {
-                    return true;
-                }
-                at += 1;
-            }
-        }
-        codec += 1;
-    }
-    false
-}
-
-/// A parameter value trimmed and stripped of its quotes, as `parameter`
-/// reads it.
-const fn unquote(value: &[u8]) -> &[u8] {
-    let mut value = value.trim_ascii();
-    while let [b'"', rest @ ..] = value {
-        value = rest;
-    }
-    while let [rest @ .., b'"'] = value {
-        value = rest;
-    }
-    value
 }
 
 /// Byte-wise ASCII case-insensitive equality, usable in a constant.

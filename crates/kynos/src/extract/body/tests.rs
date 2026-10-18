@@ -49,13 +49,14 @@ fn the_marker_chooses_the_content_key() {
 }
 
 /// A `Binary` marker beside another body is refused exactly when `offers`
-/// hands the two the same requests: case and surrounding whitespace aside, a
-/// parameter a request may already carry to the body adds nothing, one the
-/// body refuses keeps the marker reachable, and a structured suffix is a
-/// different subtype.
+/// hands some request to both: a request need not repeat a marker's
+/// parameters, so the body's own bare media type reaches a marker naming its
+/// type and subtype whatever parameters it declares. Case and surrounding
+/// whitespace aside, only a different type or subtype keeps the pair, and a
+/// structured suffix is a different subtype.
 #[test]
-fn a_marker_is_refused_only_where_it_is_offered_its_partners_requests() {
-    use crate::extract::body::{alternative::same_requests, offers};
+fn a_marker_is_refused_wherever_a_request_reaches_both_sides() {
+    use crate::extract::body::{alternative::shares_requests, offers};
     use crate::http::{HeaderMap, HeaderValue, header};
 
     let pairs = [
@@ -68,10 +69,10 @@ fn a_marker_is_refused_only_where_it_is_offered_its_partners_requests() {
             true,
         ),
         (" application/json ; flag", "application/json", true),
-        (" application/json ;q=1", "application/json", false),
-        ("application/json; version=2", "application/json", false),
+        (" application/json ;q=1", "application/json", true),
+        ("application/json; version=2", "application/json", true),
         ("text/plain", "text/plain", true),
-        ("text/plain; charset=iso-8859-1", "text/plain", false),
+        ("text/plain; charset=iso-8859-1", "text/plain", true),
         ("application/vnd.x+json", "application/json", false),
         ("application/jsonl", "application/json", false),
         ("application/json-seq", "application/json", false),
@@ -86,13 +87,14 @@ fn a_marker_is_refused_only_where_it_is_offered_its_partners_requests() {
 
     for (marker, body, refused) in pairs {
         assert_eq!(
-            same_requests(marker, body),
+            shares_requests(marker, body),
             refused,
             "`{marker}` beside `{body}`"
         );
 
-        // Held to `offers`: a probe the marker's own value or a charset
-        // reaches tells the two apart exactly when the pair is kept.
+        // Held to `offers`: the pair is refused exactly when one of the
+        // probes, the marker's own value, the body's, or either with a
+        // charset, reaches both sides, where tuple order would pick the side.
         let essence = marker.split(';').next().unwrap_or(marker).trim();
         let probes = [
             marker.to_owned(),
@@ -100,33 +102,69 @@ fn a_marker_is_refused_only_where_it_is_offered_its_partners_requests() {
             format!("{essence}; charset=utf-8"),
             format!("{essence}; charset=iso-8859-1"),
         ];
-        let agree = probes.iter().all(|probe| {
+        let shared = probes.iter().any(|probe| {
             let mut headers = HeaderMap::new();
             headers.insert(
                 header::CONTENT_TYPE,
                 HeaderValue::from_str(probe).expect("a header value"),
             );
-            offers(&headers, marker) == offers(&headers, body)
+            offers(&headers, marker) && offers(&headers, body)
         });
-        assert_eq!(agree, refused, "`offers` on `{marker}` beside `{body}`");
+        assert_eq!(shared, refused, "`offers` on `{marker}` beside `{body}`");
     }
 }
 
-/// A marker whose charset `Text` refuses still builds beside it, and both
-/// keys are described.
+/// A parameter a marker declares is the value a request may carry for it, or
+/// none: `charset=utf-8`, which every codec otherwise accepts, does not reach
+/// a Latin-1 marker, and a charset's name is compared without regard to case
+/// (RFC 9110 section 8.3.2).
 #[test]
-fn a_latin_1_marker_stays_an_alternative_to_text() {
-    use crate::extract::body::{OneOf, text::Text};
+fn a_declared_parameter_governs_the_value_a_request_carries() {
+    use crate::extract::body::offers;
+    use crate::http::{HeaderMap, HeaderValue, header};
 
-    struct Latin1;
-    impl crate::http::media::MediaType for Latin1 {
-        const MEDIA_TYPE: &'static str = "text/plain; charset=iso-8859-1";
+    for (marker, content_type, offered) in [
+        ("text/plain; charset=iso-8859-1", "text/plain", true),
+        (
+            "text/plain; charset=iso-8859-1",
+            "text/plain; charset=iso-8859-1",
+            true,
+        ),
+        (
+            "text/plain; charset=iso-8859-1",
+            "text/plain; charset=\"ISO-8859-1\"",
+            true,
+        ),
+        (
+            "text/plain; charset=iso-8859-1",
+            "text/plain; charset=utf-8",
+            false,
+        ),
+        ("text/html; charset=utf-8", "text/html; charset=UTF-8", true),
+        (
+            "text/html; charset=utf-8",
+            "text/html; charset=iso-8859-1",
+            false,
+        ),
+        (
+            "application/vnd.x; version=2",
+            "application/vnd.x; version=2; charset=utf-8",
+            true,
+        ),
+        (
+            "application/vnd.x; version=2",
+            "application/vnd.x; version=3",
+            false,
+        ),
+    ] {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+        assert_eq!(
+            offers(&headers, marker),
+            offered,
+            "`{content_type}` to `{marker}`"
+        );
     }
-
-    let body = OneOf::<Text, Binary<Latin1>>::request_body(&mut Registry::default());
-
-    assert!(body.content.contains_key("text/plain"));
-    assert!(body.content.contains_key("text/plain; charset=iso-8859-1"));
 }
 
 /// The documented remedy for a variable number of uploads has to compile.

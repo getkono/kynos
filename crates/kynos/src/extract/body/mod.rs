@@ -63,11 +63,10 @@ fn parameter(parameter: &str) -> Option<(&str, &str)> {
     Some((name.trim(), value.trim().trim_matches('"')))
 }
 
-/// Whether the parameters trailing `media_type` are ones its codec accepts.
-///
-/// Accepted: `charset=utf-8` (every text format is decoded as UTF-8), the
-/// parameters [`CODEC_PARAMETERS`] lists with any value, and those `declared`
-/// spells out with exactly the declared value. Anything else is refused.
+/// Whether the parameters trailing `media_type` are ones its codec accepts: one
+/// `declared` names, at exactly its value (a charset's in any case, RFC 9110
+/// section 8.3.2); else `charset=utf-8` (every text format is decoded as UTF-8)
+/// and the parameters [`CODEC_PARAMETERS`] lists, at any value.
 fn parameters_are_acceptable(media_type: &str, declared: &str, parameters: &str) -> bool {
     let read = CODEC_PARAMETERS
         .iter()
@@ -79,13 +78,14 @@ fn parameters_are_acceptable(media_type: &str, declared: &str, parameters: &str)
         .filter(|parameter| !parameter.trim().is_empty())
         .all(|offered| {
             parameter(offered).is_some_and(|(name, value)| {
-                (name.eq_ignore_ascii_case("charset") && value.eq_ignore_ascii_case("utf-8"))
-                    || read.iter().any(|read| name.eq_ignore_ascii_case(read))
-                    || declared.split(';').filter_map(parameter).any(
-                        |(declared_name, declared_value)| {
-                            name.eq_ignore_ascii_case(declared_name) && value == declared_value
-                        },
-                    )
+                let charset = name.eq_ignore_ascii_case("charset");
+                let mut declared = declared.split(';').filter_map(parameter);
+                match declared.find(|&(declared, _)| name.eq_ignore_ascii_case(declared)) {
+                    Some((_, expected)) if charset => value.eq_ignore_ascii_case(expected),
+                    Some((_, expected)) => value == expected,
+                    None if charset => value.eq_ignore_ascii_case("utf-8"),
+                    None => read.iter().any(|read| name.eq_ignore_ascii_case(read)),
+                }
             })
         })
 }
@@ -93,8 +93,8 @@ fn parameters_are_acceptable(media_type: &str, declared: &str, parameters: &str)
 /// Whether the request offers `media_type`, compared by type and subtype.
 ///
 /// Parameters are then held to [`parameters_are_acceptable`]; the request need
-/// not repeat declared ones. A structured suffix never matches:
-/// `application/vnd.x+json` is not `application/json`.
+/// not repeat declared ones, nor contradict them. A structured suffix never
+/// matches: `application/vnd.x+json` is not `application/json`.
 pub(crate) fn offers(headers: &HeaderMap, media_type: &str) -> bool {
     let (essence, declared) = media_type.split_once(';').unwrap_or((media_type, ""));
     let essence = essence.trim();
