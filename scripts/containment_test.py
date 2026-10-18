@@ -799,6 +799,10 @@ class Confinement(unittest.TestCase):
     def test_a_crate_that_lost_its_backticks_is_refused(self):
         self.assertIsNone(self.read("`chrono` and jiff are named only under `temporal/`"))
 
+    def test_a_backticked_crate_that_is_no_crate_token_is_refused(self):
+        # Read as `serde json`, it would match no identifier and confine nothing.
+        self.assertIsNone(self.read("`serde json` is named only under `codec/`"))
+
     def test_a_sentence_of_another_shape_is_refused(self):
         self.assertIsNone(self.read("`uuid` lives in `schema/impls/identifier.rs`"))
 
