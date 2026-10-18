@@ -24,10 +24,15 @@ impl Validator {
         document: &Document,
         violations: &mut Vec<Violation>,
     ) {
-        let schemes = &document.components.security_schemes;
+        let declared: HashSet<&str> = document
+            .components
+            .security_schemes
+            .keys()
+            .map(String::as_str)
+            .collect();
         for (index, requirement) in document.security.iter().enumerate() {
             for name in requirement.0.keys() {
-                if !schemes.contains_key(name) && !self.names_a_scheme_by_uri(name) {
+                if !self.names_a_scheme(name, &declared) {
                     violations.push(Violation::error(
                         format!("#/security/{index}"),
                         SpecError::UnknownSecurityScheme { name: name.clone() },
