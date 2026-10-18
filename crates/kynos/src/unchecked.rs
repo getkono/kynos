@@ -9,10 +9,6 @@
 //! document when any operation is flagged. If Kynos cannot describe something,
 //! it says so in the artifact rather than quietly leaving a hole.
 //!
-//! The exception is [`Router::upgrade_unchecked`]: a connection that has left
-//! HTTP has no vocabulary in any version of the specification, so it gets no
-//! entry, though `Router::validate` still reports it.
-//!
 //! # When these are the right answer
 //!
 //! - A wildcard route serving static assets from the same binary, in a small
@@ -59,7 +55,8 @@ use crate::{
 /// The unchecked counterpart of
 /// [`Path<T>`](crate::extract::params::path::Path): an undescribed route has
 /// no template to decode into, so this hands back the text. `None` when the
-/// pattern declares no such variable, or when the capture is not UTF-8.
+/// request never passed the router, when the pattern declares no such
+/// variable, or when the capture is not UTF-8.
 ///
 /// ```no_run
 /// use kynos::http::{Request, Response};
@@ -644,9 +641,10 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// When true, the emitted document carries
     /// `x-kynos-document-not-authoritative`.
     ///
-    /// [`examples/unchecked.rs`] asserts `!router.has_unchecked()` in CI. Reach
-    /// for [`unchecked_reasons`](Self::unchecked_reasons) where a service takes
-    /// one waiver deliberately.
+    /// It is what a CI job should assert false; [`examples/unchecked.rs`]
+    /// shows where the check goes. Reach for
+    /// [`unchecked_reasons`](Self::unchecked_reasons) where a service takes one
+    /// waiver deliberately.
     ///
     /// [`examples/unchecked.rs`]: https://github.com/getkono/kynos/blob/master/crates/kynos/examples/unchecked.rs
     #[must_use]
