@@ -458,6 +458,18 @@ mod schema {
                 ),
                 "reads the map empty",
             ),
+            case(
+                "a constraint written twice, across two lists, when the second would replace \
+                 the first",
+                quote::quote!(
+                    struct Order {
+                        #[schema(minimum = 1)]
+                        #[schema(minimum = 2)]
+                        total: u32,
+                    }
+                ),
+                "`minimum` is already set",
+            ),
             // One site, which says why the check cannot enforce the pattern:
             // what it is, with the feature, or that there is no engine.
             #[cfg(feature = "pattern")]
@@ -556,6 +568,58 @@ mod schema {
         each_case_is_refused(field_ledger(), expand_inner);
         each_case_is_refused(tag_ledger(), expand_inner);
         each_case_is_refused(rename_ledger(), expand_inner);
+    }
+
+    /// A qualified key matches no constraint, so it reaches the unknown-key
+    /// refusal; and every key, flags and `open` included, is written once.
+    #[test]
+    fn a_constraint_refuses_a_qualified_or_repeated_key() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "a qualified constraint key",
+                    quote::quote!(
+                        struct Order {
+                            #[schema(kynos::minimum = 1)]
+                            total: u32,
+                        }
+                    ),
+                    "`kynos::minimum` is not part of the `#[schema(...)]` grammar",
+                ),
+                case(
+                    "a count written twice in one list",
+                    quote::quote!(
+                        struct Order {
+                            #[schema(max_length = 8, max_length = 9)]
+                            code: String,
+                        }
+                    ),
+                    "`max_length` is already set",
+                ),
+                case(
+                    "a flag written twice",
+                    quote::quote!(
+                        struct Order {
+                            #[schema(unique_items, unique_items)]
+                            tags: Vec<String>,
+                        }
+                    ),
+                    "`unique_items` is already set",
+                ),
+                case(
+                    "open written twice",
+                    quote::quote!(
+                        struct Order {
+                            #[serde(flatten)]
+                            #[schema(open, open)]
+                            extra: BTreeMap<String, String>,
+                        }
+                    ),
+                    "`open` is already set",
+                ),
+            ],
+            expand_inner,
+        );
     }
 
     #[test]
@@ -4592,6 +4656,148 @@ mod api_error {
         ]
     }
 
+    /// The refusals of a key written twice, and of a field marker outside the
+    /// field grammar; apart, so [`ledger`] stays one a reader can hold.
+    fn keys_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a title written twice, across two lists, when the second would replace the first",
+                quote::quote!(
+                    #[problem(status = 404, title = "User not found")]
+                    #[problem(title = "Gone")]
+                    struct StoreError;
+                ),
+                "`title` is already set",
+            ),
+            case(
+                "a field marker outside the field grammar",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(status = 404)]
+                        NotFound {
+                            #[problem(extention)]
+                            id: u64,
+                        },
+                    }
+                ),
+                "is not part of a field's `#[problem(...)]` grammar",
+            ),
+            case(
+                "a field marker written twice",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(status = 404)]
+                        NotFound {
+                            #[problem(extension)]
+                            #[problem(extension)]
+                            id: u64,
+                        },
+                    }
+                ),
+                "`extension` is already set",
+            ),
+        ]
+    }
+
+    /// The grammar refuses a qualified key, which matches no key, and each key
+    /// written twice, at every position; the ledger holds one row per site.
+    #[test]
+    fn every_position_refuses_qualified_and_repeated_keys() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "a qualified key on the type",
+                    quote::quote!(
+                        #[problem(status = 404, kynos::title = "User not found")]
+                        struct StoreError;
+                    ),
+                    "`kynos::title` is not part of the `#[problem(...)]` grammar",
+                ),
+                case(
+                    "a qualified key on a variant",
+                    quote::quote!(
+                        enum StoreError {
+                            #[problem(status = 404, a::b)]
+                            NotFound,
+                        }
+                    ),
+                    "`a::b` is not part of the `#[problem(...)]` grammar",
+                ),
+                case(
+                    "a qualified field marker",
+                    quote::quote!(
+                        enum StoreError {
+                            #[problem(status = 404)]
+                            NotFound {
+                                #[problem(kynos::extension)]
+                                id: u64,
+                            },
+                        }
+                    ),
+                    "`kynos::extension` is not part of a field's `#[problem(...)]` grammar",
+                ),
+                case(
+                    "a type written twice in one list",
+                    quote::quote!(
+                        #[problem(
+                            status = 404,
+                            type = "https://a.example/",
+                            type = "https://b.example/"
+                        )]
+                        struct StoreError;
+                    ),
+                    "`type` is already set",
+                ),
+                case(
+                    "a title written twice on a variant",
+                    quote::quote!(
+                        enum StoreError {
+                            #[problem(status = 404, title = "a", title = "b")]
+                            NotFound,
+                        }
+                    ),
+                    "`title` is already set",
+                ),
+                case(
+                    "a base written twice on the type",
+                    quote::quote!(
+                        #[problem(base = "https://a.example/")]
+                        #[problem(base = "https://b.example/")]
+                        enum StoreError {
+                            #[problem(status = 404)]
+                            NotFound,
+                        }
+                    ),
+                    "`base` is already set",
+                ),
+                case(
+                    "transparent written twice",
+                    quote::quote!(
+                        enum StoreError {
+                            #[problem(transparent, transparent)]
+                            Lookup(LookupError),
+                        }
+                    ),
+                    "`transparent` is already set",
+                ),
+                case(
+                    "the headers marker written twice",
+                    quote::quote!(
+                        enum StoreError {
+                            #[problem(status = 429)]
+                            Limited {
+                                #[problem(headers, headers)]
+                                retry: RetryAfter,
+                            },
+                        }
+                    ),
+                    "`headers` is already set",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
     /// The refusals of `#[problem(headers)]`, apart for the reason
     /// [`transparent_ledger`] is.
     fn headers_ledger() -> Vec<Case> {
@@ -4709,6 +4915,7 @@ mod api_error {
         each_case_is_refused(ledger(), expand_inner);
         each_case_is_refused(transparent_ledger(), expand_inner);
         each_case_is_refused(headers_ledger(), expand_inner);
+        each_case_is_refused(keys_ledger(), expand_inner);
     }
 
     /// One diagnostic site refuses three keys, so the ledger's single row per
@@ -4747,7 +4954,10 @@ mod api_error {
         every_diagnostic_has_a_case(
             "api_error.rs",
             include_str!("api_error.rs"),
-            ledger().len() + transparent_ledger().len() + headers_ledger().len(),
+            ledger().len()
+                + transparent_ledger().len()
+                + headers_ledger().len()
+                + keys_ledger().len(),
         );
     }
 
@@ -5114,6 +5324,276 @@ mod security_scheme {
         ]
     }
 
+    /// The refusals of an option outside its kind or flow, and of a key
+    /// written twice; apart for the reason [`oauth2_ledger`] is.
+    fn keys_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a scheme option written twice, across two lists",
+                quote::quote!(
+                    #[security(bearer, description = "A token")]
+                    #[security(description = "Another")]
+                    struct Bearer;
+                ),
+                "`description` is already set",
+            ),
+            case(
+                "an option its kind does not model, misspelled",
+                quote::quote!(
+                    #[security(bearer(formt = "JWT"))]
+                    struct Bearer;
+                ),
+                "`formt` is not part of the `bearer(...)` grammar",
+            ),
+            case(
+                "a kind's option written twice",
+                quote::quote!(
+                    #[security(api_key(in = "header", name = "X-Api-Key", name = "X-Key"))]
+                    struct ApiKey;
+                ),
+                "`name` is already set, and `api_key(...)` takes each option once",
+            ),
+            case(
+                "a key no flow models",
+                quote::quote!(
+                    #[security(oauth2(client_credentials(
+                        token_url = "https://auth.example.com/token",
+                        token_uri = "https://auth.example.com/token",
+                    )))]
+                    struct Delegated;
+                ),
+                "`token_uri` is not part of the `client_credentials(...)` grammar",
+            ),
+            case(
+                "a flow key written twice",
+                quote::quote!(
+                    #[security(oauth2(client_credentials(
+                        token_url = "https://auth.example.com/a",
+                        token_url = "https://auth.example.com/b",
+                    )))]
+                    struct Delegated;
+                ),
+                "`token_url` is already set, and `client_credentials(...)` takes each key once",
+            ),
+        ]
+    }
+
+    /// Each kind takes only the options its row of the grammar lists, and each
+    /// flow only the URLs the OAuth Flow Object applies to it; the ledger holds
+    /// one row per site, so the rest of the table is swept here.
+    #[test]
+    fn each_kind_and_flow_refuses_an_option_outside_its_row() {
+        let token = "https://auth.example.com/token";
+        let authorize = "https://auth.example.com/authorize";
+        each_case_is_refused(
+            vec![
+                case(
+                    "a URL on a kind that has none",
+                    quote::quote!(
+                        #[security(bearer(url = "https://example.com"))]
+                        struct Bearer;
+                    ),
+                    "`url` is not part of the `bearer(...)` grammar",
+                ),
+                case(
+                    "an option on basic, which has none",
+                    quote::quote!(
+                        #[security(basic(format = "JWT"))]
+                        struct Basic;
+                    ),
+                    "`format` is not part of the `basic(...)` grammar",
+                ),
+                case(
+                    "an option on mutual TLS, which has none",
+                    quote::quote!(
+                        #[security(mutual_tls(name = "client"))]
+                        struct Mtls;
+                    ),
+                    "`name` is not part of the `mutual_tls(...)` grammar",
+                ),
+                case(
+                    "an API key's location on an HTTP scheme",
+                    quote::quote!(
+                        #[security(http(scheme = "Digest", in = "header"))]
+                        struct Digest;
+                    ),
+                    "`in` is not part of the `http(...)` grammar",
+                ),
+                case(
+                    "a format on an API key",
+                    quote::quote!(
+                        #[security(api_key(in = "header", name = "X-Api-Key", format = "JWT"))]
+                        struct ApiKey;
+                    ),
+                    "`format` is not part of the `api_key(...)` grammar",
+                ),
+                case(
+                    "a format on OpenID Connect",
+                    quote::quote!(
+                        #[security(openid_connect(url = "https://example.com", format = "JWT"))]
+                        struct Oidc;
+                    ),
+                    "`format` is not part of the `openid_connect(...)` grammar",
+                ),
+                case(
+                    "an authorization URL on the client credentials flow",
+                    quote::quote!(
+                        #[security(oauth2(client_credentials(
+                            token_url = #token,
+                            authorization_url = #authorize,
+                        )))]
+                        struct Delegated;
+                    ),
+                    "`authorization_url` is not part of the `client_credentials(...)` grammar",
+                ),
+                case(
+                    "an authorization URL on the password flow",
+                    quote::quote!(
+                        #[security(oauth2(password(token_url = #token, authorization_url = #authorize)))]
+                        struct Delegated;
+                    ),
+                    "`authorization_url` is not part of the `password(...)` grammar",
+                ),
+                case(
+                    "a token URL on the implicit flow",
+                    quote::quote!(
+                        #[security(oauth2(implicit(authorization_url = #authorize, token_url = #token)))]
+                        struct Delegated;
+                    ),
+                    "`token_url` is not part of the `implicit(...)` grammar",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
+    /// A qualified key matches no key at any level, so each level refuses it.
+    #[test]
+    fn every_level_refuses_a_qualified_key() {
+        let token = "https://auth.example.com/token";
+        each_case_is_refused(
+            vec![
+                case(
+                    "a qualified option inside a kind",
+                    quote::quote!(
+                        #[security(bearer(kynos::format = "JWT"))]
+                        struct Bearer;
+                    ),
+                    "`kynos::format` is not part of the `bearer(...)` grammar",
+                ),
+                case(
+                    "a qualified option inside oauth2, which names no flow",
+                    quote::quote!(
+                        #[security(oauth2(a::client_credentials(token_url = #token)))]
+                        struct Delegated;
+                    ),
+                    "`a::client_credentials` is not part of the `oauth2(...)` grammar",
+                ),
+                case(
+                    "a qualified key inside a flow",
+                    quote::quote!(
+                        #[security(oauth2(client_credentials(a::token_url = #token)))]
+                        struct Delegated;
+                    ),
+                    "`a::token_url` is not part of the `client_credentials(...)` grammar",
+                ),
+                case(
+                    "a qualified scheme key",
+                    quote::quote!(
+                        #[security(bearer, kynos::name = "Token")]
+                        struct Bearer;
+                    ),
+                    "`kynos::name` is not part of the `#[security(...)]` grammar",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
+    /// Every key is written once at every level, across lists too; the ledger
+    /// holds one row per level, so the other keys are swept here.
+    #[test]
+    fn every_level_refuses_a_repeated_key() {
+        let token = "https://auth.example.com/token";
+        each_case_is_refused(
+            vec![
+                case(
+                    "a flow's scopes written twice",
+                    quote::quote!(
+                        #[security(oauth2(client_credentials(
+                            token_url = #token,
+                            scopes("a"),
+                            scopes("b"),
+                        )))]
+                        struct Delegated;
+                    ),
+                    "`scopes` is already set",
+                ),
+                case(
+                    "a bearer format written twice",
+                    quote::quote!(
+                        #[security(bearer(format = "JWT", format = "opaque"))]
+                        struct Bearer;
+                    ),
+                    "`format` is already set, and `bearer(...)` takes each option once",
+                ),
+                case(
+                    "an OpenID Connect URL written twice",
+                    quote::quote!(
+                        #[security(openid_connect(
+                            url = "https://a.example",
+                            url = "https://b.example"
+                        ))]
+                        struct Oidc;
+                    ),
+                    "`url` is already set",
+                ),
+                case(
+                    "each scheme key written twice",
+                    quote::quote!(
+                        #[security(bearer, name = "A", name = "B")]
+                        struct Bearer;
+                    ),
+                    "`name` is already set, and `#[security(...)]` takes each key once",
+                ),
+                case(
+                    "a credential written twice",
+                    quote::quote!(
+                        #[security(bearer, credential = A, credential = B)]
+                        struct Bearer;
+                    ),
+                    "`credential` is already set",
+                ),
+                case(
+                    "a scope type written twice",
+                    quote::quote!(
+                        #[security(bearer, scope = A, scope = B)]
+                        struct Bearer;
+                    ),
+                    "`scope` is already set",
+                ),
+                case(
+                    "a challenge written twice",
+                    quote::quote!(
+                        #[security(bearer, challenge = "Bearer")]
+                        #[security(challenge = "Bearer realm=\"a\"")]
+                        struct Bearer;
+                    ),
+                    "`challenge` is already set",
+                ),
+                case(
+                    "the demanded scopes written twice",
+                    quote::quote!(
+                        #[security(bearer, scopes(A::Read), scopes(A::Write))]
+                        struct Bearer;
+                    ),
+                    "`scopes` is already set",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
     /// The two diagnostics that fire only where the document model has no field
     /// to hold the answer.
     ///
@@ -5210,6 +5690,7 @@ mod security_scheme {
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
         each_case_is_refused(oauth2_ledger(), expand_inner);
+        each_case_is_refused(keys_ledger(), expand_inner);
         each_case_is_refused(version_gated_ledger(), expand_inner);
     }
 
@@ -5220,6 +5701,7 @@ mod security_scheme {
             include_str!("security_scheme.rs"),
             ledger().len()
                 + oauth2_ledger().len()
+                + keys_ledger().len()
                 + version_gated_ledger().len()
                 + UNREACHABLE_HERE,
         );
