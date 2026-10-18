@@ -439,6 +439,52 @@ pub enum SpecError {
         expression: String,
     },
 
+    /// A Discriminator Object was written beside no `oneOf`, `anyOf` or
+    /// `allOf`.
+    ///
+    /// Legal only with one of the three (`references/3.1.2.md:3341`,
+    /// `references/3.2.0.md:3623`), or on the parent schema of the `allOf`
+    /// form: one some `allOf` member's `$ref` names by the pointer this is
+    /// reported under, `#/components/schemas/Pet` say. A reference spelled any
+    /// other way, through `$id` or an anchor, is not matched. Located at the
+    /// `discriminator`.
+    #[error(
+        "a discriminator must sit beside `oneOf`, `anyOf` or `allOf`, or on a schema an `allOf` \
+         member references"
+    )]
+    DiscriminatorWithoutComposition,
+
+    /// A discriminating property was not required, which 3.1 requires.
+    ///
+    /// `references/3.1.2.md:2834`. Raised only when validating against 3.1, and
+    /// only where the property is provably optional: read are `required`,
+    /// every `allOf` member, every `oneOf` or `anyOf` branch together, both
+    /// arms of a conditional, and the `#/components/schemas` entry a `$ref`
+    /// names. A `$dynamicRef`, or a reference elsewhere, could require it
+    /// unseen. Located at the `discriminator`.
+    #[error("discriminating property `{property}` must be required under OpenAPI 3.1")]
+    DiscriminatorPropertyNotRequired {
+        /// The `propertyName`.
+        property: String,
+    },
+
+    /// A discriminating property was optional and the Discriminator Object
+    /// named no `defaultMapping`.
+    ///
+    /// 3.2 lets the property be optional only with one
+    /// (`references/3.2.0.md:3615`); whether it is optional is read as for
+    /// [`DiscriminatorPropertyNotRequired`](Self::DiscriminatorPropertyNotRequired),
+    /// its 3.1 counterpart. Located at the `discriminator`.
+    #[cfg(feature = "openapi32")]
+    #[error(
+        "discriminating property `{property}` is optional, so the discriminator must declare \
+         `defaultMapping`"
+    )]
+    DiscriminatorWithoutDefaultMapping {
+        /// The `propertyName`.
+        property: String,
+    },
+
     /// A schema was deliberately left unconstrained.
     ///
     /// Located at the schema itself: one carrying the `x-kynos-unchecked`
