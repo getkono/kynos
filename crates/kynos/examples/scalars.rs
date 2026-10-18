@@ -10,7 +10,8 @@
 //! An application picks *one* date backend and *one* decimal backend. Both of
 //! each appear here because the point of the file is the mapping, and the
 //! mapping is only visible when the alternatives sit side by side. The
-//! normative table is [`docs/schema.md`](../../../docs/schema.md).
+//! mapping itself is the "Behind a feature flag" table in the `kynos::schema`
+//! rustdoc.
 //!
 //! Three things are worth noticing:
 //!
@@ -111,7 +112,8 @@ struct Availability {
     ///
     /// This is the half of the temporal surface chrono cannot match:
     /// `TimeDelta` serializes as a `[seconds, nanos]` array, so it is
-    /// deliberately undescribable and `docs/schema.md` gives the remedy.
+    /// deliberately undescribable, and the `kynos::schema` rustdoc's table of
+    /// types left without an implementation gives the remedy.
     slot_length: jiff::Span,
 }
 

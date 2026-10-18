@@ -50,10 +50,10 @@ constructor's number and a codec's cannot share a file with the routing path's.
 | File | Asserts |
 | --- | --- |
 | [`pipeline.rs`](../crates/kynos/tests/pipeline.rs) | an `async fn` is a `Handler`, `routes!` collects it, `Endpoints` accepts it, mounting reaches the context that supplies its dependencies, each route attribute writes its own method, and both ends of the arity list typecheck |
-| [`derives.rs`](../crates/kynos/tests/derives.rs) | every derive expands to a well-formed implementation of the trait it claims, and what the default `QueryParams::parameters` makes of a derived schema: an aliased field as one optional parameter per name, and no parameter for a member behind `allOf`, `oneOf` or `$ref`. The runtime properties, the recorded exceptions to a derive being a type-level surface: the derived query decoder refuses a declared value whose octets are not UTF-8, naming its wire parameter, matches a percent-encoded name, ignores an undeclared pair, decodes `+` as a space and keeps an escaped `+` (`%2B`) as a `+`, and refuses a value breaking its field's `#[schema(...)]` bound or its type's, naming its wire parameter, where the description carries the field's bounds, as the derived path, header and cookie decoders do, a header's bounds reaching its response header too; the derived cookie decoder refuses a declared cookie whose first value is not ASCII, naming its wire name, ignores an unreadable undeclared cookie on the same field, and passes a percent-encoded value through undecoded, which its description leaves unstated unless a field asks for `style: cookie`, and then states on that field alone; the derived header decoder refuses a missing required header and a value that is not printable ASCII, naming its wire name, and reads an absent optional header as `None`, and writes a fixed `#[header(value = "...")]` header as its value, reads it only where it is that value, refusing any other naming its wire name, and describes it as that `const`, and refuses to encode a rendered value that is no field value, which `WithHeaders` and a failure's `headers` group answer with a 500; a derived `ParamValue` writes each variant as serde does and reads every name its schema's `enum` lists as the variant serde reads it as, refusing the rest; a derived `Reply` writes each variant's declared status, a bodied variant as JSON and a unit one with no content, and describes it by its `description`, else its doc comment, else its reason phrase, else a fixed sentence of its status's class, so a 4xx or 5xx never reads `the request succeeded`; and a derived `ApiError` publishes its extension members and no other field, its slug under `base` where it names no `type`, and its `Display` sentence as `detail`, and answers through a `transparent` variant with the held error's problem, its statuses joined to the enum's in the `const`, `statuses()` and the responses alike, and sends a failure's `headers` group on that failure's response alone, declared under its status alone and required only where every failure answering with it requires it, a transparent variant's held error included |
-| [`flatten.rs`](../crates/kynos/tests/flatten.rs) | that a flattened field's description agrees with the JSON its type writes and reads, checked against the emitted schema with a real JSON Schema validator in two ways — a value the type serializes, which the description must accept, and hand-written documents it must accept or refuse, such as a member of the wrong type or a key serde refuses, held to serde's own read in every closed case. Where a keyword's presence, absence or position is the point, such as where a flattened map's value schema is hoisted to or what an open flatten drops, it is asserted on the emitted schema itself as well. The cases: a flattened struct, a flattened tagged struct, whose tag reaches the parent through its `$ref`, an open map beside the parent's own properties and beside a flattened struct, an open map inside a tagged variant, the key constraint an open flatten drops, and an object `deny_unknown_fields` closes beside a flattened struct, alone and with a required or an optional field serde also reads under an `alias`, and beside a flattened adjacently tagged enum, whose refusals are held to serde's; a flattened `Problem` beside a member of the parent's own and beside an open map, a `Problem` as an internally tagged newtype variant's payload, and an open `Unchecked` payload, over a `serde_json::Map` and over a typed map, beside the parent's own properties and beside a field serde writes and never reads, as a map of `Unchecked` values is beside such a field too. Behind `macros` and `test-util`, which carries the validator |
-| [`aliases.rs`](../crates/kynos/tests/aliases.rs) | that a name serde reads under an `alias` means to a validator what it means to serde, for the bounds no `flatten.rs` case reaches: an optional field of a closed object under three names, bounded by a `not` over an `anyOf` of their pairs, beside a second aliased field whose bound it leaves in place, an externally tagged branch keyed by exactly one of its names, and a name two variants claim, internally and externally tagged, named in the first one's branch alone. Each document is held to serde's own read, so a bound fails even when the exact JSON in `derives.rs`, which is transcribed from the emitter, moved with it. Behind `macros` and `test-util` |
-| [`constraints.rs`](../crates/kynos/tests/constraints.rs) | that `Json<T>` enforces the `#[schema(...)]` bounds the description emits: each document is read by `Json<T>` and by a draft 2020-12 validator over the schema `T` emits, the two must agree on admitting it, and a refusal is keyed by the pointer of each member that broke a bound — through a named field, an `Option`, a nested type, a sequence, a map under an escaped key, a newtype, a tuple, a flattened field, each enum tagging, a field and a variant read under an `alias`, and a member serde fills from a field or container `default`, a field described `as` another type, and a map key past its `propertyNames`; that each `JsonLines` and `JsonSeq` record and a `QueryString<T, Json>` document agree with the same validator, a record refused under its index and reading continuing past it; and that `Form<T>` and `MultipartForm<T>` refuse a body at the same pointers. A recorded exception to a derive being a type-level surface, as `derives.rs`'s decoders are. Behind `macros`, `json` and `test-util`, with `form` and `multipart` for those bodies and `openapi32` for the records and the query string |
+| [`derives.rs`](../crates/kynos/tests/derives.rs) | every derive expands to a well-formed implementation of the trait it claims, and what the code a derive generates does at run time — the query, path, header and cookie decoders, `ParamValue`, `Reply` and `ApiError` — the recorded exceptions to a derive being a type-level surface |
+| [`flatten.rs`](../crates/kynos/tests/flatten.rs) | that a flattened field's description agrees with the JSON its type writes and reads, held to serde's own read by a real JSON Schema validator over the emitted schema. Behind `macros` and `test-util`, which carries the validator |
+| [`aliases.rs`](../crates/kynos/tests/aliases.rs) | that a name serde reads under an `alias` means to a validator what it means to serde, for the bounds no `flatten.rs` case reaches, held to serde's own read rather than to the emitter's JSON `derives.rs` pins. Behind `macros` and `test-util` |
+| [`constraints.rs`](../crates/kynos/tests/constraints.rs) | that each extractor enforcing the `#[schema(...)]` bounds the description emits — `Json<T>`, a `JsonLines` or `JsonSeq` record, a `QueryString<T, Json>`, `Form<T>` and `MultipartForm<T>` — agrees with a draft 2020-12 validator over the schema `T` emits on what it admits, and refuses at the pointer of each member that broke a bound. A recorded exception to a derive being a type-level surface, as `derives.rs`'s decoders are. Behind `macros`, `json` and `test-util`, with `form` and `multipart` for those bodies and `openapi32` for the records and the query string |
 | [`errors.rs`](../crates/kynos/tests/errors.rs) | each extractor rejects with the rejection type its signature names — and "each" is counted against the source: a sweep reads every `FromRequest`, `FromRequestParts` and `Guard` implementation out of `src/` and compares the types it finds with the ones witnessed, so an extractor added without a witness fails the build |
 | [`extractors.rs`](../crates/kynos/tests/extractors.rs) | what the extractors deciding from more than one input read, refuse and describe, each driven through the public trait and held to the exact rejection: which side of a `OneOf` its `Content-Type` selects, and that a malformed side fails as itself; that an `Option` body is absent only without a `Content-Type`; the closed table of parameters each text codec accepts after its media type, that a media type marker carrying a parameter is matched by type and subtype and accepts exactly the parameter it declares, and that multipart reads `boundary` and no other parameter, alone and as a `OneOf` side; and that a `QueryString` is percent-decoded and read as one JSON document. Each beside the request body or parameter the same type describes. Behind `macros`, `json` and `form`, with the multipart cases behind `multipart` and the `QueryString` cases behind `openapi32` |
 | [`reporting.rs`](../crates/kynos/tests/reporting.rs) | every public error type `kynos`'s own source declares — the build and startup failures an application reports from `main`, the rejections, and the refusals a constructor or reader returns — is `Error + Send + Sync + 'static`, and "every" is counted against that source: a sweep reads each `thiserror::Error` derive and `impl std::error::Error for` out of `crates/kynos/src/` and compares the types it finds with the ones witnessed and the private ones no caller can hold, so an error type added without a witness fails the build. The `kynos-openapi` error types re-exported as `kynos::openapi` are outside the sweep, which counts only `kynos`'s own declarations |
@@ -64,9 +64,9 @@ constructor's number and a codec's cannot share a file with the routing path's.
 | [`alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) | what each opt-in payload codec adds to an operation that mounts it, against the same service's bodyless and transport floors — and how compression's cost grows with the body it holds. A further `#[global_allocator]` target rather than a second module of `alloc.rs`, because a `#[global_allocator]` is per process and each integration target is one process, installing the same counter `alloc.rs` does by including [`tests/support/counting.rs`](../crates/kynos/tests/support/counting.rs), so one driver decides what both files' numbers mean. It deliberately does not restate `work_on_another_thread_is_not_counted` |
 | [`conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs) | that the committed corpus is what this build emits, and that it still carries the 3.2 constructs it exists to pin — asserted against the committed *text*, since what a downstream repository reads is the file |
 | [`conformance.rs`](../crates/kynos/tests/conformance.rs) | that the responses a suite observed match what the document promises, and that every declared response was exercised, by one client or by several sharing a `Coverage` |
-| [`matrix.rs`](../crates/kynos/tests/matrix.rs) | the same two assertions over the operations, a guard, the response shapes and nine of the interceptors Kynos ships — `RequestId`, `Cors`, `BodySize`, `Timeout`, `Concurrency`, `RateLimit`, `Csrf`, `Conditional` and `SetCookies`. `Cache`, `Compression`, `Decompression`, `BodyTimeout` and `SecurityHeaders` are not mounted there, and are held by their own targets — and, all but `SecurityHeaders`, by `interceptors.rs`'s accounting of what each writes against what it declares. The matrix is the only place a wrong *document* fails against responses that actually happened. Static assertions about that document belong in `description.rs` even when the matrix is what found them: the matrix reports which promise went unkept, and the small fixture there says which rule was broken. That rule is about a document; an assertion about a *type* is a different question and stays with the type, which is why the `ShortCircuit` sweep is in `interceptors.rs` — see [below](#the-sweep-and-the-matrix-assert-one-property-over-two-sets) |
+| [`matrix.rs`](../crates/kynos/tests/matrix.rs) | the same two assertions over the operations, a guard, the response shapes and the interceptors that need no target of their own — the only place a wrong *document* fails against responses that actually happened. A static assertion about the document belongs in `description.rs` even when the matrix found it — see [below](#the-sweep-and-the-matrix-assert-one-property-over-two-sets) |
 | [`dispatch.rs`](../crates/kynos/tests/dispatch.rs), [`routing.rs`](../crates/kynos/tests/routing.rs), [`panics.rs`](../crates/kynos/tests/panics.rs) | every outcome one request can reach, the routes the router declines, that recovery happens only where it was asked for, and that a recovered panic is reported to observers once, whichever scope recovered it |
-| [`limits.rs`](../crates/kynos/tests/limits.rs), [`interceptors.rs`](../crates/kynos/tests/interceptors.rs), [`middleware.rs`](../crates/kynos/tests/middleware.rs), [`cors.rs`](../crates/kynos/tests/cors.rs), [`description.rs`](../crates/kynos/tests/description.rs), [`sse.rs`](../crates/kynos/tests/sse.rs) | each interceptor doing what it declares, setting only what it declared, and declaring it on exactly the operations it covers. `middleware.rs` also holds `partial` and `ranged_assets`, which assert that compression leaves anything a byte range is calculated against alone — a range is calculated over the encoded octets, so re-encoding a 206 puts a `Content-Range` on a body it is wrong about, and encoding a 200 that advertises `Accept-Ranges` puts one strong `ETag` over two representations. `ranged_assets` is the second half end to end: it resumes an asset download against the tag it was served with and splices the two halves back into the file. `description.rs` carries the same scope question one level down in its second section: which *statuses* within an operation a response field's declaration reaches, which is where `Accept-Ranges`, `Content-Range` and the 416 are each pinned to the statuses that give them a meaning — and where a response header nothing in the handler writes is pinned too, since a header group's and an interceptor's alike are filed under a wildcard and have to reach the exact key a consumer resolves to. Its third section is that question on the tag axis: which of the four tag scopes reaches the operation's `tags`, in what order, and whether each scope that names a tag also registers its metadata in the document's `tags` — a name arriving without its metadata is an `UndocumentedTag` warning on every operation carrying one, so both halves are asserted for every scope |
+| [`limits.rs`](../crates/kynos/tests/limits.rs), [`interceptors.rs`](../crates/kynos/tests/interceptors.rs), [`middleware.rs`](../crates/kynos/tests/middleware.rs), [`cors.rs`](../crates/kynos/tests/cors.rs), [`description.rs`](../crates/kynos/tests/description.rs), [`sse.rs`](../crates/kynos/tests/sse.rs) | each interceptor doing what it declares, setting only what it declared, and declaring it on exactly the operations it covers — and, in `description.rs`, on exactly the statuses and tags. `middleware.rs` also holds that compression leaves alone anything a byte range is calculated against |
 | [`rate_limit.rs`](../crates/kynos/tests/rate_limit.rs) | the shipped limiter over a store: one quota and several, burst, keying, exemption, and both failure policies — and, since an application may replace the algorithm outright, that a `RateLimitPolicy` Kynos does not ship reaches the wire with its own `Retry-After` — behaviour that is a property of a *sequence* of requests rather than of any one |
 | [`client.rs`](../crates/kynos/tests/client.rs) | the `TestClient`'s own surface rather than the harness's: every method the router accepts, a query string, a cookie jar, a peer address, the three body setters, a streamed body and a declared length that ends or fails it, and the two assertions a suite would otherwise hand-roll — a 206 checked as a `Content-Range` *and* a body that fills it, and a finite event stream read as its events |
 | [`cookies.rs`](../crates/kynos/tests/cookies.rs) | `SetCookies` wired through the router: that two `Set-Cookie` fields reach the wire as two, that a cookie may depend on the request that asked for it, and that one that cannot be a field answers 500 with none of the others |
@@ -472,111 +472,29 @@ halve.
 | the `decimal-rust` feature | `rust_decimal`, `feature = "decimal-rust"` | `lib.rs`, `schema/impls/decimal/{mod,rust_decimal}.rs` | `Schema` implementations for the crate's decimal type, behind the `&mut Registry` only `describe` mints, and `ParamValue`, a marker with no items |
 | the `decimal-big` feature | `bigdecimal`, `feature = "decimal-big"` | `lib.rs`, `schema/impls/decimal/{mod,bigdecimal}.rs` | `Schema` implementations for the crate's decimal type, behind the `&mut Registry` only `describe` mints |
 
-A site path is relative to `crates/kynos/src/` unless it starts at `crates/`,
-which makes it relative to the repository root and is how a row names a file in
-a sibling crate. The scope [`containment.py`](../scripts/containment.py) counts
-a row against follows from the row's own sites: always `crates/kynos/src/`, plus
-one `crates/<name>/src/` tree per crate-qualified site. So the widening and the
-reason for it are one edit, and a row reaching into another crate cannot be
-written without saying where. Deriving it per row rather than declaring one
-scope for the table is what makes the widening safe: `Document`, `Registry` and
-`Validator` are all *declared* in `kynos-openapi`, and a table-wide scope
-spanning both crates would fail those three rows on sight while proving nothing
-about the crate a request runs in. A derived tree that is not a directory fails
-the row rather than scanning nothing: the derivation is string surgery over a
-crate name nothing else here spell-checks, and a misspelled one reads as a legal
-site while narrowing the row back to the home scope, where every spelling it
-names is still written.
+How [`containment.py`](../scripts/containment.py) reads a row is documented on
+its `token`, `Gate`, `allowed_sites` and `scanned`; what a row's writer needs is
+this:
 
-A *Named by* cell holds one of two kinds of token, and may hold several of
-either as a comma-separated list of backticked entries. The first is an
-identifier or a path of them, brace-expanding the way the *Named only in* column
-does when one element has more than one spelling that reaches it:
-`Registry::{new,default}` holds both, because `Registry::new` is
-`Self::default()` and a row holding only `new` would let a derived `default()`
-mint a registry anywhere. The second is a `feature = "…"` gate, written as the
-`#[cfg]` attribute writes it, for an element whose whole contribution is what a
-gate compiles — a flag is not a Rust name, so there is nothing else to name it
-by. A gate is read as the predicate around it rather than as the text of it: the
-enclosing `#[cfg]`, `#![cfg]`, `cfg_attr` or `cfg!` is walked with its
-delimiters balanced, and the flag counts where that walk reaches it.
-
-The two questions a row asks read that walk at different strictnesses, and the
-difference is what a cell's polarity does and does not buy. Whether the cell's
-own claim is still live is polarity-exact: the spelling matches only where the
-predicate names the flag at the polarity the cell wrote, so a spelling may be
-written negated, as `not(feature = "…")`, and then matches only what the flag
-compiles by being *off*. The `openapi31` row is the case that needs the negated
-spelling, since both of its sites are the `compile_error!` that refuses a build
-without the flag. Whether a *site* names the flag is polarity-blind: the
-offender scan reports a disallowed site naming the flag at either polarity,
-because being off-path is a matter of naming the flag at all, and a cell states
-a polarity as the row's own claim rather than as a filter over the tree. So the
-positive `test-util` cell reports a disallowed
-`#[cfg(not(feature = "test-util"))]`, and the negated `openapi31` cell reports a
-disallowed `#[cfg(feature = "openapi31")]`. Write the cell at the polarity the
-row's reason is about, and do not expect it to exempt the other polarity from
-the offender scan.
-
-The macro is in that list because it is the form that compiles in *every*
-configuration and branches at run time, so what it guards is on the request path
-in every build; a rule anchored on the attribute forms alone read it as naming
-no flag and let the site past in silence. It is read under any of the three
-delimiters a macro invocation may take, since `cfg!{…}` and `cfg![…]` gate a
-build exactly as `cfg!(…)` does, while the attribute forms are read only under
-`(` — `#[cfg{…}]` is not source `rustc` accepts. The name must stand bare:
-`other::cfg!`, and the `macro_rules!` metavariable `$cfg!`, resolve to whatever
-the module exports or the caller passed, which a scan reading text cannot tell
-from the gate, so neither is read as one.
-
-The two kinds of token are matched over different text, and the string literals
-are the whole of the difference: an identifier over source with its comments,
-its literals and its inline `#[cfg(test)]` modules removed, a gate over the same
-source with the literals kept, because the flag name is one. Comments go from
-both corpora. A gate written in a comment or a rustdoc example is a mention no
-build compiles, and a rule reading one would report a row as holding on the
-strength of a sentence about it — a renamed flag staying green off a stale
-comment is the failure a naming rule is least able to survive. A feature row
-usually carries both — the code its gate compiles, and the crate that code
-calls — as in `` `uuid`, `feature = "uuid"` ``. A cell the rule cannot read
-fails the build rather than passing quietly, so teaching it a new kind of token
-is part of writing the row that needs one.
-
-Each spelling in a cell is held to naming something, one at a time rather than
-as a union: a cell written `Registry::{new,defualt}` would otherwise pass on the
-strength of `new` while a derived `default()` minted a registry anywhere. What a
-spelling must name is a mention anywhere in the scope, sibling test files
-included, rather than a site on the request path — a mint spelling earns its row
-by being reachable, not by being reached, and the row is at its strongest when
-nothing a request can run writes it at all. `Registry::default` is that case
-today. A spelling nothing in the scope writes under any `cfg` is a rename or a
-typo, and fails the build: it is a row holding nothing rather than an element
-nothing reaches.
-
-*Sibling* test files, and not every test: the same strip drops an inline
-`#[cfg(test)] mod` body from either corpus, so what a spelling may be found in
-is the source a request can run plus the `tests.rs` siblings beside it. That is
-the layout rule's own corpus — a module's tests belong in a sibling — rather
-than an approximation of "the tests", and it holds for a gate as much as for an
-identifier: an inline test module is the other place a gate can sit that no
-build outside `cfg(test)` compiles. A failure names which of the two corpora it
-read, so a row that has stopped holding says what text it was held against. A
-row whose cell the rule cannot read, or whose spelling names nothing, reports
-that one failure and stops: its site list goes unchecked until the cell is
-repaired, because an offender scan under a spelling already called
-untrustworthy would render a verdict nobody should act on.
-
-A cell names the shortest spelling that is unique in the workspace, not the
-longest one that is unambiguous. A qualified path is what an import removes:
-`use kynos_openapi::validate::{Validator, Violation};` leaves every later
-mention of the type bare, so a row written `validate::Validator` would match the
-one file that spells the path out and miss the file that imported it. `Validator`
-is the whole token because `kynos_openapi::validate::Validator` is the only type
-of that name in either crate. Where an identifier is not unique, the row names
-what mints one instead. Uniqueness is the writer's judgement and the rule does
-not check it — a spelling that names two types would hold both under one reason.
-What the rule does check is that the spelling still names something, which is
-what catches one that has quietly stopped matching.
+- A site is relative to `crates/kynos/src/` unless it starts at `crates/`. A row
+  is scanned over that home tree plus each sibling crate one of its own sites
+  names, so a row reaching into another crate says where, and a site naming a
+  crate that does not exist fails the row.
+- A *Named by* cell is a comma-separated list of backticked spellings: an
+  identifier or path, brace-expanding like the sites (`Registry::{new,default}`
+  holds both ways to mint one), or a `feature = "…"` gate, read as the `cfg`
+  predicate around it — `cfg!` included, since it compiles in every build and
+  branches at run time.
+- A gate written `not(feature = "…")` holds only what the flag compiles by being
+  off, which is the `openapi31` row's case. The offender scan is
+  polarity-blind: a disallowed site naming the flag either way fails.
+- Spellings are matched over source with comments and inline `#[cfg(test)]`
+  modules stripped — identifiers with string literals stripped too, gates with
+  them kept — so a mention no build compiles holds nothing.
+- Each spelling must name something in scope on its own, so a rename or a typo
+  fails the build, and so does a cell the rule cannot read.
+- Name the shortest spelling unique in the workspace: an import removes a
+  qualified path. Uniqueness is the writer's judgement, not the rule's.
 
 `Registry` — the type — is deliberately not a row. `Describe::request_body`
 takes `&mut Registry`, which puts the name in some eighty files by design, and a
@@ -608,18 +526,13 @@ the callee the `Request`, and an `Observer` is handed a `Duration` and a
 pins is the stored half — the table's own shape — and that is what a new field
 on it would change.
 
-What the naming rule enforces for #131 is **the request-serving half of each
-file split for it may not name `Document`**. The files `unchecked.rs`,
-`server/mod.rs` and `router/docs/mod.rs` serve requests, and a new use of
-`Document` inside one of them was allowed by the row and invisible to the
-witness, which is [#131](https://github.com/getkono/kynos/issues/131). Each was
-split in two, and the row allows only the describing half:
-`unchecked/describe.rs`, `server/describe.rs` and `router/docs/render.rs`. The
-serving halves are no longer listed, so putting a `Document` beside the code that answers
-`/openapi.json` now fails `containment:check` rather than passing it. That is
-the one direction the split had to earn, and it is why `router/docs/render.rs`
-exists as a file at all: the endpoint holds finished `Bytes`, and the function
-that produced them is somewhere the endpoint is not.
+A module that both serves requests and describes them keeps the two halves in
+separate files, and the `Document` row allows only the describing one:
+`unchecked/describe.rs`, `server/describe.rs` and `router/docs/render.rs`, not
+`unchecked.rs`, `server/mod.rs` or `router/docs/mod.rs`. So a `Document` beside
+the code that answers `/openapi.json` fails `containment:check`; the endpoint
+holds finished `Bytes`, and the function that produced them is somewhere the
+endpoint is not.
 
 Neither the rule nor the witness checks that the describing halves themselves
 serve no request. None of the three holds a handler, a layer, an endpoint or an
