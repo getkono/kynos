@@ -1030,6 +1030,65 @@ fn located_errors_3_2(document: &Document) -> Vec<(String, SpecError)> {
         .collect()
 }
 
+/// A key without the `x-` prefix is no field either version defines and no
+/// extension (`references/3.2.0.md:4747`), so 3.2 refuses it as 3.1 does: at
+/// the object holding it, by the name it was written under, and once.
+#[cfg(feature = "openapi32")]
+#[test]
+fn an_unrecognised_field_is_an_error_under_3_2() {
+    let mut response = Response::new("ok");
+    response.extensions.insert("descripton", "typo");
+    let mut operation =
+        Operation::new("getUser").with_responses(Responses::new().with(200, response));
+    operation.extensions.insert("opertionId", "typo");
+    operation.extensions.insert("odd/key~", true);
+    let document = document_with(&[(
+        "/users",
+        PathItem::new().with_operation(Method::Get, operation),
+    )]);
+
+    let unrecognised = |location: &str, name: &str| Violation {
+        location: location.to_owned(),
+        severity: super::Severity::Error,
+        error: SpecError::InvalidExtensionName {
+            name: name.to_owned(),
+        },
+    };
+    assert_eq!(
+        Validator::new(SpecVersion::V3_2).validate(&document),
+        vec![
+            unrecognised("#/paths/~1users/get", "opertionId"),
+            unrecognised("#/paths/~1users/get", "odd/key~"),
+            unrecognised("#/paths/~1users/get/responses/200", "descripton"),
+        ]
+    );
+}
+
+/// An `x-oai-` or `x-oas-` name is an extension the OpenAPI Initiative
+/// reserves: weaker than it could be, not unreadable, so it stays a warning
+/// under 3.2.
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_reserved_extension_name_stays_a_warning_under_3_2() {
+    let mut operation = Operation::new("getUser").with_responses(ok_responses());
+    operation.extensions.insert("x-oai-thing", true);
+    let document = document_with(&[(
+        "/users",
+        PathItem::new().with_operation(Method::Get, operation),
+    )]);
+
+    assert_eq!(
+        Validator::new(SpecVersion::V3_2).validate(&document),
+        vec![Violation {
+            location: "#/paths/~1users/get".to_owned(),
+            severity: super::Severity::Warning,
+            error: SpecError::InvalidExtensionName {
+                name: "x-oai-thing".to_owned(),
+            },
+        }]
+    );
+}
+
 #[cfg(feature = "openapi32")]
 #[test]
 fn a_reusable_request_bodys_media_types_are_checked_at_its_definition() {
