@@ -201,19 +201,13 @@ impl Header {
     /// The inline example, when the value is shown with one.
     #[must_use]
     pub fn example(&self) -> Option<&Value> {
-        match &self.examples {
-            Some(Examples::Inline(value)) => Some(value),
-            Some(Examples::Named(_)) | None => None,
-        }
+        self.examples.as_ref().and_then(Examples::as_inline)
     }
 
     /// The named examples, when the value is shown with those.
     #[must_use]
     pub fn named_examples(&self) -> Option<&Map<RefOr<Example>>> {
-        match &self.examples {
-            Some(Examples::Named(named)) => Some(named),
-            Some(Examples::Inline(_)) | None => None,
-        }
+        self.examples.as_ref().and_then(Examples::as_named)
     }
 
     /// Shows the value with one inline example.

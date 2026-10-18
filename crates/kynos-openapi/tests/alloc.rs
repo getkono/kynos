@@ -63,7 +63,7 @@
 //! for unrecognised fields that every build runs renders a pointer only for a
 //! field it reports, so on this fixture a baseline build allocates nothing
 //! walking and does the clone alone: stage two reads 125,
-//! 1205 and 12 005 there against the 301, 2821 and 28 021 at
+//! 1205 and 12 005 there against the 299, 2819 and 28 019 at
 //! `--all-features`. Enforcing the larger number at baseline would run
 //! `mise run test:baseline` — a gate of its own — at a ratchet more than twice
 //! as loose as its own measurement, which is the guessed ceiling
@@ -102,12 +102,12 @@
 //!   fires on `n^2.0001` and on `n³`; it does not fire at exactly `n²` over a
 //!   linear cost, at any coefficient, over any span of sizes. Concretely: a
 //!   descent in `three_two_only_constructs` allocating one pointer per
-//!   (path, path) pair reads 401, 12 821 and 1 028 021 at `--all-features` —
+//!   (path, path) pair reads 399, 12 819 and 1 028 019 at `--all-features` —
 //!   each recorded ceiling plus n², which is how `NESTED_WALK` below derives
 //!   them from whichever ceilings the build enforces, and over 95% of the cost
 //!   at a thousand operations — and *both* decades satisfy the relation.
 //!
-//!   **The per-size ceilings are what catch that case** (401 exceeds the 301
+//!   **The per-size ceilings are what catch that case** (399 exceeds the 299
 //!   recorded at ten operations), and they are what catch the sub-quadratic
 //!   exponents above. That is the division of labour, and it is the reverse of
 //!   what a reader expects: the relation is the half that carries no recorded
@@ -170,7 +170,7 @@ struct Size {
 /// enforced under both would be more than twice as loose as its own
 /// measurement in the build that reads it lower.
 #[cfg(feature = "openapi32")]
-const EMIT_CEILINGS: [usize; 3] = [301, 2821, 28_021];
+const EMIT_CEILINGS: [usize; 3] = [299, 2819, 28_019];
 
 /// ...and at baseline, where the typed downgrade walk is compiled out, the
 /// walk for unrecognised fields allocates nothing on this fixture, and

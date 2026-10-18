@@ -17,7 +17,7 @@ use crate::pointer::pointer_token;
 use crate::model::{
     body::{encoding::Encoding, media_type::MediaType},
     components::Components,
-    example::{Example, ExampleValue, Examples},
+    example::{Example, ExampleValue},
     link::Link,
     parameter::{Parameter, ParameterIn, header::Header},
     paths::{item::PathItem, operation::Operation},

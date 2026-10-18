@@ -1,9 +1,10 @@
 use super::{
-    Components, Encoding, Example, ExampleValue, Examples, Header, Link, MediaType, OAuthFlows,
-    Operation, Parameter, ParameterIn, PathItem, RefOr, Response, Responses, Schema,
-    SecurityScheme, Server, for_each, for_each_item, pointer_token,
+    Components, Encoding, Example, ExampleValue, Header, Link, MediaType, OAuthFlows, Operation,
+    Parameter, ParameterIn, PathItem, RefOr, Response, Responses, Schema, SecurityScheme, Server,
+    for_each, for_each_item, pointer_token,
 };
 use crate::{
+    Map,
     pointer::At,
     visit::{self, Visit},
 };
@@ -133,11 +134,7 @@ pub(super) fn collect_components_blockers(
         &components.headers,
         |at, header| collect_header_blockers(&at, header, blockers),
     );
-    for_each_item(
-        &format!("{location}/examples"),
-        &components.examples,
-        |at, example| collect_example_blockers(&at, example, blockers),
-    );
+    collect_named_example_blockers(&location, Some(&components.examples), blockers);
     for_each_item(
         &format!("{location}/requestBodies"),
         &components.request_bodies,
@@ -325,17 +322,7 @@ pub(super) fn collect_parameter_blockers(
         collect_schema_blockers(&format!("{location}/schema"), schema, blockers);
     }
 
-    if let Some(Examples::Named(examples)) = parameter.examples() {
-        for (name, example) in examples {
-            if let Some(example) = example.as_item() {
-                collect_example_blockers(
-                    &format!("{location}/examples/{}", pointer_token(name)),
-                    example,
-                    blockers,
-                );
-            }
-        }
-    }
+    collect_named_example_blockers(location, parameter.named_examples(), blockers);
 }
 
 pub(super) fn collect_header_blockers(location: &str, header: &Header, blockers: &mut Vec<String>) {
@@ -351,17 +338,7 @@ pub(super) fn collect_header_blockers(location: &str, header: &Header, blockers:
         collect_schema_blockers(&format!("{location}/schema"), schema, blockers);
     }
 
-    if let Some(Examples::Named(examples)) = header.examples() {
-        for (name, example) in examples {
-            if let Some(example) = example.as_item() {
-                collect_example_blockers(
-                    &format!("{location}/examples/{}", pointer_token(name)),
-                    example,
-                    blockers,
-                );
-            }
-        }
-    }
+    collect_named_example_blockers(location, header.named_examples(), blockers);
 }
 
 pub(super) fn collect_media_type_blockers(
@@ -389,17 +366,7 @@ pub(super) fn collect_media_type_blockers(
         );
     }
 
-    if let Some(Examples::Named(examples)) = content.examples() {
-        for (name, example) in examples {
-            if let Some(example) = example.as_item() {
-                collect_example_blockers(
-                    &format!("{location}/examples/{}", pointer_token(name)),
-                    example,
-                    blockers,
-                );
-            }
-        }
-    }
+    collect_named_example_blockers(location, content.named_examples(), blockers);
 
     // Not `item_schema`: its presence is already a blocker above, so walking it
     // would name the same document twice.
@@ -432,6 +399,26 @@ pub(super) fn collect_encoding_blockers(
         &encoding.headers,
         |at, header| collect_header_blockers(&at, header, blockers),
     );
+}
+
+/// Each inline example of a named-examples map, under `{location}/examples`.
+///
+/// A component's `examples` section and a Parameter, Header or Media Type
+/// Object's `examples` field are one shape.
+fn collect_named_example_blockers(
+    location: &str,
+    examples: Option<&Map<RefOr<Example>>>,
+    blockers: &mut Vec<String>,
+) {
+    for (name, example) in examples.into_iter().flatten() {
+        if let Some(example) = example.as_item() {
+            collect_example_blockers(
+                &format!("{location}/examples/{}", pointer_token(name)),
+                example,
+                blockers,
+            );
+        }
+    }
 }
 
 /// The two example forms 3.2 added beside `value`.
