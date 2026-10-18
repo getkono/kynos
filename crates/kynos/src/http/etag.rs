@@ -45,6 +45,9 @@ pub struct ETag {
 
 impl ETag {
     /// A strong tag: the representation is byte-for-byte this one.
+    ///
+    /// Any `value` is taken; one holding a `"` or any byte outside visible
+    /// ASCII makes [`encode`](Self::encode) answer `None`.
     #[must_use]
     pub fn strong(value: impl Into<String>) -> Self {
         Self {
@@ -54,6 +57,9 @@ impl ETag {
     }
 
     /// A weak tag: the representation is equivalent, not identical.
+    ///
+    /// Any `value` is taken; one holding a `"` or any byte outside visible
+    /// ASCII makes [`encode`](Self::encode) answer `None`.
     #[must_use]
     pub fn weak(value: impl Into<String>) -> Self {
         Self {
@@ -62,14 +68,17 @@ impl ETag {
         }
     }
 
-    /// The field value, or `None` where [`value`](Self::value) holds a byte
-    /// `etagc` does not admit: a `"`, or anything outside visible ASCII.
+    /// The field value, or `None` where [`value`](Self::value) holds a `"` or
+    /// any byte outside visible ASCII, including the `obs-text` that `etagc`
+    /// itself admits.
     ///
     /// Attached as a header group, such a tag answers 500 rather than going
     /// out without the field (see [`EncodeHeaders::encode`]).
     #[must_use]
     pub fn encode(&self) -> Option<HeaderValue> {
-        // RFC 9110 section 8.8.3: `etagc` is printable ASCII without `"`.
+        // RFC 9110 section 8.8.3's `etagc` without `obs-text`: `value` is a
+        // `str`, whose non-ASCII bytes are UTF-8 rather than the opaque octets
+        // `obs-text` names.
         if !self
             .value
             .bytes()

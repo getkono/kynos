@@ -1,10 +1,9 @@
-//! What it means for two contributions to the description to disagree.
+//! What it means for two declarations to disagree about one operation.
 //!
-//! Interceptors cannot: `Router::intercept` rejects two that claim one status
-//! or header at compile time. What remains is a component name, which
-//! [`Router::security_scheme`](crate::router::Router::security_scheme) and
-//! [`OperationCx::add_security_scheme`](crate::router::operation::OperationCx::add_security_scheme)
-//! may both claim, and which the router reports while it is built.
+//! Interceptors that disagree are refused at compile time by
+//! `Router::intercept`'s bound. The conflict left is two declarations claiming
+//! one security scheme name with different schemes, reported while the router
+//! is built.
 
 use kynos_openapi::ComponentName;
 

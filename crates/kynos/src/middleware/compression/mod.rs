@@ -1,6 +1,7 @@
 //! Response compression.
 //!
-//! Out-of-document: content coding is transport, and OpenAPI does not model it.
+//! The coding is out-of-document: content coding is transport, and OpenAPI
+//! does not model it. The 406 refusal is declared.
 
 use std::{io, marker::PhantomData, pin::Pin, task::Poll};
 
@@ -110,8 +111,8 @@ fn strongly_tagged(headers: &http::HeaderMap) -> bool {
 /// origin server "can either honor the header field by sending a 406 (Not
 /// Acceptable) response or disregard the header field". Kynos honours it.
 ///
-/// Reachable only by excluding identity *and* leaving every coding this build
-/// offers unacceptable, or when a handler requires an encoding
+/// Reachable only by excluding identity *and* leaving zstd, br and gzip all
+/// unacceptable, or when a handler requires an encoding
 /// ([`policy::Encoding::Required`]) and none can be applied.
 ///
 /// `T` names the problem type the body carries; `()` leaves `about:blank`. Set
@@ -591,8 +592,8 @@ where
     type Reads = ();
     type Adds = ContentEncoding;
 
-    /// 406, for a request that refused every representation this build can
-    /// produce.
+    /// 406, for a request that refused identity, zstd, br and gzip alike, or
+    /// a required encoding none of them can apply.
     type Short = NotAcceptable<T>;
 
     async fn intercept(

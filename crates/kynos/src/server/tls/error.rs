@@ -25,7 +25,8 @@ pub enum TlsError {
         /// The expected PEM material.
         kind: &'static str,
     },
-    /// A private key did not match a supported signing algorithm.
+    /// A private key did not match a supported signing algorithm, or did not
+    /// match the public key of the certificate chain it was given with.
     #[error("invalid TLS private key")]
     PrivateKey(#[source] Cause),
     /// An SNI server name was empty, invalid, or repeated.
