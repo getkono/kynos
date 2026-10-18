@@ -52,7 +52,7 @@ impl Discriminators {
         }
 
         let property = &discriminator.property_name;
-        if requires(object, property, components, &mut HashMap::new()) {
+        if requires(object, property, components, &mut Judged::default()) {
             return;
         }
         let location = format!("{location}/discriminator");
@@ -104,18 +104,15 @@ impl Discriminators {
 /// component still being followed, `not`, `dependentSchemas` and
 /// `dependentRequired` could each require it unseen.
 ///
-/// `judged` holds each component followed so far for this `property`: `None`
-/// while it is being followed, then its verdict, so each is followed once
-/// however many paths reach it. Remembering a verdict reached through a cut
-/// cycle is sound, because a cut only ever counts as requiring.
+/// `judged` remembers each component's verdict for this `property`, so each is
+/// followed once however many paths reach it.
 fn requires<'doc>(
     object: &'doc SchemaObject,
     property: &str,
     components: &'doc Components,
-    judged: &mut HashMap<&'doc str, Option<bool>>,
+    judged: &mut Judged<'doc>,
 ) -> bool {
-    let schema = |schema: &'doc Schema, judged: &mut HashMap<&'doc str, Option<bool>>| match schema
-    {
+    let schema = |schema: &'doc Schema, judged: &mut Judged<'doc>| match schema {
         Schema::Bool(admits) => !admits,
         Schema::Object(object) => requires(object, property, components, judged),
     };
@@ -139,13 +136,31 @@ fn requires<'doc>(
         else {
             return true;
         };
-        let required = if let Some(verdict) = judged.get(name.as_str()) {
-            verdict.unwrap_or(true)
-        } else {
-            judged.insert(name, None);
-            let required = schema(target, judged);
-            judged.insert(name, Some(required));
-            required
+        let required = match judged.verdicts.get(name.as_str()) {
+            Some(&Verdict::Reached(required)) => required,
+            Some(&Verdict::Following(depth)) => {
+                judged.lowest_cut = judged.lowest_cut.min(depth);
+                true
+            }
+            None => {
+                let depth = judged.following;
+                judged.following += 1;
+                judged.verdicts.insert(name, Verdict::Following(depth));
+                let outer_cut = std::mem::replace(&mut judged.lowest_cut, usize::MAX);
+                let required = schema(target, judged);
+                judged.following -= 1;
+                // `requires` combines verdicts only through `any` and `all`,
+                // so a cut assumed requiring can turn `false` into `true` and
+                // never the reverse: `false` always holds, and `true` holds
+                // once no component outside this one was assumed.
+                if !required || judged.lowest_cut >= depth {
+                    judged.verdicts.insert(name, Verdict::Reached(required));
+                } else {
+                    judged.verdicts.remove(name.as_str());
+                }
+                judged.lowest_cut = judged.lowest_cut.min(outer_cut);
+                required
+            }
         };
         if required {
             return true;
@@ -167,4 +182,35 @@ fn requires<'doc>(
             }
             _ => false,
         }
+}
+
+/// The components [`requires`] has followed for one property.
+#[derive(Debug)]
+struct Judged<'doc> {
+    verdicts: HashMap<&'doc str, Verdict>,
+    /// How many components are being followed.
+    following: usize,
+    /// The shallowest depth of a component being followed that a cut was
+    /// taken to, since the innermost component being followed was entered.
+    lowest_cut: usize,
+}
+
+impl Default for Judged<'_> {
+    fn default() -> Self {
+        Self {
+            verdicts: HashMap::new(),
+            following: 0,
+            lowest_cut: usize::MAX,
+        }
+    }
+}
+
+/// What [`requires`] knows of one component.
+#[derive(Debug, Clone, Copy)]
+enum Verdict {
+    /// Being followed at this depth: a path reaching it again is cut, and
+    /// counts as requiring.
+    Following(usize),
+    /// Followed to this verdict, assuming nothing of a component outside it.
+    Reached(bool),
 }
