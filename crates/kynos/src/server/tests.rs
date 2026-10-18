@@ -1267,9 +1267,8 @@ fn the_first_head_deadline_counts_the_header_read_timeout_from_accept() {
     assert_eq!(deadline(Some(Duration::MAX)), None);
 }
 
-/// Without HTTP/1 the first-head deadline is the HTTP/2 idle timeout counted
-/// from accept, with the same two cases of none. Run in every HTTP/2 build, so
-/// the all-features build reaches it too.
+/// HTTP/2's share of the first-head deadline is its idle timeout counted from
+/// accept, with the same two cases of none.
 #[cfg(feature = "http2")]
 #[test]
 fn the_http2_first_head_deadline_counts_the_idle_timeout_from_accept() {
@@ -1285,6 +1284,37 @@ fn the_http2_first_head_deadline_counts_the_idle_timeout_from_accept() {
     assert_eq!(deadline(Some(HEAD_TIMEOUT)), Some(accepted + HEAD_TIMEOUT));
     assert_eq!(deadline(None), None);
     assert_eq!(deadline(Some(Duration::MAX)), None);
+}
+
+/// With both protocols compiled, a connection's first-head deadline is the
+/// earlier of the header-read and idle deadlines, either alone when the other
+/// is disabled, and none when both are.
+#[cfg(all(feature = "http1", feature = "http2"))]
+#[test]
+fn the_first_head_deadline_is_the_earlier_of_both_protocols() {
+    use std::{num::NonZeroUsize, time::Instant};
+
+    let accepted = Instant::now();
+    let later = HEAD_TIMEOUT * 2;
+    let deadline = |header_read, idle| {
+        let config = super::TransportConfig {
+            http1: Http1Config::default().header_read_timeout(header_read),
+            http2: Http2Config::default().idle_timeout(idle),
+            #[cfg(feature = "tls")]
+            tls: None,
+            shutdown_timeout: std::time::Duration::from_secs(25),
+            max_connections: NonZeroUsize::MIN,
+            request_body_idle_timeout: None,
+        };
+        crate::server::connection::first_head_deadline(&config, accepted)
+    };
+
+    let first = Some(accepted + HEAD_TIMEOUT);
+    assert_eq!(deadline(Some(HEAD_TIMEOUT), Some(later)), first);
+    assert_eq!(deadline(Some(later), Some(HEAD_TIMEOUT)), first);
+    assert_eq!(deadline(None, Some(HEAD_TIMEOUT)), first);
+    assert_eq!(deadline(Some(HEAD_TIMEOUT), None), first);
+    assert_eq!(deadline(None, None), None);
 }
 
 /// The idle timeout the `Streams::idle` cases wait out, on a paused clock.
@@ -1493,6 +1523,54 @@ async fn an_http2_connection_that_opens_no_stream_is_closed() {
         closed.is_ok(),
         "an HTTP/2 connection with no stream is still held {SILENT_CONNECTION_BOUND:?} after \
          accepting it, past a {HEAD_TIMEOUT:?} header-read timeout"
+    );
+    drop(sender);
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// With the header-read timeout disabled, an HTTP/2 connection that finishes
+/// its preface and opens no stream is closed at the HTTP/2 idle timeout: no
+/// stream is in flight from accept, so the idle timeout bounds the first head
+/// as well.
+#[cfg(all(feature = "http1", feature = "http2"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_http2_connection_that_opens_no_stream_is_closed_at_the_idle_timeout() {
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let bound = crate::server::Server::new(test_service())
+        .http1(Http1Config::default().header_read_timeout(None))
+        .http2(Http2Config::default().idle_timeout(Some(HEAD_TIMEOUT)))
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+            let _ = shutdown_receiver.await;
+        }))
+        .prepare()
+        .await
+        .expect("loopback listener binds");
+    let address = bound.local_addrs()[0];
+    let server = tokio::spawn(bound.serve());
+
+    let stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    let (sender, connection) = hyper::client::conn::http2::handshake::<
+        _,
+        _,
+        http_body_util::Empty<bytes::Bytes>,
+    >(TokioExecutor::new(), TokioIo::new(stream))
+    .await
+    .expect("HTTP/2 handshake completes");
+    let closed = tokio::time::timeout(SILENT_CONNECTION_BOUND, connection).await;
+    assert!(
+        closed.is_ok(),
+        "an HTTP/2 connection with no stream is still held {SILENT_CONNECTION_BOUND:?} after \
+         accepting it, past a {HEAD_TIMEOUT:?} idle timeout and no header-read timeout"
     );
     drop(sender);
 
@@ -3458,7 +3536,7 @@ fn tls_rejects_an_empty_sni_name_list() {
 fn tls_rejects_an_empty_sni_name() {
     assert!(matches!(
         sni_refusal(&[], &["example.com", ""]),
-        Err(crate::server::tls::error::TlsError::ServerName(name)) if name == "example.com"
+        Err(crate::server::tls::error::TlsError::ServerName(name)) if name.is_empty()
     ));
 }
 
@@ -3471,6 +3549,13 @@ fn tls_rejects_an_sni_name_an_earlier_call_registered() {
         sni_refusal(&["example.com"], &["Example.COM"]),
         Err(crate::server::tls::error::TlsError::ServerName(name)) if name == "example.com"
     ));
+    assert!(
+        matches!(
+            sni_refusal(&["example.com"], &["example.org", "example.com"]),
+            Err(crate::server::tls::error::TlsError::ServerName(name)) if name == "example.com"
+        ),
+        "the refusal names the registered name, not the call's first"
+    );
     assert!(
         sni_refusal(&["example.com"], &["example.org"]).is_ok(),
         "a name no earlier call registered is accepted"

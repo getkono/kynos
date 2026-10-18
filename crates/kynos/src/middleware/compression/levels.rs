@@ -94,14 +94,18 @@ impl Default for BrotliLevel {
 ///
 /// 1 to 22. The negative "fast" levels are not reachable: a response that
 /// compresses that badly should be sent as it is.
+///
+/// Every level encodes within the 8 MB window RFC 9659 allows HTTP. Up to
+/// 19, that is the window zstd chooses; 20 to 22 would choose 32 to 128 MB,
+/// so theirs is capped at 8 MB, and they gain less over 19 than they would
+/// outside HTTP.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ZstdLevel(i32);
 
 impl ZstdLevel {
     /// The level used unless one is chosen: 3.
     ///
-    /// zstd's own default; it beats gzip 6 on both size and speed. RFC 9659
-    /// fixes the window at 8 MB for HTTP, and every level here stays inside it.
+    /// zstd's own default; it beats gzip 6 on both size and speed.
     pub const DEFAULT: Self = Self(3);
 
     /// The lowest level reachable here.

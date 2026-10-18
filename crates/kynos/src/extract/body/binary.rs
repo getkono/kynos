@@ -17,6 +17,10 @@ use crate::{
 /// rather than shrugging. Binary content is described with
 /// `contentMediaType`/`contentEncoding`, never the OpenAPI 3.0 `format: binary`.
 ///
+/// A request matches `M` by type and subtype. It need not repeat a parameter
+/// the marker declares, but may not contradict one: a marker declaring
+/// `charset=iso-8859-1` refuses `charset=utf-8`.
+///
 /// Reach the bytes through [`into_inner`](Self::into_inner) or the public field.
 ///
 /// ```no_run

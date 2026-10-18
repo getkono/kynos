@@ -111,6 +111,35 @@ fn a_removal_expires_the_cookie_it_names() {
     );
 }
 
+/// A lifetime is rounded up to the next whole second, so only an explicit
+/// zero is ever sent as the removal `Max-Age=0`, and a cookie never lives
+/// shorter than it was asked to.
+#[test]
+fn a_fractional_lifetime_rounds_up_rather_than_removing_the_cookie() {
+    let max_age = |age| rendered(&Cookie::new("a", "1").max_age(age));
+    assert_eq!(
+        max_age(Duration::from_nanos(1)).as_deref(),
+        Some("a=1; Max-Age=1")
+    );
+    assert_eq!(
+        max_age(Duration::from_millis(500)).as_deref(),
+        Some("a=1; Max-Age=1")
+    );
+    assert_eq!(
+        max_age(Duration::from_millis(1_500)).as_deref(),
+        Some("a=1; Max-Age=2")
+    );
+    assert_eq!(
+        max_age(Duration::from_secs(2)).as_deref(),
+        Some("a=1; Max-Age=2")
+    );
+    assert_eq!(max_age(Duration::ZERO).as_deref(), Some("a=1; Max-Age=0"));
+    assert_eq!(
+        max_age(Duration::MAX).as_deref(),
+        Some(format!("a=1; Max-Age={}", u64::MAX).as_str())
+    );
+}
+
 /// `SameSite=None` implies `Secure`, and is sent with it whether or not it was
 /// asked for.
 ///

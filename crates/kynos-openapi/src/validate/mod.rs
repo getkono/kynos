@@ -17,6 +17,7 @@ use crate::{
     model::document::{Document, SpecVersion},
     validate::{
         rules::{
+            content::check_component_content,
             document::{
                 check_component_names, check_component_parameters, check_servers, check_tags,
             },
@@ -46,12 +47,25 @@ impl Validator {
     pub fn validate(&self, document: &Document) -> Vec<Violation> {
         let mut violations = Vec::new();
 
-        // Validating as 3.1 refuses 3.2 constructs by the same walk
-        // `Document::emit` refuses on, so validating and emitting agree.
+        // Validating as 3.1 refuses what 3.1 cannot express by the same walk
+        // `Document::emit` refuses on, so validating and emitting agree. A
+        // requirement naming a scheme by URI is the security rules' to report,
+        // as an undeclared scheme, by the same predicate the walk applies.
         if !self.version.supports_3_2() {
-            let blockers = crate::emit::downgrade::three_two_only_constructs(document);
-            if !blockers.is_empty() {
-                violations.push(Violation::error("#", SpecError::RequiresV3_2 { blockers }));
+            let obstacles = crate::emit::downgrade::three_one_obstacles(document);
+            if !obstacles.fields.is_empty() {
+                violations.push(Violation::error(
+                    "#",
+                    SpecError::RequiresV3_2 {
+                        blockers: obstacles.fields,
+                    },
+                ));
+            }
+            for response in obstacles.undescribed_responses {
+                violations.push(Violation::error(
+                    response,
+                    SpecError::MissingResponseDescription,
+                ));
             }
         }
 
@@ -59,6 +73,7 @@ impl Validator {
         check_tags(document, &mut violations);
         check_component_names(document, &mut violations);
         check_component_parameters(document, &mut violations);
+        check_component_content(document, &mut violations);
         self.check_security(document, &mut violations);
         self.check_paths(document, &mut violations);
         check_unchecked_schemas(document, &mut violations);

@@ -8,33 +8,27 @@ use crate::{
         components::Components,
         paths::{item::PathItem, operation::Operation, template::PathTemplate},
         reference::RefOr,
-        response::Response,
     },
     validate::{
         Validator,
         rules::{
-            content::check_media_type,
+            content::{check_request_body, check_response},
             extensions::check_extensions,
-            parameters::{check_header_map, check_parameter_list},
+            parameters::check_parameter_list,
             paths::check_path_correspondence,
         },
-        violation::{SpecError, Violation, pointer_token},
+        violation::{SpecError, Violation},
     },
 };
 
 impl Validator {
     /// Whether `name` is a Security Scheme Object's URI rather than a
-    /// component name.
+    /// component name, by the predicate `Document::emit` refuses 3.1 on.
     ///
-    /// 3.2 admits both (`references/3.2.0.md:4685`); 3.1 admits only a
-    /// component name, so this is always `false` there.
-    ///
-    /// A *bare* single-segment name is not read as a URI: 3.2 spells a
-    /// single-segment relative reference `./foo`, so an undeclared `Bearer` is
-    /// a misspelling, which accepting would leave the rule unable to catch.
+    /// 3.2 admits both; 3.1 admits only a component name, so this is always
+    /// `false` there.
     pub(in crate::validate) fn names_a_scheme_by_uri(self, name: &str) -> bool {
-        self.version.supports_3_2()
-            && (name.contains('/') || name.contains(':') || name.contains('#'))
+        self.version.supports_3_2() && crate::emit::downgrade::names_a_scheme_by_uri(name)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -66,28 +60,8 @@ impl Validator {
             violations.push(Violation::error(location, SpecError::NoResponses));
         }
 
-        // 3.1 marks a response's `description` REQUIRED and 3.2 does not, so
-        // the model holds an `Option` and the claimed version decides here.
-        if !self.version.supports_3_2() {
-            let mut require_description = |status: &str, response: &RefOr<Response>| {
-                if response
-                    .as_item()
-                    .is_some_and(|response| response.description.is_none())
-                {
-                    violations.push(Violation::error(
-                        format!("{location}/responses/{status}"),
-                        SpecError::MissingResponseDescription,
-                    ));
-                }
-            };
-
-            for (status, response) in &operation.responses.responses {
-                require_description(status, response);
-            }
-            if let Some(default) = &operation.responses.default_response {
-                require_description("default", default);
-            }
-        }
+        // A response's `description`, REQUIRED by 3.1 alone, is checked with
+        // the rest of what 3.1 cannot express, wherever the response sits.
 
         for tag in &operation.tags {
             if !declared_tags.contains(tag.as_str()) {
@@ -129,43 +103,34 @@ impl Validator {
     }
 }
 
-/// Checks the request body and every response of one operation.
+/// Checks the inline request body and every inline response of one operation,
+/// `default` included.
+///
+/// A referenced one is checked where it is defined, by
+/// [`check_component_content`](super::content::check_component_content).
 pub(in crate::validate) fn check_operation_content(
     location: &str,
     operation: &Operation,
     violations: &mut Vec<Violation>,
 ) {
     if let Some(RefOr::Item(body)) = &operation.request_body {
-        for (media_type, content) in &body.content {
-            check_media_type(
-                &format!(
-                    "{location}/requestBody/content/{}",
-                    pointer_token(media_type)
-                ),
-                content,
-                violations,
-            );
-        }
+        check_request_body(&format!("{location}/requestBody"), body, violations);
     }
 
+    if let Some(RefOr::Item(response)) = &operation.responses.default_response {
+        check_response(
+            &format!("{location}/responses/default"),
+            response,
+            violations,
+        );
+    }
     for (status, response) in &operation.responses.responses {
-        let Some(response) = response.as_item() else {
-            continue;
-        };
-        let response_location = format!("{location}/responses/{status}");
-        for (media_type, content) in &response.content {
-            check_media_type(
-                &format!("{response_location}/content/{}", pointer_token(media_type)),
-                content,
+        if let Some(response) = response.as_item() {
+            check_response(
+                &format!("{location}/responses/{status}"),
+                response,
                 violations,
             );
         }
-        // Links and a header's shape hold by construction; a header's name is
-        // a map key no type reaches, so it is still checked.
-        check_header_map(
-            &format!("{response_location}/headers"),
-            &response.headers,
-            violations,
-        );
     }
 }

@@ -54,18 +54,17 @@ pub(in crate::server) fn server_names(
     {
         return Err(TlsError::ServerName(name.clone()));
     }
-    if names.is_empty()
-        || names.iter().any(String::is_empty)
-        || names.iter().any(|name| {
-            registered
+    if names.is_empty() {
+        return Err(TlsError::ServerName(String::new()));
+    }
+    if let Some(name) = names.iter().find(|name| {
+        name.is_empty()
+            || registered
                 .iter()
                 .flat_map(|certificate| &certificate.names)
-                .any(|existing| existing == name)
-        })
-    {
-        return Err(TlsError::ServerName(
-            names.first().cloned().unwrap_or_default(),
-        ));
+                .any(|existing| existing == *name)
+    }) {
+        return Err(TlsError::ServerName(name.clone()));
     }
     for name in &names {
         // rustls never presents an IP literal as SNI (RFC 6066 §3), so a

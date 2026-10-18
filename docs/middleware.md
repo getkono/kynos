@@ -647,7 +647,7 @@ four different answers depending on which layer is asked.
 | Header-list size | `max_buffer_size` | `max_header_list_size` | — | — | yes |
 | Query-string length | subsumed by the URI | subsumed by the list size | — | — | yes, loosely |
 | Body size | — | — | every buffering body extractor, 2 MiB → 413 | `BodySize`, replacing the default where mounted | yes |
-| Request-head read time | `header_read_timeout`, 30 s | the first head only; `Http2Config::idle_timeout` in a build without `http1` | `header_read_timeout` again, from accept to the first head, before a protocol is known | — | yes |
+| Request-head read time | `header_read_timeout`, 30 s | the first head only, by the server's bound | from accept to the first head, before a protocol is known: the earlier of `header_read_timeout` and `Http2Config::idle_timeout` | — | yes |
 | Slow body | — | — | `request_body_idle_timeout`, 30 s between frames → 408 | `Timeout`, *outside* `BodySize`, for a total | yes, by the gap |
 | Keep-alive idle | `header_read_timeout` covers the wait for the next head | `idle_timeout`, 30 s with no stream in flight → GOAWAY, then close; a stream counts until its response body ends | — | — | yes |
 | Vanished peer | `tcp_keepalive`, with nothing in flight | `Http2KeepAlive`, a PING after 30 s silent and 20 s to answer | `tcp_keepalive`, probing after 60 s idle, every 15 s | — | yes; mid-response over HTTP/1 by retransmission only |
@@ -973,7 +973,9 @@ precedence wherever both appear, so a cookie carrying both is one attribute
 stating the lifetime and one being ignored. `Max-Age` is also a duration, which
 is what a server actually knows; `Expires` is an absolute HTTP-date, so
 emitting one means trusting the client's clock against the server's.
-`Max-Age=0` is the removal, so nothing needs a date in the past either.
+`Max-Age=0` is the removal, so nothing needs a date in the past either, and a
+fractional lifetime is rounded up to the next second so that only an explicit
+zero ever sends it.
 
 So a cookie's expiry is still expressible, and expressed once: it is `Max-Age`,
 stated as a duration.
