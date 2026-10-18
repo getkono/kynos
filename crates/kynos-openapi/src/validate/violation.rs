@@ -99,6 +99,22 @@ pub enum SpecError {
         path: String,
     },
 
+    /// An `additionalOperations` key names a method with its own Path Item
+    /// field.
+    ///
+    /// 3.2 forbids the entry outright, beside the field or instead of it, so a
+    /// reader has one place to look for each method. The match is exact, as a
+    /// method token is case-sensitive: `post` is not `POST`, and stays legal.
+    #[cfg(feature = "openapi32")]
+    #[error(
+        "`additionalOperations` must not hold `{method}`: the method has its own Path Item \
+         field, which describes it instead"
+    )]
+    FixedMethodInAdditionalOperations {
+        /// The method the key names.
+        method: crate::model::paths::method::Method,
+    },
+
     /// A `paths` key is not a legal path template.
     ///
     /// Reachable only for a description read from somewhere else: a template

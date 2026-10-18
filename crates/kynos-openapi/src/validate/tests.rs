@@ -1103,6 +1103,39 @@ fn an_additional_operation_is_refused_exactly_when_its_method_has_a_field() {
     }
 }
 
+/// The refusal names the method, sits at the escaped key, and comes once per
+/// offending key, beside the fixed field it duplicates or without it.
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_fixed_method_in_additional_operations_is_reported_at_its_key() {
+    let operation = |id: &str| Box::new(Operation::new(id).with_responses(ok_responses()));
+    let mut item = PathItem::new().with_operation(Method::Post, *operation("create"));
+    item.additional_operations
+        .insert("POST".to_owned(), operation("createAgain"));
+    item.additional_operations
+        .insert("QUERY".to_owned(), operation("search"));
+    item.additional_operations
+        .insert("PROPFIND".to_owned(), operation("properties"));
+
+    assert_eq!(
+        located_errors_3_2(&document_with(&[("/a/b", item)])),
+        vec![
+            (
+                "#/paths/~1a~1b/additionalOperations/POST".to_owned(),
+                SpecError::FixedMethodInAdditionalOperations {
+                    method: Method::Post
+                },
+            ),
+            (
+                "#/paths/~1a~1b/additionalOperations/QUERY".to_owned(),
+                SpecError::FixedMethodInAdditionalOperations {
+                    method: Method::Query
+                },
+            ),
+        ]
+    );
+}
+
 /// Every component section's keys are checked, not five of them.
 ///
 /// `references/3.1.2.md:593`: "**All** the fixed fields declared above are
@@ -2209,6 +2242,8 @@ fn variant_name(error: &SpecError) -> &'static str {
         SpecError::DuplicateOperationId { .. } => "DuplicateOperationId",
         SpecError::DuplicatePathTemplate { .. } => "DuplicatePathTemplate",
         SpecError::DuplicateOperation { .. } => "DuplicateOperation",
+        #[cfg(feature = "openapi32")]
+        SpecError::FixedMethodInAdditionalOperations { .. } => "FixedMethodInAdditionalOperations",
         SpecError::InvalidPathTemplate { .. } => "InvalidPathTemplate",
         SpecError::UndeclaredPathVariable { .. } => "UndeclaredPathVariable",
         SpecError::UnusedPathParameter { .. } => "UnusedPathParameter",
@@ -2287,6 +2322,9 @@ const RAISED_ELSEWHERE: &[&str] = &[
     "DuplicateQuerystring",
     #[cfg(not(feature = "openapi32"))]
     "QueryBesideQuerystring",
+    // `additionalOperations` is a 3.2 field, absent from a 3.1 build.
+    #[cfg(not(feature = "openapi32"))]
+    "FixedMethodInAdditionalOperations",
     // `kynos`'s `short_circuit_mismatch` compares an interceptor's declared
     // statuses against the responses it describes. No document reaches it, and
     // `crates/kynos/src/response/mod.rs` covers it where it lives.
@@ -2382,6 +2420,13 @@ fn ledger_paths() -> Vec<(&'static str, SpecVersion, Document)> {
                 .with_responses(Responses::new().with(600, Response::new("ok")))),
         )]),
     );
+    #[cfg(feature = "openapi32")]
+    push("FixedMethodInAdditionalOperations", {
+        let mut item = PathItem::new();
+        item.additional_operations
+            .insert("POST".to_owned(), Box::new(operation()));
+        document_with(&[("/users", item)])
+    });
     cases
 }
 

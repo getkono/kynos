@@ -78,8 +78,9 @@ pub struct PathItem {
     /// Operations for methods with no dedicated field.
     ///
     /// Introduced in OpenAPI 3.2. Keys are HTTP methods with the exact
-    /// capitalization sent on the wire, and must not duplicate a method that
-    /// has its own field.
+    /// capitalization sent on the wire, and must not name a method that has
+    /// its own field: validation reports such a key as
+    /// [`SpecError::FixedMethodInAdditionalOperations`](crate::validate::violation::SpecError::FixedMethodInAdditionalOperations).
     #[cfg(feature = "openapi32")]
     #[serde(
         rename = "additionalOperations",
