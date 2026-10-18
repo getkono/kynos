@@ -42,6 +42,10 @@ character is no field value. Dropping that field would send a response its
 description says carries it; `encode` returns `UnencodableHeader` instead, and
 every writer — `with_headers`, `WithHeaders`, an `ApiError` failure's group —
 answers 500 in place of the response, as a body that failed to serialize does.
+The framework's own groups holding a caller's value refuse the same way: an
+`ETag` that is no `entity-tag`, and a `SetCookies` group holding one cookie
+that is no field value, which refuses the whole group rather than sending the
+others.
 
 ## Soundness, not exactness
 
