@@ -46,11 +46,16 @@ fn every_row_is_a_media_type_named_once() {
 
 #[test]
 fn a_body_shown_both_ways_at_once_is_refused() {
-    let error =
-        serde_json::from_str::<MediaType>(r#"{"example":1,"examples":{"one":{"value":1}}}"#)
-            .expect_err("`example` is exclusive with `examples`");
+    let error = serde_json::from_value::<MediaType>(serde_json::json!({
+        "example": 1,
+        "examples": {"one": {"value": 1}},
+    }))
+    .expect_err("`example` is exclusive with `examples`");
 
-    assert!(error.to_string().contains("mutually exclusive"));
+    assert_eq!(
+        error.to_string(),
+        "`example` and `examples` are mutually exclusive"
+    );
 }
 
 #[test]
