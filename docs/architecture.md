@@ -441,8 +441,8 @@ user's problem for them. Kynos negotiates the language and states which one it
 chose; the strings are the application's, and
 [`errors.md`](errors.md) records what that means for a problem detail.
 
-`moka` and `jsonwebtoken` are a fourth kind. Both are named by one example and
-by nothing under `src/`, which is the standing `rcgen`, `listenfd` and
+`moka` and `jsonwebtoken` are a fourth kind. Both are named only by examples,
+and by nothing under `src/`, which is the standing `rcgen`, `listenfd` and
 `tracing-subscriber` already have: this table governs what Kynos depends on, not
 what an example demonstrates.
 
@@ -549,7 +549,10 @@ the same refusal for both, and it is a describability one: it does not soften
 with demand, because the document Kynos emits would have nothing to say about
 the stream. A protocol that stops being HTTP request/response belongs to
 AsyncAPI, and Kynos would rather point at it than emit a description that
-covers the upgrade handshake and then goes silent. Server-Sent Events are the
+covers the upgrade handshake and then goes silent. The escape hatch is
+`upgrade_unchecked`, behind `unchecked`: it serves the handshake on `GET` and
+records the route under `x-kynos-opaque-routes` rather than describing it, and
+the protocol on the far side stays the application's. Server-Sent Events are the
 edge that stays in, and they stay in precisely because they do not cross it:
 an event stream is one ordinary response body, so `openapi32` describes it as
 one.
@@ -698,19 +701,20 @@ The case for owning the HTTP/1 codec rests on a category error: `httparse` is
 already what hyper parses with, so a rewrite would not touch the parser. What
 it would take over is framing and buffering — and set against that, hyper
 costs roughly nothing per request. A GET with standard headers allocates once
-or not at all inside hyper's codec — a reading of hyper, not a count. No
-allocation count this repository records reaches that codec: the request-path
-counts poll `Service` directly, with no socket
-([`tests/support/counting.rs`](../crates/kynos/tests/support/counting.rs)), and
-a per-request figure over a socket is the general measurement
+or not at all inside hyper's codec. The gated request-path counts poll
+`Service` directly, with no socket
+([`tests/support/counting.rs`](../crates/kynos/tests/support/counting.rs)), but
+the `connection_*` groups of `mise run profile:requests` drive
+`Server::serve_io` over an in-memory duplex, so hyper's parse, its buffers and
+timers, and what the per-connection handler in
+[`server/connection.rs`](../crates/kynos/src/server/connection.rs) adds — the
+connection metadata it inserts into the request's extensions and the incoming
+body it erases — are counted to the duplex ([`nfr.md`](nfr.md)'s
+`connection_*` row), as a trend with no gate. A per-request figure over a real
+socket is the general measurement
 [`performance.md`](performance.md#the-boundary) sends to `kynos-bench`. What
-Kynos's routing path adds is counted: [`nfr.md`](nfr.md#routing) records five
-allocations for a static match. What its server path adds around each request
-is counted by nothing: the per-connection handler in
-[`server/connection.rs`](../crates/kynos/src/server/connection.rs) inserts the
-connection metadata into the request's extensions and erases the incoming body,
-and only the erasure is traced, in the body-erasure paragraph later in this
-section.
+Kynos's routing path adds is also gated: [`nfr.md`](nfr.md#routing) records five
+allocations for a static match.
 
 The honest counter-argument is the per-connection buffer floor. Roughly 16 KiB
 that cannot be pooled or reclaimed between requests on an idle keep-alive
@@ -828,8 +832,9 @@ qualifier is the condition
 [`dispatch.rs`](../crates/kynos/src/router/dispatch.rs)'s `finish` branches on
 — a router with an observer erases the response body a second time through a
 `Watched` that is not zero-sized and boxes the disconnect report beside it, for
-two more. That figure is traced rather than counted: `Body::from_incoming` is
-`pub(crate)` and nothing counts it.
+two more. No gated test counts that figure, since `Body::from_incoming` is
+`pub(crate)`; the `connection_*` groups of [`nfr.md`](nfr.md)'s profile row
+count it to the duplex, as a trend.
 [`alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) counts both constructors
 — zero for `Body::empty`, one for `Body::from_bytes` — and
 [`size.rs`](../crates/kynos/tests/size.rs) holds the zero-sized reason as a

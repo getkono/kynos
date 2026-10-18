@@ -26,7 +26,7 @@
 //!   interceptors — mounting [`Compression`] does not make a service accept
 //!   compressed uploads, and this does not make it send compressed responses.
 //! * **`BodySize` is not the guard here, and mounting it is a compile error.**
-//!   Two kilobytes of zeroes are a gigabyte of gzip output, so a limit measured
+//!   A megabyte of gzip inflates to a gigabyte of zeroes, so a limit measured
 //!   before decoding measures the one number an attacker sets freely. The limit
 //!   `Decompression` takes is the route's body limit applied to what the
 //!   handler will actually see. Both answer 413, so `CompatibleWith` refuses

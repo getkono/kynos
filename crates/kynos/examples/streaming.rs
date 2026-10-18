@@ -45,8 +45,11 @@
 //!
 //! `QueryString<T, M>` is the other 3.2-only construct here: a parameter whose
 //! value is the *entire* query string, media-typed. It exists for the APIs
-//! whose filter language is not `key=value` pairs — a JSON filter, an RSQL
-//! expression — which 3.1 could describe only by lying about the shape.
+//! whose filter is one structured document rather than `key=value` pairs,
+//! which 3.1 could describe only by lying about the shape. The document is
+//! JSON: its marker names `application/json` or a `+json` type, and any other
+//! marker fails the build, since JSON is the only format a query string is
+//! decoded as.
 
 use std::{
     net::Ipv4Addr,
@@ -129,14 +132,23 @@ impl MediaType for Csv {
     const MEDIA_TYPE: &'static str = "text/csv";
 }
 
-/// The filter language this API accepts in a query string.
+/// The filter document this API accepts as its query string.
 ///
 /// Media-typed, because the whole query string is one value in a format —
-/// which is exactly what a `key=value` parameter list cannot describe.
-struct RsqlFilter;
+/// which is exactly what a `key=value` parameter list cannot describe. A vendor
+/// `+json` type names the filter's own format while still being decoded as the
+/// JSON it is.
+struct FilterJson;
 
-impl MediaType for RsqlFilter {
-    const MEDIA_TYPE: &'static str = "application/rsql";
+impl MediaType for FilterJson {
+    const MEDIA_TYPE: &'static str = "application/vnd.kynos.reading-filter+json";
+}
+
+/// Which readings a search returns.
+#[derive(Schema, Deserialize)]
+struct ReadingFilter {
+    /// At most this many; ten when absent.
+    limit: Option<u32>,
 }
 
 /// Streams readings as newline-delimited JSON.
@@ -177,10 +189,12 @@ async fn stream_export() -> BinaryStream<Chunks, Csv> {
 /// of unbounded length. It pairs naturally with a media-typed query string, but
 /// the two are independent.
 #[kynos::query("/readings")]
-async fn search(filter: QueryString<String, RsqlFilter>) -> JsonLines<Countdown> {
-    let _ = filter.into_inner();
+async fn search(filter: QueryString<ReadingFilter, FilterJson>) -> JsonLines<Countdown> {
+    let ReadingFilter { limit } = filter.into_inner();
     JsonLines {
-        items: Countdown { remaining: 10 },
+        items: Countdown {
+            remaining: limit.unwrap_or(10),
+        },
     }
 }
 

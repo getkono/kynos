@@ -582,13 +582,6 @@ pub enum SpecError {
         detail: String,
     },
 
-    /// The document declared nothing at all.
-    ///
-    /// Not raised by [`Validator`](crate::validate::Validator): `paths` is
-    /// always serialized, so no document can declare nothing.
-    #[error("a document must declare at least one of `paths`, `components` or `webhooks`")]
-    EmptyDocument,
-
     /// The document uses 3.2-only constructs or unrecognised non-`x-` fields 3.1 cannot express.
     #[error("cannot emit as OpenAPI 3.1: {} 3.2-only or unrecognised field(s) in use: {}", blockers.len(), blockers.join(", "))]
     RequiresV3_2 {

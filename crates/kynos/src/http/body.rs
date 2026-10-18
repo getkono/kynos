@@ -74,6 +74,13 @@ impl Body {
         }
     }
 
+    /// A body whose bytes arrive as `chunks`, each one frame, for a fuzz
+    /// target choosing where a transport splits a body.
+    #[cfg(fuzzing)]
+    pub(crate) fn from_chunks(chunks: Vec<Bytes>) -> Self {
+        Self::from_body(Chunks(chunks.into()))
+    }
+
     /// Erases a wrapping body (compressing, counting, ranged). Ungated, since
     /// `response::range` is.
     pub(crate) fn from_body<B>(body: B) -> Self
@@ -187,6 +194,29 @@ where
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
         }
+    }
+}
+
+/// Chunks already in memory, seen as a body: one data frame per chunk, in
+/// order, as a transport might have split them.
+#[cfg(fuzzing)]
+struct Chunks(std::collections::VecDeque<Bytes>);
+
+#[cfg(fuzzing)]
+impl HttpBody for Chunks {
+    type Data = Bytes;
+    type Error = BoxError;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        Poll::Ready(
+            self.get_mut()
+                .0
+                .pop_front()
+                .map(|chunk| Ok(Frame::data(chunk))),
+        )
     }
 }
 

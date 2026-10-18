@@ -68,7 +68,7 @@ impl EncodeHeaders for AssetHeaders {
 /// The path is fixed before the router is built and never joined with request
 /// input, so there is no traversal to defend against.
 #[derive(Clone, Debug)]
-pub struct AssetEndpoint {
+pub(crate) struct AssetEndpoint {
     asset: Asset,
     template: PathTemplate,
     operation_id: String,

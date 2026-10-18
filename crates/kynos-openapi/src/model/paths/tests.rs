@@ -97,36 +97,54 @@ fn a_query_or_fragment_delimiter_inside_an_expression_is_part_of_the_name() {
     }
 }
 
-#[test]
-fn literal_segments_accept_every_character_the_grammar_allows() {
-    // `unreserved`, `sub-delims`, `:` and `@` are all `pchar`.
-    let template =
-        PathTemplate::parse("/a-b.c_d~e/f!g$h&i'j(k)l*m+n,o;p=q/r:s@t/%2Fu").expect("valid");
-    assert!(template.variables().is_empty());
-}
+/// RFC 3986's `pchar` (section 3.3), transcribed from its ABNF rather than
+/// from the parser: `unreserved` (section 2.3), `sub-delims` (section 2.2),
+/// `:` and `@`. `pct-encoded` begins with `%`, which the sweep reads apart.
+const PCHAR: &str =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~!$&'()*+,;=:@";
 
+/// Every ASCII character, between two literal ones, is read as the path
+/// grammar reads it: `pchar` and the segment separator parse; `%` must open
+/// a triple; `?` and `#` end the path; a brace is an expression's; anything
+/// else is refused by the character itself.
 #[test]
-fn literal_segments_reject_characters_outside_pchar() {
-    for raw in [
-        "/users/a b",
-        "/users/a<b",
-        "/users/a>b",
-        "/users/a\"b",
-        "/users/a\\b",
-        "/users/a^b",
-        "/users/a`b",
-        "/users/a|b",
-        // `pchar` is ASCII; anything else must arrive percent-encoded.
-        "/café",
-    ] {
-        assert!(
-            matches!(
-                PathTemplate::parse(raw),
-                Err(InvalidPathTemplate::IllegalLiteralCharacter { .. })
-            ),
-            "`{raw}` should not parse"
+fn each_ascii_character_in_a_literal_is_read_as_the_path_grammar_reads_it() {
+    for character in '\0'..='\x7f' {
+        let raw = format!("/a{character}b");
+        let expected = match character {
+            _ if PCHAR.contains(character) => Ok(()),
+            '/' => Ok(()),
+            '%' => Err(InvalidPathTemplate::MalformedPercentEncoding(raw.clone())),
+            '?' | '#' => Err(InvalidPathTemplate::NotAPath(raw.clone())),
+            '{' | '}' => Err(InvalidPathTemplate::UnbalancedBraces(raw.clone())),
+            _ => Err(InvalidPathTemplate::IllegalLiteralCharacter {
+                template: raw.clone(),
+                character,
+            }),
+        };
+        assert_eq!(
+            PathTemplate::parse(raw.as_str()).map(|_| ()),
+            expected,
+            "{character:?}"
         );
     }
+}
+
+/// `pchar` is ASCII; anything else must arrive percent-encoded, and is
+/// refused by the character itself.
+#[test]
+fn a_non_ascii_literal_character_is_refused_by_name() {
+    assert_eq!(
+        PathTemplate::parse("/café"),
+        Err(InvalidPathTemplate::IllegalLiteralCharacter {
+            template: "/café".to_owned(),
+            character: 'é',
+        })
+    );
+    assert_eq!(
+        PathTemplate::parse("/caf%C3%A9").map(|template| template.as_str().to_owned()),
+        Ok("/caf%C3%A9".to_owned())
+    );
 }
 
 #[test]
@@ -242,6 +260,70 @@ fn operations_are_addressed_by_method() {
     assert!(item.operation(Method::Get).is_some());
     assert!(item.operation(Method::Post).is_none());
     assert_eq!(item.operations().count(), 1);
+}
+
+/// Every fixed-method slot is reached, in `Method::all` order, and an edit
+/// through the iterator lands on the operation the item holds.
+#[test]
+fn operations_mut_reaches_every_method_slot_in_order() {
+    let mut item = EVERY_METHOD.iter().fold(PathItem::new(), |item, &method| {
+        item.with_operation(method, Operation::new(method.as_wire_str()))
+    });
+
+    let visited: Vec<String> = item
+        .operations_mut()
+        .map(|operation| {
+            operation.summary = Some("edited".to_owned());
+            operation.operation_id.clone().expect("set above")
+        })
+        .collect();
+
+    let expected: Vec<&str> = EVERY_METHOD
+        .iter()
+        .map(|method| method.as_wire_str())
+        .collect();
+    assert_eq!(visited, expected);
+    for &method in EVERY_METHOD {
+        let operation = item.operation(method).expect("declared above");
+        assert_eq!(operation.summary.as_deref(), Some("edited"), "{method:?}");
+    }
+}
+
+#[test]
+fn operations_mut_skips_undeclared_methods() {
+    let mut item = PathItem::new().with_operation(Method::Post, Operation::new("create"));
+    let visited: Vec<_> = item
+        .operations_mut()
+        .map(|operation| operation.operation_id.clone())
+        .collect();
+    assert_eq!(visited, [Some("create".to_owned())]);
+    assert_eq!(PathItem::new().operations_mut().count(), 0);
+}
+
+/// 3.2's additional operations follow the fixed ones, in insertion order.
+#[cfg(feature = "openapi32")]
+#[test]
+fn operations_mut_includes_additional_operations_after_the_fixed_ones() {
+    let mut item = PathItem::new().with_operation(Method::Get, Operation::new("get"));
+    for name in ["PROPFIND", "COPY"] {
+        item.additional_operations
+            .insert(name.to_owned(), Box::new(Operation::new(name)));
+    }
+
+    for operation in item.operations_mut() {
+        operation.deprecated = Some(true);
+    }
+
+    let visited: Vec<_> = item
+        .operations_mut()
+        .map(|operation| operation.operation_id.clone().expect("set above"))
+        .collect();
+    assert_eq!(visited, ["get", "PROPFIND", "COPY"]);
+    assert!(
+        item.additional_operations
+            .values()
+            .all(|operation| operation.deprecated == Some(true))
+    );
 }
 
 #[test]

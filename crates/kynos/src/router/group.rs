@@ -1,4 +1,4 @@
-//! A set of operations sharing a prefix, a tag, and interceptors.
+//! A set of operations sharing a prefix, tags, and interceptors.
 
 use std::{marker::PhantomData, sync::Arc};
 
@@ -19,10 +19,11 @@ use crate::{
     },
 };
 
-/// A set of operations sharing a path prefix, a tag, and interceptors.
+/// A set of operations sharing a path prefix, tags, and interceptors.
 ///
 /// This is the recommended unit of API structure: one group per resource. The
-/// prefix becomes part of each path, the tag is applied to each operation, and
+/// prefix becomes part of each path, every tag the group names is applied to
+/// each operation, and
 /// each interceptor's contribution is merged into each operation's description
 /// — so attaching authentication to a group documents it on every operation
 /// underneath.

@@ -150,6 +150,59 @@ impl PathItem {
             .filter_map(move |&method| self.operation(method).map(|op| (method, op)))
     }
 
+    /// Iterates mutably over every operation the path declares.
+    ///
+    /// Unlike [`operations`](Self::operations), this includes the 3.2
+    /// `additional_operations`, so an edit made through it reaches every
+    /// operation on the path. The fixed-method operations come first, in
+    /// [`Method::all`] order, followed by the additional operations in
+    /// insertion order.
+    pub fn operations_mut(&mut self) -> impl Iterator<Item = &mut Operation> {
+        // Exhaustive, so a new field fails to compile until it is classified.
+        let Self {
+            reference: _,
+            summary: _,
+            description: _,
+            get,
+            put,
+            post,
+            delete,
+            options,
+            head,
+            patch,
+            trace,
+            #[cfg(feature = "openapi32")]
+            query,
+            #[cfg(feature = "openapi32")]
+            additional_operations,
+            servers: _,
+            parameters: _,
+            extensions: _,
+        } = self;
+
+        let fixed = [
+            get,
+            put,
+            post,
+            delete,
+            options,
+            head,
+            patch,
+            trace,
+            #[cfg(feature = "openapi32")]
+            query,
+        ]
+        .into_iter()
+        .filter_map(|slot| slot.as_deref_mut());
+
+        #[cfg(feature = "openapi32")]
+        let additional = additional_operations.values_mut().map(|boxed| &mut **boxed);
+        #[cfg(not(feature = "openapi32"))]
+        let additional = std::iter::empty();
+
+        fixed.chain(additional)
+    }
+
     /// Sets the operation for a method, in builder style.
     #[must_use]
     pub fn with_operation(mut self, method: Method, operation: Operation) -> Self {

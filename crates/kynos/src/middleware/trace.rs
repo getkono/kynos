@@ -5,8 +5,13 @@ use crate::{http, middleware::Observer, router::operation::Route};
 /// Emits a `tracing` event for each end of an operation.
 ///
 /// Both carry `method`, `matched_path`, `operation_id` and `request_id`; the
-/// closing one adds `status` and `latency`. Handler bodies use plain
-/// `tracing::info!` and inherit whatever span the application established.
+/// closing one adds `status` and `latency`. The opening event's `method` is the
+/// request's; the closing one's is the matched operation's, so it joins with
+/// `operation_id` on its own line: `GET` for a `HEAD` that a `GET` answers, and
+/// the same placeholder as `matched_path` where nothing matched.
+///
+/// Handler bodies use plain `tracing::info!` and inherit whatever span the
+/// application established.
 ///
 /// Observers run before any interceptor, so the opening event precedes
 /// [`RequestId`](super::request_id::RequestId) assigning an identifier. Its
@@ -213,6 +218,7 @@ impl<C> Observer<C> for Trace {
     ) {
         emit!(
             self.level,
+            method = %route.map_or(UNMATCHED, |route| route.method().as_wire_str()),
             matched_path = route.map_or(UNMATCHED, |route| route.path()),
             operation_id = route.map_or(UNMATCHED, |route| route.operation_id()),
             status = response.status().as_u16(),

@@ -20,9 +20,10 @@
 //!
 //! # Rejections describe themselves too
 //!
-//! [`FromRequestParts::Rejection`] is bound by
-//! [`Responses`](crate::response::Responses), so every way an extractor can
-//! fail appears in the operation's `responses`.
+//! Both [`FromRequestParts::Rejection`] and [`FromRequest::Rejection`] are
+//! bound by [`Responses`](crate::response::Responses), so every way an
+//! extractor can fail — reading the head or consuming the body — appears in
+//! the operation's `responses`.
 //!
 //! # How this module is laid out
 //!

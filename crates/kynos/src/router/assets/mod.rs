@@ -35,7 +35,7 @@ use crate::http::HeaderValue;
 use crate::router::assets::endpoint::AssetEndpoint;
 use crate::router::endpoint::set::{Endpoints, IntoEndpoints};
 
-pub mod endpoint;
+mod endpoint;
 
 pub mod error;
 

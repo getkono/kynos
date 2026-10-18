@@ -205,31 +205,55 @@ fn a_content_described_parameter_has_no_style_to_report() {
 
 #[test]
 fn a_parameter_describing_its_value_twice_or_not_at_all_is_refused() {
-    let neither = serde_json::from_str::<Parameter>(r#"{"name":"a","in":"query"}"#)
-        .expect_err("one of `schema` and `content` is required");
-    assert!(neither.to_string().contains("required"));
+    let neither = serde_json::from_value::<Parameter>(serde_json::json!({
+        "name": "a",
+        "in": "query",
+    }))
+    .expect_err("one of `schema` and `content` is required");
+    assert_eq!(
+        neither.to_string(),
+        "one of `schema` and `content` is required"
+    );
 
-    let both = serde_json::from_str::<Parameter>(
-        r#"{"name":"a","in":"query","schema":true,"content":{"application/json":{}}}"#,
-    )
+    let both = serde_json::from_value::<Parameter>(serde_json::json!({
+        "name": "a",
+        "in": "query",
+        "schema": true,
+        "content": {"application/json": {}},
+    }))
     .expect_err("`schema` and `content` are mutually exclusive");
-    assert!(both.to_string().contains("mutually exclusive"));
+    assert_eq!(
+        both.to_string(),
+        "`schema` and `content` are mutually exclusive"
+    );
 
-    let two = serde_json::from_str::<Parameter>(
-        r#"{"name":"a","in":"query","content":{"application/json":{},"text/plain":{}}}"#,
-    )
+    let two = serde_json::from_value::<Parameter>(serde_json::json!({
+        "name": "a",
+        "in": "query",
+        "content": {"application/json": {}, "text/plain": {}},
+    }))
     .expect_err("`content` must hold exactly one entry");
-    assert!(two.to_string().contains("exactly one entry"));
+    assert_eq!(
+        two.to_string(),
+        "`content` must hold exactly one entry, found 2"
+    );
 }
 
 #[test]
 fn a_parameter_shown_both_ways_at_once_is_refused() {
-    let error = serde_json::from_str::<Parameter>(
-        r#"{"name":"a","in":"query","schema":true,"example":1,"examples":{"one":{"value":1}}}"#,
-    )
+    let error = serde_json::from_value::<Parameter>(serde_json::json!({
+        "name": "a",
+        "in": "query",
+        "schema": true,
+        "example": 1,
+        "examples": {"one": {"value": 1}},
+    }))
     .expect_err("`example` is exclusive with `examples`");
 
-    assert!(error.to_string().contains("mutually exclusive"));
+    assert_eq!(
+        error.to_string(),
+        "`example` and `examples` are mutually exclusive"
+    );
 }
 
 #[test]
@@ -295,12 +319,17 @@ fn a_content_described_header_has_no_style_to_set() {
 fn a_header_shown_both_ways_at_once_is_refused() {
     use crate::model::parameter::header::Header;
 
-    let error = serde_json::from_str::<Header>(
-        r#"{"schema":true,"example":1,"examples":{"one":{"value":1}}}"#,
-    )
+    let error = serde_json::from_value::<Header>(serde_json::json!({
+        "schema": true,
+        "example": 1,
+        "examples": {"one": {"value": 1}},
+    }))
     .expect_err("`example` is exclusive with `examples`");
 
-    assert!(error.to_string().contains("mutually exclusive"));
+    assert_eq!(
+        error.to_string(),
+        "`example` and `examples` are mutually exclusive"
+    );
 }
 
 #[test]

@@ -80,7 +80,7 @@ half and the timed half are separate rows, and only the timed one carries the
 | [Runtime](#runtime) | `crates/kynos/src/server/` |
 | [Dependencies](#dependencies) | the whole workspace |
 | [Macros](#macros) | `crates/kynos-macros/` |
-| [Observability](#observability) | the `trace` feature — no OpenTelemetry module yet |
+| [Observability](#observability) | the `trace` feature — no OpenTelemetry module |
 
 ## Document model
 
@@ -103,8 +103,8 @@ half and the timed half are separate rows, and only the timed one carries the
 The `--check` row's blocker was never a `todo!()` body: the workspace declares no
 binary target at all, and no command-line surface is designed anywhere. It is
 recorded here because the emitter is here, but it may well belong to a
-satellite crate. That, and the two observability rows below, are the only three
-`blocked-on-impl` rows left — the API-skeleton milestone accounted for the rest,
+satellite crate. It is the only `blocked-on-impl` row left — the API-skeleton
+milestone accounted for the rest,
 and each moved to the status its evidence actually supports rather than all of
 them moving to `enforced`.
 
@@ -305,7 +305,7 @@ rewrite.
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
-| reliability | No extractor panics on any input | `cargo-fuzz` targets in [`fuzz/`](../fuzz/), one per hand-written parser of untrusted input, each asserting no panic and a round trip or an independent oracle where one exists; [`fuzz.yml`](../.github/workflows/fuzz.yml) searches each nightly, and [`full.yml`](../.github/workflows/full.yml) replays the committed [`fuzz/corpus/`](../fuzz/corpus/) | `partial`: a release fails only on a committed input, while a new one fails the nightly job, which no merge waits on; and the ten targets are Kynos's own parsers, not every extractor — a codec whose parser is a dependency's (`serde_json`, `serde_html_form`, `multer`'s part framing, `prost`) is not fuzzed here. [`testing.md`](testing.md#fuzzing) lists them |
+| reliability | No extractor panics on any input | `cargo-fuzz` targets in [`fuzz/`](../fuzz/), one per hand-written parser of untrusted input, each asserting no panic and a round trip or an independent oracle where one exists; [`fuzz.yml`](../.github/workflows/fuzz.yml) searches each nightly, and [`full.yml`](../.github/workflows/full.yml) replays the committed [`fuzz/corpus/`](../fuzz/corpus/) | `partial`: a release fails only on a committed input, while a new one fails the nightly job, which no merge waits on; and the targets are Kynos's own parsers, not every extractor — a codec whose parser is a dependency's (`serde_json`, `serde_html_form`, `multer`'s part framing, `prost`) is not fuzzed here. [`testing.md`](testing.md#fuzzing) lists them |
 | security | Header count and header-list size are bounded by default | The driver is configured from [`Http1Config`](../crates/kynos/src/server/protocol/http1.rs) and [`Http2Config`](../crates/kynos/src/server/protocol/http2.rs) on every connection; [`server/tests.rs`](../crates/kynos/src/server/tests.rs) asserts the configured cap is the one forwarded | `enforced` |
 | security | Every buffered request body is capped by default, the cap is declared wherever a body is read, and a mounted limit replaces it per operation | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) asserting a 2 MiB default refuses at default+1 counted and declared, accepts at the default, declares its 413 only on operations reading a body, is raised past itself by a `BodySize` on one operation, and holds for multipart; a mounted limit asserted at limit+1 and refused from a declared length before the body is read; [`json_lines/tests.rs`](../crates/kynos/src/extract/body/json_lines/tests.rs) bounding each streamed record | `enforced`; `planned` for the allocation bound |
 | security | Per-IP connection caps | none yet — see below | `planned` |
@@ -380,7 +380,7 @@ belongs with [`security.md`](security.md) rather than here.
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
-| correctness | Emitted document ⊇ observable responses | [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) checking live responses against the generated document across the owned-layer matrix, in both directions | `enforced` |
+| correctness | Emitted document ⊇ observable responses | [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) checking live responses against the generated document across the owned-layer matrix, in both directions | `partial`: statuses and bodies are held both ways, but a header is checked only as declared-required ⊆ sent, so a response header the document never declares is not reported ([`TestClient::assert_conformance`](../crates/kynos/src/test/mod.rs)) |
 | correctness | A short circuit's description declares the body it sends, and declares none only where it sends none | `every_short_circuit_declares_the_content_it_sends` in [`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs) driving every constructible implementation against `every_short_circuit_kynos_ships_is_accounted_for`'s set, plus the declaration-of-none check in [`test/conformance.rs`](../crates/kynos/src/test/conformance.rs) that [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) runs over a live exchange | `enforced` |
 | correctness | Two interceptors covering one operation never add one response header or answer with one status | `CompatibleWith` forced at every mount site, with a `trybuild` case per scope in [`tests/ui/antipattern/`](../crates/kynos/tests/ui/antipattern/) and a pass control for each | `enforced` for what the two sides declare; the two rows below are where a declaration is missing |
 | correctness | The check does not depend on the order the scopes were written in | The five `*_collide` cases mount a scope *before* the interceptor that conflicts with it, which is the order that used to compile | `enforced`; this row is why the one above is not a restatement |
@@ -530,9 +530,10 @@ where someone mounting a cap will meet it.
 
 AGENTS.md: *"A module becomes a directory once it holds two
 independently-changing concerns … Passing ~400 lines excluding tests is when to
-ask that question, not an answer to it."* Thirty-five files under `crates/*/src` are
-past that line and asked it, and `containment:check` holds that number so it can
-only move on purpose.
+ask that question, not an answer to it."* The files under `crates/*/src` past
+that line, each of which asked it, are listed at the end of this section, and
+`containment:check` holds the list against the tree as a set, naming the path
+added or removed, so it moves only on purpose.
 
 The line count is a prompt rather than a trigger because the rule interacts with
 the one directly above it in AGENTS.md — *"Submodules are `pub` with no parent
@@ -541,7 +542,7 @@ public types lengthens every one of their paths, because no re-export may
 preserve the old one. `error/rejection.rs` is the clearest case: it is one of
 them, it declares every rejection type, and splitting it would turn
 `error::rejection::PathRejection` into
-`error::rejection::path::PathRejection`. Nineteen of the thirty-five are that
+`error::rejection::path::PathRejection`. Nineteen of them are that
 shape, worth roughly a hundred public paths between them — and each is one
 cohesive family, which is precisely what the concern test says may stay a file.
 So they stay: a longer path is a worse name, and the rule's first clause already
@@ -561,8 +562,9 @@ family: four interceptors sharing no type, each with its own response and its
 own reason to change. The concern test answers yes there, so
 `limits::Timeout` became `limits::timeout::Timeout` and likewise for the rest.
 
-The budget is the honest record of what stayed. It falls when a module is split,
-and raising it means saying in the same commit why a new module needs the room.
+The budget is the honest record of what stayed. A path leaves it when its module
+is split, and one joins it only with the argument for why that module needs the
+room, in the same commit.
 
 Eleven of them crossed the line after v0.1.0, and each was argued for as it did.
 `response/status.rs` is the shape above rather than a new argument. It declares
@@ -664,11 +666,53 @@ rule is an arm beside the construct it judges; split by construct, the rules
 would sit a file away from the one visitor that walks them, and the property
 tables are already files of their own.
 
+The budget, which may only shrink:
+
+- `crates/kynos-macros/src/derive/api_error.rs`
+- `crates/kynos-macros/src/derive/schema.rs`
+- `crates/kynos-macros/src/derive/schema/attributes.rs`
+- `crates/kynos-macros/src/derive/security_scheme.rs`
+- `crates/kynos-macros/src/lib.rs`
+- `crates/kynos-openapi/src/annotation/mod.rs`
+- `crates/kynos-openapi/src/emit/downgrade/unrecognised.rs`
+- `crates/kynos-openapi/src/emit/downgrade/walk.rs`
+- `crates/kynos-openapi/src/model/parameter/mod.rs`
+- `crates/kynos-openapi/src/model/schema/object.rs`
+- `crates/kynos-openapi/src/pattern.rs`
+- `crates/kynos-openapi/src/validate/violation.rs`
+- `crates/kynos-profile/src/lib.rs`
+- `crates/kynos/src/error/problem.rs`
+- `crates/kynos/src/error/rejection.rs`
+- `crates/kynos/src/http/forwarded.rs`
+- `crates/kynos/src/middleware/cache/mod.rs`
+- `crates/kynos/src/middleware/compression/mod.rs`
+- `crates/kynos/src/middleware/cors/mod.rs`
+- `crates/kynos/src/middleware/decompression/mod.rs`
+- `crates/kynos/src/middleware/mod.rs`
+- `crates/kynos/src/response/range/mod.rs`
+- `crates/kynos/src/response/range/served.rs`
+- `crates/kynos/src/response/status.rs`
+- `crates/kynos/src/response/stream/sse.rs`
+- `crates/kynos/src/router/describe.rs`
+- `crates/kynos/src/router/dispatch.rs`
+- `crates/kynos/src/router/mod.rs`
+- `crates/kynos/src/schema/constraints.rs`
+- `crates/kynos/src/schema/mod.rs`
+- `crates/kynos/src/security/auth.rs`
+- `crates/kynos/src/server/connection.rs`
+- `crates/kynos/src/server/mod.rs`
+- `crates/kynos/src/test/mod.rs`
+- `crates/kynos/src/unchecked.rs`
+
 ## Dependencies
 
 Containment rows enforcing the graph in
-[`architecture.md`](architecture.md#dependencies). Each is a grep, and each
-fails the build when a crate is named outside the module that owns it.
+[`architecture.md`](architecture.md#dependencies). `containment:check` reads
+every row whose method it is off this table rather than restating it, and fails
+the build when a crate is named outside the sites its row lists. A row is
+backticked crates, then `named only in`, `under` or `at` backticked sites, or
+`never named`; a site is relative to `crates/kynos/src/` unless it opens with a
+member's name, and one ending in `/` is a tree.
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
@@ -678,7 +722,7 @@ fails the build when a crate is named outside the module that owns it.
 | compatibility | `socket2` is named only in `server/tcp.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `h2` and `httparse` are never named | `mise run containment:check` | `enforced` |
 | compatibility | `tower`, `tower-layer` and `tower-service` are named only in `unchecked.rs` | `mise run containment:check` | `enforced` |
-| compatibility | `http-body` and `http-body-util` are named only at the body sites architecture.md lists | `mise run containment:check` | `enforced` |
+| compatibility | `http-body` and `http-body-util` are named only in `http/body.rs`, `http/body/watched.rs`, `middleware/cache/mod.rs`, `response/range/source.rs`, `router/dispatch.rs` and `test/mod.rs`, and under `extract/body/`, `middleware/compression/`, `middleware/decompression/` and `middleware/limits/` | `mise run containment:check` | `enforced` |
 | compatibility | `async-compression` is named only under `middleware/compression/` and `middleware/decompression/` | `mise run containment:check` | `enforced` |
 | compatibility | `serde_html_form` is named only in `extract/body/form.rs`, `response/codec/form.rs` and `test/mod.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `tracing` is named only under `server/` and in `middleware/trace.rs` | `mise run containment:check` | `enforced` |
@@ -690,9 +734,10 @@ fails the build when a crate is named outside the module that owns it.
 | compatibility | `rust_decimal` and `bigdecimal` are named only under `schema/impls/decimal/` | `mise run containment:check` | `enforced` |
 | compatibility | `percent-encoding` is named only in `__private/uri.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `jsonschema` is named only in `test/conformance.rs` | `mise run containment:check` | `enforced` |
-| compatibility | `serde_norway` is named only under `kynos-openapi/emit/` and in `error/mod.rs` | `mise run containment:check` | `enforced` |
-| compatibility | `indexmap` is named only in `kynos-openapi` | `mise run containment:check` | `enforced` |
-| compatibility | `proc-macro2`, `quote` and `syn` are named only in `kynos-macros` | `mise run containment:check` | `enforced` |
+| compatibility | `regex` and `regex-syntax` are named only in `__private/constraints/pattern.rs` and `kynos-openapi/pattern.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `serde_norway` is named only under `kynos-openapi/emit/` | `mise run containment:check` | `enforced` |
+| compatibility | `indexmap` is named only under `kynos-openapi/` | `mise run containment:check` | `enforced` |
+| compatibility | `proc-macro2`, `quote` and `syn` are named only under `kynos-macros/` | `mise run containment:check` | `enforced` |
 | dx | Every crate in `[workspace.dependencies]` is consumed by a member | `cargo-udeps` or an equivalent manifest check | `needs-tooling` |
 
 ## Macros
@@ -717,18 +762,18 @@ the toolchain, so the row is waiting on wiring rather than on an installation.
 
 ## Observability
 
-No OpenTelemetry module exists yet; the `trace` feature's
+No OpenTelemetry module exists, and none will; the `trace` feature's
 [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) is a facade
 over `tracing` and the subscriber stays the application's.
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
-| operability | Spans conform to OpenTelemetry HTTP semantic conventions | Integration test asserting attribute names against a pinned semconv version | `blocked-on-impl` |
-| operability | Metric cardinality is bounded by operation count | Test asserting series count is invariant under 10k distinct request paths | `blocked-on-impl` |
+| operability | Spans conform to OpenTelemetry HTTP semantic conventions | Integration test asserting attribute names against a pinned semconv version | `by-design`, below |
+| operability | Metric cardinality is bounded by operation count | Test asserting series count is invariant under 10k distinct request paths | `by-design`, below |
 | operability | A response the client did not receive is distinguishable from one it did | [`tests/sse.rs`](../crates/kynos/tests/sse.rs) dropping a live event stream's reader and asserting `on_disconnect` fires exactly once, with a control that reads a finite response to its end | `enforced` |
 
-Both `blocked-on-impl` rows are blocked on the same thing — the OpenTelemetry
-module does not exist — so neither is waiting on tooling. What did land is the
+Both `by-design` rows rest on the same refusal — Kynos ships no OpenTelemetry
+module, for the reasons closing this section. What did land is the
 seam they need: `Observer` receives the matched
 [`Route`](../crates/kynos/src/router/operation.rs), so a label can be keyed by
 operation rather than by request path, which is the property the second row
@@ -750,8 +795,8 @@ untrusted caller is allowed to do — each an operator's decision.
 [`examples/opentelemetry.rs`](../crates/kynos/examples/opentelemetry.rs) is the
 answer instead: an interceptor whose `Reads` group is both the declaration and
 the W3C propagation carrier, entered across `next.run` so the span covers the
-handler. It carries no dependency into the library, and both rows above stay
-open against a `kynos-otel` that may never be written.
+handler. It carries no dependency into the library, and both rows above are
+the application's to assert against its own instrumentation.
 
 ## Workspace
 
@@ -771,7 +816,7 @@ open against a `kynos-otel` that may never be written.
 | reliability | Every test target compiles and runs at baseline features, not only `--all-features` | `mise run test:baseline` | `enforced` |
 | reliability | Every test target is built at the feature sets its own `#[cfg]` gates decide, not only at all-on, default and baseline | `mise run lint:codecs`, six `-p kynos --all-targets` Clippy runs over `openapi31 + macros` and each optional codec in turn | `enforced` for the codec flags, which is where a per-feature-gated target lives today; a target gated on some other flag would need its set added to that list |
 | reliability | Tests are hermetic; no shared state, no ordering dependence, no retries | `cargo-nextest` process isolation, `retries = 0`, guarded by `crates/kynos/tests/hermeticity.rs` | `enforced` |
-| dx | No module grows past the size the layout rule allows without that being recorded | `mise run containment:check`, against a module-size budget of 35 files stated below | `enforced` as a ratchet: the count cannot rise silently, and lowering it is what splitting a module looks like |
+| dx | No module grows past the size the layout rule allows without that being recorded | `mise run containment:check`, against [the module-size budget](#the-module-size-budget)'s list of paths, compared as a set | `enforced` as a ratchet: no path joins the list silently, and dropping one is what splitting a module looks like. A failure names the path added or removed, so a split and a regression in one commit cannot cancel out |
 | dx | A worktree's `target/` stays near the 17 GiB [PR #126](https://github.com/getkono/kynos/pull/126) measured, against the 44 GiB before it | `mise run containment:check`, holding [`.cargo/config.toml`](../.cargo/config.toml) to declaring `profile.dev.debug` and `profile.dev.package."*".debug`, and to carrying no top-level table but `profile` | `partial`: it holds the cause and not the size. No job takes a `du -sh target` reading, so a build that grows for some other reason passes; the two keys' *values* are unchecked, and so are the two `CARGO_INCREMENTAL = "0"` task envs #126 added beside them. What it closes is the half nobody can review — below |
 | reliability | Panic recovery refuses to compile under `panic = "abort"` | `mise run panic:check` | `enforced` |
 | reliability | Commits follow Conventional Commits, merge commits exempt | `convco`, twice over: the `conventional-commit` `commit-msg` step runs `mise run commits:message` over the one message being written, exempting a merge on the presence of the `MERGE_HEAD` *file*; `mise run commits:check` and the `commits` CI job run `convco check` over a range, where the exemption is convco's own parent-count filter. `mise run commits:test` runs *both* halves over the same commits, since a divergence between them fails neither | `enforced`, with one case out of reach: amending an *existing* merge commit runs the hook with `MERGE_HEAD` already gone over a commit that still has two parents, so the hook rejects what the range form exempts, and `--no-verify` is the escape. `commits:test` pins that residual in both directions, so closing or widening it fails this row |

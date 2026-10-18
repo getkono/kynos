@@ -17,8 +17,8 @@
 //! * **`Redirect<CODE>` refuses the wrong codes.** The bound is a witness
 //!   implemented for exactly 301, 302, 303, 307 and 308, and both the trait and
 //!   `()` are foreign to an application — so the set cannot be widened from
-//!   outside and `Redirect::<304>` does not compile. That rules out writing 302
-//!   where 307 was meant and silently changing the method on replay.
+//!   outside and `Redirect::<304>` does not compile. That rules out a redirect
+//!   answered with a code that is not one; choosing among the five stays yours.
 //! * **A download is a body type plus a header group.** Other frameworks hand
 //!   you an `Attachment` type with a content-type setter on it. Here the media
 //!   type is already the body's own type — `Binary<Pdf>` *is*

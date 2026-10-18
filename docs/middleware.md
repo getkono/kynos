@@ -688,8 +688,8 @@ for whatever it covers, upward too, so one large upload is one `BodySize` on its
 own endpoint. [`nfr.md`](nfr.md#extraction) records why this reverses the
 earlier decision against a default.
 
-**A decompression bomb is `BodySize`'s blind spot, not its job.** Two kilobytes
-of zeroes are a gigabyte of gzip output, so a cap measured before decoding
+**A decompression bomb is `BodySize`'s blind spot, not its job.** A megabyte
+of gzip inflates to a gigabyte of zeroes, so a cap measured before decoding
 measures the one number an attacker chooses freely. `Decompression` takes the
 limit instead and applies it to what the handler will actually see. The two
 cannot be mounted together — both answer 413, and `CompatibleWith` refuses
@@ -1479,8 +1479,12 @@ consulted the `Route` argument the old `contribution` method gave it.
 ## Conformance
 
 The invariant is a claim about a running service, so it has to be tested like
-one: a harness checking live responses against the emitted document across the
-matrix of owned layers, in CI.
+one: a harness checking live responses against the emitted document across a
+matrix of owned layers, in CI. The matrix mounts nine of the shipped
+interceptors; `Cache`, `Compression`, `Decompression`, `BodyTimeout` and
+`SecurityHeaders` are held by their own targets instead, and all but the last
+by [`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs)
+([`testing.md`](testing.md#the-taxonomy)).
 
 That harness is [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs), and it
 runs. It asserts in both directions, which is what makes it a conformance check
@@ -1490,7 +1494,8 @@ the document predicts went unexercised. The second is coverage over the
 *contract*, and it is why every interceptor there sits on a group holding
 exactly one operation — a limit mounted at the router would declare its status
 on all of them, and every one would then have to be made to produce it.
-[`nfr.md`](nfr.md#middleware) carries it as `enforced`, and what it caught on
+[`nfr.md`](nfr.md#middleware) carries it as `partial` — a response header the
+document never declares goes unreported — and what it caught on
 its first run is in
 [`testing.md`](testing.md#what-the-harness-found-on-its-first-run).
 

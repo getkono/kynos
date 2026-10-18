@@ -993,6 +993,7 @@ fn only_an_incomplete_drain_is_a_requested_shutdown() {
         },
         ServerError::AcceptLoop { panicked: true },
         ServerError::Signal(io_error()),
+        #[cfg(feature = "tls")]
         ServerError::MutualTlsConflict,
     ];
     for failure in failures {
