@@ -5,7 +5,12 @@ use crate::model::{
     parameter::{Parameter, style::Style},
     paths::{item::PathItem, method::Method, operation::Operation, template::PathTemplate},
     response::{Response, Responses},
-    schema::{Schema, types::SchemaType},
+    schema::{
+        Schema,
+        discriminator::Discriminator,
+        object::SchemaObject,
+        types::{SchemaType, TypeSet},
+    },
     security::requirement::SecurityRequirement,
 };
 
@@ -3109,6 +3114,12 @@ fn variant_name(error: &SpecError) -> &'static str {
         SpecError::ServerVariableDefaultNotInEnum { .. } => "ServerVariableDefaultNotInEnum",
         SpecError::InvalidExtensionName { .. } => "InvalidExtensionName",
         SpecError::CallbackKeyedAsExtension { .. } => "CallbackKeyedAsExtension",
+        SpecError::DiscriminatorWithoutComposition => "DiscriminatorWithoutComposition",
+        SpecError::DiscriminatorPropertyNotRequired { .. } => "DiscriminatorPropertyNotRequired",
+        #[cfg(feature = "openapi32")]
+        SpecError::DiscriminatorWithoutDefaultMapping { .. } => {
+            "DiscriminatorWithoutDefaultMapping"
+        }
         SpecError::UncheckedSchema => "UncheckedSchema",
         SpecError::NotAuthoritative => "NotAuthoritative",
         SpecError::OpaqueOperation { .. } => "OpaqueOperation",
@@ -3174,6 +3185,10 @@ const RAISED_ELSEWHERE: &[&str] = &[
     "UnknownTagParent",
     #[cfg(not(feature = "openapi32"))]
     "TagParentCycle",
+    // `defaultMapping` is a 3.2 field, and only validating as 3.2 lets a
+    // discriminating property be optional with one.
+    #[cfg(not(feature = "openapi32"))]
+    "DiscriminatorWithoutDefaultMapping",
 ];
 
 /// One document per variant, each named by the variant it must raise and the
@@ -3188,6 +3203,7 @@ fn ledger() -> Vec<(&'static str, SpecVersion, Document)> {
     cases.extend(ledger_querystring());
     cases.extend(ledger_document());
     cases.extend(ledger_opacity());
+    cases.extend(ledger_discriminator());
     cases
 }
 
@@ -3612,6 +3628,33 @@ fn ledger_opacity() -> Vec<(&'static str, SpecVersion, Document)> {
     cases
 }
 
+/// Cases for the Discriminator Object's MUSTs.
+fn ledger_discriminator() -> Vec<(&'static str, SpecVersion, Document)> {
+    let mut uncomposed = kinded(true);
+    uncomposed.discriminator = Some(Discriminator::new("kind"));
+    let optional =
+        || document_with_schemas([("Pet", object(discriminated(vec![object(kinded(false))])))]);
+
+    vec![
+        (
+            "DiscriminatorWithoutComposition",
+            SpecVersion::V3_1,
+            document_with_schemas([("Pet", object(uncomposed))]),
+        ),
+        (
+            "DiscriminatorPropertyNotRequired",
+            SpecVersion::V3_1,
+            optional(),
+        ),
+        #[cfg(feature = "openapi32")]
+        (
+            "DiscriminatorWithoutDefaultMapping",
+            SpecVersion::V3_2,
+            optional(),
+        ),
+    ]
+}
+
 /// Each ledger entry raises the variant it is filed under.
 #[test]
 fn each_ledger_case_raises_the_variant_it_names() {
@@ -4030,4 +4073,349 @@ fn an_unchecked_schema_under_a_nested_encoding_is_reported() {
             "#/components/mediaTypes/Parts/itemSchema",
         ]
     );
+}
+
+// --- The Discriminator Object's MUSTs ---------------------------------------
+
+/// An object with a string `kind` property, which it requires when `required`.
+fn kinded(required: bool) -> SchemaObject {
+    let mut object = SchemaObject {
+        ty: Some(TypeSet::One(SchemaType::Object)),
+        ..SchemaObject::default()
+    };
+    object
+        .properties
+        .insert("kind".to_owned(), Schema::of_type(SchemaType::String));
+    if required {
+        object.required = Some(vec!["kind".to_owned()]);
+    }
+    object
+}
+
+/// A `oneOf` over `branches`, discriminated by `kind`.
+fn discriminated(branches: Vec<Schema>) -> SchemaObject {
+    SchemaObject {
+        one_of: Some(branches),
+        discriminator: Some(Discriminator::new("kind")),
+        ..SchemaObject::default()
+    }
+}
+
+fn object(object: SchemaObject) -> Schema {
+    Schema::Object(Box::new(object))
+}
+
+/// A document holding each of `schemas` under `#/components/schemas`.
+fn document_with_schemas<'a>(schemas: impl IntoIterator<Item = (&'a str, Schema)>) -> Document {
+    let mut document = document_with(&[]);
+    for (name, schema) in schemas {
+        document.components.schemas.insert(name.to_owned(), schema);
+    }
+    document
+}
+
+/// Each discriminator violation validating as `version` raises, at its
+/// location.
+fn discriminator_errors(document: &Document, version: SpecVersion) -> Vec<(String, &'static str)> {
+    Validator::new(version)
+        .validate(document)
+        .into_iter()
+        .map(|violation| (violation.location, variant_name(&violation.error)))
+        .filter(|(_, name)| name.starts_with("Discriminator"))
+        .collect()
+}
+
+/// Every version a build validates against.
+fn versions() -> Vec<SpecVersion> {
+    vec![
+        SpecVersion::V3_1,
+        #[cfg(feature = "openapi32")]
+        SpecVersion::V3_2,
+    ]
+}
+
+/// The Discriminator Object is legal only beside `oneOf`, `anyOf` or `allOf`
+/// (`references/3.1.2.md:3341`, `references/3.2.0.md:3623`).
+#[test]
+fn a_discriminator_beside_no_composition_is_refused() {
+    let mut pet = kinded(true);
+    pet.discriminator = Some(Discriminator::new("kind"));
+    let document = document_with_schemas([("Pet", object(pet))]);
+
+    for version in versions() {
+        assert_eq!(
+            discriminator_errors(&document, version),
+            [(
+                "#/components/schemas/Pet/discriminator".to_owned(),
+                "DiscriminatorWithoutComposition"
+            )],
+            "validating as {version}"
+        );
+    }
+}
+
+/// The `allOf` form puts the discriminator on a parent its children extend
+/// through `allOf` (`references/3.1.2.md:3345`, the specification's own
+/// `Pet` example), so the parent needs no composition of its own.
+#[test]
+fn the_parent_an_all_of_member_references_needs_no_composition() {
+    let mut pet = kinded(true);
+    pet.discriminator = Some(Discriminator::new("kind"));
+    let cat = SchemaObject {
+        all_of: Some(vec![
+            Schema::component("Pet"),
+            Schema::of_type(SchemaType::Object),
+        ]),
+        ..SchemaObject::default()
+    };
+    let document = document_with_schemas([("Pet", object(pet)), ("Cat", object(cat))]);
+
+    for version in versions() {
+        let errors = discriminator_errors(&document, version);
+        assert!(errors.is_empty(), "validating as {version}: {errors:?}");
+    }
+}
+
+/// 3.1 makes the discriminating property required (`references/3.1.2.md:2834`),
+/// so one `oneOf` branch leaving it optional is enough to refuse it.
+#[test]
+fn a_discriminating_property_must_be_required_under_three_one() {
+    let pet = discriminated(vec![object(kinded(true)), object(kinded(false))]);
+    let document = document_with_schemas([("Pet", object(pet))]);
+
+    assert_eq!(
+        discriminator_errors(&document, SpecVersion::V3_1),
+        [(
+            "#/components/schemas/Pet/discriminator".to_owned(),
+            "DiscriminatorPropertyNotRequired"
+        )]
+    );
+}
+
+/// 3.2 lets the discriminating property be optional only beside a
+/// `defaultMapping` (`references/3.2.0.md:3615`).
+#[cfg(feature = "openapi32")]
+#[test]
+fn an_optional_discriminating_property_needs_a_default_mapping_under_three_two() {
+    let mut pet = discriminated(vec![object(kinded(true)), object(kinded(false))]);
+    let document = document_with_schemas([("Pet", object(pet.clone()))]);
+    assert_eq!(
+        discriminator_errors(&document, SpecVersion::V3_2),
+        [(
+            "#/components/schemas/Pet/discriminator".to_owned(),
+            "DiscriminatorWithoutDefaultMapping"
+        )]
+    );
+
+    pet.discriminator
+        .as_mut()
+        .expect("discriminated")
+        .default_mapping = Some("#/components/schemas/Pet".to_owned());
+    let document = document_with_schemas([("Pet", object(pet))]);
+    let errors = discriminator_errors(&document, SpecVersion::V3_2);
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+/// Whether the property is required is read through what composes the
+/// schema: an `allOf` member, a `#/components/schemas` reference, both arms of
+/// a conditional, and a `false` branch that admits nothing. A reference the
+/// rule cannot follow, or one it is already following, is not judged.
+#[test]
+fn a_discriminating_property_is_required_through_what_composes_the_schema() {
+    let conditional = SchemaObject {
+        if_schema: Some(Box::new(Schema::of_type(SchemaType::Object))),
+        then_schema: Some(Box::new(object(kinded(true)))),
+        else_schema: Some(Box::new(object(kinded(true)))),
+        ..SchemaObject::default()
+    };
+    let conjunction = SchemaObject {
+        all_of: Some(vec![
+            Schema::of_type(SchemaType::Object),
+            object(kinded(true)),
+        ]),
+        ..SchemaObject::default()
+    };
+    let pet = discriminated(vec![
+        Schema::component("Cat"),
+        object(conditional),
+        object(conjunction),
+        Schema::reference("https://example.com/lizard.json"),
+        Schema::never(),
+    ]);
+    let document = document_with_schemas([
+        ("Pet", object(pet)),
+        ("Cat", object(kinded(true))),
+        (
+            "Loop",
+            object(discriminated(vec![Schema::component("Loop")])),
+        ),
+    ]);
+    for version in versions() {
+        let errors = discriminator_errors(&document, version);
+        assert!(errors.is_empty(), "validating as {version}: {errors:?}");
+    }
+
+    // Followed, not trusted: a component leaving the property optional leaves
+    // it optional.
+    let pet = discriminated(vec![Schema::component("Dog")]);
+    let document = document_with_schemas([("Pet", object(pet)), ("Dog", object(kinded(false)))]);
+    assert_eq!(
+        discriminator_errors(&document, SpecVersion::V3_1),
+        [(
+            "#/components/schemas/Pet/discriminator".to_owned(),
+            "DiscriminatorPropertyNotRequired"
+        )]
+    );
+
+    // A `$dynamicRef` resolves against the dynamic scope, which could require
+    // the property unseen.
+    let dynamic = SchemaObject {
+        dynamic_ref: Some("#node".to_owned()),
+        ..SchemaObject::default()
+    };
+    assert_eq!(single_branch_errors(dynamic), Vec::<&str>::new());
+
+    // An `anyOf` requires the property when every branch does, and only then.
+    let every = SchemaObject {
+        any_of: Some(vec![object(kinded(true)), object(kinded(true))]),
+        ..SchemaObject::default()
+    };
+    assert_eq!(single_branch_errors(every), Vec::<&str>::new());
+    let some = SchemaObject {
+        any_of: Some(vec![object(kinded(true)), object(kinded(false))]),
+        ..SchemaObject::default()
+    };
+    assert_eq!(single_branch_errors(some), [NOT_REQUIRED]);
+
+    // A conditional requires it only through both arms.
+    let one_armed = SchemaObject {
+        if_schema: Some(Box::new(Schema::of_type(SchemaType::Object))),
+        then_schema: Some(Box::new(object(kinded(true)))),
+        else_schema: Some(Box::new(object(kinded(false)))),
+        ..SchemaObject::default()
+    };
+    assert_eq!(single_branch_errors(one_armed), [NOT_REQUIRED]);
+
+    // `not`, `dependentSchemas` and `dependentRequired` can each require the
+    // property in a way the rule does not read, so each gets the benefit of
+    // the doubt rather than a false positive.
+    let negated = SchemaObject {
+        not: Some(Box::new(Schema::Object(Box::new(SchemaObject {
+            not: Some(Box::new(object(kinded(true)))),
+            ..SchemaObject::default()
+        })))),
+        ..SchemaObject::default()
+    };
+    assert_eq!(single_branch_errors(negated), Vec::<&str>::new());
+    let mut dependent = SchemaObject {
+        required: Some(vec!["a".to_owned()]),
+        ..SchemaObject::default()
+    };
+    dependent
+        .dependent_schemas
+        .insert("a".to_owned(), object(kinded(true)));
+    assert_eq!(single_branch_errors(dependent), Vec::<&str>::new());
+    let mut dependent = SchemaObject {
+        required: Some(vec!["a".to_owned()]),
+        ..SchemaObject::default()
+    };
+    dependent
+        .dependent_required
+        .insert("a".to_owned(), vec!["kind".to_owned()]);
+    assert_eq!(single_branch_errors(dependent), Vec::<&str>::new());
+}
+
+/// Each component a discriminator's requiredness reaches is followed once, so
+/// a chain whose every link references the next twice is judged in linear
+/// rather than exponential time: at 64 links the latter never finishes, and
+/// nextest's bound reports it.
+#[test]
+fn a_component_reached_twice_is_followed_once() {
+    const LINKS: usize = 64;
+    let link = |index: usize| format!("Link{index}");
+    let mut schemas: Vec<(String, Schema)> = (0..LINKS)
+        .map(|index| {
+            let next = Schema::component(&link(index + 1));
+            let doubled = SchemaObject {
+                all_of: Some(vec![next.clone(), next]),
+                ..SchemaObject::default()
+            };
+            (link(index), object(doubled))
+        })
+        .collect();
+    schemas.push((link(LINKS), object(kinded(false))));
+    schemas.push((
+        "Pet".to_owned(),
+        object(discriminated(vec![Schema::component(&link(0))])),
+    ));
+    let document = document_with_schemas(
+        schemas
+            .iter()
+            .map(|(name, schema)| (name.as_str(), schema.clone())),
+    );
+
+    assert_eq!(
+        discriminator_errors(&document, SpecVersion::V3_1),
+        [(
+            "#/components/schemas/Pet/discriminator".to_owned(),
+            NOT_REQUIRED
+        )]
+    );
+}
+
+/// The discriminator violations validating, as 3.1, a `Pet` discriminated
+/// over `branch` alone raises, each at its `discriminator`.
+fn single_branch_errors(branch: SchemaObject) -> Vec<&'static str> {
+    let pet = discriminated(vec![object(branch)]);
+    discriminator_errors(
+        &document_with_schemas([("Pet", object(pet))]),
+        SpecVersion::V3_1,
+    )
+    .into_iter()
+    .map(|(location, name)| {
+        assert_eq!(location, "#/components/schemas/Pet/discriminator");
+        name
+    })
+    .collect()
+}
+
+/// `Pet`'s discriminating property reported optional under 3.1.
+const NOT_REQUIRED: &str = "DiscriminatorPropertyNotRequired";
+
+/// What the `Schema` derive writes for a tagged enum, transcribed from
+/// `kynos-macros/src/derive/schema/shape.rs`, is clean: a `oneOf` of inline
+/// branches each requiring the tag, a newtype variant's through an `allOf`
+/// with a tag-only marker, discriminated by the tag with no `mapping`.
+#[test]
+fn the_schema_derives_tagged_enums_are_clean() {
+    let unit = kinded(true);
+    let mut named = kinded(true);
+    named
+        .properties
+        .insert("name".to_owned(), Schema::of_type(SchemaType::String));
+    let newtype = SchemaObject {
+        all_of: Some(vec![object(kinded(true)), Schema::component("Payload")]),
+        ..SchemaObject::default()
+    };
+    let internally = discriminated(vec![object(unit), object(named), object(newtype)]);
+
+    let mut adjacent = kinded(true);
+    adjacent
+        .properties
+        .insert("content".to_owned(), Schema::component("Payload"));
+    adjacent
+        .required
+        .get_or_insert_with(Vec::new)
+        .push("content".to_owned());
+    let adjacently = discriminated(vec![object(kinded(true)), object(adjacent)]);
+
+    let document = document_with_schemas([
+        ("Internally", object(internally)),
+        ("Adjacently", object(adjacently)),
+        ("Payload", Schema::of_type(SchemaType::Object)),
+    ]);
+    for version in versions() {
+        let errors = discriminator_errors(&document, version);
+        assert!(errors.is_empty(), "validating as {version}: {errors:?}");
+    }
 }
