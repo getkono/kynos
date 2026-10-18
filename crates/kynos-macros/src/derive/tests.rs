@@ -4696,7 +4696,61 @@ mod api_error {
                 ),
                 "`extension` is already set",
             ),
+            case(
+                "a field marker given a value, which a bare marker would drop",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(status = 404)]
+                        NotFound {
+                            #[problem(extension = "user_id")]
+                            id: u64,
+                        },
+                    }
+                ),
+                "`extension` is a bare marker and takes no value",
+            ),
         ]
+    }
+
+    /// Each field marker is bare, given as `= value` or as a list; the ledger's
+    /// one row witnesses `extension = ...` alone.
+    #[test]
+    fn a_field_marker_refuses_a_value_in_every_form() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "an extension marker given a list",
+                    quote::quote!(
+                        struct StoreError {
+                            #[problem(extension(user_id))]
+                            id: u64,
+                        }
+                    ),
+                    "`extension` is a bare marker and takes no value",
+                ),
+                case(
+                    "a headers marker given a value",
+                    quote::quote!(
+                        struct StoreError {
+                            #[problem(headers = "retry")]
+                            retry: RetryAfter,
+                        }
+                    ),
+                    "`headers` is a bare marker and takes no value",
+                ),
+                case(
+                    "a headers marker given a list",
+                    quote::quote!(
+                        struct StoreError {
+                            #[problem(headers(retry))]
+                            retry: RetryAfter,
+                        }
+                    ),
+                    "`headers` is a bare marker and takes no value",
+                ),
+            ],
+            expand_inner,
+        );
     }
 
     /// The grammar refuses a qualified key, which matches no key, and each key
@@ -5344,6 +5398,14 @@ mod security_scheme {
                     struct Bearer;
                 ),
                 "`formt` is not part of the `bearer(...)` grammar",
+            ),
+            case(
+                "a bare kind given a value, which nothing would read",
+                quote::quote!(
+                    #[security(bearer = "JWT")]
+                    struct Bearer;
+                ),
+                "`bearer` takes its options in a list",
             ),
             case(
                 "a kind's option written twice",
