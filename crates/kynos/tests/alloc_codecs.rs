@@ -1263,10 +1263,10 @@ mod compression {
     /// is kilobytes, which is why `encode` boxes its future at all; the same
     /// fact shows up here as the allocations that state costs.
     const RECORDED: [(&str, [usize; 4]); 4] = [
-        ("identity", [14, 14, 14, 14]),
-        ("gzip", [14, 27, 27, 31]),
-        ("br", [14, 42, 42, 48]),
-        ("zstd", [14, 21, 21, 24]),
+        ("identity", [9, 9, 9, 9]),
+        ("gzip", [9, 22, 22, 26]),
+        ("br", [9, 37, 37, 43]),
+        ("zstd", [9, 16, 16, 19]),
     ];
 
     /// The same operation at 16 KiB, asked for as `identity`, with no
