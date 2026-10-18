@@ -4243,6 +4243,49 @@ mod schema {
     }
 }
 
+/// The parameter fields' shared grammar, `#[param]`, `#[header]` and
+/// `#[cookie]`, driven through the `CookieParams` derive.
+mod attribute {
+    use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
+    use crate::derive::cookies::expand_inner;
+
+    fn ledger() -> Vec<Case> {
+        vec![
+            case(
+                "`value`, which fixes a header and is no cookie key",
+                quote::quote!(
+                    struct Session {
+                        #[cookie(rename = "sid", value = "anonymous")]
+                        id: String,
+                    }
+                ),
+                "`value` is not part of the `#[cookie(...)]` grammar",
+            ),
+            case(
+                "`rename` written twice, the second replacing the first",
+                quote::quote!(
+                    struct Theme {
+                        #[cookie(rename = "theme")]
+                        #[cookie(rename = "colour")]
+                        theme: String,
+                    }
+                ),
+                "`rename` is already set",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_case_raises_the_diagnostic_it_names() {
+        each_case_is_refused(ledger(), expand_inner);
+    }
+
+    #[test]
+    fn every_attribute_diagnostic_has_a_case() {
+        every_diagnostic_has_a_case("attribute.rs", include_str!("attribute.rs"), ledger().len());
+    }
+}
+
 mod api_error {
     use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
     use crate::derive::api_error::expand_inner;
@@ -4557,7 +4600,7 @@ mod reply {
     use crate::derive::reply::expand_inner;
 
     fn ledger() -> Vec<Case> {
-        vec![
+        let mut rows = vec![
             case(
                 "a struct, when a reply is a closed set of responses",
                 quote::quote!(
@@ -4617,26 +4660,6 @@ mod reply {
                 "its status is between",
             ),
             case(
-                "two statuses on one variant",
-                quote::quote!(
-                    enum CreateReply {
-                        #[reply(status = 200, status = 201)]
-                        Ok(u32),
-                    }
-                ),
-                "already declares a status",
-            ),
-            case(
-                "a key outside the reply grammar",
-                quote::quote!(
-                    enum CreateReply {
-                        #[reply(status = 200, nonsense = "x")]
-                        Ok(u32),
-                    }
-                ),
-                "is not part of the `#[reply(...)]` grammar",
-            ),
-            case(
                 "a struct variant, when a body is one described type",
                 quote::quote!(
                     enum CreateReply {
@@ -4656,12 +4679,82 @@ mod reply {
                 ),
                 "a `204` response carries no content",
             ),
+        ];
+        rows.extend(member_ledger());
+        rows
+    }
+
+    /// The rows for the `#[reply(...)]` members themselves: where each goes,
+    /// how often, and what is outside the grammar.
+    fn member_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "two statuses on one variant",
+                quote::quote!(
+                    enum CreateReply {
+                        #[reply(status = 200, status = 201)]
+                        Ok(u32),
+                    }
+                ),
+                "already declares a status",
+            ),
+            case(
+                "a description on the enum, which no response would carry",
+                quote::quote!(
+                    #[reply(description = "what creating answers")]
+                    enum CreateReply {
+                        #[reply(status = 200)]
+                        Ok(u32),
+                    }
+                ),
+                "a description belongs on each variant",
+            ),
+            case(
+                "two descriptions on one variant, the second replacing the first",
+                quote::quote!(
+                    enum CreateReply {
+                        #[reply(status = 200, description = "created")]
+                        #[reply(description = "made")]
+                        Ok(u32),
+                    }
+                ),
+                "already declares a description",
+            ),
+            case(
+                "a key outside the reply grammar",
+                quote::quote!(
+                    enum CreateReply {
+                        #[reply(status = 200, nonsense = "x")]
+                        Ok(u32),
+                    }
+                ),
+                "is not part of the `#[reply(...)]` grammar",
+            ),
         ]
     }
 
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
+    }
+
+    /// A qualified key is outside the grammar too, rather than read as no
+    /// key at all.
+    #[test]
+    fn a_qualified_key_is_refused() {
+        each_case_is_refused(
+            vec![case(
+                "a qualified `description`",
+                quote::quote!(
+                    enum CreateReply {
+                        #[reply(status = 200, reply::description = "created")]
+                        Ok(u32),
+                    }
+                ),
+                "is not part of the `#[reply(...)]` grammar",
+            )],
+            expand_inner,
+        );
     }
 
     #[test]
@@ -5060,12 +5153,88 @@ mod provider {
                 ),
                 "own type parameters",
             ),
+            case(
+                "a misspelled `skip`, which once provided the field anyway",
+                quote::quote!(
+                    struct App {
+                        pool: Pool,
+                        #[provide(skp)]
+                        started_at: Instant,
+                    }
+                ),
+                "is not part of the `#[provide(...)]` grammar",
+            ),
+            case(
+                "`skip` written twice",
+                quote::quote!(
+                    struct App {
+                        pool: Pool,
+                        #[provide(skip)]
+                        #[provide(skip)]
+                        started_at: Instant,
+                    }
+                ),
+                "`skip` is already set",
+            ),
         ]
     }
 
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
+    }
+
+    /// A key outside the grammar is refused whatever its shape, a qualified
+    /// path included, rather than read as no key at all.
+    #[test]
+    fn an_unknown_key_is_refused_in_every_shape() {
+        each_case_is_refused(
+            ["skip_it = true", "skip_it(always)", "di::skip"]
+                .into_iter()
+                .map(|written| {
+                    let written: proc_macro2::TokenStream =
+                        written.parse().expect("the key itself must parse");
+                    case(
+                        "a key the grammar does not hold",
+                        quote::quote!(
+                            struct App {
+                                #[provide(#written)]
+                                started_at: Instant,
+                            }
+                        ),
+                        "is not part of the `#[provide(...)]` grammar",
+                    )
+                })
+                .collect(),
+            expand_inner,
+        );
+    }
+
+    /// `skip` is bare. Given a value, the list fails to parse, and that
+    /// failure reaches the user instead of being discarded with the field
+    /// skipped anyway.
+    #[test]
+    fn a_skip_given_a_value_is_refused() {
+        each_case_is_refused(
+            ["skip = true", "skip(always)"]
+                .into_iter()
+                .map(|written| {
+                    let written: proc_macro2::TokenStream =
+                        written.parse().expect("the key itself must parse");
+                    case(
+                        "`skip` given a value",
+                        quote::quote!(
+                            struct App {
+                                #[provide(#written)]
+                                started_at: Instant,
+                            }
+                        ),
+                        "",
+                    )
+                })
+                .collect(),
+            expand_inner,
+        );
     }
 
     #[test]
@@ -5265,6 +5434,40 @@ mod headers {
         if let Err(error) = expand_inner(&input) {
             panic!("a token was refused as a header name: {error}");
         }
+    }
+
+    /// The `#[header]` grammar is closed: a misspelled `value` is named as
+    /// the mistake it is, and a second `value` does not replace the first.
+    /// Both are `common.rs`'s diagnostics, counted there; these rows hold the
+    /// header derive to them.
+    #[test]
+    fn the_header_grammar_refuses_unknown_and_repeated_keys() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "a misspelled `value`",
+                    quote::quote!(
+                        struct Hardened {
+                            #[header(rename = "X-Content-Type-Options", vaule = "nosniff")]
+                            nosniff: (),
+                        }
+                    ),
+                    "`vaule` is not part of the `#[header(...)]` grammar",
+                ),
+                case(
+                    "`value` written twice",
+                    quote::quote!(
+                        struct Hardened {
+                            #[header(rename = "X-Content-Type-Options", value = "nosniff")]
+                            #[header(value = "sniff")]
+                            nosniff: (),
+                        }
+                    ),
+                    "`value` is already set",
+                ),
+            ],
+            expand_inner,
+        );
     }
 
     /// Field names are case-insensitive (RFC 9110 §5.1), so two spellings of
@@ -5557,8 +5760,60 @@ mod multipart {
 }
 
 mod tag {
-    use super::{Case, each_case_is_refused, every_diagnostic_has_a_case};
+    use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
     use crate::derive::tag::expand_inner;
+
+    /// The diagnostics every build can provoke.
+    fn ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a misspelled `description`, which once dropped the description",
+                quote::quote!(
+                    #[tag(descripton = "Managing user accounts")]
+                    struct Users;
+                ),
+                "`descripton` is not part of the `#[tag(...)]` grammar",
+            ),
+            case(
+                "`name` written twice, the second replacing the first",
+                quote::quote!(
+                    #[tag(name = "users")]
+                    #[tag(name = "people")]
+                    struct Users;
+                ),
+                "`name` is already set",
+            ),
+        ]
+    }
+
+    /// A key outside the grammar is refused whatever its shape, a qualified
+    /// path included, rather than read as no key at all.
+    #[test]
+    fn an_unknown_key_is_refused_in_every_shape() {
+        each_case_is_refused(
+            [
+                "nmae = \"users\"",
+                "nmae(users)",
+                "nmae",
+                "tag::name = \"users\"",
+            ]
+            .into_iter()
+            .map(|written| {
+                let written: proc_macro2::TokenStream =
+                    written.parse().expect("the key itself must parse");
+                case(
+                    "a key the grammar does not hold",
+                    quote::quote!(
+                        #[tag(#written)]
+                        struct Users;
+                    ),
+                    "is not part of the `#[tag(...)]` grammar",
+                )
+            })
+            .collect(),
+            expand_inner,
+        );
+    }
 
     /// The 3.2-only members, which a 3.1 build refuses.
     ///
@@ -5567,8 +5822,6 @@ mod tag {
     /// that only one build can provoke still has to be counted in both.
     #[cfg(not(feature = "openapi32"))]
     fn version_gated_ledger() -> Vec<Case> {
-        use super::case;
-
         vec![
             case(
                 "a summary, which only 3.2 gives a tag",
@@ -5610,15 +5863,17 @@ mod tag {
 
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
+        each_case_is_refused(ledger(), expand_inner);
         each_case_is_refused(version_gated_ledger(), expand_inner);
     }
 
     #[test]
     fn every_tag_diagnostic_has_a_case() {
         // The three members are refused from one `syn::Error::new`, so the
-        // ledger's three cases meet one site. Counting the *site* is the point:
-        // a fourth 3.2 member added without a case fails here.
-        let covered = usize::from(!version_gated_ledger().is_empty()) + UNREACHABLE_HERE;
+        // gated ledger's three cases meet one site. Counting the *site* is the
+        // point: a fourth 3.2 member added without a case fails here.
+        let covered =
+            ledger().len() + usize::from(!version_gated_ledger().is_empty()) + UNREACHABLE_HERE;
         every_diagnostic_has_a_case("tag.rs", include_str!("tag.rs"), covered);
     }
 }

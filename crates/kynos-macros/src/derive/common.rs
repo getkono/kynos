@@ -10,7 +10,7 @@ use syn::{
     PathArguments, Type, spanned::Spanned,
 };
 
-use crate::derive::schema::property_names;
+use crate::derive::{attribute::field_args, schema::property_names};
 
 /// The named fields of a struct, or a diagnostic naming what was found instead.
 pub(crate) fn named_fields<'a>(
@@ -111,8 +111,8 @@ pub(crate) fn wire_names(
 
 /// The wire name of a field: the Kynos then serde `rename`, else `fallback`.
 fn wire_name(field: &Field, attribute: &str, fallback: String) -> syn::Result<String> {
-    if let Some(renamed) = kynos_rename(field, attribute)? {
-        return Ok(renamed);
+    if let Some(renamed) = field_args(field, attribute)?.rename {
+        return Ok(renamed.value());
     }
     if let Some(renamed) = serde_rename(field)? {
         return Ok(renamed);
@@ -161,25 +161,6 @@ fn reject_alias(field: &Field) -> syn::Result<()> {
         })?;
     }
     Ok(())
-}
-
-/// The `rename = "..."` inside a Kynos attribute; other keys are skipped.
-fn kynos_rename(field: &Field, attribute: &str) -> syn::Result<Option<String>> {
-    let mut found = None;
-    for attr in &field.attrs {
-        if !attr.path().is_ident(attribute) {
-            continue;
-        }
-        attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("rename") {
-                found = Some(meta.value()?.parse::<LitStr>()?.value());
-            } else {
-                skip_value(&meta)?;
-            }
-            Ok(())
-        })?;
-    }
-    Ok(found)
 }
 
 /// The `rename = "..."` inside `#[serde(...)]`; the split form is refused.

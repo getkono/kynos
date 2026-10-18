@@ -3,12 +3,13 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{DeriveInput, Field, LitStr, Type, parse_macro_input, spanned::Spanned};
+use syn::{DeriveInput, Field, Type, parse_macro_input, spanned::Spanned};
 
 use crate::derive::{
+    attribute::field_args,
     common::{
         NameCase, named_fields, names_const, reject_duplicate_names, reject_non_token_names,
-        skip_value, wire_names,
+        wire_names,
     },
     params::{
         Param, check_field, construct, decode_field, parameters_body, render, response_headers_body,
@@ -133,22 +134,7 @@ fn carries_unit(param: &Param<'_>) -> bool {
 ///
 /// `unit` says whether the field is `()` or `Option<()>`.
 fn fixed_value(field: &Field, unit: bool) -> syn::Result<Option<String>> {
-    let mut found: Option<LitStr> = None;
-    for attr in &field.attrs {
-        if !attr.path().is_ident("header") {
-            continue;
-        }
-        attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("value") {
-                found = Some(meta.value()?.parse()?);
-                Ok(())
-            } else {
-                skip_value(&meta)
-            }
-        })?;
-    }
-
-    let Some(literal) = found else {
+    let Some(literal) = field_args(field, "header")?.value else {
         if unit {
             return Err(syn::Error::new(
                 field.ty.span(),

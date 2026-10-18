@@ -1,0 +1,11 @@
+error: `renmae` is not part of the `#[header(...)]` grammar
+ --> tests/ui/macros/header_params_unknown_and_repeated_keys.rs:7:14
+  |
+7 |     #[header(renmae = "X-Request-Id")]
+  |              ^^^^^^
+
+error: `value` is already set, and `#[header(...)]` takes each key once
+  --> tests/ui/macros/header_params_unknown_and_repeated_keys.rs:14:14
+   |
+14 |     #[header(value = "sniff")]
+   |              ^^^^^

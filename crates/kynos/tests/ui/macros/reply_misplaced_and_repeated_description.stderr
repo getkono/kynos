@@ -1,0 +1,11 @@
+error: a description belongs on each variant, since each describes the one response it answers with, and no response is described by the enum's. Move it to the variants
+ --> tests/ui/macros/reply_misplaced_and_repeated_description.rs:8:23
+  |
+8 | #[reply(description = "what reporting answers")]
+  |                       ^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: this already declares a description, and a response has one
+  --> tests/ui/macros/reply_misplaced_and_repeated_description.rs:17:27
+   |
+17 |     #[reply(description = "the export")]
+   |                           ^^^^^^^^^^^^

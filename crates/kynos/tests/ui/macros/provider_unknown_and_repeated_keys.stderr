@@ -1,0 +1,11 @@
+error: `skp` is not part of the `#[provide(...)]` grammar
+  --> tests/ui/macros/provider_unknown_and_repeated_keys.rs:13:15
+   |
+13 |     #[provide(skp)]
+   |               ^^^
+
+error: `skip` is already set, and `#[provide(...)]` takes each key once
+  --> tests/ui/macros/provider_unknown_and_repeated_keys.rs:21:15
+   |
+21 |     #[provide(skip)]
+   |               ^^^^

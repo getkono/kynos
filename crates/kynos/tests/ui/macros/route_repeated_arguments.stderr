@@ -1,0 +1,17 @@
+error: `path` is already given, and a route attribute takes each argument once
+ --> tests/ui/macros/route_repeated_arguments.rs:5:24
+  |
+5 | #[kynos::get("/users", path = "/people")]
+  |                        ^^^^
+
+error: `operation_id` is already given, and a route attribute takes each argument once
+ --> tests/ui/macros/route_repeated_arguments.rs:8:54
+  |
+8 | #[kynos::get("/orders", operation_id = "listOrders", operation_id = "orders")]
+  |                                                      ^^^^^^^^^^^^
+
+error: `method` is already given, and an operation answers one method
+  --> tests/ui/macros/route_repeated_arguments.rs:11:57
+   |
+11 | #[kynos::operation(method = "GET", path = "/documents", method = "POST")]
+   |                                                         ^^^^^^

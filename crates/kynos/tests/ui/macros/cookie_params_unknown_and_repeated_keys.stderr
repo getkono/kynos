@@ -1,0 +1,11 @@
+error: `value` is not part of the `#[cookie(...)]` grammar
+ --> tests/ui/macros/cookie_params_unknown_and_repeated_keys.rs:7:30
+  |
+7 |     #[cookie(rename = "sid", value = "anonymous")]
+  |                              ^^^^^
+
+error: `rename` is already set, and `#[cookie(...)]` takes each key once
+  --> tests/ui/macros/cookie_params_unknown_and_repeated_keys.rs:13:32
+   |
+13 |     #[cookie(rename = "theme", rename = "colour")]
+   |                                ^^^^^^

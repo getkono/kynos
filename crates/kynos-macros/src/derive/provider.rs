@@ -4,7 +4,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, Field, Type, parse_macro_input, spanned::Spanned};
 
-use crate::derive::common::{named_fields, skip_value};
+use crate::derive::{attribute::key_name, common::named_fields};
 
 pub(crate) fn expand(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
@@ -17,11 +17,12 @@ pub(crate) fn expand(item: TokenStream) -> TokenStream {
 pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = named_fields(input, "Provider")?;
 
-    let provided: Vec<&Field> = fields
-        .named
-        .iter()
-        .filter(|field| !is_skipped(field))
-        .collect();
+    let mut provided: Vec<&Field> = Vec::new();
+    for field in &fields.named {
+        if !is_skipped(field)? {
+            provided.push(field);
+        }
+    }
 
     reject_duplicate_types(&provided)?;
     reject_type_parameter_fields(input, &provided)?;
@@ -46,22 +47,34 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
 }
 
 /// Whether the field opted out with `#[provide(skip)]`.
-fn is_skipped(field: &Field) -> bool {
-    field.attrs.iter().any(|attr| {
+///
+/// `skip` is the grammar's one key, and it is bare: anything else, and a
+/// second `skip`, is refused rather than leaving the field provided.
+fn is_skipped(field: &Field) -> syn::Result<bool> {
+    let mut skipped = false;
+    for attr in &field.attrs {
         if !attr.path().is_ident("provide") {
-            return false;
+            continue;
         }
-        let mut skipped = false;
-        let _ = attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("skip") {
-                skipped = true;
-            } else {
-                skip_value(&meta)?;
+        attr.parse_nested_meta(|meta| {
+            let key = key_name(&meta.path);
+            if key != "skip" {
+                return Err(syn::Error::new(
+                    meta.path.span(),
+                    format!("`{key}` is not part of the `#[provide(...)]` grammar"),
+                ));
             }
+            if skipped {
+                return Err(syn::Error::new(
+                    meta.path.span(),
+                    "`skip` is already set, and `#[provide(...)]` takes each key once",
+                ));
+            }
+            skipped = true;
             Ok(())
-        });
-        skipped
-    })
+        })?;
+    }
+    Ok(skipped)
 }
 
 /// Two fields of the same type would emit the same implementation twice;

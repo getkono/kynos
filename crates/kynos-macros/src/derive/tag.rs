@@ -12,13 +12,18 @@
 //!
 //! The 3.2 members are refused under `openapi31` rather than dropped, as
 //! [`security_scheme`](super::security_scheme) refuses its own: a failed build
-//! names its remedy, a description that silently says less does not.
+//! names its remedy, a description that silently says less does not. A key
+//! outside the grammar, and a member written twice, are refused for the same
+//! reason.
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{DeriveInput, LitStr, Type, parse_macro_input};
+use syn::{DeriveInput, LitStr, Type, parse_macro_input, spanned::Spanned};
 
-use crate::derive::common::{doc_string, skip_value, unit_struct};
+use crate::derive::{
+    attribute::key_name,
+    common::{doc_string, unit_struct},
+};
 
 /// What the attribute said, before it becomes a tag.
 #[derive(Default)]
@@ -124,27 +129,39 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     })
 }
 
-/// Reads the type's `#[tag(...)]` lists, skipping keys it does not model.
+/// Reads the type's `#[tag(...)]` lists, refusing a key outside the grammar
+/// and a key written twice across them.
 fn parse_args(input: &DeriveInput) -> syn::Result<TagArgs> {
     let mut args = TagArgs::default();
+    let mut seen: Vec<String> = Vec::new();
 
     for attr in &input.attrs {
         if !attr.path().is_ident("tag") {
             continue;
         }
         attr.parse_nested_meta(|meta| {
-            let Some(key) = meta.path.get_ident() else {
-                return Ok(());
-            };
+            let key = key_name(&meta.path);
+            if seen.contains(&key) {
+                return Err(syn::Error::new(
+                    meta.path.span(),
+                    format!("`{key}` is already set, and `#[tag(...)]` takes each key once"),
+                ));
+            }
 
-            match key.to_string().as_str() {
+            match key.as_str() {
                 "name" => args.name = Some(meta.value()?.parse()?),
                 "summary" => args.summary = Some(meta.value()?.parse()?),
                 "description" => args.description = Some(meta.value()?.parse()?),
                 "parent" => args.parent = Some(meta.value()?.parse()?),
                 "kind" => args.kind = Some(meta.value()?.parse()?),
-                _ => skip_value(&meta)?,
+                _ => {
+                    return Err(syn::Error::new(
+                        meta.path.span(),
+                        format!("`{key}` is not part of the `#[tag(...)]` grammar"),
+                    ));
+                }
             }
+            seen.push(key);
             Ok(())
         })?;
     }
