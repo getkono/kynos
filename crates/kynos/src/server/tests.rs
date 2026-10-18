@@ -4460,26 +4460,157 @@ fn request_http1_from(address: std::net::SocketAddr) -> (std::net::SocketAddr, S
     (client_address, response)
 }
 
-/// The header cap the driver is told about is the one that was configured.
+/// The HTTP/1 header cap holds on the wire: a request head carrying exactly
+/// the configured number of fields is served, and one more is answered 431
+/// (RFC 6585 section 5).
 ///
-/// `Http1Config::default` documents 100 and the forwarding branch skipped
-/// exactly that value, so Kynos's own default was an alias for a hyper constant
-/// Kynos does not own. The two agree today; nothing makes them keep agreeing,
-/// and an explicit `max_headers(100)` pinned nothing at all.
-///
-/// A sweep rather than one case, because the defect was a value-dependent
-/// branch and a single row would have been the wrong one.
+/// Over a real socket, because what is owed is the driver refusing the head,
+/// not a value handed to it. The default cap and a configured one, each at
+/// the boundary, so neither a cap that stopped reaching the driver nor one
+/// off by one passes.
 #[cfg(feature = "http1")]
-#[test]
-fn the_configured_http1_header_cap_is_the_one_the_driver_is_told() {
-    for configured in [1, 8, 64, 99, 100, 101, 1024] {
-        let config = Http1Config::default().max_headers(configured);
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_head_past_the_http1_header_cap_is_answered_431() {
+    for (http1, cap) in [
+        (Http1Config::default(), 100),
+        (Http1Config::default().max_headers(8), 8),
+    ] {
+        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let bound = crate::server::Server::new(test_service())
+            .http1(http1)
+            .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+                let _ = shutdown_receiver.await;
+            }))
+            .prepare()
+            .await
+            .expect("loopback listener binds");
+        let address = bound.local_addrs()[0];
+        let server = tokio::spawn(bound.serve());
 
-        assert_eq!(
-            crate::server::protocol::http1::forwarded_max_headers(&config),
-            configured,
-            "a cap of {configured} must reach the driver"
+        let (at_cap, past_cap) = tokio::task::spawn_blocking(move || {
+            (
+                request_http1_with_fields(address, cap),
+                request_http1_with_fields(address, cap + 1),
+            )
+        })
+        .await
+        .expect("blocking client joins");
+
+        assert!(
+            at_cap.starts_with("HTTP/1.1 200 OK"),
+            "{cap} field(s) under a cap of {cap}: {at_cap}"
         );
+        assert!(
+            past_cap.starts_with("HTTP/1.1 431 "),
+            "{} field(s) under a cap of {cap}: {past_cap}",
+            cap + 1
+        );
+
+        let _ = shutdown_sender.send(());
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
+    }
+}
+
+/// Requests over HTTP/1 with a head of exactly `fields` header fields, `Host`
+/// and `Connection: close` among them.
+#[cfg(feature = "http1")]
+fn request_http1_with_fields(address: std::net::SocketAddr, fields: usize) -> String {
+    use std::io::{Read as _, Write as _};
+
+    let mut head = String::from("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n");
+    for field in 2..fields {
+        head.push_str(&format!("X-Field-{field}: {field}\r\n"));
+    }
+    head.push_str("\r\n");
+
+    let mut stream = std::net::TcpStream::connect(address).expect("server accepts");
+    stream.write_all(head.as_bytes()).expect("request writes");
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .expect("response reads");
+    response
+}
+
+/// The HTTP/2 header-list cap holds on the wire: a request whose header list
+/// is past the cap is answered 431 on its stream, and one under it is served
+/// on the same connection.
+///
+/// The default cap and a configured one. A list of 8 KiB is under the first
+/// and past the second, so a configured cap that stopped reaching the driver
+/// is served where it must be refused.
+#[cfg(feature = "http2")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_header_list_past_the_http2_cap_is_answered_431() {
+    use http_body_util::Empty;
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+
+    for (http2, past, under) in [
+        (Http2Config::default(), 20 * 1024, 8 * 1024),
+        (
+            Http2Config::default().max_header_list_size(4 * 1024),
+            8 * 1024,
+            1024,
+        ),
+    ] {
+        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let bound = crate::server::Server::new(test_service())
+            .http2(http2)
+            .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+                let _ = shutdown_receiver.await;
+            }))
+            .prepare()
+            .await
+            .expect("loopback listener binds");
+        let address = bound.local_addrs()[0];
+        let server = tokio::spawn(bound.serve());
+
+        let stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("server accepts");
+        let (mut sender, connection) =
+            hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+                .await
+                .expect("HTTP/2 handshake completes");
+        let connection = tokio::spawn(connection);
+
+        let mut statuses = Vec::new();
+        for length in [past, under] {
+            let request = hyper::Request::builder()
+                .uri("http://localhost/")
+                .header("x-padding", "a".repeat(length))
+                .body(Empty::<bytes::Bytes>::new())
+                .expect("request builds");
+            let response = sender
+                .send_request(request)
+                .await
+                .expect("the server answers the stream");
+            statuses.push(response.status());
+        }
+        assert_eq!(
+            statuses,
+            [
+                crate::http::StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE,
+                crate::http::StatusCode::OK
+            ],
+            "{http2:?}"
+        );
+
+        drop(sender);
+        connection
+            .await
+            .expect("client connection task joins")
+            .expect("client connection closes cleanly");
+        let _ = shutdown_sender.send(());
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
     }
 }
 
