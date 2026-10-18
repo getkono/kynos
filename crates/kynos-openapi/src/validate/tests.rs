@@ -685,11 +685,12 @@ fn a_reusable_parameters_style_is_checked_against_its_location() {
 }
 
 /// A component's name is a pointer token, escaped as one. The extension-name
-/// rule warns rather than errs, so every severity is read here.
+/// rule warns of a reserved prefix rather than erring, so every severity is
+/// read here.
 #[test]
 fn a_reusable_parameters_extensions_are_checked_at_its_escaped_pointer() {
     let mut parameter = Parameter::query("page", Schema::of_type(SchemaType::Integer));
-    parameter.extensions.insert("not-prefixed", true);
+    parameter.extensions.insert("x-oai-reserved", true);
     let document = document_with_component_parameter(&[], "a/b", crate::RefOr::Item(parameter));
 
     let found = Validator::new(SpecVersion::V3_1).validate(&document);
@@ -2762,7 +2763,7 @@ fn ledger_document() -> Vec<(&'static str, SpecVersion, Document)> {
             "/users",
             get(operation().with_parameter({
                 let mut parameter = Parameter::query("q", Schema::of_type(SchemaType::String));
-                parameter.extensions.insert("not-prefixed", true);
+                parameter.extensions.insert("x-oai-reserved", true);
                 parameter
             })),
         )]),
