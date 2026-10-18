@@ -50,8 +50,10 @@ exclude_globs = [
   "crates/kynos-profile/**",
   # Per-platform `cfg` arms that only forward to tokio's signal streams.
   "crates/kynos/src/server/shutdown/signal.rs",
-  # Proc-macro entry points that only forward to a mutated `expand`; a mutant
-  # here is unviable. One that does more belongs in the module it forwards to.
+  # Proc-macro entry points that only forward to a mutated `expand`. Their
+  # mutants are viable, but each one empties an expansion that every test using
+  # the macro would then fail on, so mutating them buys nothing. One that does
+  # more belongs in the module it forwards to.
   "crates/kynos-macros/src/lib.rs",
   # `cfg(fuzzing)`, so never compiled by a test build; forwards to a mutated parser.
   "crates/kynos/src/__private/fuzz.rs",
