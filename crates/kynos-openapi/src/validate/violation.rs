@@ -357,6 +357,21 @@ pub enum SpecError {
         name: String,
     },
 
+    /// An OAuth flow omitted a URL its flow requires.
+    ///
+    /// Reported once per missing URL, at the flow. `authorizationUrl` is
+    /// required by `implicit` and `authorizationCode`; `tokenUrl` by
+    /// `password`, `clientCredentials`, `authorizationCode` and, in 3.2,
+    /// `deviceAuthorization`, which also requires `deviceAuthorizationUrl`.
+    /// Only absence is judged: whether a present value is a URL is not.
+    #[error("the `{flow}` OAuth flow must declare `{field}`")]
+    MissingOAuthFlowUrl {
+        /// The flow, as a description spells it (`authorizationCode`).
+        flow: &'static str,
+        /// The missing field, as a description spells it (`tokenUrl`).
+        field: &'static str,
+    },
+
     /// An operation used a tag with no metadata.
     #[error("operation uses tag `{name}`, which has no metadata in the document `tags`")]
     UndocumentedTag {
