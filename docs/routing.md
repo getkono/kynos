@@ -286,7 +286,15 @@ client's method name stable across a refactor.
 
 [`FallbackPolicy`](../crates/kynos/src/router/policy.rs) and
 [`TrailingSlashPolicy`](../crates/kynos/src/router/policy.rs) are set once, on
-the router, and have no per-route form.
+the root router, and have no per-route form.
+
+Only the root router's policies apply, so a router that is nested or merged may
+not set one: each of the three below, and `trusted_proxies`
+([`http::forwarded`](../crates/kynos/src/http/forwarded.rs)), called on an
+absorbed router is a `SpecError::NestedRouterPolicy` violation that fails
+`openapi` and `build`. Setting the default counts too — the root's value would
+override it just the same, and a setting that is silently dropped, a trusted
+proxy above all, is worse than a refused one.
 
 | Policy | Applies to | Values |
 | --- | --- | --- |
