@@ -104,8 +104,10 @@ impl Discriminators {
 /// component still being followed, `not`, `dependentSchemas` and
 /// `dependentRequired` could each require it unseen.
 ///
-/// `judged` remembers each component's verdict for this `property`, so each is
-/// followed once however many paths reach it.
+/// `judged` remembers each component's verdict for this `property`. A path
+/// reaching a component already judged reuses its verdict, so a component is
+/// followed again only after a component it assumed requiring came out
+/// optional, which each component does at most once.
 fn requires<'doc>(
     object: &'doc SchemaObject,
     property: &str,
@@ -138,26 +140,41 @@ fn requires<'doc>(
         };
         let required = match judged.verdicts.get(name.as_str()) {
             Some(&Verdict::Reached(required)) => required,
-            Some(&Verdict::Following(depth)) => {
-                judged.lowest_cut = judged.lowest_cut.min(depth);
+            Some(&(Verdict::Following(entered) | Verdict::Assumed(entered))) => {
+                judged.lowest_cut = judged.lowest_cut.min(entered);
                 true
             }
             None => {
-                let depth = judged.following;
-                judged.following += 1;
-                judged.verdicts.insert(name, Verdict::Following(depth));
+                let entered = judged.entered;
+                judged.entered += 1;
+                judged.verdicts.insert(name, Verdict::Following(entered));
+                let assumed_from = judged.assumed.len();
                 let outer_cut = std::mem::replace(&mut judged.lowest_cut, usize::MAX);
                 let required = schema(target, judged);
-                judged.following -= 1;
                 // `requires` combines verdicts only through `any` and `all`,
                 // so a cut assumed requiring can turn `false` into `true` and
                 // never the reverse: `false` always holds, and `true` holds
-                // once no component outside this one was assumed.
-                if !required || judged.lowest_cut >= depth {
-                    judged.verdicts.insert(name, Verdict::Reached(required));
+                // once every component it assumed has come out requiring.
+                let verdict = if !required {
+                    // Each verdict assumed since entering may rest on this
+                    // component requiring, which it does not.
+                    for assumed in judged.assumed.drain(assumed_from..) {
+                        judged.verdicts.remove(assumed);
+                    }
+                    judged.lowest_cut = usize::MAX;
+                    Verdict::Reached(false)
+                } else if judged.lowest_cut >= entered {
+                    // Nothing outside this component was assumed, and every
+                    // component inside it that was came out requiring.
+                    for assumed in judged.assumed.drain(assumed_from..) {
+                        judged.verdicts.insert(assumed, Verdict::Reached(true));
+                    }
+                    Verdict::Reached(true)
                 } else {
-                    judged.verdicts.remove(name.as_str());
-                }
+                    judged.assumed.push(name);
+                    Verdict::Assumed(entered)
+                };
+                judged.verdicts.insert(name, verdict);
                 judged.lowest_cut = judged.lowest_cut.min(outer_cut);
                 required
             }
@@ -188,10 +205,14 @@ fn requires<'doc>(
 #[derive(Debug)]
 struct Judged<'doc> {
     verdicts: HashMap<&'doc str, Verdict>,
-    /// How many components are being followed.
-    following: usize,
-    /// The shallowest depth of a component being followed that a cut was
-    /// taken to, since the innermost component being followed was entered.
+    /// How many components have been entered, numbering each in turn.
+    entered: usize,
+    /// The components whose verdict is [`Verdict::Assumed`], in the order
+    /// they finished.
+    assumed: Vec<&'doc str>,
+    /// The lowest entry number of a component still being followed, or still
+    /// assumed, that was reached since the innermost component being followed
+    /// was entered.
     lowest_cut: usize,
 }
 
@@ -199,18 +220,25 @@ impl Default for Judged<'_> {
     fn default() -> Self {
         Self {
             verdicts: HashMap::new(),
-            following: 0,
+            entered: 0,
+            assumed: Vec::new(),
             lowest_cut: usize::MAX,
         }
     }
 }
 
-/// What [`requires`] knows of one component.
+/// What [`requires`] knows of one component, each numbered in the order it
+/// was entered.
 #[derive(Debug, Clone, Copy)]
 enum Verdict {
-    /// Being followed at this depth: a path reaching it again is cut, and
-    /// counts as requiring.
+    /// Being followed: a path reaching it again is cut, and counts as
+    /// requiring.
     Following(usize),
-    /// Followed to this verdict, assuming nothing of a component outside it.
+    /// Came out requiring by assuming a component entered before it, still
+    /// being followed, requires. It holds until that cycle's first component
+    /// finishes, which keeps it if that component requires and drops it
+    /// otherwise.
+    Assumed(usize),
+    /// Followed to this verdict, resting on no assumption.
     Reached(bool),
 }
