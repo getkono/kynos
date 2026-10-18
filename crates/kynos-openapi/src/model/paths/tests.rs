@@ -262,6 +262,70 @@ fn operations_are_addressed_by_method() {
     assert_eq!(item.operations().count(), 1);
 }
 
+/// Every fixed-method slot is reached, in `Method::all` order, and an edit
+/// through the iterator lands on the operation the item holds.
+#[test]
+fn operations_mut_reaches_every_method_slot_in_order() {
+    let mut item = EVERY_METHOD.iter().fold(PathItem::new(), |item, &method| {
+        item.with_operation(method, Operation::new(method.as_wire_str()))
+    });
+
+    let visited: Vec<String> = item
+        .operations_mut()
+        .map(|operation| {
+            operation.summary = Some("edited".to_owned());
+            operation.operation_id.clone().expect("set above")
+        })
+        .collect();
+
+    let expected: Vec<&str> = EVERY_METHOD
+        .iter()
+        .map(|method| method.as_wire_str())
+        .collect();
+    assert_eq!(visited, expected);
+    for &method in EVERY_METHOD {
+        let operation = item.operation(method).expect("declared above");
+        assert_eq!(operation.summary.as_deref(), Some("edited"), "{method:?}");
+    }
+}
+
+#[test]
+fn operations_mut_skips_undeclared_methods() {
+    let mut item = PathItem::new().with_operation(Method::Post, Operation::new("create"));
+    let visited: Vec<_> = item
+        .operations_mut()
+        .map(|operation| operation.operation_id.clone())
+        .collect();
+    assert_eq!(visited, [Some("create".to_owned())]);
+    assert_eq!(PathItem::new().operations_mut().count(), 0);
+}
+
+/// 3.2's additional operations follow the fixed ones, in insertion order.
+#[cfg(feature = "openapi32")]
+#[test]
+fn operations_mut_includes_additional_operations_after_the_fixed_ones() {
+    let mut item = PathItem::new().with_operation(Method::Get, Operation::new("get"));
+    for name in ["PROPFIND", "COPY"] {
+        item.additional_operations
+            .insert(name.to_owned(), Box::new(Operation::new(name)));
+    }
+
+    for operation in item.operations_mut() {
+        operation.deprecated = Some(true);
+    }
+
+    let visited: Vec<_> = item
+        .operations_mut()
+        .map(|operation| operation.operation_id.clone().expect("set above"))
+        .collect();
+    assert_eq!(visited, ["get", "PROPFIND", "COPY"]);
+    assert!(
+        item.additional_operations
+            .values()
+            .all(|operation| operation.deprecated == Some(true))
+    );
+}
+
 #[test]
 fn the_method_list_is_complete() {
     assert_eq!(Method::all(), EVERY_METHOD);
