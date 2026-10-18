@@ -1741,6 +1741,188 @@ fn a_server_variable_is_checked_at_every_scope() {
     }
 }
 
+/// `/users` with `GET listUsers`, whose `200` response carries `link` as
+/// `next`.
+fn document_linking(link: crate::model::link::Link) -> Document {
+    let operation = Operation::new("listUsers")
+        .with_responses(Responses::new().with(200, Response::new("ok").with_link("next", link)));
+    document_with(&[(
+        "/users",
+        PathItem::new().with_operation(Method::Get, operation),
+    )])
+}
+
+/// A link names an operation the description describes.
+///
+/// `references/3.1.2.md:2425,2434-2435` and `references/3.2.0.md:2503`: an
+/// `operationId` "MUST be resolved within the scope of the OpenAPI
+/// Description", and an `operationRef` "MUST point to an Operation Object".
+/// Both are reported at the link, wherever it sits: inline under an
+/// operation's response, a webhook's included, or as a component.
+#[test]
+fn a_link_naming_no_described_operation_is_reported_at_the_link() {
+    use crate::model::{link::Link, reference::RefOr};
+
+    let unknown_id = || SpecError::UnknownLinkOperationId {
+        operation_id: "missing".to_owned(),
+    };
+    let unresolved_ref = |operation_ref: &str| SpecError::UnresolvedLinkOperationRef {
+        operation_ref: operation_ref.to_owned(),
+    };
+    let inline = "#/paths/~1users/get/responses/200/links/next";
+
+    let mut component_link = document_linking(Link::to_operation("listUsers"));
+    component_link
+        .components
+        .links
+        .insert("a/b".to_owned(), RefOr::Item(Link::to_operation("missing")));
+
+    let mut component_response = document_linking(Link::to_operation("listUsers"));
+    component_response.components.responses.insert(
+        "Page".to_owned(),
+        RefOr::Item(
+            Response::new("ok").with_link("next", Link::to_operation_ref("#/paths/~1users")),
+        ),
+    );
+
+    let mut webhook = document_linking(Link::to_operation("listUsers"));
+    webhook.webhooks.insert(
+        "hook".to_owned(),
+        PathItem::new().with_operation(
+            Method::Post,
+            Operation::new("onHook").with_responses(
+                Responses::new().with(
+                    200,
+                    Response::new("ok")
+                        .with_link("next", Link::to_operation_ref("#/paths/~1users/post")),
+                ),
+            ),
+        ),
+    );
+
+    let cases = [
+        (
+            document_linking(Link::to_operation("missing")),
+            inline,
+            unknown_id(),
+        ),
+        (
+            document_linking(Link::to_operation_ref("#/paths/~1nope/get")),
+            inline,
+            unresolved_ref("#/paths/~1nope/get"),
+        ),
+        // A malformed escape decodes to no pointer at all.
+        (
+            document_linking(Link::to_operation_ref("#/paths/~1users/%zzget")),
+            inline,
+            unresolved_ref("#/paths/~1users/%zzget"),
+        ),
+        (component_link, "#/components/links/a~1b", unknown_id()),
+        // A Path Item is not an Operation Object.
+        (
+            component_response,
+            "#/components/responses/Page/links/next",
+            unresolved_ref("#/paths/~1users"),
+        ),
+        (
+            webhook,
+            "#/webhooks/hook/post/responses/200/links/next",
+            unresolved_ref("#/paths/~1users/post"),
+        ),
+    ];
+
+    for (document, location, error) in cases {
+        assert_eq!(
+            located_errors(&document),
+            vec![(location.to_owned(), error)],
+            "{location}"
+        );
+    }
+}
+
+/// A link resolves wherever the operation is described, and is not judged
+/// where the operation may lie beyond this document.
+///
+/// `references/3.1.2.md:185-186` resolves an `operationId` against "all
+/// Operation Objects from all parsed documents", so a Path Item or Callback
+/// referenced from another document leaves every identifier open; an
+/// `operationRef` into another document, or through a `$ref` this walk does
+/// not follow, likewise.
+#[test]
+fn a_link_to_a_described_or_unknowable_operation_is_not_reported() {
+    use crate::model::{callback::Callback, link::Link, reference::RefOr};
+
+    let operation = |id: &str| Operation::new(id).with_responses(ok_responses());
+    let mut listing = operation("listUsers");
+    listing.callbacks.insert(
+        "onEvent".to_owned(),
+        RefOr::Item(Callback::new().with(
+            "{$request.body#/url}",
+            PathItem::new().with_operation(Method::Post, operation("notify")),
+        )),
+    );
+
+    let mut document = document_with(&[
+        (
+            "/users",
+            PathItem::new().with_operation(Method::Get, listing),
+        ),
+        (
+            "/users/{id}",
+            PathItem::new().with_operation(
+                Method::Get,
+                operation("getUser")
+                    .with_parameter(Parameter::path("id", Schema::of_type(SchemaType::String))),
+            ),
+        ),
+    ]);
+    document.webhooks.insert(
+        "hook".to_owned(),
+        PathItem::new().with_operation(Method::Post, operation("onHook")),
+    );
+    document.components.path_items.insert(
+        "Shared".to_owned(),
+        PathItem::new().with_operation(Method::Get, operation("shared")),
+    );
+    let mut proxy = PathItem::new();
+    proxy.reference = Some("#/components/pathItems/Shared".to_owned());
+    let template = PathTemplate::parse("/proxy").expect("valid template");
+    document.paths.insert(&template, proxy);
+
+    let links = [
+        Link::to_operation("listUsers"),
+        Link::to_operation("notify"),
+        Link::to_operation("onHook"),
+        Link::to_operation("shared"),
+        Link::to_operation_ref("#/paths/~1users/get"),
+        Link::to_operation_ref("#/paths/~1users~1%7Bid%7D/get"),
+        Link::to_operation_ref(
+            "#/paths/~1users/get/callbacks/onEvent/%7B$request.body%23~1url%7D/post",
+        ),
+        Link::to_operation_ref("#/webhooks/hook/post"),
+        Link::to_operation_ref("#/components/pathItems/Shared/get"),
+        Link::to_operation_ref("#/paths/~1proxy/get"),
+        Link::to_operation_ref("https://example.com/openapi.json#/paths/~1nope/get"),
+        Link::to_operation_ref("other.json#/paths/~1nope/get"),
+    ];
+    for (index, link) in links.into_iter().enumerate() {
+        document
+            .components
+            .links
+            .insert(format!("link{index}"), RefOr::Item(link));
+    }
+    assert_eq!(located_errors(&document), vec![]);
+
+    // An identifier no part of this document declares may be declared by the
+    // document a Path Item refers to.
+    let mut remote = PathItem::new();
+    remote.reference = Some("other.json#/paths/~1remote".to_owned());
+    let template = PathTemplate::parse("/remote").expect("valid template");
+    let mut elsewhere = document_linking(Link::to_operation("remoteOnly"));
+    elsewhere.paths.insert(&template, remote);
+    assert_eq!(located_errors(&elsewhere), vec![]);
+}
+
 #[test]
 fn an_operation_must_declare_a_response() {
     let item = PathItem::new().with_operation(Method::Get, Operation::new("listUsers"));
@@ -2847,6 +3029,8 @@ fn variant_name(error: &SpecError) -> &'static str {
         SpecError::UnknownTagParent { .. } => "UnknownTagParent",
         SpecError::TagParentCycle { .. } => "TagParentCycle",
         SpecError::UnknownSecurityScheme { .. } => "UnknownSecurityScheme",
+        SpecError::UnknownLinkOperationId { .. } => "UnknownLinkOperationId",
+        SpecError::UnresolvedLinkOperationRef { .. } => "UnresolvedLinkOperationRef",
         SpecError::MissingOAuthFlowUrl { .. } => "MissingOAuthFlowUrl",
         SpecError::UndocumentedTag { .. } => "UndocumentedTag",
         SpecError::EmptyServerVariableEnum { .. } => "EmptyServerVariableEnum",
@@ -3203,6 +3387,16 @@ fn ledger_document() -> Vec<(&'static str, SpecVersion, Document)> {
             "/users",
             get(operation().with_security(SecurityRequirement::scheme("Undeclared"))),
         )]),
+    );
+    push(
+        "UnknownLinkOperationId",
+        document_linking(crate::model::link::Link::to_operation("missing")),
+    );
+    push(
+        "UnresolvedLinkOperationRef",
+        document_linking(crate::model::link::Link::to_operation_ref(
+            "#/paths/~1nope/get",
+        )),
     );
     push("MissingOAuthFlowUrl", {
         let mut document = document_with(&[("/users", get(operation()))]);
