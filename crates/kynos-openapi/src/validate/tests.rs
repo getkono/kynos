@@ -2014,6 +2014,107 @@ fn a_three_two_requirement_pointer_must_resolve_to_a_declared_scheme() {
     }
 }
 
+/// Every [`SpecError::MissingOAuthFlowUrl`] `version` reports for `flows`,
+/// declared as scheme `OAuth`, as `(location, flow, field)`, sorted.
+fn missing_flow_urls(
+    flows: crate::OAuthFlows,
+    version: SpecVersion,
+) -> Vec<(String, &'static str, &'static str)> {
+    let mut document = document_with(&[]);
+    document.components.security_schemes.insert(
+        "OAuth".to_owned(),
+        crate::RefOr::Item(crate::SecurityScheme::oauth2(flows)),
+    );
+    let mut found: Vec<_> = Validator::new(version)
+        .validate(&document)
+        .into_iter()
+        .filter_map(|v| match v.error {
+            SpecError::MissingOAuthFlowUrl { flow, field } => Some((v.location, flow, field)),
+            _ => None,
+        })
+        .collect();
+    found.sort_unstable();
+    found
+}
+
+/// `references/3.1.2.md:4078-4079` makes `authorizationUrl` REQUIRED for
+/// `implicit` and `authorizationCode`, and `tokenUrl` for `password`,
+/// `clientCredentials` and `authorizationCode`. Each missing URL is its own
+/// violation, at the flow that omits it.
+#[test]
+fn each_oauth_flow_must_declare_its_required_urls() {
+    use crate::{OAuthFlow, OAuthFlows};
+
+    let bare = || OAuthFlow::new([]);
+    let at = |flow: &str| format!("#/components/securitySchemes/OAuth/flows/{flow}");
+    let mut expected = vec![
+        (at("implicit"), "implicit", "authorizationUrl"),
+        (at("password"), "password", "tokenUrl"),
+        (at("clientCredentials"), "clientCredentials", "tokenUrl"),
+        (
+            at("authorizationCode"),
+            "authorizationCode",
+            "authorizationUrl",
+        ),
+        (at("authorizationCode"), "authorizationCode", "tokenUrl"),
+    ];
+    expected.sort_unstable();
+    let flows = OAuthFlows::default()
+        .with_implicit(bare())
+        .with_password(bare())
+        .with_client_credentials(bare())
+        .with_authorization_code(bare());
+    assert_eq!(
+        missing_flow_urls(flows, SpecVersion::V3_1),
+        expected,
+        "every missing URL is reported"
+    );
+
+    let complete = OAuthFlows::default()
+        .with_implicit(bare().with_authorization_url("https://example.com/authorize"))
+        .with_password(bare().with_token_url("https://example.com/token"))
+        .with_client_credentials(bare().with_token_url("https://example.com/token"))
+        .with_authorization_code(
+            bare()
+                .with_authorization_url("https://example.com/authorize")
+                .with_token_url("https://example.com/token"),
+        );
+    assert_eq!(
+        missing_flow_urls(complete, SpecVersion::V3_1),
+        [],
+        "a flow declaring its URLs passes"
+    );
+}
+
+/// `references/3.2.0.md:4655-4657` makes `deviceAuthorizationUrl` and
+/// `tokenUrl` REQUIRED for `deviceAuthorization`.
+#[cfg(feature = "openapi32")]
+#[test]
+fn the_device_authorization_flow_must_declare_its_required_urls() {
+    use crate::{OAuthFlow, OAuthFlows};
+
+    let at = "#/components/securitySchemes/OAuth/flows/deviceAuthorization";
+    let flows = OAuthFlows::default().with_device_authorization(OAuthFlow::new([]));
+    assert_eq!(
+        missing_flow_urls(flows, SpecVersion::V3_2),
+        [
+            (
+                at.to_owned(),
+                "deviceAuthorization",
+                "deviceAuthorizationUrl"
+            ),
+            (at.to_owned(), "deviceAuthorization", "tokenUrl"),
+        ],
+    );
+
+    let complete = OAuthFlows::default().with_device_authorization(
+        OAuthFlow::new([])
+            .with_device_authorization_url("https://example.com/device")
+            .with_token_url("https://example.com/token"),
+    );
+    assert_eq!(missing_flow_urls(complete, SpecVersion::V3_2), []);
+}
+
 #[test]
 fn an_unconstrained_schema_is_a_warning_not_an_error() {
     let mut operation = Operation::new("ingest").with_responses(ok_responses());
@@ -2684,6 +2785,7 @@ fn variant_name(error: &SpecError) -> &'static str {
         SpecError::UnknownTagParent { .. } => "UnknownTagParent",
         SpecError::TagParentCycle { .. } => "TagParentCycle",
         SpecError::UnknownSecurityScheme { .. } => "UnknownSecurityScheme",
+        SpecError::MissingOAuthFlowUrl { .. } => "MissingOAuthFlowUrl",
         SpecError::UndocumentedTag { .. } => "UndocumentedTag",
         SpecError::EmptyServerVariableEnum { .. } => "EmptyServerVariableEnum",
         SpecError::ServerVariableDefaultNotInEnum { .. } => "ServerVariableDefaultNotInEnum",
@@ -3039,6 +3141,16 @@ fn ledger_document() -> Vec<(&'static str, SpecVersion, Document)> {
             get(operation().with_security(SecurityRequirement::scheme("Undeclared"))),
         )]),
     );
+    push("MissingOAuthFlowUrl", {
+        let mut document = document_with(&[("/users", get(operation()))]);
+        document.components.security_schemes.insert(
+            "OAuth".to_owned(),
+            crate::RefOr::Item(crate::SecurityScheme::oauth2(
+                crate::OAuthFlows::default().with_password(crate::OAuthFlow::new([])),
+            )),
+        );
+        document
+    });
     push(
         "UndocumentedTag",
         document_with(&[("/users", get(operation().with_tag("orders")))]),
