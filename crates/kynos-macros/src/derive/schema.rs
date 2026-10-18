@@ -223,7 +223,7 @@ fn flatten_witnesses(
     let (impl_generics, _, where_clause) = generics.split_for_impl();
 
     let closing = container.deny_unknown_fields && !container.transparent;
-    let flattened = described_groups(input)
+    let flattened = described_groups(input, container)
         .into_iter()
         .flat_map(described_members)
         .filter(|field| is_flattened(field))
@@ -295,7 +295,7 @@ fn flatten_witnesses(
 /// serde writes its members beside the tag, as it does a flattened field's.
 fn internally_tagged_payloads<'a>(input: &'a DeriveInput, container: &Container) -> Vec<&'a Field> {
     match (&input.data, &container.tag, &container.content) {
-        (Data::Enum(data), Some(_), None) => described_variants(data)
+        (Data::Enum(data), Some(_), None) => described_variants(data, container)
             .into_iter()
             .filter(|variant| !is_unit_like(&variant.fields))
             .filter_map(|variant| match &variant.fields {
@@ -357,7 +357,7 @@ fn flattens(input: &DeriveInput, container: &Container) -> bool {
         return false;
     }
 
-    let groups = described_groups(input);
+    let groups = described_groups(input, container);
     if groups.iter().flat_map(|group| group.iter()).any(is_open) {
         return false;
     }
@@ -369,7 +369,7 @@ fn flattens(input: &DeriveInput, container: &Container) -> bool {
                 && !container.deny_unknown_fields
         }
         Data::Enum(data) => {
-            let variants = described_variants(data);
+            let variants = described_variants(data, container);
 
             match (&container.tag, &container.content) {
                 // Adjacently tagged: every branch is a tag and content object.
@@ -440,9 +440,9 @@ fn field_groups(input: &DeriveInput) -> Vec<&Fields> {
 ///
 /// Attribute grammar still reads [`field_groups`]: a malformed attribute is an
 /// error wherever it is written.
-fn described_groups(input: &DeriveInput) -> Vec<&Fields> {
+fn described_groups<'a>(input: &'a DeriveInput, container: &Container) -> Vec<&'a Fields> {
     match &input.data {
-        Data::Enum(data) => described_variants(data)
+        Data::Enum(data) => described_variants(data, container)
             .into_iter()
             .map(|variant| &variant.fields)
             .collect(),
@@ -452,10 +452,15 @@ fn described_groups(input: &DeriveInput) -> Vec<&Fields> {
 
 /// The variants the emitted schema describes: every one serde does not skip
 /// both ways. A read-only variant is among them, since serde accepts it.
-fn described_variants(data: &DataEnum) -> Vec<&Variant> {
+///
+/// An identifier enum's are all of them: serde's identifier visitor names
+/// every declared variant and reads no `skip`, and serde refuses to write one.
+fn described_variants<'a>(data: &'a DataEnum, container: &Container) -> Vec<&'a Variant> {
     data.variants
         .iter()
-        .filter(|variant| !is_skipped_both_ways(&variant.attrs))
+        .filter(|variant| {
+            container.visitor == Visitor::Identifier || !is_skipped_both_ways(&variant.attrs)
+        })
         .collect()
 }
 
@@ -534,6 +539,20 @@ struct Container {
     default: bool,
     /// `#[serde(deny_unknown_fields)]`, which [`closed`] follows.
     deny_unknown_fields: bool,
+    /// The visitor serde reads an enum's variants through.
+    visitor: Visitor,
+}
+
+/// The visitor serde's `Deserialize` reads an enum's variants through.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum Visitor {
+    /// The enum visitor, which honours each variant's `skip` keys.
+    #[default]
+    Enum,
+    /// `#[serde(field_identifier)]` or `#[serde(variant_identifier)]`: the
+    /// identifier visitor, which names every declared variant and reads no
+    /// `skip` key ([`described_variants`]). serde refuses to write such an enum.
+    Identifier,
 }
 
 impl Container {
@@ -562,6 +581,9 @@ impl Container {
                     "content" => container.content = string_value(&meta)?,
                     "transparent" => container.transparent = true,
                     "deny_unknown_fields" => container.deny_unknown_fields = true,
+                    "field_identifier" | "variant_identifier" => {
+                        container.visitor = Visitor::Identifier;
+                    }
                     _ => skip_value(&meta)?,
                 }
                 Ok(())

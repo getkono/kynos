@@ -4,6 +4,7 @@ use proc_macro2::Span;
 use syn::{DeriveInput, GenericArgument, Ident, Path, PathArguments, Type};
 
 use crate::derive::schema::{
+    Container,
     attributes::{described_type, is_described, is_phantom},
     described_groups,
 };
@@ -20,7 +21,7 @@ pub(super) fn reject_recursive_generic(input: &DeriveInput) -> syn::Result<()> {
         return Ok(());
     }
 
-    let site = described_groups(input)
+    let site = described_groups(input, &Container::read(input))
         .into_iter()
         .flatten()
         .filter(|field| is_described(field) && !is_phantom(&field.ty))

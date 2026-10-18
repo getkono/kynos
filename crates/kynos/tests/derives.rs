@@ -3689,6 +3689,8 @@ enum Key {
     #[serde(skip_serializing)]
     #[serde(skip_deserializing)]
     Retired,
+    #[serde(skip_deserializing)]
+    Draft,
 }
 
 #[derive(Debug, PartialEq, Schema, serde::Deserialize)]
@@ -3701,12 +3703,16 @@ enum Medium {
 
 /// An identifier enum's variant is described whatever it skips: serde's
 /// identifier visitor reads every declared variant, so a skip leaves out no
-/// name serde accepts.
+/// name serde accepts, and a lone `skip_deserializing` is not refused.
 #[test]
 fn an_identifier_enums_skipped_variant_is_described() {
     assert_eq!(
         emitted::<Key>(),
-        serde_json::json!({"type": "string", "enum": ["Id", "Legacy", "Retired"]})
+        serde_json::json!({"type": "string", "enum": ["Id", "Legacy", "Retired", "Draft"]})
+    );
+    assert_eq!(
+        serde_json::from_str::<Key>(r#""Draft""#).ok(),
+        Some(Key::Draft)
     );
     assert_eq!(
         serde_json::from_str::<Key>(r#""Legacy""#).ok(),

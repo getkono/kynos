@@ -83,7 +83,7 @@ pub(super) fn reject_untagged(input: &DeriveInput) -> syn::Result<()> {
         }
     }
 
-    for variant in described_variants(data) {
+    for variant in described_variants(data, &Container::read(input)) {
         if let Some((_, span)) = serde_key_span(&variant.attrs, &["untagged"]) {
             return Err(syn::Error::new(
                 span,
@@ -150,7 +150,7 @@ pub(super) fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()>
     let described = match &input.data {
         Data::Struct(data) if Container::read(input).transparent => picked(&data.fields),
         Data::Struct(data) => fields(&data.fields, data.fields.len() == 1, WIRE_FORM_OVERRIDES),
-        Data::Enum(data) => described_variants(data)
+        Data::Enum(data) => described_variants(data, &Container::read(input))
             .into_iter()
             .flat_map(|variant| {
                 let keys = if is_written(variant) {
@@ -214,7 +214,7 @@ pub(super) fn reject_catch_all(input: &DeriveInput) -> syn::Result<()> {
         ));
     }
 
-    for variant in described_variants(data) {
+    for variant in described_variants(data, &Container::read(input)) {
         if let Some((_, span)) = serde_key_span(&variant.attrs, &["other"]) {
             return Err(syn::Error::new(
                 span,

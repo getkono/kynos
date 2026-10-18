@@ -23,7 +23,9 @@ pub(super) fn reject_shadowed_variant(input: &DeriveInput) -> syn::Result<()> {
     };
 
     let container = Container::read(input);
-    let Some((later, earlier)) = shadowed_variant(&described_variants(data), &container) else {
+    let Some((later, earlier)) =
+        shadowed_variant(&described_variants(data, &container), &container)
+    else {
         return Ok(());
     };
     Err(syn::Error::new(
@@ -81,7 +83,7 @@ pub(super) fn reject_split_rename(input: &DeriveInput) -> syn::Result<()> {
         });
     let variant = match &input.data {
         Data::Enum(data) => {
-            let variants = described_variants(data);
+            let variants = described_variants(data, &container);
             let read_names = aliases::variants_read_names(&variants, &container);
             variants
                 .into_iter()

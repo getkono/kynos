@@ -5,7 +5,7 @@
 use syn::{Data, DeriveInput, Field, Fields, punctuated::Punctuated, token::Comma};
 
 use crate::derive::schema::{
-    Container,
+    Container, Visitor,
     attributes::{
         is_described, is_flattened, is_open, is_option, is_required, is_unit_like, serde_flag,
         serde_key_span,
@@ -15,12 +15,19 @@ use crate::derive::schema::{
 
 /// A variant serde writes and never reads has no closed schema true of both.
 /// (`skip_serializing` alone needs no refusal: what serde writes it also reads.)
+///
+/// An identifier enum is left alone: serde's identifier visitor reads every
+/// variant whatever it skips, and serde never writes one.
 pub(super) fn reject_unread_variant(input: &DeriveInput) -> syn::Result<()> {
     let Data::Enum(data) = &input.data else {
         return Ok(());
     };
+    let container = Container::read(input);
+    if container.visitor == Visitor::Identifier {
+        return Ok(());
+    }
 
-    for variant in described_variants(data) {
+    for variant in described_variants(data, &container) {
         if let Some((_, span)) = serde_key_span(&variant.attrs, &["skip_deserializing"]) {
             return Err(syn::Error::new(
                 span,
@@ -43,7 +50,8 @@ pub(super) fn reject_empty_tagged_enum(input: &DeriveInput) -> syn::Result<()> {
     let Data::Enum(data) = &input.data else {
         return Ok(());
     };
-    if Container::read(input).tag.is_none() || !described_variants(data).is_empty() {
+    let container = Container::read(input);
+    if container.tag.is_none() || !described_variants(data, &container).is_empty() {
         return Ok(());
     }
     Err(syn::Error::new(
@@ -144,7 +152,7 @@ pub(super) fn reject_one_way_member_skip(input: &DeriveInput) -> syn::Result<()>
             }
             Fields::Named(_) | Fields::Unnamed(_) | Fields::Unit => Vec::new(),
         },
-        Data::Enum(data) => described_variants(data)
+        Data::Enum(data) => described_variants(data, &container)
             .into_iter()
             .filter_map(|variant| match &variant.fields {
                 Fields::Unnamed(unnamed) => Some((&unnamed.unnamed, is_written(variant))),
@@ -215,7 +223,7 @@ pub(super) fn reject_skipped_adjacent_payload(input: &DeriveInput) -> syn::Resul
         return Ok(());
     };
 
-    for variant in described_variants(data) {
+    for variant in described_variants(data, &container) {
         let Fields::Unnamed(unnamed) = &variant.fields else {
             continue;
         };
