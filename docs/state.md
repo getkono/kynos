@@ -111,8 +111,8 @@ sixty-four.
 `&T`, because `FromRequestParts::from_request_parts` returns `Self` with no
 lifetime tying it to `context`. This is the one thing the freeze forecloses:
 lending state to a handler means a lifetime parameter on `FromRequestParts` and
-`FromRequest`, and therefore on every extractor and all thirty-three `Handler`
-implementations.
+`FromRequest`, and therefore on every extractor and every `Handler`
+implementation.
 
 It is closed deliberately. What it costs is one clone of a handle per injected
 argument per request — for the shape this document already prescribes, an `Arc`,

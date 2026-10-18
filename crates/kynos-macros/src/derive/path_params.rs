@@ -30,7 +30,7 @@ fn reject_optional(params: &[Param<'_>]) -> syn::Result<()> {
     }
 }
 
-fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = named_fields(input, "PathParams")?;
     let names = wire_names(input, fields, "param")?;
     reject_duplicate_names(fields, &names, "path parameter", NameCase::Sensitive)?;

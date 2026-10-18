@@ -84,7 +84,7 @@ feature. It serves the route and gets no `paths` entry, recording it under
 | Construct | Code scope | Document scope |
 | --- | --- | --- |
 | [`Router::mount`](../crates/kynos/src/router/mod.rs) | operations at the root | those operations' `paths` entries |
-| [`Group`](../crates/kynos/src/router/group.rs) | one prefix, one tag, shared interceptors | prefix joins each path; the tag lands on each operation; each contribution merges into each operation |
+| [`Group`](../crates/kynos/src/router/group.rs) | one prefix, any number of tags, shared interceptors | prefix joins each path; each tag lands on each operation; each contribution merges into each operation |
 | [`Router::nest`](../crates/kynos/src/router/mod.rs) | another router under a prefix | the prefix joins every path beneath |
 | [`Router::merge`](../crates/kynos/src/router/mod.rs) | another router at the same level | the two operation sets union |
 | [`Router::intercept`](../crates/kynos/src/router/mod.rs) | every operation in the router | every one of their descriptions |
@@ -133,15 +133,18 @@ resource's operations need — a larger body limit on its one upload — goes on
 those operations inside `routes!`, so groups stay one per resource rather than
 one per limit.
 
-What reaches a router is an
-[`Endpoints<C>`](../crates/kynos/src/router/endpoint/), produced by
-`routes![..]`, or anything implementing `IntoEndpoints<C>`: an
-[`EndpointBuilder`](../crates/kynos/src/router/endpoint/), or a tuple, array
-or vector of those. There is deliberately no blanket `IntoEndpoints` over
-`Endpoint`, because it would conflict with every container implementation —
-a downstream crate may implement `Endpoint` for a tuple of its own types, and
-coherence has to assume it will. A hand-written endpoint is mounted with one
-line, `sink.push(self)`.
+What reaches a router is anything implementing `IntoEndpoints<C>`: an
+[`Endpoints<C>`](../crates/kynos/src/router/endpoint/), an
+[`EndpointBuilder`](../crates/kynos/src/router/endpoint/), an
+[`AssetSet`](../crates/kynos/src/router/assets/mod.rs), or a tuple, array or
+vector of those. `routes![..]` expands to a tuple rather than an `Endpoints<C>`,
+so each member keeps the interceptor types the mount site checks. There is
+deliberately no blanket `IntoEndpoints` over `Endpoint`, because it would
+conflict with every container implementation — a downstream crate may
+implement `Endpoint` for a tuple of its own types, and coherence has to assume
+it will. A hand-written endpoint implements it with `type Stacks = ();` — it
+carries no interceptor of its own the mount site can check — and an
+`into_endpoints` of one line, `sink.push(self)`.
 
 `Endpoints` is opaque and append-only. The prefix, the panic policy and the
 interceptors belong to whatever is mounting, not to the endpoints, so there is

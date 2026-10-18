@@ -78,10 +78,11 @@ proptest! {
         );
     }
 
-    /// Nothing the generator deliberately malforms is accepted.
+    /// Nothing the generator deliberately malforms is accepted, and each is
+    /// refused as what malforms it.
     #[test]
-    fn a_malformed_template_is_rejected(raw in arb_malformed_template()) {
-        prop_assert!(PathTemplate::parse(raw.clone()).is_err(), "`{}` parsed", raw);
+    fn a_malformed_template_is_rejected((raw, refusal) in arb_malformed_template_case()) {
+        prop_assert_eq!(PathTemplate::parse(raw), Err(refusal));
     }
 
     /// A prefix concatenates exactly, and fails exactly when it repeats one of

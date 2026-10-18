@@ -214,26 +214,33 @@ fn each_spelling_of_a_refused_construct_is_refused() {
     }
 }
 
-/// Each form ECMA-262 writes a property in, spelled as it spells it.
+/// Each form ECMA-262 writes a property in, spelled as it spells it, is
+/// accepted as the property it names: it matches a character holding the
+/// property and refuses one that does not.
 #[test]
 fn a_property_ecma_262_spells_is_accepted() {
-    for pattern in [
-        r"\p{Lu}",
-        r"\p{Uppercase_Letter}",
-        r"\p{punct}",
-        r"\p{General_Category=Lu}",
-        r"\p{gc=Cased_Letter}",
-        r"\p{Script=Greek}",
-        r"\p{sc=Grek}",
-        r"\p{Script_Extensions=Zyyy}",
-        r"\P{scx=Hira}",
-        r"\p{ASCII}",
-        r"\p{Any}",
-        r"\p{White_Space}",
-        r"\p{space}",
-        r"[\p{Alpha}\p{ID_Continue}]",
+    for (pattern, holds, lacks) in [
+        (r"\p{Lu}", "A", "a"),
+        (r"\p{Uppercase_Letter}", "A", "a"),
+        (r"\p{punct}", "!", "a"),
+        (r"\p{General_Category=Lu}", "A", "a"),
+        (r"\p{gc=Cased_Letter}", "a", "1"),
+        (r"\p{Script=Greek}", "α", "a"),
+        (r"\p{sc=Grek}", "α", "a"),
+        (r"\p{Script_Extensions=Zyyy}", "!", "a"),
+        (r"\P{scx=Hira}", "a", "あ"),
+        (r"\p{ASCII}", "a", "é"),
+        // Every character holds `Any`, so only the empty string lacks it.
+        (r"\p{Any}", "é", ""),
+        (r"\p{White_Space}", " ", "a"),
+        (r"\p{space}", " ", "a"),
+        (r"[\p{Alpha}\p{ID_Continue}]", "_", "!"),
     ] {
-        assert!(translate(pattern).is_ok(), "`{pattern}` must be accepted");
+        assert!(matches(pattern, holds), "`{pattern}` must match `{holds}`");
+        assert!(
+            !matches(pattern, lacks),
+            "`{pattern}` must refuse `{lacks}`"
+        );
     }
 }
 
@@ -311,7 +318,9 @@ fn an_escaped_hyphen_is_refused_outside_a_class() {
         reason.contains(r"`\-`, an escape ECMA-262 refuses"),
         "{reason}"
     );
-    assert!(translate(r"[a\-b]").is_ok());
+    // A literal `-`, not the range `a-b`.
+    assert!(matches(r"[a\-b]", "-"));
+    assert!(!matches(r"[a\-c]", "b"));
 }
 
 #[test]

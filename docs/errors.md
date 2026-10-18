@@ -12,8 +12,9 @@ error that carries no body is a fallback under `FallbackPolicy::Empty`
 This covers the framework's own failures, not only the application's. A body
 that will not parse and a path parameter that will not deserialize both produce
 a problem document, and both appear in the operation's `responses` — because
-[`FromRequestParts::Rejection`](../crates/kynos/src/extract/mod.rs) is bound by
-`Responses` and therefore cannot decline to describe itself.
+an extractor's rejection, `FromRequestParts::Rejection` and
+`FromRequest::Rejection` alike, is bound by `Responses` and therefore cannot
+decline to describe itself ([`extract/mod.rs`](../crates/kynos/src/extract/mod.rs)).
 
 It covers what middleware refuses, too, and the description owes the same
 account of it. A `ShortCircuit` that *refuses* answers with a problem document,
@@ -283,9 +284,9 @@ All live in [`error::rejection`](../crates/kynos/src/error/rejection.rs).
 | `QueryRejection` | 400 | `Query<T>`, `QueryString<T, M>` |
 | `HeaderRejection` | 400 | `Headers<T>` |
 | `CookieRejection` | 400 | `Cookies<T>` |
-| `BodyRejection` | 400, 415, 422 | every body extractor, and `OneOf<L, R>` |
+| `BodyRejection` | 400, 413, 415, 422 | every body extractor, and `OneOf<L, R>` |
 | `NegotiationRejection` | 400, 406 | `Accept<T>` |
-| `RangeRejection` | 416 | `Range<T>::apply` |
+| `RangeRejection` | 416 | `Range<T>`'s `select`, `apply`, `select_parts` and `apply_parts`, and `Served::deliver` |
 | `AuthRejection` | 401, 403 | `Auth<S>`, `MaybeAuth<S>` |
 | `ScopedRejection<R>` | 401, 403 | `Scoped<S, R>` |
 
@@ -302,8 +303,8 @@ neither, but only one of them means its serializer is wrong.
 `RangeRejection` is the one raised by a *method* rather than by extraction.
 [`Range<T>`](../crates/kynos/src/response/range/mod.rs) is infallible — RFC 9110
 §14.2 answers every unusable `Range` field by ignoring it, so a bad field is a
-200 and not a 400 — and the 416 arises only once the field meets a
-representation it cannot be applied to, in `Range::apply`.
+200 and not a 400 — and the 416 arises only for a range request that cannot be
+satisfied: once the field meets a representation it cannot be applied to.
 
 That is why the argument declares nothing but the parameter. A `Range<T>`
 contributes no rejection, so the 416 reaches the document through the handler's
@@ -350,29 +351,31 @@ The rest of the reasoning is in
 [`security.md`](security.md#a-403-may-name-itself-a-401-may-not).
 
 An extractor that cannot fail says so with `Infallible`, whose `Responses`
-implementation contributes nothing:
+implementation contributes nothing — among them
 [`Inject<T>`](../crates/kynos/src/di/inject.rs),
-[`MatchedPath` and `ConnectInfo`](../crates/kynos/src/extract/connection.rs),
+[`MatchedPath`, `ConnectInfo` and `Connection`](../crates/kynos/src/extract/connection.rs),
 [`Forwarded`](../crates/kynos/src/http/forwarded.rs),
-and [`Link<E>`](../crates/kynos/src/extract/link.rs). For the last four
-this is a fact about ordering — a route has already matched by the time a
-handler argument is built, and a router whose link has no target refuses to
-build.
+and [`Link<E>`](../crates/kynos/src/extract/link.rs). For `MatchedPath`,
+`Forwarded` and `Link<E>` this is a fact about ordering — a route has already
+matched and the forwarding fields been resolved by the time a handler argument
+is built, and a router whose link has no target refuses to build. `ConnectInfo`
+and `Connection` report the in-process address where no socket carried the
+request.
 
 ## What is not an error type
 
-**Interceptor statuses.** 429, 503 and 408 belong to
-[`RateLimit`](../crates/kynos/src/middleware/rate_limit/mod.rs),
-[`Concurrency`](../crates/kynos/src/middleware/limits/concurrency.rs) and
-[`Timeout`](../crates/kynos/src/middleware/limits/timeout.rs), which return a response directly and declare it through
-an interceptor's `Short`. They are not extractor rejections and have no rejection
+**Interceptor statuses.** A status an interceptor refuses with — a 429 from
+[`RateLimit`](../crates/kynos/src/middleware/rate_limit/mod.rs) or a 503 from
+[`Concurrency`](../crates/kynos/src/middleware/limits/concurrency.rs), among
+others — belongs to the interceptor, which returns a response directly and
+declares it through its `Interceptor::Short`. Those statuses are not extractor rejections and have no rejection
 variant; an interceptor builds a `Problem` itself, through the same
 `refusal_problem` that the type it names is read from. See
 [`middleware.md`](middleware.md#declaring-is-not-describing).
 
 **[`kynos::Error`](../crates/kynos/src/error/mod.rs).** The framework's own
-failure, raised while a router is built or a server started — never while
-serving. It is what `Router::openapi`, `Router::build` and `Server::serve`
+failure, raised while a router is built or a server runs — never as the answer
+to a request. It is what `Router::openapi`, `Router::build` and `Server::serve`
 return, and it never reaches a client.
 
 **`kynos::Result`.** Its defaulted `E = Error` is for those build-time paths.

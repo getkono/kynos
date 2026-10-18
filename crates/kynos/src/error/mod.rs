@@ -5,9 +5,10 @@
 //! failures generically.
 //!
 //! This covers the framework's *own* rejections: a body that fails to parse is
-//! a problem document in the operation's `responses`, because
-//! [`FromRequestParts::Rejection`](crate::extract::FromRequestParts::Rejection)
-//! must implement [`Responses`](crate::response::Responses).
+//! a problem document in the operation's `responses`, because every
+//! extractor's rejection must implement
+//! [`Responses`](crate::response::Responses) — see
+//! [Rejections describe themselves too](crate::extract#rejections-describe-themselves-too).
 //!
 //! [RFC 9457 problem details]: https://www.rfc-editor.org/rfc/rfc9457
 //!
@@ -28,8 +29,8 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// A failure raised by the framework itself, not by a handler.
 ///
-/// These surface while a router is being built or a server started — never
-/// while serving a request, where a [`Problem`](problem::Problem) is returned instead.
+/// These surface while a router is built or a server runs — never as the
+/// answer to a request, where a [`Problem`](problem::Problem) is returned instead.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {

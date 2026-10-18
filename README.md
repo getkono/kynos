@@ -78,7 +78,7 @@ runs on. `#[kynos::get("/users/{id}")]` also checks at compile time that
 `UserPath`'s fields are exactly the template's variables, in order.
 
 This is a trimmed [`hello.rs`](crates/kynos/examples/hello.rs), one of
-thirty-six examples, each about a page and all listed in
+the examples, each about a page and all listed in
 [their README](crates/kynos/examples/README.md).
 
 ## Documentation
@@ -107,13 +107,13 @@ thirty-six examples, each about a page and all listed in
 Permanently out-of-scope
 
 - Support for OpenAPI 3.0 and older: OpenAPI 3.0.x is vastly different from OpenAPI 3.1+ and has technically been superseded for many years.
-- WebSockets, WebTransport and bidirectional streaming generally: OpenAPI describes HTTP request/response semantics. A stream that stops being either belongs to AsyncAPI, and Kynos would rather point at it than pretend. Server-Sent Events are not an exception to this — an event stream is one ordinary response body, which is why `openapi32` can describe it.
+- WebSockets, WebTransport and bidirectional streaming generally: OpenAPI describes HTTP request/response semantics. A stream that stops being either belongs to AsyncAPI, and Kynos would rather point at it than pretend. Escape hatch: `upgrade_unchecked`, behind `unchecked`, which serves the handshake and records the route as opaque rather than describing it. Server-Sent Events are not an exception to this — an event stream is one ordinary response body, which is why `openapi32` can describe it.
 - Templating and HTML rendering: Kynos is a REST framework, not a web framework.
 - Runtime abstraction: Kynos is tokio-only. There is no executor generic and no feature flag selecting another runtime, because no trait spans readiness-based and completion-based I/O without paying for a copy. See [`docs/architecture.md`](docs/architecture.md#runtime-policy).
 
 ## Anti-patterns
 
-Each of these is something another Rust framework offers and Kynos does not, and in every case the reason is the same: it would put a claim in the description that the running service does not honour. Where an escape hatch exists it is named.
+Each of these is something another Rust framework offers and Kynos does not. Most share one reason: they would put a claim in the description that the running service does not honour. The rest say what they rest on instead, and two of them are advice the compiler does not keep. Where an escape hatch exists it is named.
 
 **1. Arbitrary middleware.** A `tower::Layer` can change the status, rewrite the body, add headers or refuse the request, and its type says nothing about which. Wrapping an operation in one silently invalidates its description. Write an `Interceptor` instead, whose signature *is* the declaration: the responses it can answer with, the headers it adds and the headers it reads are three associated types, so it cannot say one thing and do another. Every covered operation documents the effect automatically. Escape hatch: `layer_unchecked`, behind `unchecked`.
 

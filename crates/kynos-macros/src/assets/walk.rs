@@ -6,11 +6,20 @@ use kynos_openapi::PathTemplate;
 
 use crate::assets::args::AssetArgs;
 
-/// How deep a set may nest; a backstop that guarantees the walk terminates.
-const MAX_DEPTH: usize = 32;
+/// How far a walk may go.
+#[derive(Clone, Copy)]
+pub(super) struct Limits {
+    /// How deep a set may nest; a backstop that guarantees the walk terminates.
+    pub(super) depth: usize,
+    /// How many files a set may hold.
+    pub(super) files: usize,
+}
 
-/// How many files a set may hold.
-const MAX_FILES: usize = 100_000;
+/// The limits every `assets!` invocation walks within.
+const LIMITS: Limits = Limits {
+    depth: 32,
+    files: 100_000,
+};
 
 /// Filename suffixes that mark a stored content coding, and the coding token
 /// each one names.
@@ -57,6 +66,11 @@ pub(super) struct Walked {
 
 /// Walks `args.dir`, relative to the crate being compiled.
 pub(super) fn walk(args: &AssetArgs) -> syn::Result<Walked> {
+    walk_within(args, LIMITS)
+}
+
+/// [`walk`], within `limits`.
+pub(super) fn walk_within(args: &AssetArgs, limits: Limits) -> syn::Result<Walked> {
     let root = PathBuf::from(
         std::env::var("CARGO_MANIFEST_DIR")
             .map_err(|_| syn::Error::new(args.dir.span(), "`CARGO_MANIFEST_DIR` is not set"))?,
@@ -71,7 +85,7 @@ pub(super) fn walk(args: &AssetArgs) -> syn::Result<Walked> {
     })?;
 
     let mut files = Vec::new();
-    collect(args, &root, &root, 0, &mut files)?;
+    collect(args, limits, &root, &root, 0, &mut files)?;
 
     if files.is_empty() {
         return Err(syn::Error::new(
@@ -164,17 +178,19 @@ struct Found {
 
 fn collect(
     args: &AssetArgs,
+    limits: Limits,
     root: &Path,
     directory: &Path,
     depth: usize,
     files: &mut Vec<Found>,
 ) -> syn::Result<()> {
-    if depth > MAX_DEPTH {
+    if depth > limits.depth {
         return Err(syn::Error::new(
             args.dir.span(),
             format!(
-                "`{}` nests deeper than {MAX_DEPTH} levels",
-                args.dir.value()
+                "`{}` nests deeper than {} levels",
+                args.dir.value(),
+                limits.depth
             ),
         ));
     }
@@ -207,7 +223,7 @@ fn collect(
         }
 
         if kind.is_dir() {
-            collect(args, root, &path, depth + 1, files)?;
+            collect(args, limits, root, &path, depth + 1, files)?;
             continue;
         }
 
@@ -246,10 +262,14 @@ fn collect(
             absolute: path.to_string_lossy().into_owned(),
         });
 
-        if files.len() > MAX_FILES {
+        if files.len() > limits.files {
             return Err(syn::Error::new(
                 args.dir.span(),
-                format!("`{}` holds more than {MAX_FILES} files", args.dir.value()),
+                format!(
+                    "`{}` holds more than {} files",
+                    args.dir.value(),
+                    limits.files
+                ),
             ));
         }
     }

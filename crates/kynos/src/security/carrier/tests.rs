@@ -164,6 +164,18 @@ fn a_header_api_key_is_read_from_the_field_the_scheme_named() {
 }
 
 #[test]
+fn a_header_api_key_named_authorization_is_refused_in_every_build() {
+    for name in ["Authorization", "authorization", "AUTHORIZATION"] {
+        for head in [authorized("Bearer k-123"), bare()] {
+            assert!(
+                api_key(&head, KeyLocation::Header, name).is_err(),
+                "{name} must never be read as an API key field"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_query_api_key_is_percent_decoded() {
     let mut request = Request::new(crate::http::body::Body::empty());
     *request.uri_mut() = "/reports?api_key=k%20123&other=1"

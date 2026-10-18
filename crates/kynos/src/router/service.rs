@@ -80,31 +80,14 @@ impl<C> Service<C> {
     fn flag_opaque(document: &mut Document, reason: kynos_openapi::OpaqueReason) {
         let marker = kynos_openapi::Opaque::new(reason);
 
-        for item in document.paths.items.values_mut() {
-            let slots: Vec<&mut Option<Box<kynos_openapi::Operation>>> = vec![
-                &mut item.get,
-                &mut item.put,
-                &mut item.post,
-                &mut item.delete,
-                &mut item.options,
-                &mut item.head,
-                &mut item.patch,
-                &mut item.trace,
-                #[cfg(feature = "openapi32")]
-                &mut item.query,
-            ];
-
-            for slot in slots {
-                if let Some(operation) = slot.as_deref_mut() {
-                    // Fails only on a pre-existing marker, which this cannot carry.
-                    let _ = marker.apply_to(operation);
-                }
-            }
-
-            #[cfg(feature = "openapi32")]
-            for operation in item.additional_operations.values_mut() {
-                let _ = marker.apply_to(operation);
-            }
+        for operation in document
+            .paths
+            .items
+            .values_mut()
+            .flat_map(kynos_openapi::PathItem::operations_mut)
+        {
+            // Fails only on a pre-existing marker, which this cannot carry.
+            let _ = marker.apply_to(operation);
         }
 
         // Derived from what the document now says, rather than set.

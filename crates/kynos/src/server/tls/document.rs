@@ -35,36 +35,14 @@ pub(in crate::server) fn apply_mutual_tls(
     }
 
     require_mutual_tls(&mut document.security);
-    for path in document.paths.items.values_mut() {
-        for operation in [
-            &mut path.get,
-            &mut path.put,
-            &mut path.post,
-            &mut path.delete,
-            &mut path.options,
-            &mut path.head,
-            &mut path.patch,
-            &mut path.trace,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            if let Some(requirements) = &mut operation.security {
-                require_mutual_tls(requirements);
-            }
-        }
-        #[cfg(feature = "openapi32")]
-        {
-            if let Some(operation) = &mut path.query {
-                if let Some(requirements) = &mut operation.security {
-                    require_mutual_tls(requirements);
-                }
-            }
-            for operation in path.additional_operations.values_mut() {
-                if let Some(requirements) = &mut operation.security {
-                    require_mutual_tls(requirements);
-                }
-            }
+    for operation in document
+        .paths
+        .items
+        .values_mut()
+        .flat_map(kynos_openapi::PathItem::operations_mut)
+    {
+        if let Some(requirements) = &mut operation.security {
+            require_mutual_tls(requirements);
         }
     }
 
