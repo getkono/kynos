@@ -15,10 +15,10 @@ use crate::{
 
 /// The fields an asset response carries, declared so the conflict check sees
 /// them.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct AssetHeaders {
     etag: &'static str,
-    cache_control: Option<&'static str>,
+    cache_control: Option<HeaderValue>,
     /// The coding the selected representation is in, if it is not identity.
     coding: Option<&'static str>,
     /// Whether this file has stored codings, and so sends `Vary` on every
@@ -47,10 +47,8 @@ impl EncodeHeaders for AssetHeaders {
         if let Ok(value) = HeaderValue::from_str(self.etag) {
             fields.push((header::ETAG, value));
         }
-        if let Some(cache_control) = self.cache_control {
-            if let Ok(value) = HeaderValue::from_str(cache_control) {
-                fields.push((header::CACHE_CONTROL, value));
-            }
+        if let Some(cache_control) = &self.cache_control {
+            fields.push((header::CACHE_CONTROL, cache_control.clone()));
         }
         if let Some(coding) = self.coding {
             if let Ok(value) = HeaderValue::from_str(coding) {
@@ -74,7 +72,7 @@ pub struct AssetEndpoint {
     asset: Asset,
     template: PathTemplate,
     operation_id: String,
-    cache_control: Option<&'static str>,
+    cache_control: Option<HeaderValue>,
 }
 
 impl AssetEndpoint {
@@ -88,7 +86,7 @@ impl AssetEndpoint {
     pub(super) fn new(
         asset: Asset,
         path: &str,
-        cache_control: Option<&'static str>,
+        cache_control: Option<HeaderValue>,
         prefix: &str,
     ) -> Self {
         let relative = format!("/{}", path.trim_start_matches('/'));
@@ -107,7 +105,7 @@ impl AssetEndpoint {
     fn headers(&self, chosen: &Representation) -> AssetHeaders {
         AssetHeaders {
             etag: chosen.etag,
-            cache_control: self.cache_control,
+            cache_control: self.cache_control.clone(),
             coding: chosen.coding,
             negotiable: !self.asset.encodings().is_empty(),
         }

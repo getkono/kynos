@@ -106,6 +106,10 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
     }
 
     /// How long this representation may be reused.
+    ///
+    /// A value that is no field value (RFC 9110 section 5.5) has
+    /// [`deliver`](Self::deliver) answer 500 in place of each response that
+    /// would carry it: the 200, the 206 and the 304.
     #[must_use]
     pub fn cache_control(mut self, value: impl Into<String>) -> Self {
         self.cache_control = Some(value.into());
@@ -239,11 +243,10 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
         {
             fields.insert(header::LAST_MODIFIED, value);
         }
-        if let Some(value) = self
-            .cache_control
-            .as_deref()
-            .and_then(|value| HeaderValue::from_str(value).ok())
-        {
+        if let Some(value) = &self.cache_control {
+            let Ok(value) = HeaderValue::from_str(value) else {
+                return crate::extract::params::header::refused();
+            };
             fields.insert(header::CACHE_CONTROL, value);
         }
 

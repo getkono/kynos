@@ -31,6 +31,7 @@ mod media;
 
 use std::borrow::Cow;
 
+use crate::http::HeaderValue;
 use crate::router::assets::endpoint::AssetEndpoint;
 use crate::router::endpoint::set::{Endpoints, IntoEndpoints};
 
@@ -225,14 +226,33 @@ impl Asset {
 #[derive(Clone, Debug)]
 pub struct AssetSet {
     assets: &'static [Asset],
-    cache_control: Option<&'static str>,
+    cache_control: Option<HeaderValue>,
     index: Option<&'static str>,
     operation_id_prefix: Cow<'static, str>,
 }
 
 /// What a set carrying no `Cache-Control` of its own sends: an hour, short
 /// enough that unfingerprinted files are not stuck in caches.
-pub(crate) const DEFAULT_CACHE_CONTROL: &str = "public, max-age=3600";
+pub(crate) fn default_cache_control() -> HeaderValue {
+    HeaderValue::from_static("public, max-age=3600")
+}
+
+/// What [`AssetSet::immutable`] sends: a year, for a fingerprinted set.
+pub(crate) fn immutable_cache_control() -> HeaderValue {
+    HeaderValue::from_static("public, max-age=31536000, immutable")
+}
+
+/// `value` as the `Cache-Control` field it configures.
+///
+/// # Panics
+///
+/// If `value` is not a field value (RFC 9110 section 5.5).
+#[track_caller]
+pub(crate) fn cache_control(value: &'static str) -> HeaderValue {
+    HeaderValue::from_str(value).unwrap_or_else(|_| {
+        panic!("`{value:?}` is not a Cache-Control field value (RFC 9110 section 5.5)")
+    })
+}
 
 impl AssetSet {
     /// A set over files compiled into the binary.
@@ -240,7 +260,7 @@ impl AssetSet {
     pub fn embedded(assets: &'static [Asset]) -> Self {
         Self {
             assets,
-            cache_control: Some(DEFAULT_CACHE_CONTROL),
+            cache_control: Some(default_cache_control()),
             index: Some("index.html"),
             operation_id_prefix: Cow::Borrowed("asset"),
         }
@@ -267,9 +287,16 @@ impl AssetSet {
     }
 
     /// The `Cache-Control` every asset carries.
+    ///
+    /// # Panics
+    ///
+    /// If `value` is not a field value (RFC 9110 section 5.5), such as one
+    /// holding a control character. It is configuration, so it is refused here
+    /// rather than left off every asset the set describes as carrying it.
     #[must_use]
+    #[track_caller]
     pub fn cache_control(mut self, value: &'static str) -> Self {
-        self.cache_control = Some(value);
+        self.cache_control = Some(cache_control(value));
         self
     }
 
@@ -279,7 +306,7 @@ impl AssetSet {
     /// by every client that saw it, with no way to take it back.
     #[must_use]
     pub fn immutable(mut self) -> Self {
-        self.cache_control = Some("public, max-age=31536000, immutable");
+        self.cache_control = Some(immutable_cache_control());
         self
     }
 
@@ -336,7 +363,7 @@ impl<C: Send + Sync + 'static> IntoEndpoints<C> for AssetSet {
             sink.push(AssetEndpoint::new(
                 *asset,
                 asset.path,
-                self.cache_control,
+                self.cache_control.clone(),
                 &self.operation_id_prefix,
             ));
         }
@@ -345,7 +372,7 @@ impl<C: Send + Sync + 'static> IntoEndpoints<C> for AssetSet {
             sink.push(AssetEndpoint::new(
                 *asset,
                 &directory,
-                self.cache_control,
+                self.cache_control.clone(),
                 &self.operation_id_prefix,
             ));
         }
