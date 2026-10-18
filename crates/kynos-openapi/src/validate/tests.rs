@@ -4295,6 +4295,34 @@ fn a_discriminating_property_is_required_through_what_composes_the_schema() {
         ..SchemaObject::default()
     };
     assert_eq!(single_branch_errors(one_armed), [NOT_REQUIRED]);
+
+    // `not`, `dependentSchemas` and `dependentRequired` can each require the
+    // property in a way the rule does not read, so each gets the benefit of
+    // the doubt rather than a false positive.
+    let negated = SchemaObject {
+        not: Some(Box::new(Schema::Object(Box::new(SchemaObject {
+            not: Some(Box::new(object(kinded(true)))),
+            ..SchemaObject::default()
+        })))),
+        ..SchemaObject::default()
+    };
+    assert_eq!(single_branch_errors(negated), Vec::<&str>::new());
+    let mut dependent = SchemaObject {
+        required: Some(vec!["a".to_owned()]),
+        ..SchemaObject::default()
+    };
+    dependent
+        .dependent_schemas
+        .insert("a".to_owned(), object(kinded(true)));
+    assert_eq!(single_branch_errors(dependent), Vec::<&str>::new());
+    let mut dependent = SchemaObject {
+        required: Some(vec!["a".to_owned()]),
+        ..SchemaObject::default()
+    };
+    dependent
+        .dependent_required
+        .insert("a".to_owned(), vec!["kind".to_owned()]);
+    assert_eq!(single_branch_errors(dependent), Vec::<&str>::new());
 }
 
 /// The discriminator violations validating, as 3.1, a `Pet` discriminated
