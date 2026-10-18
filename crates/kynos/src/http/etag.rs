@@ -78,8 +78,15 @@ impl ETag {
             return None;
         }
 
+        // Sized exactly, so the value takes the buffer over as its one
+        // allocation rather than copying it.
         let marker = if self.weak { "W/" } else { "" };
-        HeaderValue::from_str(&format!("{marker}\"{}\"", self.value)).ok()
+        let mut field = String::with_capacity(marker.len() + self.value.len() + 2);
+        field.push_str(marker);
+        field.push('"');
+        field.push_str(&self.value);
+        field.push('"');
+        HeaderValue::try_from(field).ok()
     }
 }
 
