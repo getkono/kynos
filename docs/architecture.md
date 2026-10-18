@@ -283,10 +283,9 @@ number exists it stays closed.
 `/`, and captures a borrowed slice of the request path rather than an owned
 string — the property the routing path's allocation requirements rest on.
 [`nfr.md`](nfr.md#routing) records zero heap allocations there as `absent` and
-unmet, since a static match measures five, and enforces recorded ceilings in
+unmet, beside what a static match measures, and enforces recorded ceilings in
 the meantime; lowering one is what closing the gap looks like. matchit also
-understands catch-all
-patterns, which Kynos does not: a catch-all has no OpenAPI equivalent, so the
+understands catch-all patterns, which Kynos does not: a catch-all has no OpenAPI equivalent, so the
 router rejects that syntax before matchit is asked to insert it. That check is
 syntactic and belongs above the dependency rather than inside it, which is why
 the anti-pattern and the crate can coexist.
@@ -387,26 +386,19 @@ with the `unsafe` this workspace forbids, for a 64-bit token. FNV-1a with the
 length folded in is computed in `kynos-macros` at expansion time and never runs
 in a served request.
 
-**No HTTP-date crate**, and still none — but the premise under it changed.
-This row used to read "Kynos sends no `Last-Modified` and reads no
-`If-Modified-Since`, so there is no date to render or parse". Ranged delivery
-sends one and reads one, so there is.
-
-What the row refuses is a *dependency*, and the reason it gives applies
-unchanged: a crate here would be a database only sampling can verify. An
-HTTP-date is not that. RFC 9110 section 5.6.7 is a fixed-width grammar over a
-closed set of day and month names — three formats, all enumerable — which is
-exactly the shape this section says the project prefers to write down and test.
+**No HTTP-date crate.** Ranged delivery sends `Last-Modified` and reads
+`If-Modified-Since`, so Kynos renders and parses dates, but a crate here would
+be a database only sampling can verify, and an HTTP-date is not that. RFC 9110
+section 5.6.7 is a fixed-width grammar over a closed set of day and month names
+— three formats, all enumerable — which is exactly the shape this section says
+the project prefers to write down and test.
 [`http/date.rs`](../crates/kynos/src/http/date.rs) is that table, and its round
 trip is swept across a leap boundary rather than sampled.
 
-The row's other clause was conditional and is honoured: "sending a date obliges
-honouring a request that carries one back. Sending neither half is consistent;
-sending one is not." Both halves landed together.
-
-The ranking is unchanged. Section 8.8.2 gives `Last-Modified` one-second
-resolution, so section 13.1.3 ranks `If-None-Match` above it and a strong entity
-tag stays what Kynos reaches for first.
+Sending a date obliges honouring a request that carries one back, so Kynos
+sends and reads both halves or neither. Section 8.8.2 gives `Last-Modified`
+one-second resolution, so section 13.1.3 ranks `If-None-Match` above it and a
+strong entity tag stays what Kynos reaches for first.
 
 ### The language-tag registry, refused
 
@@ -713,8 +705,8 @@ body it erases — are counted to the duplex ([`nfr.md`](nfr.md)'s
 `connection_*` row), as a trend with no gate. A per-request figure over a real
 socket is the general measurement
 [`performance.md`](performance.md#the-boundary) sends to `kynos-bench`. What
-Kynos's routing path adds is also gated: [`nfr.md`](nfr.md#routing) records five
-allocations for a static match.
+Kynos's routing path adds is also gated, against the ceilings
+[`nfr.md`](nfr.md#routing) records.
 
 The honest counter-argument is the per-connection buffer floor. Roughly 16 KiB
 that cannot be pooled or reclaimed between requests on an idle keep-alive
@@ -727,9 +719,8 @@ hyper's own parser, which uses uninitialized memory for the header array; and
 owning HTTP framing means owning request-smuggling response permanently. The
 resolution is a measurement, not more argument.
 
-That 16 KiB is prose, and nothing gates it against hyper. So what
-[#87](https://github.com/getkono/kynos/issues/87) asked to be stated as a
-relation against this figure is guarded as absolute `size_of` ceilings on
+That 16 KiB is prose, and nothing gates it against hyper. So the relation to
+this figure is guarded as absolute `size_of` ceilings on
 Kynos's own per-connection state instead — 192 bytes for the inline connection
 record, 256 for the protocol configuration cloned per socket. Those are what
 can fail. The relation itself is recorded beside them as prose
@@ -747,22 +738,13 @@ is exactly the flexibility it declines. Vendoring trades a maintained
 dependency for a fork that ages.
 
 The other reason to leave the codec alone is that the cheap wins are not in it.
-Discarding the ALPN protocol already negotiated during the handshake and
-letting the driver re-sniff it costs a read syscall per connection; cloning
-per-connection TLS metadata per request copies the peer certificate chain each
-time; erasing every body through a boxed trait object behind a mutex allocates
-once per request for a body that is not shared. Those cost more per request
-than hyper's entire HTTP/1 codec, and none of them require replacing it.
+Three costs sit beside hyper's codec rather than inside it — per-connection TLS
+metadata, the ALPN protocol, and body erasure — and none requires replacing it.
 
-The second of the three was the first taken.
-[`Connection`](../crates/kynos/src/extract/connection.rs) is built once per
-accepted socket and reference-counted onto each request, so a certificate chain
-is copied once per connection rather than once per request. It landed as the fix
-for a defect rather than as an optimization — the metadata was private and
-`#[expect(dead_code)]`, and the extractor that was meant to read it panicked on
-every request — which is why the entry stays here rather than moving to a
-benchmark: the cost was real, and removing it was not what motivated the
-change. The reference count is now guarded at one pointer wide in
+**TLS metadata.** [`Connection`](../crates/kynos/src/extract/connection.rs) is
+built once per accepted socket and reference-counted onto each request, so a
+certificate chain is copied once per connection rather than once per request.
+The reference count is guarded at one pointer wide in
 `crates/kynos/src/extract/connection/tests.rs`, alongside a bound on the state
 behind it. That bound is a `size_of`, so what fits inside the smallest
 per-connection transport buffer the crate accepts is the inline record — the
@@ -775,11 +757,9 @@ pointer-width triple and a multi-certificate mTLS chain makes kilobytes of heap
 the reading does not see, along with the connection task's future, the service
 handle and the semaphore permit, none of which is bounded today.
 
-The other two have their numbers now, and neither costs what the entry above
-predicted. The first is traced through the dependencies it runs on rather than
-measured, which is the whole of what it claims: re-sniffing ALPN costs no read
-syscall on the one path where ALPN exists. hyper-util's `read_version` reads
-into a 24-byte array and rewinds the head it copied out, and on plaintext TCP
+**ALPN.** Traced through the dependencies it runs on rather than measured,
+re-sniffing ALPN costs no read syscall on the one path where ALPN exists.
+hyper-util's `read_version` reads into a 24-byte array and rewinds the head it copied out, and on plaintext TCP
 that cap does force the codec into a second `read(2)` — but plaintext
 negotiates no protocol to discard in the first place. Under TLS, `tokio-rustls`
 reads and decrypts a whole record before it hands any plaintext up, and rustls
@@ -787,22 +767,17 @@ reports no want for a read while that plaintext is buffered, so the codec's
 next read is served out of memory. What is left is one heap copy of the head,
 at most 24 bytes, and one extra poll through the TLS stack per connection — a
 socket-level per-connection figure, and so `kynos-bench`'s by the boundary
-[`performance.md`](performance.md#the-boundary) sets. It is still unmeasured,
-and the change is taken anyway
-([#114](https://github.com/getkono/kynos/issues/114)) — on the second thing the
-trace found rather than on the first. rustls settles the protocol during the
-handshake; a driver that reads it back off the first bytes of the stream is a
-second answer to a question that already has one, and the two could disagree.
-They did: a connection whose ALPN identifier said `h2` was served HTTP/1
-whenever its first bytes said so, which made the identifier a handler reads a
-claim the connection's own traffic could contradict. `serve_http` pins the
-driver from the negotiated identifier now. Nothing here claims a saving, and no
-test asserts one: what is asserted, over a real socket in
-`crates/kynos/src/server/tests.rs`, is which protocol a connection is served
-with.
+[`performance.md`](performance.md#the-boundary) sets, and unmeasured.
+`serve_http` pins the driver from the negotiated identifier anyway, for
+correctness rather than cost: rustls settles the protocol during the handshake,
+and a driver that reads it back off the first bytes of the stream is a second
+answer that can disagree — a connection whose ALPN identifier said `h2` would be
+served HTTP/1 whenever its first bytes said so. No test asserts a saving: what
+is asserted, over a real socket in `crates/kynos/src/server/tests.rs`, is which
+protocol a connection is served with.
 
-Only one of the two residuals goes with it, and the pin does not come free.
-Reading the head is what the sniff *owned*, not merely what it cost: a
+The pin does not come free. Reading the head is what the sniff *owned*, not
+merely what it cost: a
 connection that has said nothing can be dropped mid-read, and hyper's HTTP/2
 server cannot be — `graceful_shutdown` before its handshake completes only sets
 `close_pending`, so a connection pinned to `h2` and then left silent holds a
@@ -813,15 +788,15 @@ it builds the codec, which keeps the drop and hands the byte on
 saved after all, and hyper-util wraps a pinned connection in `Rewind` either
 way. What is left is the heap copy: `read_version` collects up to 24 bytes into
 a `Vec`, and one byte lives inline. A connection with no ALPN waits for
-nothing and is built immediately, exactly as before.
+nothing and is built immediately.
 
-Erasing a body is not on the routing path at all. None of the five allocations
-[`alloc.rs`](../crates/kynos/tests/alloc.rs) records for a static match is a
+**Body erasure** is not on the routing path at all. None of the allocations
+[`alloc.rs`](../crates/kynos/tests/alloc.rs) counts for a static match is a
 body erasure — the request body there is built before the counted region opens,
 and a `204`'s response body is `Body::empty`, which erases a zero-sized type, so
 the `Box::pin` behind it returns a dangling pointer and never reaches the
-allocator. The mutex is not part of the cost either; it is inline in `Body`. The
-entry is true one step further out, on the server path, where
+allocator. The mutex is not part of the cost either; it is inline in `Body`.
+Erasure costs one step further out, on the server path, where
 `Body::from_incoming` erases a `hyper::body::Incoming` that is not zero-sized:
 on a router with no observer registered, one allocation per request that
 arrives over a socket, and one more for a response body that is not empty. A
