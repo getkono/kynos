@@ -67,9 +67,12 @@ pub(crate) fn decode_path_value(
 /// The pairs a raw query string carries, each half decoded to octets, in the
 /// order the target wrote them.
 ///
-/// Shared by `QueryParams`, query API keys and `Form<T>`, so they cannot
-/// disagree about what the client sent; octets, so each reader decides what
-/// non-UTF-8 means to it.
+/// Shared by `QueryParams` and query API keys, so they cannot disagree about
+/// what the client sent; octets, so each reader decides what non-UTF-8 means
+/// to it. `Form<T>` does not read its body through this: it checks the body
+/// in place with `check_percent_decoded_utf8`, which the `__private` test
+/// `the_in_place_utf8_check_agrees_with_decoding_every_pair` and the `query`
+/// fuzz target hold to this reader plus `str::from_utf8` on every half.
 ///
 /// Form rules, as OpenAPI requires of `in: query`: `+` is a space and `%2B` a
 /// plus sign. An empty pair is skipped, a pair with no `=` has an empty value,
