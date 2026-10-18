@@ -16,6 +16,10 @@ pub enum QuotaUnit {
     #[default]
     Requests,
     /// Bytes of request content.
+    ///
+    /// For a [`RateLimitPolicy`] that counts them itself.
+    /// [`Quotas`](super::quota::Quotas) counts requests and never advertises
+    /// this.
     ContentBytes,
 }
 
