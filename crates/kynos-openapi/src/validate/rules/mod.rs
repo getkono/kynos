@@ -4,6 +4,7 @@
 //! `impl` block or free functions [`Validator::validate`] calls.
 
 pub(in crate::validate) mod content;
+pub(in crate::validate) mod discriminator;
 pub(in crate::validate) mod document;
 pub(in crate::validate) mod extensions;
 pub(in crate::validate) mod opaque;
