@@ -4,7 +4,9 @@
 //! is a value type in `docs/testing.md`'s allocation, which owes exactly that
 //! and explicitly does not owe per-field tests or a hand-written round-trip:
 //! the round-trip is the extracting half's, and a hand-written one here would
-//! compare `encode` with `decode` and pass wherever both were wrong.
+//! compare `encode` with `decode` and pass wherever both were wrong. The one
+//! exception is JSON's writer, whose stack-to-heap spill is internal logic of
+//! its own and is held at its boundaries.
 //!
 //! What an exact-bytes case buys is the thing a round-trip cannot see. A
 //! misspelled field name round-trips perfectly — nothing sets
@@ -55,6 +57,23 @@ async fn json_writes_the_document_and_states_its_type() {
 
     assert_eq!(media_type(&response), "application/json");
     assert_eq!(&body(response).await[..], br#"{"x":1,"y":-2}"#);
+}
+
+/// The writer moves a body from the stack to the heap once it outgrows 1 KiB:
+/// a body filling it exactly, one octet past it, and one spilled far enough
+/// that the heap grows again are each written whole and in order.
+#[cfg(feature = "json")]
+#[tokio::test]
+async fn json_writes_a_body_whole_on_either_side_of_the_stack_buffer() {
+    use crate::extract::body::json::Json;
+
+    for octets in [1024, 1025, 5000] {
+        // A string is written as its characters between two quotes.
+        let text: String = ('a'..='z').cycle().take(octets - 2).collect();
+        let response = Json(&text).into_response();
+
+        assert_eq!(body(response).await, format!("\"{text}\"").as_bytes());
+    }
 }
 
 #[cfg(feature = "form")]

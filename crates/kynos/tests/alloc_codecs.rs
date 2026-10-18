@@ -488,8 +488,9 @@ mod json {
     /// so what the operation pays over the bodyless floor is the collection of
     /// the body rather than the codec — and a table with only the bodyless
     /// floor in it would have reported that one allocation as JSON's price.
-    /// Writing is the expensive direction: `serde_json` builds the octets in a
-    /// buffer of its own before a status is committed.
+    /// Writing is the expensive direction: `serde_json` builds the octets
+    /// before a status is committed, on the stack, and they are then copied
+    /// into one allocation of exactly their length that becomes the body.
     const RECORDED: Table = Table {
         bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 7),
         transport_floor: (
@@ -505,7 +506,7 @@ mod json {
             7,
         ),
         decoding: ("POST /json", decode_request, StatusCode::NO_CONTENT, 8),
-        encoding: ("GET /json/out", encode_request, StatusCode::OK, 12),
+        encoding: ("GET /json/out", encode_request, StatusCode::OK, 9),
     };
 
     /// The record: what each operation of this service costs today.
@@ -646,10 +647,10 @@ mod form {
     /// Read the way the JSON table was read: every ceiling set to zero, the
     /// target run, the counts the failure reported transcribed.
     ///
-    /// The request direction reads as JSON's does, and the responding one an
-    /// allocation below JSON's, though the form encoder builds a `String` the
-    /// response body is then made from where `serde_json` writes into the
-    /// `Vec<u8>` that becomes the body directly.
+    /// The request direction reads as JSON's does, and the responding one two
+    /// allocations above JSON's: the form encoder builds a `String` the
+    /// response body is then made from, where `serde_json` writes on the stack
+    /// and allocates only the body.
     const RECORDED: Table = Table {
         bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 7),
         transport_floor: (
@@ -1017,9 +1018,8 @@ mod protobuf {
     ///
     /// The cheapest of the four, in both directions. Decoding adds nothing over
     /// the read, as JSON's and the form codec's do on an all-integer payload;
-    /// and encoding is the only one of the three that beats JSON, because
-    /// `prost` writes the message into one growable buffer and that buffer
-    /// becomes the body.
+    /// and encoding costs what JSON's does, because `prost` writes the message
+    /// into one growable buffer and that buffer becomes the body.
     const RECORDED: Table = Table {
         bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 7),
         transport_floor: (
@@ -1035,7 +1035,7 @@ mod protobuf {
             7,
         ),
         decoding: ("POST /protobuf", decode_request, StatusCode::NO_CONTENT, 8),
-        encoding: ("GET /protobuf/out", encode_request, StatusCode::OK, 11),
+        encoding: ("GET /protobuf/out", encode_request, StatusCode::OK, 9),
     };
 
     /// The record: what each operation of this service costs today.
