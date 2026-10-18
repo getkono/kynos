@@ -8,7 +8,7 @@ use crate::derive::{
     common::{NameCase, named_fields, reject_duplicate_names, wire_names},
     params::{
         Param, check_field, construct, decode_field, parameters_body, query_encode_body,
-        query_pairs,
+        query_slot, query_slots,
     },
 };
 
@@ -31,15 +31,14 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let params = Param::pair(fields, &names);
     let rejection = quote!(::kynos::error::rejection::QueryRejection);
 
-    let pairs = query_pairs();
     // The first occurrence of a repeated name wins.
-    let reads = params.iter().map(|param| {
+    let pairs = query_slots(&params);
+    let reads = params.iter().enumerate().map(|(index, param)| {
         let wire = param.name();
+        let slot = query_slot(index);
         // Only a declared parameter's value is required to be UTF-8.
         let found = quote! {
-            match pairs.iter().find_map(|(name, value)| {
-                (**name == *#wire.as_bytes()).then_some(&**value)
-            }) {
+            match &#slot {
                 ::core::option::Option::Some(octets) => match ::core::str::from_utf8(octets) {
                     ::core::result::Result::Ok(text) => ::core::option::Option::Some(text),
                     ::core::result::Result::Err(_) => {
