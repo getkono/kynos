@@ -13,7 +13,7 @@
 //! shared across a fleet. `moka` here is a dev-dependency of this file, named
 //! nowhere under `src/`.
 //!
-//! Six things are worth noticing:
+//! Worth noticing:
 //!
 //! * **The store is two methods.** `read` and `increment`, neither taking a
 //!   closure across an `await`. That is what keeps a Redis backend
@@ -26,8 +26,8 @@
 //! * **A refusal spends nothing.** The counter is read before it is
 //!   incremented, so a throttled client that keeps retrying does not push its
 //!   own window along forever.
-//! * **Several quotas compose.** A per-second burst and a per-day allowance are
-//!   both enforced and both reported. The `X-RateLimit-*` triple has room for
+//! * **Several quotas compose.** A per-second burst, an hourly allowance and a
+//!   daily allowance are all enforced and all reported. The `X-RateLimit-*` triple has room for
 //!   one, which is why `standard_fields` exists.
 //! * **`Retry-After` is solved, not guessed.** The delay is when the estimate
 //!   actually falls below the ceiling, assuming the client sends nothing more.
@@ -63,9 +63,12 @@ use kynos::{
 /// The whole implementation, and it is short on purpose: a store that needed
 /// more than this from the seam would be a store the seam had failed.
 ///
-/// `moka`'s per-entry expiry is what makes `ttl` meaningful. A backend without
-/// one — a plain `HashMap` — would grow without bound, which is why the trait
-/// asks for a TTL rather than leaving eviction to the caller.
+/// It ignores the trait's `ttl`: nothing here expires an entry, so the only
+/// bound on the counters is the LRU capacity set in `MokaCounters::new`. That
+/// is safe to count with, because every key names its window, so a counter
+/// whose window has passed is never read again; it only occupies memory until
+/// the LRU evicts it. A backend with neither expiry nor a capacity — a plain
+/// `HashMap` — would grow without bound, which is why the trait asks for a TTL.
 struct MokaCounters {
     counters: moka::future::Cache<String, u64>,
 }
@@ -98,10 +101,9 @@ impl RateLimitStore for MokaCounters {
     }
 
     async fn increment(&self, key: &str, by: u64, ttl: Duration) -> Result<u64, Self::Error> {
-        // `moka`'s TTL is per-cache rather than per-entry, so a window longer
-        // than the cache's own would be cut short. The windows here are all
-        // well inside it; a service mixing a per-second and a per-year quota
-        // wants one cache per window, or a store that expires per key.
+        // No expiry is set: the cache is bounded by its capacity alone. A
+        // store that honours `ttl` sets a per-entry expiry here instead, e.g.
+        // through `moka`'s `Expiry` or Redis's `EXPIRE`.
         let _ = ttl;
 
         let counted = self.counters.get(key).await.unwrap_or(0) + by;
@@ -149,15 +151,15 @@ async fn main() -> kynos::Result<()> {
         // the entry it wrote. Naming the wrong field does the same, since the
         // proxy passes the other one through as the client sent it.
         .trusted_proxies(TrustedProxies::hops(ProxyHeader::XForwarded, 1))
-        // Per caller, per operation, with two windows. The key is what makes
+        // Per caller, per operation, with three windows. The key is what makes
         // "per endpoint" mean the `paths` key rather than the request path, so
         // a client cannot mint buckets by inventing URLs.
         .intercept(
             RateLimit::new(
                 Quotas::new(And(ByClientAddress, ByRoute), MokaCounters::new())
-                    // A short window with headroom for a burst, and a long one
-                    // that bounds the day. Both are enforced; both are
-                    // reported.
+                    // A short window with headroom for a burst, and longer
+                    // ones that bound the hour and the day. All three are
+                    // enforced; all three are reported.
                     .quota(Quota::per_second("burst", 5).burst(10))
                     .quota(Quota::per_hour("sustained", 1_000))
                     .quota(Quota::per_day("daily", 10_000))

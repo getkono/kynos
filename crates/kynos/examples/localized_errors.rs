@@ -50,8 +50,11 @@
 //! # Where it sits in a chain
 //!
 //! Inside `Compression`, which would otherwise encode bytes this then rewrites.
-//! Inside `Cache` too, though that one is benign: only a 200 is stored, and a
-//! localized problem is never one.
+//! Outside `Cache`: a `Cache` may store a 404, 405, 410, 414 or 501 that
+//! states a lifetime, and this adds no `Vary: Accept-Language`, so a problem
+//! localized inside it would be replayed in the first caller's language to
+//! every caller after. Outside it, the stored problem stays unlocalized and is
+//! rewritten for each caller on the way out.
 //!
 //! It declares `Content-Language` and no status, so it composes with anything
 //! that does not also set that field.

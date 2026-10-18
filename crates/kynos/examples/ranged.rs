@@ -31,9 +31,10 @@
 //!   defined against one, so a source that cannot mint a strong `ETag` is
 //!   telling you it cannot support resumption. `Last-Modified` is the weaker
 //!   partner and is ranked below it, per section 13.1.3.
-//! * **HEAD is its own route.** Kynos does not invent one from a GET, because
-//!   the two are separate operations in the description. Both reach the same
-//!   builder, and `Served` sends no content for the second.
+//! * **HEAD is declared on its own here.** Kynos would answer a HEAD from the
+//!   GET without content anyway; declaring `head` is what makes it a separate
+//!   operation in the description, and a declared `head` wins over the GET.
+//!   Both reach the same builder, and `Served` sends no content for the second.
 
 use std::{
     net::Ipv4Addr,
