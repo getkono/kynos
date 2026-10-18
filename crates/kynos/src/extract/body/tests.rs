@@ -308,6 +308,91 @@ mod a_multipart_boundary_is_read_past_optional_whitespace {
     }
 }
 
+/// A part's field name is its `Content-Disposition`'s `name` parameter, read
+/// by RFC 9110's `quoted-string` grammar (section 5.6.4) under RFC 7578
+/// section 4.2, which makes every part's disposition `form-data`.
+#[cfg(feature = "multipart")]
+mod a_part_disposition_is_read_quote_aware {
+    use crate::{
+        error::rejection::BodyRejection,
+        extract::{
+            FromRequest,
+            body::multipart::{FromMultipart, MultipartForm, Part},
+        },
+        http::{HeaderValue, Request, StatusCode, body::Body, header},
+        schema::{Schema, registry::Registry},
+    };
+
+    /// Every part the body carried, as `(name, file_name)`.
+    #[derive(Debug, PartialEq, Eq)]
+    struct Names(Vec<(String, Option<String>)>);
+
+    impl FromMultipart for Names {
+        fn from_parts(parts: Vec<Part>) -> Result<Self, BodyRejection> {
+            Ok(Self(
+                parts
+                    .into_iter()
+                    .map(|part| (part.name, part.file_name))
+                    .collect(),
+            ))
+        }
+    }
+
+    impl Schema for Names {
+        fn schema(_registry: &mut Registry) -> kynos_openapi::Schema {
+            kynos_openapi::Schema::any()
+        }
+    }
+
+    /// What `MultipartForm` makes of one part carrying `disposition`.
+    async fn read(disposition: &str) -> Result<Names, BodyRejection> {
+        let body = format!("--x\r\nContent-Disposition: {disposition}\r\n\r\nb\r\n--x--\r\n");
+        let mut request = Request::new(Body::from_bytes(bytes::Bytes::from(body)));
+        request.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("multipart/form-data; boundary=x"),
+        );
+        MultipartForm::<Names>::from_request(request, &())
+            .await
+            .map(|MultipartForm(names)| names)
+    }
+
+    /// A ` name=` inside a quoted `filename` is part of the file name, not
+    /// the field's.
+    #[tokio::test]
+    async fn a_name_inside_a_quoted_value_is_not_the_name() {
+        let names = read(r#"form-data; filename="; name=x"; name="real""#)
+            .await
+            .expect("a well-formed disposition");
+        assert_eq!(
+            names,
+            Names(vec![("real".to_owned(), Some("; name=x".to_owned()))])
+        );
+    }
+
+    /// A disposition other than `form-data` is not a form field: 400.
+    #[tokio::test]
+    async fn a_disposition_other_than_form_data_is_refused() {
+        for disposition in [
+            r#"attachment; name="a""#,
+            r#"inline; name="a""#,
+            r#"form-datax; name="a""#,
+            r#"name="a""#,
+        ] {
+            let rejection = read(disposition).await.expect_err(disposition);
+            assert_eq!(
+                rejection.status(),
+                StatusCode::BAD_REQUEST,
+                "`{disposition}`"
+            );
+            assert!(
+                matches!(rejection, BodyRejection::Syntax { .. }),
+                "`{disposition}`: {rejection:?}"
+            );
+        }
+    }
+}
+
 /// A form body decodes the encoding its description states.
 ///
 /// No Encoding Object is written, so each property takes the defaults:
