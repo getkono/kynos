@@ -473,7 +473,8 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   the first variant claiming it, so the later variant goes on the wire under
 ///   a name that reads back as the earlier one. An `alias` an earlier variant
 ///   already claims is accepted and named under that variant alone, since serde
-///   never reads it as the later one.
+///   never reads it as the later one. So is a `field_identifier` or
+///   `variant_identifier` enum's later variant, since serde never writes it.
 /// - A container `tag` on a struct carrying `deny_unknown_fields`. serde writes
 ///   the tag beside the fields and never reads it back as one of them, so the
 ///   closed struct refuses every document it writes. Drop
