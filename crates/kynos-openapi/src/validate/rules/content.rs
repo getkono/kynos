@@ -1,7 +1,9 @@
 //! Media type rules, and the request bodies and responses that hold them.
 //!
-//! A media type's schema is not read here; `rules/schemas.rs` checks every
-//! schema at once.
+//! A media type's schema is read here only to judge its encodings against
+//! it, through `allOf` and `#/components/schemas` references: the properties
+//! it declares and whether it can be an array. `rules/schemas.rs` checks the
+//! schemas themselves, every one at once.
 
 use std::collections::HashSet;
 
@@ -287,7 +289,9 @@ fn excludes_arrays(schema: &Schema, components: &Components) -> bool {
 /// component once however many paths reach it.
 ///
 /// Returns whether every conjunct was an object this document resolves; a
-/// boolean schema or a reference it cannot follow is not visited.
+/// boolean schema or a reference it cannot follow is not visited. A name is
+/// looked up as written: a valid component name holds no character a pointer
+/// escapes, so an escaped or deeper pointer misses and counts as unfollowed.
 fn for_each_conjunct<'doc>(
     schema: &'doc Schema,
     components: &'doc Components,
@@ -306,7 +310,6 @@ fn for_each_conjunct<'doc>(
         if let Some(reference) = &object.reference {
             match reference
                 .strip_prefix("#/components/schemas/")
-                .filter(|name| !name.contains(['/', '~', '%']))
                 .and_then(|name| components.schemas.get_key_value(name))
             {
                 Some((name, target)) => {
