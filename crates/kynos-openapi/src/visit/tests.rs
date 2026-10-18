@@ -51,10 +51,15 @@ impl<'doc> Visit<'doc> for Record {
         self.events
             .push(format!("entry {} {expression}", at.pointer()));
     }
+
+    fn reference(&mut self, at: At<'_>, uri: &'doc str) {
+        self.events
+            .push(format!("reference {} {uri}", at.pointer()));
+    }
 }
 
-/// An operation declaring one callback, `onEvent`, with an inline entry and a
-/// referenced one.
+/// An operation declaring two callbacks: `onEvent`, with an inline entry and a
+/// referenced one, and `onReuse`, itself a reference.
 fn calling_back(id: &str) -> Operation {
     let mut callback = Callback::new().with(
         "{$request.body#/url}",
@@ -67,6 +72,10 @@ fn calling_back(id: &str) -> Operation {
     operation
         .callbacks
         .insert("onEvent".to_owned(), RefOr::Item(callback));
+    operation.callbacks.insert(
+        "onReuse".to_owned(),
+        RefOr::Ref(Ref::new("#/components/callbacks/Reusable")),
+    );
     operation
 }
 
@@ -115,6 +124,9 @@ fn every_path_item_and_operation_is_visited_once_where_it_is_written() {
             "operation #/paths/~1pets~1{id}/get/callbacks/onEvent/{$request.body#~1url}/post",
             "walked #/paths/~1pets~1{id}/get/callbacks/onEvent/{$request.body#~1url}/post",
             "entry #/paths/~1pets~1{id}/get/callbacks/onEvent/elsewhere elsewhere",
+            "reference #/paths/~1pets~1{id}/get/callbacks/onEvent/elsewhere #/x",
+            "reference #/paths/~1pets~1{id}/get/callbacks/onReuse \
+             #/components/callbacks/Reusable",
             "walked #/paths/~1pets~1{id}/get",
             "operation #/paths/~1pets~1{id}/post",
             "walked #/paths/~1pets~1{id}/post",
@@ -126,6 +138,7 @@ fn every_path_item_and_operation_is_visited_once_where_it_is_written() {
             "walked #/components/pathItems/Shared/delete",
             "entry #/components/callbacks/Reusable/~1back /back",
             "item #/components/callbacks/Reusable/~1back -",
+            "reference #/components/callbacks/Referenced #/y",
         ]
     );
 }

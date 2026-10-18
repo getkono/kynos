@@ -15,6 +15,7 @@ use crate::{
         callback::Callback,
         document::Document,
         paths::{item::PathItem, method::Method, operation::Operation},
+        reference::RefOr,
     },
     pointer::At,
 };
@@ -42,6 +43,10 @@ pub(crate) trait Visit<'doc> {
     /// One entry of a callback, before the Path Item it holds, which is
     /// walked only where it is written inline.
     fn callback_entry(&mut self, _at: At<'_>, _expression: &'doc str) {}
+
+    /// A callback, or a callback's Path Item, given by reference to `uri`:
+    /// the walk stops there, so what lies past it is not visited.
+    fn reference(&mut self, _at: At<'_>, _uri: &'doc str) {}
 }
 
 /// Every Path Item in `document`: [`routes`], then `components.pathItems`,
@@ -56,9 +61,7 @@ pub(crate) fn document<'doc>(document: &'doc Document, visit: &mut impl Visit<'d
     }
     let callbacks = components.key("callbacks");
     for (name, entry) in &document.components.callbacks {
-        if let Some(entry) = entry.as_item() {
-            callback(callbacks.key(name), entry, visit);
-        }
+        callback_or_reference(callbacks.key(name), entry, visit);
     }
 }
 
@@ -84,9 +87,21 @@ pub(crate) fn callback<'doc>(at: At<'_>, callback: &'doc Callback, visit: &mut i
     for (expression, entry) in &callback.items {
         let at = at.key(expression);
         visit.callback_entry(at, expression);
-        if let Some(item) = entry.as_item() {
-            walk_path_item(at, item, None, visit);
+        match entry {
+            RefOr::Item(item) => walk_path_item(at, item, None, visit),
+            RefOr::Ref(reference) => visit.reference(at, &reference.location),
         }
+    }
+}
+
+fn callback_or_reference<'doc>(
+    at: At<'_>,
+    entry: &'doc RefOr<Callback>,
+    visit: &mut impl Visit<'doc>,
+) {
+    match entry {
+        RefOr::Item(entry) => callback(at, entry, visit),
+        RefOr::Ref(reference) => visit.reference(at, &reference.location),
     }
 }
 
@@ -123,9 +138,7 @@ fn walk_operation<'doc>(
 
     let callbacks = at.key("callbacks");
     for (name, entry) in &operation.callbacks {
-        if let Some(entry) = entry.as_item() {
-            callback(callbacks.key(name), entry, visit);
-        }
+        callback_or_reference(callbacks.key(name), entry, visit);
     }
 
     visit.operation_walked(at, operation);
