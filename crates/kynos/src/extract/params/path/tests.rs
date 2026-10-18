@@ -1,4 +1,4 @@
-use super::{DecodePath, Path, PathCaptures, PathParams, decode_capture};
+use super::{DecodePath, INLINE, Path, PathCaptures, PathParams, Small, decode_capture};
 use crate::{
     error::rejection::PathRejection,
     extract::{FromRequestParts, describe::Describe},
@@ -35,6 +35,26 @@ impl PathParams for Absent {
 impl DecodePath for Absent {
     fn decode(values: &[(&str, &str)]) -> Result<Self, PathRejection> {
         Ok(Self(values[0].1.to_owned()))
+    }
+}
+
+/// Five variables, one past what is held in place, decoded by hand for the
+/// reason [`Named`] is.
+#[derive(Debug, PartialEq)]
+struct Five(Vec<(String, String)>);
+
+impl PathParams for Five {
+    const NAMES: &'static [&'static str] = &["a", "b", "c", "d", "e"];
+}
+
+impl DecodePath for Five {
+    fn decode(values: &[(&str, &str)]) -> Result<Self, PathRejection> {
+        Ok(Self(
+            values
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+                .collect(),
+        ))
     }
 }
 
@@ -98,6 +118,66 @@ async fn a_percent_encoded_capture_arrives_decoded() {
     .expect("a decodable capture");
 
     assert_eq!(decoded, Named("annual/2026".to_owned()));
+}
+
+/// Past the captures held in place, every value still reaches the group under
+/// its own name and in declaration order: spilling to the heap moves what was
+/// already recorded rather than dropping or reordering it.
+#[tokio::test]
+async fn a_group_past_the_inline_captures_keeps_every_value_in_order() {
+    let decoded: Five = extract(matched(
+        "/v/1/2/3/4/%35",
+        &[("e", "%35"), ("d", "4"), ("c", "3"), ("b", "2"), ("a", "1")],
+    ))
+    .await
+    .expect("a decodable capture");
+
+    assert_eq!(
+        decoded,
+        Five(
+            [("a", "1"), ("b", "2"), ("c", "3"), ("d", "4"), ("e", "5")]
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value.to_owned()))
+                .collect()
+        )
+    );
+}
+
+/// Each name in `names` paired with the segment after `/v/` it stands at, out
+/// of an iterator whose length is not known up front, as the router's
+/// `filter_map` is not.
+fn segments(
+    path: &'static str,
+    names: &'static [&'static str],
+) -> impl Iterator<Item = (&'static str, &'static str)> {
+    names.iter().copied().zip(path.split('/').skip(2))
+}
+
+/// A record whose length is not known up front starts in place and spills on
+/// the fifth capture: what it held moves to the heap whole and in order, and a
+/// match is then read back by name as before.
+#[test]
+fn captures_of_unknown_count_spill_without_losing_one() {
+    let path = "/v/1/2/3/4/5";
+    let recorded = PathCaptures::new(path, segments(path, &["a", "b", "c", "d", "e"]));
+
+    assert!(matches!(recorded.0, Small::Spilled(_)), "{recorded:?}");
+    for (name, value) in [("a", "1"), ("b", "2"), ("c", "3"), ("d", "4"), ("e", "5")] {
+        assert_eq!(recorded.get(path, name), Some(value), "{name}");
+    }
+}
+
+/// Up to [`INLINE`] captures, the record holds them in place.
+#[test]
+fn captures_within_the_inline_count_stay_in_place() {
+    let path = "/v/1/2/3/4";
+    let recorded = PathCaptures::new(path, segments(path, &["a", "b", "c", "d"]));
+
+    assert!(
+        matches!(recorded.0, Small::Inline { len: INLINE, .. }),
+        "{recorded:?}"
+    );
+    assert_eq!(recorded.get(path, "d"), Some("4"));
 }
 
 /// A capture the route never made is a rejection naming the variable, not a

@@ -27,9 +27,10 @@ pub struct Path<T>(pub T);
 /// Where in the request path a matched route found each of its variables.
 ///
 /// Read by [`Path`] and [`captured`](crate::unchecked::captured). Ranges into
-/// the request path, so a match allocates nothing per variable.
+/// the request path, so a match allocates nothing per variable, and held in
+/// place up to [`INLINE`] variables, so below that it allocates nothing at all.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct PathCaptures(Vec<(&'static str, Range<usize>)>);
+pub(crate) struct PathCaptures(Small<(&'static str, Range<usize>)>);
 
 impl PathCaptures {
     /// Records what a match captured out of `path`.
@@ -64,11 +65,95 @@ impl PathCaptures {
     /// matching.
     pub(crate) fn get<'p>(&self, path: &'p str, name: &str) -> Option<&'p str> {
         self.0
+            .as_slice()
             .iter()
             .find(|(captured, _)| *captured == name)
             .and_then(|(_, range)| path.get(range.clone()))
     }
 }
+
+/// How many variables a match records, and a group decodes, before either
+/// spills to the heap.
+///
+/// One past `matchit`'s own inline capacity of three, so the shortest route
+/// that spills here already paid one allocation for its variables there.
+const INLINE: usize = 4;
+
+/// A vector whose first [`INLINE`] items are held in place.
+///
+/// What keeps a match's captures and their decoding off the heap on a common
+/// route, where each vector here would otherwise allocate once per request.
+#[derive(Clone, Debug)]
+enum Small<T> {
+    Inline { len: usize, items: [T; INLINE] },
+    Spilled(Vec<T>),
+}
+
+impl<T: Default> Small<T> {
+    /// Room for `capacity` items, in place where they fit.
+    fn with_capacity(capacity: usize) -> Self {
+        if capacity <= INLINE {
+            Self::default()
+        } else {
+            Self::Spilled(Vec::with_capacity(capacity))
+        }
+    }
+
+    /// Appends `item`, moving every item to the heap once the inline slots
+    /// are full.
+    fn push(&mut self, item: T) {
+        match self {
+            Self::Inline { len, items } if *len < INLINE => {
+                items[*len] = item;
+                *len += 1;
+            }
+            Self::Inline { items, .. } => {
+                let mut spilled = Vec::with_capacity(INLINE * 2);
+                spilled.extend(items.iter_mut().map(std::mem::take));
+                spilled.push(item);
+                *self = Self::Spilled(spilled);
+            }
+            Self::Spilled(items) => items.push(item),
+        }
+    }
+}
+
+impl<T> Small<T> {
+    fn as_slice(&self) -> &[T] {
+        match self {
+            Self::Inline { len, items } => &items[..*len],
+            Self::Spilled(items) => items,
+        }
+    }
+}
+
+impl<T: Default> Default for Small<T> {
+    fn default() -> Self {
+        Self::Inline {
+            len: 0,
+            items: std::array::from_fn(|_| T::default()),
+        }
+    }
+}
+
+impl<T: Default> FromIterator<T> for Small<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let iter = iter.into_iter();
+        let mut small = Self::with_capacity(iter.size_hint().0);
+        for item in iter {
+            small.push(item);
+        }
+        small
+    }
+}
+
+impl<T: PartialEq> PartialEq for Small<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl<T: Eq> Eq for Small<T> {}
 
 /// Percent-decodes one captured value, through the one module allowed
 /// `percent-encoding`.
@@ -170,7 +255,7 @@ impl<C: Sync, T: DecodePath + Send> FromRequestParts<C> for Path<T> {
             .get::<crate::router::dispatch::Routed>()
             .and_then(|routed| routed.captures.as_ref());
 
-        let mut decoded: Vec<(&'static str, Cow<'_, str>)> = Vec::with_capacity(T::NAMES.len());
+        let mut decoded: Small<Cow<'_, str>> = Small::with_capacity(T::NAMES.len());
         for name in T::NAMES {
             let raw = captures
                 .and_then(|captures| captures.get(path, name))
@@ -182,14 +267,15 @@ impl<C: Sync, T: DecodePath + Send> FromRequestParts<C> for Path<T> {
                 name: (*name).to_owned(),
                 detail: format!("the percent-decoded value is not valid UTF-8: {error}"),
             })?;
-            decoded.push((*name, value));
+            decoded.push(value);
         }
 
-        let values: Vec<(&str, &str)> = decoded
+        let values: Small<(&str, &str)> = T::NAMES
             .iter()
+            .zip(decoded.as_slice())
             .map(|(name, value)| (*name, value.as_ref()))
             .collect();
-        T::decode(&values).map(Path)
+        T::decode(values.as_slice()).map(Path)
     }
 }
 

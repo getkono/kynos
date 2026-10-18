@@ -70,9 +70,8 @@ use counting::request;
 /// Every shape measured here, with what it costs today.
 ///
 /// `/users/{id}` is dispatch *and* the `Path` extractor that reads the capture,
-/// so its excess over `/ping` is not the router's alone. Splitting the two is
-/// the attribution [`nfr.md`](../../../docs/nfr.md#routing) names as the next
-/// piece of work.
+/// and neither allocates for it, so it costs what `/ping` does
+/// ([`nfr.md`](../../../docs/nfr.md#routing)).
 ///
 /// The status is the one the count has to be of, for the reason
 /// [`alloc_codecs.rs`](alloc_codecs.rs) gives: a request answered 404 where 204
@@ -83,7 +82,7 @@ const SHAPES: [(&str, StatusCode, usize); 3] = [
     // and the depth-0 stack ceiling are read from.
     ("/ping", StatusCode::NO_CONTENT, 5),
     // One path parameter, captured and deserialized.
-    ("/users/7", StatusCode::NO_CONTENT, 8),
+    ("/users/7", StatusCode::NO_CONTENT, 5),
     // A request matching no route at all.
     ("/nope", StatusCode::NOT_FOUND, 6),
 ];
@@ -648,8 +647,13 @@ fn the_routing_path_allocates_where_the_requirement_asks_for_nothing() {
 }
 
 /// The relation the absolutes are there to hold, and the one that survives a
-/// change to any of them: reading a parameter costs more than the static match
-/// that found it.
+/// change to any of them: reading a parameter costs no allocation beyond the
+/// static match that found it.
+///
+/// It once had to cost more, by the capture vector the router recorded and the
+/// two the extractor built. All three are now held in place up to four
+/// variables, so `/users/7` ties `/ping`, and a cut to the shared path moves
+/// both rather than opening a gap only a capture pays.
 ///
 /// A miss is held by its ceiling alone. It once also had to cost less than a
 /// match, but that compared two response bodies rather than two routes: the
@@ -658,7 +662,7 @@ fn the_routing_path_allocates_where_the_requirement_asks_for_nothing() {
 /// the routing path takes the match below the miss. The relation was never
 /// about what routing costs.
 #[test]
-fn a_capture_is_what_a_path_parameter_costs() {
+fn a_capture_costs_no_allocation_of_its_own() {
     let service = service();
 
     // Each shape reaches this test through the const that names it, rather
@@ -674,10 +678,10 @@ fn a_capture_is_what_a_path_parameter_costs() {
     let matched = counted(&service, STACKED, STACKED_STATUS);
     let captured = counted(&service, CAPTURED, CAPTURED_STATUS);
 
-    assert!(
-        captured > matched,
-        "a captured parameter ({captured}) should cost more than the static \
-         match that found it ({matched})"
+    assert_eq!(
+        captured, matched,
+        "a captured parameter should cost what the static match that found it \
+         does"
     );
 }
 
