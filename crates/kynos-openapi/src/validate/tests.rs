@@ -3635,7 +3635,7 @@ fn ledger_discriminator() -> Vec<(&'static str, SpecVersion, Document)> {
     let optional =
         || document_with_schemas([("Pet", object(discriminated(vec![object(kinded(false))])))]);
 
-    let mut cases = vec![
+    vec![
         (
             "DiscriminatorWithoutComposition",
             SpecVersion::V3_1,
@@ -3646,14 +3646,13 @@ fn ledger_discriminator() -> Vec<(&'static str, SpecVersion, Document)> {
             SpecVersion::V3_1,
             optional(),
         ),
-    ];
-    #[cfg(feature = "openapi32")]
-    cases.push((
-        "DiscriminatorWithoutDefaultMapping",
-        SpecVersion::V3_2,
-        optional(),
-    ));
-    cases
+        #[cfg(feature = "openapi32")]
+        (
+            "DiscriminatorWithoutDefaultMapping",
+            SpecVersion::V3_2,
+            optional(),
+        ),
+    ]
 }
 
 /// Each ledger entry raises the variant it is filed under.
