@@ -65,9 +65,11 @@ use kynos::{
 ///
 /// It ignores the trait's `ttl`: nothing here expires an entry, so the only
 /// bound on the counters is the LRU capacity set in `MokaCounters::new`. That
-/// is safe to count with, because every key names its window, so a counter
-/// whose window has passed is never read again; it only occupies memory until
-/// the LRU evicts it. A backend with neither expiry nor a capacity — a plain
+/// is safe to count with, because every key names its window: the sliding
+/// estimate still reads a counter through the window after its own, but once
+/// two windows have passed it is never read again — which is why the trait's
+/// `ttl` is twice the window — and it only occupies memory until the LRU
+/// evicts it. A backend with neither expiry nor a capacity — a plain
 /// `HashMap` — would grow without bound, which is why the trait asks for a TTL.
 struct MokaCounters {
     counters: moka::future::Cache<String, u64>,
