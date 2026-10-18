@@ -300,7 +300,9 @@ where
     type Reads = ();
     type Adds = H;
 
-    /// Always continues: an identifier is added to whatever the chain returns.
+    /// Never answers with a response of its own: an identifier is added to
+    /// whatever the chain returns, and a group that refuses to encode answers
+    /// the 500 any refused group does, without running the chain.
     type Short = Infallible;
 
     async fn intercept(
@@ -328,7 +330,9 @@ where
         // Set on the request too, so handler, observer and client correlate on
         // one value under the same names. A group that refuses to encode is
         // refused on the response too, so the chain is not run for the 500
-        // `with_headers` answers with.
+        // `with_headers` answers with. The other `Continued::new` outside
+        // `Next::run` besides a cache hit: sound, because `with_headers` would
+        // replace whatever the chain returned with this same 500.
         let Ok(fields) = headers.encode() else {
             let refused = crate::extract::params::header::refused();
             return Ok(Continued::new(refused).with_headers(headers));

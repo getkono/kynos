@@ -311,8 +311,9 @@ where
             *response.status_mut() = stored.status();
             *response.headers_mut() = stored.headers().clone();
 
-            // The one `Continued::new` outside `Next::run`: sound, because a hit
-            // replays a response this operation itself produced.
+            // A `Continued::new` outside `Next::run` (the other is `RequestId`'s
+            // refused group): sound, because a hit replays a response this
+            // operation itself produced.
             return Ok(Continued::new(response).with_headers(D::headers(age, etag)));
         }
 
