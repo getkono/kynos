@@ -140,7 +140,7 @@ pub enum SpecError {
     DuplicateParameter {
         /// The parameter name.
         name: String,
-        /// Where it is carried.
+        /// Where it is carried, as a description spells it.
         location: String,
     },
 
@@ -211,9 +211,9 @@ pub enum SpecError {
     /// A serialization style is not legal at a parameter's location.
     #[error("style `{style}` may not be used with `in: {location}`")]
     IllegalStyle {
-        /// The style used.
+        /// The style used, as a description spells it (`deepObject`).
         style: String,
-        /// The location it was used at.
+        /// The location it was used at, as a description spells it.
         location: String,
     },
 
