@@ -286,6 +286,33 @@ pub enum SpecError {
     )]
     ConflictingEncoding,
 
+    /// `prefixEncoding` or `itemEncoding` was declared on a media type with
+    /// neither `itemSchema` nor an array `schema`.
+    ///
+    /// 3.2 applies both by array position, so there must be an array for them
+    /// to index. Raised only where no array is possible: no `schema`, or one
+    /// whose `type` omits `array`, directly, through a `#/components/schemas`
+    /// reference, or in an `allOf` member.
+    #[cfg(feature = "openapi32")]
+    #[error(
+        "`prefixEncoding` and `itemEncoding` apply by array position, so the media type needs \
+         `itemSchema` or an array `schema`"
+    )]
+    PositionalEncodingWithoutArray,
+
+    /// An `encoding` key names no property of the media type's schema.
+    ///
+    /// Raised only where every keyword that could declare the property was
+    /// read: `properties`, a `#/components/schemas` reference, and `allOf`. A
+    /// schema reaching `anyOf`, `oneOf`, a conditional, `dependentSchemas`, a
+    /// boolean schema, or a reference elsewhere could declare it unseen, so
+    /// its keys are not judged.
+    #[error("encoding key `{property}` names no property of the media type's schema")]
+    UnknownEncodingProperty {
+        /// The key with no property behind it.
+        property: String,
+    },
+
     /// A response carried no description, which 3.1 requires.
     ///
     /// 3.2 makes it optional, so this is raised only when validating against

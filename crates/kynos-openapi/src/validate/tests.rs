@@ -931,7 +931,7 @@ fn an_encoding_header_named_content_type_is_reported() {
 
     let body = RequestBody::new(
         "multipart/form-data",
-        MediaType::new(Schema::of_type(SchemaType::Object)).with_encoding("part", encoding),
+        MediaType::new(object_with(&["part"])).with_encoding("part", encoding),
     );
 
     let item = PathItem::new().with_operation(
@@ -1007,17 +1007,318 @@ fn a_reusable_responses_headers_are_checked_at_its_definition() {
     );
 }
 
-/// A media type declaring both `encoding` and `prefixEncoding`.
+/// A media type declaring both `encoding` and `prefixEncoding`, and nothing
+/// else wrong: the key names a property, and `itemSchema` is the array.
 #[cfg(feature = "openapi32")]
 fn conflicting_media_type() -> crate::model::body::media_type::MediaType {
     use crate::model::body::{encoding::Encoding, media_type::MediaType};
 
-    let mut content = MediaType::new(Schema::of_type(SchemaType::Object));
+    let mut content = MediaType::new(object_with(&["part"]));
+    content.item_schema = Some(Schema::of_type(SchemaType::String));
     content
         .encoding
         .insert("part".to_owned(), Encoding::new("text/plain"));
     content.prefix_encoding = Some(vec![Encoding::new("text/plain")]);
     content
+}
+
+/// An object schema declaring `properties`, each a string.
+fn object_with(properties: &[&str]) -> Schema {
+    let mut schema = crate::model::schema::object::SchemaObject {
+        ty: Some(crate::model::schema::types::TypeSet::One(
+            SchemaType::Object,
+        )),
+        ..Default::default()
+    };
+    for property in properties {
+        schema
+            .properties
+            .insert((*property).to_owned(), Schema::of_type(SchemaType::String));
+    }
+    Schema::Object(Box::new(schema))
+}
+
+/// A document whose one operation uploads `content` as `media_type`.
+fn document_with_upload(
+    media_type: &str,
+    content: crate::model::body::media_type::MediaType,
+) -> Document {
+    use crate::model::body::RequestBody;
+
+    let item = PathItem::new().with_operation(
+        Method::Post,
+        Operation::new("upload")
+            .with_request_body(RequestBody::new(media_type, content))
+            .with_responses(ok_responses()),
+    );
+    document_with(&[("/uploads", item)])
+}
+
+/// The `content` of [`document_with_upload`]'s request body.
+const UPLOAD: &str = "#/paths/~1uploads/post/requestBody/content";
+
+/// Each `encoding` key names a property (`references/3.1.2.md:1551`,
+/// `references/3.2.0.md:1368`), reported at the entry naming none.
+#[test]
+fn an_encoding_key_naming_no_property_is_an_error() {
+    use crate::model::body::{encoding::Encoding, media_type::MediaType};
+
+    let content = MediaType::new(object_with(&["file"]))
+        .with_encoding("file", Encoding::new("image/png"))
+        .with_encoding("fiel", Encoding::new("text/plain"));
+
+    assert_eq!(
+        located_errors(&document_with_upload("multipart/form-data", content)),
+        vec![(
+            format!("{UPLOAD}/multipart~1form-data/encoding/fiel"),
+            SpecError::UnknownEncodingProperty {
+                property: "fiel".to_owned()
+            },
+        )]
+    );
+}
+
+/// With no schema there is no property for any key to name.
+#[test]
+fn an_encoding_key_without_a_schema_is_an_error() {
+    use crate::model::body::{encoding::Encoding, media_type::MediaType};
+
+    let content = MediaType::default().with_encoding("file", Encoding::new("image/png"));
+
+    assert_eq!(
+        located_errors(&document_with_upload("multipart/form-data", content)),
+        vec![(
+            format!("{UPLOAD}/multipart~1form-data/encoding/file"),
+            SpecError::UnknownEncodingProperty {
+                property: "file".to_owned()
+            },
+        )]
+    );
+}
+
+/// A property is found through a component reference and `allOf`, the
+/// shapes Kynos's own derived forms take; one an unread keyword could
+/// declare is not judged, so no valid document is refused.
+#[test]
+fn an_encoding_key_is_judged_only_where_every_declaring_keyword_was_read() {
+    use crate::model::{
+        body::{encoding::Encoding, media_type::MediaType},
+        schema::object::SchemaObject,
+    };
+
+    let composed = Schema::Object(Box::new(SchemaObject {
+        all_of: Some(vec![Schema::component("Upload"), object_with(&["note"])]),
+        ..Default::default()
+    }));
+    let alternatives = Schema::Object(Box::new(SchemaObject {
+        one_of: Some(vec![object_with(&["a"]), object_with(&["b"])]),
+        ..Default::default()
+    }));
+    let cyclic = Schema::component("Loop");
+
+    let mut document = document_with(&[]);
+    for (path, schema, key) in [
+        ("/composed", composed.clone(), "file"),
+        ("/composed-own", composed, "note"),
+        ("/alternatives", alternatives, "c"),
+        (
+            "/elsewhere",
+            Schema::reference("other.json#/Upload"),
+            "file",
+        ),
+        ("/cyclic", cyclic, "file"),
+        ("/unconstrained", Schema::any(), "file"),
+    ] {
+        document.paths.insert(
+            &PathTemplate::parse(path).expect("a legal template"),
+            PathItem::new().with_operation(
+                Method::Post,
+                Operation::new(path.trim_start_matches('/'))
+                    .with_request_body(crate::model::body::RequestBody::new(
+                        "multipart/form-data",
+                        MediaType::new(schema).with_encoding(key, Encoding::new("text/plain")),
+                    ))
+                    .with_responses(ok_responses()),
+            ),
+        );
+    }
+    document
+        .components
+        .schemas
+        .insert("Upload".to_owned(), object_with(&["file"]));
+    // A reference cycle is walked once, and still finds what it declares.
+    document.components.schemas.insert(
+        "Loop".to_owned(),
+        Schema::Object(Box::new(SchemaObject {
+            all_of: Some(vec![Schema::component("Loop"), object_with(&["file"])]),
+            ..Default::default()
+        })),
+    );
+
+    assert_eq!(located_errors(&document), vec![]);
+}
+
+/// `prefixEncoding` and `itemEncoding` need `itemSchema` or an array
+/// `schema` (`references/3.2.0.md:1386`), reported once at the media type,
+/// including where `array` is absent from several types.
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_positional_encoding_without_an_array_is_an_error() {
+    use crate::model::{
+        body::{encoding::Encoding, media_type::MediaType},
+        schema::object::SchemaObject,
+    };
+
+    let positional = |schema: Option<Schema>| {
+        let mut content = MediaType::default();
+        content.schema = schema;
+        content.prefix_encoding = Some(vec![Encoding::new("text/plain")]);
+        content.item_encoding = Some(Box::new(Encoding::new("text/plain")));
+        content
+    };
+    let through_all_of = Schema::Object(Box::new(SchemaObject {
+        all_of: Some(vec![Schema::component("Text")]),
+        ..Default::default()
+    }));
+
+    let mut document = document_with(&[]);
+    for (path, content) in [
+        ("/absent", positional(None)),
+        ("/object", positional(Some(object_with(&[])))),
+        ("/referenced", positional(Some(through_all_of))),
+        (
+            "/nullable",
+            positional(Some(Schema::nullable(SchemaType::String))),
+        ),
+    ] {
+        document.paths.insert(
+            &PathTemplate::parse(path).expect("a legal template"),
+            PathItem::new().with_operation(
+                Method::Post,
+                Operation::new(path.trim_start_matches('/'))
+                    .with_request_body(crate::model::body::RequestBody::new(
+                        "multipart/mixed",
+                        content,
+                    ))
+                    .with_responses(ok_responses()),
+            ),
+        );
+    }
+    document
+        .components
+        .schemas
+        .insert("Text".to_owned(), Schema::of_type(SchemaType::String));
+
+    let at = |path: &str| {
+        (
+            format!("#/paths/~1{path}/post/requestBody/content/multipart~1mixed"),
+            SpecError::PositionalEncodingWithoutArray,
+        )
+    };
+    assert_eq!(
+        located_errors_3_2(&document),
+        vec![at("absent"), at("object"), at("referenced"), at("nullable")]
+    );
+}
+
+/// An array `schema`, `itemSchema` (the `multipart/byteranges` shape Kynos
+/// emits for a ranged response), or a schema that may be an array, untyped or
+/// with `array` among several types, satisfies the positional encodings.
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_positional_encoding_beside_a_possible_array_is_clean() {
+    use crate::model::body::{encoding::Encoding, media_type::MediaType};
+
+    let mut array = MediaType::new(Schema::of_type(SchemaType::Array));
+    array.prefix_encoding = Some(vec![Encoding::new("text/plain")]);
+    let mut byteranges = MediaType::sequential(Schema::Object(Box::default()));
+    byteranges.item_encoding = Some(Box::new(Encoding::new("text/plain")));
+    let mut untyped = MediaType::new(Schema::component("Parts"));
+    untyped.item_encoding = Some(Box::new(Encoding::new("text/plain")));
+    let mut nullable = MediaType::new(Schema::nullable(SchemaType::Array));
+    nullable.prefix_encoding = Some(vec![Encoding::new("text/plain")]);
+    nullable.item_encoding = Some(Box::new(Encoding::new("text/plain")));
+
+    let mut document = document_with(&[]);
+    for (name, content) in [
+        ("Array", array),
+        ("Byteranges", byteranges),
+        ("Nullable", nullable),
+        ("Untyped", untyped),
+    ] {
+        document
+            .components
+            .media_types
+            .insert(name.to_owned(), crate::RefOr::Item(content));
+    }
+    document
+        .components
+        .schemas
+        .insert("Parts".to_owned(), Schema::Object(Box::default()));
+
+    assert_eq!(located_errors_3_2(&document), vec![]);
+}
+
+/// A nested Encoding Object applies its fields "in the same manner" as a
+/// media type's (`references/3.2.0.md:1711-1713`), so its own `encoding`
+/// excludes its positional ones and its headers drop `Content-Type`, at
+/// every depth and under every positional field.
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_nested_encoding_is_held_to_the_media_type_rules() {
+    use crate::model::{
+        body::{encoding::Encoding, media_type::MediaType},
+        parameter::header::Header,
+    };
+
+    let typed = || {
+        Encoding::new("text/plain").with_header(
+            "Content-Type",
+            Header::new(Schema::of_type(SchemaType::String)),
+        )
+    };
+    let mut conflicting = Encoding::new("multipart/mixed");
+    conflicting
+        .encoding
+        .insert("inner".to_owned(), Encoding::new("text/plain"));
+    conflicting.item_encoding = Some(Box::new(typed()));
+
+    let mut form = MediaType::new(object_with(&["part"]));
+    form.encoding.insert("part".to_owned(), conflicting);
+    let mut parts = MediaType::new(Schema::of_type(SchemaType::Array));
+    parts.prefix_encoding = Some(vec![typed()]);
+    parts.item_encoding = Some(Box::new(typed()));
+
+    let mut document = document_with(&[]);
+    document
+        .components
+        .media_types
+        .insert("Form".to_owned(), crate::RefOr::Item(form));
+    document
+        .components
+        .media_types
+        .insert("Parts".to_owned(), crate::RefOr::Item(parts));
+
+    let ignored = |location: &str| {
+        (
+            location.to_owned(),
+            SpecError::IgnoredHeader {
+                name: "Content-Type".to_owned(),
+            },
+        )
+    };
+    assert_eq!(
+        located_errors_3_2(&document),
+        vec![
+            (
+                "#/components/mediaTypes/Form/encoding/part".to_owned(),
+                SpecError::ConflictingEncoding,
+            ),
+            ignored("#/components/mediaTypes/Form/encoding/part/itemEncoding/headers"),
+            ignored("#/components/mediaTypes/Parts/prefixEncoding/0/headers"),
+            ignored("#/components/mediaTypes/Parts/itemEncoding/headers"),
+        ]
+    );
 }
 
 /// Each error a 3.2 validation raises, with where it was raised.
@@ -2375,6 +2676,9 @@ fn variant_name(error: &SpecError) -> &'static str {
         SpecError::MissingResponseDescription => "MissingResponseDescription",
         #[cfg(feature = "openapi32")]
         SpecError::ConflictingEncoding => "ConflictingEncoding",
+        #[cfg(feature = "openapi32")]
+        SpecError::PositionalEncodingWithoutArray => "PositionalEncodingWithoutArray",
+        SpecError::UnknownEncodingProperty { .. } => "UnknownEncodingProperty",
         SpecError::InvalidComponentName { .. } => "InvalidComponentName",
         SpecError::DuplicateTag { .. } => "DuplicateTag",
         SpecError::UnknownTagParent { .. } => "UnknownTagParent",
@@ -2425,6 +2729,9 @@ const RAISED_ELSEWHERE: &[&str] = &[
     // neither of which a 3.1 build has.
     #[cfg(not(feature = "openapi32"))]
     "ConflictingEncoding",
+    // As are the two positional encoding fields this one needs an array for.
+    #[cfg(not(feature = "openapi32"))]
+    "PositionalEncodingWithoutArray",
     // And `in: querystring` is a 3.2 location, so a 3.1 build has no parameter
     // to raise any of these three with.
     #[cfg(not(feature = "openapi32"))]
@@ -2613,21 +2920,26 @@ fn ledger_parameters() -> Vec<(&'static str, SpecVersion, Document)> {
     // 3.2 only: `prefixEncoding` is what `encoding` conflicts with, and it does
     // not exist under 3.1, so neither does the conflict.
     #[cfg(feature = "openapi32")]
-    push("ConflictingEncoding", {
-        use crate::model::body::{RequestBody, encoding::Encoding, media_type::MediaType};
+    push(
+        "ConflictingEncoding",
+        document_with_upload("multipart/mixed", conflicting_media_type()),
+    );
+    #[cfg(feature = "openapi32")]
+    push("PositionalEncodingWithoutArray", {
+        use crate::model::body::{encoding::Encoding, media_type::MediaType};
 
         let mut content = MediaType::new(Schema::of_type(SchemaType::Object));
-        content
-            .encoding
-            .insert("part".to_owned(), Encoding::new("text/plain"));
-        content.prefix_encoding = Some(vec![Encoding::new("text/plain")]);
+        content.item_encoding = Some(Box::new(Encoding::new("text/plain")));
+        document_with_upload("multipart/mixed", content)
+    });
+    push("UnknownEncodingProperty", {
+        use crate::model::body::{encoding::Encoding, media_type::MediaType};
 
-        document_with(&[(
-            "/uploads",
-            get(Operation::new("upload")
-                .with_request_body(RequestBody::new("multipart/mixed", content))
-                .with_responses(ok_responses())),
-        )])
+        document_with_upload(
+            "multipart/form-data",
+            MediaType::new(object_with(&["file"]))
+                .with_encoding("fiel", Encoding::new("text/plain")),
+        )
     });
     cases
 }

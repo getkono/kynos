@@ -123,7 +123,7 @@ impl Validator {
         if let Some(template) = template {
             check_path_correspondence(location, template, item, operation, components, violations);
         }
-        check_operation_content(location, operation, violations);
+        check_operation_content(location, operation, components, violations);
 
         check_extensions(location, &operation.extensions, violations);
     }
@@ -137,16 +137,23 @@ impl Validator {
 pub(in crate::validate) fn check_operation_content(
     location: &str,
     operation: &Operation,
+    components: &Components,
     violations: &mut Vec<Violation>,
 ) {
     if let Some(RefOr::Item(body)) = &operation.request_body {
-        check_request_body(&format!("{location}/requestBody"), body, violations);
+        check_request_body(
+            &format!("{location}/requestBody"),
+            body,
+            components,
+            violations,
+        );
     }
 
     if let Some(RefOr::Item(response)) = &operation.responses.default_response {
         check_response(
             &format!("{location}/responses/default"),
             response,
+            components,
             violations,
         );
     }
@@ -155,6 +162,7 @@ pub(in crate::validate) fn check_operation_content(
             check_response(
                 &format!("{location}/responses/{status}"),
                 response,
+                components,
                 violations,
             );
         }

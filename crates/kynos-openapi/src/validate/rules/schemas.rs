@@ -9,7 +9,7 @@ use crate::{
     Map,
     annotation::UNCHECKED_SCHEMA_ANNOTATION,
     model::{
-        body::{RequestBody, encoding::Encoding, media_type::MediaType},
+        body::{RequestBody, media_type::MediaType},
         callback::Callback,
         document::Document,
         parameter::{
@@ -21,7 +21,10 @@ use crate::{
         response::Response,
         schema::{Schema, object::SchemaObject},
     },
-    validate::violation::{SpecError, Violation, pointer_token},
+    validate::{
+        rules::content::for_each_encoding,
+        violation::{SpecError, Violation, pointer_token},
+    },
 };
 
 pub(in crate::validate) fn check_unchecked_schemas(
@@ -211,53 +214,12 @@ fn check_media_type(location: &str, media_type: &MediaType, violations: &mut Vec
         check_payload(&format!("{location}/itemSchema"), schema, violations);
     }
 
-    for (property, encoding) in &media_type.encoding {
-        check_encoding(
-            &format!("{location}/encoding/{}", pointer_token(property)),
-            encoding,
-            violations,
-        );
-    }
-    #[cfg(feature = "openapi32")]
-    {
-        for (index, encoding) in media_type.prefix_encoding.iter().flatten().enumerate() {
-            check_encoding(
-                &format!("{location}/prefixEncoding/{index}"),
-                encoding,
-                violations,
-            );
+    // The headers of every encoded part, at every depth.
+    for_each_encoding(location, media_type, &mut |location, encoding| {
+        for (location, header) in items(&format!("{location}/headers"), &encoding.headers) {
+            check_header(&location, header, violations);
         }
-        if let Some(encoding) = &media_type.item_encoding {
-            check_encoding(&format!("{location}/itemEncoding"), encoding, violations);
-        }
-    }
-}
-
-/// The headers of an encoded part, and under 3.2 the parts nested inside it.
-fn check_encoding(location: &str, encoding: &Encoding, violations: &mut Vec<Violation>) {
-    for (location, header) in items(&format!("{location}/headers"), &encoding.headers) {
-        check_header(&location, header, violations);
-    }
-    #[cfg(feature = "openapi32")]
-    {
-        for (property, nested) in &encoding.encoding {
-            check_encoding(
-                &format!("{location}/encoding/{}", pointer_token(property)),
-                nested,
-                violations,
-            );
-        }
-        for (index, nested) in encoding.prefix_encoding.iter().flatten().enumerate() {
-            check_encoding(
-                &format!("{location}/prefixEncoding/{index}"),
-                nested,
-                violations,
-            );
-        }
-        if let Some(nested) = &encoding.item_encoding {
-            check_encoding(&format!("{location}/itemEncoding"), nested, violations);
-        }
-    }
+    });
 }
 
 /// A media type's own schema, the one position where `true` is the payload.
