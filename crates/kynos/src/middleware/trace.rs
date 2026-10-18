@@ -144,10 +144,13 @@ impl Trace {
         self
     }
 
-    /// Records request headers matching these names on the emitted events.
+    /// Records request headers matching these names on the `request received`
+    /// event; the other events carry none.
     ///
-    /// Anything not listed is omitted. A header on [`REDACTED`] is recorded as
-    /// present and never by value.
+    /// Anything not listed is omitted. Of a field the request repeats, only
+    /// the first line is recorded, and a line that is not visible ASCII is
+    /// skipped, as if absent. A header on [`REDACTED`] is recorded as present
+    /// and never by value.
     #[must_use]
     pub fn record_headers(mut self, names: &'static [&'static str]) -> Self {
         self.recorded = names;

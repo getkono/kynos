@@ -64,7 +64,8 @@ type Markers<U, M, L> = PhantomData<fn() -> (U, M, L)>;
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reason {
-    /// The body named a content coding this server cannot decode. Produces 415.
+    /// The body named a content coding this server cannot decode, or stacked
+    /// more than four codings. Produces 415.
     UnsupportedCoding,
     /// The body did not decode as the coding it claimed. Produces 400.
     Malformed,
@@ -347,7 +348,8 @@ fn declared(headers: &http::HeaderMap) -> Option<Vec<Coding>> {
 /// A body arriving under `Content-Encoding: gzip` reaches the handler's
 /// extractor as the bytes it decoded to, so a handler never knows a coding was
 /// involved. A body naming a coding this server does not decode is refused with
-/// 415 carrying `Accept-Encoding`, per RFC 9110 sections 8.4 and 15.5.16.
+/// 415 carrying `Accept-Encoding`, per RFC 9110 sections 8.4 and 15.5.16. So is
+/// one stacking more than four codings, since each costs a full decoding pass.
 ///
 /// ```no_run
 /// # #[cfg(feature = "compression")]

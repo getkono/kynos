@@ -13,10 +13,8 @@ use crate::http::{HeaderMap, HeaderValue, StatusCode};
 /// 4.1).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PrimaryKey {
-    /// The application's namespace.
-    ///
-    /// Bump it on a deploy that changes what an operation returns: a store that
-    /// outlives a process can hold a response the new binary no longer declares.
+    /// The application's namespace, set with
+    /// [`Cache::namespace`](super::Cache::namespace).
     pub namespace: &'static str,
     /// The request method. `GET` or `HEAD` for anything stored.
     pub method: Method,

@@ -68,8 +68,8 @@ pub enum Error {
     #[error(transparent)]
     KeyPattern(#[from] Box<crate::schema::registry::UnenforceableKeyPattern>),
 
-    /// Two interceptors covering one operation disagreed about what they
-    /// contribute to it.
+    /// Two declarations claimed one security scheme name with different
+    /// schemes.
     ///
     /// Raised while the router is built, so the conflict is caught before the
     /// service starts.
@@ -78,9 +78,8 @@ pub enum Error {
 
     /// An interceptor was configured with a combination it cannot honour.
     ///
-    /// Unlike [`Contribution`](Error::Contribution), this is one interceptor
-    /// disagreeing with the protocol it implements, caught while the router is
-    /// built.
+    /// This is one interceptor disagreeing with the protocol it implements,
+    /// caught while the router is built.
     #[error(transparent)]
     Middleware(#[from] crate::middleware::MiddlewareError),
 
