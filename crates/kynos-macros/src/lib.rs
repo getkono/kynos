@@ -496,15 +496,20 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   one way is named by that side: a field it skips in either direction, any
 ///   field of a variant it never writes, and a variant it only reads.
 /// - A split container `rename_all(serialize = ..., deserialize = ...)` whose
-///   two sides differ, or which names one side only, and the same of an enum's
-///   `rename_all_fields` that reaches a struct variant or of the own
-///   `rename_all` of a struct variant serde both writes and reads. The style
-///   names a member serde both writes and reads, so no one schema is true in
-///   both directions. Say which with the same key's single form: `rename_all =
-///   "..."` for a container's or a variant's `rename_all`, and
-///   `rename_all_fields = "..."` for an enum's `rename_all_fields`. Sides that
-///   agree are read as that one style. A variant serde only reads names its
-///   fields by its rule's deserialize side, one it skips both ways is in no
+///   two sides differ, or which names one side only. A struct variant serde
+///   both writes and reads is judged the same way by the sides it resolves,
+///   each side its own `rename_all` leaves taking the enum's
+///   `rename_all_fields`, as serde fills it: where those sides differ, the
+///   enum's `rename_all_fields` is refused if the variant leaves it a side, and
+///   the variant's own `rename_all` otherwise. A split `rename_all_fields` is
+///   so judged per variant, and is accepted where every such variant resolves
+///   both sides to one style. The style names a member serde both writes and
+///   reads, so no one schema is true in both directions. Say which with the
+///   same key's single form: `rename_all = "..."` for a container's or a
+///   variant's `rename_all`, and `rename_all_fields = "..."` for an enum's
+///   `rename_all_fields`. Sides that agree are read as that one style. A
+///   variant serde only reads names its fields by the deserialize side of its
+///   own rule, else of `rename_all_fields`; one it skips both ways is in no
 ///   schema, and a unit or tuple variant's own rule names no field.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
