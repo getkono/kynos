@@ -1,5 +1,5 @@
-use super::CookieParams;
-use crate::{error::rejection::CookieRejection, http::HeaderMap};
+use super::{CookieParams, Cookies};
+use crate::{error::rejection::CookieRejection, extract::FromRequestParts, http::HeaderMap};
 
 // A `#[should_panic]` case stood here, asserting that a group declaring no
 // decoder said so at run time. `decode` is required now — a cookie group is
@@ -8,9 +8,11 @@ use crate::{error::rejection::CookieRejection, http::HeaderMap};
 
 /// The control, which also pins the reason the signature takes the whole
 /// map: a request may carry more than one `Cookie` field, and the jar is
-/// their concatenation rather than the first of them.
-#[test]
-fn a_group_that_declares_a_decoder_sees_every_cookie_field() {
+/// their concatenation rather than the first of them. Driven through
+/// `Cookies`'s extractor, so what is proved is what a request hands the
+/// decoder rather than what the fixture's own `decode` returns.
+#[tokio::test]
+async fn a_group_that_declares_a_decoder_sees_every_cookie_field() {
     #[derive(Debug, PartialEq)]
     struct Recorded(Vec<String>);
 
@@ -28,18 +30,18 @@ fn a_group_that_declares_a_decoder_sees_every_cookie_field() {
         }
     }
 
-    let mut headers = HeaderMap::new();
-    headers.append(
-        crate::http::header::COOKIE,
-        crate::http::HeaderValue::from_static("a=1"),
-    );
-    headers.append(
-        crate::http::header::COOKIE,
-        crate::http::HeaderValue::from_static("b=2"),
-    );
+    let (mut parts, ()) = http::Request::get("/")
+        .header(crate::http::header::COOKIE, "a=1")
+        .header(crate::http::header::COOKIE, "b=2")
+        .body(())
+        .expect("a well-formed request")
+        .into_parts();
+    let Cookies(recorded) = Cookies::<Recorded>::from_request_parts(&mut parts, &())
+        .await
+        .expect("decoded");
 
     assert_eq!(
-        Recorded::decode(&headers).expect("decoded"),
+        recorded,
         Recorded(vec!["a=1".to_owned(), "b=2".to_owned()])
     );
 }

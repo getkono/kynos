@@ -129,22 +129,6 @@ async fn a_capture_that_is_not_utf8_once_decoded_is_rejected() {
     );
 }
 
-/// A group that declares a decoder uses it.
-///
-/// This used to be the control for two `#[should_panic]` cases asserting
-/// that a group declaring *neither* direction said so at run time. Those
-/// are gone with the defaults that made them possible: `DecodePath` and
-/// `EncodePath` are separate traits now, so a group missing the one it is
-/// used for does not compile, and the guarantee is stated as a
-/// `compile_fail` doctest on `DecodePath` rather than as a panic here.
-#[test]
-fn a_group_that_declares_a_decoder_uses_it() {
-    assert_eq!(
-        Named::decode(&[("name", "ada")]).expect("a decoded group"),
-        Named("ada".to_owned())
-    );
-}
-
 /// A capture with nothing to decode is handed back untouched, which is what
 /// keeps the common case allocation-free.
 #[test]

@@ -1,6 +1,7 @@
-use super::{DecodeQuery, QueryParams};
+use super::{DecodeQuery, Query, QueryParams};
 use crate::{
     error::rejection::QueryRejection,
+    extract::FromRequestParts,
     schema::{Schema, registry::Registry},
 };
 
@@ -13,9 +14,11 @@ use crate::{
 
 /// The control: a group that declares a decoder is not touched by the
 /// default, and sees the distinction the signature draws — `None` for a
-/// request with no `?` at all, `Some("")` for a bare one.
-#[test]
-fn a_group_that_declares_a_decoder_sees_the_query_it_was_given() {
+/// request with no `?` at all, `Some("")` for a bare one. Driven through
+/// `Query`'s extractor, so what is proved is what a request hands the
+/// decoder rather than what the fixture's own `decode` returns.
+#[tokio::test]
+async fn a_group_that_declares_a_decoder_sees_the_query_it_was_given() {
     #[derive(Debug, PartialEq)]
     struct Recorded(Option<String>);
 
@@ -34,13 +37,19 @@ fn a_group_that_declares_a_decoder_sees_the_query_it_was_given() {
         }
     }
 
-    assert_eq!(Recorded::decode(None).expect("decoded"), Recorded(None));
-    assert_eq!(
-        Recorded::decode(Some("")).expect("decoded"),
-        Recorded(Some(String::new()))
-    );
-    assert_eq!(
-        Recorded::decode(Some("a=1")).expect("decoded"),
-        Recorded(Some("a=1".to_owned()))
-    );
+    for (uri, expected) in [
+        ("/reports", None),
+        ("/reports?", Some("")),
+        ("/reports?a=1", Some("a=1")),
+    ] {
+        let (mut parts, ()) = http::Request::get(uri)
+            .body(())
+            .expect("a well-formed request")
+            .into_parts();
+        let Query(recorded) = Query::<Recorded>::from_request_parts(&mut parts, &())
+            .await
+            .expect("decoded");
+
+        assert_eq!(recorded, Recorded(expected.map(str::to_owned)), "{uri}");
+    }
 }
