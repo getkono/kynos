@@ -87,6 +87,69 @@ pub fn query_pairs(
         })
 }
 
+/// Whether `text` percent-decodes to UTF-8, read in place without decoding it
+/// into memory.
+///
+/// `+`, `&` and `=` are ASCII, so this is also whether every half of every
+/// pair [`query_pairs`] reads from `text` is UTF-8. A malformed escape is the
+/// literal `%`, as there.
+///
+/// # Errors
+///
+/// Returns the offset into `text` of the first escape that begins, or
+/// continues, an octet sequence that is not UTF-8.
+#[cfg(feature = "form")]
+pub(crate) fn check_percent_decoded_utf8(text: &str) -> Result<(), usize> {
+    let octets = text.as_bytes();
+    // The escaped octets of the character being read, and where it began. A
+    // literal octet always begins a character of its own, because `text` is a
+    // `str`, so only escapes ever need holding.
+    let mut pending = [0u8; 4];
+    let mut held = 0;
+    let mut began = 0;
+    let mut index = 0;
+
+    while index < octets.len() {
+        let Some(octet) = escaped_octet(octets, index) else {
+            if held > 0 {
+                return Err(began);
+            }
+            index += 1;
+            continue;
+        };
+
+        if held == 0 {
+            if octet.is_ascii() {
+                index += 3;
+                continue;
+            }
+            began = index;
+        }
+        pending[held] = octet;
+        held += 1;
+        match std::str::from_utf8(&pending[..held]) {
+            Ok(_) => held = 0,
+            // Incomplete, and short of the four octets the longest takes.
+            Err(error) if error.error_len().is_none() && held < pending.len() => {}
+            Err(_) => return Err(began),
+        }
+        index += 3;
+    }
+
+    if held > 0 { Err(began) } else { Ok(()) }
+}
+
+/// The octet the escape at `index` encodes, or `None` where none begins there.
+#[cfg(feature = "form")]
+fn escaped_octet(octets: &[u8], index: usize) -> Option<u8> {
+    let [b'%', high, low, ..] = octets.get(index..)? else {
+        return None;
+    };
+    let digit = |octet: u8| char::from(octet).to_digit(16);
+    let octet = digit(*high)? << 4 | digit(*low)?;
+    u8::try_from(octet).ok()
+}
+
 /// `+` to a space, then percent-decoding; borrowed when neither changed
 /// anything.
 fn decode_form_value(raw: &str) -> std::borrow::Cow<'_, [u8]> {
