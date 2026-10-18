@@ -3981,10 +3981,11 @@ fn request_http1(address: std::net::SocketAddr) -> String {
 
 /// Every configuration `validate_protocol_config` refuses.
 ///
-/// Seven branches, none of them reached before. A limit that stops being checked
-/// is one hyper is handed instead -- where a zero window stalls a connection
-/// and an oversized send buffer does not fit the protocol field it is written
-/// to. The branch is the whole value of the function, so each gets a case.
+/// One row per refused condition rather than per `return`: several conditions
+/// share one refusal, and a condition dropped from an `||` chain reads as a
+/// branch that still has a case. A limit that stops being checked is one hyper
+/// is handed instead -- where a zero window stalls a connection and an
+/// oversized send buffer does not fit the protocol field it is written to.
 ///
 /// Gated on both protocols because the function takes one argument per enabled
 /// protocol; the feature matrix builds combinations with only one, and there
@@ -4010,7 +4011,7 @@ mod protocol_configuration {
         }
     }
 
-    /// One row per branch: what was set, and what it must be told.
+    /// One row per condition: what was set, and what it must be told.
     fn cases() -> Vec<(&'static str, Http1Config, Http2Config, &'static str)> {
         vec![
             (
@@ -4032,13 +4033,43 @@ mod protocol_configuration {
                 "HTTP/1 header_read_timeout must be non-zero when enabled",
             ),
             (
+                "no stream may be opened",
+                Http1Config::default(),
+                Http2Config::default().max_concurrent_streams(0),
+                "HTTP/2 limits must be non-zero and fit their protocol fields",
+            ),
+            (
+                "no room for a single header",
+                Http1Config::default(),
+                Http2Config::default().max_header_list_size(0),
+                "HTTP/2 limits must be non-zero and fit their protocol fields",
+            ),
+            (
+                "a send buffer that holds nothing",
+                Http1Config::default(),
+                Http2Config::default().max_send_buffer_size(0),
+                "HTTP/2 limits must be non-zero and fit their protocol fields",
+            ),
+            (
                 "a send buffer larger than the field that carries it",
                 Http1Config::default(),
                 Http2Config::default().max_send_buffer_size(u32::MAX as usize + 1),
                 "HTTP/2 limits must be non-zero and fit their protocol fields",
             ),
             (
-                "a fixed flow-control window that admits nothing",
+                "no reset stream may await acceptance",
+                Http1Config::default(),
+                Http2Config::default().max_pending_accept_reset_streams(0),
+                "HTTP/2 limits must be non-zero and fit their protocol fields",
+            ),
+            (
+                "no stream may be reset for a local error",
+                Http1Config::default(),
+                Http2Config::default().max_local_error_reset_streams(0),
+                "HTTP/2 limits must be non-zero and fit their protocol fields",
+            ),
+            (
+                "a fixed stream window that admits nothing",
                 Http1Config::default(),
                 Http2Config::default().flow_control(Http2FlowControl::Fixed {
                     initial_stream_window_size: 0,
@@ -4047,11 +4078,29 @@ mod protocol_configuration {
                 "HTTP/2 fixed flow-control windows must be non-zero",
             ),
             (
-                "a fixed flow-control window past the protocol ceiling",
+                "a fixed connection window that admits nothing",
+                Http1Config::default(),
+                Http2Config::default().flow_control(Http2FlowControl::Fixed {
+                    initial_stream_window_size: 1024,
+                    initial_connection_window_size: 0,
+                }),
+                "HTTP/2 fixed flow-control windows must be non-zero",
+            ),
+            (
+                "a fixed stream window past the protocol ceiling",
                 Http1Config::default(),
                 Http2Config::default().flow_control(Http2FlowControl::Fixed {
                     initial_stream_window_size: 1 << 31,
                     initial_connection_window_size: 1024,
+                }),
+                "HTTP/2 fixed flow-control windows must not exceed 2147483647",
+            ),
+            (
+                "a fixed connection window past the protocol ceiling",
+                Http1Config::default(),
+                Http2Config::default().flow_control(Http2FlowControl::Fixed {
+                    initial_stream_window_size: 1024,
+                    initial_connection_window_size: 1 << 31,
                 }),
                 "HTTP/2 fixed flow-control windows must not exceed 2147483647",
             ),
@@ -4061,6 +4110,15 @@ mod protocol_configuration {
                 Http2Config::default().keep_alive(Some(Http2KeepAlive::new(
                     Duration::ZERO,
                     Duration::from_secs(5),
+                ))),
+                "HTTP/2 keep-alive durations must be non-zero",
+            ),
+            (
+                "a keep-alive that never waits for its acknowledgement",
+                Http1Config::default(),
+                Http2Config::default().keep_alive(Some(Http2KeepAlive::new(
+                    Duration::from_secs(5),
+                    Duration::ZERO,
                 ))),
                 "HTTP/2 keep-alive durations must be non-zero",
             ),
@@ -4101,9 +4159,9 @@ mod protocol_configuration {
 
     /// RFC 9113 §6.9.1 caps a flow-control window at 2^31-1, and `h2` asserts
     /// it during the handshake, so a larger window panicked every HTTP/2
-    /// connection instead of failing `prepare`. The case table reaches the
-    /// stream window; this holds the connection window to the same ceiling and
-    /// the ceiling itself to acceptance.
+    /// connection instead of failing `prepare`. The case table refuses one
+    /// past the ceiling on either window; this holds the ceiling itself to
+    /// acceptance, and the far end of `u32` to refusal.
     #[test]
     fn fixed_windows_are_held_to_the_protocol_ceiling_on_either_side() {
         const CEILING: u32 = (1 << 31) - 1;
@@ -4122,16 +4180,24 @@ mod protocol_configuration {
         );
     }
 
-    /// A count, so a limit added without a case fails the build.
+    /// A count of conditions, so a limit added without a case fails the
+    /// build, whether as a refusal of its own or as one more `||` on a shared
+    /// one: each refusal is one condition, and each `||` adds another.
     #[test]
     fn every_refusal_has_a_case() {
         const SOURCE: &str = include_str!("protocol.rs");
 
-        let branches = SOURCE.matches("ServerError::InvalidConfiguration(").count();
+        let code = SOURCE
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let conditions =
+            code.matches("ServerError::InvalidConfiguration(").count() + code.matches("||").count();
         assert_eq!(
             cases().len(),
-            branches,
-            "`protocol.rs` refuses {branches} configuration(s) and {} have a case",
+            conditions,
+            "`protocol.rs` refuses {conditions} condition(s) and {} have a case",
             cases().len()
         );
     }
