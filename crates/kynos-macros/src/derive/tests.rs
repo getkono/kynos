@@ -284,18 +284,6 @@ mod schema {
                 "`#[serde(other)]` accepts",
             ),
             case(
-                "a `#[serde(field_identifier)]` enum's trailing newtype variant, a catch-all serde \
-                 reads but the description cannot state",
-                quote::quote!(
-                    #[serde(field_identifier)]
-                    enum Field {
-                        Id,
-                        Other(String),
-                    }
-                ),
-                "`#[serde(field_identifier)]` reads every identifier",
-            ),
-            case(
                 "`skip_serializing_if` on a field serde still requires on read",
                 quote::quote!(
                     struct Draft {
@@ -378,6 +366,18 @@ mod schema {
                     }
                 ),
                 "an untagged variant",
+            ),
+            case(
+                "a `#[serde(field_identifier)]` enum's trailing newtype variant, a catch-all serde \
+                 reads but the description cannot state",
+                quote::quote!(
+                    #[serde(field_identifier)]
+                    enum Field {
+                        Id,
+                        Other(String),
+                    }
+                ),
+                "`#[serde(field_identifier)]` reads every identifier",
             ),
             case(
                 "a skipped non-`Option` member of an adjacently tagged newtype variant",
