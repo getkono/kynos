@@ -667,8 +667,12 @@ tables are already files of their own.
 ## Dependencies
 
 Containment rows enforcing the graph in
-[`architecture.md`](architecture.md#dependencies). Each is a grep, and each
-fails the build when a crate is named outside the module that owns it.
+[`architecture.md`](architecture.md#dependencies). `containment:check` reads
+every row whose method it is off this table rather than restating it, and fails
+the build when a crate is named outside the sites its row lists. A row is
+backticked crates, then `named only in`, `under` or `at` backticked sites, or
+`never named`; a site is relative to `crates/kynos/src/` unless it opens with a
+member's name, and one ending in `/` is a tree.
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
@@ -678,7 +682,7 @@ fails the build when a crate is named outside the module that owns it.
 | compatibility | `socket2` is named only in `server/tcp.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `h2` and `httparse` are never named | `mise run containment:check` | `enforced` |
 | compatibility | `tower`, `tower-layer` and `tower-service` are named only in `unchecked.rs` | `mise run containment:check` | `enforced` |
-| compatibility | `http-body` and `http-body-util` are named only at the body sites architecture.md lists | `mise run containment:check` | `enforced` |
+| compatibility | `http-body` and `http-body-util` are named only in `http/body.rs`, `http/body/watched.rs`, `middleware/cache/mod.rs`, `response/range/source.rs`, `router/dispatch.rs` and `test/mod.rs`, and under `extract/body/`, `middleware/compression/`, `middleware/decompression/` and `middleware/limits/` | `mise run containment:check` | `enforced` |
 | compatibility | `async-compression` is named only under `middleware/compression/` and `middleware/decompression/` | `mise run containment:check` | `enforced` |
 | compatibility | `serde_html_form` is named only in `extract/body/form.rs`, `response/codec/form.rs` and `test/mod.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `tracing` is named only under `server/` and in `middleware/trace.rs` | `mise run containment:check` | `enforced` |
@@ -690,9 +694,10 @@ fails the build when a crate is named outside the module that owns it.
 | compatibility | `rust_decimal` and `bigdecimal` are named only under `schema/impls/decimal/` | `mise run containment:check` | `enforced` |
 | compatibility | `percent-encoding` is named only in `__private/uri.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `jsonschema` is named only in `test/conformance.rs` | `mise run containment:check` | `enforced` |
-| compatibility | `serde_norway` is named only under `kynos-openapi/emit/` and in `error/mod.rs` | `mise run containment:check` | `enforced` |
-| compatibility | `indexmap` is named only in `kynos-openapi` | `mise run containment:check` | `enforced` |
-| compatibility | `proc-macro2`, `quote` and `syn` are named only in `kynos-macros` | `mise run containment:check` | `enforced` |
+| compatibility | `regex` and `regex-syntax` are named only in `__private/constraints/pattern.rs` and `kynos-openapi/pattern.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `serde_norway` is named only under `kynos-openapi/emit/` | `mise run containment:check` | `enforced` |
+| compatibility | `indexmap` is named only under `kynos-openapi/` | `mise run containment:check` | `enforced` |
+| compatibility | `proc-macro2`, `quote` and `syn` are named only under `kynos-macros/` | `mise run containment:check` | `enforced` |
 | dx | Every crate in `[workspace.dependencies]` is consumed by a member | `cargo-udeps` or an equivalent manifest check | `needs-tooling` |
 
 ## Macros

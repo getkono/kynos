@@ -292,6 +292,7 @@ class ImportTime(unittest.TestCase):
         "| Grade | Owes | Flags |",
         "| Element | Named by | Named only in | Why a request cannot reach it |",
         "| Kind | Lives in | Runs under | Proves | Status |",
+        "| Category | Requirement | Method | Status |",
     )
 
     def test_the_module_holds_no_failure_list_at_import(self):
@@ -742,6 +743,63 @@ class AllowedSites(unittest.TestCase):
 
     def test_prose_after_the_last_site_is_refused(self):
         self.assertIsNone(gate.allowed_sites("`router/dispatch.rs` and nowhere else"))
+
+
+class Confinement(unittest.TestCase):
+    """One Requirement sentence of `nfr.md`'s Dependencies table, read.
+
+    Members are stated rather than read off disk, as `REAL` below is.
+    """
+
+    MEMBERS = frozenset({"kynos", "kynos-openapi", "kynos-macros"})
+
+    def read(self, requirement):
+        return gate.confinement(requirement, self.MEMBERS)
+
+    def test_a_hyphenated_crate_is_read_as_rust_names_it(self):
+        self.assertEqual(
+            self.read("`hyper` and `hyper-util` are named only in `server/connection.rs`"),
+            (("hyper", "hyper_util"), {"crates/kynos/src/server/connection.rs"}),
+        )
+
+    def test_a_site_opening_with_a_member_is_that_member_s_tree(self):
+        self.assertEqual(
+            self.read("`indexmap` is named only under `kynos-openapi/`"),
+            (("indexmap",), {"crates/kynos-openapi/src/"}),
+        )
+        self.assertEqual(
+            self.read("`serde_norway` is named only under `kynos-openapi/emit/`"),
+            (("serde_norway",), {"crates/kynos-openapi/src/emit/"}),
+        )
+
+    def test_a_module_that_is_no_member_is_relative_to_the_home_scope(self):
+        self.assertEqual(
+            self.read("`matchit` may be named only under `router/`"),
+            (("matchit",), {"crates/kynos/src/router/"}),
+        )
+
+    def test_sites_joined_by_in_and_under_are_all_read(self):
+        self.assertEqual(
+            self.read(
+                "`tracing` is named only under `server/` and in `middleware/trace.rs`"
+            ),
+            (("tracing",), {"crates/kynos/src/server/", "crates/kynos/src/middleware/trace.rs"}),
+        )
+
+    def test_a_crate_never_named_has_no_site(self):
+        self.assertEqual(
+            self.read("`h2` and `httparse` are never named"), (("h2", "httparse"), set())
+        )
+
+    def test_a_site_written_as_prose_is_refused(self):
+        self.assertIsNone(self.read("`http-body` is named only at the body sites listed"))
+        self.assertIsNone(self.read("`multer` is named only in `extract/` and elsewhere"))
+
+    def test_a_crate_that_lost_its_backticks_is_refused(self):
+        self.assertIsNone(self.read("`chrono` and jiff are named only under `temporal/`"))
+
+    def test_a_sentence_of_another_shape_is_refused(self):
+        self.assertIsNone(self.read("`uuid` lives in `schema/impls/identifier.rs`"))
 
 
 # The trees this repository actually has, for the cases that do not care which
@@ -1464,9 +1522,10 @@ class Main(unittest.TestCase):
     instead. These three reads are not module constants, and no parameter
     would spare them.
 
-    The three rules stated over the corpus and over no document at all -- the
-    dependency-graph stray scan, the parent re-export scan and the placeholder
-    scan -- are reached the same way, and are why `main` has a fifth argument.
+    The rules stated over the corpus -- the dependency-graph stray scan, whose
+    rows `nfr.md` states, and the parent re-export and placeholder scans, over
+    no document at all -- are reached the same way, and are why `main` has a
+    fifth argument.
     While the corpus was built at import nothing a case could pass reached
     them: by the time `main` ran it was already what the tree said, and neither
     an argument nor a rebound read went back that far. Silencing any one of
@@ -1786,11 +1845,10 @@ class Main(unittest.TestCase):
         )
 
     def test_a_crate_named_outside_the_tree_its_row_allows_is_reported(self):
-        # The dependency-graph stray scan, which reads the corpus and no
-        # document: the rules in that loop are written in this file rather
-        # than read out of `architecture.md`, so a corpus is the only thing a
-        # case can hand it. `matchit` is the router's, and `unchecked.rs` is not
-        # under `router/`.
+        # The dependency-graph stray scan, over a corpus: its rules are read
+        # out of `nfr.md`'s Dependencies table, and the cases after the ones
+        # over that loop hand it a rewritten table instead. `matchit` is the
+        # router's, and `unchecked.rs` is not under `router/`.
         corpus = self.appending(
             "crates/kynos/src/unchecked.rs", '\nuse matchit::Router;\n'
         )
@@ -1967,8 +2025,8 @@ class Main(unittest.TestCase):
         self.assertIn("crates/kynos/src/extract/params/query.rs", reported[0])
 
     def test_every_remaining_listed_crate_is_reported_at_a_stray_site(self):
-        # One case per architecture.md row whose *Named in* cell lists sites
-        # and that no case above holds. Each row is its own claim, so each gets
+        # One case per nfr.md Dependencies row that lists sites and that no
+        # case above holds. Each row is its own claim, so each gets
         # its own stray: a site beside the allowed ones, doing the job a second
         # site would plausibly be added for.
         for stray, addition, description in [
@@ -1990,7 +2048,12 @@ class Main(unittest.TestCase):
              "use percent_encoding::percent_decode_str;", "`percent-encoding` is named only"),
             ("crates/kynos/src/test/mod.rs", "use jsonschema::Validator;",
              "`jsonschema` is named only"),
+            ("crates/kynos/src/extract/params/query.rs", "use regex::Regex;",
+             "`regex` and `regex-syntax` are named only"),
             ("crates/kynos-openapi/src/lib.rs", "use serde_norway::to_string;",
+             "`serde_norway` is named only"),
+            # The site `error/mod.rs` held until it stopped naming the crate.
+            ("crates/kynos/src/error/mod.rs", "use serde_norway::to_string;",
              "`serde_norway` is named only"),
             ("crates/kynos/src/unchecked.rs", "use indexmap::IndexMap;",
              "`indexmap` is named only"),
@@ -2003,6 +2066,61 @@ class Main(unittest.TestCase):
                 reported = self.naming(failures, description)
                 self.assertEqual(len(reported), 1)
                 self.assertIn(stray, reported[0])
+
+    def test_a_dependency_row_is_read_off_nfr_md(self):
+        # The rows above all hold against the table as written; this holds
+        # that the table is what they are read from. Narrowing the `hyper` row
+        # to one site turns the other, which the tree names, into a stray.
+        broken = self.rewriting(
+            gate.NFR,
+            "are named only in `server/connection.rs` and `http/body.rs`",
+            "are named only in `server/connection.rs`",
+        )
+        status, failures = self.report(nfr=broken)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "`hyper` and `hyper-util` are named only in")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/http/body.rs", reported[0])
+
+    def test_a_renamed_dependencies_section_is_reported(self):
+        broken = self.rewriting(gate.NFR, "\n## Dependencies\n", "\n## Crates\n")
+        status, failures = self.report(nfr=broken)
+        self.assertEqual(status, 1)
+        self.assertEqual(len(self.naming(failures, repr(gate.DEPENDENCIES))), 1)
+
+    def test_a_dependencies_section_without_its_table_is_reported(self):
+        # The header is shared by every table in nfr.md, so the search stops
+        # at the next section rather than reading the Macros table as this one.
+        start = gate.NFR.index(gate.DEPENDENCIES)
+        header = gate.NFR.index(gate.REQUIREMENTS_HEADER, start)
+        broken = gate.NFR[:header] + "| Category | Rule |" + gate.NFR[header + len(gate.REQUIREMENTS_HEADER):]
+        status, failures = self.report(nfr=broken)
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            len(self.naming(failures, "Dependencies section no longer holds a table")), 1
+        )
+
+    def test_an_unreadable_dependency_row_is_reported(self):
+        broken = self.rewriting(
+            gate.NFR,
+            "`multer` is named only in `extract/body/multipart.rs`",
+            "`multer` is named only in the multipart extractor",
+        )
+        status, failures = self.report(nfr=broken)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "cannot read as backticked crates")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("the multipart extractor", reported[0])
+
+    def test_a_dependencies_table_assigning_this_gate_nothing_is_reported(self):
+        start = gate.NFR.index(gate.DEPENDENCIES)
+        end = gate.NFR.index("\n## ", start + 1)
+        broken = gate.NFR[:start] + gate.NFR[start:end].replace(
+            gate.CONTAINMENT_METHOD, "`grep`"
+        ) + gate.NFR[end:]
+        status, failures = self.report(nfr=broken)
+        self.assertEqual(status, 1)
+        self.assertEqual(len(self.naming(failures, "assigns this gate no row")), 1)
 
     def test_a_renamed_surface_heading_skips_the_declaration_check(self):
         broken = gate.ARCHITECTURE.replace(self.SURFACE, "### The public surface", 1)
