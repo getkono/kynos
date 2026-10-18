@@ -9,6 +9,10 @@ const VALUE_NOT_ALONE: &str = "`value` is mutually exclusive with `dataValue`, `
 const TWO_SERIALIZATIONS: &str =
     "`serializedValue` and `externalValue` are mutually exclusive on an Example Object";
 
+/// What reading a combination of value fields yields: the example's value,
+/// or the exact refusal.
+type Reading = Result<Option<ExampleValue>, &'static str>;
+
 /// Reads an Example Object holding exactly the value fields `fields` names,
 /// each with a value of its type.
 fn read(fields: &[&str]) -> Result<Example, String> {
@@ -36,7 +40,7 @@ fn each_combination_of_value_fields_is_read_as_the_specification_says() {
     let external = || ExampleValue::External {
         uri: "./one.json".to_owned(),
     };
-    let table: [(&[&str], Result<Option<ExampleValue>, &str>); 4] = [
+    let table: [(&[&str], Reading); 4] = [
         (&[], Ok(None)),
         (&["value"], Ok(Some(ExampleValue::Embedded(1.into())))),
         (&["externalValue"], Ok(Some(external()))),
@@ -76,7 +80,7 @@ fn each_combination_of_value_fields_is_read_as_the_specification_says() {
     };
     // Indexed by the bits `value`, `dataValue`, `serializedValue`,
     // `externalValue`, most significant first.
-    let table: [Result<Option<ExampleValue>, &str>; 16] = [
+    let table: [Reading; 16] = [
         /* ---- */ Ok(None),
         /* ---e */ Ok(external(None)),
         /* --s- */ Ok(Some(ExampleValue::Serialized("1".to_owned()))),

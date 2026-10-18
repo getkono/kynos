@@ -335,9 +335,12 @@ pub(crate) fn arb_template() -> impl Strategy<Value = String> {
     arb_template_case().prop_map(|case| case.raw)
 }
 
+/// The refusal of a malformed template, built from the template.
+pub(crate) type Refusal = fn(String) -> InvalidPathTemplate;
+
 /// Templates the grammar must reject, each with the refusal that names what
-/// malforms it, built from the template.
-pub(crate) fn malformed_templates() -> Vec<(&'static str, fn(String) -> InvalidPathTemplate)> {
+/// malforms it.
+pub(crate) fn malformed_templates() -> Vec<(&'static str, Refusal)> {
     use InvalidPathTemplate::{
         DuplicateVariable, EmptyExpression, EmptySegment, IllegalLiteralCharacter,
         MalformedPercentEncoding, MissingLeadingSlash, NotAPath, UnbalancedBraces,
