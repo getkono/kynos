@@ -349,6 +349,160 @@ mod unrecognised {
     }
 }
 
+/// What 3.2 relaxed rather than added, which 3.1 cannot express either.
+///
+/// A response without `description` (REQUIRED in 3.1,
+/// `references/3.1.2.md:2009`, optional in 3.2) and a security requirement
+/// naming a scheme by URI (`references/3.2.0.md:4685`; 3.1 admits only a
+/// declared name, `references/3.1.2.md:4128`) are both absences or values,
+/// not fields, so neither walk for 3.2 fields saw them and `emit(V3_1)`
+/// relabelled such a document `3.1.2`.
+///
+/// Ungated: the model holds both in every build.
+mod relaxed {
+    use crate::{
+        emit::downgrade::three_two_only_constructs,
+        model::{
+            document::{Document, SpecVersion},
+            paths::{item::PathItem, method::Method, operation::Operation, template::PathTemplate},
+            reference::RefOr,
+            response::{Response, Responses},
+            security::{SecurityScheme, requirement::SecurityRequirement},
+        },
+        validate::violation::SpecError,
+    };
+
+    /// A document whose one operation answers `200` with `response`.
+    fn answering(response: Response, security: Option<SecurityRequirement>) -> Document {
+        let mut operation =
+            Operation::new("getOrder").with_responses(Responses::new().with(200, response));
+        if let Some(requirement) = security {
+            operation = operation.with_security(requirement);
+        }
+        let mut document = super::document();
+        document.paths.insert(
+            &PathTemplate::parse("/orders").expect("a valid template"),
+            PathItem::new().with_operation(Method::Get, operation),
+        );
+        document
+    }
+
+    /// A document 3.1 expresses, which every case below departs from once.
+    fn described() -> Document {
+        answering(Response::new("ok"), None)
+    }
+
+    fn cases() -> Vec<(&'static str, Document, String)> {
+        let mut cases = vec![
+            (
+                "an operation's response",
+                answering(Response::default(), None),
+                "#/paths/~1orders/get/responses/200/description".to_owned(),
+            ),
+            (
+                "a requirement on an operation",
+                answering(
+                    Response::new("ok"),
+                    Some(SecurityRequirement::scheme("./bearer")),
+                ),
+                "#/paths/~1orders/get/security/0/.~1bearer".to_owned(),
+            ),
+            (
+                "a requirement on the document",
+                described().with_security(SecurityRequirement::scheme(
+                    "https://example.com/schemes#/Bearer",
+                )),
+                "#/security/0/https:~1~1example.com~1schemes#~1Bearer".to_owned(),
+            ),
+        ];
+
+        let mut defaulted = described();
+        let operation = defaulted
+            .paths
+            .items
+            .get_mut("/orders")
+            .and_then(|item| item.get.as_mut())
+            .expect("the operation inserted above");
+        operation.responses.default_response = Some(RefOr::Item(Response::default()));
+        cases.push((
+            "a default response",
+            defaulted,
+            "#/paths/~1orders/get/responses/default/description".to_owned(),
+        ));
+
+        let mut reusable = described();
+        reusable
+            .components
+            .responses
+            .insert("NotFound".to_owned(), RefOr::Item(Response::default()));
+        cases.push((
+            "a component response",
+            reusable,
+            "#/components/responses/NotFound/description".to_owned(),
+        ));
+
+        cases
+    }
+
+    #[test]
+    fn each_is_reported_where_it_lives() {
+        assert!(three_two_only_constructs(&described()).is_empty());
+        for (case, document, expected) in cases() {
+            assert_eq!(
+                three_two_only_constructs(&document),
+                vec![expected],
+                "{case}"
+            );
+        }
+    }
+
+    #[test]
+    fn each_refuses_to_emit_as_three_one() {
+        for (case, document, expected) in cases() {
+            assert_eq!(
+                document.emit(SpecVersion::V3_1),
+                Err(SpecError::RequiresV3_2 {
+                    blockers: vec![expected]
+                }),
+                "{case}"
+            );
+        }
+    }
+
+    /// `Validator`'s claim that it agrees with `emit`, held for each case:
+    /// what `emit` refuses as 3.1, validating as 3.1 refuses too.
+    #[test]
+    fn the_validator_refuses_what_emit_refuses() {
+        assert_eq!(described().validate(SpecVersion::V3_1), Ok(()));
+        for (case, document, _) in cases() {
+            assert!(document.validate(SpecVersion::V3_1).is_err(), "{case}");
+        }
+    }
+
+    /// A name 3.1 can hold is no blocker, declared or not: an undeclared bare
+    /// name is a misspelling under either version, which the validator
+    /// reports, not something 3.2 expresses.
+    #[test]
+    fn a_requirement_by_name_is_no_blocker() {
+        for document in [
+            answering(
+                Response::new("ok"),
+                Some(SecurityRequirement::scheme("Bearer")),
+            ),
+            described().with_security(SecurityRequirement::scheme("Bearer")),
+        ] {
+            assert!(three_two_only_constructs(&document).is_empty());
+
+            let mut declared = document.clone();
+            declared.components.security_schemes.insert(
+                "Bearer".to_owned(),
+                RefOr::Item(SecurityScheme::bearer(None)),
+            );
+            assert!(three_two_only_constructs(&declared).is_empty());
+        }
+    }
+}
+
 /// An extension key that repeats a model field is written as `serde_norway`
 /// writes the model: beside the field, not in place of it.
 ///
@@ -1293,7 +1447,7 @@ mod blockers {
 mod reach {
     use super::document;
     use crate::model::{
-        body::{RequestBody, media_type::MediaType},
+        body::{RequestBody, encoding::Encoding, media_type::MediaType},
         callback::Callback,
         components::ComponentName,
         document::{Document, SpecVersion},
@@ -1514,6 +1668,30 @@ mod reach {
                 document
             },
             "#/paths/~1orders/get/responses/default/summary".to_owned(),
+        ));
+
+        cases.push((
+            "encoding.headers",
+            {
+                let part = Encoding::new("text/plain").with_header(
+                    "X-Part",
+                    Header::with_content("application/json", sequential()),
+                );
+                let form = MediaType::new(Schema::any()).with_encoding("file", part);
+                let mut document = document();
+                document.paths.insert(
+                    &orders,
+                    PathItem::new().with_operation(
+                        Method::Post,
+                        Operation::default()
+                            .with_request_body(RequestBody::new("multipart/form-data", form)),
+                    ),
+                );
+                document
+            },
+            "#/paths/~1orders/post/requestBody/content/multipart~1form-data/encoding/file/headers/\
+             X-Part/content/application~1json/itemSchema"
+                .to_owned(),
         ));
 
         cases
