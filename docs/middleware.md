@@ -688,8 +688,8 @@ for whatever it covers, upward too, so one large upload is one `BodySize` on its
 own endpoint. [`nfr.md`](nfr.md#extraction) records why this reverses the
 earlier decision against a default.
 
-**A decompression bomb is `BodySize`'s blind spot, not its job.** Two kilobytes
-of zeroes are a gigabyte of gzip output, so a cap measured before decoding
+**A decompression bomb is `BodySize`'s blind spot, not its job.** A megabyte
+of gzip inflates to a gigabyte of zeroes, so a cap measured before decoding
 measures the one number an attacker chooses freely. `Decompression` takes the
 limit instead and applies it to what the handler will actually see. The two
 cannot be mounted together — both answer 413, and `CompatibleWith` refuses

@@ -362,8 +362,8 @@ fn declared(headers: &http::HeaderMap) -> Option<Vec<Coding>> {
 ///
 /// # The limit replaces `BodySize`
 ///
-/// A cap measured before decoding is not a cap: two kilobytes of zeroes are a
-/// gigabyte of gzip output. The limit here applies to what the handler will
+/// A cap measured before decoding is not a cap: a megabyte of gzip inflates to
+/// a gigabyte of zeroes. The limit here applies to what the handler will
 /// see — the decoded octets, or the bytes as they arrived when no coding was
 /// applied. Mounting
 /// [`BodySize`](crate::middleware::limits::body_size::BodySize) beside this is
