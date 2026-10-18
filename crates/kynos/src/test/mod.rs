@@ -860,9 +860,14 @@ impl TestResponse {
     ///
     /// # Panics
     ///
-    /// Panics when the status is not 206, the field is absent or names another
-    /// span, or the body is not the length the field claims.
+    /// Panics when `last` precedes `first`, which names no octets; when the
+    /// status is not 206, the field is absent or names another span, or the
+    /// body is not the length the field claims.
     pub fn assert_part(&self, first: u64, last: u64, complete_length: u64) -> &Self {
+        assert!(
+            first <= last,
+            "`bytes {first}-{last}` names no octets: its last position precedes its first"
+        );
         assert!(
             self.status() == StatusCode::PARTIAL_CONTENT,
             "expected 206, received {}",
@@ -872,9 +877,10 @@ impl TestResponse {
         let expected = format!("bytes {first}-{last}/{complete_length}");
         self.assert_header("content-range", &expected);
 
-        let enclosed = last - first + 1;
+        // Wider than `u64`, which `0-18446744073709551615` overflows by one.
+        let enclosed = u128::from(last - first) + 1;
         assert!(
-            self.body.len() as u64 == enclosed,
+            self.body.len() as u128 == enclosed,
             "`Content-Range` names {enclosed} octet(s) and the body carries {}",
             self.body.len()
         );

@@ -3981,10 +3981,11 @@ fn request_http1(address: std::net::SocketAddr) -> String {
 
 /// Every configuration `validate_protocol_config` refuses.
 ///
-/// Seven branches, none of them reached before. A limit that stops being checked
-/// is one hyper is handed instead -- where a zero window stalls a connection
-/// and an oversized send buffer does not fit the protocol field it is written
-/// to. The branch is the whole value of the function, so each gets a case.
+/// One row per refused condition rather than per `return`: several conditions
+/// share one refusal, and a condition dropped from an `||` chain reads as a
+/// branch that still has a case. A limit that stops being checked is one hyper
+/// is handed instead -- where a zero window stalls a connection and an
+/// oversized send buffer does not fit the protocol field it is written to.
 ///
 /// Gated on both protocols because the function takes one argument per enabled
 /// protocol; the feature matrix builds combinations with only one, and there
@@ -4010,7 +4011,8 @@ mod protocol_configuration {
         }
     }
 
-    /// One row per branch: what was set, and what it must be told.
+    /// One row per condition: what was set, and what it must be told.
+    #[expect(clippy::too_many_lines)]
     fn cases() -> Vec<(&'static str, Http1Config, Http2Config, &'static str)> {
         vec![
             (
@@ -4032,13 +4034,43 @@ mod protocol_configuration {
                 "HTTP/1 header_read_timeout must be non-zero when enabled",
             ),
             (
+                "no stream may be opened",
+                Http1Config::default(),
+                Http2Config::default().max_concurrent_streams(0),
+                "HTTP/2 limits must be non-zero and fit their protocol fields",
+            ),
+            (
+                "no room for a single header",
+                Http1Config::default(),
+                Http2Config::default().max_header_list_size(0),
+                "HTTP/2 limits must be non-zero and fit their protocol fields",
+            ),
+            (
+                "a send buffer that holds nothing",
+                Http1Config::default(),
+                Http2Config::default().max_send_buffer_size(0),
+                "HTTP/2 limits must be non-zero and fit their protocol fields",
+            ),
+            (
                 "a send buffer larger than the field that carries it",
                 Http1Config::default(),
                 Http2Config::default().max_send_buffer_size(u32::MAX as usize + 1),
                 "HTTP/2 limits must be non-zero and fit their protocol fields",
             ),
             (
-                "a fixed flow-control window that admits nothing",
+                "no reset stream may await acceptance",
+                Http1Config::default(),
+                Http2Config::default().max_pending_accept_reset_streams(0),
+                "HTTP/2 limits must be non-zero and fit their protocol fields",
+            ),
+            (
+                "no stream may be reset for a local error",
+                Http1Config::default(),
+                Http2Config::default().max_local_error_reset_streams(0),
+                "HTTP/2 limits must be non-zero and fit their protocol fields",
+            ),
+            (
+                "a fixed stream window that admits nothing",
                 Http1Config::default(),
                 Http2Config::default().flow_control(Http2FlowControl::Fixed {
                     initial_stream_window_size: 0,
@@ -4047,11 +4079,29 @@ mod protocol_configuration {
                 "HTTP/2 fixed flow-control windows must be non-zero",
             ),
             (
-                "a fixed flow-control window past the protocol ceiling",
+                "a fixed connection window that admits nothing",
+                Http1Config::default(),
+                Http2Config::default().flow_control(Http2FlowControl::Fixed {
+                    initial_stream_window_size: 1024,
+                    initial_connection_window_size: 0,
+                }),
+                "HTTP/2 fixed flow-control windows must be non-zero",
+            ),
+            (
+                "a fixed stream window past the protocol ceiling",
                 Http1Config::default(),
                 Http2Config::default().flow_control(Http2FlowControl::Fixed {
                     initial_stream_window_size: 1 << 31,
                     initial_connection_window_size: 1024,
+                }),
+                "HTTP/2 fixed flow-control windows must not exceed 2147483647",
+            ),
+            (
+                "a fixed connection window past the protocol ceiling",
+                Http1Config::default(),
+                Http2Config::default().flow_control(Http2FlowControl::Fixed {
+                    initial_stream_window_size: 1024,
+                    initial_connection_window_size: 1 << 31,
                 }),
                 "HTTP/2 fixed flow-control windows must not exceed 2147483647",
             ),
@@ -4061,6 +4111,15 @@ mod protocol_configuration {
                 Http2Config::default().keep_alive(Some(Http2KeepAlive::new(
                     Duration::ZERO,
                     Duration::from_secs(5),
+                ))),
+                "HTTP/2 keep-alive durations must be non-zero",
+            ),
+            (
+                "a keep-alive that never waits for its acknowledgement",
+                Http1Config::default(),
+                Http2Config::default().keep_alive(Some(Http2KeepAlive::new(
+                    Duration::from_secs(5),
+                    Duration::ZERO,
                 ))),
                 "HTTP/2 keep-alive durations must be non-zero",
             ),
@@ -4101,9 +4160,9 @@ mod protocol_configuration {
 
     /// RFC 9113 §6.9.1 caps a flow-control window at 2^31-1, and `h2` asserts
     /// it during the handshake, so a larger window panicked every HTTP/2
-    /// connection instead of failing `prepare`. The case table reaches the
-    /// stream window; this holds the connection window to the same ceiling and
-    /// the ceiling itself to acceptance.
+    /// connection instead of failing `prepare`. The case table refuses one
+    /// past the ceiling on either window; this holds the ceiling itself to
+    /// acceptance, and the far end of `u32` to refusal.
     #[test]
     fn fixed_windows_are_held_to_the_protocol_ceiling_on_either_side() {
         const CEILING: u32 = (1 << 31) - 1;
@@ -4122,19 +4181,150 @@ mod protocol_configuration {
         );
     }
 
-    /// A count, so a limit added without a case fails the build.
+    /// A count of conditions, so a limit added without a case fails the
+    /// build, whether as a refusal of its own or as one more `||` on a shared
+    /// one: each refusal is one condition, and each `||` adds another.
     #[test]
     fn every_refusal_has_a_case() {
         const SOURCE: &str = include_str!("protocol.rs");
 
-        let branches = SOURCE.matches("ServerError::InvalidConfiguration(").count();
+        let code = SOURCE
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let conditions =
+            code.matches("ServerError::InvalidConfiguration(").count() + code.matches("||").count();
         assert_eq!(
             cases().len(),
-            branches,
-            "`protocol.rs` refuses {branches} configuration(s) and {} have a case",
+            conditions,
+            "`protocol.rs` refuses {conditions} condition(s) and {} have a case",
             cases().len()
         );
     }
+}
+
+/// Every [`InvalidConfiguration`](crate::server::error::ServerError::InvalidConfiguration)
+/// the crate constructs, as the file under `src/` that constructs it and its
+/// message.
+///
+/// Each message is asserted exactly by the case that reaches it: the
+/// `protocol_configuration` table, the TCP keepalive and request-body idle
+/// timeout cases, the mutual-TLS case here, and `tests/serve_io.rs`.
+const CONFIGURATION_REFUSALS: &[(&str, &str)] = &[
+    (
+        "middleware/limits/request_body.rs",
+        "request_body_idle_timeout must be non-zero when enabled",
+    ),
+    (
+        "server/mod.rs",
+        "mutual TLS adds itself to the document, so no serve_io connection may still share the service",
+    ),
+    (
+        "server/mod.rs",
+        "serve_io serves plaintext, so TLS must not be configured",
+    ),
+    ("server/protocol.rs", "HTTP/1 max_headers must be non-zero"),
+    (
+        "server/protocol.rs",
+        "HTTP/1 max_buffer_size must be at least 8192",
+    ),
+    (
+        "server/protocol.rs",
+        "HTTP/1 header_read_timeout must be non-zero when enabled",
+    ),
+    (
+        "server/protocol.rs",
+        "HTTP/2 limits must be non-zero and fit their protocol fields",
+    ),
+    (
+        "server/protocol.rs",
+        "HTTP/2 fixed flow-control windows must be non-zero",
+    ),
+    (
+        "server/protocol.rs",
+        "HTTP/2 fixed flow-control windows must not exceed 2147483647",
+    ),
+    (
+        "server/protocol.rs",
+        "HTTP/2 keep-alive durations must be non-zero",
+    ),
+    (
+        "server/protocol.rs",
+        "HTTP/2 idle_timeout must be non-zero when enabled",
+    ),
+    (
+        "server/tcp.rs",
+        "TCP keepalive durations must be between 1 and 32767 seconds",
+    ),
+];
+
+/// The configuration refusals in `src/`, read from the source, are exactly
+/// [`CONFIGURATION_REFUSALS`].
+///
+/// Read crate-wide rather than per file, so a refusal added in a module no
+/// count covered fails here instead of going unasserted; and by message, so
+/// one reworded without its case moving fails too. Test files are skipped, as
+/// are comment lines, so a doc example cannot count.
+#[test]
+fn every_configuration_refusal_in_the_crate_is_listed() {
+    const CONSTRUCTOR: &str = "ServerError::InvalidConfiguration(";
+
+    fn sources(directory: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(directory).expect("a readable source directory") {
+            let path = entry.expect("a readable directory entry").path();
+            if path.is_dir() {
+                if path.file_name().is_some_and(|name| name != "tests") {
+                    sources(&path, found);
+                }
+            } else if path.extension().is_some_and(|extension| extension == "rs")
+                && path.file_name().is_some_and(|name| name != "tests.rs")
+            {
+                found.push(path);
+            }
+        }
+    }
+
+    let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src"));
+    let mut files = Vec::new();
+    sources(root, &mut files);
+
+    let mut constructed = Vec::new();
+    for file in files {
+        let source = std::fs::read_to_string(&file).expect("a readable source file");
+        let code = source
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let relative = file
+            .strip_prefix(root)
+            .expect("a file under `src/`")
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+
+        for (at, _) in code.match_indices(CONSTRUCTOR) {
+            let message = code[at + CONSTRUCTOR.len()..]
+                .split('"')
+                .nth(1)
+                .expect("a refusal's message is a string literal");
+            constructed.push((relative.clone(), message.to_owned()));
+        }
+    }
+    constructed.sort();
+
+    let mut listed = CONFIGURATION_REFUSALS
+        .iter()
+        .map(|(file, message)| ((*file).to_owned(), (*message).to_owned()))
+        .collect::<Vec<_>>();
+    listed.sort();
+
+    assert_eq!(
+        constructed, listed,
+        "the configuration refusals `src/` constructs and the ones listed here differ"
+    );
 }
 
 /// An accept loop that ended without returning is its own failure, not an
@@ -4271,26 +4461,160 @@ fn request_http1_from(address: std::net::SocketAddr) -> (std::net::SocketAddr, S
     (client_address, response)
 }
 
-/// The header cap the driver is told about is the one that was configured.
+/// The HTTP/1 header cap holds on the wire: a request head carrying exactly
+/// the configured number of fields is served, and one more is answered 431
+/// (RFC 6585 section 5).
 ///
-/// `Http1Config::default` documents 100 and the forwarding branch skipped
-/// exactly that value, so Kynos's own default was an alias for a hyper constant
-/// Kynos does not own. The two agree today; nothing makes them keep agreeing,
-/// and an explicit `max_headers(100)` pinned nothing at all.
-///
-/// A sweep rather than one case, because the defect was a value-dependent
-/// branch and a single row would have been the wrong one.
+/// Over a real socket, because what is owed is the driver refusing the head,
+/// not a value handed to it. The default cap and a configured one, each at
+/// the boundary, so neither a cap that stopped reaching the driver nor one
+/// off by one passes.
 #[cfg(feature = "http1")]
-#[test]
-fn the_configured_http1_header_cap_is_the_one_the_driver_is_told() {
-    for configured in [1, 8, 64, 99, 100, 101, 1024] {
-        let config = Http1Config::default().max_headers(configured);
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_head_past_the_http1_header_cap_is_answered_431() {
+    for (http1, cap) in [
+        (Http1Config::default(), 100),
+        (Http1Config::default().max_headers(8), 8),
+    ] {
+        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let bound = crate::server::Server::new(test_service())
+            .http1(http1)
+            .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+                let _ = shutdown_receiver.await;
+            }))
+            .prepare()
+            .await
+            .expect("loopback listener binds");
+        let address = bound.local_addrs()[0];
+        let server = tokio::spawn(bound.serve());
 
-        assert_eq!(
-            crate::server::protocol::http1::forwarded_max_headers(&config),
-            configured,
-            "a cap of {configured} must reach the driver"
+        let (at_cap, past_cap) = tokio::task::spawn_blocking(move || {
+            (
+                request_http1_with_fields(address, cap),
+                request_http1_with_fields(address, cap + 1),
+            )
+        })
+        .await
+        .expect("blocking client joins");
+
+        assert!(
+            at_cap.starts_with("HTTP/1.1 200 OK"),
+            "{cap} field(s) under a cap of {cap}: {at_cap}"
         );
+        assert!(
+            past_cap.starts_with("HTTP/1.1 431 "),
+            "{} field(s) under a cap of {cap}: {past_cap}",
+            cap + 1
+        );
+
+        let _ = shutdown_sender.send(());
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
+    }
+}
+
+/// Requests over HTTP/1 with a head of exactly `fields` header fields, `Host`
+/// and `Connection: close` among them.
+#[cfg(feature = "http1")]
+fn request_http1_with_fields(address: std::net::SocketAddr, fields: usize) -> String {
+    use std::{
+        fmt::Write as _,
+        io::{Read as _, Write as _},
+    };
+
+    let mut head = String::from("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n");
+    for field in 2..fields {
+        write!(head, "X-Field-{field}: {field}\r\n").expect("a String takes any write");
+    }
+    head.push_str("\r\n");
+
+    let mut stream = std::net::TcpStream::connect(address).expect("server accepts");
+    stream.write_all(head.as_bytes()).expect("request writes");
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .expect("response reads");
+    response
+}
+
+/// The HTTP/2 header-list cap holds on the wire: a request whose header list
+/// is past the cap is answered 431 on its stream, and one under it is served
+/// on the same connection.
+///
+/// The default cap and a configured one. A list of 8 KiB is under the first
+/// and past the second, so a configured cap that stopped reaching the driver
+/// is served where it must be refused.
+#[cfg(feature = "http2")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_header_list_past_the_http2_cap_is_answered_431() {
+    use http_body_util::Empty;
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+
+    for (http2, past, under) in [
+        (Http2Config::default(), 20 * 1024, 8 * 1024),
+        (
+            Http2Config::default().max_header_list_size(4 * 1024),
+            8 * 1024,
+            1024,
+        ),
+    ] {
+        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let bound = crate::server::Server::new(test_service())
+            .http2(http2)
+            .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+                let _ = shutdown_receiver.await;
+            }))
+            .prepare()
+            .await
+            .expect("loopback listener binds");
+        let address = bound.local_addrs()[0];
+        let server = tokio::spawn(bound.serve());
+
+        let stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("server accepts");
+        let (mut sender, connection) =
+            hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+                .await
+                .expect("HTTP/2 handshake completes");
+        let connection = tokio::spawn(connection);
+
+        let mut statuses = Vec::new();
+        for length in [past, under] {
+            let request = hyper::Request::builder()
+                .uri("http://localhost/")
+                .header("x-padding", "a".repeat(length))
+                .body(Empty::<bytes::Bytes>::new())
+                .expect("request builds");
+            let response = sender
+                .send_request(request)
+                .await
+                .expect("the server answers the stream");
+            statuses.push(response.status());
+        }
+        assert_eq!(
+            statuses,
+            [
+                crate::http::StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE,
+                crate::http::StatusCode::OK
+            ],
+            "{http2:?}"
+        );
+
+        drop(sender);
+        connection
+            .await
+            .expect("client connection task joins")
+            .expect("client connection closes cleanly");
+        let _ = shutdown_sender.send(());
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
     }
 }
 

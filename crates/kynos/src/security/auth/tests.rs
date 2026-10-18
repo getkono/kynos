@@ -625,3 +625,140 @@ async fn scoped_adds_its_own_scopes_to_the_defaults() {
         [vec!["audit", "reports:read", "reports:write"]]
     );
 }
+
+impl Authenticates<Bearer<String, Grant>> for Recording {
+    type Authenticator = Recorder;
+
+    fn authenticator(&self) -> &Recorder {
+        &self.0
+    }
+}
+
+impl Authenticates<MutualTls<String>> for Recording {
+    type Authenticator = Recorder;
+
+    fn authenticator(&self) -> &Recorder {
+        &self.0
+    }
+}
+
+/// A scheme whose challenge would splice a second header field into the
+/// response, were it written as it is.
+struct Spliced;
+
+impl SecurityScheme for Spliced {
+    const NAME: &'static str = "Spliced";
+    type Credential = String;
+    type Scope = Grant;
+
+    fn describe() -> kynos_openapi::SecurityScheme {
+        kynos_openapi::SecurityScheme::bearer(None)
+    }
+
+    fn challenge() -> Option<&'static str> {
+        Some("Bearer\r\nX-Injected: 1")
+    }
+}
+
+impl Carries for Spliced {
+    type Presented = BearerToken;
+
+    fn present(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
+        carrier::bearer(parts)
+    }
+}
+
+impl Authenticates<Spliced> for Recording {
+    type Authenticator = Recorder;
+
+    fn authenticator(&self) -> &Recorder {
+        &self.0
+    }
+}
+
+/// The `WWW-Authenticate` values on the response guard `G` refuses `parts`
+/// with, which must be a 401.
+async fn challenges_sent<G: Guard<Recording>>(parts: &Parts) -> Vec<String> {
+    use crate::response::IntoResponse as _;
+
+    let Err(refused) = G::guard(parts, &Recording::admitting()).await else {
+        panic!("the request is refused");
+    };
+    let response = refused.into_response();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    response
+        .headers()
+        .get_all(crate::http::header::WWW_AUTHENTICATE)
+        .iter()
+        .map(|value| value.to_str().expect("a visible challenge").to_owned())
+        .collect()
+}
+
+/// RFC 9110 section 11.6.1: a 401 sends `WWW-Authenticate`. What each built-in
+/// scheme sends on the wire, under each guard that attaches it, is exactly
+/// the challenge it declares, or nothing where it declares none.
+///
+/// `MutualTls` has no HTTP authentication scheme to challenge with, so its 401
+/// sends none, and an `AnyOf` it leads challenges with the first scheme after
+/// it that has one.
+#[tokio::test]
+async fn every_built_in_scheme_sends_its_own_challenge_on_a_401() {
+    let anonymous = Request::new(Body::empty()).into_parts().0;
+    let basic = r#"Basic realm="api", charset="UTF-8""#;
+
+    assert_eq!(
+        challenges_sent::<Auth<Bearer>>(&anonymous).await,
+        ["Bearer"]
+    );
+    assert_eq!(
+        challenges_sent::<Auth<Basic<String>>>(&anonymous).await,
+        [basic]
+    );
+    assert!(
+        challenges_sent::<Auth<MutualTls<String>>>(&anonymous)
+            .await
+            .is_empty()
+    );
+    assert_eq!(
+        challenges_sent::<Auth<AnyOf<(MutualTls<String>, Bearer)>>>(&anonymous).await,
+        ["Bearer"]
+    );
+    assert_eq!(
+        challenges_sent::<Scoped<Bearer<String, Grant>, ReadReports>>(&anonymous).await,
+        ["Bearer"]
+    );
+
+    // `MaybeAuth` admits absence, so its 401 is a credential present and
+    // unreadable: a Basic credential where a bearer token is carried.
+    let mut request = Request::new(Body::empty());
+    request
+        .headers_mut()
+        .insert(AUTHORIZATION, HeaderValue::from_static("Basic dTpw"));
+    let unreadable = request.into_parts().0;
+    assert_eq!(
+        challenges_sent::<MaybeAuth<Bearer>>(&unreadable).await,
+        ["Bearer"]
+    );
+}
+
+/// A challenge that is no field value is dropped from the 401 rather than
+/// written or panicked on, and from the description alike, so the two never
+/// disagree about whether one is sent.
+#[tokio::test]
+async fn a_challenge_that_is_no_field_value_is_neither_sent_nor_declared() {
+    let anonymous = Request::new(Body::empty()).into_parts().0;
+    assert!(
+        challenges_sent::<Auth<Spliced>>(&anonymous)
+            .await
+            .is_empty()
+    );
+
+    let (operation, _) = described::<Auth<Spliced>>();
+    assert!(
+        !operation.responses.responses["401"]
+            .as_item()
+            .expect("an inline 401")
+            .headers
+            .contains_key("WWW-Authenticate")
+    );
+}
