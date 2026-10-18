@@ -1,0 +1,5 @@
+error: `#[serde(field_identifier)]` reads every identifier this enum does not name as its last variant `Other`, a catch-all no closed `oneOf` or `enum` can state, so the description would refuse identifiers the type accepts. Name every identifier the API accepts as a unit variant, or publish the value as `Unchecked` on purpose
+  --> tests/ui/macros/schema_field_identifier_catch_all.rs:11:5
+   |
+11 |     Other(String),
+   |     ^^^^^
