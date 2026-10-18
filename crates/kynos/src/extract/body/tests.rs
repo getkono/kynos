@@ -308,6 +308,207 @@ mod a_multipart_boundary_is_read_past_optional_whitespace {
     }
 }
 
+/// A part's field name is its `Content-Disposition`'s `name` parameter, read
+/// by RFC 9110's `quoted-string` grammar (section 5.6.4) under RFC 7578
+/// section 4.2, which makes every part's disposition `form-data`.
+#[cfg(feature = "multipart")]
+mod a_part_disposition_is_read_quote_aware {
+    use crate::{
+        error::rejection::BodyRejection,
+        extract::{
+            FromRequest,
+            body::multipart::{Disposition, FromMultipart, MultipartForm, Part, disposition},
+        },
+        http::{HeaderValue, Request, StatusCode, body::Body, header},
+        schema::{Schema, registry::Registry},
+    };
+
+    /// Every part the body carried, as `(name, file_name)`.
+    #[derive(Debug, PartialEq, Eq)]
+    struct Names(Vec<(String, Option<String>)>);
+
+    impl FromMultipart for Names {
+        fn from_parts(parts: Vec<Part>) -> Result<Self, BodyRejection> {
+            Ok(Self(
+                parts
+                    .into_iter()
+                    .map(|part| (part.name, part.file_name))
+                    .collect(),
+            ))
+        }
+    }
+
+    impl Schema for Names {
+        fn schema(_registry: &mut Registry) -> kynos_openapi::Schema {
+            kynos_openapi::Schema::any()
+        }
+    }
+
+    /// What `MultipartForm` makes of one part carrying `disposition`.
+    async fn read(disposition: &str) -> Result<Names, BodyRejection> {
+        read_head(format!("Content-Disposition: {disposition}").as_bytes()).await
+    }
+
+    /// What `MultipartForm` makes of one part whose header block is `head`.
+    async fn read_head(head: &[u8]) -> Result<Names, BodyRejection> {
+        let body = [b"--x\r\n", head, b"\r\n\r\nb\r\n--x--\r\n"].concat();
+        let mut request = Request::new(Body::from_bytes(bytes::Bytes::from(body)));
+        request.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("multipart/form-data; boundary=x"),
+        );
+        MultipartForm::<Names>::from_request(request, &())
+            .await
+            .map(|MultipartForm(names)| names)
+    }
+
+    /// A ` name=` inside a quoted `filename` is part of the file name, not
+    /// the field's.
+    #[tokio::test]
+    async fn a_name_inside_a_quoted_value_is_not_the_name() {
+        let names = read(r#"form-data; filename="; name=x"; name="real""#)
+            .await
+            .expect("a well-formed disposition");
+        assert_eq!(
+            names,
+            Names(vec![("real".to_owned(), Some("; name=x".to_owned()))])
+        );
+    }
+
+    /// A disposition other than `form-data` is not a form field: 400.
+    #[tokio::test]
+    async fn a_disposition_other_than_form_data_is_refused() {
+        for disposition in [
+            r#"attachment; name="a""#,
+            r#"inline; name="a""#,
+            r#"form-datax; name="a""#,
+            r#"name="a""#,
+        ] {
+            let rejection = read(disposition).await.expect_err(disposition);
+            assert_eq!(
+                rejection.status(),
+                StatusCode::BAD_REQUEST,
+                "`{disposition}`"
+            );
+            assert!(
+                matches!(rejection, BodyRejection::Syntax { .. }),
+                "`{disposition}`: {rejection:?}"
+            );
+        }
+    }
+
+    /// The detail of the 400 `head` earns, which must be a syntax rejection.
+    async fn refused(head: &[u8]) -> String {
+        match read_head(head).await {
+            Err(BodyRejection::Syntax { detail }) => detail,
+            other => panic!("{:?}: {other:?}", String::from_utf8_lossy(head)),
+        }
+    }
+
+    /// A part with no `Content-Disposition` names no field: 400.
+    #[tokio::test]
+    async fn a_part_without_a_disposition_is_refused() {
+        assert_eq!(
+            refused(b"Content-Type: text/plain").await,
+            "a part carries no `Content-Disposition`"
+        );
+    }
+
+    /// A `Content-Disposition` that is not UTF-8 is 400, the file name's
+    /// bytes included, since both names are `String`s.
+    #[tokio::test]
+    async fn a_disposition_that_is_not_utf8_is_refused() {
+        for head in [
+            &b"Content-Disposition: form-data; name=\"\xff\""[..],
+            b"Content-Disposition: form-data; name=\"a\"; filename=\"\xff.txt\"",
+        ] {
+            assert_eq!(
+                refused(head).await,
+                "a part's `Content-Disposition` is not UTF-8"
+            );
+        }
+    }
+
+    /// The field a well-formed disposition names, as `(name, file_name)`.
+    fn named(value: &str) -> (String, Option<String>) {
+        let Disposition { name, file_name } =
+            disposition(value).unwrap_or_else(|detail| panic!("`{value}`: {detail}"));
+        (name, file_name)
+    }
+
+    /// Each spelling the grammar admits names field `a`, with the file name
+    /// it carries.
+    #[test]
+    fn each_admitted_spelling_is_read() {
+        let file = |name: &str| Some(name.to_owned());
+        for (value, file_name) in [
+            // A token value, and the type and parameter names in any case.
+            ("form-data; name=a", None),
+            ("Form-Data; NAME=\"a\"", None),
+            // Whitespace around `;` and `=`, and empty parameters.
+            ("form-data ;\tname = \"a\" ;", None),
+            ("form-data;;name=\"a\";;", None),
+            // Separators, quotes and backslashes inside a quoted value.
+            (r#"form-data; name="a"; filename="x;y=z""#, file("x;y=z")),
+            (
+                r#"form-data; filename="\"; name=b"; name="a""#,
+                file("\"; name=b"),
+            ),
+            (
+                r#"form-data; name="a"; filename="c:\\x\.txt""#,
+                file(r"c:\x.txt"),
+            ),
+            // Raw UTF-8 is `obs-text`; a percent escape is kept as sent.
+            ("form-data; name=\"a\"; filename=\"é.txt\"", file("é.txt")),
+            (
+                "form-data; name=\"a\"; filename=\"%22.txt\"",
+                file("%22.txt"),
+            ),
+            // An unknown parameter, `filename*` included, is read past.
+            (
+                "form-data; filename*=UTF-8''x.txt; name=\"a\"; size=3",
+                None,
+            ),
+        ] {
+            assert_eq!(named(value), ("a".to_owned(), file_name), "`{value}`");
+        }
+    }
+
+    /// An empty quoted value is a value: the field is named by the empty
+    /// string, which `FromMultipart` then matches against no declared field.
+    #[test]
+    fn an_empty_quoted_name_is_a_name() {
+        assert_eq!(named("form-data; name=\"\""), (String::new(), None));
+    }
+
+    /// Each value the grammar refuses, or whose field it cannot name.
+    #[test]
+    fn each_refused_spelling_names_no_field() {
+        for value in [
+            "",
+            "form-data",
+            "form-data; filename=\"x\"",
+            // Two of a parameter the codec reads.
+            "form-data; name=a; NAME=b",
+            "form-data; name=a; filename=x; filename=y",
+            // Unterminated, or holding a control character.
+            "form-data; name=\"a",
+            "form-data; name=\"a\\",
+            "form-data; name=\"a\u{1}\"",
+            "form-data; name=\"a\\\u{7f}\"",
+            // Not a token, missing `=` or value, or nothing between values.
+            "form-data; name=a/b",
+            "form-data; name=",
+            "form-data; name",
+            "form-data; =a",
+            "form-data; name=\"a\" x",
+            "form-data name=a",
+        ] {
+            assert!(disposition(value).is_err(), "`{value}` was admitted");
+        }
+    }
+}
+
 /// A form body decodes the encoding its description states.
 ///
 /// No Encoding Object is written, so each property takes the defaults:

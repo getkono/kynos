@@ -42,8 +42,8 @@ pub type Parts = http::request::Parts;
 /// An outgoing response.
 pub type Response = http::Response<Body>;
 
-/// RFC 9110 section 5.6.2 `token`, shared by `cookie` and `assets`.
-#[cfg(any(feature = "cookie", feature = "assets"))]
+/// RFC 9110 section 5.6.2 `token`, shared by `cookie`, `assets` and `multipart`.
+#[cfg(any(feature = "cookie", feature = "assets", feature = "multipart"))]
 pub(crate) fn is_token(text: &str) -> bool {
     !text.is_empty()
         && text
