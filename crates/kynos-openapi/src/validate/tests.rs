@@ -234,6 +234,81 @@ fn a_referenced_callback_is_not_walked_again_from_its_operation() {
     );
 }
 
+/// A callback is refused exactly when it would not read back as itself.
+///
+/// `Callback` writes its Path Items and its extensions into one object and
+/// reads a key beginning `x-` back as an extension, the field pattern
+/// `references/3.1.2.md:4206` gives them — so an item keyed that way returns as
+/// an extension, and the operations under it are gone. `X-hook` pins that the
+/// prefix is matched as the reader matches it: case-sensitively.
+#[test]
+fn a_callback_is_refused_exactly_when_it_does_not_round_trip() {
+    use crate::model::{callback::Callback, reference::RefOr};
+
+    for key in ["{$request.body#/url}", "X-hook", "x-hook"] {
+        let notify = PathItem::new().with_operation(
+            Method::Post,
+            Operation::new("notify").with_responses(ok_responses()),
+        );
+        let mut document = document_with(&[]);
+        document.components.callbacks.insert(
+            "OnData".to_owned(),
+            RefOr::Item(Callback::new().with(key, notify)),
+        );
+
+        let emitted = serde_json::to_value(&document).expect("serializable");
+        let parsed: Document = serde_json::from_value(emitted).expect("parses");
+        let found = errors(&document);
+        assert_eq!(
+            !found.is_empty(),
+            parsed != document,
+            "`{key}`: refused with {found:?}, read back as {:?}",
+            parsed.components.callbacks
+        );
+    }
+}
+
+/// The refusal sits at the offending key, inline on an operation as well as in
+/// `components`, and whether that key holds a Path Item or a `$ref` to one:
+/// either is read back as an extension.
+#[test]
+fn a_callback_keyed_as_an_extension_is_refused_at_its_key() {
+    use crate::model::{
+        callback::Callback,
+        reference::{Ref, RefOr},
+    };
+
+    let mut callback = Callback::new();
+    callback.items.insert(
+        "x-hook".to_owned(),
+        RefOr::Ref(Ref::new("#/components/pathItems/Notify")),
+    );
+    let mut owner = Operation::new("subscribe").with_responses(ok_responses());
+    owner
+        .callbacks
+        .insert("onData".to_owned(), RefOr::Item(callback));
+    let document = document_with(&[(
+        "/subscriptions",
+        PathItem::new().with_operation(Method::Post, owner),
+    )]);
+
+    let found: Vec<(String, SpecError)> = Validator::new(SpecVersion::V3_1)
+        .validate(&document)
+        .into_iter()
+        .filter(|violation| violation.severity == super::Severity::Error)
+        .map(|violation| (violation.location, violation.error))
+        .collect();
+    assert_eq!(
+        found,
+        vec![(
+            "#/paths/~1subscriptions/post/callbacks/onData/x-hook".to_owned(),
+            SpecError::CallbackKeyedAsExtension {
+                expression: "x-hook".to_owned()
+            },
+        )]
+    );
+}
+
 /// An operation with no responses is reported wherever it is written.
 ///
 /// The companion to the case above, and a different rule on purpose: it shows
@@ -1958,6 +2033,7 @@ fn variant_name(error: &SpecError) -> &'static str {
         SpecError::EmptyServerVariableEnum { .. } => "EmptyServerVariableEnum",
         SpecError::ServerVariableDefaultNotInEnum { .. } => "ServerVariableDefaultNotInEnum",
         SpecError::InvalidExtensionName { .. } => "InvalidExtensionName",
+        SpecError::CallbackKeyedAsExtension { .. } => "CallbackKeyedAsExtension",
         SpecError::UncheckedSchema => "UncheckedSchema",
         SpecError::NotAuthoritative => "NotAuthoritative",
         SpecError::OpaqueOperation { .. } => "OpaqueOperation",
@@ -2390,6 +2466,16 @@ fn ledger_opacity() -> Vec<(&'static str, SpecVersion, Document)> {
         document.extensions.insert(
             crate::annotation::OPAQUE_ROUTES_ANNOTATION,
             serde_json::json!("nonsense"),
+        );
+        document
+    });
+    push("CallbackKeyedAsExtension", {
+        let mut document = document_with(&[]);
+        document.components.callbacks.insert(
+            "OnData".to_owned(),
+            crate::RefOr::Item(
+                crate::model::callback::Callback::new().with("x-hook", get(operation())),
+            ),
         );
         document
     });
