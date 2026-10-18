@@ -3178,7 +3178,6 @@ fn variant_name(error: &SpecError) -> &'static str {
         SpecError::AuthorityNotStamped => "AuthorityNotStamped",
         SpecError::StaleAuthorityStamp => "StaleAuthorityStamp",
         SpecError::MalformedAnnotation { .. } => "MalformedAnnotation",
-        SpecError::EmptyDocument => "EmptyDocument",
         SpecError::RequiresV3_2 { .. } => "RequiresV3_2",
     }
 }
@@ -3189,13 +3188,6 @@ fn variant_name(error: &SpecError) -> &'static str {
 /// what keeps [`every_variant_has_a_case`] a statement about this validator
 /// rather than about the enum.
 const RAISED_ELSEWHERE: &[&str] = &[
-    // Prevented by construction rather than reported: `Document::paths` is
-    // always serialized, so every emitted document carries one of the three
-    // fields the rule asks for. The variant stays because a consumer
-    // validating a description Kynos did not write still needs to name the
-    // failure, and because `paths` being absent and `paths` being present but
-    // empty are the same value here -- only the wire tells them apart.
-    "EmptyDocument",
     // Prevented by the model rather than reported: a `PathItem` has one slot
     // per method, so no document holds a second operation for one. `kynos`'s
     // `Router::describe` raises it when two mounts claim the same slot, and
