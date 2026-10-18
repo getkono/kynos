@@ -31,26 +31,26 @@
 //! | --- | --- |
 //! | `bool` | `boolean` |
 //! | `String` | `string` |
-//! | `char` | `string`/`char`, bounded to one character |
+//! | `char` | `string`/`char`, with `minLength` and `maxLength` of 1 |
 //! | `i8`–`i32` | `integer`/`int8`–`int32`, with the type's exact range |
 //! | `u8`–`u32` | `integer`/`uint8`–`uint32`, with the type's exact range |
 //! | `i64`, `u64` | `integer`/`int64`, `uint64`; of their bounds only `u64`'s `minimum: 0` survives an `f64`, so it is the only one stated |
 //! | `f32`, `f64` | `number`/`float`, `number`/`double` |
 //! | `Option<T>` | `T`, widened to admit `null` |
 //! | `Box<T>`, `Arc<T>` | `T`, under `T`'s own component name |
-//! | `Vec<T>`, `VecDeque<T>`, `[T]` | `array` |
+//! | `Vec<T>`, `VecDeque<T>`, `[T]` | `array` with `items` |
 //! | `[T; N]` | `array` of exactly `N` |
 //! | `HashSet<T>`, `BTreeSet<T>` | `array` with `uniqueItems` |
 //! | `HashMap<K, V>`, `BTreeMap<K, V>` | `object`; `K: MapKey` supplies `propertyNames` |
-//! | tuples up to twelve | `array` with `prefixItems`, closed |
+//! | tuples up to twelve | `array` with `prefixItems`, closed by `items: false` and bounded by `minItems` |
 //! | `()` | `null` |
-//! | `Ipv4Addr`, `Ipv6Addr`, `IpAddr` | `string`/`ipv4`, `string`/`ipv6`, either |
+//! | `Ipv4Addr`, `Ipv6Addr`, `IpAddr` | `string`/`ipv4`, `string`/`ipv6`, `anyOf` the two |
 //!
 //! Each `format` above is either defined by OpenAPI itself or registered in the
 //! OAI Format Registry, where support is optional — so every constraint a format
 //! implies is also emitted as a keyword, and a tool that ignores the format
-//! loses nothing. `docs/schema.md` is normative for the whole mapping and
-//! records where each format comes from.
+//! loses nothing. These tables are the mapping; `docs/schema.md` records where
+//! each format comes from and why each row reads as it does.
 //!
 //! # Behind a feature flag
 //!
