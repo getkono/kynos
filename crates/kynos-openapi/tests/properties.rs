@@ -7,7 +7,9 @@
 
 use kynos_openapi::{
     Document, Info, Method, Operation, PathItem, PathTemplate, RefOr, Response, Responses,
-    Severity, SpecError, SpecVersion, Violation, emit::downgrade::three_two_only_constructs,
+    Severity, SpecError, SpecVersion, Violation,
+    annotation::{OPAQUE_OPERATION_ANNOTATION, OPAQUE_ROUTES_ANNOTATION},
+    emit::downgrade::three_two_only_constructs,
     validate::Validator,
 };
 use proptest::prelude::*;
@@ -109,6 +111,61 @@ fn unchecked_pointers(document: &Document) -> Vec<String> {
     found
 }
 
+/// Every operation the emitted JSON marks opaque, as sorted pointers, each
+/// with the reasons its marker records or `None` where the marker is not in
+/// the shape Kynos emits.
+///
+/// Read off the wire, as `unchecked_pointers` is, so the oracle shares no
+/// walk with the validator or with `Document::is_authoritative`: the
+/// generators plant `x-kynos-opaque` on operations and nowhere else, so every
+/// object carrying it is one. A marker is well formed when it is an object
+/// whose `reasons` is an array of strings and whose `note`, if any, is a
+/// string.
+fn opaque_markers(document: &Document) -> Vec<(String, Option<Vec<String>>)> {
+    fn read(marker: &serde_json::Value) -> Option<Vec<String>> {
+        let marker = marker.as_object()?;
+        if marker.get("note").is_some_and(|note| !note.is_string()) {
+            return None;
+        }
+        marker
+            .get("reasons")?
+            .as_array()?
+            .iter()
+            .map(|reason| reason.as_str().map(str::to_owned))
+            .collect()
+    }
+
+    fn walk(
+        value: &serde_json::Value,
+        pointer: &str,
+        found: &mut Vec<(String, Option<Vec<String>>)>,
+    ) {
+        match value {
+            serde_json::Value::Object(map) => {
+                if let Some(marker) = map.get(OPAQUE_OPERATION_ANNOTATION) {
+                    found.push((pointer.to_owned(), read(marker)));
+                }
+                for (key, child) in map {
+                    let token = key.replace('~', "~0").replace('/', "~1");
+                    walk(child, &format!("{pointer}/{token}"), found);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for (index, child) in items.iter().enumerate() {
+                    walk(child, &format!("{pointer}/{index}"), found);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let json = serde_json::to_value(document).expect("every generated value is representable");
+    let mut found = Vec::new();
+    walk(&json, "#", &mut found);
+    found.sort();
+    found
+}
+
 // --- Properties ----------------------------------------------------------
 
 proptest! {
@@ -176,6 +233,51 @@ proptest! {
             reported.sort();
             prop_assert_eq!(&reported, &expected);
         }
+    }
+
+    /// Every opaque operation a document holds is reported once, at its own
+    /// pointer, whatever path item, webhook, component or callback it sits
+    /// in: as a warning carrying its reasons, or as an error where its marker
+    /// is unreadable. The document is authoritative exactly when no operation
+    /// is marked and no route is recorded.
+    #[test]
+    fn every_opaque_operation_is_reported_once_where_it_sits(document in arb_document()) {
+        let markers = opaque_markers(&document);
+        let expected: Vec<_> = markers
+            .iter()
+            .map(|(pointer, reasons)| {
+                let severity = if reasons.is_some() { Severity::Warning } else { Severity::Error };
+                (pointer.clone(), severity, reasons.clone())
+            })
+            .collect();
+        for &version in VERSIONS {
+            let mut reported: Vec<_> = Validator::new(version)
+                .validate(&document)
+                .into_iter()
+                .filter_map(|violation| match violation.error {
+                    SpecError::OpaqueOperation { reasons } => Some((
+                        violation.location,
+                        violation.severity,
+                        Some(reasons.iter().map(|reason| reason.as_str().to_owned()).collect()),
+                    )),
+                    SpecError::MalformedAnnotation { name, .. }
+                        if name == OPAQUE_OPERATION_ANNOTATION =>
+                    {
+                        Some((violation.location, violation.severity, None))
+                    }
+                    _ => None,
+                })
+                .collect();
+            reported.sort();
+            prop_assert_eq!(&reported, &expected);
+        }
+
+        // `x-kynos-opaque-routes` reads as no route only when absent or empty.
+        let no_routes = document
+            .extensions
+            .get(OPAQUE_ROUTES_ANNOTATION)
+            .is_none_or(|routes| *routes == serde_json::json!([]));
+        prop_assert_eq!(document.is_authoritative(), markers.is_empty() && no_routes);
     }
 
     /// A document the validator accepts is one the model reads back, whatever
