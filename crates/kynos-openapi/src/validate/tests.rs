@@ -2289,9 +2289,71 @@ fn a_clean_document_makes_no_opacity_noise() {
         v.error,
         SpecError::NotAuthoritative
             | SpecError::AuthorityNotStamped
+            | SpecError::StaleAuthorityStamp
             | SpecError::OpaqueOperation { .. }
             | SpecError::OpaqueRoute { .. }
     )));
+}
+
+/// The stamp is true exactly when something is opaque, so one left on a
+/// document with nothing opaque is stale. It understates the description,
+/// which is worth saying but not worth failing over.
+#[test]
+fn a_stale_authority_stamp_on_an_authoritative_document_is_a_warning() {
+    let item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("health").with_responses(ok_responses()),
+    );
+    let mut document = document_with(&[("/health", item)]);
+    document
+        .extensions
+        .insert(crate::annotation::NOT_AUTHORITATIVE_ANNOTATION, true);
+
+    assert!(errors(&document).is_empty());
+    let opacity: Vec<_> = violations(&document)
+        .into_iter()
+        .filter(|v| {
+            matches!(
+                v.error,
+                SpecError::NotAuthoritative | SpecError::StaleAuthorityStamp
+            )
+        })
+        .map(|v| (v.severity, v.location, v.error))
+        .collect();
+    assert_eq!(
+        opacity,
+        vec![(
+            super::Severity::Warning,
+            "#".to_owned(),
+            SpecError::StaleAuthorityStamp
+        )]
+    );
+
+    document.restamp_authority();
+    assert!(
+        !violations(&document)
+            .iter()
+            .any(|v| matches!(v.error, SpecError::StaleAuthorityStamp))
+    );
+}
+
+/// Only a stamp claiming non-authority is stale; `false` claims nothing false.
+#[test]
+fn a_false_authority_stamp_on_an_authoritative_document_is_not_reported() {
+    let item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("health").with_responses(ok_responses()),
+    );
+    let mut document = document_with(&[("/health", item)]);
+    document
+        .extensions
+        .insert(crate::annotation::NOT_AUTHORITATIVE_ANNOTATION, false);
+
+    assert!(
+        !violations(&document)
+            .iter()
+            .any(|v| matches!(v.error, SpecError::StaleAuthorityStamp))
+    );
 }
 
 /// A description read from somewhere else never passes through
@@ -2798,6 +2860,7 @@ fn variant_name(error: &SpecError) -> &'static str {
         SpecError::RouteConflict { .. } => "RouteConflict",
         SpecError::InvalidRoutePattern { .. } => "InvalidRoutePattern",
         SpecError::AuthorityNotStamped => "AuthorityNotStamped",
+        SpecError::StaleAuthorityStamp => "StaleAuthorityStamp",
         SpecError::MalformedAnnotation { .. } => "MalformedAnnotation",
         SpecError::EmptyDocument => "EmptyDocument",
         SpecError::RequiresV3_2 { .. } => "RequiresV3_2",
@@ -3241,6 +3304,13 @@ fn ledger_opacity() -> Vec<(&'static str, SpecVersion, Document)> {
             .extensions
             .0
             .shift_remove(crate::annotation::NOT_AUTHORITATIVE_ANNOTATION);
+        document
+    });
+    push("StaleAuthorityStamp", {
+        let mut document = document_with(&[("/users", get(operation()))]);
+        document
+            .extensions
+            .insert(crate::annotation::NOT_AUTHORITATIVE_ANNOTATION, true);
         document
     });
     push("OpaqueRoute", {

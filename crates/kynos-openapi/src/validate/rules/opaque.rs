@@ -48,15 +48,17 @@ pub(in crate::validate) fn check_opaque(document: &Document, violations: &mut Ve
 
     check_routes(document, violations);
 
-    if !document.is_authoritative() {
-        if document.extensions.get(NOT_AUTHORITATIVE_ANNOTATION) == Some(&true.into()) {
-            // Honestly incomplete: worth saying, not worth failing over.
-            violations.push(Violation::warning("#", SpecError::NotAuthoritative));
-        } else {
-            // A missing root stamp is the graver claim; reporting both would
-            // bury it.
-            violations.push(Violation::error("#", SpecError::AuthorityNotStamped));
-        }
+    let stamped = document.extensions.get(NOT_AUTHORITATIVE_ANNOTATION) == Some(&true.into());
+    match (document.is_authoritative(), stamped) {
+        (true, false) => {}
+        // Stale: it understates the description, so it is not worth failing
+        // over either.
+        (true, true) => violations.push(Violation::warning("#", SpecError::StaleAuthorityStamp)),
+        // Honestly incomplete: worth saying, not worth failing over.
+        (false, true) => violations.push(Violation::warning("#", SpecError::NotAuthoritative)),
+        // A missing root stamp is the graver claim; reporting both would bury
+        // it.
+        (false, false) => violations.push(Violation::error("#", SpecError::AuthorityNotStamped)),
     }
 }
 
