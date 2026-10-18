@@ -5,8 +5,9 @@
 //! generators both files draw on are in `support/`.
 
 use kynos_openapi::{
-    Document, Severity, SpecError, SpecVersion, Violation,
-    emit::downgrade::three_two_only_constructs, validate::Validator,
+    Document, Info, Method, Operation, PathItem, PathTemplate, RefOr, Response, Responses,
+    Severity, SpecError, SpecVersion, Violation, emit::downgrade::three_two_only_constructs,
+    validate::Validator,
 };
 use proptest::prelude::*;
 
@@ -173,6 +174,40 @@ proptest! {
                 .collect();
             reported.sort();
             prop_assert_eq!(&reported, &expected);
+        }
+    }
+
+    /// A document the validator accepts is one the model reads back, whatever
+    /// key its responses are written under: `parse ∘ emit = id` on every
+    /// accepted response key, and a refusal on every other.
+    ///
+    /// `arb_responses` draws only legal keys so the round trip above holds;
+    /// this draws the codes `Responses::with` takes and the strings the public
+    /// map holds.
+    #[test]
+    fn a_response_key_is_accepted_exactly_when_it_reads_back(
+        key in prop_oneof![
+            any::<u16>().prop_map(|status| status.to_string()),
+            "[0-9xX+-]{0,4}",
+            Just("default".to_owned()),
+            Just("x-a".to_owned()),
+        ]
+    ) {
+        let mut responses = Responses::new();
+        responses.responses.insert(key, RefOr::Item(Response::new("ok")));
+        let mut document = Document::new(SpecVersion::V3_1, Info::new("Test", "1.0.0"));
+        document.paths.insert(
+            &PathTemplate::parse("/users").expect("a legal template"),
+            PathItem::new().with_operation(
+                Method::Get,
+                Operation::new("listUsers").with_responses(responses),
+            ),
+        );
+
+        let reads_back = serde_json::from_str::<Document>(&to_json(&document))
+            .is_ok_and(|parsed| parsed == document);
+        for &version in VERSIONS {
+            prop_assert_eq!(document.validate(version).is_ok(), reads_back);
         }
     }
 

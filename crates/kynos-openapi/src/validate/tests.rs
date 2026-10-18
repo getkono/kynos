@@ -309,6 +309,43 @@ fn a_callback_keyed_as_an_extension_is_refused_at_its_key() {
     );
 }
 
+/// A response key is refused exactly when the model would not read it back.
+///
+/// `Responses::with` takes any `u16` and `responses` is a public map, but the
+/// reader admits only `[1-5]XX` and three digits beginning `1`-`5`, so `600`
+/// and `42` validated cleanly and then failed to parse. `default` and `x-a`
+/// parse, but back as the fallback response and an extension, not as the key
+/// that was written.
+#[test]
+fn a_response_key_is_refused_exactly_when_it_does_not_round_trip() {
+    for key in [
+        "100", "200", "599", "2XX", "600", "42", "099", "2xx", "default", "x-a",
+    ] {
+        let mut responses = Responses::new();
+        responses
+            .responses
+            .insert(key.to_owned(), crate::RefOr::Item(Response::new("ok")));
+        let document = document_with(&[(
+            "/users",
+            PathItem::new().with_operation(
+                Method::Get,
+                Operation::new("listUsers").with_responses(responses),
+            ),
+        )]);
+
+        let reads_back = serde_json::to_value(&document)
+            .ok()
+            .and_then(|emitted| serde_json::from_value::<Document>(emitted).ok())
+            .is_some_and(|parsed| parsed == document);
+        let found = errors(&document);
+        assert_eq!(
+            !found.is_empty(),
+            !reads_back,
+            "`{key}`: refused with {found:?}, read back: {reads_back}"
+        );
+    }
+}
+
 /// An operation with no responses is reported wherever it is written.
 ///
 /// The companion to the case above, and a different rule on purpose: it shows
