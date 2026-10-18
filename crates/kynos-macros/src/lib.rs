@@ -663,7 +663,10 @@ pub fn derive_reply(item: TokenStream) -> TokenStream {
 /// `Display` writes the name serde writes, `awaiting_metadata`, and `FromStr`
 /// reads every name serde reads, aliases included, which is the schema's
 /// `enum`; any other text is refused with `kynos::schema::UnknownVariant`,
-/// listing them. Names are matched exactly, as serde matches them.
+/// listing them. Names are matched exactly, as serde matches them. A
+/// `#[serde(field_identifier)]` or `#[serde(variant_identifier)]` enum, which
+/// serde never writes, `Display`s each variant under the name serde reads it
+/// by, the deserialize side of a split `rename` or `rename_all`.
 ///
 /// Every serde attribute the `Schema` derive refuses is refused here too, so
 /// the names a decoder reads are never ones that derive would not publish.
