@@ -216,4 +216,37 @@ mod assertions {
         )
         .assert_part(0, 1, 4);
     }
+
+    /// A span ending before it starts names no octets (RFC 9110 section 14.4
+    /// calls such a field invalid), and is refused as that rather than
+    /// overflowing the length subtraction, which panics in a debug build and
+    /// wraps in a release one, even against a response whose field repeats it.
+    #[test]
+    #[should_panic(expected = "`bytes 5-2` names no octets: its last position precedes its first")]
+    fn assert_part_refuses_a_span_that_ends_before_it_starts() {
+        received(
+            StatusCode::PARTIAL_CONTENT,
+            &[("content-range", "bytes 5-2/10")],
+            b"",
+        )
+        .assert_part(5, 2, 10);
+    }
+
+    /// The widest span `u64` can write is one octet more than `u64` counts,
+    /// and is compared rather than overflowed.
+    #[test]
+    #[should_panic(
+        expected = "`Content-Range` names 18446744073709551616 octet(s) and the body carries 0"
+    )]
+    fn assert_part_compares_the_widest_span_without_overflowing() {
+        received(
+            StatusCode::PARTIAL_CONTENT,
+            &[(
+                "content-range",
+                "bytes 0-18446744073709551615/18446744073709551615",
+            )],
+            b"",
+        )
+        .assert_part(0, u64::MAX, u64::MAX);
+    }
 }
