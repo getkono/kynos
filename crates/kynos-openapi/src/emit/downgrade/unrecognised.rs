@@ -79,6 +79,12 @@ impl<'a> At<'a> {
         }
     }
 
+    fn pointer(&self) -> String {
+        let mut pointer = String::new();
+        self.render(&mut pointer);
+        pointer
+    }
+
     fn render(&self, pointer: &mut String) {
         if let Some(parent) = self.parent {
             parent.render(pointer);
@@ -94,14 +100,6 @@ impl<'a> At<'a> {
                 let _ = write!(pointer, "/{index}");
             }
         }
-    }
-}
-
-impl At<'_> {
-    fn pointer(&self) -> String {
-        let mut pointer = String::new();
-        self.render(&mut pointer);
-        pointer
     }
 }
 
