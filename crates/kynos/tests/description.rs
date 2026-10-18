@@ -38,8 +38,8 @@
 //! on the feature would still produce a document that validates.
 //!
 //! The seventh is what a router declares about itself rather than its
-//! operations: its servers, and which router's `info` and `externalDocs` a nest
-//! publishes.
+//! operations: its servers, which router's `info` and `externalDocs` a nest
+//! publishes, and which policies a nested router may not set.
 //!
 //! The eighth is what an interceptor's `Reads` answers with when it cannot be
 //! decoded. The 400 is sent before the interceptor runs, so nothing in its
@@ -2090,6 +2090,63 @@ fn a_nested_routers_external_docs_are_used_only_when_the_outer_declares_none() {
         external_docs(Router::<()>::new().mount(kynos::routes![alpha])),
         None
     );
+}
+
+/// The four application-wide policies are the root router's alone, so an
+/// absorbed router that sets one is refused rather than silently overridden,
+/// through `nest` and `merge` alike. Setting one to its default counts too:
+/// the root's own value would replace it just the same.
+#[test]
+fn a_policy_set_on_a_nested_or_merged_router_is_a_violation() {
+    use kynos::{
+        http::forwarded::{ProxyHeader, TrustedProxies},
+        openapi::{Severity, SpecError, Violation},
+        router::policy::{FallbackPolicy, TrailingSlashPolicy},
+    };
+
+    type Set = fn(Router<()>) -> Router<()>;
+    let policies: [(&str, Set); 4] = [
+        ("not_found", |router| {
+            router.not_found(FallbackPolicy::Empty)
+        }),
+        ("method_not_allowed", |router| {
+            router.method_not_allowed(FallbackPolicy::Problem)
+        }),
+        ("trailing_slashes", |router| {
+            router.trailing_slashes(TrailingSlashPolicy::Redirect)
+        }),
+        ("trusted_proxies", |router| {
+            router.trusted_proxies(TrustedProxies::hops(ProxyHeader::XForwarded, 1))
+        }),
+    ];
+    let refused = |policy| Violation {
+        location: "#".to_owned(),
+        severity: Severity::Error,
+        error: SpecError::NestedRouterPolicy { policy },
+    };
+    let violations = |router: Router<()>| router.validate().expect("a describable router");
+
+    for (policy, set) in policies {
+        let inner = || set(Router::<()>::new().mount(kynos::routes![beta]));
+
+        assert_eq!(
+            violations(Router::<()>::new().nest("/v2", inner())),
+            [refused(policy)],
+            "`{policy}` through `nest`"
+        );
+        assert_eq!(
+            violations(Router::<()>::new().merge(inner())),
+            [refused(policy)],
+            "`{policy}` through `merge`"
+        );
+        assert_eq!(
+            violations(set(
+                Router::<()>::new().nest("/v2", Router::<()>::new().mount(kynos::routes![beta]))
+            )),
+            [],
+            "`{policy}` on the root router"
+        );
+    }
 }
 
 // --- What an interceptor's `Reads` answers with -----------------------------
