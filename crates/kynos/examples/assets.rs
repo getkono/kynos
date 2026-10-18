@@ -18,7 +18,7 @@
 //! `unchecked`, recorded at the document root where no client generator can act
 //! on it.
 //!
-//! Six things are worth noticing:
+//! Worth noticing:
 //!
 //! * **The embedded half is fully described.** Run this and read the document:
 //!   `/static/index.html` and `/static/css/app.css` are `paths` keys with their

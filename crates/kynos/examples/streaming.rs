@@ -8,7 +8,7 @@
 //!   --features openapi32,macros,server,http1,json
 //! ```
 //!
-//! Four things are worth noticing:
+//! Worth noticing:
 //!
 //! * **3.1 cannot describe a stream, so the whole subtree is 3.2-only.** What
 //!   3.2 adds is `itemSchema`: a way to say what one *item* of a sequential
@@ -39,8 +39,8 @@
 //!   the responding half is implemented there so a return type reads as a
 //!   response, and here it is a return type *and* an argument.
 //!
-//! Server-Sent Events are the fourth sequential media type, and the only one
-//! with protocol rules of its own — event names, resumption, reconnection
+//! Server-Sent Events are a sequential media type too, and the only one with
+//! protocol rules of its own — event names, resumption, reconnection
 //! advice. [`sse.rs`](sse.rs) covers them.
 //!
 //! `QueryString<T, M>` is the other 3.2-only construct here: a parameter whose
