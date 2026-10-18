@@ -317,7 +317,7 @@ mod a_part_disposition_is_read_quote_aware {
         error::rejection::BodyRejection,
         extract::{
             FromRequest,
-            body::multipart::{FromMultipart, MultipartForm, Part},
+            body::multipart::{Disposition, FromMultipart, MultipartForm, Part, disposition},
         },
         http::{HeaderValue, Request, StatusCode, body::Body, header},
         schema::{Schema, registry::Registry},
@@ -389,6 +389,85 @@ mod a_part_disposition_is_read_quote_aware {
                 matches!(rejection, BodyRejection::Syntax { .. }),
                 "`{disposition}`: {rejection:?}"
             );
+        }
+    }
+
+    /// The field a well-formed disposition names, as `(name, file_name)`.
+    fn named(value: &str) -> (String, Option<String>) {
+        let Disposition { name, file_name } =
+            disposition(value).unwrap_or_else(|detail| panic!("`{value}`: {detail}"));
+        (name, file_name)
+    }
+
+    /// Each spelling the grammar admits names field `a`, with the file name
+    /// it carries.
+    #[test]
+    fn each_admitted_spelling_is_read() {
+        let file = |name: &str| Some(name.to_owned());
+        for (value, file_name) in [
+            // A token value, and the type and parameter names in any case.
+            ("form-data; name=a", None),
+            ("Form-Data; NAME=\"a\"", None),
+            // Whitespace around `;` and `=`, and empty parameters.
+            ("form-data ;\tname = \"a\" ;", None),
+            ("form-data;;name=\"a\";;", None),
+            // Separators, quotes and backslashes inside a quoted value.
+            (r#"form-data; name="a"; filename="x;y=z""#, file("x;y=z")),
+            (
+                r#"form-data; filename="\"; name=b"; name="a""#,
+                file("\"; name=b"),
+            ),
+            (
+                r#"form-data; name="a"; filename="c:\\x\.txt""#,
+                file(r"c:\x.txt"),
+            ),
+            // Raw UTF-8 is `obs-text`; a percent escape is kept as sent.
+            ("form-data; name=\"a\"; filename=\"é.txt\"", file("é.txt")),
+            (
+                "form-data; name=\"a\"; filename=\"%22.txt\"",
+                file("%22.txt"),
+            ),
+            // An unknown parameter, `filename*` included, is read past.
+            (
+                "form-data; filename*=UTF-8''x.txt; name=\"a\"; size=3",
+                None,
+            ),
+        ] {
+            assert_eq!(named(value), ("a".to_owned(), file_name), "`{value}`");
+        }
+    }
+
+    /// An empty quoted value is a value: the field is named by the empty
+    /// string, which `FromMultipart` then matches against no declared field.
+    #[test]
+    fn an_empty_quoted_name_is_a_name() {
+        assert_eq!(named("form-data; name=\"\""), (String::new(), None));
+    }
+
+    /// Each value the grammar refuses, or whose field it cannot name.
+    #[test]
+    fn each_refused_spelling_names_no_field() {
+        for value in [
+            "",
+            "form-data",
+            "form-data; filename=\"x\"",
+            // Two of a parameter the codec reads.
+            "form-data; name=a; NAME=b",
+            "form-data; name=a; filename=x; filename=y",
+            // Unterminated, or holding a control character.
+            "form-data; name=\"a",
+            "form-data; name=\"a\\",
+            "form-data; name=\"a\u{1}\"",
+            "form-data; name=\"a\\\u{7f}\"",
+            // Not a token, missing `=` or value, or nothing between values.
+            "form-data; name=a/b",
+            "form-data; name=",
+            "form-data; name",
+            "form-data; =a",
+            "form-data; name=\"a\" x",
+            "form-data name=a",
+        ] {
+            assert!(disposition(value).is_err(), "`{value}` was admitted");
         }
     }
 }
