@@ -40,10 +40,7 @@ async fn a_group_that_declares_a_decoder_sees_every_cookie_field() {
         .await
         .expect("decoded");
 
-    assert_eq!(
-        recorded,
-        Recorded(vec!["a=1".to_owned(), "b=2".to_owned()])
-    );
+    assert_eq!(recorded, Recorded(vec!["a=1".to_owned(), "b=2".to_owned()]));
 }
 
 /// The description names every declared cookie and marks none required: a
