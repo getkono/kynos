@@ -214,8 +214,9 @@ impl<T> Accepted<T> {
 /// A redirect with a status fixed at compile time.
 ///
 /// `CODE` must be one of 301, 302, 303, 307 or 308; anything else fails to
-/// compile. That rules out the most common redirect bug, which is using 302
-/// where 307 was meant and silently changing the method on replay.
+/// compile. That rules out a redirect answered with a code that is not one,
+/// such as 304, which carries no `Location` to follow. Choosing among the five
+/// stays the caller's: 302 where 307 was meant still compiles.
 ///
 /// ```compile_fail
 /// fn response<T: kynos::response::IntoResponse>(value: T) { drop(value); }
