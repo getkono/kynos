@@ -3787,6 +3787,44 @@ fn an_identifier_enums_shadowed_variant_is_described_once() {
     );
 }
 
+#[derive(Debug, PartialEq, Schema, ParamValue, serde::Deserialize)]
+#[serde(
+    field_identifier,
+    rename_all(serialize = "UPPERCASE", deserialize = "kebab-case")
+)]
+enum ReadKey {
+    #[serde(rename(serialize = "written", deserialize = "read"))]
+    Renamed,
+    CreatedAt,
+}
+
+/// An identifier enum's split `rename` and container `rename_all` name each
+/// variant by the deserialize side, the one serde reads, since serde never
+/// writes the enum; a derived `ParamValue` writes and reads that name too.
+#[test]
+fn an_identifier_enums_split_rename_is_described_under_the_side_serde_reads() {
+    assert_eq!(
+        emitted::<ReadKey>(),
+        serde_json::json!({"type": "string", "enum": ["read", "created-at"]})
+    );
+    assert_eq!(
+        serde_json::from_str::<ReadKey>(r#""read""#).ok(),
+        Some(ReadKey::Renamed)
+    );
+    assert_eq!(
+        serde_json::from_str::<ReadKey>(r#""created-at""#).ok(),
+        Some(ReadKey::CreatedAt)
+    );
+    assert!(serde_json::from_str::<ReadKey>(r#""written""#).is_err());
+    assert!(serde_json::from_str::<ReadKey>(r#""CREATEDAT""#).is_err());
+
+    assert_eq!(ReadKey::Renamed.to_string(), "read");
+    assert_eq!(
+        "created-at".parse::<ReadKey>().ok(),
+        Some(ReadKey::CreatedAt)
+    );
+}
+
 // --- What a derived error response declares ---------------------------------
 //
 // A problem body carries the type URI the declaration named, so the response

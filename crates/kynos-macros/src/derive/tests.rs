@@ -2679,6 +2679,72 @@ mod schema {
         }
     }
 
+    /// serde only reads an identifier enum, so a split `rename` or container
+    /// `rename_all` gives each variant the one name it is read under: the
+    /// deserialize side, which the description lists in place of the serialize
+    /// side serde never writes.
+    #[test]
+    fn an_identifier_enums_split_rename_is_named_by_the_side_serde_reads() {
+        for (declaration, read, unwritten) in [
+            (
+                quote::quote!(
+                    #[serde(field_identifier)]
+                    enum Key {
+                        #[serde(rename(serialize = "written", deserialize = "read"))]
+                        A,
+                    }
+                ),
+                "\"read\"",
+                "\"written\"",
+            ),
+            (
+                quote::quote!(
+                    #[serde(variant_identifier)]
+                    enum Kind {
+                        #[serde(rename(deserialize = "read"))]
+                        Web,
+                    }
+                ),
+                "\"read\"",
+                "\"Web\"",
+            ),
+            (
+                quote::quote!(
+                    #[serde(
+                        field_identifier,
+                        rename_all(serialize = "UPPERCASE", deserialize = "kebab-case")
+                    )]
+                    enum Key {
+                        CreatedAt,
+                    }
+                ),
+                "\"created-at\"",
+                "\"CREATEDAT\"",
+            ),
+            (
+                quote::quote!(
+                    #[serde(rename_all(deserialize = "snake_case"))]
+                    #[serde(variant_identifier)]
+                    enum Kind {
+                        CreatedAt,
+                    }
+                ),
+                "\"created_at\"",
+                "\"CreatedAt\"",
+            ),
+        ] {
+            let input: DeriveInput = syn::parse2(declaration).expect("the case itself must parse");
+            let expansion = match expand_inner(&input) {
+                Ok(expansion) => expansion.to_string(),
+                Err(error) => panic!("an identifier enum's split rename must expand: {error}"),
+            };
+            assert!(
+                expansion.contains(read) && !expansion.contains(unwritten),
+                "an identifier enum must name its variant {read}, never {unwritten}: {expansion}"
+            );
+        }
+    }
+
     /// `skip_serializing_if` is accepted wherever serde may leave the field out
     /// in both directions, or never reads it at all.
     ///
