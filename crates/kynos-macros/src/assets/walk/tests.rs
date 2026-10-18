@@ -116,6 +116,128 @@ fn a_coding_without_a_base_is_a_file_of_its_own() {
     assert!(folded[0].encodings.is_empty());
 }
 
+/// What one fold must produce: each resource in order, with the file each of
+/// its codings came from, in order.
+type Shape = &'static [(&'static str, &'static [(&'static str, &'static str)])];
+
+/// The fold, pinned case by case: which file each input became, and in which
+/// order, compared whole rather than by membership.
+///
+/// Each row's input is out of order on purpose, so a row passes only where the
+/// fold sorted it.
+#[test]
+fn each_fold_produces_exactly_its_shape() {
+    let rows: &[(&str, &[&str], Shape)] = &[
+        (
+            "resources come out in path order, nested paths among them",
+            &["nested/b.css", "c.map", "a.txt"],
+            &[("a.txt", &[]), ("c.map", &[]), ("nested/b.css", &[])],
+        ),
+        (
+            "byte order, so an upper-case name sorts first",
+            &["b.txt", "B.txt", "a/z.txt", "a.txt"],
+            &[
+                ("B.txt", &[]),
+                ("a.txt", &[]),
+                ("a/z.txt", &[]),
+                ("b.txt", &[]),
+            ],
+        ),
+        (
+            "each coding attaches to its own base and to no other",
+            &["b.js.gz", "a.js.br", "b.js", "a.js"],
+            &[
+                ("a.js", &[("br", "a.js.br")]),
+                ("b.js", &[("gzip", "b.js.gz")]),
+            ],
+        ),
+        (
+            "a coding in a directory attaches to the base beside it, not to a \
+             same-named file elsewhere",
+            &["app.js", "nested/app.js.gz", "nested/app.js"],
+            &[
+                ("app.js", &[]),
+                ("nested/app.js", &[("gzip", "nested/app.js.gz")]),
+            ],
+        ),
+        (
+            "a base with no extension takes its codings too",
+            &["LICENSE.zst", "LICENSE"],
+            &[("LICENSE", &[("zstd", "LICENSE.zst")])],
+        ),
+        (
+            "codings arrive br, gzip, zstd whatever order the walk found them in",
+            &["app.js.zst", "app.js.br", "app.js", "app.js.gz"],
+            &[(
+                "app.js",
+                &[
+                    ("br", "app.js.br"),
+                    ("gzip", "app.js.gz"),
+                    ("zstd", "app.js.zst"),
+                ],
+            )],
+        ),
+        (
+            "a coding of a folded coding stays a resource, in its own place",
+            &["app.js.br.gz", "app.js.br", "app.js", "app.jsx"],
+            &[
+                ("app.js", &[("br", "app.js.br")]),
+                ("app.js.br.gz", &[]),
+                ("app.jsx", &[]),
+            ],
+        ),
+        (
+            "a coding whose base is itself a coding of nothing folds into it",
+            &["archive.tar.gz.br", "archive.tar.gz"],
+            &[("archive.tar.gz", &[("br", "archive.tar.gz.br")])],
+        ),
+        (
+            "a suffix that is not a stored coding is part of the name",
+            &["app.js.bz2", "app.js"],
+            &[("app.js", &[]), ("app.js.bz2", &[])],
+        ),
+    ];
+
+    for (description, paths, expected) in rows {
+        let folded = fold(paths);
+        let shape: Vec<(&str, Vec<(&str, &str)>)> = folded
+            .iter()
+            .map(|file| {
+                (
+                    file.path.as_str(),
+                    file.encodings
+                        .iter()
+                        .map(|encoded| {
+                            let from = encoded
+                                .absolute
+                                .strip_prefix("/root/")
+                                .expect("`found` roots every file");
+                            (encoded.coding, from)
+                        })
+                        .collect(),
+                )
+            })
+            .collect();
+        let expected: Vec<(&str, Vec<(&str, &str)>)> = expected
+            .iter()
+            .map(|(path, codings)| (*path, codings.to_vec()))
+            .collect();
+        assert_eq!(shape, expected, "{description}");
+
+        // Each file keeps its own validator, whichever slot it landed in.
+        for file in &folded {
+            assert_eq!(file.etag, format!("\"{}\"", file.path), "{description}");
+            for encoded in &file.encodings {
+                assert_eq!(
+                    encoded.etag,
+                    format!("\"{}\"", &encoded.absolute["/root/".len()..]),
+                    "{description}"
+                );
+            }
+        }
+    }
+}
+
 /// Several codings of one file arrive in the order `preferred` offers them.
 #[test]
 fn the_codings_of_one_file_are_ordered_smallest_first() {

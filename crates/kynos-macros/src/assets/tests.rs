@@ -15,6 +15,15 @@ fn expand(tokens: proc_macro2::TokenStream) -> syn::Result<String> {
     expand_inner(&args).map(|expanded| expanded.to_string())
 }
 
+/// The paths an expansion serves, in the order it lists them.
+fn served(expanded: &str) -> Vec<&str> {
+    expanded
+        .split(":: kynos :: router :: assets :: Asset :: embedded")
+        .skip(1)
+        .filter_map(|entry| entry.split('"').nth(1))
+        .collect()
+}
+
 /// The whole directory reaches the expansion, sorted, with dotfiles skipped.
 #[test]
 fn a_directory_becomes_one_asset_per_file() {
@@ -24,9 +33,14 @@ fn a_directory_becomes_one_asset_per_file() {
     })
     .expect("a walkable directory");
 
-    assert!(expanded.contains("\"a.txt\""), "{expanded}");
-    assert!(expanded.contains("\"nested/b.css\""), "{expanded}");
-    assert!(expanded.contains("\"c.map\""), "{expanded}");
+    // Exactly these, in this order: the walk finds them in whatever order
+    // the file system lists them, and the set is sorted after it.
+    assert_eq!(
+        served(&expanded),
+        ["a.txt", "c.map", "nested/b.css"],
+        "{expanded}"
+    );
+    assert!(expanded.contains("COUNT : usize = 3usize"), "{expanded}");
 
     // A dotfile is not part of a build output, and `.git` is the case that
     // matters: embedding it would put a repository in a binary.
