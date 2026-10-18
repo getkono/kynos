@@ -18,13 +18,10 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, quote_spanned};
-use syn::{
-    DeriveInput, Field, FieldsNamed, GenericArgument, Ident, PathArguments, Type,
-    parse_macro_input, spanned::Spanned,
-};
+use syn::{DeriveInput, Field, FieldsNamed, Ident, Type, parse_macro_input, spanned::Spanned};
 
 use crate::derive::{
-    common::{NameCase, named_fields, reject_duplicate_names},
+    common::{NameCase, named_fields, reject_duplicate_names, wrapped},
     schema::{
         attributes::{DefaultFrom, serde_default, serde_key_span},
         property_names, split_renamed_field, split_rule,
@@ -235,9 +232,9 @@ struct Declared<'a> {
 
 impl<'a> Declared<'a> {
     fn new(index: usize, field: &'a Field, name: &'a str) -> syn::Result<Self> {
-        let (arity, element) = wrapper(&field.ty, "Option")
+        let (arity, element) = wrapped(&field.ty, "Option")
             .map(|inner| (Arity::Optional, inner))
-            .or_else(|| wrapper(&field.ty, "Vec").map(|inner| (Arity::Repeated, inner)))
+            .or_else(|| wrapped(&field.ty, "Vec").map(|inner| (Arity::Repeated, inner)))
             .unwrap_or((Arity::One, &field.ty));
         let default = serde_default(&field.attrs);
 
@@ -382,28 +379,5 @@ impl<'a> Declared<'a> {
                 }
             }
         }
-    }
-}
-
-/// The `T` of a `Wrapper<T>` field, which is what declares its multiplicity.
-fn wrapper<'a>(ty: &'a Type, wrapper: &str) -> Option<&'a Type> {
-    let Type::Path(path) = ty else {
-        return None;
-    };
-    if path.qself.is_some() {
-        return None;
-    }
-
-    let segment = path.path.segments.last()?;
-    if segment.ident != wrapper {
-        return None;
-    }
-
-    let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
-        return None;
-    };
-    match arguments.args.first()? {
-        GenericArgument::Type(inner) => Some(inner),
-        _ => None,
     }
 }
