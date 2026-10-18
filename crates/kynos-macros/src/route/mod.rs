@@ -10,7 +10,7 @@ pub(crate) mod uri;
 use kynos_openapi::Method;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
-use syn::{ItemFn, Meta, Token, parse::Parser, parse_macro_input, punctuated::Punctuated};
+use syn::{ItemFn, LitStr, Meta, Token, parse::Parser, parse_macro_input, punctuated::Punctuated};
 
 use crate::route::{
     args::{RouteArgs, expect_str, prepend_path_name},
@@ -66,34 +66,9 @@ pub(crate) fn expand(method: &str, attribute: TokenStream, item: TokenStream) ->
 /// Expands `#[kynos::operation(method = "...", path = "...")]`.
 pub(crate) fn expand_generic(attribute: TokenStream, item: TokenStream) -> TokenStream {
     let function = parse_macro_input!(item as ItemFn);
-    let tokens: TokenStream2 = attribute.into();
-
-    let parser = Punctuated::<Meta, Token![,]>::parse_terminated;
-    let items = match parser.parse2(tokens.clone()) {
-        Ok(items) => items,
+    let (method, remaining) = match split_method(attribute.into()) {
+        Ok(split) => split,
         Err(error) => return error.to_compile_error().into(),
-    };
-
-    let mut method = None;
-    for entry in &items {
-        if let Meta::NameValue(pair) = entry {
-            if pair.path.is_ident("method") {
-                match expect_str(&pair.value) {
-                    Ok(value) => method = Some(value),
-                    Err(error) => return error.to_compile_error().into(),
-                }
-            }
-        }
-    }
-
-    let Some(method) = method else {
-        return syn::Error::new(
-            proc_macro2::Span::call_site(),
-            "`#[kynos::operation]` needs `method = \"...\"`; the per-method attributes such as \
-             `#[kynos::get]` are the usual way to declare an operation",
-        )
-        .to_compile_error()
-        .into();
     };
 
     let method_value = method.value();
@@ -103,18 +78,44 @@ pub(crate) fn expand_generic(attribute: TokenStream, item: TokenStream) -> Token
             .into();
     }
 
-    // `method` is removed here so the shared parser refuses it on
-    // `#[kynos::get("/x", method = "POST")]`.
-    let remaining: Punctuated<Meta, Token![,]> = items
-        .into_iter()
-        .filter(|entry| !matches!(entry, Meta::NameValue(pair) if pair.path.is_ident("method")))
-        .collect();
-
-    let args = match RouteArgs::parse(quote::quote!(#remaining)) {
+    let args = match RouteArgs::parse(remaining) {
         Ok(args) => args,
         Err(error) => return error.to_compile_error().into(),
     };
     emit(&method_value, &args, &function).into()
+}
+
+/// Splits `#[kynos::operation]`'s arguments into its `method` and the rest,
+/// which the shared route parser reads.
+///
+/// `method` is removed here so the shared parser refuses it on
+/// `#[kynos::get("/x", method = "POST")]`.
+fn split_method(tokens: TokenStream2) -> syn::Result<(LitStr, TokenStream2)> {
+    let parser = Punctuated::<Meta, Token![,]>::parse_terminated;
+    let items = parser.parse2(tokens)?;
+
+    let mut method = None;
+    for entry in &items {
+        if let Meta::NameValue(pair) = entry {
+            if pair.path.is_ident("method") {
+                method = Some(expect_str(&pair.value)?);
+            }
+        }
+    }
+
+    let Some(method) = method else {
+        return Err(syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "`#[kynos::operation]` needs `method = \"...\"`; the per-method attributes such as \
+             `#[kynos::get]` are the usual way to declare an operation",
+        ));
+    };
+
+    let remaining: Punctuated<Meta, Token![,]> = items
+        .into_iter()
+        .filter(|entry| !matches!(entry, Meta::NameValue(pair) if pair.path.is_ident("method")))
+        .collect();
+    Ok((method, quote::quote!(#remaining)))
 }
 
 #[cfg(test)]
