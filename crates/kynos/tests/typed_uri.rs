@@ -232,9 +232,29 @@ fn the_fixture_describes_the_query_it_encodes() {
         .openapi()
         .expect("a describable router");
 
-    let emitted = format!("{document:?}");
+    let document = serde_json::to_value(&document).expect("a serializable document");
 
-    assert!(emitted.contains("download"), "{emitted}");
+    // Exactly the two parameters `encode` writes. `download` is typed by the
+    // query group's own schema, as `true` is; `name` by `PathParams`'s
+    // default, which describes each declared name with an unconstrained
+    // schema whatever the group's `Schema` says.
+    assert_eq!(
+        document["paths"]["/reports/{name}"]["get"]["parameters"],
+        serde_json::json!([
+            {
+                "name": "name",
+                "in": "path",
+                "required": true,
+                "schema": true,
+            },
+            {
+                "name": "download",
+                "in": "query",
+                "required": true,
+                "schema": { "type": "boolean" },
+            },
+        ])
+    );
 }
 
 /// Points at `report`, wherever the router mounted it.
