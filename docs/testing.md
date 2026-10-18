@@ -860,20 +860,17 @@ text. `mise.toml` therefore lists it: a snapshot suite that passes on the
 machine that recorded it and fails everywhere else is testing the environment.
 
 **`on_unimplemented` attributes must land before any snapshot is recorded.**
-Twenty-three traits carry `#[diagnostic::on_unimplemented]` —
-`Provides`, `Handler`, `FromRequestParts`, `FromRequest`, `Describe`,
-`RequestContent`, `IntoResponse`, `Responses`, `Schema`, `MapKey`, `ParamValue`, `Flatten`,
-`ClosedFlatten`, `OpenMap`, `AdmitsAny`, `Alternative`, `ShortCircuit`, `EndpointMeta`, `IntoEndpoints`, `Carries`,
-`Languages`, `Rangeable` and `ByteSource`.
-Each one replaces the compiler's generic "the trait bound is not satisfied"
-with a message naming the fix.
+Every trait that carries `#[diagnostic::on_unimplemented]` replaces the
+compiler's generic "the trait bound is not satisfied" with a message naming the
+fix.
 
 `every_guided_diagnostic_has_a_snapshot` in
 [`tests/ui.rs`](../crates/kynos/tests/ui.rs) maps each to the snapshot that
-records it and counts the pairs against the attributes in the source. Eight of
-the fourteen guided traits *at the time it was written* had none, so more than
-half of what this requirement named was unchecked; the count has grown to
-twenty-three since, and the test is what kept the mapping level with it. The
+records it and counts the pairs against the attributes in the source, so it,
+not this page, is the list of guided traits. Eight of the fourteen guided traits
+*at the time it was written* had none, so more than half of what this
+requirement named was unchecked; the count has grown since, and the test is
+what kept the mapping level with it. The
 mapping is written out rather than searched for, because half the
 messages deliberately never spell the trait: `Handler`'s says "is not a Kynos
 handler", which is the improvement rather than something to grep for.

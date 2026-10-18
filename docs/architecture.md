@@ -441,8 +441,8 @@ user's problem for them. Kynos negotiates the language and states which one it
 chose; the strings are the application's, and
 [`errors.md`](errors.md) records what that means for a problem detail.
 
-`moka` and `jsonwebtoken` are a fourth kind. Both are named by one example and
-by nothing under `src/`, which is the standing `rcgen`, `listenfd` and
+`moka` and `jsonwebtoken` are a fourth kind. Both are named only by examples,
+and by nothing under `src/`, which is the standing `rcgen`, `listenfd` and
 `tracing-subscriber` already have: this table governs what Kynos depends on, not
 what an example demonstrates.
 
@@ -549,7 +549,10 @@ the same refusal for both, and it is a describability one: it does not soften
 with demand, because the document Kynos emits would have nothing to say about
 the stream. A protocol that stops being HTTP request/response belongs to
 AsyncAPI, and Kynos would rather point at it than emit a description that
-covers the upgrade handshake and then goes silent. Server-Sent Events are the
+covers the upgrade handshake and then goes silent. The escape hatch is
+`upgrade_unchecked`, behind `unchecked`: it serves the handshake on `GET` and
+records the route under `x-kynos-opaque-routes` rather than describing it, and
+the protocol on the far side stays the application's. Server-Sent Events are the
 edge that stays in, and they stay in precisely because they do not cross it:
 an event stream is one ordinary response body, so `openapi32` describes it as
 one.
