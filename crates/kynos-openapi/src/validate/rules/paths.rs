@@ -166,7 +166,17 @@ impl Validator {
             .map(|(method, operation)| (method.as_wire_str().to_lowercase(), operation));
 
         // `operations()` never yields an operation under 3.2's
-        // `additionalOperations`.
+        // `additionalOperations`. A key naming a fixed-field method is refused
+        // at the key, and its operation is still checked like any other.
+        #[cfg(feature = "openapi32")]
+        for key in item.additional_operations.keys() {
+            if let Some(method) = crate::model::paths::method::Method::from_wire_str(key) {
+                violations.push(Violation::error(
+                    format!("{location}/additionalOperations/{}", pointer_token(key)),
+                    SpecError::FixedMethodInAdditionalOperations { method },
+                ));
+            }
+        }
         #[cfg(feature = "openapi32")]
         let named = named.chain(
             item.additional_operations
