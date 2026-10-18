@@ -1,5 +1,6 @@
 //! `#[derive(HeaderParams)]`.
 
+use kynos_openapi::model::parameter::header::is_ignored_header_parameter;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
@@ -16,9 +17,10 @@ use crate::derive::{
     },
 };
 
-/// Fields a header parameter definition may not name, and what to reach for;
-/// the OpenAPI Parameter Object says such definitions *shall be ignored*.
-const RESERVED: &[(&str, &str)] = &[
+/// What to reach for instead of each header [`is_ignored_header_parameter`]
+/// refuses; the OpenAPI Parameter Object says such definitions *shall be
+/// ignored*. Which names are refused is the model's to say, not this table's.
+const ADVICE: &[(&str, &str)] = &[
     (
         "accept",
         "content negotiation decides this; return `Negotiated<T>` and let the description say \
@@ -35,6 +37,15 @@ const RESERVED: &[(&str, &str)] = &[
          and describing it are one act",
     ),
 ];
+
+/// The [`ADVICE`] for `name`, matched as HTTP matches field names: ASCII
+/// case-insensitively.
+pub(super) fn advice(name: &str) -> Option<&'static str> {
+    ADVICE
+        .iter()
+        .find(|(header, _)| header.eq_ignore_ascii_case(name))
+        .map(|(_, remedy)| *remedy)
+}
 
 /// What a required header nothing carried is refused with.
 const MISSING: &str = "the header is required";
@@ -213,9 +224,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let names = wire_names(input, fields, "header")?;
     reject_non_token_names(fields, &names, "header", "an RFC 9110 field name")?;
     for (field, name) in fields.named.iter().zip(&names) {
-        // HTTP field names are case-insensitive, so the check must be too.
-        let folded = name.to_ascii_lowercase();
-        if let Some((_, remedy)) = RESERVED.iter().find(|(reserved, _)| *reserved == folded) {
+        if is_ignored_header_parameter(name) {
+            let remedy = advice(name).expect("`ADVICE` names every header the model ignores");
             return Err(syn::Error::new(
                 field.span(),
                 format!("`{name}` must not be declared as a header parameter: {remedy}"),

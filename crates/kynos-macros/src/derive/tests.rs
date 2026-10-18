@@ -5125,8 +5125,14 @@ mod api_error {
     #[test]
     fn every_api_error_diagnostic_has_a_case() {
         every_diagnostic_has_a_case(
-            "api_error.rs",
-            include_str!("api_error.rs"),
+            "api_error.rs` and `api_error/",
+            &[
+                include_str!("api_error.rs"),
+                include_str!("api_error/args.rs"),
+                include_str!("api_error/emit.rs"),
+                include_str!("api_error/outcomes.rs"),
+            ]
+            .concat(),
             ledger().len()
                 + transparent_ledger().len()
                 + headers_ledger().len()
@@ -5906,8 +5912,13 @@ mod security_scheme {
     #[test]
     fn every_security_scheme_diagnostic_has_a_case() {
         every_diagnostic_has_a_case(
-            "security_scheme.rs",
-            include_str!("security_scheme.rs"),
+            "security_scheme.rs` and `security_scheme/",
+            &[
+                include_str!("security_scheme.rs"),
+                include_str!("security_scheme/args.rs"),
+                include_str!("security_scheme/flow.rs"),
+            ]
+            .concat(),
             ledger().len()
                 + oauth2_ledger().len()
                 + keys_ledger().len()
@@ -6480,6 +6491,19 @@ mod headers {
     #[test]
     fn every_headers_diagnostic_has_a_case() {
         every_diagnostic_has_a_case("headers.rs", include_str!("headers.rs"), ledger().len());
+    }
+
+    /// The model says which headers are refused and the derive only what to
+    /// reach for instead, so a header the model adds needs advice here before
+    /// the refusal can name it.
+    #[test]
+    fn every_header_the_model_ignores_has_advice() {
+        for name in kynos_openapi::model::parameter::header::IGNORED_HEADER_PARAMETERS {
+            assert!(
+                crate::derive::headers::advice(name).is_some(),
+                "`{name}` is refused with no advice"
+            );
+        }
     }
 }
 

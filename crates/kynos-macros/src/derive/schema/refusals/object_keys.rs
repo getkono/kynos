@@ -111,7 +111,7 @@ pub(super) fn reject_field_named_as_tag(input: &DeriveInput) -> syn::Result<()> 
 ///
 /// The schema omits the field, and the closed object then refuses what serde
 /// writes of it. The open-map case is a bound instead
-/// ([`open_fields_beside_unread_fields`](crate::derive::schema::open_fields_beside_unread_fields)).
+/// ([`open_fields_beside_unread_fields`](crate::derive::schema::flatten::open_fields_beside_unread_fields)).
 pub(super) fn reject_unread_field_in_closed_object(input: &DeriveInput) -> syn::Result<()> {
     let container = Container::read(input);
     if container.transparent || !container.deny_unknown_fields {

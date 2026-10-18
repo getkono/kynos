@@ -119,7 +119,7 @@ pub(super) fn object_body(
                     };
                 }
 
-                // Composed by `allOf`; sound only because `flatten_witnesses`
+                // Composed by `allOf`; sound only because `flatten::witnesses`
                 // asserts the type is `Flatten`.
                 return quote! {
                     keywords

@@ -3,6 +3,7 @@ use super::{
     LitStr, NUMERIC, Span, Spanned, TokenStream2, Type, Variant, Visitor,
     aliases::variants_read_names, quote, skip_value, string_value,
 };
+use crate::derive::common::wrapped;
 
 /// The name serde writes a named field under: the serialize side of its
 /// `rename`, its [`default_field_name`] otherwise.
@@ -386,19 +387,9 @@ pub(super) fn is_open(field: &Field) -> bool {
 /// container `#[serde(default)]`. `skip_serializing_if` is not read here;
 /// `reject_read_required_skip` refuses it on a required field.
 pub(super) fn is_required(field: &Field, container: &Container) -> bool {
-    !is_option(&field.ty) && !container.default && !serde_flag(&field.attrs, &["default"])
-}
-
-pub(super) fn is_option(ty: &Type) -> bool {
-    let Type::Path(path) = ty else {
-        return false;
-    };
-    path.qself.is_none()
-        && path
-            .path
-            .segments
-            .last()
-            .is_some_and(|segment| segment.ident == "Option")
+    wrapped(&field.ty, "Option").is_none()
+        && !container.default
+        && !serde_flag(&field.attrs, &["default"])
 }
 
 /// Whether any `#[serde(...)]` list names one of `keys`, with or without a

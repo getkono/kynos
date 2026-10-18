@@ -668,10 +668,8 @@ tables are already files of their own.
 
 The budget, which may only shrink:
 
-- `crates/kynos-macros/src/derive/api_error.rs`
 - `crates/kynos-macros/src/derive/schema.rs`
 - `crates/kynos-macros/src/derive/schema/attributes.rs`
-- `crates/kynos-macros/src/derive/security_scheme.rs`
 - `crates/kynos-macros/src/lib.rs`
 - `crates/kynos-openapi/src/annotation/mod.rs`
 - `crates/kynos-openapi/src/emit/downgrade/unrecognised.rs`

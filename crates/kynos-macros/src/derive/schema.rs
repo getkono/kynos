@@ -26,7 +26,7 @@
 //! is an error that points at the remedy.
 //!
 //! `open` is not a constraint: it says how a `#[serde(flatten)]` field composes
-//! (bounded by `OpenMap` rather than `Flatten`; see `flatten_witnesses`).
+//! (bounded by `OpenMap` rather than `Flatten`; see `flatten::witnesses`).
 //!
 //! Nor is `as`: it resolves the field's schema from another type, and its
 //! check runs on that type's value, converted through `From<&F>`.
@@ -34,6 +34,7 @@
 pub(crate) mod aliases;
 pub(crate) mod attributes;
 pub(crate) mod check;
+mod flatten;
 mod kinds;
 #[cfg(feature = "pattern")]
 mod pattern;
@@ -41,15 +42,15 @@ pub(crate) mod refusals;
 mod shape;
 
 use attributes::{
-    Sides, constraints, described_members, field_name, field_read_name, is_described, is_flattened,
-    is_open, is_phantom, is_required, is_skipped_both_ways, is_unit_like, serde_flag,
-    serde_key_span, sides, transparent_member, variant_read_name, variant_rename_all,
+    Sides, constraints, field_name, field_read_name, is_described, is_flattened, is_open,
+    is_phantom, is_required, is_skipped_both_ways, is_unit_like, serde_flag, serde_key_span, sides,
+    transparent_member, variant_read_name, variant_rename_all,
 };
 use shape::{enum_body, struct_body};
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
-use quote::{quote, quote_spanned};
+use quote::quote;
 use syn::{
     Data, DataEnum, DeriveInput, Field, Fields, Lit, LitFloat, LitInt, LitStr, Type, Variant,
     ext::IdentExt, parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma,
@@ -136,26 +137,10 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let body = body(input, &container);
     let check = check::body(input, &container);
     let kinds = kinds::newtype(input, &container, &generics);
-    let witnesses = flatten_witnesses(input, &container, &generics);
-    let flatten = flattens(input, &container).then(|| {
-        quote! {
-            #[allow(deprecated)]
-            impl #impl_generics ::kynos::schema::flatten::Flatten
-                for #name #ty_generics #where_clause {}
-        }
-    });
-    let closed_flatten = flattens_into_closed_objects(input, &container).then(|| {
-        quote! {
-            #[allow(deprecated)]
-            impl #impl_generics ::kynos::schema::flatten::ClosedFlatten
-                for #name #ty_generics #where_clause {}
-        }
-    });
+    let flatten = flatten::emit(input, &container, &generics);
 
     Ok(quote! {
-        #witnesses
         #flatten
-        #closed_flatten
         #kinds
 
         // The impl names the type, so a `#[deprecated]` type would otherwise warn
@@ -208,126 +193,6 @@ fn schema_bounded_generics(input: &DeriveInput) -> syn::Generics {
     generics
 }
 
-/// One witness per flattened field, requiring that its type names its members.
-///
-/// A `const _` rather than an impl predicate, so the diagnostic lands on the
-/// type's definition. Bounds: `OpenMap` for `#[schema(open)]` (`AdmitsAny`
-/// beside an unread field), else `Flatten`, plus `ClosedFlatten` in an object
-/// [`closed`] closes. An internally tagged newtype variant's payload, composed
-/// with a tag-only object in an `allOf`, is bounded by `Flatten` alone.
-fn flatten_witnesses(
-    input: &DeriveInput,
-    container: &Container,
-    generics: &syn::Generics,
-) -> TokenStream2 {
-    let (impl_generics, _, where_clause) = generics.split_for_impl();
-
-    let closing = container.deny_unknown_fields && !container.transparent;
-    let flattened = described_groups(input, container)
-        .into_iter()
-        .flat_map(described_members)
-        .filter(|field| is_flattened(field))
-        .map(|field| (field, closing));
-
-    let admitting = open_fields_beside_unread_fields(input, container);
-
-    let payloads = internally_tagged_payloads(input, container)
-        .into_iter()
-        .map(|field| (field, false));
-    let witnesses = flattened.chain(payloads).map(|(field, closed)| {
-        let ty = &field.ty;
-        // Spanned at the field's type, so the refusal points at what was written.
-        if admitting.iter().any(|open| std::ptr::eq(*open, field)) {
-            quote_spanned! {ty.span()=>
-                const _: () = {
-                    #[allow(dead_code, deprecated)]
-                    fn open_fields_beside_unread_fields_admit_any_member #impl_generics ()
-                        #where_clause
-                    {
-                        fn admits_any<T: ::kynos::schema::flatten::AdmitsAny + ?Sized>() {}
-                        admits_any::<#ty>();
-                    }
-                };
-            }
-        } else if is_open(field) {
-            quote_spanned! {ty.span()=>
-                const _: () = {
-                    #[allow(dead_code, deprecated)]
-                    fn open_fields_are_maps_described_in_place #impl_generics () #where_clause {
-                        fn is_open_map<T: ::kynos::schema::flatten::OpenMap + ?Sized>() {}
-                        is_open_map::<#ty>();
-                    }
-                };
-            }
-        } else {
-            let read_by_name = closed.then(|| {
-                quote_spanned! {ty.span()=>
-                    const _: () = {
-                        #[allow(dead_code, deprecated)]
-                        fn closed_objects_flatten_what_serde_reads_by_name #impl_generics ()
-                            #where_clause
-                        {
-                            fn is_closed_flattenable<
-                                T: ::kynos::schema::flatten::ClosedFlatten + ?Sized,
-                            >() {}
-                            is_closed_flattenable::<#ty>();
-                        }
-                    };
-                }
-            });
-            quote_spanned! {ty.span()=>
-                const _: () = {
-                    #[allow(dead_code, deprecated)]
-                    fn flattened_fields_name_their_members #impl_generics () #where_clause {
-                        fn is_flattenable<T: ::kynos::schema::flatten::Flatten + ?Sized>() {}
-                        is_flattenable::<#ty>();
-                    }
-                };
-                #read_by_name
-            }
-        }
-    });
-
-    quote!(#(#witnesses)*)
-}
-
-/// The payload of each described newtype variant of an internally tagged enum:
-/// serde writes its members beside the tag, as it does a flattened field's.
-fn internally_tagged_payloads<'a>(input: &'a DeriveInput, container: &Container) -> Vec<&'a Field> {
-    match (&input.data, &container.tag, &container.content) {
-        (Data::Enum(data), Some(_), None) => described_variants(data, container)
-            .into_iter()
-            .filter(|variant| !is_unit_like(&variant.fields))
-            .filter_map(|variant| match &variant.fields {
-                Fields::Unnamed(unnamed) if unnamed.unnamed.len() == 1 => unnamed.unnamed.first(),
-                _ => None,
-            })
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
-/// The open flattened fields that sit beside a named field serde writes and
-/// never reads, `skip_deserializing` alone, in an object serde writes.
-///
-/// The schema omits the unread field, so the open field must admit any member:
-/// [`flatten_witnesses`] bounds it by `AdmitsAny`. A transparent struct has no
-/// object to bound.
-fn open_fields_beside_unread_fields<'a>(
-    input: &'a DeriveInput,
-    container: &Container,
-) -> Vec<&'a Field> {
-    if container.transparent {
-        return Vec::new();
-    }
-    written_groups(input)
-        .into_iter()
-        .filter(|fields| unread_field_span(fields).is_some())
-        .flat_map(described_members)
-        .filter(|field| is_open(field))
-        .collect()
-}
-
 /// The field groups of every object serde writes: a struct's, and each
 /// variant's serde writes.
 fn written_groups(input: &DeriveInput) -> Vec<&Fields> {
@@ -341,84 +206,6 @@ fn written_groups(input: &DeriveInput) -> Vec<&Fields> {
             .collect(),
         // Refused at the top of `expand_inner`.
         Data::Union(_) => Vec::new(),
-    }
-}
-
-/// Whether the schema this input emits names its own members, and so may itself
-/// be flattened.
-///
-/// True of an object whose `properties` names every member it admits: a named
-/// struct, or an internally or adjacently tagged enum of such branches. Never
-/// for an open, transparent or closed container, nor one with a field serde
-/// writes but never reads, since each would constrain the outer object's
-/// members one level up.
-fn flattens(input: &DeriveInput, container: &Container) -> bool {
-    if container.transparent {
-        return false;
-    }
-
-    let groups = described_groups(input, container);
-    if groups.iter().flat_map(|group| group.iter()).any(is_open) {
-        return false;
-    }
-
-    match &input.data {
-        Data::Struct(data) => {
-            matches!(data.fields, Fields::Named(_))
-                && unread_field_span(&data.fields).is_none()
-                && !container.deny_unknown_fields
-        }
-        Data::Enum(data) => {
-            let variants = described_variants(data, container);
-
-            match (&container.tag, &container.content) {
-                // Adjacently tagged: every branch is a tag and content object.
-                (Some(_), Some(_)) => !variants.is_empty() && !container.deny_unknown_fields,
-                // Internally tagged: a named or unit variant is an object of its
-                // members plus the tag.
-                (Some(_), None) => {
-                    !variants.is_empty()
-                        && variants.iter().all(|variant| match variant.fields {
-                            Fields::Unit => true,
-                            Fields::Named(_) => !container.deny_unknown_fields,
-                            Fields::Unnamed(_) => false,
-                        })
-                        && variants
-                            .iter()
-                            .filter(|variant| is_written(variant))
-                            .all(|variant| unread_field_span(&variant.fields).is_none())
-                }
-                // Externally tagged: each branch is closed to all but its
-                // variant key, and a unit variant is a bare string.
-                (None, _) => false,
-            }
-        }
-        // Refused at the top of `expand_inner`.
-        Data::Union(_) => false,
-    }
-}
-
-/// Whether serde reads this [`flattens`] shape by name, so it may be flattened
-/// into an object `#[serde(deny_unknown_fields)]` closes.
-///
-/// serde takes a key only through `deserialize_struct`, which it uses unless a
-/// field is flattened without `skip_deserializing` (so a flattened `PhantomData`
-/// counts) or the struct carries a container `tag`. An adjacently tagged enum
-/// names its keys; an internally tagged one reads through `deserialize_any`.
-fn flattens_into_closed_objects(input: &DeriveInput, container: &Container) -> bool {
-    if !flattens(input, container) {
-        return false;
-    }
-    match &input.data {
-        Data::Struct(data) => {
-            container.tag.is_none()
-                && !data.fields.iter().any(|field| {
-                    is_flattened(field)
-                        && !serde_flag(&field.attrs, &["skip", "skip_deserializing"])
-                })
-        }
-        Data::Enum(_) => container.content.is_some(),
-        Data::Union(_) => false,
     }
 }
 
