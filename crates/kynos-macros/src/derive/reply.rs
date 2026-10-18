@@ -4,8 +4,10 @@
 //! #[reply( <member> [, <member>]* )]            on each variant, required
 //!
 //! member := status = <200..=599>                required, exactly once
-//!         | description = "<what it means>"
+//!         | description = "<what it means>"     at most once
 //! ```
+//!
+//! Neither member goes on the enum, and any other key is refused.
 //!
 //! `status` is required on every variant, names a final response, and is
 //! unique. A variant at 204, 205 or 304 is a unit variant, since those
@@ -24,7 +26,7 @@ use syn::{
     spanned::Spanned,
 };
 
-use crate::derive::common::doc_string;
+use crate::derive::{attribute::key_name, common::doc_string};
 
 /// The range a reply's status may fall in: final responses only, never 1xx.
 const STATUS_RANGE: std::ops::RangeInclusive<u16> = 200..=599;
@@ -61,12 +63,20 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         }
     };
 
-    // A status belongs on each variant, not the enum.
-    if let Some((_, span)) = parse_reply(&input.attrs)?.status {
+    // A status and a description belong on each variant, not the enum.
+    let on_enum = parse_reply(&input.attrs)?;
+    if let Some((_, span)) = on_enum.status {
         return Err(syn::Error::new(
             span,
             "a status belongs on each variant, because the point of a `Reply` enum is that its \
              variants answer differently. Move it to the variants",
+        ));
+    }
+    if let Some((_, span)) = on_enum.description {
+        return Err(syn::Error::new(
+            span,
+            "a description belongs on each variant, since each describes the one response it \
+             answers with, and no response is described by the enum's. Move it to the variants",
         ));
     }
 
@@ -118,7 +128,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
             ));
         }
 
-        declared.push(response(variant, status, args.description.as_deref()));
+        let description = args.description.map(|(text, _)| text);
+        declared.push(response(variant, status, description.as_deref()));
         written.push(write(variant, status));
     }
 
@@ -221,7 +232,7 @@ fn write(variant: &Variant, status: u16) -> TokenStream2 {
 #[derive(Default)]
 struct ReplyArgs {
     status: Option<(u16, Span)>,
-    description: Option<String>,
+    description: Option<(String, Span)>,
 }
 
 /// Reads one item's `#[reply(...)]` lists, validating every member.
@@ -233,11 +244,8 @@ fn parse_reply(attrs: &[Attribute]) -> syn::Result<ReplyArgs> {
             continue;
         }
         attr.parse_nested_meta(|meta| {
-            let Some(key) = meta.path.get_ident() else {
-                return Ok(());
-            };
-
-            match key.to_string().as_str() {
+            let key = key_name(&meta.path);
+            match key.as_str() {
                 "status" => {
                     let literal: LitInt = meta.value()?.parse()?;
                     let code: u16 = literal.base10_parse()?;
@@ -261,11 +269,18 @@ fn parse_reply(attrs: &[Attribute]) -> syn::Result<ReplyArgs> {
                     args.status = Some((code, literal.span()));
                 }
                 "description" => {
-                    args.description = Some(meta.value()?.parse::<LitStr>()?.value());
+                    let literal = meta.value()?.parse::<LitStr>()?;
+                    if args.description.is_some() {
+                        return Err(syn::Error::new(
+                            literal.span(),
+                            "this already declares a description, and a response has one",
+                        ));
+                    }
+                    args.description = Some((literal.value(), literal.span()));
                 }
                 other => {
                     return Err(syn::Error::new(
-                        key.span(),
+                        meta.path.span(),
                         format!("`{other}` is not part of the `#[reply(...)]` grammar"),
                     ));
                 }

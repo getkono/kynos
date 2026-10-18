@@ -10,7 +10,10 @@ pub(crate) mod uri;
 use kynos_openapi::Method;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
-use syn::{ItemFn, LitStr, Meta, Token, parse::Parser, parse_macro_input, punctuated::Punctuated};
+use syn::{
+    ItemFn, LitStr, Meta, Token, parse::Parser, parse_macro_input, punctuated::Punctuated,
+    spanned::Spanned,
+};
 
 use crate::route::{
     args::{RouteArgs, expect_str, prepend_path_name},
@@ -98,6 +101,12 @@ fn split_method(tokens: TokenStream2) -> syn::Result<(LitStr, TokenStream2)> {
     for entry in &items {
         if let Meta::NameValue(pair) = entry {
             if pair.path.is_ident("method") {
+                if method.is_some() {
+                    return Err(syn::Error::new(
+                        pair.path.span(),
+                        "`method` is already given, and an operation answers one method",
+                    ));
+                }
                 method = Some(expect_str(&pair.value)?);
             }
         }

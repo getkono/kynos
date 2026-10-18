@@ -4243,6 +4243,49 @@ mod schema {
     }
 }
 
+/// The parameter fields' shared grammar, `#[param]`, `#[header]` and
+/// `#[cookie]`, driven through the `CookieParams` derive.
+mod attribute {
+    use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
+    use crate::derive::cookies::expand_inner;
+
+    fn ledger() -> Vec<Case> {
+        vec![
+            case(
+                "`value`, which fixes a header and is no cookie key",
+                quote::quote!(
+                    struct Session {
+                        #[cookie(rename = "sid", value = "anonymous")]
+                        id: String,
+                    }
+                ),
+                "`value` is not part of the `#[cookie(...)]` grammar",
+            ),
+            case(
+                "`rename` written twice, the second replacing the first",
+                quote::quote!(
+                    struct Theme {
+                        #[cookie(rename = "theme")]
+                        #[cookie(rename = "colour")]
+                        theme: String,
+                    }
+                ),
+                "`rename` is already set",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_case_raises_the_diagnostic_it_names() {
+        each_case_is_refused(ledger(), expand_inner);
+    }
+
+    #[test]
+    fn every_attribute_diagnostic_has_a_case() {
+        every_diagnostic_has_a_case("attribute.rs", include_str!("attribute.rs"), ledger().len());
+    }
+}
+
 mod api_error {
     use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
     use crate::derive::api_error::expand_inner;
@@ -4557,7 +4600,7 @@ mod reply {
     use crate::derive::reply::expand_inner;
 
     fn ledger() -> Vec<Case> {
-        vec![
+        let mut rows = vec![
             case(
                 "a struct, when a reply is a closed set of responses",
                 quote::quote!(
@@ -4617,6 +4660,35 @@ mod reply {
                 "its status is between",
             ),
             case(
+                "a struct variant, when a body is one described type",
+                quote::quote!(
+                    enum CreateReply {
+                        #[reply(status = 201)]
+                        Created { id: u32, revision: u32 },
+                    }
+                ),
+                "carries its response body",
+            ),
+            case(
+                "a body at a status whose response carries no content",
+                quote::quote!(
+                    enum DeleteReply {
+                        #[reply(status = 204)]
+                        Deleted(u32),
+                    }
+                ),
+                "a `204` response carries no content",
+            ),
+        ];
+        rows.extend(member_ledger());
+        rows
+    }
+
+    /// The rows for the `#[reply(...)]` members themselves: where each goes,
+    /// how often, and what is outside the grammar.
+    fn member_ledger() -> Vec<Case> {
+        vec![
+            case(
                 "two statuses on one variant",
                 quote::quote!(
                     enum CreateReply {
@@ -4657,26 +4729,6 @@ mod reply {
                     }
                 ),
                 "is not part of the `#[reply(...)]` grammar",
-            ),
-            case(
-                "a struct variant, when a body is one described type",
-                quote::quote!(
-                    enum CreateReply {
-                        #[reply(status = 201)]
-                        Created { id: u32, revision: u32 },
-                    }
-                ),
-                "carries its response body",
-            ),
-            case(
-                "a body at a status whose response carries no content",
-                quote::quote!(
-                    enum DeleteReply {
-                        #[reply(status = 204)]
-                        Deleted(u32),
-                    }
-                ),
-                "a `204` response carries no content",
             ),
         ]
     }

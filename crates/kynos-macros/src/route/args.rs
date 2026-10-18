@@ -25,8 +25,23 @@ impl RouteArgs {
         let mut operation_id = None;
         let mut tag = None;
         let mut catch_panics = false;
+        let mut seen: Vec<String> = Vec::new();
 
         for item in items {
+            // Each argument is read once; a second `tag` has its own word.
+            if let Some(name) = item.path().get_ident().map(ToString::to_string) {
+                if name != "tag" && seen.contains(&name) {
+                    return Err(syn::Error::new(
+                        item.path().span(),
+                        format!(
+                            "`{name}` is already given, and a route attribute takes each \
+                             argument once"
+                        ),
+                    ));
+                }
+                seen.push(name);
+            }
+
             match &item {
                 // The bare path literal, which must come first.
                 Meta::Path(bare) => {

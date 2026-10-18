@@ -1,0 +1,11 @@
+error: `renam` is not part of the `#[param(...)]` grammar
+ --> tests/ui/macros/query_params_unknown_and_repeated_keys.rs:7:13
+  |
+7 |     #[param(renam = "pageSize")]
+  |             ^^^^^
+
+error: `rename` is already set, and `#[param(...)]` takes each key once
+  --> tests/ui/macros/query_params_unknown_and_repeated_keys.rs:14:13
+   |
+14 |     #[param(rename = "from")]
+   |             ^^^^^^

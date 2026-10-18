@@ -2,13 +2,13 @@
 //! groups, differing only in that each key is spelled the way the grammar
 //! defines it and written once.
 
-#[derive(kynos::QueryParams)]
+#[derive(kynos::Schema, kynos::QueryParams)]
 struct Page {
     #[param(rename = "pageSize")]
     page_size: u32,
 }
 
-#[derive(kynos::QueryParams)]
+#[derive(kynos::Schema, kynos::QueryParams)]
 struct Cursor {
     #[param(rename = "after")]
     after: String,

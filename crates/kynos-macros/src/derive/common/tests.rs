@@ -521,26 +521,6 @@ fn cases() -> Vec<(&'static str, syn::Result<()>, &'static str)> {
             "split `rename_all`",
         ),
         (
-            "a key the location's attribute does not take",
-            named_by(quote!(
-                struct Holder {
-                    #[param(renam = "userId")]
-                    user_id: u64,
-                }
-            )),
-            "is not part of the `#[param(...)]` grammar",
-        ),
-        (
-            "a key written twice, the second silently replacing the first",
-            named_by(quote!(
-                struct Holder {
-                    #[param(rename = "userId", rename = "user")]
-                    user_id: u64,
-                }
-            )),
-            "`rename` is already set",
-        ),
-        (
             "two fields on one wire name",
             reject_duplicate_names(
                 &duplicate,

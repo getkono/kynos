@@ -1,10 +1,12 @@
 //! One module per derive macro, each holding that derive's `expand`; the
 //! documented entry points live at the crate root.
 //!
-//! [`common`] holds what every derive shares, and [`params`] what the four
-//! parameter locations share.
+//! [`common`] holds what every derive shares, [`params`] what the four
+//! parameter locations share, and [`attribute`] how a helper attribute's
+//! closed key set is read.
 
 pub(crate) mod api_error;
+pub(crate) mod attribute;
 pub(crate) mod common;
 pub(crate) mod cookies;
 pub(crate) mod headers;
