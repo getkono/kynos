@@ -4325,6 +4325,44 @@ fn a_discriminating_property_is_required_through_what_composes_the_schema() {
     assert_eq!(single_branch_errors(dependent), Vec::<&str>::new());
 }
 
+/// Each component a discriminator's requiredness reaches is followed once, so
+/// a chain whose every link references the next twice is judged in linear
+/// rather than exponential time: at 64 links the latter never finishes, and
+/// nextest's bound reports it.
+#[test]
+fn a_component_reached_twice_is_followed_once() {
+    const LINKS: usize = 64;
+    let link = |index: usize| format!("Link{index}");
+    let mut schemas: Vec<(String, Schema)> = (0..LINKS)
+        .map(|index| {
+            let next = Schema::component(&link(index + 1));
+            let doubled = SchemaObject {
+                all_of: Some(vec![next.clone(), next]),
+                ..SchemaObject::default()
+            };
+            (link(index), object(doubled))
+        })
+        .collect();
+    schemas.push((link(LINKS), object(kinded(false))));
+    schemas.push((
+        "Pet".to_owned(),
+        object(discriminated(vec![Schema::component(&link(0))])),
+    ));
+    let document = document_with_schemas(
+        schemas
+            .iter()
+            .map(|(name, schema)| (name.as_str(), schema.clone())),
+    );
+
+    assert_eq!(
+        discriminator_errors(&document, SpecVersion::V3_1),
+        [(
+            "#/components/schemas/Pet/discriminator".to_owned(),
+            NOT_REQUIRED
+        )]
+    );
+}
+
 /// The discriminator violations validating, as 3.1, a `Pet` discriminated
 /// over `branch` alone raises, each at its `discriminator`.
 fn single_branch_errors(branch: SchemaObject) -> Vec<&'static str> {
