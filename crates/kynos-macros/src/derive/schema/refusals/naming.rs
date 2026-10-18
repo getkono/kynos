@@ -4,7 +4,7 @@
 use syn::{Data, DeriveInput, Fields, Variant};
 
 use crate::derive::schema::{
-    Container, aliases,
+    Container, Visitor, aliases,
     aliases::shadowed_variant,
     attributes::{
         field_name, field_read_name, is_flattened, rename_all_fields, serde_flag, serde_key_span,
@@ -17,13 +17,21 @@ use crate::derive::schema::{
 /// true of both directions: serde writes it under a name it reads back as the
 /// earlier one. A merely shadowed alias is left out by
 /// [`aliases::variants_read_names`] instead.
+///
+/// An identifier enum is never written, so the shared name only reads as the
+/// earlier variant and `variants_read_names` lists it once.
 pub(super) fn reject_shadowed_variant(input: &DeriveInput) -> syn::Result<()> {
     let Data::Enum(data) = &input.data else {
         return Ok(());
     };
 
     let container = Container::read(input);
-    let Some((later, earlier)) = shadowed_variant(&described_variants(data), &container) else {
+    if container.visitor == Visitor::Identifier {
+        return Ok(());
+    }
+    let Some((later, earlier)) =
+        shadowed_variant(&described_variants(data, &container), &container)
+    else {
         return Ok(());
     };
     Err(syn::Error::new(
@@ -81,7 +89,7 @@ pub(super) fn reject_split_rename(input: &DeriveInput) -> syn::Result<()> {
         });
     let variant = match &input.data {
         Data::Enum(data) => {
-            let variants = described_variants(data);
+            let variants = described_variants(data, &container);
             let read_names = aliases::variants_read_names(&variants, &container);
             variants
                 .into_iter()

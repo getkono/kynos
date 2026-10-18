@@ -21,7 +21,7 @@ pub(super) fn reject_contradicted_closure(input: &DeriveInput) -> syn::Result<()
         return Ok(());
     }
 
-    let named = described_groups(input)
+    let named = described_groups(input, &container)
         .into_iter()
         .filter(|fields| matches!(fields, Fields::Named(_)))
         .flat_map(described_members);

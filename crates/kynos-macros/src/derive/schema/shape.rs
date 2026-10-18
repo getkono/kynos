@@ -184,7 +184,7 @@ pub(super) fn member_schema(field: &Field) -> TokenStream2 {
 /// An enum's schema: an `enum` of names where every variant is a unit,
 /// otherwise a `oneOf` shaped by the serde tagging.
 pub(super) fn enum_body(data: &DataEnum, container: &Container) -> TokenStream2 {
-    let variants = described_variants(data);
+    let variants = described_variants(data, container);
 
     // A deprecated unit variant needs its own schema to mark, so it forces the
     // `oneOf` of `const` branches over the compact `enum`.

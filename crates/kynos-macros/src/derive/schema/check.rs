@@ -146,7 +146,7 @@ fn struct_check(
 /// An enum's members, read through a `match` on `self` with one arm per
 /// variant that carries any.
 fn enum_check(data: &DataEnum, container: &Container) -> TokenStream2 {
-    let variants = described_variants(data);
+    let variants = described_variants(data, container);
     let names = variants_read_names(&variants, container);
     let arms: Vec<TokenStream2> = variants
         .into_iter()
