@@ -581,6 +581,14 @@ fn an_offer_marker_deriving_nothing_leaves_both_types_clone_debug_and_eq() {
     let preferred = AcceptLanguage::<Supported>::parse("");
     assert_eq!(preferred.clone(), preferred);
     assert_eq!(
+        AcceptLanguage::<Supported>::parse("fr"),
+        AcceptLanguage::<Supported>::parse("fr")
+    );
+    assert_ne!(
+        AcceptLanguage::<Supported>::parse("fr"),
+        AcceptLanguage::<Supported>::parse("de")
+    );
+    assert_eq!(
         format!("{preferred:?}"),
         "AcceptLanguage { preferences: [] }"
     );
