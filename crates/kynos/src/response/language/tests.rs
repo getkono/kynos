@@ -598,28 +598,49 @@ fn a_field_of_nothing_readable_is_served_the_default_rather_than_refused() {
 
 #[test]
 fn every_tag_a_client_can_be_served_is_one_the_offer_declares() {
-    // What makes the emitted `Content-Language` enumeration true. Asserted over
-    // the whole space a client can ask for rather than one field, because the
-    // claim is about `choose` and not about any particular request: no input
-    // reaches a tag the description does not list.
-    for field in [
-        "fr-CA",
+    // What makes the emitted `Content-Language` enumeration true. The claim is
+    // about `choose` and not about any particular request -- no input reaches
+    // a tag the description does not list -- so it is swept over every field
+    // of one or two ranges built from a closed set: offered and unoffered
+    // tags, a truncatable one, the wildcard, unreadable and empty ranges, each
+    // under every kind of weight, readable or not.
+    const RANGES: [&str; 10] = [
+        "en",
+        "fr",
+        "de",
         "ja",
-        "",
-        "!!!",
-        "*",
-        "en;q=0",
-        "de-AT, fr;q=0.4",
+        "fr-CA",
+        "de-AT",
         "zh-Hant-TW",
-        "en, fr, de",
-        "*;q=0.1, ja;q=0.9",
-    ] {
-        let chosen = AcceptLanguage::<Supported>::parse(field).choose();
+        "*",
+        "!!!",
+        "",
+    ];
+    const WEIGHTS: [&str; 6] = ["", ";q=0", ";q=0.001", ";q=0.5", ";q=1", ";q=x"];
+
+    let elements: Vec<String> = RANGES
+        .iter()
+        .flat_map(|range| WEIGHTS.iter().map(move |weight| format!("{range}{weight}")))
+        .collect();
+    let fields = elements
+        .iter()
+        .cloned()
+        .chain(elements.iter().flat_map(|first| {
+            elements
+                .iter()
+                .map(move |second| format!("{first}, {second}"))
+        }));
+
+    let mut swept = 0;
+    for field in fields {
+        let chosen = AcceptLanguage::<Supported>::parse(&field).choose();
         assert!(
             Supported::TAGS.contains(&chosen),
             "{field:?} was served {chosen:?}, which the offer does not declare"
         );
+        swept += 1;
     }
+    assert_eq!(swept, 60 + 60 * 60);
 
     assert_eq!(AcceptLanguage::<Supported>::parse("fr-CA").choose(), "fr");
 }
