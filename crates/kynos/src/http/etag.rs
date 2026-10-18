@@ -46,8 +46,8 @@ pub struct ETag {
 impl ETag {
     /// A strong tag: the representation is byte-for-byte this one.
     ///
-    /// Any `value` is taken; one `etagc` does not admit makes
-    /// [`encode`](Self::encode) answer `None`.
+    /// Any `value` is taken; one holding a `"` or any byte outside visible
+    /// ASCII makes [`encode`](Self::encode) answer `None`.
     #[must_use]
     pub fn strong(value: impl Into<String>) -> Self {
         Self {
@@ -58,8 +58,8 @@ impl ETag {
 
     /// A weak tag: the representation is equivalent, not identical.
     ///
-    /// Any `value` is taken; one `etagc` does not admit makes
-    /// [`encode`](Self::encode) answer `None`.
+    /// Any `value` is taken; one holding a `"` or any byte outside visible
+    /// ASCII makes [`encode`](Self::encode) answer `None`.
     #[must_use]
     pub fn weak(value: impl Into<String>) -> Self {
         Self {
@@ -68,9 +68,9 @@ impl ETag {
         }
     }
 
-    /// The field value, or `None` where [`value`](Self::value) holds a byte
-    /// `etagc` does not admit: a `"`, or anything outside visible ASCII,
-    /// `obs-text` included.
+    /// The field value, or `None` where [`value`](Self::value) holds a `"` or
+    /// any byte outside visible ASCII, including the `obs-text` that `etagc`
+    /// itself admits.
     ///
     /// Attached as a header group, such a tag answers 500 rather than going
     /// out without the field (see [`EncodeHeaders::encode`]).
