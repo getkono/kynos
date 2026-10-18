@@ -475,6 +475,30 @@ async fn a_record_that_is_not_json_ends_the_stream() {
     );
 }
 
+/// RFC 7464 §2.1 says to keep reading past a malformed record; the reader
+/// departs from that on purpose, as `docs/standards.md` argues.
+#[tokio::test]
+async fn a_sequence_record_that_is_not_json_ends_the_stream() {
+    let mut records = json_seq(one_frame(b"\x1e{\"at\":1}\n\x1e{\"at\":\n\x1e{\"at\":3}\n")).await;
+
+    assert_eq!(expect_record(&mut records).await, Reading { at: 1 });
+
+    let rejection = records
+        .next()
+        .await
+        .expect("the malformed record is reported")
+        .expect_err("bytes that are not JSON are a rejection");
+    assert!(
+        matches!(&rejection, BodyRejection::Syntax { detail } if detail.contains("record 1")),
+        "a malformed record is a syntax rejection naming it, not {rejection:?}"
+    );
+
+    assert!(
+        records.next().await.is_none(),
+        "the record after a malformed one is framed by its separator and still not read"
+    );
+}
+
 /// A record that is JSON and does not fit `T` leaves the boundaries intact,
 /// so a bulk ingest can report every bad record rather than the first.
 #[tokio::test]
