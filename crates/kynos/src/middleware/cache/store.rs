@@ -138,6 +138,29 @@ impl StoredResponse {
                     && combined(stored.iter()).eq(combined(received.iter()))
             })
     }
+
+    /// Whether `other` is the same variant of a resource as this one, so that
+    /// storing it replaces this one.
+    ///
+    /// The same variant varied on the same fields and was stored for the same
+    /// request values of each, compared as [`selected_by`](Self::selected_by)
+    /// compares them: two lines are the one line that lists both, and a field
+    /// sent empty is not a field not sent. This is what
+    /// [`CacheStore::put`] replaces by; [`vary`](Self::vary) alone is not,
+    /// since every negotiation of a resource varies on the same names.
+    #[must_use]
+    pub fn same_variant(&self, other: &Self) -> bool {
+        self.0.vary == other.0.vary
+            && self
+                .0
+                .selecting
+                .iter()
+                .zip(&other.0.selecting)
+                .all(|(mine, theirs)| {
+                    mine.is_empty() == theirs.is_empty()
+                        && combined(mine.iter()).eq(combined(theirs.iter()))
+                })
+    }
 }
 
 /// The octets of `lines` combined into one field value, as RFC 9110 section
@@ -157,8 +180,8 @@ fn combined<'a>(lines: impl Iterator<Item = &'a HeaderValue>) -> impl Iterator<I
 /// # The contract
 ///
 /// * `get` returns **every** stored variant of `key`. Kynos picks among them.
-/// * `put` replaces the variant whose selecting values match, and appends
-///   otherwise.
+/// * `put` replaces the variant whose selecting values match, as
+///   [`StoredResponse::same_variant`] judges them, and appends otherwise.
 /// * `invalidate` drops every variant, because RFC 9111 section 4.4
 ///   invalidates a URI rather than one negotiation of it.
 pub trait CacheStore<C>: Send + Sync + 'static {

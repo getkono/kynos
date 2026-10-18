@@ -646,3 +646,34 @@ fn an_empty_varied_field_is_not_an_absent_one() {
     assert!(stored.selected_by(&HeaderMap::new()));
     assert!(!stored.selected_by(&map(&[("accept", "")])));
 }
+
+/// Two stored responses are the same variant exactly when one request selects
+/// both: the same `Vary` names, and each field's lines combining to the same
+/// value, a field sent empty differing from one not sent. A second negotiation
+/// of the same names is a sibling, not a replacement.
+#[test]
+fn a_variant_is_the_same_one_when_one_request_selects_both() {
+    let stored = |vary: &[&str], request: &[(&str, &str)]| {
+        super::store::StoredResponse::new(
+            StatusCode::OK,
+            HeaderMap::new(),
+            bytes::Bytes::new(),
+            vary.iter().map(|name| (*name).to_owned()).collect(),
+            &map(request),
+            Duration::from_secs(60),
+        )
+    };
+    let english = stored(&["accept-language"], &[("accept-language", "en, fr")]);
+
+    assert!(english.same_variant(&stored(
+        &["accept-language"],
+        &[("accept-language", "en"), ("accept-language", "fr")]
+    )));
+    assert!(!english.same_variant(&stored(&["accept-language"], &[("accept-language", "fr")])));
+    assert!(!english.same_variant(&stored(&["accept"], &[("accept", "en, fr")])));
+    assert!(
+        !stored(&["accept-language"], &[])
+            .same_variant(&stored(&["accept-language"], &[("accept-language", "")]))
+    );
+    assert!(stored(&["accept-language"], &[]).same_variant(&stored(&["accept-language"], &[])));
+}
