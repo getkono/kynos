@@ -195,45 +195,80 @@ pub(crate) fn set_retry_after(response: &mut Response, delay: std::time::Duratio
 /// `Vary` line counts (section 5.3), and `Vary: *` is never narrowed. Merged
 /// over bytes so a non-UTF-8 line survives; lines are rewritten only when a
 /// name is added.
+///
+/// Builds no line when no name is added, borrows the name when the one name
+/// added is the whole field, and otherwise allocates the rewritten line once,
+/// sized exactly.
 pub(crate) fn vary_on(fields: &mut crate::http::HeaderMap, names: &'static [&'static str]) {
-    if names.is_empty() {
-        return;
+    use crate::http::{HeaderMap, HeaderValue, header::VARY};
+
+    /// Every non-empty member of every `Vary` line, trimmed.
+    fn members(fields: &HeaderMap) -> impl Iterator<Item = &[u8]> {
+        fields
+            .get_all(VARY)
+            .into_iter()
+            .flat_map(|line| line.as_bytes().split(|&byte| byte == b','))
+            .map(<[u8]>::trim_ascii)
+            .filter(|member| !member.is_empty())
     }
 
-    let mut merged: Vec<&[u8]> = Vec::new();
+    /// Each of `names` neither a member nor an earlier name, in any case.
+    fn added<'a>(
+        fields: &'a HeaderMap,
+        names: &'static [&'static str],
+    ) -> impl Iterator<Item = &'static [u8]> + 'a {
+        names.iter().enumerate().filter_map(move |(index, name)| {
+            let name = name.as_bytes();
+            let known = members(fields)
+                .chain(names[..index].iter().map(|earlier| earlier.as_bytes()))
+                .any(|member| member.eq_ignore_ascii_case(name));
+            (!known).then_some(name)
+        })
+    }
 
-    for line in fields.get_all(crate::http::header::VARY) {
-        for name in line.as_bytes().split(|&byte| byte == b',') {
-            let name = name.trim_ascii();
+    let mut count = 0;
+    let mut length = 0;
 
-            if name == b"*" {
-                return;
+    for member in members(fields) {
+        if member == b"*" {
+            return;
+        }
+        count += 1;
+        length += member.len();
+    }
+
+    let present = count;
+    let mut last: &'static [u8] = b"";
+
+    for name in added(fields, names) {
+        count += 1;
+        length += name.len();
+        last = name;
+    }
+
+    let line = match count - present {
+        0 => return,
+        // The one name is the whole field, so it is borrowed rather than copied.
+        1 if present == 0 => bytes::Bytes::from_static(last),
+        _ => {
+            let mut line = Vec::with_capacity(length + b", ".len() * (count - 1));
+
+            for member in members(fields).chain(added(fields, names).map(|name| -> &[u8] { name }))
+            {
+                if !line.is_empty() {
+                    line.extend_from_slice(b", ");
+                }
+                line.extend_from_slice(member);
             }
 
-            if !name.is_empty() {
-                merged.push(name);
-            }
+            // Sized exactly, so the value takes the buffer over without a copy.
+            bytes::Bytes::from(line)
         }
-    }
+    };
 
-    let present = merged.len();
-
-    for name in names {
-        if !merged
-            .iter()
-            .any(|present| present.eq_ignore_ascii_case(name.as_bytes()))
-        {
-            merged.push(name.as_bytes());
-        }
-    }
-
-    if merged.len() == present {
-        return;
-    }
-
-    // Unreachable in practice; a missing cache hint beats a panicking response.
-    if let Ok(value) = crate::http::HeaderValue::from_bytes(&merged.join(&b", "[..])) {
-        fields.insert(crate::http::header::VARY, value);
+    // Unreachable for a field name; a missing cache hint beats a panicking response.
+    if let Ok(value) = HeaderValue::from_maybe_shared(line) {
+        fields.insert(VARY, value);
     }
 }
 

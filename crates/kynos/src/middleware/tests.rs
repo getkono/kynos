@@ -142,6 +142,26 @@ fn a_vary_line_that_is_not_utf8_is_kept_with_every_other_line() {
     assert_eq!(lines, [b"x-caf\xe9, cookie, origin".to_vec()]);
 }
 
+/// Names the field lacks are added once each, in their order, however many
+/// spellings of one name the caller passes.
+#[test]
+fn names_added_to_vary_are_joined_once_each_in_order() {
+    let lines = vary_lines_after(&[b"ORIGIN"], &["origin", "accept", "Accept", "cookie"]);
+
+    assert_eq!(lines, [b"ORIGIN, accept, cookie".to_vec()]);
+}
+
+/// The one name added to a field holding no member is the whole line, and
+/// a line of only separators holds no member to keep.
+#[test]
+fn a_lone_name_added_to_an_empty_vary_is_the_whole_line() {
+    assert_eq!(vary_lines_after(&[], &["origin"]), [b"origin".to_vec()]);
+    assert_eq!(
+        vary_lines_after(&[b" , "], &["origin"]),
+        [b"origin".to_vec()]
+    );
+}
+
 /// A group that is not repeatable replaces whatever was there.
 ///
 /// The control for the repeatable case, which
