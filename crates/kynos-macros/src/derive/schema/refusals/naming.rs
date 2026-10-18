@@ -1,14 +1,14 @@
 //! Members serde writes under one name and reads under another, so no name a
 //! schema gives them is true in both directions.
 
-use syn::{Data, DeriveInput, Fields};
+use syn::{Data, DeriveInput, Fields, Variant};
 
 use crate::derive::schema::{
     Container, aliases,
     aliases::shadowed_variant,
     attributes::{
-        field_name, field_read_name, is_flattened, serde_flag, serde_key_span, variant_name,
-        variant_read_name, variant_rename_all,
+        field_name, field_read_name, is_flattened, rename_all_fields, serde_flag, serde_key_span,
+        variant_name, variant_read_name, variant_rename_all,
     },
     described_variants, is_written, split_rule,
 };
@@ -127,7 +127,8 @@ pub(super) fn reject_split_rename(input: &DeriveInput) -> syn::Result<()> {
 /// names a member serde both writes and reads: a container
 /// `rename_all(serialize = ..., deserialize = ...)`, an enum's
 /// `rename_all_fields(...)` that reaches a struct variant, or the own
-/// `rename_all(...)` of a struct variant serde writes.
+/// `rename_all(...)` of a struct variant serde writes, judged once each side
+/// it leaves takes the enum's `rename_all_fields`.
 ///
 /// Such a rule gives a member two wire names. A rule naming no field serde both
 /// writes and reads is not refused. Runs before any check that reads a
@@ -143,6 +144,15 @@ pub(super) fn reject_split_rename_all(input: &DeriveInput) -> syn::Result<()> {
         matches!(variant.fields, Fields::Named(_))
             && (own.serialize.is_none() || own.deserialize.is_none())
     });
+    // serde fills each side a variant's own rule leaves from
+    // `rename_all_fields`, so the variant's rule is judged by what each side
+    // resolves to.
+    let fields_rule = rename_all_fields(input);
+    let resolves_split = |variant: &&Variant| {
+        let own = variant_rename_all(variant);
+        own.serialize.or_else(|| fields_rule.serialize.clone())
+            != own.deserialize.or_else(|| fields_rule.deserialize.clone())
+    };
     let rules = [
         Some((&input.attrs, "rename_all", "every member")),
         fields_reached.then_some((
@@ -157,6 +167,7 @@ pub(super) fn reject_split_rename_all(input: &DeriveInput) -> syn::Result<()> {
         variants
             .into_iter()
             .filter(|variant| matches!(variant.fields, Fields::Named(_)) && is_written(variant))
+            .filter(resolves_split)
             .map(|variant| (&variant.attrs, "rename_all", "every field of this variant")),
     );
     for (attrs, key, reach) in rules {

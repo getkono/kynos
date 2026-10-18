@@ -117,6 +117,12 @@ pub(super) fn variant_rename_all(variant: &Variant) -> Sides {
     serde_sides(&variant.attrs, "rename_all")
 }
 
+/// An enum's `rename_all_fields` style on each side, which names a variant's
+/// fields on each side the variant's own `rename_all` leaves.
+pub(super) fn rename_all_fields(input: &DeriveInput) -> Sides {
+    serde_sides(&input.attrs, "rename_all_fields")
+}
+
 /// The [`sides`] of `key` in `#[serde(...)]` lists, the last one written.
 fn serde_sides(attrs: &[syn::Attribute], key: &str) -> Sides {
     let mut found = Sides::default();
