@@ -1,7 +1,8 @@
 //! The sweep over every diagnostic ledger in this crate.
 //!
 //! Each ledger counts its rows against the `syn::Error::new` and `meta.error`
-//! sites of the files it names with `include_str!`. A count only holds for a
+//! sites, or the emitted `compile_error!` guards, of the files it names with
+//! `include_str!`. A count only holds for a
 //! file somebody named, so this walks the source tree, rather than a list of
 //! it, and fails for a file that raises a diagnostic no ledger names, or that
 //! raises one in a spelling no ledger counts.
@@ -85,7 +86,12 @@ fn every_file_raising_a_diagnostic_is_named_by_a_ledger() {
              `syn::Error::new(`, the spelling every ledger counts"
         );
 
-        if source.contains("syn::Error::new(") || source.contains("meta.error(") {
+        // An emitted `compile_error!` refuses the user's build as surely as a
+        // returned error, so it is a site a ledger must name too.
+        if source.contains("syn::Error::new(")
+            || source.contains("meta.error(")
+            || source.contains("compile_error!(")
+        {
             raising += 1;
             assert!(
                 counted.contains(&path.canonicalize().expect("it was just read")),

@@ -1097,6 +1097,9 @@ mod operation_method {
 /// Both hand the template to the document model's parser, whose own tests
 /// hold every way a template is malformed; what each site here owes is that
 /// the parser's refusal reaches the user at all.
+///
+/// `emit.rs` also refuses a build without raising a `syn::Error`: it emits a
+/// `compile_error!` the user's build evaluates, which its own ledger counts.
 mod templates {
     use quote::quote;
     use syn::ItemFn;
@@ -1177,6 +1180,100 @@ mod templates {
             sites,
             "`emit.rs` raises {sites} diagnostic(s) and {} have a case",
             emit_cases().len()
+        );
+    }
+
+    /// One row per `compile_error!` the expansion of `emit.rs` carries: the
+    /// route arguments that put it there, the `cfg` it is gated on, and a
+    /// fragment of what it says.
+    fn guard_cases() -> Vec<(
+        &'static str,
+        proc_macro2::TokenStream,
+        &'static str,
+        &'static str,
+    )> {
+        vec![(
+            "`catch_panics` under a panic strategy that cannot unwind",
+            quote!(path = "/files", catch_panics),
+            "panic = \"abort\"",
+            "requires `panic = \"unwind\"`",
+        )]
+    }
+
+    /// The `compile_error!` invocations in an expansion, each with its
+    /// `#[cfg(..)]` predicates and its message.
+    fn guards(expansion: proc_macro2::TokenStream) -> Vec<(Vec<String>, String)> {
+        let file: syn::File = syn::parse2(expansion).expect("the expansion parses as items");
+        file.items
+            .into_iter()
+            .filter_map(|item| match item {
+                syn::Item::Macro(item) if item.mac.path.is_ident("compile_error") => Some(item),
+                _ => None,
+            })
+            .map(|item| {
+                let predicates = item
+                    .attrs
+                    .iter()
+                    .filter(|attribute| attribute.path().is_ident("cfg"))
+                    .map(|attribute| {
+                        let list = attribute.meta.require_list().expect("`cfg(..)`");
+                        list.tokens.to_string()
+                    })
+                    .collect();
+                let message = item
+                    .mac
+                    .parse_body::<syn::LitStr>()
+                    .expect("a string literal message")
+                    .value();
+                (predicates, message)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn each_guard_case_emits_the_guard_it_names() {
+        for (description, tokens, predicate, expected) in guard_cases() {
+            let args = RouteArgs::parse(tokens).expect("the arguments parse");
+            let expansion = emit("GET", &args, &handler()).expect("the route expands");
+            let emitted = guards(expansion);
+            let [(predicates, message)] = emitted.as_slice() else {
+                panic!("{description}: expected exactly one guard, got {emitted:?}");
+            };
+            let wanted = syn::parse_str::<proc_macro2::TokenStream>(predicate)
+                .expect("a predicate")
+                .to_string();
+            assert_eq!(
+                predicates,
+                &[wanted],
+                "{description}: the guard must be gated on `{predicate}` alone"
+            );
+            assert!(
+                message.contains(expected),
+                "{description}: expected a message containing {expected:?}, got {message:?}"
+            );
+        }
+    }
+
+    /// The control: without `catch_panics` the expansion carries no guard,
+    /// so an aborting build compiles a route that propagates its panics.
+    #[test]
+    fn a_route_propagating_panics_emits_no_guard() {
+        let args = RouteArgs::parse(quote!(path = "/files")).expect("the arguments parse");
+        let expansion = emit("GET", &args, &handler()).expect("the route expands");
+        assert_eq!(guards(expansion), Vec::<(Vec<String>, String)>::new());
+    }
+
+    /// A count, as for the diagnostics: a guard added without a row fails.
+    #[test]
+    fn every_emitted_guard_has_a_case() {
+        const SOURCE: &str = include_str!("emit.rs");
+
+        let sites = SOURCE.matches("compile_error!(").count();
+        assert_eq!(
+            guard_cases().len(),
+            sites,
+            "`emit.rs` emits {sites} `compile_error!` guard(s) and {} have a case",
+            guard_cases().len()
         );
     }
 
