@@ -5160,6 +5160,29 @@ mod security_scheme {
         );
     }
 
+    /// The device grant, the one flow the key applies to, still carries it.
+    #[cfg(feature = "openapi32")]
+    #[test]
+    fn a_device_authorization_url_reaches_the_device_flow() {
+        let input: syn::DeriveInput = syn::parse_quote!(
+            #[security(oauth2(device_authorization(
+                device_authorization_url = "https://auth.example.com/device",
+                token_url = "https://auth.example.com/token"
+            )))]
+            struct Delegated;
+        );
+
+        let expanded = expand_inner(&input)
+            .expect("a well-formed device flow")
+            .to_string();
+
+        assert!(
+            expanded
+                .contains("with_device_authorization_url (\"https://auth.example.com/device\")"),
+            "the device flow drops its URL: {expanded}"
+        );
+    }
+
     /// An API key's name is held to the token grammar exactly where the wire
     /// holds it there: a header field name (RFC 9110 §5.1) and a cookie name
     /// (RFC 6265 §4.1.1) are tokens, while a query parameter name is any
