@@ -1190,7 +1190,6 @@ mod failing {
 }
 
 /// A stream states no length, so it is never buffered to be stored.
-#[cfg(feature = "openapi32")]
 mod streamed {
     use std::{
         convert::Infallible,
