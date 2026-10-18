@@ -3,15 +3,24 @@
 //! A media type's schema is not read here; `rules/schemas.rs` checks every
 //! schema at once.
 
+use std::collections::HashSet;
+
+#[cfg(feature = "openapi32")]
+use crate::{
+    Map,
+    model::schema::types::{SchemaType, TypeSet},
+};
 use crate::{
     model::{
-        body::{RequestBody, media_type::MediaType},
+        body::{RequestBody, encoding::Encoding, media_type::MediaType},
+        components::Components,
         document::Document,
         response::Response,
+        schema::{Schema, object::SchemaObject},
     },
     validate::{
         rules::{document::check_link, parameters::check_header_map},
-        violation::{Violation, pointer_token},
+        violation::{SpecError, Violation, pointer_token},
     },
 };
 
@@ -30,6 +39,7 @@ pub(in crate::validate) fn check_component_content(
             check_response(
                 &format!("#/components/responses/{}", pointer_token(name)),
                 response,
+                components,
                 violations,
             );
         }
@@ -39,6 +49,7 @@ pub(in crate::validate) fn check_component_content(
             check_request_body(
                 &format!("#/components/requestBodies/{}", pointer_token(name)),
                 body,
+                components,
                 violations,
             );
         }
@@ -49,6 +60,7 @@ pub(in crate::validate) fn check_component_content(
             check_media_type(
                 &format!("#/components/mediaTypes/{}", pointer_token(name)),
                 media_type,
+                components,
                 violations,
             );
         }
@@ -58,12 +70,14 @@ pub(in crate::validate) fn check_component_content(
 pub(in crate::validate) fn check_request_body(
     location: &str,
     body: &RequestBody,
+    components: &Components,
     violations: &mut Vec<Violation>,
 ) {
     for (media_type, content) in &body.content {
         check_media_type(
             &format!("{location}/content/{}", pointer_token(media_type)),
             content,
+            components,
             violations,
         );
     }
@@ -72,12 +86,14 @@ pub(in crate::validate) fn check_request_body(
 pub(in crate::validate) fn check_response(
     location: &str,
     response: &Response,
+    components: &Components,
     violations: &mut Vec<Violation>,
 ) {
     for (media_type, content) in &response.content {
         check_media_type(
             &format!("{location}/content/{}", pointer_token(media_type)),
             content,
+            components,
             violations,
         );
     }
@@ -100,29 +116,207 @@ pub(in crate::validate) fn check_response(
     );
 }
 
+/// Checks a media type's encodings against its schema, then each encoding.
+///
+/// The schema-dependent rules hold at this level only: a nested encoding
+/// applies to a part whose value the specification leaves to the part's own
+/// media type, so there is no schema to hold its keys against.
 pub(in crate::validate) fn check_media_type(
     location: &str,
     content: &MediaType,
+    components: &Components,
     violations: &mut Vec<Violation>,
 ) {
-    // The one stated exclusion not spelled as a type: `prefixEncoding` and
-    // `itemEncoding` are 3.2-only, so a sum type would change shape with the
-    // `openapi32` feature, breaking additivity.
     #[cfg(feature = "openapi32")]
-    if !content.encoding.is_empty()
-        && (content.prefix_encoding.is_some() || content.item_encoding.is_some())
     {
-        violations.push(Violation::error(
+        check_exclusion(
             location,
-            crate::validate::violation::SpecError::ConflictingEncoding,
-        ));
-    }
-
-    for (property, encoding) in &content.encoding {
-        check_header_map(
-            &format!("{location}/encoding/{}/headers", pointer_token(property)),
-            &encoding.headers,
+            &content.encoding,
+            content.prefix_encoding.as_ref(),
+            content.item_encoding.as_deref(),
             violations,
         );
+        // `references/3.2.0.md:1386`.
+        if (content.prefix_encoding.is_some() || content.item_encoding.is_some())
+            && content.item_schema.is_none()
+            && content
+                .schema
+                .as_ref()
+                .is_none_or(|schema| excludes_arrays(schema, components))
+        {
+            violations.push(Violation::error(
+                location,
+                SpecError::PositionalEncodingWithoutArray,
+            ));
+        }
     }
+
+    // `references/3.1.2.md:1551`, `references/3.2.0.md:1368`.
+    let properties = match &content.schema {
+        Some(schema) => declared_properties(schema, components),
+        None => Some(HashSet::new()),
+    };
+    for (property, encoding) in &content.encoding {
+        let location = format!("{location}/encoding/{}", pointer_token(property));
+        if properties
+            .as_ref()
+            .is_some_and(|properties| !properties.contains(property.as_str()))
+        {
+            violations.push(Violation::error(
+                &location,
+                SpecError::UnknownEncodingProperty {
+                    property: property.clone(),
+                },
+            ));
+        }
+        check_encoding(&location, encoding, violations);
+    }
+    #[cfg(feature = "openapi32")]
+    {
+        for (index, encoding) in content.prefix_encoding.iter().flatten().enumerate() {
+            check_encoding(
+                &format!("{location}/prefixEncoding/{index}"),
+                encoding,
+                violations,
+            );
+        }
+        if let Some(encoding) = &content.item_encoding {
+            check_encoding(&format!("{location}/itemEncoding"), encoding, violations);
+        }
+    }
+}
+
+/// An encoded part's headers, and under 3.2 the parts nested inside it, which
+/// apply their fields "in the same manner" as a media type
+/// (`references/3.2.0.md:1711-1713`).
+fn check_encoding(location: &str, encoding: &Encoding, violations: &mut Vec<Violation>) {
+    #[cfg(feature = "openapi32")]
+    check_exclusion(
+        location,
+        &encoding.encoding,
+        encoding.prefix_encoding.as_ref(),
+        encoding.item_encoding.as_deref(),
+        violations,
+    );
+    check_header_map(
+        &format!("{location}/headers"),
+        &encoding.headers,
+        violations,
+    );
+    #[cfg(feature = "openapi32")]
+    {
+        for (property, nested) in &encoding.encoding {
+            check_encoding(
+                &format!("{location}/encoding/{}", pointer_token(property)),
+                nested,
+                violations,
+            );
+        }
+        for (index, nested) in encoding.prefix_encoding.iter().flatten().enumerate() {
+            check_encoding(
+                &format!("{location}/prefixEncoding/{index}"),
+                nested,
+                violations,
+            );
+        }
+        if let Some(nested) = &encoding.item_encoding {
+            check_encoding(&format!("{location}/itemEncoding"), nested, violations);
+        }
+    }
+}
+
+/// The one stated exclusion not spelled as a type: `prefixEncoding` and
+/// `itemEncoding` are 3.2-only, so a sum type would change shape with the
+/// `openapi32` feature, breaking additivity.
+#[cfg(feature = "openapi32")]
+fn check_exclusion(
+    location: &str,
+    encoding: &Map<Encoding>,
+    prefix_encoding: Option<&Vec<Encoding>>,
+    item_encoding: Option<&Encoding>,
+    violations: &mut Vec<Violation>,
+) {
+    if !encoding.is_empty() && (prefix_encoding.is_some() || item_encoding.is_some()) {
+        violations.push(Violation::error(location, SpecError::ConflictingEncoding));
+    }
+}
+
+/// The property names `schema` declares, or `None` where a keyword this rule
+/// does not read could declare more.
+///
+/// Read are `properties` on `schema` and on every schema it is the
+/// conjunction of. `anyOf`, `oneOf`, a conditional, `dependentSchemas` and
+/// `$dynamicRef` can each declare one unseen, as can a conjunct no object
+/// stands for.
+fn declared_properties<'doc>(
+    schema: &'doc Schema,
+    components: &'doc Components,
+) -> Option<HashSet<&'doc str>> {
+    let mut properties = HashSet::new();
+    let mut open = false;
+    let complete = for_each_conjunct(schema, components, |object| {
+        properties.extend(object.properties.keys().map(String::as_str));
+        open |= object.any_of.is_some()
+            || object.one_of.is_some()
+            || object.if_schema.is_some()
+            || object.then_schema.is_some()
+            || object.else_schema.is_some()
+            || !object.dependent_schemas.is_empty()
+            || object.dynamic_ref.is_some();
+    });
+    (complete && !open).then_some(properties)
+}
+
+/// Whether no instance of `schema` can be an array: some conjunct's `type`
+/// omits `array`.
+#[cfg(feature = "openapi32")]
+fn excludes_arrays(schema: &Schema, components: &Components) -> bool {
+    let mut excludes = false;
+    for_each_conjunct(schema, components, |object| {
+        excludes |= match &object.ty {
+            Some(TypeSet::One(ty)) => *ty != SchemaType::Array,
+            Some(TypeSet::Many(types)) => !types.contains(&SchemaType::Array),
+            None => false,
+        };
+    });
+    excludes
+}
+
+/// Visits `schema` and each schema it is the conjunction of: its `allOf`
+/// members and the `#/components/schemas` entry its `$ref` names, each
+/// component once however many paths reach it.
+///
+/// Returns whether every conjunct was an object this document resolves; a
+/// boolean schema or a reference it cannot follow is not visited.
+fn for_each_conjunct<'doc>(
+    schema: &'doc Schema,
+    components: &'doc Components,
+    mut visit: impl FnMut(&'doc SchemaObject),
+) -> bool {
+    let mut pending = vec![schema];
+    let mut followed = HashSet::new();
+    let mut complete = true;
+    while let Some(schema) = pending.pop() {
+        let Schema::Object(object) = schema else {
+            complete = false;
+            continue;
+        };
+        visit(object);
+        pending.extend(object.all_of.iter().flatten());
+        if let Some(reference) = &object.reference {
+            match reference
+                .strip_prefix("#/components/schemas/")
+                .filter(|name| !name.contains(['/', '~', '%']))
+                .and_then(|name| components.schemas.get_key_value(name))
+            {
+                Some((name, target)) => {
+                    if followed.insert(name.as_str()) {
+                        pending.push(target);
+                    }
+                }
+                None => complete = false,
+            }
+        }
+    }
+    complete
 }

@@ -1146,10 +1146,14 @@ fn an_encoding_key_is_judged_only_where_every_declaring_keyword_was_read() {
         .components
         .schemas
         .insert("Upload".to_owned(), object_with(&["file"]));
-    document
-        .components
-        .schemas
-        .insert("Loop".to_owned(), Schema::component("Loop"));
+    // A reference cycle is walked once, and still finds what it declares.
+    document.components.schemas.insert(
+        "Loop".to_owned(),
+        Schema::Object(Box::new(SchemaObject {
+            all_of: Some(vec![Schema::component("Loop"), object_with(&["file"])]),
+            ..Default::default()
+        })),
+    );
 
     assert_eq!(located_errors(&document), vec![]);
 }
