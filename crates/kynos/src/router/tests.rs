@@ -216,3 +216,144 @@ fn an_absorbed_denial_of_unchecked_schemas_refuses_the_whole_build() {
         );
     }
 }
+
+// --- Malformed mount sites -----------------------------------------------------
+
+/// The path-template violations a refused router reports, in order.
+fn template_violations(router: &Router<()>) -> Vec<kynos_openapi::Violation> {
+    let Err(crate::Error::Invalid { violations }) = router.openapi() else {
+        panic!("a malformed mount site did not refuse the router");
+    };
+    violations
+        .into_iter()
+        .filter(|violation| {
+            matches!(
+                violation.error,
+                kynos_openapi::SpecError::InvalidPathTemplate { .. }
+            )
+        })
+        .collect()
+}
+
+/// The violation a malformed path literal at a mount site records.
+fn malformed(location: &str, template: &str, prefixed: &str) -> kynos_openapi::Violation {
+    kynos_openapi::Violation {
+        location: location.to_owned(),
+        severity: kynos_openapi::Severity::Error,
+        error: kynos_openapi::SpecError::InvalidPathTemplate {
+            template: template.to_owned(),
+            reason: kynos_openapi::model::paths::template::InvalidPathTemplate::MissingLeadingSlash(
+                prefixed.to_owned(),
+            ),
+        },
+    }
+}
+
+/// A group's prefix that is no path template is recorded where the group is
+/// made, and refuses the router rather than panicking or mounting it at the
+/// root.
+#[test]
+fn a_malformed_group_prefix_refuses_the_router() {
+    let router =
+        Router::<()>::new().group(super::group::Group::<()>::new("v1").mount(at!("/held")));
+
+    assert_eq!(
+        template_violations(&router),
+        [malformed("#/paths", "v1", "v1")]
+    );
+}
+
+/// A nesting prefix that is no path template refuses each operation it would
+/// have prefixed, at that operation's own path.
+#[test]
+fn a_malformed_nesting_prefix_refuses_each_operation_it_prefixes() {
+    let router = Router::<()>::new().nest(
+        "v1",
+        Router::<()>::new().mount(at!("/held")).mount(at!("/other")),
+    );
+
+    assert_eq!(
+        template_violations(&router),
+        [
+            malformed("#/paths/~1held", "/held", "v1/held"),
+            malformed("#/paths/~1other", "/other", "v1/other"),
+        ]
+    );
+}
+
+/// The two paths a reference is placed at are each held to the template
+/// grammar, and a malformed one refuses the router.
+#[cfg(feature = "docs")]
+#[test]
+fn a_malformed_reference_path_refuses_the_router() {
+    use super::docs::Docs;
+
+    let page = Router::<()>::new().docs(Docs::scalar().at("reference"));
+    assert_eq!(
+        template_violations(&page),
+        [malformed("#/paths", "reference", "reference")]
+    );
+
+    let description =
+        Router::<()>::new().docs(Docs::description_only().description_at("spec.json"));
+    assert_eq!(
+        template_violations(&description),
+        [malformed("#/paths", "spec.json", "spec.json")]
+    );
+}
+
+/// Each `GET` operation's path and the `operationId` it publishes.
+#[cfg(feature = "docs")]
+fn published_ids(router: &Router<()>) -> Vec<String> {
+    let document = router.openapi().expect("a describable router");
+    document
+        .paths
+        .items
+        .iter()
+        .filter_map(|(path, item)| {
+            let operation = item.get.as_deref()?;
+            Some(format!("{path} {}", operation.operation_id.as_deref()?))
+        })
+        .collect()
+}
+
+/// Each half of a reference publishes an `operationId` under its prefix,
+/// `docs` unless one is given; and two references nested beneath different
+/// prefixes collide under the default and are told apart by giving one its
+/// own.
+#[cfg(feature = "docs")]
+#[test]
+fn a_reference_publishes_its_operation_ids_under_its_prefix() {
+    use super::docs::Docs;
+
+    assert_eq!(
+        published_ids(&Router::<()>::new().docs(Docs::scalar())),
+        ["/openapi.json docs_openapi_json", "/docs docs_docs"]
+    );
+    assert_eq!(
+        published_ids(&Router::<()>::new().docs(Docs::scalar().operation_id_prefix("reference"))),
+        [
+            "/openapi.json reference_openapi_json",
+            "/docs reference_docs"
+        ]
+    );
+
+    let twice = |second: Docs<_>| {
+        Router::<()>::new()
+            .nest("/v1", Router::<()>::new().docs(Docs::scalar()))
+            .nest("/v2", Router::<()>::new().docs(second))
+    };
+    let Err(crate::Error::Invalid { violations }) = twice(Docs::scalar()).openapi() else {
+        panic!("two references under one prefix were described");
+    };
+    assert!(
+        violations.iter().any(|violation| matches!(
+            violation.error,
+            kynos_openapi::SpecError::DuplicateOperationId { .. }
+        )),
+        "{violations:?}"
+    );
+    twice(Docs::scalar().operation_id_prefix("v2_docs"))
+        .openapi()
+        .expect("two references under two prefixes");
+}
