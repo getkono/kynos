@@ -195,8 +195,10 @@ impl PathTemplate {
     ///
     /// Returns [`InvalidPathTemplate`] when the template does not start with
     /// `/`, has unbalanced or empty braces, repeats a variable, carries a query
-    /// string or fragment (a `?` or `#` outside a `{}` expression), or holds a
-    /// character the path grammar does not allow outside a `{}` expression.
+    /// string or fragment (a `?` or `#` outside a `{}` expression), holds a
+    /// character the path grammar does not allow outside a `{}` expression,
+    /// has a `%` not followed by two hex digits outside a `{}` expression, or
+    /// has an empty segment (two `/` with nothing between them).
     pub fn parse(raw: impl Into<String>) -> Result<Self, InvalidPathTemplate> {
         let raw = raw.into();
 
