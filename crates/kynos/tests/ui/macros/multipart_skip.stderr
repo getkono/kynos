@@ -1,0 +1,5 @@
+error: `skip_serializing_if` leaves this field out of what serde reads or writes, and a form reads and writes every field as its parts, so the description would not be the body. Drop `skip_serializing_if`, or move the field out of the form
+ --> tests/ui/macros/multipart_skip.rs:7:13
+  |
+7 |     #[serde(skip_serializing_if = "Option::is_none")]
+  |             ^^^^^^^^^^^^^^^^^^^

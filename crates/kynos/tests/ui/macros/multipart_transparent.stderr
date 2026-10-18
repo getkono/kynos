@@ -1,0 +1,5 @@
+error: `transparent` describes the form as its one field's schema, and a form carries that field as a part under the field's own name. Drop `transparent`
+ --> tests/ui/macros/multipart_transparent.rs:6:9
+  |
+6 | #[serde(transparent)]
+  |         ^^^^^^^^^^^

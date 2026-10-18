@@ -6,7 +6,8 @@
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{
-    Attribute, Data, DataStruct, DeriveInput, Field, Fields, FieldsNamed, LitStr, spanned::Spanned,
+    Attribute, Data, DataStruct, DeriveInput, Field, Fields, FieldsNamed, GenericArgument, LitStr,
+    PathArguments, Type, spanned::Spanned,
 };
 
 use crate::derive::schema::property_names;
@@ -367,6 +368,28 @@ pub(crate) fn non_token_message(name: &str, kind: &str, grammar: &str) -> Option
 /// RFC 9110 §5.6.2's `tchar`.
 fn is_tchar(character: char) -> bool {
     character.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(character)
+}
+
+/// The `T` of a field typed `Wrapper<T>`; syntactic, so an alias for the
+/// wrapper is not recognised.
+pub(crate) fn wrapped<'a>(ty: &'a Type, wrapper: &str) -> Option<&'a Type> {
+    let Type::Path(path) = ty else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+    let segment = path.path.segments.last()?;
+    if segment.ident != wrapper {
+        return None;
+    }
+    let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
+        return None;
+    };
+    match arguments.args.first()? {
+        GenericArgument::Type(inner) => Some(inner),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

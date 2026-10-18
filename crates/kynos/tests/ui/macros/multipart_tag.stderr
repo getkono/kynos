@@ -1,0 +1,5 @@
+error: a container `tag` describes a required property named by the tag and holding the struct's name, which no part carries in either direction. Drop `tag`, or declare that property as a field of the form
+ --> tests/ui/macros/multipart_tag.rs:6:9
+  |
+6 | #[serde(tag = "kind")]
+  |         ^^^

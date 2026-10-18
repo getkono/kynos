@@ -8,10 +8,10 @@
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
-use syn::{Field, FieldsNamed, GenericArgument, Ident, PathArguments, Type, spanned::Spanned};
+use syn::{Field, FieldsNamed, Ident, Type, spanned::Spanned};
 
 use crate::derive::{
-    common::doc_string,
+    common::{doc_string, wrapped},
     schema::{aliases::named_string, attributes::constraints, check::value_checks},
 };
 
@@ -70,25 +70,7 @@ impl<'a> Param<'a> {
 
     /// The `T` of an `Option<T>` field, which is what makes it optional.
     pub(crate) fn optional(&self) -> Option<&Type> {
-        let Type::Path(path) = self.ty() else {
-            return None;
-        };
-        if path.qself.is_some() {
-            return None;
-        }
-
-        let segment = path.path.segments.last()?;
-        if segment.ident != "Option" {
-            return None;
-        }
-
-        let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
-            return None;
-        };
-        match arguments.args.first()? {
-            GenericArgument::Type(inner) => Some(inner),
-            _ => None,
-        }
+        wrapped(self.ty(), "Option")
     }
 }
 

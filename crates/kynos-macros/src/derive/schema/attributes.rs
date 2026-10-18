@@ -412,7 +412,7 @@ pub(super) fn serde_flag(attrs: &[syn::Attribute], keys: &[&str]) -> bool {
 }
 
 /// Where serde takes the value it fills a missing member with.
-pub(super) enum DefaultFrom {
+pub(crate) enum DefaultFrom {
     /// A bare `default`: the type's `Default`.
     Default,
     /// `default = "path"`: what the function at `path` returns.
@@ -420,7 +420,7 @@ pub(super) enum DefaultFrom {
 }
 
 /// The `default` in a `#[serde(...)]` list, and where it takes its value.
-pub(super) fn serde_default(attrs: &[syn::Attribute]) -> Option<DefaultFrom> {
+pub(crate) fn serde_default(attrs: &[syn::Attribute]) -> Option<DefaultFrom> {
     let mut found = None;
     for attr in attrs {
         if !attr.path().is_ident("serde") {

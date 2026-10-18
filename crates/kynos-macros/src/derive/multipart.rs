@@ -7,19 +7,34 @@
 //! Parts convert through `FromPart` and `IntoPart`. Multiplicity is read
 //! syntactically from the type: `Vec<T>` is one part per element, `Option<T>`
 //! an optional part, anything else a required one.
+//!
+//! The decoder accepts what the `Schema` derive describes: a field's
+//! `#[serde(default)]` fills a part left out, and `deny_unknown_fields`
+//! refuses a part no field declares. A serde key the description honours and
+//! a part cannot — a container `default`, `tag` or `transparent`, an `alias`,
+//! any `skip`, a `flatten` — is refused, and so is a `Vec<T>` without `default`, whose empty value is
+//! written as no part although its description requires one.
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, quote_spanned};
-use syn::{
-    DeriveInput, Field, GenericArgument, Ident, PathArguments, Type, parse_macro_input,
-    spanned::Spanned,
-};
+use syn::{DeriveInput, Field, FieldsNamed, Ident, Type, parse_macro_input, spanned::Spanned};
 
 use crate::derive::{
-    common::{NameCase, named_fields, reject_duplicate_names},
-    schema::{property_names, split_renamed_field, split_rule},
+    common::{NameCase, named_fields, reject_duplicate_names, wrapped},
+    schema::{
+        attributes::{DefaultFrom, serde_default, serde_key_span},
+        property_names, split_renamed_field, split_rule,
+    },
 };
+
+/// serde's keys that leave a field out of what serde reads or writes.
+const SKIPS: &[&str] = &[
+    "skip",
+    "skip_serializing",
+    "skip_deserializing",
+    "skip_serializing_if",
+];
 
 pub(crate) fn expand(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
@@ -45,6 +60,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
              directions. Say which with `rename = \"...\"`",
         ));
     }
+    reject_unfollowed_keys(input, fields)?;
     let names = property_names(input, fields);
     reject_duplicate_names(fields, &names, "part", NameCase::Sensitive)?;
 
@@ -54,11 +70,12 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
         .zip(&names)
         .enumerate()
         .map(|(index, (field, name))| Declared::new(index, field, name))
-        .collect();
+        .collect::<syn::Result<_>>()?;
 
     // One binding per field, filled in a single pass over the parts.
     let bindings = declared.iter().map(Declared::binding);
-    let dispatch = dispatch(&declared);
+    let closed = serde_key_span(&input.attrs, &["deny_unknown_fields"]).is_some();
+    let dispatch = dispatch(&declared, closed);
     let reads = declared.iter().map(Declared::read);
     let idents = declared.iter().map(Declared::ident);
     let writes = declared.iter().map(Declared::write);
@@ -77,7 +94,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 #(#bindings)*
 
                 // A part naming no declared field is ignored, like an
-                // undeclared query parameter.
+                // undeclared query parameter, unless the form is closed.
                 for part in parts {
                     #dispatch
                 }
@@ -101,10 +118,83 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
     })
 }
 
-/// Sorts one part into the field that declared its name, or drops it; an
-/// `if` chain, since a `match` on `part.name` could not move `part`.
-fn dispatch(declared: &[Declared<'_>]) -> TokenStream2 {
-    declared.iter().rev().fold(quote!({}), |rest, field| {
+/// Refuses each serde key the `Schema` derive describes and a part cannot
+/// follow, at the key.
+fn reject_unfollowed_keys(input: &DeriveInput, fields: &FieldsNamed) -> syn::Result<()> {
+    if let Some((_, span)) = serde_key_span(&input.attrs, &["default"]) {
+        return Err(syn::Error::new(
+            span,
+            "a container `default` fills a field left out from the form's own `Default`, and a \
+             form is read one part at a time, never built whole. Put `#[serde(default)]` on each \
+             field that may be left out",
+        ));
+    }
+    if let Some((_, span)) = serde_key_span(&input.attrs, &["tag"]) {
+        return Err(syn::Error::new(
+            span,
+            "a container `tag` describes a required property named by the tag and holding the \
+             struct's name, which no part carries in either direction. Drop `tag`, or declare \
+             that property as a field of the form",
+        ));
+    }
+    if let Some((_, span)) = serde_key_span(&input.attrs, &["transparent"]) {
+        return Err(syn::Error::new(
+            span,
+            "`transparent` describes the form as its one field's schema, and a form carries that \
+             field as a part under the field's own name. Drop `transparent`",
+        ));
+    }
+    for field in &fields.named {
+        if let Some((_, span)) = serde_key_span(&field.attrs, &["alias"]) {
+            return Err(syn::Error::new(
+                span,
+                "an `alias` gives this field a second part name, and a part is read and written \
+                 under one. Drop the `alias`, or make the name it carries the field's `rename`",
+            ));
+        }
+        if let Some((key, span)) = serde_key_span(&field.attrs, SKIPS) {
+            return Err(syn::Error::new(
+                span,
+                format!(
+                    "`{key}` leaves this field out of what serde reads or writes, and a form \
+                     reads and writes every field as its parts, so the description would not be \
+                     the body. Drop `{key}`, or move the field out of the form"
+                ),
+            ));
+        }
+        if let Some((_, span)) = serde_key_span(&field.attrs, &["flatten"]) {
+            return Err(syn::Error::new(
+                span,
+                "a `flatten`ed field is described as its own members, and a form carries each \
+                 field as parts under the field's own name. Declare those members as fields of \
+                 the form",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Sorts one part into the field that declared its name, else drops it or,
+/// in a `closed` form, refuses it; an `if` chain, since a `match` on
+/// `part.name` could not move `part`.
+fn dispatch(declared: &[Declared<'_>], closed: bool) -> TokenStream2 {
+    let undeclared = if closed {
+        quote! {{
+            return ::core::result::Result::Err(
+                ::kynos::error::rejection::BodyRejection::Schema {
+                    failures: ::std::collections::BTreeMap::from([(
+                        ::std::string::ToString::to_string(
+                            &::kynos::schema::constraints::Pointer::root().member(&part.name),
+                        ),
+                        ::std::string::String::from("the part is not declared"),
+                    )]),
+                },
+            );
+        }}
+    } else {
+        quote!({})
+    };
+    declared.iter().rev().fold(undeclared, |rest, field| {
         let gathered = field.gathered();
         let name = field.name;
         quote! {
@@ -135,22 +225,36 @@ struct Declared<'a> {
     /// The type one part becomes: the `T` of `Option<T>` or `Vec<T>`, else the
     /// field's own type.
     element: &'a Type,
+    /// What fills the field when no part carries it, from its
+    /// `#[serde(default)]`.
+    default: Option<DefaultFrom>,
 }
 
 impl<'a> Declared<'a> {
-    fn new(index: usize, field: &'a Field, name: &'a str) -> Self {
-        let (arity, element) = wrapper(&field.ty, "Option")
+    fn new(index: usize, field: &'a Field, name: &'a str) -> syn::Result<Self> {
+        let (arity, element) = wrapped(&field.ty, "Option")
             .map(|inner| (Arity::Optional, inner))
-            .or_else(|| wrapper(&field.ty, "Vec").map(|inner| (Arity::Repeated, inner)))
+            .or_else(|| wrapped(&field.ty, "Vec").map(|inner| (Arity::Repeated, inner)))
             .unwrap_or((Arity::One, &field.ty));
+        let default = serde_default(&field.attrs);
 
-        Self {
+        if matches!(arity, Arity::Repeated) && default.is_none() {
+            return Err(syn::Error::new(
+                field.ty.span(),
+                "a `Vec` field is carried by no part when it is empty, and its description, \
+                 without `default`, requires it. Mark it `#[serde(default)]`, so an empty list \
+                 and a missing part are one value in both directions",
+            ));
+        }
+
+        Ok(Self {
             index,
             field,
             name,
             arity,
             element,
-        }
+            default,
+        })
     }
 
     fn ident(&self) -> &Ident {
@@ -187,36 +291,54 @@ impl<'a> Declared<'a> {
             <#element as ::kynos::extract::body::multipart::FromPart>::from_part(part)?
         };
 
+        // What the field is when no part carries it: its `default`, else
+        // what its arity says absence is.
+        let missing = match (&self.default, self.arity) {
+            (Some(DefaultFrom::Default), _) => {
+                quote_spanned! {span=> ::core::default::Default::default() }
+            }
+            (Some(DefaultFrom::Path(path)), _) => quote_spanned! {path.span()=> #path() },
+            (None, Arity::One) => quote! {
+                return ::core::result::Result::Err(
+                    ::kynos::error::rejection::BodyRejection::Schema {
+                        failures: ::std::collections::BTreeMap::from([(
+                            ::std::string::ToString::to_string(
+                                &::kynos::schema::constraints::Pointer::root().member(#name),
+                            ),
+                            ::std::string::String::from("the part is required"),
+                        )]),
+                    },
+                )
+            },
+            (None, Arity::Optional) => quote!(::core::option::Option::None),
+            // `Declared::new` refuses a `Vec` without `default`.
+            (None, Arity::Repeated) => quote!(::std::vec::Vec::new()),
+        };
+
         match self.arity {
             // Only the first part under this name is read.
             Arity::One => quote! {
-                let ::core::option::Option::Some(part) =
-                    ::core::iter::IntoIterator::into_iter(#gathered).next()
-                else {
-                    return ::core::result::Result::Err(
-                        ::kynos::error::rejection::BodyRejection::Schema {
-                            failures: ::std::collections::BTreeMap::from([(
-                                ::std::string::ToString::to_string(
-                                    &::kynos::schema::constraints::Pointer::root().member(#name),
-                                ),
-                                ::std::string::String::from("the part is required"),
-                            )]),
-                        },
-                    );
+                let #ident = match ::core::iter::IntoIterator::into_iter(#gathered).next() {
+                    ::core::option::Option::Some(part) => #one,
+                    ::core::option::Option::None => #missing,
                 };
-                let #ident = #one;
             },
             Arity::Optional => quote! {
                 let #ident = match ::core::iter::IntoIterator::into_iter(#gathered).next() {
                     ::core::option::Option::Some(part) => ::core::option::Option::Some(#one),
-                    ::core::option::Option::None => ::core::option::Option::None,
+                    ::core::option::Option::None => #missing,
                 };
             },
             Arity::Repeated => quote! {
-                let mut #ident = ::std::vec::Vec::with_capacity(#gathered.len());
-                for part in #gathered {
-                    #ident.push(#one);
-                }
+                let #ident = if #gathered.is_empty() {
+                    #missing
+                } else {
+                    let mut #ident = ::std::vec::Vec::with_capacity(#gathered.len());
+                    for part in #gathered {
+                        #ident.push(#one);
+                    }
+                    #ident
+                };
             },
         }
     }
@@ -257,28 +379,5 @@ impl<'a> Declared<'a> {
                 }
             }
         }
-    }
-}
-
-/// The `T` of a `Wrapper<T>` field, which is what declares its multiplicity.
-fn wrapper<'a>(ty: &'a Type, wrapper: &str) -> Option<&'a Type> {
-    let Type::Path(path) = ty else {
-        return None;
-    };
-    if path.qself.is_some() {
-        return None;
-    }
-
-    let segment = path.path.segments.last()?;
-    if segment.ident != wrapper {
-        return None;
-    }
-
-    let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
-        return None;
-    };
-    match arguments.args.first()? {
-        GenericArgument::Type(inner) => Some(inner),
-        _ => None,
     }
 }
