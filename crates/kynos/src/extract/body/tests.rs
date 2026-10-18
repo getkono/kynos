@@ -414,6 +414,21 @@ mod a_part_disposition_is_read_quote_aware {
         );
     }
 
+    /// A part whose `form-data` disposition names no field is 400, file name
+    /// or not: RFC 7578 section 4.2 requires each part to carry a `name`.
+    #[tokio::test]
+    async fn a_part_naming_no_field_is_refused() {
+        for head in [
+            &b"Content-Disposition: form-data"[..],
+            b"Content-Disposition: form-data; filename=\"a.txt\"",
+        ] {
+            assert_eq!(
+                refused(head).await,
+                "a part declares no field name in its `Content-Disposition`"
+            );
+        }
+    }
+
     /// A `Content-Disposition` that is not UTF-8 is 400, the file name's
     /// bytes included, since both names are `String`s.
     #[tokio::test]
@@ -704,6 +719,36 @@ async fn a_protobuf_body_decodes_to_the_message_it_encodes() {
         .expect("a well-formed message");
 
     assert_eq!(message, Tagged { value: 7 });
+}
+
+/// Bytes protobuf cannot decode are a 400 syntax rejection, not a 422: no
+/// message exists for a bound to be checked against. The detail is `prost`'s
+/// own sentence, so only its presence is asserted.
+#[cfg(feature = "protobuf")]
+#[tokio::test]
+async fn a_protobuf_body_that_does_not_decode_is_a_syntax_rejection() {
+    use crate::{
+        error::rejection::BodyRejection,
+        extract::{FromRequest, body::protobuf::Protobuf},
+        http::{HeaderValue, Request, StatusCode, body::Body, header},
+    };
+
+    // Field 1, varint wire type, and then no varint: the buffer ends first.
+    let mut request = Request::new(Body::from_bytes(bytes::Bytes::from_static(&[0x08])));
+    request.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/protobuf"),
+    );
+
+    let rejection = Protobuf::<()>::from_request(request, &())
+        .await
+        .expect_err("a truncated message");
+
+    assert_eq!(rejection.status(), StatusCode::BAD_REQUEST);
+    let BodyRejection::Syntax { detail } = rejection else {
+        panic!("refused as {rejection:?} rather than as syntax");
+    };
+    assert!(!detail.is_empty());
 }
 
 /// A body still under a content coding was decoded by nothing, since
