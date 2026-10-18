@@ -1783,6 +1783,30 @@ fn a_router_using_no_3_2_construct_is_described_as_3_1() {
     assert_eq!(claimed_version(&router), "3.1.2");
 }
 
+/// A cookie group stating no style, so nothing in it is 3.2-only.
+#[cfg(feature = "cookie")]
+#[derive(kynos::CookieParams)]
+struct Preference {
+    #[allow(dead_code)]
+    theme: String,
+}
+
+#[cfg(feature = "cookie")]
+#[kynos::get("/preference")]
+async fn preference(_: kynos::extract::params::cookie::Cookies<Preference>) -> NoContent {
+    NoContent
+}
+
+/// A derived cookie is no 3.2 construct of its own accord: the `openapi32`
+/// feature, wherever in the graph it is enabled, leaves this router at 3.1.
+#[cfg(feature = "cookie")]
+#[test]
+fn a_derived_cookie_leaves_the_description_at_3_1() {
+    let router = Router::<()>::new().mount(kynos::routes![preference]);
+
+    assert_eq!(claimed_version(&router), "3.1.2");
+}
+
 /// The one violation a router refused to describe reports.
 fn sole_refusal<C: 'static>(router: &Router<C>) -> kynos::openapi::SpecError {
     let Err(kynos::Error::Invalid { violations }) = router.openapi() else {
