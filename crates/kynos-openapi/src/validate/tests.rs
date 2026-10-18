@@ -1071,6 +1071,38 @@ fn a_reusable_media_type_is_checked_at_its_definition() {
     );
 }
 
+/// An `additionalOperations` key is refused exactly when its method has a
+/// fixed field of its own.
+///
+/// `references/3.2.0.md:604`: the map "MUST NOT contain any entry for the
+/// methods that can be defined by other fixed fields". Every method in
+/// [`Method::all`] is one; `PROPFIND` has no field, and `post` is not `POST`,
+/// because a method token is case-sensitive (RFC 9110 §9.1).
+#[cfg(feature = "openapi32")]
+#[test]
+fn an_additional_operation_is_refused_exactly_when_its_method_has_a_field() {
+    let fixed = Method::all()
+        .iter()
+        .map(|method| (method.as_wire_str(), true));
+    let unfixed = [("PROPFIND", false), ("post", false)];
+
+    for (key, refused) in fixed.chain(unfixed) {
+        let mut item = PathItem::new();
+        item.additional_operations.insert(
+            key.to_owned(),
+            Box::new(Operation::new("op").with_responses(ok_responses())),
+        );
+        let document = document_with(&[("/x", item)]);
+        let at_key = format!("#/paths/~1x/additionalOperations/{key}");
+
+        let located: Vec<String> = located_errors_3_2(&document)
+            .into_iter()
+            .map(|(location, _)| location)
+            .collect();
+        assert_eq!(located.contains(&at_key), refused, "`{key}`: {located:?}");
+    }
+}
+
 /// Every component section's keys are checked, not five of them.
 ///
 /// `references/3.1.2.md:593`: "**All** the fixed fields declared above are
