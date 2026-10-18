@@ -5393,6 +5393,26 @@ mod multipart {
                 "fills a field left out from the form's own `Default`",
             ),
             case(
+                "a container `tag`, a required property no part carries",
+                quote::quote!(
+                    #[serde(tag = "kind")]
+                    struct Upload {
+                        caption: String,
+                    }
+                ),
+                "describes a required property named by the tag",
+            ),
+            case(
+                "a container `transparent`, described as its one field's schema",
+                quote::quote!(
+                    #[serde(transparent)]
+                    struct Upload {
+                        caption: String,
+                    }
+                ),
+                "describes the form as its one field's schema",
+            ),
+            case(
                 "an `alias`, a second name the part is never read under",
                 quote::quote!(
                     struct Upload {
