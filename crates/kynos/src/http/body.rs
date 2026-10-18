@@ -16,9 +16,9 @@ use http_body_util::{BodyExt, Empty, Full, combinators::UnsyncBoxBody};
 
 pub(crate) type BoxError = Box<dyn StdError + Send + Sync>;
 
-/// The request body.
+/// The body of a request or a response.
 ///
-/// Opaque by design. Bodies are consumed through a typed extractor such as
+/// Opaque by design. A request's is consumed through a typed extractor such as
 /// [`Json`](crate::extract::body::json::Json), never read directly.
 pub struct Body {
     inner: Mutex<UnsyncBoxBody<Bytes, BoxError>>,
@@ -72,6 +72,13 @@ impl Body {
                 .boxed_unsync(),
             ),
         }
+    }
+
+    /// A body whose bytes arrive as `chunks`, each one frame, for a fuzz
+    /// target choosing where a transport splits a body.
+    #[cfg(fuzzing)]
+    pub(crate) fn from_chunks(chunks: Vec<Bytes>) -> Self {
+        Self::from_body(Chunks(chunks.into()))
     }
 
     /// Erases a wrapping body (compressing, counting, ranged). Ungated, since
@@ -187,6 +194,29 @@ where
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
         }
+    }
+}
+
+/// Chunks already in memory, seen as a body: one data frame per chunk, in
+/// order, as a transport might have split them.
+#[cfg(fuzzing)]
+struct Chunks(std::collections::VecDeque<Bytes>);
+
+#[cfg(fuzzing)]
+impl HttpBody for Chunks {
+    type Data = Bytes;
+    type Error = BoxError;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        Poll::Ready(
+            self.get_mut()
+                .0
+                .pop_front()
+                .map(|chunk| Ok(Frame::data(chunk))),
+        )
     }
 }
 

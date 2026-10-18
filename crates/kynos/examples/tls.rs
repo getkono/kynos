@@ -13,7 +13,7 @@
 //! disk, a secret manager or an ACME client; `from_pem` takes bytes and does
 //! not care where they came from.
 //!
-//! Four things are worth noticing:
+//! Worth noticing:
 //!
 //! * **rustls is the only TLS backend, and that is a decision rather than a
 //!   default.** There is no `native-tls` feature and no runtime selection, so

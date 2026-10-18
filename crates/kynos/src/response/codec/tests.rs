@@ -4,7 +4,9 @@
 //! is a value type in `docs/testing.md`'s allocation, which owes exactly that
 //! and explicitly does not owe per-field tests or a hand-written round-trip:
 //! the round-trip is the extracting half's, and a hand-written one here would
-//! compare `encode` with `decode` and pass wherever both were wrong.
+//! compare `encode` with `decode` and pass wherever both were wrong. The one
+//! exception is JSON's writer, whose stack-to-heap spill is internal logic of
+//! its own and is held at its boundaries.
 //!
 //! What an exact-bytes case buys is the thing a round-trip cannot see. A
 //! misspelled field name round-trips perfectly — nothing sets
@@ -57,6 +59,23 @@ async fn json_writes_the_document_and_states_its_type() {
     assert_eq!(&body(response).await[..], br#"{"x":1,"y":-2}"#);
 }
 
+/// The writer moves a body from the stack to the heap once it outgrows 1 KiB:
+/// a body filling it exactly, one octet past it, and one spilled far enough
+/// that the heap grows again are each written whole and in order.
+#[cfg(feature = "json")]
+#[tokio::test]
+async fn json_writes_a_body_whole_on_either_side_of_the_stack_buffer() {
+    use crate::extract::body::json::Json;
+
+    for octets in [1024, 1025, 5000] {
+        // A string is written as its characters between two quotes.
+        let text: String = ('a'..='z').cycle().take(octets - 2).collect();
+        let response = Json(&text).into_response();
+
+        assert_eq!(body(response).await, format!("\"{text}\"").as_bytes());
+    }
+}
+
 #[cfg(feature = "form")]
 #[tokio::test]
 async fn a_form_writes_the_pairs_and_states_its_type() {
@@ -87,6 +106,33 @@ async fn a_form_writes_an_array_as_one_pair_per_item() {
     .into_response();
 
     assert_eq!(&body(response).await[..], b"tag=a&tag=b");
+}
+
+/// A value the form encoder refuses -- here a bare number, which has no name
+/// to pair it with -- answers a 500 problem rather than a 200 with a partial
+/// or empty body: it is encoded in full before the status is committed.
+#[cfg(feature = "form")]
+#[tokio::test]
+async fn a_form_that_cannot_be_encoded_answers_500() {
+    use crate::extract::body::form::Form;
+
+    let response = Form(42_u32).into_response();
+
+    assert_eq!(
+        response.status(),
+        crate::http::StatusCode::INTERNAL_SERVER_ERROR
+    );
+    assert_eq!(media_type(&response), "application/problem+json");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body(response).await)
+            .expect("a problem document"),
+        serde_json::json!({
+            "type": "about:blank",
+            "title": "Internal Server Error",
+            "status": 500,
+            "detail": "the response body could not be encoded as a form",
+        })
+    );
 }
 
 #[tokio::test]
@@ -183,8 +229,8 @@ async fn multipart_states_the_boundary_the_body_is_framed_with() {
 #[test]
 fn every_codec_has_a_wire_case() {
     const SOURCE: &str = include_str!("mod.rs");
-    /// `binary`, `text`, `form`, `json`, `multipart`, `protobuf`.
-    const WITNESSED: usize = 6;
+    /// The codecs a case above pins the bytes of, in declaration order.
+    const WITNESSED: [&str; 6] = ["binary", "text", "form", "json", "multipart", "protobuf"];
 
     // Either visibility. What is counted is codecs, and whether a codec's
     // module is `pub` says only whether it declares an item of its own --
@@ -197,12 +243,13 @@ fn every_codec_has_a_wire_case() {
             line.strip_prefix("pub mod ")
                 .or_else(|| line.strip_prefix("mod "))
         })
-        .filter(|declaration| *declaration != "tests;")
-        .count();
+        .filter_map(|declaration| declaration.strip_suffix(';'))
+        .filter(|name| *name != "tests")
+        .collect::<Vec<_>>();
 
     assert_eq!(
         declared, WITNESSED,
-        "`codec/` holds {declared} codec(s) and {WITNESSED} have a wire case; a codec added \
-         without one is a codec whose bytes nothing pins"
+        "`codec/` holds one set of codecs and another has a wire case; a codec added without \
+         one is a codec whose bytes nothing pins"
     );
 }

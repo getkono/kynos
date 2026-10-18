@@ -9,7 +9,7 @@
 //! compiles in the regular expression engine the check runs, and without it
 //! the derive refuses the key rather than describe a bound nothing checks.
 //!
-//! Four things are worth noticing:
+//! Worth noticing:
 //!
 //! * **The serde attributes are read, not repeated.** `rename_all` and
 //!   `#[serde(tag = ...)]` are already on the type because it has to serialize;

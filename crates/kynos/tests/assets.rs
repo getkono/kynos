@@ -858,14 +858,26 @@ mod directory {
     }
 
     /// Traversal is refused, end to end.
+    ///
+    /// Each target is `tests/assets.rs`, this file, which exists one level
+    /// above the root, so a router that followed the `..` would answer 200
+    /// with it rather than 404. The control is a file inside the root, served.
     #[tokio::test]
     async fn a_request_climbing_out_of_the_root_is_refused() {
         let service = served().build(()).expect("a buildable router");
+        assert!(
+            std::path::Path::new("tests/assets.rs").is_file(),
+            "the traversal target exists, so only the refusal keeps it out"
+        );
+
+        let inside = get(&service, "/files/css/app.css").call().await;
+        assert_eq!(inside.status, StatusCode::OK);
+        assert_eq!(inside.text(), super::STYLESHEET);
 
         for path in [
-            "/files/../Cargo.toml",
-            "/files/css/../../Cargo.toml",
-            "/files/%2e%2e/Cargo.toml",
+            "/files/../assets.rs",
+            "/files/css/../../assets.rs",
+            "/files/%2e%2e/assets.rs",
         ] {
             let reply = get(&service, path).call().await;
             assert_eq!(reply.status, StatusCode::NOT_FOUND, "{path}");

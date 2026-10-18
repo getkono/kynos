@@ -1,0 +1,23 @@
+error[E0277]: `(Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>)` is not something a router can mount
+  --> tests/ui/traits/into_endpoints_seventeen_members.rs:12:21
+   |
+12 |     mountable::<(), (E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E, E)>();
+   |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not mountable
+   |
+   = help: the trait `IntoEndpoints<()>` is not implemented for `(Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>, Endpoints<()>)`
+   = note: mount what `routes![..]` produces, an `EndpointBuilder`, or a tuple, array or vector of those
+   = help: the following other types implement trait `IntoEndpoints<C>`:
+             (A, B)
+             (A, B, C2)
+             (A, B, C2, D)
+             (A, B, C2, D, E)
+             (A, B, C2, D, E, F)
+             (A, B, C2, D, E, F, G)
+             (A, B, C2, D, E, F, G, H)
+             (A, B, C2, D, E, F, G, H, I)
+           and $N others
+note: required by a bound in `mountable`
+  --> tests/ui/traits/into_endpoints_seventeen_members.rs:7:20
+   |
+ 7 | fn mountable<C, T: IntoEndpoints<C>>() {}
+   |                    ^^^^^^^^^^^^^^^^ required by this bound in `mountable`

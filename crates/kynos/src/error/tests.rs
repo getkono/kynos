@@ -59,9 +59,9 @@ fn an_invalid_router_offers_no_cause() {
 /// Every failure raised while a router is built has to have a way into
 /// [`Error`], or the code that raises it has nothing to return.
 ///
-/// `ContributionConflict` had none: `OperationContribution::merge` and
-/// `OperationCx::contribute` both produce one during the build, and neither
-/// could report it.
+/// `ContributionConflict` had none, so a security scheme name two declarations
+/// claimed with different schemes, recorded during the build, could not be
+/// reported.
 #[test]
 fn a_contribution_conflict_becomes_a_build_failure() {
     let error = Error::from(ContributionConflict::DefaultResponse);
@@ -142,67 +142,70 @@ mod variants {
         }
     }
 
-    /// One constructed value per variant, with a fragment of what it must say.
-    fn ledger() -> Vec<(Error, &'static str)> {
+    /// One constructed value per variant, with the whole of what it must say.
+    ///
+    /// A transparent variant's sentence is its inner error's, rendered from a
+    /// second value of the same inner error, so a wrapper that added words of
+    /// its own would part the two.
+    fn ledger() -> Vec<(Error, String)> {
+        let path = || {
+            kynos_openapi::PathTemplate::parse("users")
+                .expect_err("a template without a leading slash")
+        };
+        let schema = || crate::schema::registry::SchemaConflict {
+            name: "Order".to_owned(),
+        };
+        let key_pattern = || crate::schema::registry::UnenforceableKeyPattern {
+            key: "app::Sku".to_owned(),
+            pattern: "a(?=b)".to_owned(),
+            reason: "lookaround".to_owned(),
+        };
+        let contribution =
+            || crate::middleware::contribution::ContributionConflict::DefaultResponse;
+        let middleware = || crate::middleware::MiddlewareError::CredentialedWildcardOrigin;
+        let link = || crate::extract::link::UnresolvedLink::Unmounted {
+            from: "create_user".to_owned(),
+            target: "get_user",
+        };
+        #[cfg(feature = "yaml")]
+        let yaml = || {
+            <kynos_openapi::emit::YamlError as serde::ser::Error>::custom(
+                "a number with no YAML representation",
+            )
+        };
+
         vec![
-            (invalid(), "does not describe a valid API"),
             (
-                Error::Path(
-                    kynos_openapi::PathTemplate::parse("users")
-                        .expect_err("a template without a leading slash"),
-                ),
-                "/",
+                invalid(),
+                "the router does not describe a valid API:\n  \
+                 error at /paths/~1users/get: an operation must declare at least one response\n  \
+                 warning at /tags/1: tag `admin` is declared more than once"
+                    .to_owned(),
+            ),
+            (Error::Path(path()), path().to_string()),
+            (Error::Schema(schema()), schema().to_string()),
+            (
+                Error::KeyPattern(Box::new(key_pattern())),
+                key_pattern().to_string(),
             ),
             (
-                Error::Schema(crate::schema::registry::SchemaConflict {
-                    name: "Order".to_owned(),
-                }),
-                "`Order` is claimed by two structurally different schemas",
+                Error::Contribution(contribution()),
+                contribution().to_string(),
             ),
-            (
-                Error::KeyPattern(Box::new(crate::schema::registry::UnenforceableKeyPattern {
-                    key: "app::Sku".to_owned(),
-                    pattern: "a(?=b)".to_owned(),
-                    reason: "lookaround".to_owned(),
-                })),
-                "`app::Sku` declares the pattern `a(?=b)`, which cannot be enforced: lookaround",
-            ),
-            (
-                Error::Contribution(
-                    crate::middleware::contribution::ContributionConflict::DefaultResponse,
-                ),
-                "two interceptors declare different `default` responses",
-            ),
-            (
-                Error::Middleware(crate::middleware::MiddlewareError::CredentialedWildcardOrigin),
-                "permits any origin and also permits credentials",
-            ),
-            (
-                Error::Link(Box::new(crate::extract::link::UnresolvedLink::Unmounted {
-                    from: "create_user".to_owned(),
-                    target: "get_user",
-                })),
-                "operation `create_user` links to `get_user`, which this router does not mount",
-            ),
+            (Error::Middleware(middleware()), middleware().to_string()),
+            (Error::Link(Box::new(link())), link().to_string()),
             (
                 Error::Json(
                     serde_json::from_str::<u8>("not a number").expect_err("a parse failure"),
                 ),
-                "could not be emitted as JSON",
+                "the description could not be emitted as JSON".to_owned(),
             ),
             #[cfg(feature = "yaml")]
-            (
-                Error::Yaml(
-                    <kynos_openapi::emit::YamlError as serde::ser::Error>::custom(
-                        "a number with no YAML representation",
-                    ),
-                ),
-                "could not be emitted as YAML",
-            ),
+            (Error::Yaml(yaml()), yaml().to_string()),
             #[cfg(feature = "server")]
             (
                 Error::Server(crate::server::error::ServerError::NoListeners),
-                "listener",
+                crate::server::error::ServerError::NoListeners.to_string(),
             ),
         ]
     }
@@ -211,13 +214,70 @@ mod variants {
     fn each_variant_says_what_failed() {
         for (error, expected) in ledger() {
             let name = variant_name(&error);
-            let rendered = error.to_string();
 
-            assert!(
-                rendered.contains(expected),
-                "{name}: expected a message containing {expected:?}, got {rendered:?}"
-            );
+            assert_eq!(error.to_string(), expected, "{name}");
         }
+    }
+
+    /// What the transparent variants' inner errors say, so that rendering a
+    /// second value of each in the ledger is not the only thing pinning the
+    /// sentence a caller reads.
+    #[test]
+    fn each_inner_error_says_what_failed() {
+        assert_eq!(
+            Error::Path(
+                kynos_openapi::PathTemplate::parse("users")
+                    .expect_err("a template without a leading slash")
+            )
+            .to_string(),
+            "path template `users` must begin with `/`"
+        );
+        assert_eq!(
+            Error::Schema(crate::schema::registry::SchemaConflict {
+                name: "Order".to_owned(),
+            })
+            .to_string(),
+            "component name `Order` is claimed by two structurally different schemas; rename one \
+             of the Rust types, or implement `Schema` by hand for one and return a different \
+             `name()`"
+        );
+        assert_eq!(
+            Error::KeyPattern(Box::new(crate::schema::registry::UnenforceableKeyPattern {
+                key: "app::Sku".to_owned(),
+                pattern: "a(?=b)".to_owned(),
+                reason: "lookaround".to_owned(),
+            }))
+            .to_string(),
+            "the map key `app::Sku` declares the pattern `a(?=b)`, which cannot be enforced: \
+             lookaround"
+        );
+        assert_eq!(
+            Error::Contribution(
+                crate::middleware::contribution::ContributionConflict::DefaultResponse
+            )
+            .to_string(),
+            "two interceptors declare different `default` responses"
+        );
+        assert_eq!(
+            Error::Middleware(crate::middleware::MiddlewareError::CredentialedWildcardOrigin)
+                .to_string(),
+            "a CORS configuration permits any origin and also permits credentials, which the \
+             protocol forbids; drop `allow_credentials`, or replace `allow_any_origin` with the \
+             origins `allow_origins` should name"
+        );
+        assert_eq!(
+            Error::Link(Box::new(crate::extract::link::UnresolvedLink::Unmounted {
+                from: "create_user".to_owned(),
+                target: "get_user",
+            }))
+            .to_string(),
+            "operation `create_user` links to `get_user`, which this router does not mount"
+        );
+        #[cfg(feature = "server")]
+        assert_eq!(
+            Error::Server(crate::server::error::ServerError::NoListeners).to_string(),
+            "the server has no listeners"
+        );
     }
 
     /// The ledger against the variants, transcribed.

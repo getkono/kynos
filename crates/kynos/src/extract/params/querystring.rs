@@ -2,7 +2,11 @@
 
 use crate::{
     error::rejection::QueryRejection,
-    extract::{FromRequestParts, describe::Describe},
+    extract::{
+        FromRequestParts,
+        body::alternative::{eq_ignore_ascii_case, split_essence},
+        describe::Describe,
+    },
     http::{Parts, media::MediaType},
     router::operation::OperationCx,
     schema::{
@@ -11,6 +15,7 @@ use crate::{
         type_admits_null,
     },
 };
+use kynos_openapi::model::body::mime_names::APPLICATION_JSON;
 
 /// The whole query string, described by media type.
 ///
@@ -18,6 +23,12 @@ use crate::{
 /// describe search filters, JSON in the query, or RFC 9535 JSONPath — shapes a
 /// list of named parameters cannot express. It must be the only query-related
 /// input on its handler.
+///
+/// `M` names JSON: `application/json`, or an RFC 6839 `+json` type such as
+/// `application/vnd.acme.filter+json`, since JSON is the only media type a
+/// query string is decoded as. Any other marker fails the build wherever the
+/// parameter is extracted or described, rather than compiling into a parameter
+/// that refuses every request.
 ///
 /// Reach the decoded query through [`into_inner`](Self::into_inner) or the
 /// public field.
@@ -51,18 +62,28 @@ impl<T, M> QueryString<T, M> {
 /// 3.2); a constant keeps emitted documents byte-stable.
 const QUERYSTRING_NAME: &str = "querystring";
 
-/// Whether a media type carries a JSON document.
+/// Whether a media type carries a JSON document, usable in a constant.
 ///
-/// True for `application/json` and any RFC 6839 `+json` suffix type.
-fn is_json(media_type: &str) -> bool {
-    let base = media_type
-        .split(';')
-        .next()
-        .unwrap_or(media_type)
-        .trim()
-        .to_ascii_lowercase();
+/// True for `application/json` and any RFC 6839 `+json` suffix type, compared
+/// on the trimmed type and subtype in any ASCII case, whatever parameters
+/// follow them.
+const fn is_json(media_type: &str) -> bool {
+    const SUFFIX: &[u8] = b"+json";
 
-    base == kynos_openapi::model::body::mime_names::APPLICATION_JSON || base.ends_with("+json")
+    let essence = split_essence(media_type.as_bytes()).0;
+    eq_ignore_ascii_case(essence, APPLICATION_JSON.as_bytes())
+        || (essence.len() >= SUFFIX.len()
+            && eq_ignore_ascii_case(essence.split_at(essence.len() - SUFFIX.len()).1, SUFFIX))
+}
+
+impl<T, M: MediaType> QueryString<T, M> {
+    /// Refuses, in the constant evaluation reading it, a marker that does not
+    /// name JSON, the only media type a query string is decoded as.
+    const JSON: () = assert!(
+        is_json(M::MEDIA_TYPE),
+        "a `QueryString` marker names neither `application/json` nor a `+json` type, and only \
+         JSON has a decoder"
+    );
 }
 
 /// The whole query string is decoded as the document `M` names.
@@ -83,9 +104,6 @@ fn is_json(media_type: &str) -> bool {
 ///
 /// # Rejections
 ///
-/// Only JSON media types are decoded; any other marker is a 400 rather than a
-/// guess.
-///
 /// A document that decodes and breaks a bound is
 /// [`QueryRejection::Schema`], a 400 keyed by JSON Pointer into the decoded
 /// document, as a body's is into the body.
@@ -95,17 +113,12 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send, M: MediaType + Sen
     type Rejection = QueryRejection;
 
     async fn from_request_parts(parts: &mut Parts, _context: &C) -> Result<Self, Self::Rejection> {
+        let () = Self::JSON;
+
         let invalid = |detail: String| QueryRejection::Invalid {
             name: QUERYSTRING_NAME.to_owned(),
             detail,
         };
-
-        if !is_json(M::MEDIA_TYPE) {
-            return Err(invalid(format!(
-                "the query string is declared as `{}`, which has no decoder",
-                M::MEDIA_TYPE
-            )));
-        }
 
         // No `?` is `null` (see `describe`); a bare `?` is empty, not a document.
         let raw = parts.uri.query().unwrap_or(ABSENT);
@@ -133,6 +146,8 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send, M: MediaType + Sen
 
 impl<T: Schema, M: MediaType> Describe for QueryString<T, M> {
     fn describe(operation: &mut OperationCx<'_>) {
+        let () = Self::JSON;
+
         let schema = operation.registry().resolve::<T>();
         let required = !admits_null(&schema);
         let parameter = kynos_openapi::Parameter::with_content(

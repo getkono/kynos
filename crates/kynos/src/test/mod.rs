@@ -484,6 +484,8 @@ impl<C> TestRequest<'_, C> {
     ///
     /// Accumulated rather than set: RFC 6265 section 5.4 puts every cookie in
     /// one `Cookie` field separated by `; `.
+    /// A name or value that leaves that field no header value panics in
+    /// [`send`](Self::send), not here.
     #[must_use]
     pub fn cookie(mut self, name: &str, value: &str) -> Self {
         self.cookies.push((name.to_owned(), value.to_owned()));
@@ -585,8 +587,9 @@ impl<C> TestRequest<'_, C> {
     ///
     /// # Panics
     ///
-    /// Panics when the path is not a request target, or when the response body
-    /// fails part-way through.
+    /// Panics when the path is not a request target, when a
+    /// [`cookie`](Self::cookie) leaves the `Cookie` field no header value, or
+    /// when the response body fails part-way through.
     pub async fn send(mut self) -> TestResponse {
         let body = match (self.body, self.content_length) {
             (RequestBody::Whole(bytes), None) => Body::from_bytes(bytes),

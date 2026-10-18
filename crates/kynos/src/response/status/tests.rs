@@ -258,16 +258,20 @@ mod a_wrapper_produces_and_declares_one_status {
     #[test]
     fn every_witnessed_redirect_code_has_a_case() {
         const SOURCE: &str = include_str!("../status.rs");
-        /// 301, 302, 303, 307 and 308.
-        const WITNESSED: usize = 5;
-        // Spelled in two pieces: `SOURCE` is this file.
+        /// The codes `case` is called with above.
+        const WITNESSED: [&str; 5] = ["301", "302", "303", "307", "308"];
+        // Spelled in two pieces, so this file's own text cannot match it.
         const NEEDLE: &str = concat!("impl ValidRedirect", "Code<");
 
-        let declared = SOURCE.matches(NEEDLE).count();
+        let declared: Vec<&str> = SOURCE
+            .split(NEEDLE)
+            .skip(1)
+            .filter_map(|rest| rest.split_once('>').map(|(code, _)| code.trim()))
+            .collect();
 
         assert_eq!(
             declared, WITNESSED,
-            "`status.rs` witnesses {declared} redirect code(s) and {WITNESSED} have a case"
+            "`status.rs` witnesses one set of redirect codes and the cases another"
         );
     }
 

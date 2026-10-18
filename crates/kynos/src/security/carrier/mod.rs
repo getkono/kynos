@@ -190,7 +190,9 @@ impl ApiKey {
 ///
 /// # Errors
 ///
-/// When an `Authorization` field is present and is not a bearer credential.
+/// When an `Authorization` field is present and is not a bearer credential:
+/// two such fields, a value that is not visible ASCII, an empty scheme, a
+/// different scheme, or no token.
 pub fn bearer(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
     let Some(authorization) = parse::authorization(parts)? else {
         return Ok(None);
@@ -217,8 +219,9 @@ pub fn bearer(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
 /// # Errors
 ///
 /// When an `Authorization` field is present and is not a well-formed basic
-/// credential: a different scheme, base64 that does not decode, bytes that are
-/// not UTF-8, or no colon at all.
+/// credential: two such fields, a value that is not visible ASCII, an empty
+/// scheme, a different scheme, base64 that does not decode, bytes that are not
+/// UTF-8, or no colon at all.
 pub fn basic(parts: &Parts) -> Result<Option<Credentials>, AuthRejection> {
     let Some(authorization) = parse::authorization(parts)? else {
         return Ok(None);
@@ -248,7 +251,9 @@ pub fn basic(parts: &Parts) -> Result<Option<Credentials>, AuthRejection> {
 ///
 /// # Errors
 ///
-/// When an `Authorization` field is present and names a different scheme.
+/// When an `Authorization` field is present and is not a credential of
+/// `scheme`: two such fields, a value that is not visible ASCII, an empty
+/// scheme, or a different scheme.
 pub fn http_scheme(
     parts: &Parts,
     scheme: &str,

@@ -132,11 +132,14 @@ pub(super) fn placeholder_info() -> Info {
     Info::new("API", "0.0.0")
 }
 
-/// Tag metadata with the first claim on each name kept.
+/// Tag metadata with every repeat of one description dropped.
+///
+/// Two different descriptions under one name both stay, so validation refuses
+/// the document with `DuplicateTag` rather than one being dropped silently.
 pub(super) fn unique_tags(declared: &[kynos_openapi::Tag]) -> Vec<kynos_openapi::Tag> {
     let mut tags: Vec<kynos_openapi::Tag> = Vec::new();
     for tag in declared {
-        if !tags.iter().any(|existing| existing.name == tag.name) {
+        if !tags.contains(tag) {
             tags.push(tag.clone());
         }
     }

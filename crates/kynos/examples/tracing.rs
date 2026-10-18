@@ -11,7 +11,7 @@
 //! [`print_request_response.rs`](print_request_response.rs) is the counterpart
 //! to this file — the exchange an observer is not permitted to touch.
 //!
-//! Five things are worth noticing:
+//! Worth noticing:
 //!
 //! * **An observer declares nothing, which is why it may see everything.** It
 //!   cannot change a request or a response, so no operation's description gains
@@ -208,7 +208,9 @@ async fn main() -> kynos::Result<()> {
         .intercept(RequestId::new().trust_client(false).source(Random::new()))
         // What Kynos ships: two events per request -- one on arrival and one
         // on departure -- carrying `method`, `matched_path`, `operation_id` and
-        // `request_id`, with `status` and `latency` on the closing one.
+        // `request_id`, with `status` and `latency` on the closing one. The
+        // closing `method` is the matched operation's, so that line alone
+        // joins with `operation_id`.
         // `record_headers` is an allow-list rather than a deny-list, so a header
         // carrying a credential cannot reach a log by being forgotten -- which
         // is why only the correlation identifier this file mounts appears here,

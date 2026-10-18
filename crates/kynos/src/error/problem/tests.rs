@@ -136,6 +136,34 @@ fn an_extension_named_like_a_registered_member_never_reaches_the_wire() {
     );
 }
 
+/// `instance` is written where one was given, in its registered place after
+/// `detail`; an empty `title` is omitted rather than written as `""`, which
+/// would state a summary of nothing; and an absent `detail` and `instance` are
+/// omitted rather than written as `null`.
+#[test]
+fn instance_is_written_when_given_and_an_empty_title_is_not() {
+    use crate::{error::problem::Problem, http::StatusCode};
+
+    assert_eq!(
+        serde_json::to_string(
+            &Problem::of_type(StatusCode::CONFLICT, "https://errors.example.com/taken", "")
+                .with_detail("that email is already registered")
+                .with_instance("/users/42")
+        )
+        .expect("a problem serializes"),
+        r#"{"type":"https://errors.example.com/taken","status":409,"detail":"that email is already registered","instance":"/users/42"}"#
+    );
+    assert_eq!(
+        serde_json::to_string(&Problem::of_type(
+            StatusCode::CONFLICT,
+            "https://errors.example.com/taken",
+            "Taken"
+        ))
+        .expect("a problem serializes"),
+        r#"{"type":"https://errors.example.com/taken","title":"Taken","status":409}"#
+    );
+}
+
 /// The `oneOf` is sound only because `Problem` requires `type`.
 ///
 /// Each branch is `allOf: [$ref Problem, {properties: {type: {const: …}}}]`,

@@ -136,10 +136,12 @@ pub struct Router<C, P = Propagate, I = (), S = ()> {
     pub(crate) security_schemes: Vec<(&'static str, kynos_openapi::SecurityScheme)>,
     /// Problems found while mounting, which the fluent methods cannot return.
     pub(crate) violations: Vec<Violation>,
-    pub(crate) not_found: FallbackPolicy,
-    pub(crate) method_not_allowed: FallbackPolicy,
-    pub(crate) trailing_slashes: TrailingSlashPolicy,
-    pub(crate) trusted_proxies: crate::http::forwarded::TrustedProxies,
+    /// The four application-wide policies, `None` until set, so a router
+    /// absorbing this one can tell a setting from a default.
+    pub(crate) not_found: Option<FallbackPolicy>,
+    pub(crate) method_not_allowed: Option<FallbackPolicy>,
+    pub(crate) trailing_slashes: Option<TrailingSlashPolicy>,
+    pub(crate) trusted_proxies: Option<crate::http::forwarded::TrustedProxies>,
     pub(crate) deny_unchecked_schemas: bool,
     /// The waivers taken here: routes no template expresses, and layers whose
     /// effect nothing declares.
@@ -192,10 +194,10 @@ impl<C, P, I, S> Router<C, P, I, S> {
             tag_metadata: Vec::new(),
             security_schemes: Vec::new(),
             violations: Vec::new(),
-            not_found: FallbackPolicy::default(),
-            method_not_allowed: FallbackPolicy::default(),
-            trailing_slashes: TrailingSlashPolicy::default(),
-            trusted_proxies: crate::http::forwarded::TrustedProxies::none(),
+            not_found: None,
+            method_not_allowed: None,
+            trailing_slashes: None,
+            trusted_proxies: None,
             deny_unchecked_schemas: false,
             #[cfg(feature = "unchecked")]
             unchecked: crate::unchecked::Unchecked::default(),
@@ -338,6 +340,19 @@ impl<C, P, I, S> Router<C, P, I, S> {
         self.tag_metadata.extend(other.tag_metadata);
         self.security_schemes.extend(other.security_schemes);
         self.violations.extend(other.violations);
+        // Only the root router answers what no operation does and reads
+        // forwarding fields, so an absorbed router's policy would be dropped.
+        for (set, policy) in [
+            (other.not_found.is_some(), "not_found"),
+            (other.method_not_allowed.is_some(), "method_not_allowed"),
+            (other.trailing_slashes.is_some(), "trailing_slashes"),
+            (other.trusted_proxies.is_some(), "trusted_proxies"),
+        ] {
+            if set {
+                self.violations
+                    .push(error_at("#", SpecError::NestedRouterPolicy { policy }));
+            }
+        }
         self.deny_unchecked_schemas |= other.deny_unchecked_schemas;
         #[cfg(feature = "unchecked")]
         self.unchecked
@@ -636,9 +651,12 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     ///
     /// Not a route: an unmatched path is outside the description entirely, and
     /// contributes no `paths` entry.
+    ///
+    /// Set on the root router: on a router that is then nested or merged, it
+    /// is a [`NestedRouterPolicy`](SpecError::NestedRouterPolicy) violation.
     #[must_use]
     pub fn not_found(mut self, policy: FallbackPolicy) -> Self {
-        self.not_found = policy;
+        self.not_found = Some(policy);
         self
     }
 
@@ -655,9 +673,12 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// A CORS preflight is the exception: it is answered by the preflight
     /// synthesized for a covered path, even where no operation implements
     /// `OPTIONS`. See `docs/middleware.md`.
+    ///
+    /// Set on the root router: on a router that is then nested or merged, it
+    /// is a [`NestedRouterPolicy`](SpecError::NestedRouterPolicy) violation.
     #[must_use]
     pub fn method_not_allowed(mut self, policy: FallbackPolicy) -> Self {
-        self.method_not_allowed = policy;
+        self.method_not_allowed = Some(policy);
         self
     }
 
@@ -666,16 +687,21 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// Redirect mode only adds or removes the final slash to reach an exactly
     /// declared path. It never changes path casing or normalizes individual
     /// routes, and uses 308 so the request method and body are preserved.
+    ///
+    /// Set on the root router: on a router that is then nested or merged, it
+    /// is a [`NestedRouterPolicy`](SpecError::NestedRouterPolicy) violation.
     #[must_use]
     pub fn trailing_slashes(mut self, policy: TrailingSlashPolicy) -> Self {
-        self.trailing_slashes = policy;
+        self.trailing_slashes = Some(policy);
         self
     }
 
     /// Names the proxies whose forwarding fields may be believed.
     ///
     /// One application-level policy, like
-    /// [`trailing_slashes`](Self::trailing_slashes).
+    /// [`trailing_slashes`](Self::trailing_slashes), so it too is set on the
+    /// root router: on a router that is then nested or merged, it is a
+    /// [`NestedRouterPolicy`](SpecError::NestedRouterPolicy) violation.
     ///
     /// Unset, nothing is believed: RFC 7239 section 8.1 notes the field may be
     /// modified by every node on the way, including the client, so trusting it
@@ -693,7 +719,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// ```
     #[must_use]
     pub fn trusted_proxies(mut self, trusted: crate::http::forwarded::TrustedProxies) -> Self {
-        self.trusted_proxies = trusted;
+        self.trusted_proxies = Some(trusted);
         self
     }
 
@@ -711,3 +737,6 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         self
     }
 }
+
+#[cfg(test)]
+mod tests;

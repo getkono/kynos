@@ -547,6 +547,22 @@ pub enum SpecError {
         pattern: String,
     },
 
+    /// A router that was nested or merged into another set an
+    /// application-wide policy, which only the root router's applies.
+    ///
+    /// Raised by a router rather than by validation, once per policy set and
+    /// located at the root: the absorbed router's value would otherwise be
+    /// dropped without a word.
+    #[error(
+        "a nested or merged router sets `{policy}`, which only the root router's applies; \
+         set it on the root router instead"
+    )]
+    NestedRouterPolicy {
+        /// The setter the absorbed router called, as the router spells it
+        /// (`trusted_proxies`).
+        policy: &'static str,
+    },
+
     /// The description is opaque somewhere but does not say so at the root.
     ///
     /// The root stamp is what a consumer reads first, so omitting it is worse

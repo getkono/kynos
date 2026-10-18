@@ -38,8 +38,8 @@
 //! on the feature would still produce a document that validates.
 //!
 //! The seventh is what a router declares about itself rather than its
-//! operations: its servers, and which router's `info` and `externalDocs` a nest
-//! publishes.
+//! operations: its servers, which router's `info` and `externalDocs` a nest
+//! publishes, and which policies a nested router may not set.
 //!
 //! The eighth is what an interceptor's `Reads` answers with when it cannot be
 //! decoded. The 400 is sent before the interceptor runs, so nothing in its
@@ -1144,9 +1144,10 @@ fn an_operation_with_no_tag_of_its_own_lists_its_enclosing_scopes_outermost_firs
 
 /// One name declared at two scopes is one entry, in both places it appears.
 ///
-/// `tags` is a set spelled as an array, and the document's `tags` keeps the
-/// first claim on a name. Green before and after: the fix must not turn a tag
-/// repeated at an enclosing scope into a duplicate.
+/// `tags` is a set spelled as an array, and the document's `tags` keeps one
+/// copy of a description however many scopes repeat it. Green before and
+/// after: the fix must not turn a tag repeated at an enclosing scope into a
+/// duplicate.
 #[test]
 fn a_tag_named_at_two_scopes_appears_once() {
     let document = Router::<()>::new()
@@ -1197,6 +1198,79 @@ fn a_tag_named_at_two_enclosing_scopes_survives_at_the_outermost_of_them() {
         .expect("a describable router");
 
     assert_eq!(tags_on(&document, "/v3/alpha"), ["users", "ops"]);
+}
+
+/// A second type claiming `users` with other metadata, which the document
+/// cannot hold beside [`Users`]: operations name a tag by its name alone.
+#[derive(kynos::Tag)]
+#[tag(name = "users", description = "Account holders, as billing sees them")]
+struct BillingUsers;
+
+/// A second type claiming `users` with metadata identical to [`Users`]'s.
+#[derive(kynos::Tag)]
+#[tag(name = "users", description = "Managing user accounts")]
+struct SameUsers;
+
+/// Two types describing one name differently is a router `build` refuses.
+///
+/// Keeping either description would publish the other type's operations under
+/// a heading their own type never wrote.
+#[test]
+fn two_tag_types_describing_one_name_differently_are_refused_by_build() {
+    let router = Router::<()>::new().tag::<Users>().group(
+        Group::<()>::new("/billing")
+            .tag::<BillingUsers>()
+            .mount(kynos::routes![alpha]),
+    );
+
+    let Err(kynos::Error::Invalid { violations }) = router.build(()) else {
+        panic!("two descriptions of `users` must be refused");
+    };
+    assert!(
+        violations.iter().any(|violation| matches!(
+            &violation.error,
+            kynos::openapi::SpecError::DuplicateTag { name } if name == "users"
+        )),
+        "{violations:?}"
+    );
+}
+
+/// `validate` reports the same refusal `build` makes, so a test that checks a
+/// router without serving it sees it too.
+#[test]
+fn two_tag_types_describing_one_name_differently_are_a_validation_error() {
+    let violations = Router::<()>::new()
+        .tag::<Users>()
+        .tag::<BillingUsers>()
+        .mount(kynos::routes![alpha])
+        .validate()
+        .expect("a describable router");
+
+    assert!(
+        violations.iter().any(|violation| {
+            violation.severity == kynos::openapi::Severity::Error
+                && matches!(
+                    &violation.error,
+                    kynos::openapi::SpecError::DuplicateTag { name } if name == "users"
+                )
+        }),
+        "{violations:?}"
+    );
+}
+
+/// Two types whose metadata is identical describe one tag, and the document
+/// says so once: nothing is lost, so nothing is refused.
+#[test]
+fn two_tag_types_describing_one_name_identically_appear_once() {
+    let document = Router::<()>::new()
+        .tag::<Users>()
+        .tag::<SameUsers>()
+        .mount(kynos::routes![alpha])
+        .openapi()
+        .expect("a describable router");
+
+    assert_eq!(tags_on(&document, "/alpha"), ["users"]);
+    assert_eq!(document.tags.len(), 1, "{:?}", document.tags);
 }
 
 /// The control for all of the above: naming no tag declares none.
@@ -2090,6 +2164,63 @@ fn a_nested_routers_external_docs_are_used_only_when_the_outer_declares_none() {
         external_docs(Router::<()>::new().mount(kynos::routes![alpha])),
         None
     );
+}
+
+/// The four application-wide policies are the root router's alone, so an
+/// absorbed router that sets one is refused rather than silently overridden,
+/// through `nest` and `merge` alike. Setting one to its default counts too:
+/// the root's own value would replace it just the same.
+#[test]
+fn a_policy_set_on_a_nested_or_merged_router_is_a_violation() {
+    use kynos::{
+        http::forwarded::{ProxyHeader, TrustedProxies},
+        openapi::{Severity, SpecError, Violation},
+        router::policy::{FallbackPolicy, TrailingSlashPolicy},
+    };
+
+    type Set = fn(Router<()>) -> Router<()>;
+    let policies: [(&str, Set); 4] = [
+        ("not_found", |router| {
+            router.not_found(FallbackPolicy::Empty)
+        }),
+        ("method_not_allowed", |router| {
+            router.method_not_allowed(FallbackPolicy::Problem)
+        }),
+        ("trailing_slashes", |router| {
+            router.trailing_slashes(TrailingSlashPolicy::Redirect)
+        }),
+        ("trusted_proxies", |router| {
+            router.trusted_proxies(TrustedProxies::hops(ProxyHeader::XForwarded, 1))
+        }),
+    ];
+    let refused = |policy| Violation {
+        location: "#".to_owned(),
+        severity: Severity::Error,
+        error: SpecError::NestedRouterPolicy { policy },
+    };
+    let violations = |router: Router<()>| router.validate().expect("a describable router");
+
+    for (policy, set) in policies {
+        let inner = || set(Router::<()>::new().mount(kynos::routes![beta]));
+
+        assert_eq!(
+            violations(Router::<()>::new().nest("/v2", inner())),
+            [refused(policy)],
+            "`{policy}` through `nest`"
+        );
+        assert_eq!(
+            violations(Router::<()>::new().merge(inner())),
+            [refused(policy)],
+            "`{policy}` through `merge`"
+        );
+        assert_eq!(
+            violations(set(
+                Router::<()>::new().nest("/v2", Router::<()>::new().mount(kynos::routes![beta]))
+            )),
+            [],
+            "`{policy}` on the root router"
+        );
+    }
 }
 
 // --- What an interceptor's `Reads` answers with -----------------------------

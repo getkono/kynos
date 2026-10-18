@@ -28,7 +28,7 @@ use crate::{
 
 /// A content coding this crate can decode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Coding {
+pub(crate) enum Coding {
     Zstd,
     Brotli,
     Gzip,
@@ -64,7 +64,8 @@ type Markers<U, M, L> = PhantomData<fn() -> (U, M, L)>;
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reason {
-    /// The body named a content coding this server cannot decode. Produces 415.
+    /// The body named a content coding this server cannot decode, or stacked
+    /// more than four codings. Produces 415.
     UnsupportedCoding,
     /// The body did not decode as the coding it claimed. Produces 400.
     Malformed,
@@ -319,7 +320,7 @@ async fn decode(coding: Coding, bytes: Bytes, limit: u64) -> Result<Bytes, Reaso
 ///
 /// `None` for an undecodable token or more than [`MAX_CODINGS`]. `identity` is
 /// skipped rather than refused (RFC 9110 section 8.4).
-fn declared(headers: &http::HeaderMap) -> Option<Vec<Coding>> {
+pub(crate) fn declared(headers: &http::HeaderMap) -> Option<Vec<Coding>> {
     let mut codings = Vec::new();
 
     for value in headers.get_all(http::header::CONTENT_ENCODING) {
@@ -347,7 +348,8 @@ fn declared(headers: &http::HeaderMap) -> Option<Vec<Coding>> {
 /// A body arriving under `Content-Encoding: gzip` reaches the handler's
 /// extractor as the bytes it decoded to, so a handler never knows a coding was
 /// involved. A body naming a coding this server does not decode is refused with
-/// 415 carrying `Accept-Encoding`, per RFC 9110 sections 8.4 and 15.5.16.
+/// 415 carrying `Accept-Encoding`, per RFC 9110 sections 8.4 and 15.5.16. So is
+/// one stacking more than four codings, since each costs a full decoding pass.
 ///
 /// ```no_run
 /// # #[cfg(feature = "compression")]
@@ -524,6 +526,19 @@ impl<U, M, L> Decompression<U, M, L> {
             None => self.limit,
         }
     }
+
+    /// `arrived` with `codings` undone, in the reverse of the order they were
+    /// applied, no layer decoding past the tighter of the two caps.
+    pub(crate) async fn undo(self, codings: &[Coding], arrived: Bytes) -> Result<Bytes, Reason> {
+        // Measured once, against what arrived: a bound taken from each layer's
+        // input would let stacked codings multiply the ratio.
+        let bound = self.bound(u64::try_from(arrived.len()).unwrap_or(u64::MAX));
+        let mut bytes = arrived;
+        for coding in codings.iter().rev().copied() {
+            bytes = decode(coding, bytes, bound).await?;
+        }
+        Ok(bytes)
+    }
 }
 
 // Written out: `#[derive]` would bound each on all three markers.
@@ -604,16 +619,10 @@ where
             }
         };
 
-        // Measured once, against what arrived: a bound taken from each layer's
-        // input would let stacked codings multiply the ratio.
-        let bound = self.bound(u64::try_from(arrived.len()).unwrap_or(u64::MAX));
-        let mut bytes = arrived;
-        // Applied in the order listed, so undone in the reverse of it.
-        for coding in codings.iter().rev().copied() {
-            bytes = decode(coding, bytes, bound)
-                .await
-                .map_err(Undecodable::of)?;
-        }
+        let bytes = self
+            .undo(&codings, arrived)
+            .await
+            .map_err(Undecodable::of)?;
 
         // An uncoded request's metadata still describes its body exactly.
         if !codings.is_empty() {

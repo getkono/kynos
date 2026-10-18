@@ -59,9 +59,7 @@ fn a_scheme_alone_reads_as_empty_credentials() {
 #[test]
 fn every_refusal_has_a_case() {
     const SOURCE: &str = include_str!("../parse.rs");
-    // Spelled in two pieces: `SOURCE` is this file, and a contiguous
-    // literal would count itself.
-    const NEEDLE: &str = concat!("AuthRejection", "::unauthenticated");
+    const NEEDLE: &str = "AuthRejection::unauthenticated";
 
     let cases: &[(&str, &[&str])] = &[
         // Two fields: choosing either would let a proxy that appended one

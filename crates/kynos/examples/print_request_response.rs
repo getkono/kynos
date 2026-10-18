@@ -17,7 +17,7 @@
 //!   can produce exactly as it was. But a read that fails produces a response
 //!   the handler could not have produced at all, and that is a new fact about
 //!   the operation. Hence a contribution of 400 and 500 rather than
-//!   `OperationContribution::none()`: the moment middleware can answer on its
+//!   `type Short = Infallible`: the moment middleware can answer on its
 //!   own, the description has to know.
 //! * **Buffering must be bounded, and the bound is a different interceptor.**
 //!   `collect` on an unbounded body is how this pattern takes a process down —

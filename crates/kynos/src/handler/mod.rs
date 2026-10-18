@@ -70,9 +70,9 @@ pub trait Handler<C, A>: Clone + Send + Sync + 'static {
 
     /// Describes the handler's inputs and outputs into the operation.
     ///
-    /// Contributes, in order: each argument's
-    /// [`Describe`](crate::extract::describe::Describe), guard first; each
-    /// argument's rejection responses; the return type's
+    /// Contributes, argument by argument and guard first, each argument's
+    /// [`Describe`](crate::extract::describe::Describe) followed by its
+    /// rejection's responses; then the return type's
     /// [`Responses`](crate::response::Responses).
     ///
     /// Rejections are described here, not in `Describe`, because `Rejection`

@@ -16,11 +16,15 @@
 //!
 //! # Wire-visible but contract-neutral
 //!
-//! Headers HTTP itself defines -- `Vary`, `Content-Encoding`, the CORS set --
-//! are still *declared*, but their group sets [`HeaderParams::DESCRIBED`] to
-//! `false`, so they stay out of the emitted description.
+//! Headers HTTP itself defines -- `Content-Encoding`, the CORS set -- are
+//! still *declared*, but their group sets [`HeaderParams::DESCRIBED`] to
+//! `false`, so they stay out of the emitted description. `Vary` is not
+//! declared at all: a group contributes its field names through
+//! [`HeaderParams::VARIES`], a union rather than a claim, so two interceptors
+//! covering one route can both vary on a field.
 //!
 //! [`HeaderParams::DESCRIBED`]: crate::extract::params::header::HeaderParams::DESCRIBED
+//! [`HeaderParams::VARIES`]: crate::extract::params::header::HeaderParams::VARIES
 //!
 //! # The order a chain runs in
 //!

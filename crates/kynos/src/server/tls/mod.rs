@@ -225,6 +225,11 @@ impl TlsConfig {
     }
 
     /// Requires a verified client certificate on every connection.
+    ///
+    /// This changes who may call every operation, so it is the one listener
+    /// setting that reaches the description: the prepared server's document
+    /// registers a `MutualTls` scheme and adds it to every security
+    /// requirement.
     #[must_use]
     pub fn require_client_certificate(mut self, config: ClientCertificateConfig) -> Self {
         self.client_authentication = Some(config);

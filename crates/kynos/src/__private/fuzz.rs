@@ -49,6 +49,137 @@ pub fn offers(headers: &HeaderMap, media_type: &str) -> bool {
     crate::extract::body::offers(headers, media_type)
 }
 
+/// The `range-spec`s a `Range` field `value` asks for, as written, or why it
+/// is ignored.
+///
+/// An `int-range` is `(Some(first), last)` and a `suffix-range` is
+/// `(None, Some(length))`.
+///
+/// # Errors
+///
+/// The reason the reader ignores the field for.
+pub fn range_specs(
+    value: &str,
+) -> Result<Vec<(Option<u64>, Option<u64>)>, crate::response::range::spec::Ignored> {
+    use crate::response::range::spec::Spec;
+
+    let specs = crate::response::range::spec::parse(value)?;
+    Ok(specs
+        .into_iter()
+        .map(|spec| match spec {
+            Spec::Offsets { first, last } => (Some(first), last),
+            Spec::Suffix { length } => (None, Some(length)),
+        })
+        .collect())
+}
+
+/// Whether the `const` check refusing a `OneOf` pair finds that a `Binary`
+/// `marker` and a codec's parameterless `body` type share a request.
+#[must_use]
+pub fn shares_requests(marker: &str, body: &str) -> bool {
+    crate::extract::body::alternative::shares_requests(marker, body)
+}
+
+/// What `Decompression::new(limit)`, with `max_ratio` where one is given,
+/// hands on for a body that arrived whole as `arrived` under the
+/// `Content-Encoding` fields `headers` carries.
+///
+/// `arrived` is no longer than `limit`: a longer body is refused while it is
+/// still being read, before any decoding.
+///
+/// # Errors
+///
+/// Why the layer refuses the body.
+#[cfg(feature = "compression")]
+pub fn decompress(
+    headers: &HeaderMap,
+    arrived: &[u8],
+    limit: u64,
+    max_ratio: Option<u64>,
+) -> Result<Vec<u8>, crate::middleware::decompression::Reason> {
+    use crate::middleware::decompression::{Decompression, Reason, declared};
+
+    let codings = declared(headers).ok_or(Reason::UnsupportedCoding)?;
+    let layer = Decompression::new(limit);
+    let layer = match max_ratio {
+        Some(ratio) => layer.max_ratio(ratio),
+        None => layer,
+    };
+    let arrived = bytes::Bytes::copy_from_slice(arrived);
+    ready(layer.undo(&codings, arrived)).map(|decoded| decoded.to_vec())
+}
+
+/// What a `JsonLines` body, or with `sequence` a `JsonSeq` one, reads as
+/// when it arrives split into `chunks` under a body limit of `limit`: every
+/// record in order, up to and including the failure that ends the stream.
+#[cfg(all(feature = "json", feature = "openapi32"))]
+#[must_use]
+pub fn json_records(
+    sequence: bool,
+    chunks: &[&[u8]],
+    limit: u64,
+) -> Vec<Result<serde_json::Value, crate::error::rejection::BodyRejection>> {
+    use crate::{
+        extract::{
+            FromRequest,
+            body::{
+                json_lines::{
+                    JsonLines, JsonSeq, LINES_MEDIA_TYPE, SEQUENCE_MEDIA_TYPE, records::Records,
+                },
+                limit::BodyLimit,
+            },
+        },
+        http::{Request, body::Body, header::CONTENT_TYPE},
+        schema::unchecked::Unchecked,
+    };
+
+    let chunks = chunks
+        .iter()
+        .map(|chunk| bytes::Bytes::copy_from_slice(chunk));
+    let mut request = Request::new(Body::from_chunks(chunks.collect()));
+    let media_type = if sequence {
+        SEQUENCE_MEDIA_TYPE
+    } else {
+        LINES_MEDIA_TYPE
+    };
+    request
+        .headers_mut()
+        .insert(CONTENT_TYPE, HeaderValue::from_static(media_type));
+    request.extensions_mut().insert(BodyLimit(limit));
+
+    type Items = Records<Unchecked<serde_json::Value>>;
+    let mut records = if sequence {
+        ready(<JsonSeq<Items> as FromRequest<()>>::from_request(
+            request,
+            &(),
+        ))
+        .map(|body| body.items)
+    } else {
+        ready(<JsonLines<Items> as FromRequest<()>>::from_request(
+            request,
+            &(),
+        ))
+        .map(|body| body.items)
+    }
+    .expect("a body of the codec's own media type");
+
+    let mut read = Vec::new();
+    while let Some(record) = ready(records.next()) {
+        read.push(record.map(|Unchecked(value)| value));
+    }
+    read
+}
+
+/// Runs `future`, which reads only memory and so never waits, to its end.
+#[cfg(any(feature = "compression", all(feature = "json", feature = "openapi32")))]
+fn ready<F: std::future::Future>(future: F) -> F::Output {
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    match std::pin::pin!(future).poll(&mut context) {
+        std::task::Poll::Ready(output) => output,
+        std::task::Poll::Pending => panic!("a read of memory waited"),
+    }
+}
+
 /// The `(name, filename)` a multipart part's `Content-Disposition` `field`
 /// declares, or why it declares no field.
 #[cfg(feature = "multipart")]

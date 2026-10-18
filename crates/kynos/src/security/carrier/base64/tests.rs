@@ -79,9 +79,7 @@ fn every_input_survives_its_own_encoding() {
 #[test]
 fn every_refusal_has_a_case() {
     const SOURCE: &str = include_str!("../base64.rs");
-    // Spelled in two pieces, since `SOURCE` is this file and a contiguous
-    // literal would count itself -- the idiom `schemes.rs` already uses.
-    const NEEDLE: &str = concat!("return ", "None;");
+    const NEEDLE: &str = "return None;";
 
     let cases = [
         ("a length that is not a multiple of four", "Zm9"),

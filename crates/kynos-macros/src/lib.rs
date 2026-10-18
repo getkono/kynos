@@ -913,8 +913,9 @@ pub fn derive_multipart_form(item: TokenStream) -> TokenStream {
 /// struct Users;
 /// ```
 ///
-/// Tags are types rather than strings, so a typo is a compile error and
-/// uniqueness follows from the module system. `#[tag(parent = Admin)]` nests
+/// Tags are types rather than strings, so a typo is a compile error. Two types
+/// may claim one `name`, but a router describing them differently is refused
+/// with `SpecError::DuplicateTag` by `build`. `#[tag(parent = Admin)]` nests
 /// one tag under another, which requires `openapi32`.
 #[proc_macro_derive(Tag, attributes(tag))]
 pub fn derive_tag(item: TokenStream) -> TokenStream {
