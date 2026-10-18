@@ -1159,7 +1159,8 @@ fn an_encoding_key_is_judged_only_where_every_declaring_keyword_was_read() {
 }
 
 /// `prefixEncoding` and `itemEncoding` need `itemSchema` or an array
-/// `schema` (`references/3.2.0.md:1386`), reported once at the media type.
+/// `schema` (`references/3.2.0.md:1386`), reported once at the media type,
+/// including where `array` is absent from several types.
 #[cfg(feature = "openapi32")]
 #[test]
 fn a_positional_encoding_without_an_array_is_an_error() {
@@ -1185,6 +1186,10 @@ fn a_positional_encoding_without_an_array_is_an_error() {
         ("/absent", positional(None)),
         ("/object", positional(Some(object_with(&[])))),
         ("/referenced", positional(Some(through_all_of))),
+        (
+            "/nullable",
+            positional(Some(Schema::nullable(SchemaType::String))),
+        ),
     ] {
         document.paths.insert(
             &PathTemplate::parse(path).expect("a legal template"),
@@ -1212,13 +1217,13 @@ fn a_positional_encoding_without_an_array_is_an_error() {
     };
     assert_eq!(
         located_errors_3_2(&document),
-        vec![at("absent"), at("object"), at("referenced")]
+        vec![at("absent"), at("object"), at("referenced"), at("nullable")]
     );
 }
 
 /// An array `schema`, `itemSchema` (the `multipart/byteranges` shape Kynos
-/// emits for a ranged response), or a schema that may be an array satisfies
-/// the positional encodings.
+/// emits for a ranged response), or a schema that may be an array, untyped or
+/// with `array` among several types, satisfies the positional encodings.
 #[cfg(feature = "openapi32")]
 #[test]
 fn a_positional_encoding_beside_a_possible_array_is_clean() {
@@ -1230,11 +1235,15 @@ fn a_positional_encoding_beside_a_possible_array_is_clean() {
     byteranges.item_encoding = Some(Box::new(Encoding::new("text/plain")));
     let mut untyped = MediaType::new(Schema::component("Parts"));
     untyped.item_encoding = Some(Box::new(Encoding::new("text/plain")));
+    let mut nullable = MediaType::new(Schema::nullable(SchemaType::Array));
+    nullable.prefix_encoding = Some(vec![Encoding::new("text/plain")]);
+    nullable.item_encoding = Some(Box::new(Encoding::new("text/plain")));
 
     let mut document = document_with(&[]);
     for (name, content) in [
         ("Array", array),
         ("Byteranges", byteranges),
+        ("Nullable", nullable),
         ("Untyped", untyped),
     ] {
         document
