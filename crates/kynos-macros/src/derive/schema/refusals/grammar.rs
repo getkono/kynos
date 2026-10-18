@@ -10,7 +10,8 @@ use crate::derive::common::non_token_message;
 use crate::derive::schema::{
     COUNTS, Container, NUMERIC,
     attributes::{described_as_keys, is_flattened, is_phantom, open_span},
-    field_groups, internally_tagged_payloads,
+    field_groups,
+    flatten::internally_tagged_payloads,
 };
 
 /// Keys written alone, with no value.
