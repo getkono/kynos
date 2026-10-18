@@ -12,8 +12,6 @@
 //! Each struct whose fields are all visible here is destructured without `..`,
 //! so a field added to the model is a compile error in this file.
 
-use std::fmt::Write as _;
-
 use crate::{
     Map,
     model::{
@@ -39,69 +37,8 @@ use crate::{
         server::{Server, ServerVariable},
         tag::Tag,
     },
-    validate::violation::pointer_token,
+    pointer::At,
 };
-
-/// Where the walk stands, as a chain of borrowed tokens on the stack.
-///
-/// Rendered only when a field is reported, so a clean document costs no
-/// allocation (held by `tests/alloc.rs`).
-#[derive(Clone, Copy)]
-struct At<'a> {
-    parent: Option<&'a At<'a>>,
-    token: Token<'a>,
-}
-
-#[derive(Clone, Copy)]
-enum Token<'a> {
-    Root,
-    Key(&'a str),
-    Index(usize),
-}
-
-impl<'a> At<'a> {
-    const ROOT: At<'static> = At {
-        parent: None,
-        token: Token::Root,
-    };
-
-    fn key(&'a self, key: &'a str) -> Self {
-        Self {
-            parent: Some(self),
-            token: Token::Key(key),
-        }
-    }
-
-    fn index(&'a self, index: usize) -> Self {
-        Self {
-            parent: Some(self),
-            token: Token::Index(index),
-        }
-    }
-
-    fn pointer(&self) -> String {
-        let mut pointer = String::new();
-        self.render(&mut pointer);
-        pointer
-    }
-
-    fn render(&self, pointer: &mut String) {
-        if let Some(parent) = self.parent {
-            parent.render(pointer);
-        }
-        match self.token {
-            Token::Root => pointer.push('#'),
-            Token::Key(key) => {
-                pointer.push('/');
-                pointer.push_str(&pointer_token(key));
-            }
-            Token::Index(index) => {
-                // Writing to a `String` cannot fail.
-                let _ = write!(pointer, "/{index}");
-            }
-        }
-    }
-}
 
 /// What the walk collects, each kind at the pointer it lives at.
 pub(super) struct Found<'d> {

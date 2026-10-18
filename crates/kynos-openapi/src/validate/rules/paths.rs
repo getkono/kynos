@@ -10,13 +10,14 @@ use crate::{
         parameter::ParameterIn,
         paths::{item::PathItem, operation::Operation, template::PathTemplate},
     },
+    pointer::pointer_token,
     validate::{
         Validator,
         rules::{
             document::check_server_list,
             parameters::{Resolved, check_parameter_list, resolve_parameter},
         },
-        violation::{SpecError, Violation, pointer_token},
+        violation::{SpecError, Violation},
     },
 };
 

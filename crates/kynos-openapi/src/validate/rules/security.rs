@@ -11,7 +11,8 @@ use crate::{
             oauth::{OAuthFlow, OAuthFlows},
         },
     },
-    validate::violation::{SpecError, Violation, pointer_token},
+    pointer::pointer_token,
+    validate::violation::{SpecError, Violation},
 };
 
 /// Checks every OAuth flow of every Security Scheme defined in `components`.

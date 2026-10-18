@@ -10,7 +10,7 @@ use walk::{collect_components_blockers, collect_path_item_blockers, collect_serv
 
 use crate::model::document::Document;
 #[cfg(feature = "openapi32")]
-use crate::validate::violation::pointer_token;
+use crate::pointer::pointer_token;
 
 // Reached only while collecting 3.2 blockers.
 #[cfg(feature = "openapi32")]

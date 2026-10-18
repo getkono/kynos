@@ -23,9 +23,10 @@ use crate::{
         response::Response,
         schema::{Schema, object::SchemaObject},
     },
+    pointer::pointer_token,
     validate::{
         rules::{content::for_each_encoding, discriminator::Discriminators},
-        violation::{SpecError, Violation, pointer_token},
+        violation::{SpecError, Violation},
     },
 };
 

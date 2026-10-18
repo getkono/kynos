@@ -52,13 +52,6 @@ impl std::fmt::Display for Violation {
 /// already includes the [`SpecError`].
 impl std::error::Error for Violation {}
 
-/// Escapes one map key for use as a JSON Pointer token, per RFC 6901.
-///
-/// Every `paths` key contains a `/`, which must not split the location.
-pub(crate) fn pointer_token(key: &str) -> String {
-    key.replace('~', "~0").replace('/', "~1")
-}
-
 /// A way in which a document fails to conform.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]

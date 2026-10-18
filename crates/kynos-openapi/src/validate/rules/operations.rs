@@ -15,6 +15,7 @@ use crate::{
         reference::RefOr,
         response::status::StatusPattern,
     },
+    pointer::pointer_token,
     validate::{
         Validator,
         rules::{
@@ -24,7 +25,7 @@ use crate::{
             parameters::check_parameter_list,
             paths::check_path_correspondence,
         },
-        violation::{SpecError, Violation, pointer_token},
+        violation::{SpecError, Violation},
     },
 };
 

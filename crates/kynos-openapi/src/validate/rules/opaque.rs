@@ -17,7 +17,8 @@ use crate::{
         paths::{item::PathItem, operation::Operation},
         reference::RefOr,
     },
-    validate::violation::{SpecError, Violation, pointer_token},
+    pointer::pointer_token,
+    validate::violation::{SpecError, Violation},
 };
 
 pub(in crate::validate) fn check_opaque(document: &Document, violations: &mut Vec<Violation>) {
