@@ -23,15 +23,20 @@ members = ["."]
 [dependencies]
 # The base64 oracle the `basic` target holds Kynos's own decoder to.
 base64 = "0.23.1"
+# The reference encoders the `decompression` target codes its payloads with,
+# at the versions `async-compression` already decodes with.
+brotli = "9.0.0"
+flate2 = "1.1.10"
 libfuzzer-sys = "0.4.13"
+zstd = "0.14.2"
 
-# The baseline, plus `multipart` for its `Content-Disposition` reader: only the
-# features a fuzzed parser lives behind, since a smaller graph is a faster
-# instrumented build.
+# The baseline, plus only the features a fuzzed parser lives behind, since a
+# smaller graph is a faster instrumented build: `multipart` for its
+# `Content-Disposition` reader and `compression` for request decompression.
 [dependencies.kynos]
 path = "../crates/kynos"
 default-features = false
-features = ["openapi31", "multipart"]
+features = ["openapi31", "multipart", "compression"]
 
 [[bin]]
 name = "accept"
@@ -57,6 +62,13 @@ bench = false
 [[bin]]
 name = "date"
 path = "fuzz_targets/date.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decompression"
+path = "fuzz_targets/decompression.rs"
 test = false
 doc = false
 bench = false

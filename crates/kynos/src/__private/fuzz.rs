@@ -80,6 +80,45 @@ pub fn shares_requests(marker: &str, body: &str) -> bool {
     crate::extract::body::alternative::shares_requests(marker, body)
 }
 
+/// What `Decompression::new(limit)`, with `max_ratio` where one is given,
+/// hands on for a body that arrived whole as `arrived` under the
+/// `Content-Encoding` fields `headers` carries.
+///
+/// `arrived` is no longer than `limit`: a longer body is refused while it is
+/// still being read, before any decoding.
+///
+/// # Errors
+///
+/// Why the layer refuses the body.
+#[cfg(feature = "compression")]
+pub fn decompress(
+    headers: &HeaderMap,
+    arrived: &[u8],
+    limit: u64,
+    max_ratio: Option<u64>,
+) -> Result<Vec<u8>, crate::middleware::decompression::Reason> {
+    use crate::middleware::decompression::{Decompression, Reason, declared};
+
+    let codings = declared(headers).ok_or(Reason::UnsupportedCoding)?;
+    let layer = Decompression::new(limit);
+    let layer = match max_ratio {
+        Some(ratio) => layer.max_ratio(ratio),
+        None => layer,
+    };
+    let arrived = bytes::Bytes::copy_from_slice(arrived);
+    ready(layer.undo(&codings, arrived)).map(|decoded| decoded.to_vec())
+}
+
+/// Runs `future`, which reads only memory and so never waits, to its end.
+#[cfg(any(feature = "compression", all(feature = "json", feature = "openapi32")))]
+fn ready<F: std::future::Future>(future: F) -> F::Output {
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    match std::pin::pin!(future).poll(&mut context) {
+        std::task::Poll::Ready(output) => output,
+        std::task::Poll::Pending => panic!("a read of memory waited"),
+    }
+}
+
 /// The `(name, filename)` a multipart part's `Content-Disposition` `field`
 /// declares, or why it declares no field.
 #[cfg(feature = "multipart")]
