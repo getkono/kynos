@@ -1,8 +1,9 @@
 //! Every outcome one request can reach, end to end.
 //!
-//! One reason: routing is runtime I/O, and `docs/testing.md` allocates that an
-//! integration test over the built service rather than unit tests of the
-//! branches inside it. `allow_header`, `flipped` and `intern` are all reachable
+//! One reason: dispatch is public surface composing as a user composes it, and
+//! `docs/testing.md`'s Integration layer allocates that an integration test
+//! over the built service, driven through `Service::call` with no socket,
+//! rather than unit tests of the branches inside it. `allow_header`, `flipped` and `intern` are all reachable
 //! from here, so none of them gets a test of its own — a unit test of a private
 //! helper would assert the same thing twice and would keep passing if the
 //! dispatcher stopped calling it.

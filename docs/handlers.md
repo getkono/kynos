@@ -14,8 +14,13 @@ An argument that contributes nothing to the contract says so, by implementing
 | [`Inject<T>`](../crates/kynos/src/di/inject.rs) | nothing | application state has no wire form |
 | [`MatchedPath`](../crates/kynos/src/extract/connection.rs) | nothing | it is the `paths` key, already in the document |
 | [`ConnectInfo`](../crates/kynos/src/extract/connection.rs) | nothing | it is a property of the connection, not the API |
+| [`Connection`](../crates/kynos/src/extract/connection.rs) | nothing | it is the connection itself — peer, local address, TLS — not the API |
 | [`Forwarded`](../crates/kynos/src/http/forwarded.rs) | nothing | it is what the deployment's proxies say about the connection, not the API |
-| [`Link<E>`](../crates/kynos/src/extract/link.rs) | nothing | it is another operation's `paths` key, already in the document |
+
+[`Link<E>`](../crates/kynos/src/extract/link.rs) adds nothing to the document
+either — another operation's `paths` key is already there — but its body is not
+empty: it records the link, so the router refuses to build when it cannot
+resolve `E`.
 
 An empty body is a **claim**, not a skipped step: it asserts that a consumer
 cannot observe this argument. That distinction is the entire difference from
@@ -127,8 +132,9 @@ keeps the description true. Nothing beyond the field is validated: a
 `Redirect<CODE>` is bounded on `(): ValidRedirectCode<CODE>`, a witness
 implemented for exactly those five codes. Both the trait and `()` are foreign to
 a downstream crate, so the set cannot be widened from outside, and
-`Redirect::<304>` fails to compile. That rules out the common redirect bug of
-writing 302 where 307 was meant and silently changing the method on replay.
+`Redirect::<304>` fails to compile. That rules out answering a redirect with a
+code that is not one; it does not choose among the five, so 302 where 307 was
+meant still compiles.
 
 An operation with several statuses returns an enum deriving
 [`Reply`](../crates/kynos-macros/src/derive/reply.rs), one variant per status.
@@ -248,7 +254,8 @@ handler reads the head only.
 
 ### The empty `Describe` body as a design device
 
-The alternative to `impl Describe for Inject<T> {}` is exempting some arguments
+The alternative to `Inject<T>`'s `describe`, whose body is
+`let _ = operation;` and nothing else, is exempting some arguments
 from the trait entirely — which is what a second argument category would be.
 That trade looks like tidiness and is actually a hole: an exemption is invisible
 at the call site, whereas an empty body is a line of code someone had to write

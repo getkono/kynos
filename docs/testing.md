@@ -13,7 +13,7 @@ these are asked to enforce; this document is about the mechanics.
 | Integration | [`crates/kynos/tests/`](../crates/kynos/tests/) | `cargo nextest` | that the public surface composes as a user would compose it | in use |
 | UI snapshot | `crates/kynos/tests/ui/` | `trybuild` | the exact text of a diagnostic | in use |
 | Property | `crates/kynos-openapi/tests/`, over `support/`'s generators | `proptest` | round-tripping, determinism and totality over generated documents | in use |
-| Conformance | a harness over a fixture app | `TestClient` over live responses | *emitted ⊇ observable* against a running service | in use |
+| Conformance | a harness over a fixture app | `TestClient` over live responses | against a running service, that each observed status is declared, its body validates against the declared schema or is absent where none is declared, and every declared required header was sent — undeclared headers are not reported | in use |
 | Fuzz | [`fuzz/fuzz_targets/`](../fuzz/fuzz_targets/), over a committed corpus | `cargo fuzz`, on a pinned nightly | that a parser of untrusted input neither panics nor breaks its round trip or oracle on inputs nobody wrote — see [Fuzzing](#fuzzing) | in use |
 
 Tests move to a sibling `tests.rs` once a module passes ~400 lines, whether or
@@ -56,15 +56,15 @@ constructor's number and a codec's cannot share a file with the routing path's.
 | [`constraints.rs`](../crates/kynos/tests/constraints.rs) | that `Json<T>` enforces the `#[schema(...)]` bounds the description emits: each document is read by `Json<T>` and by a draft 2020-12 validator over the schema `T` emits, the two must agree on admitting it, and a refusal is keyed by the pointer of each member that broke a bound — through a named field, an `Option`, a nested type, a sequence, a map under an escaped key, a newtype, a tuple, a flattened field, each enum tagging, a field and a variant read under an `alias`, and a member serde fills from a field or container `default`, a field described `as` another type, and a map key past its `propertyNames`; that each `JsonLines` and `JsonSeq` record and a `QueryString<T, Json>` document agree with the same validator, a record refused under its index and reading continuing past it; and that `Form<T>` and `MultipartForm<T>` refuse a body at the same pointers. A recorded exception to a derive being a type-level surface, as `derives.rs`'s decoders are. Behind `macros`, `json` and `test-util`, with `form` and `multipart` for those bodies and `openapi32` for the records and the query string |
 | [`errors.rs`](../crates/kynos/tests/errors.rs) | each extractor rejects with the rejection type its signature names — and "each" is counted against the source: a sweep reads every `FromRequest`, `FromRequestParts` and `Guard` implementation out of `src/` and compares the types it finds with the ones witnessed, so an extractor added without a witness fails the build |
 | [`extractors.rs`](../crates/kynos/tests/extractors.rs) | what the extractors deciding from more than one input read, refuse and describe, each driven through the public trait and held to the exact rejection: which side of a `OneOf` its `Content-Type` selects, and that a malformed side fails as itself; that an `Option` body is absent only without a `Content-Type`; the closed table of parameters each text codec accepts after its media type, that a media type marker carrying a parameter is matched by type and subtype and accepts exactly the parameter it declares, and that multipart reads `boundary` and no other parameter, alone and as a `OneOf` side; and that a `QueryString` is percent-decoded and read as one JSON document. Each beside the request body or parameter the same type describes. Behind `macros`, `json` and `form`, with the multipart cases behind `multipart` and the `QueryString` cases behind `openapi32` |
-| [`reporting.rs`](../crates/kynos/tests/reporting.rs) | every error type a caller can receive is `Error + Send + Sync + 'static` |
-| [`typed_uri.rs`](../crates/kynos/tests/typed_uri.rs) | a route attribute's `relative_uri` percent-encodes its parameters, and that the hand-written fixture it encodes with describes what it encodes — a `Schema` body nothing executes cannot disagree with the `encode` beside it; and that a `Link` renders the same parameters under every prefix its target was mounted beneath, from a scope that is not the target's, while a router linking to an operation it does not mount, or through a prefix variable, refuses to build |
+| [`reporting.rs`](../crates/kynos/tests/reporting.rs) | the build and startup failures an application reports from `main` — `kynos::Error`, `ServerError`, `TlsError`, `InvalidNetwork`, `InvalidNetworkEntry` and `InvalidAsset` — are each `Error + Send + Sync + 'static`. It names them one by one; no sweep counts them against the source, so a failure type it does not name is not held to the bound |
+| [`typed_uri.rs`](../crates/kynos/tests/typed_uri.rs) | a route attribute's `relative_uri` percent-encodes its parameters, refusing — by panic — an empty value and one that renders its segment as `.` or `..`, alone or with the template's literal affixes, `%2E` included, while rendering dots that make no dot segment; and that the hand-written fixture it encodes with describes what it encodes — a `Schema` body nothing executes cannot disagree with the `encode` beside it; and that a `Link` renders the same parameters under every prefix its target was mounted beneath, from a scope that is not the target's, while a router linking to an operation it does not mount, or through a prefix variable, refuses to build |
 | [`size.rs`](../crates/kynos/tests/size.rs) | a build failure does not inline a `Violation`, a `Result` costs no more than it, and which of the three bodies Kynos erases are zero-sized — the reasons `alloc_body.rs`'s counts read the way they do, filed here because a `size_of` needs no allocator |
 | [`alloc.rs`](../crates/kynos/tests/alloc.rs) | what the routing path allocates per route shape, that a replayed request costs what the first one did, and what one interceptor adds to a request, at stack depth 0/4/8, with the width of the future dispatch returns guarded beside it. It owns a `#[global_allocator]`, which is why it is a target of its own rather than a sibling `tests.rs`: installed in the library's unit-test binary the counter would reach every unit test in it. Its counting harness is [`tests/support/counting.rs`](../crates/kynos/tests/support/counting.rs), included by `#[path]` so a second counting target can own its own allocator without a second copy of the rationale. It also carries the two assertions that hold the *instrument* rather than the router, once for both counted targets — that a count is the measuring thread's alone, and that a driver which stopped counting reallocations, or fresh allocations, goes red |
 | [`alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) | what erasing a body through `UnsyncBoxBody` costs: nothing for an empty body, which erases a zero-sized type, and one allocation for any body that does not. A second `#[global_allocator]` target, for the reason the first one is one; the zero-sized facts behind both numbers are size guards and live in `size.rs` |
 | [`alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) | what each opt-in payload codec adds to an operation that mounts it, against the same service's bodyless and transport floors — and how compression's cost grows with the body it holds. A further `#[global_allocator]` target rather than a second module of `alloc.rs`, because a `#[global_allocator]` is per process and each integration target is one process, installing the same counter `alloc.rs` does by including [`tests/support/counting.rs`](../crates/kynos/tests/support/counting.rs), so one driver decides what both files' numbers mean. It deliberately does not restate `work_on_another_thread_is_not_counted` |
 | [`conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs) | that the committed corpus is what this build emits, and that it still carries the 3.2 constructs it exists to pin — asserted against the committed *text*, since what a downstream repository reads is the file |
 | [`conformance.rs`](../crates/kynos/tests/conformance.rs) | that the responses a suite observed match what the document promises, and that every declared response was exercised, by one client or by several sharing a `Coverage` |
-| [`matrix.rs`](../crates/kynos/tests/matrix.rs) | the same two assertions over every layer Kynos owns, which is the only place a wrong *document* fails against responses that actually happened. Static assertions about that document belong in `description.rs` even when the matrix is what found them: the matrix reports which promise went unkept, and the small fixture there says which rule was broken. That rule is about a document; an assertion about a *type* is a different question and stays with the type, which is why the `ShortCircuit` sweep is in `interceptors.rs` — see [below](#the-sweep-and-the-matrix-assert-one-property-over-two-sets) |
+| [`matrix.rs`](../crates/kynos/tests/matrix.rs) | the same two assertions over the operations, a guard, the response shapes and nine of the interceptors Kynos ships — `RequestId`, `Cors`, `BodySize`, `Timeout`, `Concurrency`, `RateLimit`, `Csrf`, `Conditional` and `SetCookies`. `Cache`, `Compression`, `Decompression`, `BodyTimeout` and `SecurityHeaders` are not mounted there, and are held by their own targets — and, all but `SecurityHeaders`, by `interceptors.rs`'s accounting of what each writes against what it declares. The matrix is the only place a wrong *document* fails against responses that actually happened. Static assertions about that document belong in `description.rs` even when the matrix is what found them: the matrix reports which promise went unkept, and the small fixture there says which rule was broken. That rule is about a document; an assertion about a *type* is a different question and stays with the type, which is why the `ShortCircuit` sweep is in `interceptors.rs` — see [below](#the-sweep-and-the-matrix-assert-one-property-over-two-sets) |
 | [`dispatch.rs`](../crates/kynos/tests/dispatch.rs), [`routing.rs`](../crates/kynos/tests/routing.rs), [`panics.rs`](../crates/kynos/tests/panics.rs) | every outcome one request can reach, the routes the router declines, that recovery happens only where it was asked for, and that a recovered panic is reported to observers once, whichever scope recovered it |
 | [`limits.rs`](../crates/kynos/tests/limits.rs), [`interceptors.rs`](../crates/kynos/tests/interceptors.rs), [`middleware.rs`](../crates/kynos/tests/middleware.rs), [`cors.rs`](../crates/kynos/tests/cors.rs), [`description.rs`](../crates/kynos/tests/description.rs), [`sse.rs`](../crates/kynos/tests/sse.rs) | each interceptor doing what it declares, setting only what it declared, and declaring it on exactly the operations it covers. `middleware.rs` also holds `partial` and `ranged_assets`, which assert that compression leaves anything a byte range is calculated against alone — a range is calculated over the encoded octets, so re-encoding a 206 puts a `Content-Range` on a body it is wrong about, and encoding a 200 that advertises `Accept-Ranges` puts one strong `ETag` over two representations. `ranged_assets` is the second half end to end: it resumes an asset download against the tag it was served with and splices the two halves back into the file. `description.rs` carries the same scope question one level down in its second section: which *statuses* within an operation a response field's declaration reaches, which is where `Accept-Ranges`, `Content-Range` and the 416 are each pinned to the statuses that give them a meaning — and where a response header nothing in the handler writes is pinned too, since a header group's and an interceptor's alike are filed under a wildcard and have to reach the exact key a consumer resolves to. Its third section is that question on the tag axis: which of the four tag scopes reaches the operation's `tags`, in what order, and whether each scope that names a tag also registers its metadata in the document's `tags` — a name arriving without its metadata is an `UndocumentedTag` warning on every operation carrying one, so both halves are asserted for every scope |
 | [`rate_limit.rs`](../crates/kynos/tests/rate_limit.rs) | the shipped limiter over a store: one quota and several, burst, keying, exemption, and both failure policies — and, since an application may replace the algorithm outright, that a `RateLimitPolicy` Kynos does not ship reaches the wire with its own `Retry-After` — behaviour that is a property of a *sequence* of requests rather than of any one |
@@ -164,7 +164,7 @@ Five kinds of code account for the workspace.
 | Value type | a `Serialize`/`Deserialize` derive, and no logic beyond builders and accessors | the crate's round-trip and determinism properties, reached through a shared generator; and one exact-JSON case fixing its wire shape | per-field tests, accessor tests, a hand-written round-trip |
 | Closed enumeration | an enum or `const` table mirroring a fixed list in the specification | one table test whose closure fails when a variant is added | cases covering some of the variants |
 | Parser | an open input space — a `&str`, arbitrary JSON, a whole document | a property against an independently constructed oracle; and one case per error variant, counted against the source; where it is hand-written and reads a request, a `fuzz/` target | round-tripping alone |
-| Type-level surface | a trait, a bound, an arity impl, a derive, or a rule that something must not compile | a doctest for the rule, a `.stderr` snapshot for its wording, a witness fn for the bound | running it — above all against a `todo!()` |
+| Type-level surface | a trait, a bound, an arity impl, a derive, or a rule that something must not compile | a doctest for the rule, a `.stderr` snapshot for its wording, a witness fn for the bound | running it |
 | Runtime I/O | a socket, a timer, a task or a signal | an integration test over a real socket | a mock of the runtime |
 
 A value type owes two things because neither implies the other. A round-trip
@@ -208,16 +208,7 @@ re-derives the match arms it was meant to check. Such a grammar owes what a
 closed enumeration owes — one case per diagnostic, counted against the source —
 with the wording left to a `.stderr` snapshot, where a reader sees it rendered.
 
-### Two rules that are not code kinds
-
-**A `todo!()`-bodied item owes its `no_run` doctest and nothing further.**
-Anything more would assert that `todo!()` panics. The rule is spent — the
-API-skeleton milestone is over, the bodies landed, and what it deferred has been
-paid — and is kept because a future skeleton milestone would reach for it again.
-The compile-only guard such a skeleton used, `if
-std::hint::black_box(false) { .. }`, is spent with it: a guarded body runs no
-assertion, so a new one is the sign of a surface that should not have been written yet, not a
-testing idiom.
+### A rule that is not a code kind
 
 **Conformance has an outward-facing half, and Kynos owns it.** The harness
 checks a running service against its own description and exports nothing, which
@@ -775,7 +766,9 @@ is not mutated, each for its own reason:
 - `server/shutdown/signal.rs`, whose arms are `cfg(unix)`, `cfg(windows)` or
   neither, so on any one platform two are uncompiled and their mutants missed.
 - The proc-macro entry points in `kynos-macros/src/lib.rs`, which only forward
-  to a mutated `expand` function, so a mutant there is unviable.
+  to a mutated `expand` function. Their mutants are viable, but each one empties
+  an expansion every test using that macro fails on, so mutating them buys
+  nothing.
 - The fuzz entry points in `__private/fuzz.rs`, which are `cfg(fuzzing)` and
   so never compiled by a test build, and only forward to a mutated parser.
 - Hand-written `Debug` impls, which hold no contract a mutant can break: a
@@ -860,20 +853,17 @@ text. `mise.toml` therefore lists it: a snapshot suite that passes on the
 machine that recorded it and fails everywhere else is testing the environment.
 
 **`on_unimplemented` attributes must land before any snapshot is recorded.**
-Twenty-three traits carry `#[diagnostic::on_unimplemented]` —
-`Provides`, `Handler`, `FromRequestParts`, `FromRequest`, `Describe`,
-`RequestContent`, `IntoResponse`, `Responses`, `Schema`, `MapKey`, `ParamValue`, `Flatten`,
-`ClosedFlatten`, `OpenMap`, `AdmitsAny`, `Alternative`, `ShortCircuit`, `EndpointMeta`, `IntoEndpoints`, `Carries`,
-`Languages`, `Rangeable` and `ByteSource`.
-Each one replaces the compiler's generic "the trait bound is not satisfied"
-with a message naming the fix.
+Every trait that carries `#[diagnostic::on_unimplemented]` replaces the
+compiler's generic "the trait bound is not satisfied" with a message naming the
+fix.
 
 `every_guided_diagnostic_has_a_snapshot` in
 [`tests/ui.rs`](../crates/kynos/tests/ui.rs) maps each to the snapshot that
-records it and counts the pairs against the attributes in the source. Eight of
-the fourteen guided traits *at the time it was written* had none, so more than
-half of what this requirement named was unchecked; the count has grown to
-twenty-three since, and the test is what kept the mapping level with it. The
+records it and counts the pairs against the attributes in the source, so it,
+not this page, is the list of guided traits. Eight of the fourteen guided traits
+*at the time it was written* had none, so more than half of what this
+requirement named was unchecked; the count has grown since, and the test is
+what kept the mapping level with it. The
 mapping is written out rather than searched for, because half the
 messages deliberately never spell the trait: `Handler`'s says "is not a Kynos
 handler", which is the improvement rather than something to grep for.
@@ -917,9 +907,13 @@ response the emitted document omits. Without it, the soundness invariant in
 It is built, and it runs in two places.
 [`tests/conformance.rs`](../crates/kynos/tests/conformance.rs) is the narrow
 one, over the two operations `examples/testing.rs` assembles.
-[`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) is the wide one, over every
-layer Kynos owns: the operations, a credential guard, a `WithHeaders` return, a
-redirect, a query group, and every interceptor at router or group scope.
+[`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) is the wide one: the operations, a
+credential guard, a `WithHeaders` return, a redirect, a query group, and nine
+interceptors at router or group scope. `Cache`, `Compression`, `Decompression`,
+`BodyTimeout` and `SecurityHeaders` are the shipped interceptors it does not
+mount; their own targets hold them instead, and
+[`interceptors.rs`](../crates/kynos/tests/interceptors.rs) all but
+`SecurityHeaders`.
 
 It was built last rather than first because it needs a service that actually
 runs. That ordering was a fact about the schedule, not a judgement about

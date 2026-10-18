@@ -72,13 +72,15 @@ impl<C> Endpoints<C> {
 
 /// A value that can contribute operations to a router or a group.
 ///
-/// Implemented for [`Endpoints`], for [`EndpointBuilder`](crate::router::endpoint::builder::EndpointBuilder), and for tuples,
-/// arrays and vectors of those — which is what lets `routes![a, b, c]` be one
-/// argument.
+/// Implemented for [`Endpoints`], for [`EndpointBuilder`](crate::router::endpoint::builder::EndpointBuilder),
+/// for an asset set, and for tuples, arrays and vectors of those. `routes![a, b, c]`
+/// expands to a tuple, which is what lets it be one argument while each member
+/// keeps the interceptor types the mount site checks.
 ///
 /// There is no blanket implementation over [`Endpoint`], which would conflict
 /// with the container implementations; a hand-written endpoint implements this
-/// with one line, `sink.push(self)`.
+/// with `type Stacks = ();` and an `into_endpoints` of one line,
+/// `sink.push(self)`.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not something a router can mount",
     label = "not mountable",
