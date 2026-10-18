@@ -889,5 +889,27 @@ async fn an_unencodable_cache_control_answers_500_where_it_would_be_sent() {
             None,
             "{fields:?}"
         );
+        if expected == StatusCode::INTERNAL_SERVER_ERROR {
+            // The shared refusal itself, not the file's bytes under its status.
+            let refusal = crate::extract::params::header::refused();
+            assert_eq!(
+                response.headers().get(header::CONTENT_TYPE),
+                refusal.headers().get(header::CONTENT_TYPE),
+                "{fields:?}"
+            );
+            assert_eq!(body(response).await, body(refusal).await, "{fields:?}");
+        }
     }
+}
+
+/// The body a response carries, read to its end.
+async fn body(response: Response) -> Bytes {
+    use http_body_util::BodyExt;
+
+    response
+        .into_body()
+        .collect()
+        .await
+        .expect("a readable body")
+        .to_bytes()
 }
