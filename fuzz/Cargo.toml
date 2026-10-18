@@ -25,12 +25,13 @@ members = ["."]
 base64 = "0.23.1"
 libfuzzer-sys = "0.4.13"
 
-# Baseline features only: every parser fuzzed here is in the default build, and
-# a smaller graph is a faster instrumented build.
+# The baseline, plus `multipart` for its `Content-Disposition` reader: only the
+# features a fuzzed parser lives behind, since a smaller graph is a faster
+# instrumented build.
 [dependencies.kynos]
 path = "../crates/kynos"
 default-features = false
-features = ["openapi31"]
+features = ["openapi31", "multipart"]
 
 [[bin]]
 name = "accept"
@@ -56,6 +57,13 @@ bench = false
 [[bin]]
 name = "date"
 path = "fuzz_targets/date.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "disposition"
+path = "fuzz_targets/disposition.rs"
 test = false
 doc = false
 bench = false

@@ -41,6 +41,7 @@ jobs:
           - basic
           - cookie
           - date
+          - disposition
           - etag
           - forwarded
           - media_type

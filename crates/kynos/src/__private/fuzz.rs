@@ -48,3 +48,19 @@ pub fn etag_matches_strongly(field: &HeaderValue, current: Option<&str>) -> bool
 pub fn offers(headers: &HeaderMap, media_type: &str) -> bool {
     crate::extract::body::offers(headers, media_type)
 }
+
+/// The `(name, filename)` a multipart part's `Content-Disposition` `field`
+/// declares, or why it declares no field.
+#[cfg(feature = "multipart")]
+pub fn disposition(field: &str) -> Result<(String, Option<String>), String> {
+    crate::extract::body::multipart::disposition(field)
+        .map(|disposition| (disposition.name, disposition.file_name))
+}
+
+/// `value` as the `MultipartForm` response writer quotes a `Content-Disposition`
+/// parameter, without its surrounding quotes.
+#[cfg(feature = "multipart")]
+#[must_use]
+pub fn quoted(value: &str) -> String {
+    crate::response::codec::multipart::quoted(value)
+}
