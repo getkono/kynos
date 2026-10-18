@@ -306,6 +306,77 @@ async fn an_exhausted_body_reports_no_remaining_octets() {
     );
 }
 
+/// A body over the in-memory source, which is sliced without a read future,
+/// still yields one span at a time and exactly the octets asked for, ready on
+/// every poll.
+#[test]
+fn an_in_memory_body_yields_its_spans_on_each_poll() {
+    use std::{
+        pin::Pin,
+        task::{Context, Poll, Waker},
+    };
+
+    use http_body::Body;
+
+    let length = usize::try_from(SPAN * 2 + 5).unwrap();
+    let octets: Bytes = (0..length)
+        .map(|offset| u8::try_from(offset % 251).unwrap())
+        .collect();
+    let first = 3;
+    let last = u64::try_from(length).unwrap() - 2;
+    let mut body = Spans::new(Arc::new(InMemory::new(octets.clone())), first, last);
+
+    let mut context = Context::from_waker(Waker::noop());
+    let mut frames = Vec::new();
+    loop {
+        match Pin::new(&mut body).poll_frame(&mut context) {
+            Poll::Ready(Some(Ok(frame))) => frames.push(frame.into_data().unwrap()),
+            Poll::Ready(Some(Err(error))) => panic!("an in-memory body failed: {error}"),
+            Poll::Ready(None) => break,
+            Poll::Pending => panic!("an in-memory read is ready at once"),
+        }
+    }
+
+    let sizes: Vec<usize> = frames.iter().map(Bytes::len).collect();
+    assert_eq!(sizes, [65_536, 65_536, 1]);
+    assert_eq!(
+        frames.concat(),
+        octets[usize::try_from(first).unwrap()..=usize::try_from(last).unwrap()]
+    );
+}
+
+/// An in-memory body shorter than the span it was asked for fails with
+/// [`Truncated`], as any source answering nothing does.
+#[test]
+fn an_in_memory_body_past_its_octets_is_truncated() {
+    use std::{
+        pin::Pin,
+        task::{Context, Poll, Waker},
+    };
+
+    use http_body::Body;
+
+    let mut body = Spans::new(Arc::new(InMemory::new(Bytes::from_static(b"0123"))), 2, 9);
+    let mut context = Context::from_waker(Waker::noop());
+
+    let Poll::Ready(Some(Ok(frame))) = Pin::new(&mut body).poll_frame(&mut context) else {
+        panic!("the octets it holds come first");
+    };
+    assert_eq!(frame.into_data().unwrap(), &b"23"[..]);
+
+    let Poll::Ready(Some(Err(error))) = Pin::new(&mut body).poll_frame(&mut context) else {
+        panic!("a span it cannot fill fails the body");
+    };
+    assert_eq!(
+        error.downcast_ref::<Truncated>(),
+        Some(&Truncated { first: 4, last: 9 })
+    );
+    assert!(matches!(
+        Pin::new(&mut body).poll_frame(&mut context),
+        Poll::Ready(None)
+    ));
+}
+
 /// The in-memory source answers what it holds, and clamps rather than panicking.
 #[tokio::test]
 async fn the_in_memory_source_slices_what_it_has() {

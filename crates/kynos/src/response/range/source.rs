@@ -227,6 +227,35 @@ impl<S: ByteSource> Spans<S> {
     fn exhausted(&self) -> bool {
         self.cursor > self.last
     }
+
+    /// The frame a completed read of [`span`](Self::span) yields, advancing
+    /// past what it delivered.
+    fn answer(
+        &mut self,
+        read: Result<Bytes, S::Error>,
+    ) -> Result<http_body::Frame<Bytes>, crate::http::body::BoxError> {
+        match read {
+            Ok(span) if span.is_empty() => {
+                // No progress: fail rather than end short of the sent length,
+                // and move past the end so a further poll ends.
+                let (first, last) = self.span();
+                self.cursor = self.last.saturating_add(1);
+                Err(Box::new(Truncated { first, last }))
+            }
+            Ok(mut span) => {
+                // A long answer is cut to the span, since the head already
+                // named the length; a short one has its remainder asked for
+                // next poll. `truncate` leaves a span no longer than that alone.
+                let (first, last) = self.span();
+                span.truncate(usize::try_from(last - first + 1).unwrap_or(usize::MAX));
+                self.cursor = self
+                    .cursor
+                    .saturating_add(u64::try_from(span.len()).unwrap_or(u64::MAX));
+                Ok(http_body::Frame::data(span))
+            }
+            Err(error) => Err(Box::new(error)),
+        }
+    }
 }
 
 impl<S: ByteSource> http_body::Body for Spans<S> {
@@ -244,29 +273,7 @@ impl<S: ByteSource> http_body::Body for Spans<S> {
                 let read = std::task::ready!(reading.as_mut().poll(context));
                 this.reading = None;
 
-                return match read {
-                    Ok(span) if span.is_empty() => {
-                        // No progress: fail rather than end short of the sent
-                        // length, and move past the end so a further poll ends.
-                        let (first, last) = this.span();
-                        this.cursor = this.last.saturating_add(1);
-                        let truncated = Truncated { first, last };
-                        Poll::Ready(Some(Err(Box::new(truncated) as Self::Error)))
-                    }
-                    Ok(mut span) => {
-                        // A long answer is cut to the span, since the head
-                        // already named the length; a short one has its
-                        // remainder asked for next poll.
-                        // `truncate` leaves a span no longer than that alone.
-                        let (first, last) = this.span();
-                        span.truncate(usize::try_from(last - first + 1).unwrap_or(usize::MAX));
-                        this.cursor = this
-                            .cursor
-                            .saturating_add(u64::try_from(span.len()).unwrap_or(u64::MAX));
-                        Poll::Ready(Some(Ok(http_body::Frame::data(span))))
-                    }
-                    Err(error) => Poll::Ready(Some(Err(Box::new(error) as Self::Error))),
-                };
+                return Poll::Ready(Some(this.answer(read)));
             }
 
             if this.exhausted() {
@@ -274,6 +281,15 @@ impl<S: ByteSource> http_body::Body for Spans<S> {
             }
 
             let (first, last) = this.span();
+
+            // An in-memory read is ready at once, so it is sliced here rather
+            // than boxed as a future; what it answers is handled the same way.
+            if let Some(octets) =
+                (this.source.as_ref() as &dyn std::any::Any).downcast_ref::<InMemory>()
+            {
+                return Poll::Ready(Some(this.answer(Ok(clamped(&octets.0, first, last)))));
+            }
+
             let source = std::sync::Arc::clone(&this.source);
             this.reading = Some(Box::pin(async move { source.read_span(first, last).await }));
         }
