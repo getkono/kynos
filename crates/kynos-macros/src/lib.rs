@@ -815,11 +815,16 @@ pub fn derive_headers(item: TokenStream) -> TokenStream {
 /// # Values are read as sent
 ///
 /// A field receives the cookie's value with no percent-decoding:
-/// `greeting=Hello%2C%20world%21` reads as `Hello%2C%20world%21`. Under
-/// `openapi32` each parameter states `style: cookie`, the style that applies
-/// and removes no encoding. OpenAPI 3.1 has no such style, so a 3.1 build
-/// states none, and the `form` default a reader then assumes describes a
+/// `greeting=Hello%2C%20world%21` reads as `Hello%2C%20world%21`. A parameter
+/// states no style unless its field asks with `#[cookie(style = "cookie")]`,
+/// the style that applies and removes no encoding, and the only one this
+/// derive accepts; without it, the `form` default a reader assumes describes a
 /// percent-encoded value this derive does not decode.
+///
+/// Asking is opt-in because the `cookie` style is OpenAPI 3.2's alone: it
+/// requires `openapi32`, and a description using it is emitted as 3.2, so a
+/// derive stating it unasked would move the version of every program whose
+/// dependency graph happens to enable that feature.
 ///
 /// # Rejected, because a parameter has one name
 ///

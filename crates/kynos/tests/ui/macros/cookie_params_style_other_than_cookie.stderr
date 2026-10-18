@@ -1,0 +1,5 @@
+error: a derived cookie is read as sent, with no percent-encoding removed, so the one style it can state is `style = "cookie"`
+ --> tests/ui/macros/cookie_params_style_other_than_cookie.rs:3:38
+  |
+3 |     #[cookie(rename = "sid", style = "form")]
+  |                                      ^^^^^^

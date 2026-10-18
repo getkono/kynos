@@ -5575,8 +5575,81 @@ mod headers {
 }
 
 mod cookies {
-    use super::{case, each_case_is_refused};
+    use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
     use crate::derive::cookies::expand_inner;
+
+    fn ledger() -> Vec<Case> {
+        vec![case(
+            "`form`, which would tell a client to percent-encode a value read as sent",
+            quote::quote!(
+                struct Session {
+                    #[cookie(style = "form")]
+                    id: String,
+                }
+            ),
+            "the one style it can state",
+        )]
+    }
+
+    /// The refusal that fires only where the document model has no `cookie`
+    /// style; under `openapi32` it cannot be provoked and has no row.
+    #[cfg(not(feature = "openapi32"))]
+    fn version_gated_ledger() -> Vec<Case> {
+        vec![case(
+            "the `cookie` style, which only 3.2 defines",
+            quote::quote!(
+                struct Session {
+                    #[cookie(style = "cookie")]
+                    id: String,
+                }
+            ),
+            "enable the `openapi32` feature",
+        )]
+    }
+
+    #[cfg(feature = "openapi32")]
+    fn version_gated_ledger() -> Vec<Case> {
+        Vec::new()
+    }
+
+    /// How many diagnostics this build cannot provoke.
+    const UNREACHABLE_HERE: usize = if cfg!(feature = "openapi32") { 1 } else { 0 };
+
+    #[test]
+    fn each_case_raises_the_diagnostic_it_names() {
+        each_case_is_refused(ledger(), expand_inner);
+        each_case_is_refused(version_gated_ledger(), expand_inner);
+    }
+
+    #[test]
+    fn every_cookies_diagnostic_has_a_case() {
+        every_diagnostic_has_a_case(
+            "cookies.rs",
+            include_str!("cookies.rs"),
+            ledger().len() + version_gated_ledger().len() + UNREACHABLE_HERE,
+        );
+    }
+
+    /// `style` is the `#[cookie]` grammar's alone: the other parameter
+    /// locations read values through their own decoders.
+    #[test]
+    fn style_is_no_header_key() {
+        let input: syn::DeriveInput = syn::parse_quote!(
+            struct Traced {
+                #[header(style = "cookie")]
+                id: String,
+            }
+        );
+        let Err(error) = crate::derive::headers::expand_inner(&input) else {
+            panic!("`#[header(style)]` was accepted");
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("not part of the `#[header(...)]` grammar"),
+            "{error}"
+        );
+    }
 
     /// A cookie name is an RFC 6265 §4.1.1 token: `=` would end it and `;`
     /// would end the pair, so a cookie declared under either could never match.

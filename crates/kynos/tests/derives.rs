@@ -1929,14 +1929,13 @@ fn a_cookie_value_that_is_not_ascii_is_refused_naming_its_cookie() {
     assert_eq!(decoded.session, "s-42");
 }
 
-/// A derived cookie is read as it was sent, percent-encoding and all, and a
-/// 3.2 build says so with `style: cookie`, which applies and removes no
-/// encoding. The `form` style an unstated one defaults to would tell a client
-/// to percent-encode a value the handler then receives still encoded. A 3.1
-/// build has no style that says this, and states none.
+/// A derived cookie is read as it was sent, percent-encoding and all, and
+/// states no style unless asked: `style: cookie` is what says so, and it is
+/// 3.2-only, so stating it unasked would raise the description of every
+/// program whose graph enables `openapi32`.
 #[cfg(feature = "cookie")]
 #[test]
-fn a_derived_cookie_is_read_raw_and_described_as_read() {
+fn a_derived_cookie_is_read_raw_and_states_no_style_unasked() {
     use kynos::{
         extract::params::cookie::CookieParams,
         http::{HeaderMap, HeaderValue, header::COOKIE},
@@ -1953,19 +1952,57 @@ fn a_derived_cookie_is_read_raw_and_described_as_read() {
     let mut registry = kynos::schema::registry::Registry::new();
     let described =
         serde_json::to_value(Session::parameters(&mut registry)).expect("parameters serialize");
-    #[cfg_attr(not(feature = "openapi32"), allow(unused_mut))]
-    let mut expected = serde_json::json!({
-        "name": "session_id",
-        "in": "cookie",
-        "required": true,
-        "schema": emitted::<String>(),
-    });
-    #[cfg(feature = "openapi32")]
-    {
-        expected["style"] = serde_json::json!("cookie");
-        expected["explode"] = serde_json::json!(true);
+    assert_eq!(
+        described,
+        serde_json::json!([{
+            "name": "session_id",
+            "in": "cookie",
+            "required": true,
+            "schema": emitted::<String>(),
+        }])
+    );
+}
+
+/// `#[cookie(style = "cookie")]` states the style that applies and removes no
+/// encoding, on its own field alone. The `form` style an unstated one defaults
+/// to would tell a client to percent-encode a value the handler then receives
+/// still encoded.
+#[cfg(all(feature = "cookie", feature = "openapi32"))]
+#[test]
+fn a_cookie_asking_for_its_style_states_it_alone() {
+    use kynos::extract::params::cookie::CookieParams;
+
+    #[derive(kynos::CookieParams)]
+    #[allow(dead_code)]
+    struct Visit {
+        #[cookie(rename = "greeting", style = "cookie")]
+        greeting: String,
+        #[cookie(rename = "theme")]
+        theme: String,
     }
-    assert_eq!(described, serde_json::json!([expected]));
+
+    let mut registry = kynos::schema::registry::Registry::new();
+    let described =
+        serde_json::to_value(Visit::parameters(&mut registry)).expect("parameters serialize");
+    assert_eq!(
+        described,
+        serde_json::json!([
+            {
+                "name": "greeting",
+                "in": "cookie",
+                "required": true,
+                "schema": emitted::<String>(),
+                "style": "cookie",
+                "explode": true,
+            },
+            {
+                "name": "theme",
+                "in": "cookie",
+                "required": true,
+                "schema": emitted::<String>(),
+            },
+        ])
+    );
 }
 
 // --- The derived header decoder reads only a header that is text -----------
