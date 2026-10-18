@@ -1,9 +1,15 @@
+use std::{
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicUsize, Ordering},
+};
+
 use quote::quote;
 use syn::parse_quote;
 
 use crate::assets::{
     args::{AssetArgs, DEFAULT_WARN_OVER},
     expand_inner, suggest,
+    walk::{Limits, walk_within},
 };
 
 /// The fixture directory, beside this crate's manifest.
@@ -245,16 +251,12 @@ fn the_guard_can_be_turned_off() {
 
 // --- What the grammar refuses ---------------------------------------------
 
-/// One case per diagnostic, counted against the sites, each refused in its own
-/// words.
-#[test]
-fn every_grammar_refusal_has_a_case() {
-    const MALFORMED_SIZE: &str = "`warn_over` takes a size such as \"4MiB\" or the word \
-                                  \"none\"; the units are B, KiB, MiB and GiB";
+const MALFORMED_SIZE: &str = "`warn_over` takes a size such as \"4MiB\" or the word \"none\"; \
+                              the units are B, KiB, MiB and GiB";
 
-    // The expected message is a prefix where the rest is the operating
-    // system's own wording, which no test here controls.
-    let cases: &[(&str, proc_macro2::TokenStream, &str)] = &[
+/// One row per `syn::Error::new` site in `args.rs`.
+fn grammar_cases() -> Vec<(&'static str, proc_macro2::TokenStream, &'static str)> {
+    vec![
         (
             "no unit struct to name the set",
             quote! {
@@ -268,14 +270,6 @@ fn every_grammar_refusal_has_a_case() {
                 struct Fixture;
             },
             "an asset set needs `dir = \"...\"`, relative to the crate root",
-        ),
-        (
-            "a directory that is not there",
-            quote! {
-                struct Fixture;
-                dir = "no-such-directory",
-            },
-            "`no-such-directory` could not be read: ",
         ),
         (
             "a key outside the grammar",
@@ -297,24 +291,6 @@ fn every_grammar_refusal_has_a_case() {
             MALFORMED_SIZE,
         ),
         (
-            "a size that is not a number",
-            quote! {
-                struct Fixture;
-                dir = #FIXTURE,
-                warn_over = "lots",
-            },
-            MALFORMED_SIZE,
-        ),
-        (
-            "a size too large for usize once scaled",
-            quote! {
-                struct Fixture;
-                dir = #FIXTURE,
-                warn_over = "99999999999GiB",
-            },
-            MALFORMED_SIZE,
-        ),
-        (
             "an empty exclusion",
             quote! {
                 struct Fixture;
@@ -324,16 +300,41 @@ fn every_grammar_refusal_has_a_case() {
             "an `exclude` entry is a file name or an extension beginning with a dot, and an \
              empty string is neither",
         ),
-    ];
+    ]
+}
 
-    for (description, tokens, message) in cases {
-        let Err(error) = expand(tokens.clone()) else {
-            panic!("{description} must be refused");
-        };
-        let reported = error.to_string();
-        assert!(
-            reported.starts_with(message),
-            "{description} was refused as {reported:?}, not {message:?}"
+/// Asserts `outcome` was refused, in words beginning with `message`.
+///
+/// A prefix, because where a message goes on it is the operating system's own
+/// wording, which no test here controls.
+fn assert_refused(description: &str, outcome: &syn::Result<String>, message: &str) {
+    let Err(error) = outcome else {
+        panic!("{description} must be refused");
+    };
+    let reported = error.to_string();
+    assert!(
+        reported.starts_with(message),
+        "{description} was refused as {reported:?}, not {message:?}"
+    );
+}
+
+/// Each grammar rule refuses in its own words.
+#[test]
+fn every_grammar_refusal_has_a_case() {
+    for (description, tokens, message) in grammar_cases() {
+        assert_refused(description, &expand(tokens), message);
+    }
+
+    // Two more ways to the size site, which `grammar_cases` reaches once.
+    for size in ["lots", "99999999999GiB"] {
+        assert_refused(
+            size,
+            &expand(quote! {
+                struct Fixture;
+                dir = #FIXTURE,
+                warn_over = #size,
+            }),
+            MALFORMED_SIZE,
         );
     }
 
@@ -347,6 +348,227 @@ fn every_grammar_refusal_has_a_case() {
         })
         .is_ok()
     );
+}
+
+// --- What the walk refuses ------------------------------------------------
+
+/// A directory of this test's own under the system's temporary directory,
+/// removed when dropped.
+///
+/// Named for the process and numbered within it, so no two share one whether
+/// tests run in one process or many.
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new() -> Self {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "kynos-macros-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        // A directory left by a process that reused this id and was killed.
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).expect("the temporary directory is writable");
+        // Canonical, so the walk's own paths and the expected messages agree
+        // where the temporary directory is reached through a symlink.
+        Self(path.canonicalize().expect("it was just created"))
+    }
+
+    /// Writes `relative`, creating its parents, with its own path as contents.
+    fn file(&self, relative: &str) -> &Self {
+        let path = self.0.join(relative);
+        std::fs::create_dir_all(path.parent().expect("a file has a parent"))
+            .expect("the temporary directory is writable");
+        std::fs::write(&path, relative).expect("the temporary directory is writable");
+        self
+    }
+
+    fn dir(&self) -> &str {
+        self.0.to_str().expect("the temporary directory is UTF-8")
+    }
+
+    /// An invocation over this directory, with `options` after `dir`.
+    fn args(&self, options: &proc_macro2::TokenStream) -> AssetArgs {
+        let dir = self.dir();
+        syn::parse2(quote! {
+            struct Fixture;
+            dir = #dir,
+            #options
+        })
+        .expect("a well-formed invocation")
+    }
+
+    /// The expansion of an invocation over this directory.
+    fn expand(&self, options: &proc_macro2::TokenStream) -> syn::Result<String> {
+        expand_inner(&self.args(options)).map(|expanded| expanded.to_string())
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Limits a test passes with three files.
+const SMALL: Limits = Limits { depth: 1, files: 2 };
+
+/// The walk's outcome under [`SMALL`].
+fn walk_small(args: &AssetArgs) -> syn::Result<String> {
+    walk_within(args, SMALL).map(|walked| walked.files.len().to_string())
+}
+
+/// One row per `syn::Error::new` site in `walk.rs` a test can reach: what
+/// was walked, how it came out, and the start of what it must say.
+///
+/// Each row's directory is gone by the time the row is read; the outcome was
+/// taken while it stood.
+fn walk_cases() -> Vec<(&'static str, syn::Result<String>, String)> {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    let mut cases = vec![
+        (
+            "a directory that is not there",
+            expand(quote! {
+                struct Fixture;
+                dir = "no-such-directory",
+            }),
+            "`no-such-directory` could not be read: ".to_owned(),
+        ),
+        (
+            "a file given as the directory",
+            expand(quote! {
+                struct Fixture;
+                dir = "Cargo.toml",
+            }),
+            format!(
+                "`{}` could not be read: ",
+                manifest
+                    .join("Cargo.toml")
+                    .canonicalize()
+                    .expect("this crate has a manifest")
+                    .display()
+            ),
+        ),
+    ];
+
+    let empty = Scratch::new();
+    empty.file(".hidden").file("notes.txt");
+    cases.push((
+        "a directory holding only a dotfile and an excluded file",
+        empty.expand(&quote!(exclude = ["notes.txt"],)),
+        format!(
+            "`{}` holds no servable file; an asset set that serves nothing is one no route needs",
+            empty.dir()
+        ),
+    ));
+
+    let deep = Scratch::new();
+    deep.file("one/two/deep.txt");
+    cases.push((
+        "a file nested past the depth limit",
+        walk_small(&deep.args(&quote!())),
+        format!("`{}` nests deeper than 1 levels", deep.dir()),
+    ));
+
+    let many = Scratch::new();
+    many.file("a.txt").file("b.txt").file("c.txt");
+    cases.push((
+        "more files than the limit",
+        walk_small(&many.args(&quote!())),
+        format!("`{}` holds more than 2 files", many.dir()),
+    ));
+
+    let inexpressible = Scratch::new();
+    inexpressible.file("nested/a b.txt");
+    cases.push((
+        "a file whose name no path template can express",
+        inexpressible.expand(&quote!()),
+        "`nested/a b.txt` has a name no path template can express, so it cannot be described; \
+         rename it, or add it to `exclude`"
+            .to_owned(),
+    ));
+
+    // A socket is neither a directory nor a symlink, and has no contents to
+    // read: what a build output holding one would hit.
+    #[cfg(unix)]
+    {
+        let unreadable = Scratch::new();
+        let socket = unreadable.0.join("s");
+        let _listener =
+            std::os::unix::net::UnixListener::bind(&socket).expect("a socket can be bound");
+        cases.push((
+            "a file that cannot be read",
+            unreadable.expand(&quote!()),
+            format!("`{}` could not be read: ", socket.display()),
+        ));
+    }
+
+    cases
+}
+
+/// The sites in `walk.rs` no test can reach, each named.
+///
+/// `CARGO_MANIFEST_DIR` is set for every test `cargo` runs; a directory entry
+/// and its file type fail only where the file system does mid-walk; and every
+/// entry is under the root it was listed from, so `strip_prefix` cannot fail.
+/// Off Unix there is no socket to make a file unreadable with.
+const UNREACHABLE_HERE: usize = if cfg!(unix) { 4 } else { 5 };
+
+/// Each walk refusal says what it refused, and the control beside it passes.
+#[test]
+fn every_walk_refusal_has_a_case() {
+    for (description, outcome, message) in walk_cases() {
+        assert_refused(description, &outcome, &message);
+    }
+
+    // The controls: one level less, one file fewer, and the inexpressible
+    // file excluded, the way out its message names.
+    let shallow = Scratch::new();
+    shallow.file("one/shallow.txt").file("top.txt");
+    assert_eq!(
+        walk_small(&shallow.args(&quote!())).expect("within both limits"),
+        "2"
+    );
+
+    let excluded = Scratch::new();
+    excluded.file("a b.txt").file("a.txt");
+    let expanded = excluded
+        .expand(&quote!(exclude = ["a b.txt"],))
+        .expect("the inexpressible file is excluded");
+    assert_eq!(served(&expanded), ["a.txt"], "{expanded}");
+}
+
+/// A count, not a mapping, over both files `assets!` raises diagnostics from.
+#[test]
+fn every_assets_diagnostic_has_a_case() {
+    let source = [include_str!("args.rs"), include_str!("walk.rs")].concat();
+    let sites = source.matches("syn::Error::new(").count();
+    let covered = grammar_cases().len() + walk_cases().len() + UNREACHABLE_HERE;
+    assert_eq!(
+        covered, sites,
+        "`args.rs` and `walk.rs` raise {sites} diagnostic(s) and {covered} have a case or a \
+         reason none can"
+    );
+}
+
+/// Symlinks are skipped, so a set cannot reach outside its own directory.
+#[cfg(unix)]
+#[test]
+fn a_symlink_is_not_followed() {
+    let outside = Scratch::new();
+    outside.file("secret.txt").file("tree/inner.txt");
+
+    let set = Scratch::new();
+    set.file("index.html");
+    std::os::unix::fs::symlink(outside.0.join("secret.txt"), set.0.join("secret.txt"))
+        .expect("a symlink can be made");
+    std::os::unix::fs::symlink(outside.0.join("tree"), set.0.join("tree"))
+        .expect("a symlink can be made");
+
+    let expanded = set.expand(&quote!()).expect("a walkable directory");
+    assert_eq!(served(&expanded), ["index.html"], "{expanded}");
 }
 
 /// A trailing comma is allowed, which is what makes the last option look like
