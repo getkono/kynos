@@ -1,7 +1,7 @@
 //! Procedural macros for the Kynos REST API framework.
 //!
 //! Nothing here is meant to be used directly: every macro is re-exported from
-//! `kynos`, and the documentation lives next to the trait each one implements.
+//! `kynos`, and each one's documentation lives on its entry point in this file.
 //!
 //! The route attributes carry only what the types cannot: the method, the
 //! path, and prose. Parameters come from the handler's arguments and responses
