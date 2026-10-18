@@ -49,6 +49,13 @@ pub fn offers(headers: &HeaderMap, media_type: &str) -> bool {
     crate::extract::body::offers(headers, media_type)
 }
 
+/// Whether the `const` check refusing a `OneOf` pair finds that a `Binary`
+/// `marker` and a codec's parameterless `body` type share a request.
+#[must_use]
+pub fn shares_requests(marker: &str, body: &str) -> bool {
+    crate::extract::body::alternative::shares_requests(marker, body)
+}
+
 /// The `(name, filename)` a multipart part's `Content-Disposition` `field`
 /// declares, or why it declares no field.
 #[cfg(feature = "multipart")]

@@ -139,7 +139,7 @@ const fn distinct(marker: &str, body: &str) {
 /// surrounding whitespace, whatever parameters the marker declares: a request
 /// need not repeat them, so `body` itself reaches both. A structured suffix is
 /// a different subtype.
-pub(super) const fn shares_requests(marker: &str, body: &str) -> bool {
+pub(crate) const fn shares_requests(marker: &str, body: &str) -> bool {
     eq_ignore_ascii_case(
         split_essence(marker.as_bytes()).0,
         split_essence(body.as_bytes()).0,
