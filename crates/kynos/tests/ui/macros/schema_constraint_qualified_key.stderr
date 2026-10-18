@@ -1,0 +1,11 @@
+error: `kynos::minimum` is not part of the `#[schema(...)]` grammar, which is the keys of `kynos::schema::constraints::Constraints`: `minimum`, `maximum`, `exclusive_minimum`, `exclusive_maximum`, `multiple_of`, `min_length`, `max_length`, `pattern`, `min_items`, `max_items`, `unique_items`, `content_encoding` and `content_media_type`; plus `open`, which says a flattened field's members are not named, and `as = T`, which describes a field as the type `T`
+ --> tests/ui/macros/schema_constraint_qualified_key.rs:7:14
+  |
+7 |     #[schema(kynos::minimum = 1)]
+  |              ^^^^^
+
+error: `minimum` is already set, and a field's `#[schema(...)]` takes each key once
+  --> tests/ui/macros/schema_constraint_qualified_key.rs:14:14
+   |
+14 |     #[schema(minimum = 2)]
+   |              ^^^^^^^

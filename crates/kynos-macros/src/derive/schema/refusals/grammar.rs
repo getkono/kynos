@@ -1,9 +1,11 @@
 //! The `#[schema(...)]` grammar: every key a field may carry, and what each
-//! takes.
+//! takes. A key outside it, a qualified key, and a key written twice on one
+//! field, across lists too, are refused.
 
 use proc_macro2::Span;
-use syn::{DeriveInput, Field, Fields, Lit, LitStr, Type};
+use syn::{DeriveInput, Field, Fields, Lit, LitStr, Type, spanned::Spanned};
 
+use crate::derive::attribute::key_name;
 use crate::derive::common::non_token_message;
 use crate::derive::schema::{
     COUNTS, Container, NUMERIC,
@@ -29,9 +31,14 @@ pub(super) fn check_constraints(input: &DeriveInput) -> syn::Result<()> {
         let mut opened: Option<Span> = None;
 
         for field in named {
+            // Across every list on the field, so a second cannot overwrite the first.
+            let mut seen: Vec<String> = Vec::new();
             for attr in &field.attrs {
                 if attr.path().is_ident("schema") {
-                    attr.parse_nested_meta(|meta| check_constraint(&meta))?;
+                    attr.parse_nested_meta(|meta| {
+                        check_once(&meta.path, &mut seen)?;
+                        check_constraint(&meta)
+                    })?;
                 }
             }
             let payload = payloads.iter().any(|payload| std::ptr::eq(*payload, field));
@@ -132,16 +139,30 @@ fn enforceable(pattern: &LitStr) -> Result<(), String> {
     }
 }
 
+/// Refuses a key `seen` already holds among the field's keys so far, and
+/// records it otherwise. A second `as` is left to `check_described_as`, which
+/// names the type it duplicates.
+fn check_once(path: &syn::Path, seen: &mut Vec<String>) -> syn::Result<()> {
+    let name = key_name(path);
+    if name != "as" && seen.contains(&name) {
+        return Err(syn::Error::new(
+            path.span(),
+            format!("`{name}` is already set, and a field's `#[schema(...)]` takes each key once"),
+        ));
+    }
+    seen.push(name);
+    Ok(())
+}
+
 /// One `key` or `key = value` inside a field's `#[schema(...)]`.
 fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
-    let Some(key) = meta.path.get_ident() else {
-        return Ok(());
-    };
-    let name = key.to_string();
+    // A qualified key matches no key below, so the last refusal names it.
+    let name = key_name(&meta.path);
+    let span = meta.path.span();
 
     if name == "format" {
         return Err(syn::Error::new(
-            key.span(),
+            span,
             "`format` says what a value *is*, which follows from its type rather than from the \
              field carrying it. Use a type that already claims the format -- `uuid::Uuid` behind \
              the `uuid` feature, a date or time type behind `time-chrono` or `time-jiff`, a \
@@ -155,7 +176,7 @@ fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
         // A flag: `= false` would only restate the key's absence.
         return if meta.input.peek(syn::Token![=]) {
             Err(syn::Error::new(
-                key.span(),
+                span,
                 format!("`{name}` is a flag; write it alone, or leave it out"),
             ))
         } else {
@@ -229,7 +250,7 @@ fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
     }
 
     Err(syn::Error::new(
-        key.span(),
+        span,
         format!(
             "`{name}` is not part of the `#[schema(...)]` grammar, which is the keys of \
              `kynos::schema::constraints::Constraints`: `minimum`, `maximum`, \

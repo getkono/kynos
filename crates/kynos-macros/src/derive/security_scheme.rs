@@ -28,6 +28,11 @@
 //!         | scopes(<expr>, ..) | deprecated | carrier = manual | carrier = optional
 //! ```
 //!
+//! Each kind and each flow takes only the options its row lists, each once; a
+//! flow's URLs are the ones the OAuth Flow Object applies to it. An option
+//! elsewhere, a qualified key, and a key written twice, across lists too, are
+//! refused rather than skipped or overwritten.
+//!
 //! The kind writes both `describe` and `Carries`, so the documented and the
 //! enforced carrier agree; `carrier = manual` suppresses `Carries`, and
 //! `carrier = optional` presents `Option<_>`, so an absent credential reaches
@@ -40,9 +45,14 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{DeriveInput, Expr, Ident, LitStr, Token, Type, parse_macro_input, parse_quote};
+use syn::{
+    DeriveInput, Expr, Ident, LitStr, Token, Type, parse_macro_input, parse_quote, spanned::Spanned,
+};
 
-use crate::derive::common::{doc_string, non_token_message, skip_value, unit_struct};
+use crate::derive::{
+    attribute::key_name,
+    common::{doc_string, non_token_message, unit_struct},
+};
 
 /// Locations an API key may travel in; not `path` or 3.2's `querystring`.
 const API_KEY_LOCATIONS: &[&str] = &["header", "query", "cookie"];
@@ -502,17 +512,25 @@ fn default_challenge(kind: &Ident) -> proc_macro2::TokenStream {
 
 fn parse_args(input: &DeriveInput) -> syn::Result<SchemeArgs> {
     let mut args = SchemeArgs::default();
+    // Across every list, so a second list cannot overwrite the first.
+    let mut seen: Vec<String> = Vec::new();
 
     for attr in &input.attrs {
         if !attr.path().is_ident("security") {
             continue;
         }
         attr.parse_nested_meta(|meta| {
-            let Some(key) = meta.path.get_ident() else {
-                return Ok(());
-            };
+            let key = key_name(&meta.path);
+            let span = meta.path.span();
+            // `carrier` and the kind name what they repeat, below.
+            if seen.contains(&key) && key != "carrier" && !is_kind(&key) {
+                return Err(syn::Error::new(
+                    span,
+                    format!("`{key}` is already set, and `#[security(...)]` takes each key once"),
+                ));
+            }
 
-            match key.to_string().as_str() {
+            match key.as_str() {
                 "name" => args.name = Some(meta.value()?.parse()?),
                 "credential" => args.credential = Some(meta.value()?.parse()?),
                 "scope" => args.scope = Some(meta.value()?.parse()?),
@@ -521,7 +539,7 @@ fn parse_args(input: &DeriveInput) -> syn::Result<SchemeArgs> {
                 // A 3.2-only key is refused under 3.1 rather than dropped.
                 "deprecated" if !cfg!(feature = "openapi32") => {
                     return Err(syn::Error::new(
-                        key.span(),
+                        span,
                         "`deprecated` writes a Security Scheme Object field that OpenAPI 3.2 \
                          introduced, and this build describes 3.1; enable the `openapi32` \
                          feature, or drop it",
@@ -531,7 +549,7 @@ fn parse_args(input: &DeriveInput) -> syn::Result<SchemeArgs> {
                 "carrier" => {
                     if args.carrier.is_some() {
                         return Err(syn::Error::new(
-                            key.span(),
+                            span,
                             "`carrier` is already set, and a scheme has exactly one carrier",
                         ));
                     }
@@ -559,23 +577,25 @@ fn parse_args(input: &DeriveInput) -> syn::Result<SchemeArgs> {
                 kind if is_kind(kind) => {
                     if let Some(existing) = &args.kind {
                         return Err(syn::Error::new(
-                            key.span(),
+                            span,
                             format!(
                                 "a security scheme has exactly one kind, and this one is already \
                                  `{existing}`"
                             ),
                         ));
                     }
-                    check_kind(key, &meta, &mut args.nested)?;
-                    args.kind = Some(key.clone());
+                    let kind = meta.path.require_ident()?;
+                    check_kind(kind, &meta, &mut args.nested)?;
+                    args.kind = Some(kind.clone());
                 }
                 other => {
                     return Err(syn::Error::new(
-                        key.span(),
+                        span,
                         format!("`{other}` is not part of the `#[security(...)]` grammar"),
                     ));
                 }
             }
+            seen.push(key);
             Ok(())
         })?;
     }
@@ -598,27 +618,46 @@ fn check_kind(
     nested: &mut Nested,
 ) -> syn::Result<()> {
     if meta.input.peek(syn::token::Paren) {
-        let is_oauth2 = kind == "oauth2";
+        let kind_name = kind.to_string();
         meta.parse_nested_meta(|option| {
-            let Some(key) = option.path.get_ident() else {
-                return skip_value(&option);
+            let key = key_name(&option.path);
+            // The options this kind models; any other is refused, not skipped.
+            let slot = match (kind_name.as_str(), key.as_str()) {
+                ("api_key", "in") => Some(&mut nested.location),
+                ("api_key", "name") => Some(&mut nested.field),
+                ("http", "scheme") => Some(&mut nested.scheme),
+                ("bearer" | "http", "format") => Some(&mut nested.format),
+                ("openid_connect", "url") => Some(&mut nested.url),
+                ("oauth2", "metadata_url") => Some(&mut nested.metadata_url),
+                _ => None,
             };
-            match key.to_string().as_str() {
-                "in" => nested.location = Some(option.value()?.parse()?),
-                "name" => nested.field = Some(option.value()?.parse()?),
-                "scheme" => nested.scheme = Some(option.value()?.parse()?),
-                "format" => nested.format = Some(option.value()?.parse()?),
-                "url" => nested.url = Some(option.value()?.parse()?),
-                "metadata_url" => nested.metadata_url = Some(option.value()?.parse()?),
-                // A flow only inside `oauth2`; elsewhere an unknown option.
-                flow if is_oauth2 => read_flow(key, flow, &option, nested)?,
-                _ => skip_value(&option)?,
+            if let Some(slot) = slot {
+                if slot.is_some() {
+                    return Err(syn::Error::new(
+                        option.path.span(),
+                        format!(
+                            "`{key}` is already set, and `{kind_name}(...)` takes each option once"
+                        ),
+                    ));
+                }
+                *slot = Some(option.value()?.parse()?);
+                return Ok(());
             }
-            Ok(())
+            // Every other option of `oauth2` is a flow, which `read_flow` checks.
+            match option.path.get_ident() {
+                Some(flow) if kind_name == "oauth2" => read_flow(flow, &key, &option, nested),
+                _ => Err(syn::Error::new(
+                    option.path.span(),
+                    format!("`{key}` is not part of the `{kind_name}(...)` grammar"),
+                )),
+            }
         })?;
-    } else {
-        // A bare kind such as `bearer` has no list to read.
-        skip_value(meta)?;
+    } else if meta.input.peek(Token![=]) {
+        // A kind's options go in its list; a value here would be dropped.
+        return Err(syn::Error::new(
+            meta.path.span(),
+            format!("`{kind}` takes its options in a list, as `{kind}(...)`, not a value"),
+        ));
     }
 
     if kind == "oauth2" {
@@ -721,26 +760,38 @@ fn read_flow(
 
     let mut args = FlowArgs::default();
     if option.input.peek(syn::token::Paren) {
+        let mut seen: Vec<String> = Vec::new();
         option.parse_nested_meta(|field| {
-            let Some(name) = field.path.get_ident() else {
-                return skip_value(&field);
-            };
-            match name.to_string().as_str() {
-                "authorization_url" => args.authorization_url = Some(field.value()?.parse()?),
-                "token_url" => args.token_url = Some(field.value()?.parse()?),
+            let key = key_name(&field.path);
+            let span = field.path.span();
+            if seen.contains(&key) {
+                return Err(syn::Error::new(
+                    span,
+                    format!("`{key}` is already set, and `{name}(...)` takes each key once"),
+                ));
+            }
+            match key.as_str() {
                 // The OAuth Flow Object applies the key to the device grant
                 // alone, the one flow whose row requires it.
                 "device_authorization_url"
                     if !flow.required.contains(&"device_authorization_url") =>
                 {
                     return Err(syn::Error::new(
-                        name.span(),
+                        span,
                         format!(
                             "`device_authorization_url` applies only to the `device_authorization` \
                              flow, and the `{}` flow has no device authorization endpoint; drop it",
                             flow.name
                         ),
                     ));
+                }
+                // The other URLs apply to the flows whose row requires them,
+                // as the OAuth Flow Object's "Applies To" column says.
+                "authorization_url" if flow.required.contains(&"authorization_url") => {
+                    args.authorization_url = Some(field.value()?.parse()?);
+                }
+                "token_url" if flow.required.contains(&"token_url") => {
+                    args.token_url = Some(field.value()?.parse()?);
                 }
                 "device_authorization_url" => {
                     args.device_authorization_url = Some(field.value()?.parse()?);
@@ -753,8 +804,14 @@ fn read_flow(
                     let scopes = content.parse_terminated(parse_scope, Token![,])?;
                     args.scopes.extend(scopes);
                 }
-                _ => skip_value(&field)?,
+                _ => {
+                    return Err(syn::Error::new(
+                        span,
+                        format!("`{key}` is not part of the `{name}(...)` grammar"),
+                    ));
+                }
             }
+            seen.push(key);
             Ok(())
         })?;
     }
