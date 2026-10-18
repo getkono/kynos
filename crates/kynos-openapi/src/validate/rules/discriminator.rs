@@ -100,8 +100,9 @@ impl Discriminators {
 /// Read are `required`, every `allOf` member, every `oneOf` or `anyOf` branch
 /// together, both arms of a conditional, and the `#/components/schemas` entry a
 /// `$ref` names, looked up as written. A `false` branch admits nothing, so
-/// requires anything. A `$dynamicRef`, a reference elsewhere, and one already
-/// being `following` could each require it unseen.
+/// requires anything. A `$dynamicRef`, a reference elsewhere, one already
+/// being `following`, `not`, `dependentSchemas` and `dependentRequired` could
+/// each require it unseen.
 fn requires<'doc>(
     object: &'doc SchemaObject,
     property: &str,
@@ -119,6 +120,9 @@ fn requires<'doc>(
         .flatten()
         .any(|name| name == property)
         || object.dynamic_ref.is_some()
+        || object.not.is_some()
+        || !object.dependent_schemas.is_empty()
+        || !object.dependent_required.is_empty()
     {
         return true;
     }

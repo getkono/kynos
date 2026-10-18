@@ -460,8 +460,9 @@ pub enum SpecError {
     /// only where the property is provably optional: read are `required`,
     /// every `allOf` member, every `oneOf` or `anyOf` branch together, both
     /// arms of a conditional, and the `#/components/schemas` entry a `$ref`
-    /// names. A `$dynamicRef`, or a reference elsewhere, could require it
-    /// unseen. Located at the `discriminator`.
+    /// names. A schema carrying a `$dynamicRef`, a reference elsewhere, `not`,
+    /// `dependentSchemas` or `dependentRequired` could require it unseen, so
+    /// counts as requiring it. Located at the `discriminator`.
     #[error("discriminating property `{property}` must be required under OpenAPI 3.1")]
     DiscriminatorPropertyNotRequired {
         /// The `propertyName`.
