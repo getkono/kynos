@@ -1199,6 +1199,79 @@ fn a_tag_named_at_two_enclosing_scopes_survives_at_the_outermost_of_them() {
     assert_eq!(tags_on(&document, "/v3/alpha"), ["users", "ops"]);
 }
 
+/// A second type claiming `users` with other metadata, which the document
+/// cannot hold beside [`Users`]: operations name a tag by its name alone.
+#[derive(kynos::Tag)]
+#[tag(name = "users", description = "Account holders, as billing sees them")]
+struct BillingUsers;
+
+/// A second type claiming `users` with metadata identical to [`Users`]'s.
+#[derive(kynos::Tag)]
+#[tag(name = "users", description = "Managing user accounts")]
+struct SameUsers;
+
+/// Two types describing one name differently is a router `build` refuses.
+///
+/// Keeping either description would publish the other type's operations under
+/// a heading their own type never wrote.
+#[test]
+fn two_tag_types_describing_one_name_differently_are_refused_by_build() {
+    let router = Router::<()>::new().tag::<Users>().group(
+        Group::<()>::new("/billing")
+            .tag::<BillingUsers>()
+            .mount(kynos::routes![alpha]),
+    );
+
+    let Err(kynos::Error::Invalid { violations }) = router.build(()) else {
+        panic!("two descriptions of `users` must be refused");
+    };
+    assert!(
+        violations.iter().any(|violation| matches!(
+            &violation.error,
+            kynos::openapi::SpecError::DuplicateTag { name } if name == "users"
+        )),
+        "{violations:?}"
+    );
+}
+
+/// `validate` reports the same refusal `build` makes, so a test that checks a
+/// router without serving it sees it too.
+#[test]
+fn two_tag_types_describing_one_name_differently_are_a_validation_error() {
+    let violations = Router::<()>::new()
+        .tag::<Users>()
+        .tag::<BillingUsers>()
+        .mount(kynos::routes![alpha])
+        .validate()
+        .expect("a describable router");
+
+    assert!(
+        violations.iter().any(|violation| {
+            violation.severity == kynos::openapi::Severity::Error
+                && matches!(
+                    &violation.error,
+                    kynos::openapi::SpecError::DuplicateTag { name } if name == "users"
+                )
+        }),
+        "{violations:?}"
+    );
+}
+
+/// Two types whose metadata is identical describe one tag, and the document
+/// says so once: nothing is lost, so nothing is refused.
+#[test]
+fn two_tag_types_describing_one_name_identically_appear_once() {
+    let document = Router::<()>::new()
+        .tag::<Users>()
+        .tag::<SameUsers>()
+        .mount(kynos::routes![alpha])
+        .openapi()
+        .expect("a describable router");
+
+    assert_eq!(tags_on(&document, "/alpha"), ["users"]);
+    assert_eq!(document.tags.len(), 1, "{:?}", document.tags);
+}
+
 /// The control for all of the above: naming no tag declares none.
 ///
 /// Without it every assertion here would pass against an implementation that
