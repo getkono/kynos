@@ -1,7 +1,7 @@
 use kynos_openapi::SecurityScheme as Described;
 
-use super::{Basic, Bearer, MutualTls};
-use crate::security::{SecurityScheme, carrier::Credentials};
+use super::{Basic, Bearer, CHALLENGE_CAPACITY, MutualTls, Realm, compose};
+use crate::security::{SecurityScheme, Unscoped, carrier::Credentials};
 
 /// One row per scheme, over the whole set.
 ///
@@ -25,14 +25,14 @@ fn every_configuration_free_scheme_describes_itself_and_names_its_challenge() {
         table,
         [
             ("Bearer", Described::bearer(None), Some("Bearer")),
-            // RFC 7617 section 2: the `charset` parameter is what tells a
-            // client to send a non-ASCII password as UTF-8, and `UTF-8` is
-            // the only value the registry defines. A bare `Basic` leaves
-            // every client to guess, and they do not all guess the same.
+            // RFC 7617 section 2: `realm` is REQUIRED, so an unnamed one is
+            // `ApiRealm`'s; and `charset` is what tells a client to send a
+            // non-ASCII password as UTF-8, `UTF-8` being the only value the
+            // registry defines.
             (
                 "Basic",
                 Described::basic(),
-                Some(r#"Basic charset="UTF-8""#)
+                Some(r#"Basic realm="api", charset="UTF-8""#)
             ),
             // No challenge: the certificate is presented during the TLS
             // handshake, so a 401 has no `WWW-Authenticate` scheme to name
@@ -85,4 +85,47 @@ fn the_credential_type_does_not_reach_the_description() {
         <Bearer<Claims> as SecurityScheme>::NAME,
         <Bearer<String> as SecurityScheme>::NAME
     );
+}
+
+/// A named realm is sent as a quoted-string: `"` and `\` become quoted-pairs
+/// (RFC 9110 section 5.6.4), and every other byte a header carries is sent
+/// as written, tab and space included.
+#[test]
+fn a_named_realm_is_sent_as_a_quoted_string() {
+    struct Quoted;
+
+    impl Realm for Quoted {
+        const REALM: &'static str = "a \"b\"\t\\c~";
+    }
+
+    assert_eq!(
+        <Basic<Credentials, Unscoped, Quoted> as SecurityScheme>::challenge(),
+        Some("Basic realm=\"a \\\"b\\\"\t\\\\c~\", charset=\"UTF-8\"")
+    );
+}
+
+/// Exactly the bytes a header value carries are admitted, swept over all of
+/// ASCII: tab, space and the visible characters; the other controls and DEL
+/// are refused, as is anything beyond ASCII.
+#[test]
+fn a_realm_admits_exactly_what_a_header_carries() {
+    for byte in 0..=0x7f_u8 {
+        let realm = char::from(byte).to_string();
+        let admitted = std::panic::catch_unwind(|| compose(&realm)).is_ok();
+        let carried = byte == b'\t' || (b' '..=b'~').contains(&byte);
+        assert_eq!(admitted, carried, "{byte:#04x}");
+    }
+
+    assert!(std::panic::catch_unwind(|| compose("caf\u{e9}")).is_err());
+}
+
+/// The longest realm fits and one byte more is refused, escaping counted.
+#[test]
+fn a_realm_is_bounded_once_escaped() {
+    let longest = "a".repeat(225);
+    let (_, len) = compose(&longest);
+    assert_eq!(len, CHALLENGE_CAPACITY);
+
+    assert!(std::panic::catch_unwind(|| compose(&"a".repeat(226))).is_err());
+    assert!(std::panic::catch_unwind(|| compose(&format!("{}\"", "a".repeat(224)))).is_err());
 }
