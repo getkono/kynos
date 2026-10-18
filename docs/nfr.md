@@ -80,7 +80,7 @@ half and the timed half are separate rows, and only the timed one carries the
 | [Runtime](#runtime) | `crates/kynos/src/server/` |
 | [Dependencies](#dependencies) | the whole workspace |
 | [Macros](#macros) | `crates/kynos-macros/` |
-| [Observability](#observability) | the `trace` feature — no OpenTelemetry module yet |
+| [Observability](#observability) | the `trace` feature — no OpenTelemetry module |
 
 ## Document model
 
@@ -103,8 +103,8 @@ half and the timed half are separate rows, and only the timed one carries the
 The `--check` row's blocker was never a `todo!()` body: the workspace declares no
 binary target at all, and no command-line surface is designed anywhere. It is
 recorded here because the emitter is here, but it may well belong to a
-satellite crate. That, and the two observability rows below, are the only three
-`blocked-on-impl` rows left — the API-skeleton milestone accounted for the rest,
+satellite crate. It is the only `blocked-on-impl` row left — the API-skeleton
+milestone accounted for the rest,
 and each moved to the status its evidence actually supports rather than all of
 them moving to `enforced`.
 
@@ -717,18 +717,18 @@ the toolchain, so the row is waiting on wiring rather than on an installation.
 
 ## Observability
 
-No OpenTelemetry module exists yet; the `trace` feature's
+No OpenTelemetry module exists, and none will; the `trace` feature's
 [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) is a facade
 over `tracing` and the subscriber stays the application's.
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
-| operability | Spans conform to OpenTelemetry HTTP semantic conventions | Integration test asserting attribute names against a pinned semconv version | `blocked-on-impl` |
-| operability | Metric cardinality is bounded by operation count | Test asserting series count is invariant under 10k distinct request paths | `blocked-on-impl` |
+| operability | Spans conform to OpenTelemetry HTTP semantic conventions | Integration test asserting attribute names against a pinned semconv version | `by-design`, below |
+| operability | Metric cardinality is bounded by operation count | Test asserting series count is invariant under 10k distinct request paths | `by-design`, below |
 | operability | A response the client did not receive is distinguishable from one it did | [`tests/sse.rs`](../crates/kynos/tests/sse.rs) dropping a live event stream's reader and asserting `on_disconnect` fires exactly once, with a control that reads a finite response to its end | `enforced` |
 
-Both `blocked-on-impl` rows are blocked on the same thing — the OpenTelemetry
-module does not exist — so neither is waiting on tooling. What did land is the
+Both `by-design` rows rest on the same refusal — Kynos ships no OpenTelemetry
+module, for the reasons closing this section. What did land is the
 seam they need: `Observer` receives the matched
 [`Route`](../crates/kynos/src/router/operation.rs), so a label can be keyed by
 operation rather than by request path, which is the property the second row
@@ -750,8 +750,8 @@ untrusted caller is allowed to do — each an operator's decision.
 [`examples/opentelemetry.rs`](../crates/kynos/examples/opentelemetry.rs) is the
 answer instead: an interceptor whose `Reads` group is both the declaration and
 the W3C propagation carrier, entered across `next.run` so the span covers the
-handler. It carries no dependency into the library, and both rows above stay
-open against a `kynos-otel` that may never be written.
+handler. It carries no dependency into the library, and both rows above are
+the application's to assert against its own instrumentation.
 
 ## Workspace
 
