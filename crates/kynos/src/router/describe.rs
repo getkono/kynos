@@ -177,7 +177,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             &mut index_of,
         )?;
 
-        if self.trailing_slashes == TrailingSlashPolicy::Lenient {
+        if self.trailing_slashes.unwrap_or_default() == TrailingSlashPolicy::Lenient {
             register_flipped_spellings(&mut matcher, &paths);
         }
 
@@ -188,23 +188,23 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         // Last, so the synthesized `OPTIONS` is in no `Allow`, implemented set
         // or `paths` key.
         let implemented = dispatch::implemented(&paths);
-        install_preflight(&mut paths, &self.method_not_allowed, &implemented);
-
-        let links = linked.then(|| Arc::new(mounted_links(&paths)));
+        let method_not_allowed = self.method_not_allowed.unwrap_or_default();
+        install_preflight(&mut paths, &method_not_allowed, &implemented);
 
         let dispatch = Arc::new(Dispatch {
             matcher,
+            // Before `paths`, which moves into the dispatch.
+            links: linked.then(|| Arc::new(mounted_links(&paths))),
             paths,
             context,
             observers: self.observers,
             interceptors: self.interceptors,
             catch_panics: catches::<P>(),
-            not_found: self.not_found,
-            method_not_allowed: self.method_not_allowed,
-            trailing_slashes: self.trailing_slashes,
-            trusted_proxies: self.trusted_proxies.clone(),
+            not_found: self.not_found.unwrap_or_default(),
+            method_not_allowed,
+            trailing_slashes: self.trailing_slashes.unwrap_or_default(),
+            trusted_proxies: self.trusted_proxies.unwrap_or_default(),
             implemented,
-            links,
         });
 
         let service = Service::new(document, move |request| {

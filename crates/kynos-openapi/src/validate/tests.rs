@@ -3175,6 +3175,7 @@ fn variant_name(error: &SpecError) -> &'static str {
         SpecError::OpaqueRoute { .. } => "OpaqueRoute",
         SpecError::RouteConflict { .. } => "RouteConflict",
         SpecError::InvalidRoutePattern { .. } => "InvalidRoutePattern",
+        SpecError::NestedRouterPolicy { .. } => "NestedRouterPolicy",
         SpecError::AuthorityNotStamped => "AuthorityNotStamped",
         SpecError::StaleAuthorityStamp => "StaleAuthorityStamp",
         SpecError::MalformedAnnotation { .. } => "MalformedAnnotation",
@@ -3198,6 +3199,10 @@ const RAISED_ELSEWHERE: &[&str] = &[
     // `crates/kynos/tests/unchecked.rs` cover them there.
     "RouteConflict",
     "InvalidRoutePattern",
+    // About a router absorbing another, which no document records: `kynos`'s
+    // `nest` and `merge` raise it, and `crates/kynos/tests/description.rs`
+    // covers it there.
+    "NestedRouterPolicy",
     // `encoding` conflicts with `prefixEncoding` and `itemEncoding`,
     // neither of which a 3.1 build has.
     #[cfg(not(feature = "openapi32"))]
