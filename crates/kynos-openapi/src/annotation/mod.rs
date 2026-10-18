@@ -17,10 +17,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::Map;
-use crate::model::{
-    document::Document,
-    paths::{item::PathItem, operation::Operation},
-    reference::RefOr,
+use crate::{
+    model::{
+        document::Document,
+        paths::{item::PathItem, operation::Operation},
+    },
+    pointer::At,
+    visit::{self, Visit},
 };
 
 /// The annotation marking a schema as deliberately unconstrained.
@@ -394,46 +397,22 @@ impl MalformedAnnotation {
     }
 }
 
-/// Every operation reachable from one path item.
-///
-/// Recurses into callbacks; boxed because the recursion needs it.
-fn item_operations(item: &PathItem) -> Box<dyn Iterator<Item = &Operation> + '_> {
-    let declared = item.operations().map(|(_, operation)| operation);
-    #[cfg(feature = "openapi32")]
-    let declared = declared.chain(item.additional_operations.values().map(Box::as_ref));
-
-    Box::new(declared.flat_map(|operation| {
-        std::iter::once(operation).chain(
-            operation
-                .callbacks
-                .values()
-                .filter_map(RefOr::as_item)
-                .flat_map(|callback| callback.items.values())
-                .filter_map(RefOr::as_item)
-                .flat_map(item_operations),
-        )
-    }))
+/// Whether any operation in a document, wherever it is declared, carries
+/// [`Opaque`]'s annotation.
+#[derive(Default)]
+struct AnyOpaque {
+    found: bool,
 }
 
-/// Every operation in a document, wherever it is declared.
-fn operations(document: &Document) -> impl Iterator<Item = &Operation> {
-    document
-        .paths
-        .items
-        .values()
-        .chain(document.webhooks.values())
-        .chain(document.components.path_items.values())
-        .flat_map(item_operations)
-        .chain(
-            document
-                .components
-                .callbacks
-                .values()
-                .filter_map(RefOr::as_item)
-                .flat_map(|callback| callback.items.values())
-                .filter_map(RefOr::as_item)
-                .flat_map(item_operations),
-        )
+impl<'doc> Visit<'doc> for AnyOpaque {
+    /// Once one is found, nothing further is looked at.
+    fn path_item(&mut self, _at: At<'_>, _item: &'doc PathItem, _path: Option<&'doc str>) -> bool {
+        !self.found
+    }
+
+    fn operation(&mut self, _at: At<'_>, _item: &'doc PathItem, operation: &'doc Operation) {
+        self.found |= Opaque::is_annotated(operation);
+    }
 }
 
 impl Document {
@@ -444,8 +423,12 @@ impl Document {
     /// than read from the stamp. An unreadable annotation counts as unclean.
     #[must_use]
     pub fn is_authoritative(&self) -> bool {
-        let no_opaque_routes = OpaqueRoute::all(self).is_ok_and(|routes| routes.is_empty());
-        no_opaque_routes && !operations(self).any(Opaque::is_annotated)
+        if !OpaqueRoute::all(self).is_ok_and(|routes| routes.is_empty()) {
+            return false;
+        }
+        let mut opaque = AnyOpaque::default();
+        visit::document(self, &mut opaque);
+        !opaque.found
     }
 
     /// Brings [`NOT_AUTHORITATIVE_ANNOTATION`] into line with this document.
