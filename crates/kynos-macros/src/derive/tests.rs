@@ -5579,6 +5579,34 @@ mod security_scheme {
         ]
     }
 
+    /// A kind with no options, given a value, is told to stand bare: pointing
+    /// it at `kind(...)` would name a form its empty grammar refuses too.
+    #[test]
+    fn an_optionless_kind_given_a_value_is_told_to_stand_bare() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "basic given a value",
+                    quote::quote!(
+                        #[security(basic = "x")]
+                        struct Basic;
+                    ),
+                    "`basic` takes no options; write it bare, as `basic`, not with a value",
+                ),
+                case(
+                    "mutual TLS given a value",
+                    quote::quote!(
+                        #[security(mutual_tls = "x")]
+                        struct Mtls;
+                    ),
+                    "`mutual_tls` takes no options; write it bare, as `mutual_tls`, not with a \
+                     value",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
     /// Each kind takes only the options its row of the grammar lists, and each
     /// flow only the URLs the OAuth Flow Object applies to it; the ledger holds
     /// one row per site, so the rest of the table is swept here.
