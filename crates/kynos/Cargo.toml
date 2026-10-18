@@ -283,8 +283,6 @@ openapi32 = [
   "openapi31",
   "kynos-openapi/openapi32",
   "kynos-macros?/openapi32",
-  # Streams need 3.2's `itemSchema`.
-  "dep:futures-core",
 ]
 
 # --- Core ------------------------------------------------------------------
@@ -339,8 +337,7 @@ trace = ["dep:tracing"]
 yaml = ["kynos-openapi/yaml"]
 
 # --- Testing ---------------------------------------------------------------
-# `futures-core` for `TestRequest::body_stream`.
-test-util = ["dep:jsonschema", "dep:futures-core"]
+test-util = ["dep:jsonschema"]
 
 # --- Response cache --------------------------------------------------------
 # `Cache` and `Conditional`; the store is the application's.
@@ -403,7 +400,8 @@ async-compression = { workspace = true, optional = true, features = [
 bigdecimal = { workspace = true, optional = true }
 bytes = { workspace = true }
 chrono = { workspace = true, optional = true }
-futures-core = { workspace = true, optional = true }
+# The stream contract `BinaryStream` takes, so it is in every build.
+futures-core = { workspace = true }
 http = { workspace = true }
 http-body = { workspace = true }
 http-body-util = { workspace = true }
@@ -435,7 +433,6 @@ uuid = { workspace = true, optional = true }
 [dev-dependencies]
 # A dev-dependency adding a crate to the graph can reword the `ui` `.stderr`
 # snapshots' "other types implement" lists; these add none.
-futures-core = { workspace = true }
 jsonwebtoken = { workspace = true }
 moka = { workspace = true }
 bytes = { workspace = true }

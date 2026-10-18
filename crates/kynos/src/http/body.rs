@@ -58,7 +58,6 @@ impl Body {
     }
 
     /// A body whose bytes arrive as a stream.
-    #[cfg(feature = "openapi32")]
     pub(crate) fn from_stream<S, E>(stream: S) -> Self
     where
         S: futures_core::Stream<Item = Result<Bytes, E>> + Send + 'static,
@@ -170,12 +169,10 @@ impl HttpBody for Failed {
 /// A stream of chunks, seen as a body: one data frame per chunk.
 ///
 /// Boxed so it is `Unpin` and needs no projection.
-#[cfg(feature = "openapi32")]
 struct Streamed<S> {
     chunks: Pin<Box<S>>,
 }
 
-#[cfg(feature = "openapi32")]
 impl<S, E> HttpBody for Streamed<S>
 where
     S: futures_core::Stream<Item = Result<Bytes, E>>,

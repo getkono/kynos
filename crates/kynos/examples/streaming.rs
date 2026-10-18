@@ -1,7 +1,7 @@
 //! Responses that are described item by item, and the whole-query-string
 //! parameter.
 //!
-//! Everything here needs OpenAPI 3.2:
+//! Everything here but the binary export needs OpenAPI 3.2:
 //!
 //! ```text
 //! cargo run -p kynos --example streaming --no-default-features \
@@ -10,11 +10,14 @@
 //!
 //! Four things are worth noticing:
 //!
-//! * **3.1 cannot describe a stream, so the whole subtree is 3.2-only.** What
-//!   3.2 adds is `itemSchema`: a way to say what one *item* of a sequential
-//!   media type looks like, rather than what the whole body looks like. Without
-//!   it a streaming response could only be described as bytes, and describing
-//!   it as bytes is the thing this framework exists not to do.
+//! * **3.1 cannot describe the items of a stream, so item streams are
+//!   3.2-only.** What 3.2 adds is `itemSchema`: a way to say what one *item* of
+//!   a sequential media type looks like, rather than what the whole body looks
+//!   like. Without it a stream of records could only be described as bytes,
+//!   and describing it as bytes is the thing this framework exists not to do.
+//!   A stream of raw bytes is the exception: bytes are all it is, so
+//!   `BinaryStream` is described as a whole binary body, exactly as `Binary<M>`
+//!   is, and needs no `openapi32`.
 //! * **A stream is `futures_core::Stream` and nothing more.** No executor
 //!   integration, no combinator crate, no Kynos stream type to adapt to. The
 //!   hand-written `Countdown` below is the whole contract, which is what keeps
