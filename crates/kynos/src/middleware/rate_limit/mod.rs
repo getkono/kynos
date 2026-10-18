@@ -89,8 +89,23 @@ impl<T: ProblemType> RateLimitSpelling<T> for Legacy {
         policies: &[QuotaPolicy],
     ) -> Self::Denied {
         let _ = policies;
-        RateLimited::new(retry_after, limits.first().map_or(0, |limit| limit.quota))
+        RateLimited::new(retry_after, refused(limits).map_or(0, |limit| limit.quota))
     }
+}
+
+/// The limit a denial was refused by: the exhausted one the client waits
+/// longest on, which is the one `Retry-After` describes.
+///
+/// The first consulted where none reports itself exhausted, so a policy that
+/// refuses on other grounds still names a ceiling.
+fn refused(limits: &[ServiceLimit]) -> Option<&ServiceLimit> {
+    limits
+        .iter()
+        .filter(|limit| limit.remaining == 0)
+        // `rev` so that of equal resets the first consulted wins.
+        .rev()
+        .max_by_key(|limit| limit.reset)
+        .or_else(|| limits.first())
 }
 
 impl<T: ProblemType> RateLimitSpelling<T> for Structured {

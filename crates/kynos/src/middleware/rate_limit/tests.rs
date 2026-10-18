@@ -1,7 +1,7 @@
 use std::{fmt, marker::PhantomData, time::Duration};
 
 use super::{
-    Legacy, RateLimit, Structured,
+    Legacy, RateLimit, RateLimitSpelling, Structured,
     decision::{Decision, Denial, QuotaPolicy, QuotaUnit, RateLimitPolicy, ServiceLimit},
     headers::{RateLimitFields, RateLimitHeaders},
     key::Shared,
@@ -15,7 +15,7 @@ use crate::{
     error::problem::ProblemType,
     extract::params::header::{EncodeHeaders, HeaderParams},
     http::body::Body,
-    response::ShortCircuit,
+    response::{IntoResponse, ShortCircuit},
     router::operation::Route,
     schema::registry::Registry,
 };
@@ -204,6 +204,68 @@ fn the_legacy_triple_reports_the_first_quota_only() {
             ("x-ratelimit-reset".to_owned(), "1".to_owned()),
         ]
     );
+}
+
+/// The `X-RateLimit-Limit` a `Legacy` 429 sends for `limits`.
+fn refused_ceiling(retry_after: Duration, limits: &[ServiceLimit]) -> String {
+    let refusal = <Legacy as RateLimitSpelling<()>>::deny(retry_after, limits, &[]);
+    let response = refusal.into_response();
+
+    response.headers()["x-ratelimit-limit"]
+        .to_str()
+        .expect("a printable field")
+        .to_owned()
+}
+
+/// A `Legacy` 429 reports the ceiling that was exceeded, not the first one
+/// consulted.
+///
+/// A burst quota with room left beside a daily one that refused: the burst
+/// ceiling would tell the client it may send ten more a second, when the daily
+/// quota will refuse every one of them.
+#[test]
+fn a_legacy_refusal_reports_the_quota_that_refused() {
+    let day = Duration::from_secs(86_400);
+    let limits = [
+        ServiceLimit::new("burst", 10, 9, Duration::from_secs(1)),
+        ServiceLimit::new("daily", 1_000, 0, day),
+    ];
+
+    assert_eq!(refused_ceiling(day, &limits), "1000");
+}
+
+/// Of two quotas that refused, the one the client waits longest on is the one
+/// `Retry-After` and `X-RateLimit-Reset` describe, so its ceiling is reported.
+#[test]
+fn a_legacy_refusal_reports_the_refusing_quota_with_the_longest_reset() {
+    let hour = Duration::from_secs(3_600);
+    let limits = [
+        ServiceLimit::new("burst", 10, 0, Duration::from_secs(1)),
+        ServiceLimit::new("hourly", 100, 0, hour),
+        ServiceLimit::new("minutely", 50, 0, Duration::from_secs(60)),
+    ];
+
+    assert_eq!(refused_ceiling(hour, &limits), "100");
+
+    // Of equal waits, the first consulted.
+    let tied = [
+        ServiceLimit::new("hourly", 100, 0, hour),
+        ServiceLimit::new("tenants", 400, 0, hour),
+    ];
+    assert_eq!(refused_ceiling(hour, &tied), "100");
+}
+
+/// A policy may refuse without reporting any limit as exhausted; the first
+/// one consulted is then the only ceiling there is to report.
+#[test]
+fn a_legacy_refusal_with_no_exhausted_quota_reports_the_first() {
+    let limits = [
+        ServiceLimit::new("burst", 10, 3, Duration::from_secs(1)),
+        ServiceLimit::new("daily", 1_000, 7, Duration::from_secs(86_400)),
+    ];
+
+    assert_eq!(refused_ceiling(Duration::from_secs(5), &limits), "10");
+    assert_eq!(refused_ceiling(Duration::from_secs(5), &[]), "0");
 }
 
 /// A name no structured field can carry drops its member rather than producing
