@@ -5912,8 +5912,13 @@ mod security_scheme {
     #[test]
     fn every_security_scheme_diagnostic_has_a_case() {
         every_diagnostic_has_a_case(
-            "security_scheme.rs",
-            include_str!("security_scheme.rs"),
+            "security_scheme.rs` and `security_scheme/",
+            &[
+                include_str!("security_scheme.rs"),
+                include_str!("security_scheme/args.rs"),
+                include_str!("security_scheme/flow.rs"),
+            ]
+            .concat(),
             ledger().len()
                 + oauth2_ledger().len()
                 + keys_ledger().len()
