@@ -428,8 +428,10 @@ async fn query_thing() -> NoContent {
 }
 
 /// The escape hatch for a method with no attribute of its own, given one that
-/// has: what is under test is that it writes what it was told.
-#[kynos::operation(method = "GET", path = "/things/described")]
+/// has: what is under test is that it writes what it was told. `PATCH` rather
+/// than `GET`, the method its own documentation example and `#[kynos::get]`
+/// write, so an expansion that wrote `GET` whatever it was told would fail.
+#[kynos::operation(method = "PATCH", path = "/things/described")]
 async fn described_thing() -> NoContent {
     NoContent
 }
@@ -461,7 +463,7 @@ fn each_route_attribute_writes_its_own_method() {
     assert_eq!(<trace_thing as EndpointMeta>::METHOD, "TRACE");
     #[cfg(feature = "openapi32")]
     assert_eq!(<query_thing as EndpointMeta>::METHOD, "QUERY");
-    assert_eq!(<described_thing as EndpointMeta>::METHOD, "GET");
+    assert_eq!(<described_thing as EndpointMeta>::METHOD, "PATCH");
 }
 
 // The count that ties the cases above to the attributes `kynos-macros`
