@@ -2220,6 +2220,26 @@ fn the_derived_header_encoder_writes_a_fixed_value() {
     );
 }
 
+/// A rendered value that is no field value is refused rather than dropped, so
+/// a response never goes out without a header its description declares:
+/// `WithHeaders` answers 500, as a body that failed to serialize does.
+#[test]
+fn a_derived_header_that_is_no_field_value_is_refused() {
+    let response = kynos::response::headers::WithHeaders::new(
+        (),
+        Hardened {
+            nosniff: (),
+            no_store: None,
+            request_id: "a\nb".to_owned(),
+        },
+    )
+    .into_response();
+
+    assert_eq!(response.status(), 500);
+    assert_eq!(response.headers().get("x-request-id"), None);
+    assert_eq!(response.headers().get("x-content-type-options"), None);
+}
+
 /// A fixed header's schema is a string whose `const` is its value, in either
 /// direction, required as its field is and described by its doc comment.
 #[test]
