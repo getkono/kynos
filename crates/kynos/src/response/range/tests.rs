@@ -844,3 +844,50 @@ async fn an_unencodable_tag_answers_500_before_any_precondition() {
         assert_eq!(response.headers().get(header::ETAG), None, "{fields:?}");
     }
 }
+
+/// A `Cache-Control` that is no field value answers 500 in place of every
+/// response that would carry it, rather than that response without it; a 412
+/// carries none, so it is answered as it would be.
+#[tokio::test]
+async fn an_unencodable_cache_control_answers_500_where_it_would_be_sent() {
+    for (fields, expected) in [
+        (vec![], StatusCode::INTERNAL_SERVER_ERROR),
+        (
+            vec![(header::IF_NONE_MATCH, "\"a\"")],
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ),
+        (
+            vec![(header::RANGE, "bytes=0-1")],
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ),
+        (
+            vec![(header::IF_MATCH, "\"b\"")],
+            StatusCode::PRECONDITION_FAILED,
+        ),
+    ] {
+        let mut headers = HeaderMap::new();
+        for (name, value) in &fields {
+            headers.append(name, HeaderValue::from_static(value));
+        }
+        let conditions = Conditions {
+            method: Method::GET,
+            fields: headers,
+        };
+
+        let response =
+            Served::<_, OctetStream>::new(InMemory::new(Bytes::from_static(b"0123456789")))
+                .etag(crate::http::etag::ETag::strong("a"))
+                .cache_control("max-age=60\n")
+                .deliver(&conditions)
+                .await
+                .expect("an in-memory source cannot fail")
+                .into_response();
+
+        assert_eq!(response.status(), expected, "{fields:?}");
+        assert_eq!(
+            response.headers().get(header::CACHE_CONTROL),
+            None,
+            "{fields:?}"
+        );
+    }
+}

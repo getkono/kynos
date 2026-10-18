@@ -5,6 +5,14 @@ fn directory() -> Directory {
     Directory::new("/srv/assets")
 }
 
+/// A `Cache-Control` that is no field value is refused where the directory is
+/// configured, rather than left off every file it serves.
+#[test]
+#[should_panic(expected = "is not a Cache-Control field value")]
+fn a_cache_control_that_is_no_field_value_is_refused_where_it_is_set() {
+    let _ = directory().cache_control("max-age=60\n");
+}
+
 /// Every way out of the root, refused.
 ///
 /// Structural rather than canonicalizing: `..` is never accepted, so it cannot
