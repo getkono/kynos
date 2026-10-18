@@ -158,72 +158,100 @@ pub(in crate::validate) fn check_media_type(
         Some(schema) => declared_properties(schema, components),
         None => Some(HashSet::new()),
     };
-    for (property, encoding) in &content.encoding {
-        let location = format!("{location}/encoding/{}", pointer_token(property));
+    for property in content.encoding.keys() {
         if properties
             .as_ref()
             .is_some_and(|properties| !properties.contains(property.as_str()))
         {
             violations.push(Violation::error(
-                &location,
+                format!("{location}/encoding/{}", pointer_token(property)),
                 SpecError::UnknownEncodingProperty {
                     property: property.clone(),
                 },
             ));
         }
-        check_encoding(&location, encoding, violations);
     }
-    #[cfg(feature = "openapi32")]
-    {
-        for (index, encoding) in content.prefix_encoding.iter().flatten().enumerate() {
-            check_encoding(
-                &format!("{location}/prefixEncoding/{index}"),
-                encoding,
-                violations,
-            );
-        }
-        if let Some(encoding) = &content.item_encoding {
-            check_encoding(&format!("{location}/itemEncoding"), encoding, violations);
-        }
-    }
+    // Each encoded part's headers, and under 3.2 its own exclusion: nested
+    // parts apply their fields "in the same manner" as a media type
+    // (`references/3.2.0.md:1711-1713`).
+    for_each_encoding(location, content, &mut |location, encoding| {
+        #[cfg(feature = "openapi32")]
+        check_exclusion(
+            location,
+            &encoding.encoding,
+            encoding.prefix_encoding.as_ref(),
+            encoding.item_encoding.as_deref(),
+            violations,
+        );
+        check_header_map(
+            &format!("{location}/headers"),
+            &encoding.headers,
+            violations,
+        );
+    });
 }
 
-/// An encoded part's headers, and under 3.2 the parts nested inside it, which
-/// apply their fields "in the same manner" as a media type
-/// (`references/3.2.0.md:1711-1713`).
-fn check_encoding(location: &str, encoding: &Encoding, violations: &mut Vec<Violation>) {
+/// Visits every Encoding Object below `media_type` with its location, each
+/// before the ones nested inside it: the `encoding` entries and, under 3.2,
+/// each `prefixEncoding` item and the `itemEncoding`, then the same fields of
+/// each of those, at every depth.
+pub(in crate::validate) fn for_each_encoding<'doc>(
+    location: &str,
+    media_type: &'doc MediaType,
+    visit: &mut impl FnMut(&str, &'doc Encoding),
+) {
+    for (property, encoding) in &media_type.encoding {
+        walk_encoding(
+            &format!("{location}/encoding/{}", pointer_token(property)),
+            encoding,
+            visit,
+        );
+    }
     #[cfg(feature = "openapi32")]
-    check_exclusion(
+    walk_positional(
         location,
-        &encoding.encoding,
-        encoding.prefix_encoding.as_ref(),
-        encoding.item_encoding.as_deref(),
-        violations,
+        media_type.prefix_encoding.as_deref(),
+        media_type.item_encoding.as_deref(),
+        visit,
     );
-    check_header_map(
-        &format!("{location}/headers"),
-        &encoding.headers,
-        violations,
-    );
+}
+
+fn walk_encoding<'doc>(
+    location: &str,
+    encoding: &'doc Encoding,
+    visit: &mut impl FnMut(&str, &'doc Encoding),
+) {
+    visit(location, encoding);
     #[cfg(feature = "openapi32")]
     {
         for (property, nested) in &encoding.encoding {
-            check_encoding(
+            walk_encoding(
                 &format!("{location}/encoding/{}", pointer_token(property)),
                 nested,
-                violations,
+                visit,
             );
         }
-        for (index, nested) in encoding.prefix_encoding.iter().flatten().enumerate() {
-            check_encoding(
-                &format!("{location}/prefixEncoding/{index}"),
-                nested,
-                violations,
-            );
-        }
-        if let Some(nested) = &encoding.item_encoding {
-            check_encoding(&format!("{location}/itemEncoding"), nested, violations);
-        }
+        walk_positional(
+            location,
+            encoding.prefix_encoding.as_deref(),
+            encoding.item_encoding.as_deref(),
+            visit,
+        );
+    }
+}
+
+#[cfg(feature = "openapi32")]
+fn walk_positional<'doc>(
+    location: &str,
+    prefix_encoding: Option<&'doc [Encoding]>,
+    item_encoding: Option<&'doc Encoding>,
+    visit: &mut impl FnMut(&str, &'doc Encoding),
+) {
+    for (index, nested) in prefix_encoding.into_iter().flatten().enumerate() {
+        walk_encoding(&format!("{location}/prefixEncoding/{index}"), nested, visit);
+    }
+    if let Some(nested) = item_encoding {
+        walk_encoding(&format!("{location}/itemEncoding"), nested, visit);
     }
 }
 
