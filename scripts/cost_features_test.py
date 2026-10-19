@@ -12,8 +12,10 @@ ate a float slice and collapsed two functions onto one key.
 --no-default-features --features openapi31` at 0.4.48, whose `(TOTAL)` is the
 `openapi31` row of the committed `crates/kynos/cost/codegen.tsv`. Its column
 widths, its two parenthesised shares per column and its bare integer total are
-the tool's, not a guess at them. The float-slice row is the one line here that
-is constructed, and it is marked as such: no target in this workspace
+the tool's, not a guess at them. `LLVM_SIZE_SAMPLE` is captured the same way,
+whole: `llvm-size -A` from the 1.97.1 toolchain's `llvm-tools` (LLVM 22.1.6)
+over that point's `--release` build of the fixture. The float-slice row is the
+one line here that is constructed, and it is marked as such: no target in this workspace
 instantiates a float-slice generic today, which is exactly why that defect was
 a wrong number waiting rather than a wrong number.
 
@@ -23,12 +25,15 @@ places a wrong answer looks right: a sweep whose points drifted from the six
 `mise run lint:codecs` builds would measure a set nothing lints, and a report
 that ranked against `openapi31` rather than against the fixture's floor would
 print a plausible table of the wrong subtraction. Both are asserted here, and so
-is the refusing direction `measure_binary` gained with them — a build that named
-no artifact, and an `llvm-size` that printed no `.text`.
+is `measure_binary` over captured tool output both ways: the `.text` it reads,
+and the refusals it gained with the codec half — a build that named no
+artifact, and an `llvm-size` that printed no `.text`.
 
-`main` is reached once, with the sweep stubbed out, for the release gate: its
-exit code is what makes a release pull request red, so it is asserted where it
-is decided rather than inferred from the pure verdict beneath it.
+`main` is reached with the sweeps stubbed out, for what only it decides: which
+`--kind` runs which sweep and writes which table, the baseline
+`KYNOS_COST=overwrite` records, and the release gate's exit code, which is what
+makes a release pull request red, so it is asserted where it is decided rather
+than inferred from the pure verdict beneath it.
 
 Run it as `mise run cost:test`, or directly. There is no Python test runner in
 this repository and `unittest` needs none.
@@ -42,6 +47,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from collections import namedtuple
 from pathlib import Path
 from unittest import mock
 
@@ -83,6 +89,46 @@ FLOAT_SLICES = """\
     120                   2                (TOTAL)
      70 (58.3%, 58.3%)     1 (50.0%, 50.0%)  <[f64] as core[37f591cfbe66b0b1]::fmt::Debug>::fmt
      50 (41.7%,100.0%)     1 (50.0%,100.0%)  <[f32] as core[37f591cfbe66b0b1]::fmt::Debug>::fmt
+"""
+
+LLVM_SIZE_SAMPLE = """\
+target/release/examples/cost_fixture  :
+section                      size      addr
+.interp                        28       736
+.note.ABI-tag                  32       764
+.note.gnu.build-id             36       796
+.dynsym                      1560       832
+.gnu.version                  130      2392
+.gnu.version_r                272      2524
+.gnu.hash                      28      2800
+.dynstr                       956      2828
+.rela.dyn                   18096      3784
+.rela.plt                      48     21880
+.gcc_except_table           40764     21928
+.rodata                     65072     62720
+.eh_frame_hdr               11644    127792
+.eh_frame                   86408    139440
+.text                     1052028    229952
+.init                          27   1281980
+.fini                          13   1282008
+.plt                           48   1282032
+.tbss                          48   1282080
+.data.rel.ro                13752   1286176
+.fini_array                     8   1299928
+.init_array                    16   1299936
+.dynamic                      448   1299952
+.got                          504   1300400
+.got.plt                       40   1300904
+.relro_padding               1584   1300944
+.tm_clone_table                 0   1305040
+.data                        2472   1305040
+.bss                          176   1307512
+.comment                      231         0
+.gnu.build.attributes         324         0
+.annobin.notes                247         0
+Total                     1297040
+
+
 """
 
 DESCRIBE = (
@@ -392,7 +438,9 @@ class Ranking(unittest.TestCase):
     def test_a_feature_the_baseline_never_recorded_is_attributed(self):
         measured = codegen_rows(openapi32=101, brand_new=640)
         text = self.codegen(measured, codegen_rows(openapi32=101))
-        self.assertIn("##### `brand-new`", text)
+        self.assertIn(
+            f"##### `brand-new`\n\n- `{DESCRIBE}` +640 lines, 1 copy\n", text
+        )
 
     def test_a_new_feature_that_costs_nothing_is_still_listed(self):
         text = self.binary(
@@ -427,6 +475,81 @@ class Provenance(unittest.TestCase):
 
     def test_a_drift_within_one_toolchain_is_not_flagged(self):
         self.assertNotIn("mixes toolchains", self.report(LIVE))
+
+    def test_a_baseline_naming_no_toolchain_is_said_to_maybe_mix_them(self):
+        """A baseline older than its provenance lines, or one edited by hand."""
+        with tempfile.TemporaryDirectory() as directory:
+            was = written(
+                directory,
+                cost.BINARY_TSV,
+                binary_rows(openapi32=75920),
+                ["text", "delta"],
+                "# Binary delta.\n",
+            )
+        self.assertEqual((was.toolchain, was.host), (None, None))
+        text = cost.report(
+            binary_rows(openapi32=76000),
+            None,
+            None,
+            None,
+            {cost.BINARY_TSV: was, cost.CODEGEN_TSV: None, cost.CODEC_TSV: None},
+            LIVE,
+        )
+        self.assertIn(
+            "The recorded baseline names no toolchain, so the drift column may "
+            f"mix toolchains: this run is `{RECORDED_TOOLCHAIN}` on "
+            f"`{RECORDED_HOST}`.\n",
+            text,
+        )
+        self.assertNotIn("as here", text)
+
+
+class Attribution(unittest.TestCase):
+    """`attribute`: one point's monomorphizations against the baseline's."""
+
+    def test_each_moved_function_is_listed_by_size_with_its_copies(self):
+        functions = {
+            cost.BASELINE: {
+                "grown": (100, 1),
+                "removed": (50, 2),
+                "steady": (10, 1),
+                "tied_b": (5, 1),
+            },
+            "openapi32": {
+                "grown": (130, 1),
+                "added": (20, 3),
+                "steady": (10, 1),
+                "tied_a": (5, 1),
+                "tied_b": (10, 1),
+            },
+        }
+        self.assertEqual(
+            cost.attribute("openapi32", functions),
+            [
+                "##### `openapi32`",
+                "",
+                "- `removed` -50 lines, not instantiated here",
+                "- `grown` +30 lines, 1 copy",
+                "- `added` +20 lines, 3 copies",
+                "- `tied_a` +5 lines, 1 copy",
+                "- `tied_b` +5 lines, 1 copy",
+                "",
+            ],
+        )
+
+    def test_only_the_largest_movers_are_listed(self):
+        base = {f"f{index}": (1, 1) for index in range(cost.TOP + 1)}
+        here = {name: (2 + int(name[1:]), 1) for name in base}
+        listed = cost.attribute("openapi32", {cost.BASELINE: base, "openapi32": here})
+        self.assertEqual(len(listed), cost.TOP + 3)
+        self.assertNotIn("- `f0` +1 lines, 1 copy", listed)
+
+    def test_a_point_that_instantiates_what_the_baseline_does_says_so(self):
+        functions = {cost.BASELINE: {"steady": (10, 1)}, "uuid": {"steady": (10, 2)}}
+        self.assertEqual(
+            cost.attribute("uuid", functions),
+            ["##### `uuid`", "", "- no monomorphization moved", ""],
+        )
 
 
 def grown(rows, value, by):
@@ -659,6 +782,97 @@ class SinceRelease(unittest.TestCase):
                 self.assertEqual(self.released(Path(root)), (None, {}))
 
 
+#: Per `--kind`: the sweep `main` calls, the baseline it reads and records, the
+#: table every run writes beside the report, the section that reports it, and
+#: how this file records a baseline of that kind.
+Kind = namedtuple("Kind", ("sweep", "baseline", "table", "title", "record"))
+KINDS = {
+    "binary": Kind(
+        "sweep_binary", cost.BINARY_TSV, "cost-binary.tsv", "### Binary delta",
+        recorded_binary,
+    ),
+    "codegen": Kind(
+        "sweep_codegen", cost.CODEGEN_TSV, "cost-codegen.tsv", "### Codegen delta",
+        recorded_codegen,
+    ),
+    "codec": Kind(
+        "sweep_codec", cost.CODEC_TSV, "cost-codec.tsv", "### Codec delta",
+        recorded_codec,
+    ),
+}
+
+#: What `main` did, and what it left behind under `ROOT` and `COST`.
+Ran = namedtuple("Ran", ("code", "said", "report", "sweeps", "tables", "baselines"))
+
+
+def run_main(kind, mode, measured, recorded=None):
+    """`main --kind kind` under `KYNOS_COST=mode`, with every sweep stubbed out.
+
+    `measured` is the rows this kind's sweep returns, and `recorded` the rows
+    its committed baseline holds before the run, or `None` for none. Under
+    `--kind all` both are keyed by kind instead, a kind missing from `recorded`
+    having no baseline. Each table and baseline `main` wrote is read back by
+    the real `read_recorded` once `main` is done, keyed by file name, `None`
+    for one it did not write.
+    """
+    if kind != "all":
+        measured, recorded = {kind: measured}, {kind: recorded}
+    recorded = recorded or {}
+
+    def swept(name):
+        rows = measured[name]
+        return (rows, codegen_functions(rows)) if name == "codegen" else rows
+
+    # An unselected kind's sweep returns nothing usable: `main` must not call it.
+    sweeps = {
+        k.sweep: mock.Mock(return_value=swept(name) if name in measured else None)
+        for name, k in KINDS.items()
+    }
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        was = {
+            KINDS[name].baseline: KINDS[name].record(directory, rows)
+            for name, rows in recorded.items()
+            if rows is not None
+        }
+        environ = {"KYNOS_COST": mode} if mode else {}
+        argv = ["cost_features.py", "--kind", kind]
+        with contextlib.ExitStack() as stack:
+            for name, value in (
+                ("ROOT", root),
+                ("COST", root / "cost"),
+                ("sweep_env", mock.Mock(return_value={})),
+                ("toolchain", mock.Mock(return_value=LIVE)),
+                ("released", mock.Mock(return_value=(None, {}))),
+                ("read_recorded", mock.Mock(side_effect=lambda path: (
+                    was.get(path.name)
+                ))),
+                *sweeps.items(),
+            ):
+                stack.enter_context(mock.patch.object(cost, name, value))
+            stack.enter_context(mock.patch.object(sys, "argv", argv))
+            stack.enter_context(mock.patch.dict(os.environ, environ, clear=True))
+            stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+            said = stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+            try:
+                cost.main()
+                code = 0
+            except SystemExit as stopped:
+                code = stopped.code
+        report = root / "cost-report.md"
+        return Ran(
+            code,
+            said.getvalue(),
+            report.read_text() if report.is_file() else None,
+            [name for name, sweep in sweeps.items() if sweep.called],
+            {k.table: cost.read_recorded(root / k.table) for k in KINDS.values()},
+            {
+                k.baseline: cost.read_recorded(root / "cost" / k.baseline)
+                for k in KINDS.values()
+            },
+        )
+
+
 class ReleaseGate(unittest.TestCase):
     """`KYNOS_COST=check`: whether the committed baselines are what was measured.
 
@@ -763,33 +977,8 @@ class ReleaseGate(unittest.TestCase):
 
     def run_main(self, mode, measured, recorded):
         """`main` over a binary-only run, with the sweep itself stubbed out."""
-        with tempfile.TemporaryDirectory() as directory:
-            was = recorded_binary(directory, recorded)
-            environ = {"KYNOS_COST": mode} if mode else {}
-            argv = ["cost_features.py", "--kind", "binary"]
-            with contextlib.ExitStack() as stack:
-                for name, value in (
-                    ("ROOT", Path(directory)),
-                    ("sweep_env", mock.Mock(return_value={})),
-                    ("toolchain", mock.Mock(return_value=LIVE)),
-                    ("sweep_binary", mock.Mock(return_value=measured)),
-                    ("released", mock.Mock(return_value=(None, {}))),
-                    ("read_recorded", mock.Mock(side_effect=lambda path: (
-                        was if path.name == cost.BINARY_TSV else None
-                    ))),
-                ):
-                    stack.enter_context(mock.patch.object(cost, name, value))
-                stack.enter_context(mock.patch.object(sys, "argv", argv))
-                stack.enter_context(mock.patch.dict(os.environ, environ, clear=True))
-                stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
-                said = stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
-                try:
-                    cost.main()
-                    code = 0
-                except SystemExit as stopped:
-                    code = stopped.code
-                left = (Path(directory) / "cost-report.md").is_file()
-        return code, said.getvalue(), left
+        ran = run_main("binary", mode, measured, recorded)
+        return ran.code, ran.said, ran.report is not None
 
     def test_unrecorded_numbers_stop_the_gate_with_their_own_code(self):
         code, said, _ = self.run_main(
@@ -814,6 +1003,130 @@ class ReleaseGate(unittest.TestCase):
             None, binary_rows(openapi32=76000), binary_rows(openapi32=75920)
         )
         self.assertEqual(code, 0)
+
+
+class Main(unittest.TestCase):
+    """What `--kind` runs and what each run writes, `KYNOS_COST=overwrite` too."""
+
+    MEASURED = {
+        "binary": binary_rows(openapi32=75920, uuid=-32),
+        "codegen": codegen_rows(openapi32=101, uuid=-4),
+        "codec": codec_rows(json=4096, protobuf=-12),
+    }
+
+    def test_each_kind_runs_its_own_sweep_and_reports_it_alone(self):
+        for kind, own in KINDS.items():
+            with self.subTest(kind=kind):
+                ran = run_main(kind, None, self.MEASURED[kind])
+                self.assertEqual(ran.code, 0)
+                self.assertEqual(ran.sweeps, [own.sweep])
+                for other in KINDS.values():
+                    if other is own:
+                        self.assertIn(other.title, ran.report)
+                    else:
+                        self.assertNotIn(other.title, ran.report)
+
+    def test_each_kind_writes_its_own_table_beside_the_report(self):
+        for kind, own in KINDS.items():
+            with self.subTest(kind=kind):
+                ran = run_main(kind, None, self.MEASURED[kind])
+                self.assertEqual(
+                    ran.tables,
+                    {
+                        other.table: cost.Recorded(*LIVE, self.MEASURED[kind])
+                        if other is own
+                        else None
+                        for other in KINDS.values()
+                    },
+                )
+
+    def test_a_compared_run_records_no_baseline(self):
+        for kind in KINDS:
+            with self.subTest(kind=kind):
+                ran = run_main(kind, None, self.MEASURED[kind], self.MEASURED[kind])
+                self.assertEqual(set(ran.baselines.values()), {None})
+
+    def test_overwrite_records_what_was_measured_as_the_baseline(self):
+        for kind, own in KINDS.items():
+            with self.subTest(kind=kind):
+                measured = self.MEASURED[kind]
+                ran = run_main(kind, "overwrite", measured, None)
+                self.assertEqual(ran.code, 0)
+                self.assertEqual(
+                    ran.baselines,
+                    {
+                        other.baseline: cost.Recorded(*LIVE, measured)
+                        if other is own
+                        else None
+                        for other in KINDS.values()
+                    },
+                )
+                self.assertRegex(
+                    ran.said, rf"(?m)^cost: recorded \S+/cost/{own.baseline}$"
+                )
+                # What overwrite wrote is what the release gate then accepts.
+                self.assertEqual(
+                    cost.unrecorded(
+                        own.baseline, measured, ran.baselines[own.baseline], LIVE
+                    ),
+                    [],
+                )
+
+    def test_a_kind_with_no_baseline_says_how_to_record_one(self):
+        ran = run_main("codec", None, self.MEASURED["codec"])
+        self.assertIn(
+            f"cost: no baseline recorded for {cost.CODEC_TSV}; "
+            "run `mise run cost:record`\n",
+            ran.said,
+        )
+
+    def test_overwrite_does_not_ask_for_the_baseline_it_just_recorded(self):
+        ran = run_main("codegen", "overwrite", self.MEASURED["codegen"])
+        self.assertNotIn("no baseline recorded", ran.said)
+
+    # `--kind all` is the default, and the run `cost:features`, `cost:record`
+    # and the release gate make: every kind in one `main`.
+
+    def test_all_runs_every_sweep_and_reports_every_kind(self):
+        ran = run_main("all", None, self.MEASURED, self.MEASURED)
+        self.assertEqual(ran.code, 0)
+        self.assertEqual(ran.sweeps, [k.sweep for k in KINDS.values()])
+        for k in KINDS.values():
+            self.assertIn(k.title, ran.report)
+
+    def test_all_writes_every_table_and_records_no_baseline(self):
+        ran = run_main("all", None, self.MEASURED, self.MEASURED)
+        self.assertEqual(
+            ran.tables,
+            {
+                k.table: cost.Recorded(*LIVE, self.MEASURED[name])
+                for name, k in KINDS.items()
+            },
+        )
+        self.assertEqual(set(ran.baselines.values()), {None})
+
+    def test_all_under_overwrite_records_every_baseline(self):
+        ran = run_main("all", "overwrite", self.MEASURED)
+        self.assertEqual(ran.code, 0)
+        self.assertEqual(
+            ran.baselines,
+            {
+                k.baseline: cost.Recorded(*LIVE, self.MEASURED[name])
+                for name, k in KINDS.items()
+            },
+        )
+        for name, k in KINDS.items():
+            with self.subTest(kind=name):
+                self.assertRegex(
+                    ran.said, rf"(?m)^cost: recorded \S+/cost/{k.baseline}$"
+                )
+                self.assertEqual(
+                    cost.unrecorded(
+                        k.baseline, self.MEASURED[name], ran.baselines[k.baseline], LIVE
+                    ),
+                    [],
+                )
+        self.assertNotIn("no baseline recorded", ran.said)
 
 
 class Exclusions(unittest.TestCase):
@@ -926,6 +1239,51 @@ class Codecs(unittest.TestCase):
         text = self.report(codec_rows(json=63936), None)
         self.assertIn("serde_json", text)
         self.assertIn("not attributable to Kynos alone", text)
+
+
+class MeasureBinary(unittest.TestCase):
+    """The measuring direction of `measure_binary`, over captured tool output."""
+
+    def measure(self, built):
+        """`.text` for a build that printed `built`, and the commands it ran."""
+        with mock.patch.object(
+            cost, "capture", side_effect=[built, LLVM_SIZE_SAMPLE]
+        ) as capture:
+            text = cost.measure_binary(
+                "/size", ["--features", "openapi31"], {"K": "v"}, cost.FIXTURE
+            )
+        return text, capture.call_args_list
+
+    def test_the_measurement_is_the_text_section_llvm_size_prints(self):
+        text, _ = self.measure(artifact_line(cost.FIXTURE))
+        self.assertEqual(text, 1052028)
+
+    def test_the_point_s_flags_build_the_fixture_under_the_sweep_env(self):
+        _, (build, _) = self.measure(artifact_line(cost.FIXTURE))
+        self.assertEqual(
+            build,
+            mock.call(
+                [
+                    "cargo", "build", "-p", "kynos", "--release",
+                    "--example", cost.FIXTURE,
+                    "--message-format=json-render-diagnostics",
+                    "--features", "openapi31",
+                ],
+                {"K": "v"},
+            ),
+        )
+
+    def test_llvm_size_reads_the_executable_cargo_named_for_the_fixture(self):
+        built = (
+            "Compiling kynos\n"
+            '{"reason":"compiler-artifact","executable":null,'
+            '"target":{"name":"kynos"}}\n'
+            + artifact_line("other", "/tmp/cost/other")
+            + artifact_line(cost.FIXTURE, "/tmp/cost/cost_fixture")
+            + '{"reason":"build-finished","success":true}\n'
+        )
+        _, (_, size) = self.measure(built)
+        self.assertEqual(size, mock.call(["/size", "-A", "/tmp/cost/cost_fixture"]))
 
 
 class Failures(unittest.TestCase):
