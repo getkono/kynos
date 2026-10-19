@@ -723,7 +723,8 @@ member's name, and one ending in `/` is a tree.
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
-| compatibility | `hyper` and `hyper-util` are named only in `server/connection.rs` and `http/body.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `hyper` is named only in `server/connection.rs` and `http/body.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `hyper-util` is named only in `server/connection.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `tokio-rustls` and `rustls` are named only under `server/tls/` | `mise run containment:check` | `enforced` |
 | compatibility | `matchit` may be named only under `router/` | `mise run containment:check` | `enforced` |
 | compatibility | `socket2` is named only in `server/tcp.rs` | `mise run containment:check` | `enforced` |

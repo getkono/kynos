@@ -1758,9 +1758,11 @@ class Main(unittest.TestCase):
         # `sources` rather than `files` -- one word -- puts eleven offender
         # lines over this repository's own tree. Nine of them are the `tokio`
         # allowance scan's, over the `tests.rs` siblings that word restores to
-        # the corpus, and two are the `hyper`/`hyper-util` and `rustls`
-        # confinements'; the dependency-graph scan is two of the three
-        # failures rather than all of them.
+        # the corpus, and two are the `rustls` confinement's and that of
+        # `hyper` and `hyper-util`, then one row; the dependency-graph scan is
+        # two of the three failures rather than all of them. The `hyper` and
+        # `hyper-util` rows are separate now, and over today's tree each
+        # reports `server/tests.rs` on its own.
         #
         # Two other cases go red on it now, and did not when this was written:
         # `test_a_crate_name_matches_as_a_word_and_not_as_a_substring` and
@@ -1911,10 +1913,10 @@ class Main(unittest.TestCase):
         # second detector for the over-reporting class
         # `test_the_unmodified_tree_reports_nothing` above was written for,
         # and reds on mutations that have nothing to do with `Corpus.naming`'s word boundaries.
-        # Measured on six: `Corpus.naming` reading `sources` for `files` or
+        # Measured on seven: `Corpus.naming` reading `sources` for `files` or
         # losing its word boundaries, the re-export scan's `lib.rs` exemption
-        # disabled, either the `tower` or the `hyper`/`hyper-util` confinement
-        # emptied, and `permitted`'s `server/` branch deleted. Every one reds
+        # disabled, any one of the `tower`, `hyper` and `hyper-util`
+        # confinements emptied, and `permitted`'s `server/` branch deleted. Every one reds
         # this case, the other detector and the intact-tree case together, so
         # a red here can misname its cause -- read the intact-tree case's
         # verdict first. That cost is the one the intact-tree case states and
@@ -1949,9 +1951,24 @@ class Main(unittest.TestCase):
         )
         status, failures = self.report(corpus=corpus)
         self.assertEqual(status, 1)
-        reported = self.naming(failures, "`hyper` and `hyper-util` are named only in")
+        reported = self.naming(failures, "`hyper` is named only in")
         self.assertEqual(len(reported), 1)
         self.assertIn("crates/kynos/src/unchecked.rs", reported[0])
+
+    def test_hyper_util_is_reported_where_only_hyper_is_allowed(self):
+        # `architecture.md`'s graph lets `http/body.rs` name `hyper`, for
+        # `Incoming`, and not `hyper-util`, whose tokio adapters only the
+        # connection driver needs. While both crates shared one row the file
+        # could name either, so the row is two, and this holds them apart.
+        corpus = self.appending(
+            "crates/kynos/src/http/body.rs", "\nuse hyper_util::rt::TokioIo;\n"
+        )
+        status, failures = self.report(corpus=corpus)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "`hyper-util` is named only in")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/http/body.rs", reported[0])
+        self.assertEqual(self.naming(failures, "`hyper` is named only in"), [])
 
     def test_a_crate_confined_to_one_file_is_reported_outside_it(self):
         # Each row of that loop is a separate claim and widening one says
@@ -2080,12 +2097,12 @@ class Main(unittest.TestCase):
         # to one site turns the other, which the tree names, into a stray.
         broken = self.rewriting(
             gate.NFR,
-            "are named only in `server/connection.rs` and `http/body.rs`",
-            "are named only in `server/connection.rs`",
+            "`hyper` is named only in `server/connection.rs` and `http/body.rs`",
+            "`hyper` is named only in `server/connection.rs`",
         )
         status, failures = self.report(nfr=broken)
         self.assertEqual(status, 1)
-        reported = self.naming(failures, "`hyper` and `hyper-util` are named only in")
+        reported = self.naming(failures, "`hyper` is named only in")
         self.assertEqual(len(reported), 1)
         self.assertIn("crates/kynos/src/http/body.rs", reported[0])
 
@@ -2704,10 +2721,10 @@ class Main(unittest.TestCase):
         # second detector for the over-reporting class
         # `test_the_unmodified_tree_reports_nothing` above was written for,
         # and reds on mutations that have nothing to do with the `lib.rs` exemption.
-        # Measured on six: `Corpus.naming` reading `sources` for `files` or
+        # Measured on seven: `Corpus.naming` reading `sources` for `files` or
         # losing its word boundaries, the re-export scan's `lib.rs` exemption
-        # disabled, either the `tower` or the `hyper`/`hyper-util` confinement
-        # emptied, and `permitted`'s `server/` branch deleted. Every one reds
+        # disabled, any one of the `tower`, `hyper` and `hyper-util`
+        # confinements emptied, and `permitted`'s `server/` branch deleted. Every one reds
         # this case, the other detector and the intact-tree case together, so
         # a red here can misname its cause -- read the intact-tree case's
         # verdict first. That cost is the one the intact-tree case states and

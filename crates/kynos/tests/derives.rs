@@ -2627,10 +2627,20 @@ fn an_adjacently_tagged_variant_is_tagged_by_any_of_its_names() {
         })
     );
 
-    for document in [r#"{"t":"Created","c":1}"#, r#"{"t":"made","c":1}"#] {
+    for document in [
+        r#"{"t":"Created","c":1}"#,
+        r#"{"t":"made","c":1}"#,
+        r#"{"t":"Gone"}"#,
+    ] {
         assert!(
             serde_json::from_str::<AliasedEvent>(document).is_ok(),
             "{document}"
+        );
+    }
+    for document in [r#"{"t":"created","c":1}"#, r#"{"t":"made"}"#] {
+        assert!(
+            serde_json::from_str::<AliasedEvent>(document).is_err(),
+            "serde must refuse what the tag's `enum` or the `required` content refuses: {document}"
         );
     }
 }
