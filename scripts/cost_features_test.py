@@ -808,21 +808,33 @@ Ran = namedtuple("Ran", ("code", "said", "report", "sweeps", "tables", "baseline
 def run_main(kind, mode, measured, recorded=None):
     """`main --kind kind` under `KYNOS_COST=mode`, with every sweep stubbed out.
 
-    `recorded` is the rows this kind's committed baseline holds before the run,
-    or `None` for none. Each table and baseline `main` wrote is read back by the
-    real `read_recorded` once `main` is done, keyed by file name, `None` for one
-    it did not write.
+    `measured` is the rows this kind's sweep returns, and `recorded` the rows
+    its committed baseline holds before the run, or `None` for none. Under
+    `--kind all` both are keyed by kind instead, a kind missing from `recorded`
+    having no baseline. Each table and baseline `main` wrote is read back by
+    the real `read_recorded` once `main` is done, keyed by file name, `None`
+    for one it did not write.
     """
-    own = KINDS[kind]
-    swept = (measured, codegen_functions(measured)) if kind == "codegen" else measured
-    # Another kind's sweep returns nothing usable: `main` must not call it.
+    if kind != "all":
+        measured, recorded = {kind: measured}, {kind: recorded}
+    recorded = recorded or {}
+
+    def swept(name):
+        rows = measured[name]
+        return (rows, codegen_functions(rows)) if name == "codegen" else rows
+
+    # An unselected kind's sweep returns nothing usable: `main` must not call it.
     sweeps = {
-        k.sweep: mock.Mock(return_value=swept if k is own else None)
-        for k in KINDS.values()
+        k.sweep: mock.Mock(return_value=swept(name) if name in measured else None)
+        for name, k in KINDS.items()
     }
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
-        was = None if recorded is None else own.record(directory, recorded)
+        was = {
+            KINDS[name].baseline: KINDS[name].record(directory, rows)
+            for name, rows in recorded.items()
+            if rows is not None
+        }
         environ = {"KYNOS_COST": mode} if mode else {}
         argv = ["cost_features.py", "--kind", kind]
         with contextlib.ExitStack() as stack:
@@ -833,7 +845,7 @@ def run_main(kind, mode, measured, recorded=None):
                 ("toolchain", mock.Mock(return_value=LIVE)),
                 ("released", mock.Mock(return_value=(None, {}))),
                 ("read_recorded", mock.Mock(side_effect=lambda path: (
-                    was if path.name == own.baseline else None
+                    was.get(path.name)
                 ))),
                 *sweeps.items(),
             ):
@@ -1070,6 +1082,50 @@ class Main(unittest.TestCase):
 
     def test_overwrite_does_not_ask_for_the_baseline_it_just_recorded(self):
         ran = run_main("codegen", "overwrite", self.MEASURED["codegen"])
+        self.assertNotIn("no baseline recorded", ran.said)
+
+    # `--kind all` is the default, and the run `cost:features`, `cost:record`
+    # and the release gate make: every kind in one `main`.
+
+    def test_all_runs_every_sweep_and_reports_every_kind(self):
+        ran = run_main("all", None, self.MEASURED, self.MEASURED)
+        self.assertEqual(ran.code, 0)
+        self.assertEqual(ran.sweeps, [k.sweep for k in KINDS.values()])
+        for k in KINDS.values():
+            self.assertIn(k.title, ran.report)
+
+    def test_all_writes_every_table_and_records_no_baseline(self):
+        ran = run_main("all", None, self.MEASURED, self.MEASURED)
+        self.assertEqual(
+            ran.tables,
+            {
+                k.table: cost.Recorded(*LIVE, self.MEASURED[name])
+                for name, k in KINDS.items()
+            },
+        )
+        self.assertEqual(set(ran.baselines.values()), {None})
+
+    def test_all_under_overwrite_records_every_baseline(self):
+        ran = run_main("all", "overwrite", self.MEASURED)
+        self.assertEqual(ran.code, 0)
+        self.assertEqual(
+            ran.baselines,
+            {
+                k.baseline: cost.Recorded(*LIVE, self.MEASURED[name])
+                for name, k in KINDS.items()
+            },
+        )
+        for name, k in KINDS.items():
+            with self.subTest(kind=name):
+                self.assertRegex(
+                    ran.said, rf"(?m)^cost: recorded \S+/cost/{k.baseline}$"
+                )
+                self.assertEqual(
+                    cost.unrecorded(
+                        k.baseline, self.MEASURED[name], ran.baselines[k.baseline], LIVE
+                    ),
+                    [],
+                )
         self.assertNotIn("no baseline recorded", ran.said)
 
 
