@@ -62,17 +62,17 @@ async fn json_writes_the_document_and_states_its_type() {
 /// The writer moves a body from the stack to the heap once it outgrows 1 KiB:
 /// a body filling it exactly, one octet past it, and one spilled far enough
 /// that the heap grows again are each written whole and in order.
-#[cfg(feature = "json")]
-#[tokio::test]
-async fn json_writes_a_body_whole_on_either_side_of_the_stack_buffer() {
-    use crate::extract::body::json::Json;
-
+///
+/// Ungated, as the writer is: a problem document is written through it in
+/// every build.
+#[test]
+fn json_writes_a_body_whole_on_either_side_of_the_stack_buffer() {
     for octets in [1024, 1025, 5000] {
         // A string is written as its characters between two quotes.
         let text: String = ('a'..='z').cycle().take(octets - 2).collect();
-        let response = Json(&text).into_response();
+        let written = super::json_bytes(&text).expect("a string serializes");
 
-        assert_eq!(body(response).await, format!("\"{text}\"").as_bytes());
+        assert_eq!(written, format!("\"{text}\"").as_bytes());
     }
 }
 
