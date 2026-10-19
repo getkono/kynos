@@ -3675,10 +3675,12 @@ fn a_shared_ticket_is_the_documented_construction_on_either_provider() {
     );
 
     let hex = |bytes: &[u8]| {
-        bytes
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
+        use std::fmt::Write as _;
+
+        bytes.iter().fold(String::new(), |mut hex, byte| {
+            write!(hex, "{byte:02x}").expect("a String takes any write");
+            hex
+        })
     };
     for provider in [aws_lc_rs::default_provider(), ring::default_provider()] {
         let provider = CryptoProvider {
@@ -5253,14 +5255,14 @@ async fn a_request_head_past_the_http1_buffer_is_answered_431() {
 }
 
 /// What a server announces at the start of an HTTP/2 connection, read off the
-/// frames it sends before it acknowledges the client's SETTINGS.
+/// frames it sends before it answers the client's first PING.
 #[cfg(feature = "http2")]
 #[derive(Debug, PartialEq, Eq)]
 struct Announced {
     /// The server's SETTINGS frame, by identifier (RFC 9113 §6.5.2).
     settings: std::collections::BTreeMap<u16, u32>,
     /// The connection window: RFC 9113 §6.9.2's 65,535 plus every
-    /// WINDOW_UPDATE the server sent on stream 0.
+    /// `WINDOW_UPDATE` the server sent on stream 0.
     connection_window: u32,
 }
 
