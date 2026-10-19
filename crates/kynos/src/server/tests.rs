@@ -3394,37 +3394,12 @@ async fn connect(
     (kind, String::from_utf8_lossy(&body).into_owned())
 }
 
-/// A returning client resumes by default, over either protocol version.
-#[cfg(all(feature = "tls", feature = "http1"))]
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_returning_client_resumes_its_session_by_default() {
-    use tokio_rustls::rustls::{HandshakeKind, version};
-
-    let (address, issued, shutdown_sender, server) = resumption_server(None, false).await;
-
-    for version in [&version::TLS13, &version::TLS12] {
-        let client = resuming_client(&issued, version, false);
-        assert_eq!(
-            connect(&client, address).await.0,
-            HandshakeKind::Full,
-            "{version:?}"
-        );
-        assert_eq!(
-            connect(&client, address).await.0,
-            HandshakeKind::Resumed,
-            "{version:?}"
-        );
-    }
-
-    let _ = shutdown_sender.send(());
-    server
-        .await
-        .expect("server task joins")
-        .expect("server exits cleanly");
-}
-
 /// By default a session is a ticket the client holds, so no number of other
 /// clients evicts it.
+///
+/// It also holds that a returning client resumes by default at all, over
+/// either version: its first connection is a full handshake and its return a
+/// resumed one, which is everything a case asserting only that would.
 ///
 /// This is what separates the default from rustls's own, so it builds its
 /// config without the setter rather than naming a variant: reverting the
