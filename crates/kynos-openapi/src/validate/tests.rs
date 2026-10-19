@@ -2709,7 +2709,9 @@ fn duplicate_tag_names_are_rejected() {
 /// `references/3.2.0.md:2901`: the parent "MUST exist in the API
 /// description, and circular references between parent and child tags MUST
 /// NOT be used". Each case is reported at the tag declaring the parent; a
-/// chain ending at a root is clean however deep it is.
+/// chain ending at a root is clean however deep it is, and a cycle is
+/// reported only at its members, since a tag whose chain merely leads into
+/// one declares no circular reference of its own.
 #[cfg(feature = "openapi32")]
 #[test]
 fn a_tag_parent_must_exist_and_must_not_lead_back_to_the_tag() {
@@ -2762,6 +2764,15 @@ fn a_tag_parent_must_exist_and_must_not_lead_back_to_the_tag() {
         ]),
         [cycle(0, "a"), cycle(1, "b"), cycle(2, "c")],
         "every tag on a cycle"
+    );
+    assert_eq!(
+        reported(vec![
+            Tag::new("a").with_parent("b"),
+            Tag::new("b").with_parent("a"),
+            Tag::new("c").with_parent("a"),
+        ]),
+        [cycle(0, "a"), cycle(1, "b")],
+        "only the tags on a cycle, not one whose chain merely reaches it"
     );
 }
 
