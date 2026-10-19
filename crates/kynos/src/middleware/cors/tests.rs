@@ -35,7 +35,10 @@ fn permitting_any_origin_alongside_credentials_is_a_conflict() {
         ..CorsConfig::default()
     };
 
-    assert!(config.conflict().is_some());
+    assert!(matches!(
+        config.conflict(),
+        Some(crate::middleware::MiddlewareError::CredentialedWildcardOrigin)
+    ));
 }
 
 /// Each half alone is an ordinary deployment: a public API allows any

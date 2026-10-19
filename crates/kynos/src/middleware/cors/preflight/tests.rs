@@ -309,21 +309,85 @@ fn a_preflight_varies_on_the_three_fields_it_read() {
     let response =
         preflight(named()).answer(&asking(Some("https://app.example.com"), Some("GET"), None));
 
-    let vary = field(&response, header::VARY).expect("a Vary");
-    let names: Vec<_> = vary.split(',').map(str::trim).collect();
-
-    assert!(names.contains(&"origin"), "{vary}");
-    assert!(names.contains(&"access-control-request-method"), "{vary}");
-    assert!(names.contains(&"access-control-request-headers"), "{vary}");
+    assert_eq!(
+        field(&response, header::VARY).as_deref(),
+        Some("origin, access-control-request-method, access-control-request-headers")
+    );
 }
 
 /// A refusal is cached too, so it varies on the same fields a permission does.
 #[test]
 fn a_refused_preflight_varies_the_same_way_a_permitted_one_does() {
-    let response =
+    let permitted =
+        preflight(named()).answer(&asking(Some("https://app.example.com"), Some("GET"), None));
+    let refused =
         preflight(named()).answer(&asking(Some("https://evil.example.com"), Some("GET"), None));
 
-    assert!(field(&response, header::VARY).is_some());
+    assert_eq!(
+        refused
+            .headers()
+            .get_all(header::VARY)
+            .iter()
+            .collect::<Vec<_>>(),
+        permitted
+            .headers()
+            .get_all(header::VARY)
+            .iter()
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Any origin, uncredentialed, is answered `*` rather than an echo: the
+/// answer is the same for every origin, so nothing about it is per-origin.
+#[test]
+fn a_preflight_permitting_any_origin_answers_a_wildcard() {
+    let config = CorsConfig {
+        any: Wildcards {
+            origin: true,
+            ..Wildcards::default()
+        },
+        ..CorsConfig::default()
+    };
+
+    let response =
+        preflight(config).answer(&asking(Some("https://anyone.example"), Some("GET"), None));
+
+    assert_eq!(
+        field(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN).as_deref(),
+        Some("*")
+    );
+    assert_eq!(
+        field(&response, header::ACCESS_CONTROL_ALLOW_CREDENTIALS),
+        None
+    );
+}
+
+/// Named request headers are advertised as the one list they were permitted
+/// in, in order, whatever the preflight asked for; none named, none
+/// advertised.
+#[test]
+fn named_request_headers_are_advertised_as_permitted() {
+    let config = CorsConfig {
+        headers: vec!["x-trace-id".into(), "content-type".into()],
+        ..named()
+    };
+
+    let response = preflight(config).answer(&asking(
+        Some("https://app.example.com"),
+        Some("GET"),
+        Some("authorization"),
+    ));
+    let unnamed = preflight(named()).answer(&asking(
+        Some("https://app.example.com"),
+        Some("GET"),
+        Some("x-trace-id"),
+    ));
+
+    assert_eq!(
+        field(&response, header::ACCESS_CONTROL_ALLOW_HEADERS).as_deref(),
+        Some("x-trace-id, content-type")
+    );
+    assert_eq!(field(&unnamed, header::ACCESS_CONTROL_ALLOW_HEADERS), None);
 }
 
 #[test]
