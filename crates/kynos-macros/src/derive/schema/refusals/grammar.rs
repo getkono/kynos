@@ -186,13 +186,41 @@ fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
     }
 
     if NUMERIC.contains(&name.as_str()) {
-        return match meta.value()?.parse()? {
-            Lit::Int(_) | Lit::Float(_) => Ok(()),
-            other => Err(syn::Error::new(
-                other.span(),
-                format!("`{name}` takes a number"),
-            )),
+        let (token, suffix, digits, span) = match meta.value()?.parse()? {
+            Lit::Int(value) => (
+                value.token().to_string(),
+                value.suffix().to_owned(),
+                value.base10_digits().to_owned(),
+                value.span(),
+            ),
+            Lit::Float(value) => (
+                value.token().to_string(),
+                value.suffix().to_owned(),
+                value.base10_digits().to_owned(),
+                value.span(),
+            ),
+            other => {
+                return Err(syn::Error::new(
+                    other.span(),
+                    format!("`{name}` takes a number"),
+                ));
+            }
         };
+        // The bound is emitted as these digits with `f64` appended.
+        let based = ["0x", "0o", "0b"]
+            .iter()
+            .any(|base| token.starts_with(base));
+        if suffix.is_empty() && !based {
+            return Ok(());
+        }
+        return Err(syn::Error::new(
+            span,
+            format!(
+                "`{name}` takes a plain decimal number, as a JSON Schema bound is written: a \
+                 type suffix or a `0x`, `0o` or `0b` base says nothing the bound can carry. \
+                 Write it as `{digits}`"
+            ),
+        ));
     }
 
     if COUNTS.contains(&name.as_str()) {
