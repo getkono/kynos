@@ -538,3 +538,6 @@ pub trait Observer<C>: Send + Sync + 'static {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) mod testing;

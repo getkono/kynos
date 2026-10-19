@@ -280,58 +280,21 @@ mod zstd_window {
 /// `Body::from_body` is `pub(crate)`. Nor does one reach this path through
 /// `Served`, whose `Accept-Ranges` makes `Compression` leave it alone.
 mod failing {
-    use std::{
-        convert::Infallible,
-        io,
-        pin::Pin,
-        task::{Context, Poll},
-    };
+    use std::convert::Infallible;
 
-    use bytes::Bytes;
-    use http_body::{Frame, SizeHint};
     use http_body_util::BodyExt;
 
     use crate::{
         Router,
         extract::body::text::Text,
-        http::{
-            Request,
-            body::{Body, BoxError},
-            header,
-        },
-        middleware::{Continued, Interceptor, Next, compression::Compression},
+        http::{Request, body::Body, header},
+        middleware::{Continued, Interceptor, Next, compression::Compression, testing::Failing},
         openapi::{Method, PathTemplate},
         router::{endpoint::builder::EndpointBuilder, service::Service},
     };
 
-    /// States 4096 octets, yields 1024 of them, then the connection fails.
-    struct Failing(u8);
-
-    impl http_body::Body for Failing {
-        type Data = Bytes;
-        type Error = BoxError;
-
-        fn poll_frame(
-            mut self: Pin<&mut Self>,
-            _: &mut Context<'_>,
-        ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
-            self.0 += 1;
-            Poll::Ready(match self.0 {
-                1 => Some(Ok(Frame::data(Bytes::from(vec![b'a'; 1024])))),
-                2 => Some(Err(Box::new(io::Error::new(
-                    io::ErrorKind::ConnectionReset,
-                    "upstream went away",
-                )))),
-                _ => None,
-            })
-        }
-
-        fn size_hint(&self) -> SizeHint {
-            SizeHint::with_exact(4096)
-        }
-    }
-
-    /// Replaces whatever the handler produced with a [`Failing`] body.
+    /// Replaces whatever the handler produced with a body stating 4096
+    /// octets, yielding 1024 of them, and then failing.
     struct FailPartWay;
 
     impl Interceptor<()> for FailPartWay {
@@ -348,7 +311,9 @@ mod failing {
         ) -> Result<Continued, Infallible> {
             let mut continued = next.run(request).await;
             drop(continued.take_body());
-            continued.set_body(Body::from_body(Failing(0)));
+            continued.set_body(Body::from_body(
+                Failing::after(vec![b'a'; 1024]).stating(4096),
+            ));
             Ok(continued)
         }
     }

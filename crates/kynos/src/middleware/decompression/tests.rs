@@ -1,26 +1,16 @@
 //! The parts of decompression that decide before anything is read, and what it
 //! hands on when the read fails.
 
-use std::{
-    io,
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::io;
 
 use async_compression::tokio::bufread::{BrotliEncoder, GzipEncoder, ZstdEncoder};
 use bytes::Bytes;
-use http_body::Frame;
-use http_body_util::BodyExt;
 
 use super::{Coding, Decompression, MAX_CODINGS, Reason, declared, decode, drain_capped};
 use crate::{
     Router,
-    extract::body::{binary::Binary, text::Text},
-    http::{
-        self, Request, Response, StatusCode,
-        body::{Body, BoxError},
-        media::OctetStream,
-    },
+    http::{self, StatusCode, body::Body},
+    middleware::testing::{interrupted, read, upload},
     openapi::{Method, PathTemplate},
     router::{endpoint::builder::EndpointBuilder, service::Service},
 };
@@ -250,44 +240,6 @@ async fn input_after_the_coded_stream_is_malformed() {
     );
 }
 
-/// One data frame, then the connection fails.
-///
-/// Hand-written through the `pub(crate)` `Body::from_body` for the reason
-/// `limits/tests.rs` writes its own: no public surface builds a body that
-/// fails.
-struct Failing {
-    /// The octets that arrive before the failure.
-    arrived: &'static [u8],
-    /// How many times the body has been polled.
-    polls: u8,
-}
-
-impl http_body::Body for Failing {
-    type Data = Bytes;
-    type Error = BoxError;
-
-    fn poll_frame(
-        mut self: Pin<&mut Self>,
-        _: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
-        self.polls += 1;
-        Poll::Ready(match self.polls {
-            1 => Some(Ok(Frame::data(Bytes::from_static(self.arrived)))),
-            2 => Some(Err(Box::new(io::Error::new(
-                io::ErrorKind::ConnectionReset,
-                "peer went away",
-            )))),
-            _ => None,
-        })
-    }
-}
-
-/// Accepts whatever octets arrive, which is what makes a truncation visible:
-/// nothing here parses, so nothing here would notice one.
-async fn upload(body: Binary<OctetStream>) -> Text {
-    Text(format!("stored {} octets", body.into_inner().len()))
-}
-
 /// The upload operation, under `Decompression` when `limit` names one.
 fn service(limit: Option<u64>) -> Service<()> {
     let endpoint = EndpointBuilder::new(
@@ -305,39 +257,6 @@ fn decompressed(router: Router<()>, limit: Option<u64>) -> Service<()> {
         None => router.build(()),
     }
     .expect("a describable router")
-}
-
-/// A `content_type` upload of `arrived` that then fails, under `coding` when
-/// it names one.
-fn interrupted_as(content_type: &str, coding: Option<&str>, arrived: &'static [u8]) -> Request {
-    let mut builder = ::http::Request::builder()
-        .method("POST")
-        .uri("/upload")
-        .header(http::header::CONTENT_TYPE, content_type);
-    if let Some(coding) = coding {
-        builder = builder.header(http::header::CONTENT_ENCODING, coding);
-    }
-    builder
-        .body(Body::from_body(Failing { arrived, polls: 0 }))
-        .expect("a well-formed request")
-}
-
-/// An octet-stream upload that fails part-way, under `coding` when it names
-/// one.
-fn interrupted(coding: Option<&str>) -> Request {
-    interrupted_as("application/octet-stream", coding, b"the first half of")
-}
-
-/// A response's status and body bytes.
-async fn read(response: Response) -> (StatusCode, Bytes) {
-    let status = response.status();
-    let body = response
-        .into_body()
-        .collect()
-        .await
-        .expect("a response body that completes")
-        .to_bytes();
-    (status, body)
 }
 
 /// The ratio is measured against what arrived, so stacking codings must not
@@ -420,30 +339,14 @@ async fn a_body_that_fails_part_way_is_refused_as_it_is_without_decompression() 
 /// it.
 #[cfg(all(feature = "json", feature = "openapi32"))]
 mod streamed {
-    use super::{decompressed, interrupted_as, read};
+    use super::decompressed;
     use crate::{
         Router,
-        extract::body::{
-            json_lines::{JsonLines, records::Records},
-            text::Text,
-        },
         http::StatusCode,
+        middleware::testing::{interrupted_as, read, tally},
         openapi::{Method, PathTemplate},
         router::{endpoint::builder::EndpointBuilder, service::Service},
     };
-
-    /// Reads records until the body ends or fails, and says which it did.
-    async fn tally(JsonLines { mut items }: JsonLines<Records<u32>>) -> Text {
-        let mut read = Vec::new();
-        let ending = loop {
-            match items.next().await {
-                Some(Ok(record)) => read.push(record),
-                Some(Err(_)) => break "a rejection",
-                None => break "the end of the body",
-            }
-        };
-        Text(format!("read {read:?}, then {ending}"))
-    }
 
     /// The tally operation, under `Decompression` when `limit` names one.
     fn service(limit: Option<u64>) -> Service<()> {
