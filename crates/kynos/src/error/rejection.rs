@@ -80,6 +80,8 @@ fn pointer_errors(failures: BTreeMap<String, String>) -> Vec<serde_json::Value> 
 /// 400, over the `subject` ("parameter", "header", ...) its field docs name.
 ///
 /// A leading `#[cfg(...)]` gates the type and every implementation with it.
+/// Each invocation spells its own derive, so a sweep reading declarations from
+/// source finds every rejection by name.
 macro_rules! parameter_rejection {
     (#[cfg($cfg:meta)] $($rest:tt)*) => {
         parameter_rejection!(@[$cfg] $($rest)*);
@@ -97,8 +99,6 @@ macro_rules! parameter_rejection {
     ) => {
         $(#[cfg($cfg)])?
         $(#[$meta])*
-        #[derive(Debug, thiserror::Error)]
-        #[non_exhaustive]
         pub enum $name {
             $(#[$invalid])*
             Invalid {
@@ -165,6 +165,8 @@ macro_rules! parameter_rejection {
 parameter_rejection! {
     subject: "parameter",
     /// A path parameter did not match its declared schema.
+    #[derive(Debug, thiserror::Error)]
+    #[non_exhaustive]
     pub enum PathRejection {
         /// The parameter could not be decoded. Produces 400.
         #[error("path parameter `{name}` is not valid")]
@@ -184,6 +186,8 @@ parameter_rejection! {
 parameter_rejection! {
     subject: "parameter",
     /// A query parameter was missing or malformed.
+    #[derive(Debug, thiserror::Error)]
+    #[non_exhaustive]
     pub enum QueryRejection {
         /// The parameter was absent or could not be decoded. Produces 400.
         #[error("query parameter `{name}` is not valid")]
@@ -206,6 +210,8 @@ parameter_rejection! {
 parameter_rejection! {
     subject: "header",
     /// A header was missing or malformed.
+    #[derive(Debug, thiserror::Error)]
+    #[non_exhaustive]
     pub enum HeaderRejection {
         /// The header was absent or could not be decoded. Produces 400.
         #[error("header `{name}` is not valid")]
@@ -226,6 +232,8 @@ parameter_rejection! {
     #[cfg(feature = "cookie")]
     subject: "cookie",
     /// A cookie was missing or malformed.
+    #[derive(Debug, thiserror::Error)]
+    #[non_exhaustive]
     pub enum CookieRejection {
         /// The cookie was absent or could not be decoded. Produces 400.
         #[error("cookie `{name}` is not valid")]
