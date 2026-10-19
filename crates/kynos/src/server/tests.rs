@@ -2834,6 +2834,203 @@ async fn a_client_contradicting_its_negotiated_protocol_is_refused() {
         .expect("server exits cleanly");
 }
 
+/// One request over an established `stream`, as HTTP/2 when `http2` and as
+/// HTTP/1.1 otherwise, and the body the server answered with.
+#[cfg(all(feature = "tls", any(feature = "http1", feature = "http2")))]
+async fn served_over<S>(stream: S, http2: bool) -> bytes::Bytes
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    use http_body_util::{BodyExt as _, Empty};
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+
+    let request = hyper::Request::builder()
+        .uri("https://localhost/")
+        .header(hyper::header::HOST, "localhost")
+        .body(Empty::<bytes::Bytes>::new())
+        .expect("request builds");
+    let response = if http2 {
+        let (mut sender, connection) =
+            hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+                .await
+                .expect("HTTP/2 handshake completes");
+        tokio::spawn(connection);
+        sender.send_request(request).await
+    } else {
+        let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+            .await
+            .expect("HTTP/1 handshake completes");
+        tokio::spawn(connection);
+        sender.send_request(request).await
+    };
+    response
+        .expect("the request succeeds")
+        .into_body()
+        .collect()
+        .await
+        .expect("response body reads")
+        .to_bytes()
+}
+
+/// Offered both identifiers, in the order that puts HTTP/1.1 first, the
+/// server settles on `h2`: its own preference decides, and the connection is
+/// then served as HTTP/2.
+#[cfg(all(feature = "tls", feature = "http1", feature = "http2"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_client_offering_both_protocols_is_served_h2() {
+    use tokio_rustls::rustls::pki_types::ServerName;
+
+    let (address, authority, shutdown_sender, server) =
+        tls_server(negotiated_protocol_service()).await;
+
+    let stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    let stream = alpn_connector(authority.as_bytes(), &[b"http/1.1", b"h2"])
+        .connect(
+            ServerName::try_from("localhost").expect("valid DNS name"),
+            stream,
+        )
+        .await
+        .expect("the handshake succeeds");
+    assert_eq!(stream.get_ref().1.alpn_protocol(), Some(&b"h2"[..]));
+    assert_eq!(
+        served_over(stream, true).await,
+        bytes::Bytes::from_static(b"h2 HTTP/2.0")
+    );
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// A client offering no ALPN identifier settles nothing, so the server reads
+/// the protocol off the first bytes, as on a plaintext listener: an HTTP/1.1
+/// request is served as one, and so is an HTTP/2 preface sent with no
+/// negotiation at all.
+#[cfg(all(feature = "tls", any(feature = "http1", feature = "http2")))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_client_offering_no_protocol_is_served_what_it_speaks() {
+    use tokio_rustls::rustls::pki_types::ServerName;
+
+    let (address, authority, shutdown_sender, server) =
+        tls_server(negotiated_protocol_service()).await;
+
+    for (http2, expected) in [
+        #[cfg(feature = "http1")]
+        (false, "none HTTP/1.1"),
+        #[cfg(feature = "http2")]
+        (true, "none HTTP/2.0"),
+    ] {
+        let stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("server accepts");
+        let stream = alpn_connector(authority.as_bytes(), &[])
+            .connect(
+                ServerName::try_from("localhost").expect("valid DNS name"),
+                stream,
+            )
+            .await
+            .expect("the handshake succeeds");
+        assert_eq!(stream.get_ref().1.alpn_protocol(), None);
+        assert_eq!(
+            served_over(stream, http2).await,
+            bytes::Bytes::from(expected),
+            "HTTP/2: {http2}"
+        );
+    }
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// The certificate a handshake presents is the one registered for the name
+/// the client sent: each name its own leaf, a certificate registered under
+/// two names presented for either, a name compared without regard to case,
+/// and the default for a name nothing registered.
+#[cfg(feature = "tls")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_handshake_presents_the_certificate_registered_for_its_server_name() {
+    use tokio_rustls::rustls::pki_types::{CertificateDer, ServerName, pem::PemObject as _};
+
+    let (issued, servers) =
+        authority_issuing(&[&["a.example.test"], &["b.example.test", "c.example.test"]]);
+    let tls = crate::server::tls::TlsConfig::from_pem(
+        issued.server.certificate.as_bytes(),
+        issued.server.key.as_bytes(),
+    )
+    .expect("server identity parses")
+    .with_server_certificate(
+        ["a.example.test"],
+        servers[0].certificate.as_bytes(),
+        servers[0].key.as_bytes(),
+    )
+    .expect("the first SNI identity registers")
+    .with_server_certificate(
+        ["B.Example.Test", "c.example.test"],
+        servers[1].certificate.as_bytes(),
+        servers[1].key.as_bytes(),
+    )
+    .expect("the second SNI identity registers");
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let bound = crate::server::Server::new(test_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .tls(tls)
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+            let _ = shutdown_receiver.await;
+        }))
+        .prepare()
+        .await
+        .expect("TLS listener prepares");
+    let address = bound.local_addrs()[0];
+    let server = tokio::spawn(bound.serve());
+
+    let connector = alpn_connector(issued.certificate.as_bytes(), &[]);
+    for (name, expected) in [
+        ("a.example.test", &servers[0]),
+        ("b.example.test", &servers[1]),
+        ("C.EXAMPLE.TEST", &servers[1]),
+        ("localhost", &issued.server),
+    ] {
+        let stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("server accepts");
+        let stream = connector
+            .connect(
+                ServerName::try_from(name)
+                    .expect("valid DNS name")
+                    .to_owned(),
+                stream,
+            )
+            .await
+            .unwrap_or_else(|error| panic!("{name}: the handshake succeeds: {error}"));
+        let presented = stream
+            .get_ref()
+            .1
+            .peer_certificates()
+            .and_then(<[CertificateDer<'_>]>::first)
+            .expect("the server presents a certificate")
+            .clone();
+        assert_eq!(
+            presented,
+            CertificateDer::from_pem_slice(expected.certificate.as_bytes())
+                .expect("the expected leaf parses"),
+            "{name}"
+        );
+    }
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
 /// A TLS connection that negotiated `protocol` and then says nothing is closed
 /// at the header-read timeout, counted from accept.
 ///
@@ -3460,6 +3657,76 @@ fn shared_ticketer(
     .expect("an hour is a valid ticket lifetime")
 }
 
+/// The ticket construction `ticket.rs` documents, byte for byte, on both
+/// providers: what lets replicas on different providers resume one another's
+/// sessions is that the construction is fixed, so it is pinned rather than
+/// round-tripped, which a construction that changed would also pass.
+///
+/// The expected ticket was computed outside Rust, from RFC 5869's HKDF over
+/// SHA-384 and AES-256-GCM, for the secret `[7; 32]`, a salt of thirty-two
+/// `0x5a` bytes standing in for the random one, the second 1,700,000,000 and
+/// the session `kynos session`: the name expanded under the name label, then
+/// the key and the IV expanded under the key label, the salt and `key` or
+/// `iv`, sealing the session under the name, salt and second as associated
+/// data.
+#[cfg(feature = "tls")]
+#[test]
+fn a_shared_ticket_is_the_documented_construction_on_either_provider() {
+    use tokio_rustls::rustls::crypto::{
+        CryptoProvider, GetRandomFailed, SecureRandom, aws_lc_rs, ring,
+    };
+
+    use crate::server::tls::ticket::{SharedTicketer, TicketKey, TicketKeys};
+
+    #[derive(Debug)]
+    struct FixedSalt;
+
+    impl SecureRandom for FixedSalt {
+        fn fill(&self, buffer: &mut [u8]) -> Result<(), GetRandomFailed> {
+            buffer.fill(0x5a);
+            Ok(())
+        }
+    }
+
+    const ISSUED: u64 = 1_700_000_000;
+    const SESSION: &[u8] = b"kynos session";
+    const NAME: &str = "c531bf1f7144eb2212f6a827bc52aafe";
+    const TICKET: &str = concat!(
+        "c531bf1f7144eb2212f6a827bc52aafe",
+        "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "000000006553f100",
+        "ff07768047b4e0ab04f64f9167",
+        "b58e64c4396dca0e61260881fd44f4e3",
+    );
+
+    let hex = |bytes: &[u8]| {
+        bytes
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    };
+    for provider in [aws_lc_rs::default_provider(), ring::default_provider()] {
+        let provider = CryptoProvider {
+            secure_random: &FixedSalt,
+            ..provider
+        };
+        let key = TicketKey::derive(&provider, &[7; 32]).expect("the provider seals tickets");
+        assert_eq!(format!("{key:?}"), format!("TicketKey({NAME})"));
+
+        let ticketer = SharedTicketer::new(
+            TicketKeys::new(key, []),
+            std::time::Duration::from_secs(3600),
+            &provider,
+        )
+        .expect("an hour is a valid ticket lifetime");
+        let ticket = ticketer
+            .seal_at(ISSUED, SESSION)
+            .expect("the session seals");
+        assert_eq!(hex(&ticket), TICKET);
+        assert_eq!(ticketer.open_at(ISSUED, &ticket).as_deref(), Some(SESSION));
+    }
+}
+
 /// A ticket opens under its issuing key and under a key that is merely
 /// accepted, from the same secret wherever it was derived, and under no other.
 #[cfg(feature = "tls")]
@@ -3744,6 +4011,105 @@ fn a_malformed_pem_keeps_its_parser_failure_as_a_cause() {
         std::error::Error::source(&error).is_some(),
         "the parser failure must survive as a cause, not as a formatted string"
     );
+}
+
+/// Each malformed PEM names the material it was read for: the private key
+/// beside a certificate, and a revocation list beside client roots.
+#[cfg(feature = "tls")]
+#[test]
+fn a_malformed_pem_names_the_material_it_was_read_for() {
+    use crate::server::tls::error::TlsError;
+
+    let identity = server_identity();
+
+    assert!(matches!(
+        crate::server::tls::TlsConfig::from_pem(
+            identity.certificate.as_bytes(),
+            b"-----BEGIN PRIVATE KEY-----\nnot base64",
+        ),
+        Err(TlsError::Pem {
+            kind: "private key",
+            ..
+        })
+    ));
+
+    let client = crate::server::tls::ClientCertificateConfig::from_pem_roots(
+        identity.certificate.as_bytes(),
+    )
+    .expect("certificate parses as a trust anchor");
+    assert!(matches!(
+        client.with_pem_crls(b"-----BEGIN X509 CRL-----\nnot base64"),
+        Err(TlsError::Pem {
+            kind: "certificate revocation list",
+            ..
+        })
+    ));
+}
+
+/// A private key that is not the certificate's own is refused when the
+/// runtime is built, for the default certificate and for one selected by SNI.
+#[cfg(feature = "tls")]
+#[test]
+fn a_private_key_that_does_not_match_its_certificate_is_refused() {
+    use crate::server::tls::{TlsConfig, error::TlsError};
+
+    let (certified, other) = (server_identity(), server_identity());
+
+    let error = TlsConfig::from_pem(certified.certificate.as_bytes(), other.key.as_bytes())
+        .expect("both halves parse")
+        .build()
+        .expect_err("a mismatched default key is refused");
+    assert!(matches!(error, TlsError::PrivateKey(_)), "{error:?}");
+
+    let error = TlsConfig::from_pem(certified.certificate.as_bytes(), certified.key.as_bytes())
+        .expect("server identity parses")
+        .with_server_certificate(
+            ["example.com"],
+            certified.certificate.as_bytes(),
+            other.key.as_bytes(),
+        )
+        .expect("both halves parse")
+        .build()
+        .expect_err("a mismatched SNI key is refused");
+    assert!(matches!(error, TlsError::PrivateKey(_)), "{error:?}");
+}
+
+/// Client-certificate material that parses as PEM but cannot verify anyone
+/// is refused when the runtime is built: a root whose DER is not a
+/// certificate, and a revocation list whose DER is not one either. Both keep
+/// rustls's account as their cause.
+#[cfg(feature = "tls")]
+#[test]
+fn client_verification_material_that_cannot_verify_is_refused() {
+    use crate::server::tls::{ClientCertificateConfig, TlsConfig, error::TlsError};
+
+    let identity = server_identity();
+    let build = |client: ClientCertificateConfig| {
+        TlsConfig::from_pem(identity.certificate.as_bytes(), identity.key.as_bytes())
+            .expect("server identity parses")
+            .require_client_certificate(client)
+            .build()
+    };
+
+    let root = ClientCertificateConfig::from_pem_roots(
+        b"-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n",
+    )
+    .expect("well-formed PEM parses");
+    let crl = ClientCertificateConfig::from_pem_roots(identity.certificate.as_bytes())
+        .expect("certificate parses as a trust anchor")
+        .with_pem_crls(b"-----BEGIN X509 CRL-----\nAAAA\n-----END X509 CRL-----\n")
+        .expect("well-formed PEM parses");
+    for (case, client) in [("root", root), ("revocation list", crl)] {
+        let error = build(client).expect_err("unusable material is refused");
+        assert!(
+            matches!(error, TlsError::ClientVerifier(_)),
+            "{case}: {error:?}"
+        );
+        assert!(
+            std::error::Error::source(&error).is_some(),
+            "{case}: rustls's account survives as a cause"
+        );
+    }
 }
 
 #[cfg(feature = "tls")]
@@ -4033,17 +4399,9 @@ fn a_caller_installed_crypto_provider_is_the_one_build_runs_on() {
     .expect_err("a provider that serves nothing cannot build a TLS runtime");
 
     assert!(
-        !matches!(
+        matches!(
             error,
-            crate::server::tls::error::TlsError::Pem { .. }
-                | crate::server::tls::error::TlsError::EmptyPem { .. }
-                | crate::server::tls::error::TlsError::PrivateKey(_)
-                | crate::server::tls::error::TlsError::ServerName(_)
-                | crate::server::tls::error::TlsError::ClientVerifier(_)
-                | crate::server::tls::error::TlsError::Ticketer(_)
-                | crate::server::tls::error::TlsError::TicketCipher
-                | crate::server::tls::error::TlsError::TicketLifetime(_)
-                | crate::server::tls::error::TlsError::ZeroHandshakeTimeout
+            crate::server::tls::error::TlsError::CryptoProvider(_)
         ),
         "an unusable provider is its own failure, not a certificate one: {error}"
     );
@@ -4095,6 +4453,13 @@ struct Authority {
 
 #[cfg(feature = "tls")]
 fn authority() -> Authority {
+    authority_issuing(&[]).0
+}
+
+/// [`authority`], also issuing one server identity per entry of `servers`,
+/// each for the names that entry lists.
+#[cfg(feature = "tls")]
+fn authority_issuing(servers: &[&[&str]]) -> (Authority, Vec<Identity>) {
     use rcgen::{
         BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose,
         IsCa, KeyPair, KeyUsagePurpose,
@@ -4129,7 +4494,7 @@ fn authority() -> Authority {
         }
     };
 
-    Authority {
+    let authority = Authority {
         certificate: issuer.pem(),
         server: leaf(
             vec!["localhost".to_owned()],
@@ -4141,7 +4506,19 @@ fn authority() -> Authority {
             "Kynos test client",
             ExtendedKeyUsagePurpose::ClientAuth,
         ),
-    }
+    };
+    let servers = servers
+        .iter()
+        .enumerate()
+        .map(|(index, names)| {
+            leaf(
+                names.iter().map(|name| (*name).to_owned()).collect(),
+                &format!("Kynos test server {index}"),
+                ExtendedKeyUsagePurpose::ServerAuth,
+            )
+        })
+        .collect();
+    (authority, servers)
 }
 
 fn test_service() -> crate::router::service::Service<()> {
