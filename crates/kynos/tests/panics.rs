@@ -17,7 +17,6 @@
 use std::{
     any::Any,
     convert::Infallible,
-    panic::AssertUnwindSafe,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -28,15 +27,13 @@ use kynos::{
     middleware::{Continued, Interceptor, Next, Observer},
     openapi::{Method as OpenApiMethod, PathTemplate},
     response::status::NoContent,
-    router::{
-        endpoint::builder::EndpointBuilder, group::Group, operation::Route, service::Service,
-    },
+    router::{endpoint::builder::EndpointBuilder, group::Group, operation::Route},
 };
 
 #[path = "support/mod.rs"]
 mod support;
 
-use support::{Reply, get};
+use support::{caught, outcome};
 
 /// The operation under test. Nothing else in the fixture panics, so a 500 here
 /// can only have come from this.
@@ -60,32 +57,6 @@ async fn also_boom() -> NoContent {
 #[kynos::get("/fine")]
 async fn fine() -> NoContent {
     NoContent
-}
-
-/// Runs one request and says whether it came back or unwound.
-///
-/// The panic hook is silenced for the duration: a recovered panic still prints
-/// its message, and a suite that prints a backtrace on a passing test teaches a
-/// reader to ignore backtraces.
-fn outcome(service: &Service<()>, path: &'static str) -> Result<StatusCode, ()> {
-    reply(service, path).map(|reply| reply.status)
-}
-
-/// [`outcome`], keeping the whole response rather than its status.
-fn reply(service: &Service<()>, path: &'static str) -> Result<Reply, ()> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("a runtime");
-
-    let hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
-    let caught = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        runtime.block_on(async { get(service, path).call().await })
-    }));
-    std::panic::set_hook(hook);
-
-    caught.map_err(|_| ())
 }
 
 /// Router scope: every operation under it recovers.
@@ -313,7 +284,7 @@ fn a_recovered_panic_answers_a_bare_problem_that_exposes_no_payload() {
         .build(())
         .expect("a describable router");
 
-    let reply = reply(&service, "/boom").expect("a recovered panic");
+    let reply = caught(&service, "/boom").expect("a recovered panic");
 
     assert_eq!(reply.status, StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(

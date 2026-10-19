@@ -278,6 +278,33 @@ pub(crate) fn get<'a, C>(service: &'a Service<C>, target: &str) -> Pending<'a, C
     send(service, Method::GET, target)
 }
 
+/// `GET target` on a runtime of its own, reporting whether it came back or
+/// unwound.
+///
+/// The panic hook is silenced for the duration: a recovered panic still prints
+/// its message, and a suite that prints a backtrace on a passing test teaches a
+/// reader to ignore backtraces.
+pub(crate) fn caught<C: 'static>(service: &Service<C>, target: &str) -> Result<Reply, ()> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime");
+
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runtime.block_on(async { get(service, target).call().await })
+    }));
+    std::panic::set_hook(hook);
+
+    caught.map_err(|_| ())
+}
+
+/// [`caught`]'s status, or `Err(())` when serving `target` unwound.
+pub(crate) fn outcome<C: 'static>(service: &Service<C>, target: &str) -> Result<StatusCode, ()> {
+    caught(service, target).map(|reply| reply.status)
+}
+
 /// `POST target`.
 pub(crate) fn post<'a, C>(service: &'a Service<C>, target: &str) -> Pending<'a, C> {
     send(service, Method::POST, target)

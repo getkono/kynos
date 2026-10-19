@@ -21,7 +21,7 @@ use kynos::{
 #[path = "support/mod.rs"]
 mod support;
 
-use support::get;
+use support::{get, outcome};
 
 /// Serves the path it was reached by, so a test can see what the router
 /// captured.
@@ -220,27 +220,6 @@ async fn a_nested_routers_interceptor_covers_its_unchecked_route() {
     );
 }
 
-/// The status a request to `path` is answered with, or `None` when serving it
-/// unwound.
-fn outcome(
-    service: &kynos::router::service::Service<()>,
-    path: &'static str,
-) -> Option<StatusCode> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("a runtime");
-
-    let hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
-    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        runtime.block_on(async { get(service, path).call().await.status })
-    }));
-    std::panic::set_hook(hook);
-
-    caught.ok()
-}
-
 /// A nested router's panic recovery covers that router's unchecked routes.
 #[test]
 fn a_nested_routers_panic_recovery_covers_its_unchecked_route() {
@@ -262,7 +241,7 @@ fn a_nested_routers_panic_recovery_covers_its_unchecked_route() {
 
     assert_eq!(
         outcome(&service, "/admin/files/x"),
-        Some(StatusCode::INTERNAL_SERVER_ERROR),
+        Ok(StatusCode::INTERNAL_SERVER_ERROR),
         "a panic in the nested router's unchecked route unwound"
     );
 }
