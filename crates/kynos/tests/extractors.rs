@@ -698,8 +698,8 @@ mod multipart {
 
 mod optional {
     use super::{
-        BodyRejection, Json, NoContent, Payload, Router, StatusCode, Text, assert_unsupported,
-        json, operation, read, request_body,
+        BodyRejection, FromRequest, HeaderValue, Json, NoContent, Payload, Router, StatusCode,
+        Text, assert_unsupported, header, json, operation, read, request, request_body,
     };
 
     #[kynos::post("/maybe")]
@@ -712,18 +712,26 @@ mod optional {
         NoContent
     }
 
-    /// Absence is read from the head alone: no `Content-Type` is no body
-    /// whatever bytes follow, and a `Content-Type` is a body `T` must read.
+    /// A request with neither a `Content-Type` nor an octet of content has no
+    /// body, and a `Content-Type` is a body `T` must read.
     #[tokio::test]
-    async fn an_optional_body_is_absent_only_without_a_content_type() {
+    async fn an_optional_body_is_absent_only_without_content_or_a_content_type() {
         assert_eq!(read::<Option<Text>>(None, b"").await.expect("absent"), None);
+
+        // A zero length declares empty content (RFC 9110 section 8.6), which
+        // carries nothing a 415 would refuse.
+        let mut empty = request(None, b"");
+        empty
+            .headers_mut()
+            .insert(header::CONTENT_LENGTH, HeaderValue::from_static("0"));
         assert_eq!(
-            read::<Option<Text>>(None, b"ignored")
+            Option::<Text>::from_request(empty, &())
                 .await
                 .expect("absent"),
             None,
-            "bytes without a declared media type are not a representation"
+            "a zero `Content-Length`"
         );
+
         assert_eq!(
             read::<Option<Text>>(Some("text/plain"), b"present")
                 .await
@@ -741,6 +749,32 @@ mod optional {
             matches!(rejection, BodyRejection::Syntax { .. }),
             "expected a syntax failure, got {rejection:?}"
         );
+    }
+
+    /// Content without a `Content-Type` is a 415 naming no type, never an
+    /// absent body whose octets are discarded, whether the content shows in
+    /// the body itself or only in the length the head declares.
+    #[tokio::test]
+    async fn content_without_a_content_type_is_415() {
+        assert_unsupported(read::<Option<Text>>(None, b"ignored").await, None);
+
+        // Not one is a declared zero, so none declares no content.
+        for value in ["5", "abc", "0, 5"] {
+            let mut declared = request(None, b"");
+            declared
+                .headers_mut()
+                .insert(header::CONTENT_LENGTH, HeaderValue::from_static(value));
+            assert_unsupported(Option::<Text>::from_request(declared, &()).await, None);
+        }
+
+        // A repeated field is content when any of its lines is not a zero.
+        let mut repeated = request(None, b"");
+        for value in ["0", "5"] {
+            repeated
+                .headers_mut()
+                .append(header::CONTENT_LENGTH, HeaderValue::from_static(value));
+        }
+        assert_unsupported(Option::<Text>::from_request(repeated, &()).await, None);
     }
 
     /// Emptiness is not absence: an empty text body is the empty string.

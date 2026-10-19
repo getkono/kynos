@@ -1184,3 +1184,87 @@ fn an_unreadable_content_type_is_quoted_lossily() {
         "unsupported media type: `text/plain; x=\u{fffd}`"
     );
 }
+
+/// An optional body without a `Content-Type` is decided by whether its content
+/// carries an octet, on a body the transport has not ended as on the ended
+/// `Body::from_bytes` a buffering interceptor hands on, which `extractors.rs`
+/// drives.
+mod an_optional_body_without_a_content_type {
+    use std::{
+        collections::VecDeque,
+        convert::Infallible,
+        pin::Pin,
+        task::{Context, Poll},
+    };
+
+    use bytes::Bytes;
+
+    use crate::{
+        error::rejection::BodyRejection,
+        extract::{FromRequest, body::text::Text},
+        http::{Request, body::Body},
+    };
+
+    /// Chunks yielded in turn, one frame each, as HTTP/2 DATA frames arrive.
+    struct Frames(VecDeque<Bytes>);
+
+    impl futures_core::Stream for Frames {
+        type Item = Result<Bytes, Infallible>;
+
+        fn poll_next(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            Poll::Ready(self.get_mut().0.pop_front().map(Ok))
+        }
+    }
+
+    /// A body the transport has not ended yet, yielding `chunks`.
+    fn streamed(chunks: &[&'static [u8]]) -> Body {
+        let body = Body::from_stream(Frames(
+            chunks.iter().copied().map(Bytes::from_static).collect(),
+        ));
+        assert!(
+            !http_body::Body::is_end_stream(&body),
+            "the body has not stated its end before it is read"
+        );
+        body
+    }
+
+    async fn read(body: Body) -> Result<Option<Text>, BodyRejection> {
+        Option::<Text>::from_request(Request::new(body), &()).await
+    }
+
+    /// Empty DATA frames are zero-length content, absent as the empty
+    /// `Body::from_bytes` that `BodySize` and `Decompression` rebuild them as.
+    #[tokio::test]
+    async fn empty_data_frames_are_absent() {
+        assert_eq!(read(streamed(&[b""])).await.expect("absent"), None);
+        assert_eq!(read(streamed(&[b"", b""])).await.expect("absent"), None);
+    }
+
+    /// An octet after empty frames is content: the 415 naming no type.
+    #[tokio::test]
+    async fn an_octet_after_empty_frames_is_415() {
+        let rejection = read(streamed(&[b"", b"x"]))
+            .await
+            .expect_err("content without a type");
+        assert!(
+            matches!(
+                rejection,
+                BodyRejection::UnsupportedMediaType { received: None }
+            ),
+            "{rejection:?}"
+        );
+    }
+
+    /// A body failing before its first octet is the 400 a codec's read
+    /// answers, not a body known to be absent.
+    #[tokio::test]
+    async fn a_body_failing_before_its_first_octet_is_400() {
+        let rejection = read(Body::failed_after(Bytes::new(), "reset".into()))
+            .await
+            .expect_err("an unfinished body");
+        assert!(
+            matches!(rejection, BodyRejection::Syntax { .. }),
+            "{rejection:?}"
+        );
+    }
+}
