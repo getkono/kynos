@@ -1958,8 +1958,8 @@ class Main(unittest.TestCase):
         # nothing about the others, so the branch being reached is not enough:
         # with `tower` rewritten `UNDER, ""` its row holds nothing at all while
         # the rows beside it go on holding, and the run reports every rule
-        # holds. `http/body.rs` is not `unchecked.rs`, which is the one file
-        # this row allows.
+        # holds. `http/body.rs` is neither `unchecked.rs` nor under
+        # `unchecked/`, which are all this row allows.
         corpus = self.appending(
             "crates/kynos/src/http/body.rs", "\nuse tower_layer::Layer;\n"
         )
@@ -1967,7 +1967,8 @@ class Main(unittest.TestCase):
         self.assertEqual(status, 1)
         reported = self.naming(
             failures,
-            "`tower`, `tower-layer` and `tower-service` are named only in `unchecked.rs`",
+            "`tower`, `tower-layer` and `tower-service` are named only in `unchecked.rs` "
+            "and under `unchecked/`",
         )
         self.assertEqual(len(reported), 1)
         self.assertIn("crates/kynos/src/http/body.rs", reported[0])
@@ -1984,7 +1985,8 @@ class Main(unittest.TestCase):
         self.assertEqual(status, 1)
         reported = self.naming(
             failures,
-            "`tower`, `tower-layer` and `tower-service` are named only in `unchecked.rs`",
+            "`tower`, `tower-layer` and `tower-service` are named only in `unchecked.rs` "
+            "and under `unchecked/`",
         )
         self.assertEqual(len(reported), 1)
         self.assertIn("crates/kynos/src/http/body.rs", reported[0])
@@ -2582,20 +2584,20 @@ class Main(unittest.TestCase):
     def test_an_oversized_module_the_budget_does_not_list_is_named(self):
         # `nfr`. The budget is a list of paths, and the rule names the one the
         # tree has and the list does not.
-        broken = self.rewriting(gate.NFR, "- `crates/kynos/src/unchecked.rs`\n", "")
+        broken = self.rewriting(gate.NFR, "- `crates/kynos/src/server/connection.rs`\n", "")
         status, failures = self.report(nfr=broken)
         self.assertEqual(status, 1)
         reported = self.naming(failures, "budget does not list it")
         self.assertEqual(len(reported), 1)
-        self.assertIn("crates/kynos/src/unchecked.rs", reported[0])
+        self.assertIn("crates/kynos/src/server/connection.rs", reported[0])
 
     def test_a_budgeted_path_no_longer_oversized_is_named(self):
         # The other direction, and the one a count could not see beside the
         # first: a split and a new oversized module in one commit.
         broken = self.rewriting(
             gate.NFR,
-            "- `crates/kynos/src/unchecked.rs`\n",
-            "- `crates/kynos/src/unchecked.rs`\n- `crates/kynos/src/lib.rs`\n",
+            "- `crates/kynos/src/server/connection.rs`\n",
+            "- `crates/kynos/src/server/connection.rs`\n- `crates/kynos/src/lib.rs`\n",
         )
         status, failures = self.report(nfr=broken)
         self.assertEqual(status, 1)

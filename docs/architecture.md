@@ -221,7 +221,7 @@ by naming the row X displaces rather than by arguing that X is good.
 | Scalar formats, decimals | `rust_decimal`, `bigdecimal` | [`schema/impls/decimal/`](../crates/kynos/src/schema/impls/decimal/) | built |
 | Compression | `async-compression` | [`middleware/compression/`](../crates/kynos/src/middleware/compression/), [`middleware/decompression/`](../crates/kynos/src/middleware/decompression/) | built |
 | tower interop, outward | `tower-service` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |
-| tower interop, inward | `tower-layer` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |
+| tower interop, inward | `tower-layer` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs), [`unchecked/route.rs`](../crates/kynos/src/unchecked/route.rs) | built |
 | Document ordering | `indexmap` | [`kynos-openapi`](../crates/kynos-openapi/src/lib.rs) | built |
 | YAML emission | `serde_norway` | [`kynos-openapi/emit/`](../crates/kynos-openapi/src/emit/), behind the owned `YamlError` | built |
 | Macro parsing | `proc-macro2`, `quote`, `syn` | [`kynos-macros`](../crates/kynos-macros/src/) | built |
@@ -518,7 +518,7 @@ module column is also where the `#[cfg]` lives.
 | `assets` | `assets!` and `router/assets/`: a fixed set, so every path is a literal and nothing is waived | [`routing.md`](routing.md) |
 | `assets-fs` | `router/assets/fs/`. Implies `unchecked`, because a directory's membership is not fixed | [`routing.md`](routing.md) |
 | `docs` | `Router::docs`: the reference page and the description, as two described operations | [`routing.md`](routing.md) |
-| `unchecked` | `unchecked.rs`, the only place `tower`, `tower-layer` and `tower-service` may be named. Documented anti-pattern | [`middleware.md`](middleware.md) |
+| `unchecked` | `unchecked.rs` and `unchecked/`, the only places `tower`, `tower-layer` and `tower-service` may be named. Documented anti-pattern | [`middleware.md`](middleware.md) |
 | `full` | every flag above except `unchecked` and `assets-fs`. A testing convenience, not a recommended default | — |
 
 ### Scope edges

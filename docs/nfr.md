@@ -700,7 +700,6 @@ The budget, which may only shrink:
 - `crates/kynos/src/server/connection.rs`
 - `crates/kynos/src/server/mod.rs`
 - `crates/kynos/src/test/mod.rs`
-- `crates/kynos/src/unchecked.rs`
 
 ## Dependencies
 
@@ -719,7 +718,7 @@ member's name, and one ending in `/` is a tree.
 | compatibility | `matchit` may be named only under `router/` | `mise run containment:check` | `enforced` |
 | compatibility | `socket2` is named only in `server/tcp.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `h2` and `httparse` are never named | `mise run containment:check` | `enforced` |
-| compatibility | `tower`, `tower-layer` and `tower-service` are named only in `unchecked.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `tower`, `tower-layer` and `tower-service` are named only in `unchecked.rs` and under `unchecked/` | `mise run containment:check` | `enforced` |
 | compatibility | `http-body` and `http-body-util` are named only in `http/body.rs`, `http/body/watched.rs`, `middleware/cache/mod.rs`, `response/range/source.rs`, `router/dispatch.rs`, `server/request_body.rs` and `test/mod.rs`, and under `extract/body/`, `middleware/compression/`, `middleware/decompression/` and `middleware/limits/` | `mise run containment:check` | `enforced` |
 | compatibility | `async-compression` is named only under `middleware/compression/` and `middleware/decompression/` | `mise run containment:check` | `enforced` |
 | compatibility | `serde_html_form` is named only in `extract/body/form.rs`, `response/codec/form.rs` and `test/mod.rs` | `mise run containment:check` | `enforced` |

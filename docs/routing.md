@@ -75,7 +75,7 @@ router declines rather than one the model rejects.
 boundary from the dependency's side.
 
 The escape hatch is
-[`route_unchecked`](../crates/kynos/src/unchecked.rs), behind the `unchecked`
+[`route_unchecked`](../crates/kynos/src/unchecked/route.rs), behind the `unchecked`
 feature. It serves the route and gets no `paths` entry, recording it under
 `OPAQUE_ROUTES_ANNOTATION` and stamping the document non-authoritative instead.
 
