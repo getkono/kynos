@@ -109,14 +109,13 @@ pub(crate) fn wire_names(
         .collect()
 }
 
-/// The wire name of a field: the Kynos then serde `rename`, else `fallback`.
+/// The wire name of a field: the Kynos `rename`, else `fallback`, which is
+/// [`property_names`]' and so already carries serde's `rename`.
 fn wire_name(field: &Field, attribute: &str, fallback: String) -> syn::Result<String> {
     if let Some(renamed) = field_args(field, attribute)?.rename {
         return Ok(renamed.value());
     }
-    if let Some(renamed) = serde_rename(field)? {
-        return Ok(renamed);
-    }
+    reject_split_rename(field)?;
     Ok(fallback)
 }
 
@@ -163,9 +162,9 @@ fn reject_alias(field: &Field) -> syn::Result<()> {
     Ok(())
 }
 
-/// The `rename = "..."` inside `#[serde(...)]`; the split form is refused.
-fn serde_rename(field: &Field) -> syn::Result<Option<String>> {
-    let mut found = None;
+/// Refuses a field's `#[serde(rename(serialize = ..., deserialize = ...))]`,
+/// whose serialize side [`property_names`] would otherwise take as the name.
+fn reject_split_rename(field: &Field) -> syn::Result<()> {
     for attr in &field.attrs {
         if !attr.path().is_ident("serde") {
             continue;
@@ -181,11 +180,11 @@ fn serde_rename(field: &Field) -> syn::Result<Option<String>> {
                      Kynos attribute",
                 ));
             }
-            found = Some(meta.value()?.parse::<LitStr>()?.value());
+            let _: LitStr = meta.value()?.parse()?;
             Ok(())
         })?;
     }
-    Ok(found)
+    Ok(())
 }
 
 /// The text of an item's doc comment as the CommonMark it was written in; the
