@@ -381,8 +381,11 @@ where
             .authenticator()
             .authorize(&credential, scopes, context)
             .await
+            // The scheme's own, not `Requirement`'s, which only a guard naming
+            // no scope set may declare.
             .map_err(|rejection| {
-                rejection.with_scope_challenge(S::insufficient_scope_challenge())
+                rejection
+                    .with_scope_challenge(<S as SecurityScheme>::insufficient_scope_challenge())
             })?;
     }
     Ok(credential)
