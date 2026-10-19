@@ -53,17 +53,19 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send> FromRequest<C> for
         let bytes = super::read_body(request, MEDIA_TYPE).await?;
 
         // `serde_html_form` would replace non-UTF-8 octets, so refuse them
-        // first with the 400 `Query<T>` gives, through the same pair reader.
+        // first with the 400 `Query<T>` gives. The escapes are checked in
+        // place, so the decode below is the only one.
         let text = std::str::from_utf8(&bytes).map_err(|error| BodyRejection::Syntax {
             detail: format!("the form body is not valid UTF-8: {error}"),
         })?;
-        for (name, value) in crate::__private::uri::query_pairs(Some(text)) {
-            for half in [name, value] {
-                std::str::from_utf8(&half).map_err(|error| BodyRejection::Syntax {
-                    detail: format!("a percent-decoded form pair is not valid UTF-8: {error}"),
-                })?;
+        crate::__private::uri::check_percent_decoded_utf8(text).map_err(|offset| {
+            BodyRejection::Syntax {
+                detail: format!(
+                    "the escape at octet {offset} of the form body does not percent-decode \
+                     to UTF-8"
+                ),
             }
-        }
+        })?;
 
         // Form syntax has no malformed input, so any failure is a 422. Keyed
         // at the root: serde names the field only inside its message.

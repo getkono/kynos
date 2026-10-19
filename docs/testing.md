@@ -739,7 +739,7 @@ are reached through `kynos::__private::fuzz`, which exists only under the
 | `json_lines` | the `JsonLines` and `JsonSeq` record framer in `extract/body/json_lines/records.rs` | a body split into chunks anywhere reads, under either framing, as the whole buffer framed at once reads: the same records, 422s and the failure that ends the stream |
 | `language` | `AcceptLanguage::parse` and `choose`, and `LanguageTag::parse` | the tag chosen is one the offer declares, and a tag read is the same tag in any case and from its own normalized text, as the `const` `is_well_formed` agrees |
 | `media_type` | the codec matcher `offers` in `extract/body/mod.rs`, and the `const` `shares_requests` in `extract/body/alternative.rs` | a match agrees on type and subtype, a bare media type offers itself, and `shares_requests` finds a marker and a codec's type share a request exactly when `offers` hands one to both |
-| `query` | `__private::uri::query_pairs` | the pairs equal a byte-at-a-time form decoder's |
+| `query` | `__private::uri::query_pairs`, and `Form<T>`'s in-place UTF-8 check in `__private/uri.rs` | the pairs equal a byte-at-a-time form decoder's; the check passes exactly when every half they hold is UTF-8, and where it fails it names a `%` escape the text before which passes |
 | `range` | `Range::parse` and `select` | the specs read, or the reason the field is ignored, are a recogniser's transcribed from section 14.1.1's grammar plus the leniencies it lists, and the part selected is the first satisfiable spec cut to the representation |
 
 The search runs nightly rather than on a pull request because its verdict

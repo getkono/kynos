@@ -43,6 +43,17 @@ pub fn etag_matches_strongly(field: &HeaderValue, current: Option<&str>) -> bool
     crate::http::etag::matches_strongly(field, current)
 }
 
+/// Whether a `Form<T>` body `text` percent-decodes to UTF-8, checked in place.
+///
+/// # Errors
+///
+/// The offset into `text` of the escape that began the first sequence that is
+/// not UTF-8.
+#[cfg(feature = "form")]
+pub fn percent_decoded_utf8(text: &str) -> Result<(), usize> {
+    crate::__private::uri::check_percent_decoded_utf8(text)
+}
+
 /// Whether a request carrying `headers` offers a body codec's `media_type`.
 #[must_use]
 pub fn offers(headers: &HeaderMap, media_type: &str) -> bool {

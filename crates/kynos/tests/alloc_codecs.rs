@@ -551,7 +551,7 @@ mod form {
     };
 
     use crate::{
-        counting::request,
+        counting::{self, request},
         harness::{self, Table},
     };
 
@@ -565,6 +565,13 @@ mod form {
 
     /// One `Reading`, as the octets a client sends.
     const BODY: &[u8] = b"id=7&value=11";
+
+    /// The same `Reading` with both values percent-escaped, so each is a half
+    /// that has to be decoded into memory before it can be read.
+    const ESCAPED_BODY: &[u8] = b"id=%37&value=%31%31";
+
+    /// How many halves of [`ESCAPED_BODY`] carry an escape.
+    const ESCAPED_HALVES: usize = 2;
 
     /// The bodyless floor: dispatch, and no body extractor at all.
     #[kynos::post("/floor")]
@@ -637,6 +644,15 @@ mod form {
         )
     }
 
+    fn escaped_decode_request() -> Request {
+        request(
+            Method::POST,
+            "/form",
+            Some("application/x-www-form-urlencoded"),
+            ESCAPED_BODY,
+        )
+    }
+
     fn encode_request() -> Request {
         request(Method::GET, "/form/out", None, b"")
     }
@@ -685,6 +701,28 @@ mod form {
     #[test]
     fn writing_a_body_costs_more_than_the_status_alone() {
         harness::writing_costs_more_than_the_status(&service(), &RECORDED);
+    }
+
+    /// An escaped half costs one decoded copy, and that copy is the decoder's:
+    /// the UTF-8 check `Form<T>` makes before decoding reads the escapes in
+    /// place, so a body costs no copy of Kynos's own per escape it carries.
+    ///
+    /// A relation between two readings of one operation rather than a second
+    /// ceiling, so it names the property — one decode — and survives whatever
+    /// moves both counts together.
+    #[test]
+    fn an_escaped_half_is_decoded_into_memory_once() {
+        let service = service();
+        let (plain, _) = counting::counted(&service, decode_request(), StatusCode::NO_CONTENT);
+        let (escaped, _) =
+            counting::counted(&service, escaped_decode_request(), StatusCode::NO_CONTENT);
+
+        assert!(
+            escaped <= plain + ESCAPED_HALVES,
+            "decoding {ESCAPED_HALVES} escaped halves allocated {escaped}, where \
+             the same pairs unescaped allocated {plain}; more than one copy per \
+             escaped half is a body decoded twice"
+        );
     }
 
     /// The leak check, over every operation this service holds.
