@@ -223,11 +223,24 @@ pub(crate) fn matches(field: &HeaderValue, current: &str) -> bool {
         return false;
     };
 
-    if text.trim() == ANY {
-        return true;
-    }
+    names(listed(text), current)
+}
 
-    split(text).any(|candidate| weak_match(candidate, current))
+/// The entity tags one `If-None-Match` field line lists, or `None` where the
+/// line is `*`.
+///
+/// A `*` among tags is no `entity-tag`, so it is listed as one that never
+/// matches rather than read as `*`.
+#[must_use]
+pub(crate) fn listed(text: &str) -> Option<impl Iterator<Item = &str>> {
+    (text.trim() != ANY).then(|| split(text))
+}
+
+/// Whether an `If-None-Match` condition names `current`: `None`, which is
+/// `*`, names anything, and `tags` name it by the [weak comparison](weak_match).
+#[must_use]
+pub(crate) fn names<'a>(tags: Option<impl IntoIterator<Item = &'a str>>, current: &str) -> bool {
+    tags.is_none_or(|tags| tags.into_iter().any(|tag| weak_match(tag, current)))
 }
 
 /// Whether a request's `If-None-Match` names a representation tagged
@@ -249,7 +262,7 @@ pub(crate) fn if_none_match<S: AsRef<str>>(
     let current = current.as_ref().map(AsRef::as_ref);
     Some(lines.any(|line| match current {
         Some(current) => matches(line, current),
-        None => line.to_str().is_ok_and(|text| text.trim() == ANY),
+        None => line.to_str().is_ok_and(|text| listed(text).is_none()),
     }))
 }
 

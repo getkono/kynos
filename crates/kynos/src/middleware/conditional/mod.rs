@@ -67,15 +67,15 @@ impl DecodeHeaders for Preconditions {
             .iter()
             .filter_map(|value| value.to_str().ok())
         {
-            if text.trim() == etag::ANY {
+            let Some(listed) = etag::listed(text) else {
                 if_none_match = Some(IfNoneMatch::Any);
                 break;
-            }
+            };
 
             if let IfNoneMatch::Tags(tags) =
                 if_none_match.get_or_insert_with(|| IfNoneMatch::Tags(Vec::new()))
             {
-                tags.extend(etag::split(text).map(str::to_owned));
+                tags.extend(listed.map(str::to_owned));
             }
         }
 
@@ -215,20 +215,22 @@ impl<C: Sync + 'static> Interceptor<C> for Conditional {
 
 /// Whether the client's copy is the one the response carries.
 ///
-/// The weak comparison, per RFC 9110 section 13.1.2.
+/// [`etag::names`], save that a response carrying no tag matches nothing, `*`
+/// included, which `etag::if_none_match` would match: with no validator to
+/// compare, a 304 would call the client's copy current on no evidence.
 fn matched(condition: &IfNoneMatch, headers: &HeaderMap) -> bool {
     let Some(current) = headers
         .get(header::ETAG)
         .and_then(|value| value.to_str().ok())
     else {
-        // No validator matches nothing, `*` included.
         return false;
     };
 
-    match condition {
-        IfNoneMatch::Any => true,
-        IfNoneMatch::Tags(tags) => tags.iter().any(|tag| etag::weak_match(tag, current)),
-    }
+    let tags = match condition {
+        IfNoneMatch::Any => None,
+        IfNoneMatch::Tags(tags) => Some(tags.iter().map(String::as_str)),
+    };
+    etag::names(tags, current)
 }
 
 #[cfg(test)]
