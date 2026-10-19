@@ -19,6 +19,7 @@ use kynos_openapi::{Method, PathTemplate};
 
 use super::{Router, endpoint::builder::EndpointBuilder, operation::Route};
 use crate::{
+    error::RouterError,
     http::{Request, Response, body::Body},
     middleware::Observer,
     response::status::NoContent,
@@ -213,7 +214,7 @@ fn an_absorbed_denial_of_unchecked_schemas_refuses_the_whole_build() {
         };
         assert!(
             violations.iter().any(|violation| violation.error
-                == kynos_openapi::SpecError::UncheckedSchema
+                == RouterError::Spec(kynos_openapi::SpecError::UncheckedSchema)
                 && violation.severity == kynos_openapi::Severity::Error),
             "{how}: {violations:?}"
         );
@@ -223,7 +224,7 @@ fn an_absorbed_denial_of_unchecked_schemas_refuses_the_whole_build() {
 // --- Malformed mount sites -----------------------------------------------------
 
 /// The path-template violations a refused router reports, in order.
-fn template_violations(router: &Router<()>) -> Vec<kynos_openapi::Violation> {
+fn template_violations(router: &Router<()>) -> Vec<kynos_openapi::Violation<RouterError>> {
     let Err(crate::Error::Invalid { violations }) = router.openapi() else {
         panic!("a malformed mount site did not refuse the router");
     };
@@ -232,23 +233,27 @@ fn template_violations(router: &Router<()>) -> Vec<kynos_openapi::Violation> {
         .filter(|violation| {
             matches!(
                 violation.error,
-                kynos_openapi::SpecError::InvalidPathTemplate { .. }
+                RouterError::Spec(kynos_openapi::SpecError::InvalidPathTemplate { .. })
             )
         })
         .collect()
 }
 
 /// The violation a malformed path literal at a mount site records.
-fn malformed(location: &str, template: &str, prefixed: &str) -> kynos_openapi::Violation {
+fn malformed(
+    location: &str,
+    template: &str,
+    prefixed: &str,
+) -> kynos_openapi::Violation<RouterError> {
     kynos_openapi::Violation {
         location: location.to_owned(),
         severity: kynos_openapi::Severity::Error,
-        error: kynos_openapi::SpecError::InvalidPathTemplate {
+        error: RouterError::Spec(kynos_openapi::SpecError::InvalidPathTemplate {
             template: template.to_owned(),
             reason: kynos_openapi::model::paths::template::InvalidPathTemplate::MissingLeadingSlash(
                 prefixed.to_owned(),
             ),
-        },
+        }),
     }
 }
 
@@ -352,7 +357,7 @@ fn a_reference_publishes_its_operation_ids_under_its_prefix() {
     assert!(
         violations.iter().any(|violation| matches!(
             violation.error,
-            kynos_openapi::SpecError::DuplicateOperationId { .. }
+            RouterError::Spec(kynos_openapi::SpecError::DuplicateOperationId { .. })
         )),
         "{violations:?}"
     );

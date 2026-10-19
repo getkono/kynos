@@ -763,12 +763,16 @@ mod directory {
 
         // The one violation is the mount itself, under the pattern it would
         // have registered.
-        let reported = |violations: &[kynos::openapi::Violation]| match violations {
-            [violation] => match &violation.error {
-                kynos::openapi::SpecError::OpaqueRoute { pattern } => Some(pattern.clone()),
+        let reported = |violations: &[kynos::openapi::Violation<kynos::error::RouterError>]| {
+            match violations {
+                [violation] => match &violation.error {
+                    kynos::error::RouterError::Spec(kynos::openapi::SpecError::OpaqueRoute {
+                        pattern,
+                    }) => Some(pattern.clone()),
+                    _ => None,
+                },
                 _ => None,
-            },
-            _ => None,
+            }
         };
 
         let violations = router.validate().expect("validation itself succeeds");

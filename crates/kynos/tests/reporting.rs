@@ -109,6 +109,7 @@ reportable! {
     /// hold one directly.
     fn a_build_failure_is_reportable {
         kynos::Error;
+        kynos::error::RouterError;
         kynos::schema::registry::SchemaConflict;
         kynos::schema::registry::UnenforceableKeyPattern;
         kynos::middleware::contribution::ContributionConflict;

@@ -3416,7 +3416,6 @@ fn variant_name(error: &SpecError) -> &'static str {
     match error {
         SpecError::DuplicateOperationId { .. } => "DuplicateOperationId",
         SpecError::DuplicatePathTemplate { .. } => "DuplicatePathTemplate",
-        SpecError::DuplicateOperation { .. } => "DuplicateOperation",
         #[cfg(feature = "openapi32")]
         SpecError::FixedMethodInAdditionalOperations { .. } => "FixedMethodInAdditionalOperations",
         SpecError::InvalidPathTemplate { .. } => "InvalidPathTemplate",
@@ -3430,7 +3429,6 @@ fn variant_name(error: &SpecError) -> &'static str {
         SpecError::DuplicateQuerystring { .. } => "DuplicateQuerystring",
         #[cfg(feature = "openapi32")]
         SpecError::QueryBesideQuerystring { .. } => "QueryBesideQuerystring",
-        SpecError::ShortCircuitMismatch { .. } => "ShortCircuitMismatch",
         SpecError::IllegalStyle { .. } => "IllegalStyle",
         SpecError::IgnoredHeaderParameter { .. } => "IgnoredHeaderParameter",
         SpecError::IgnoredHeader { .. } => "IgnoredHeader",
@@ -3465,9 +3463,6 @@ fn variant_name(error: &SpecError) -> &'static str {
         SpecError::NotAuthoritative => "NotAuthoritative",
         SpecError::OpaqueOperation { .. } => "OpaqueOperation",
         SpecError::OpaqueRoute { .. } => "OpaqueRoute",
-        SpecError::RouteConflict { .. } => "RouteConflict",
-        SpecError::InvalidRoutePattern { .. } => "InvalidRoutePattern",
-        SpecError::NestedRouterPolicy { .. } => "NestedRouterPolicy",
         SpecError::AuthorityNotStamped => "AuthorityNotStamped",
         SpecError::StaleAuthorityStamp => "StaleAuthorityStamp",
         SpecError::MalformedAnnotation { .. } => "MalformedAnnotation",
@@ -3481,20 +3476,6 @@ fn variant_name(error: &SpecError) -> &'static str {
 /// what keeps [`every_variant_has_a_case`] a statement about this validator
 /// rather than about the enum.
 const RAISED_ELSEWHERE: &[&str] = &[
-    // Prevented by the model rather than reported: a `PathItem` has one slot
-    // per method, so no document holds a second operation for one. `kynos`'s
-    // `Router::describe` raises it when two mounts claim the same slot, and
-    // `crates/kynos/tests/routing.rs` covers it there.
-    "DuplicateOperation",
-    // About the router's match table, which no document has: `kynos`'s
-    // `TrialTable` raises both, and `crates/kynos/tests/routing.rs` and
-    // `crates/kynos/tests/unchecked.rs` cover them there.
-    "RouteConflict",
-    "InvalidRoutePattern",
-    // About a router absorbing another, which no document records: `kynos`'s
-    // `nest` and `merge` raise it, and `crates/kynos/tests/description.rs`
-    // covers it there.
-    "NestedRouterPolicy",
     // `encoding` conflicts with `prefixEncoding` and `itemEncoding`,
     // neither of which a 3.1 build has.
     #[cfg(not(feature = "openapi32"))]
@@ -3513,10 +3494,6 @@ const RAISED_ELSEWHERE: &[&str] = &[
     // `additionalOperations` is a 3.2 field, absent from a 3.1 build.
     #[cfg(not(feature = "openapi32"))]
     "FixedMethodInAdditionalOperations",
-    // `kynos`'s `short_circuit_mismatch` compares an interceptor's declared
-    // statuses against the responses it describes. No document reaches it, and
-    // `crates/kynos/src/response/mod.rs` covers it where it lives.
-    "ShortCircuitMismatch",
     // Tag hierarchy arrived in 3.2, so `check_tag_hierarchy` is compiled out of
     // a baseline build along with the only code paths that raise these two.
     #[cfg(not(feature = "openapi32"))]

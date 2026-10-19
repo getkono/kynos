@@ -8,7 +8,7 @@
 
 #![cfg(all(feature = "docs", feature = "macros", feature = "json"))]
 
-use kynos::{Router, http::StatusCode, openapi::Info, router::docs::Docs};
+use kynos::{Router, error::RouterError, http::StatusCode, openapi::Info, router::docs::Docs};
 
 #[path = "support/mod.rs"]
 mod support;
@@ -425,11 +425,13 @@ fn a_docs_path_that_is_not_a_template_is_reported_rather_than_panicking() {
     // a Paths key can be wrong about.
     let router = support::router().docs(Docs::scalar().at("docs"));
 
-    let names_the_bad_path = |violations: &[kynos::openapi::Violation]| {
+    let names_the_bad_path = |violations: &[kynos::openapi::Violation<RouterError>]| {
         violations.iter().any(|violation| {
             matches!(
                 &violation.error,
-                kynos::openapi::SpecError::InvalidPathTemplate { template, .. } if template == "docs"
+                RouterError::Spec(kynos::openapi::SpecError::InvalidPathTemplate {
+                    template, ..
+                }) if template == "docs"
             )
         })
     };

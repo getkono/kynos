@@ -10,14 +10,19 @@ pub enum Severity {
 }
 
 /// A single problem found in a document.
+///
+/// `E` says what is wrong. A [`Validator`](crate::validate::Validator) reports
+/// a [`SpecError`], the default; a tool that checks a document alongside
+/// something of its own, as a router checks its match table, reports in a
+/// vocabulary that wraps it, so one report holds both.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Violation {
+pub struct Violation<E = SpecError> {
     /// A JSON-Pointer-like path to the offending object.
     pub location: String,
     /// How seriously to take it.
     pub severity: Severity,
     /// What is wrong.
-    pub error: SpecError,
+    pub error: E,
 }
 
 impl Violation {
@@ -38,7 +43,7 @@ impl Violation {
     }
 }
 
-impl std::fmt::Display for Violation {
+impl<E: std::fmt::Display> std::fmt::Display for Violation<E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let label = match self.severity {
             Severity::Error => "error",
@@ -49,8 +54,8 @@ impl std::fmt::Display for Violation {
 }
 
 /// A violation is a line in a report, so it carries no cause: its `Display`
-/// already includes the [`SpecError`].
-impl std::error::Error for Violation {}
+/// already includes the error.
+impl<E: std::fmt::Debug + std::fmt::Display> std::error::Error for Violation<E> {}
 
 /// Escapes one map key for use as a JSON Pointer token, per RFC 6901.
 ///
@@ -82,21 +87,6 @@ pub enum SpecError {
         template: String,
         /// The template already present.
         existing: String,
-    },
-
-    /// One method on one path was described more than once.
-    ///
-    /// Reachable only while a description is being assembled: a Path Item
-    /// holds one Operation per method, so no document can carry the second.
-    #[error(
-        "operation `{method} {path}` is described more than once; a path item holds one \
-         operation per method"
-    )]
-    DuplicateOperation {
-        /// The method described twice.
-        method: crate::model::paths::method::Method,
-        /// The `paths` key it was described under.
-        path: String,
     },
 
     /// An `additionalOperations` key names a method with its own Path Item
@@ -204,24 +194,6 @@ pub enum SpecError {
         query: String,
         /// The querystring parameter it appears beside.
         querystring: String,
-    },
-
-    /// An interceptor's short circuit declared statuses its responses do not
-    /// describe, or the reverse.
-    ///
-    /// Only reachable from a hand-written `ShortCircuit`; the one the
-    /// `ApiError` derive emits comes from the same declaration as the
-    /// responses and cannot disagree with them.
-    #[error(
-        "`{name}` declares statuses {declared:?} as a short circuit but describes {described:?}"
-    )]
-    ShortCircuitMismatch {
-        /// The short-circuit type.
-        name: String,
-        /// What its `STATUSES` const claimed.
-        declared: Vec<u16>,
-        /// What its `Responses` actually described.
-        described: Vec<u16>,
     },
 
     /// A serialization style is not legal at a parameter's location.
@@ -522,45 +494,6 @@ pub enum SpecError {
     OpaqueRoute {
         /// The router's matching pattern, verbatim.
         pattern: String,
-    },
-
-    /// Two routes cannot share the router's match table, which has no rule for
-    /// which of them a request reaches — `/{x}.txt` beside `/v{x}`, say.
-    ///
-    /// Raised by a router rather than by validation: a document may hold both.
-    #[error("`{pattern}` conflicts with `{existing}` in the router's match table")]
-    RouteConflict {
-        /// The pattern being added.
-        pattern: String,
-        /// The pattern already in the table.
-        existing: String,
-    },
-
-    /// A matching pattern is not one the router's match table can read.
-    ///
-    /// Reachable only for a pattern given verbatim, such as an unchecked
-    /// route's — a catch-all before the end, say. A path template is checked
-    /// when it is parsed.
-    #[error("`{pattern}` is not a pattern the router's match table accepts")]
-    InvalidRoutePattern {
-        /// The router's matching pattern, verbatim.
-        pattern: String,
-    },
-
-    /// A router that was nested or merged into another set an
-    /// application-wide policy, which only the root router's applies.
-    ///
-    /// Raised by a router rather than by validation, once per policy set and
-    /// located at the root: the absorbed router's value would otherwise be
-    /// dropped without a word.
-    #[error(
-        "a nested or merged router sets `{policy}`, which only the root router's applies; \
-         set it on the root router instead"
-    )]
-    NestedRouterPolicy {
-        /// The setter the absorbed router called, as the router spells it
-        /// (`trusted_proxies`).
-        policy: &'static str,
     },
 
     /// The description is opaque somewhere but does not say so at the root.

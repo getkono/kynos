@@ -61,9 +61,12 @@ use std::{
 use bytes::Bytes;
 use kynos_openapi::{PathTemplate, validate::violation::Violation};
 
-use crate::router::{
-    docs::endpoint::{DocsDescription, DocsPage},
-    endpoint::{DynEndpoint, operation_id},
+use crate::{
+    error::RouterError,
+    router::{
+        docs::endpoint::{DocsDescription, DocsPage},
+        endpoint::{DynEndpoint, operation_id},
+    },
 };
 
 /// An API reference, ready to mount.
@@ -84,7 +87,7 @@ pub struct Docs<M = WithPage> {
     page: Option<PageMount>,
     description_at: PathTemplate,
     operation_id_prefix: Cow<'static, str>,
-    violations: Vec<Violation>,
+    violations: Vec<Violation<RouterError>>,
     mode: PhantomData<fn() -> M>,
 }
 
@@ -232,7 +235,7 @@ impl Docs<DescriptionOnly> {
 
 impl<M> Docs<M> {
     /// A reference with every default but its page.
-    fn configured(page: Option<PageMount>, mut violations: Vec<Violation>) -> Self {
+    fn configured(page: Option<PageMount>, mut violations: Vec<Violation<RouterError>>) -> Self {
         let description_at = template("/openapi.json", &mut violations);
         Self {
             page,
@@ -258,7 +261,7 @@ impl<M> Docs<M> {
     }
 
     /// The violations collected while this reference was configured.
-    pub(crate) fn take_violations(&mut self) -> Vec<Violation> {
+    pub(crate) fn take_violations(&mut self) -> Vec<Violation<RouterError>> {
         std::mem::take(&mut self.violations)
     }
 
@@ -309,7 +312,7 @@ impl<M> Docs<M> {
 
 /// Parses a mount-site path literal, recording a malformed one as a violation
 /// (as `Group::new` does) so `Router::validate` reports it.
-fn template(path: &str, violations: &mut Vec<Violation>) -> PathTemplate {
+fn template(path: &str, violations: &mut Vec<Violation<RouterError>>) -> PathTemplate {
     super::install::parse_or_record(path, violations).unwrap_or_else(|| {
         // A placeholder; the violation fails the build.
         PathTemplate::parse("/").expect("a root path is always a legal template")

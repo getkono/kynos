@@ -51,7 +51,7 @@ use std::collections::BTreeSet;
 
 use kynos::{
     ApiError, PathParams, Router, Schema,
-    error::rejection::RangeRejection,
+    error::{RouterError, rejection::RangeRejection},
     extract::{body::binary::Binary, params::path::Path},
     http::media::OctetStream,
     middleware::limits::{body_size::BodySize, timeout::Timeout},
@@ -1006,7 +1006,7 @@ fn undocumented_tags(router: &Router<()>) -> Vec<String> {
         .expect("a describable router")
         .into_iter()
         .filter_map(|violation| match violation.error {
-            kynos::openapi::SpecError::UndocumentedTag { name } => Some(name),
+            RouterError::Spec(kynos::openapi::SpecError::UndocumentedTag { name }) => Some(name),
             _ => None,
         })
         .collect()
@@ -1237,7 +1237,7 @@ fn two_tag_types_describing_one_name_differently_are_refused_by_build() {
     assert!(
         violations.iter().any(|violation| matches!(
             &violation.error,
-            kynos::openapi::SpecError::DuplicateTag { name } if name == "users"
+            RouterError::Spec(kynos::openapi::SpecError::DuplicateTag { name }) if name == "users"
         )),
         "{violations:?}"
     );
@@ -1259,7 +1259,8 @@ fn two_tag_types_describing_one_name_differently_are_a_validation_error() {
             violation.severity == kynos::openapi::Severity::Error
                 && matches!(
                     &violation.error,
-                    kynos::openapi::SpecError::DuplicateTag { name } if name == "users"
+                    RouterError::Spec(kynos::openapi::SpecError::DuplicateTag { name })
+                        if name == "users"
                 )
         }),
         "{violations:?}"
@@ -1821,10 +1822,9 @@ fn deny_unchecked_schemas_refuses_an_unchecked_field_of_a_registered_body() {
 
     let reported = router().validate().expect("a describable router");
     assert!(
-        reported
-            .iter()
-            .any(|violation| violation.error == SpecError::UncheckedSchema
-                && violation.severity == Severity::Warning),
+        reported.iter().any(|violation| violation.error
+            == RouterError::Spec(SpecError::UncheckedSchema)
+            && violation.severity == Severity::Warning),
         "the field warns without the setting: {reported:?}"
     );
     router()
@@ -1837,7 +1837,7 @@ fn deny_unchecked_schemas_refuses_an_unchecked_field_of_a_registered_body() {
     };
     let unchecked: Vec<(&str, Severity)> = violations
         .iter()
-        .filter(|violation| violation.error == SpecError::UncheckedSchema)
+        .filter(|violation| violation.error == RouterError::Spec(SpecError::UncheckedSchema))
         .map(|violation| (violation.location.as_str(), violation.severity))
         .collect();
     assert_eq!(
@@ -1915,7 +1915,7 @@ fn a_cookie_asking_for_its_style_raises_the_description_to_3_2() {
 }
 
 /// The one violation a router refused to describe reports.
-fn sole_refusal<C: 'static>(router: &Router<C>) -> kynos::openapi::SpecError {
+fn sole_refusal<C: 'static>(router: &Router<C>) -> RouterError {
     let Err(kynos::Error::Invalid { violations }) = router.openapi() else {
         panic!("a router carrying an unrecognised field was described");
     };
@@ -1944,9 +1944,9 @@ fn an_unrecognised_field_refuses_the_description() {
 
     assert_eq!(
         sole_refusal(&router),
-        kynos::openapi::SpecError::RequiresV3_2 {
+        RouterError::Spec(kynos::openapi::SpecError::RequiresV3_2 {
             blockers: vec!["#/info/foo".to_owned()],
-        }
+        })
     );
 }
 
@@ -2027,9 +2027,9 @@ fn an_unrecognised_field_refuses_a_description_using_3_2() {
 
     assert_eq!(
         sole_refusal(&router),
-        kynos::openapi::SpecError::RequiresV3_2 {
+        RouterError::Spec(kynos::openapi::SpecError::RequiresV3_2 {
             blockers: vec!["#/info/foo".to_owned()],
-        }
+        })
     );
 }
 
@@ -2051,14 +2051,14 @@ fn openapi_as_3_1_refuses_a_3_2_construct_and_names_it() {
     };
     assert_eq!(
         violation.error,
-        SpecError::RequiresV3_2 {
+        RouterError::Spec(SpecError::RequiresV3_2 {
             blockers: vec![
                 "#/paths/~1events/get/responses/200/content/text~1event-stream/itemSchema"
                     .to_owned(),
                 "#/paths/~1search/query".to_owned(),
                 "#/paths/~1filtered/get/parameters/0".to_owned(),
             ],
-        }
+        })
     );
     assert_eq!(
         violation.to_string(),
@@ -2182,7 +2182,7 @@ fn a_nested_routers_external_docs_are_used_only_when_the_outer_declares_none() {
 fn a_policy_set_on_a_nested_or_merged_router_is_a_violation() {
     use kynos::{
         http::forwarded::{ProxyHeader, TrustedProxies},
-        openapi::{Severity, SpecError, Violation},
+        openapi::{Severity, Violation},
         router::policy::{FallbackPolicy, TrailingSlashPolicy},
     };
 
@@ -2204,7 +2204,7 @@ fn a_policy_set_on_a_nested_or_merged_router_is_a_violation() {
     let refused = |policy| Violation {
         location: "#".to_owned(),
         severity: Severity::Error,
-        error: SpecError::NestedRouterPolicy { policy },
+        error: RouterError::NestedRouterPolicy { policy },
     };
     let violations = |router: Router<()>| router.validate().expect("a describable router");
 

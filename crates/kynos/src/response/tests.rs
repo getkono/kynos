@@ -38,7 +38,7 @@ fn a_status_declared_but_not_described_is_reported() {
 
     assert!(matches!(
         found,
-        kynos_openapi::SpecError::ShortCircuitMismatch { ref declared, ref described, .. }
+        crate::error::RouterError::ShortCircuitMismatch { ref declared, ref described, .. }
             if declared == &[418] && described == &[503]
     ));
     assert!(found.to_string().contains("Liar"));

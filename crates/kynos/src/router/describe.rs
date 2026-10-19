@@ -8,13 +8,13 @@
 use std::collections::HashSet;
 
 use super::install::{
-    catches, cors_conflict, error_at, highest_version, install_preflight, invalid,
+    catches, cors_conflict, error_at, highest_version, install_preflight, invalid, lift,
     lowest_expressing, path_entry, path_location, placeholder_info, unique_tags,
 };
 use super::{
     Arc, DeclaredTag, Dispatch, Document, EndpointTerminal, Error, HashMap, OperationCx,
-    PanicPolicy, PathEntry, PathItem, Paths, Registry, Result, Router, Service, Severity,
-    SpecError, SpecVersion, TrailingSlashPolicy, Violation, dispatch,
+    PanicPolicy, PathEntry, PathItem, Paths, Registry, Result, Router, RouterError, Service,
+    Severity, SpecError, SpecVersion, TrailingSlashPolicy, Violation, dispatch,
 };
 
 #[cfg(feature = "docs")]
@@ -33,7 +33,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// # Errors
     ///
     /// Returns [`Error::Invalid`] if the router cannot be described at all.
-    pub fn validate(&self) -> Result<Vec<Violation>>
+    pub fn validate(&self) -> Result<Vec<Violation<RouterError>>>
     where
         C: 'static,
     {
@@ -210,7 +210,11 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
     /// Registers every declared security scheme under `components`; an illegal
     /// name is a violation rather than a failure.
-    fn declare_security_schemes(&self, registry: &mut Registry, violations: &mut Vec<Violation>) {
+    fn declare_security_schemes(
+        &self,
+        registry: &mut Registry,
+        violations: &mut Vec<Violation<RouterError>>,
+    ) {
         for (name, scheme) in &self.security_schemes {
             match kynos_openapi::ComponentName::new(*name) {
                 Ok(name) => registry.declare_security_scheme(name, scheme.clone()),
@@ -227,7 +231,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// Reports every pattern the match table would refuse, and every unchecked
     /// route repeating a declared operation, so `validate` sees what `build`
     /// would be refused.
-    fn try_match_table(&self, violations: &mut Vec<Violation>)
+    fn try_match_table(&self, violations: &mut Vec<Violation<RouterError>>)
     where
         C: 'static,
     {
@@ -254,7 +258,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// described operation or an earlier unchecked route: dispatch serves the
     /// first operation for a method, so the repeat is never reached.
     #[cfg(feature = "unchecked")]
-    fn refuse_repeated_unchecked(&self, violations: &mut Vec<Violation>)
+    fn refuse_repeated_unchecked(&self, violations: &mut Vec<Violation<RouterError>>)
     where
         C: 'static,
     {
@@ -285,7 +289,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 };
                 violations.push(error_at(
                     location,
-                    SpecError::DuplicateOperation {
+                    RouterError::DuplicateOperation {
                         method: *method,
                         path: route.pattern.clone(),
                     },
@@ -397,7 +401,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             if item.set_operation(method, operation).is_some() {
                 violations.push(error_at(
                     format!("{location}/{}", method.as_wire_str().to_lowercase()),
-                    SpecError::DuplicateOperation { method, path: key },
+                    RouterError::DuplicateOperation { method, path: key },
                 ));
             }
         }
@@ -448,11 +452,16 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
         let version = document.spec_version().unwrap_or_default();
 
-        violations.extend(kynos_openapi::validate::Validator::new(version).validate(&document));
+        violations.extend(
+            kynos_openapi::validate::Validator::new(version)
+                .validate(&document)
+                .into_iter()
+                .map(lift),
+        );
 
         if self.deny_unchecked_schemas {
             for violation in &mut violations {
-                if violation.error == SpecError::UncheckedSchema {
+                if violation.error == RouterError::Spec(SpecError::UncheckedSchema) {
                     violation.severity = Severity::Error;
                 }
             }
@@ -469,7 +478,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 /// A described router: the document it produces, and everything wrong with it.
 struct Described {
     document: Document,
-    violations: Vec<Violation>,
+    violations: Vec<Violation<RouterError>>,
     /// Whether any operation extracts a `Link`, so the service records where
     /// each operation is mounted.
     linked: bool,
@@ -479,7 +488,7 @@ impl Described {
     /// Fails when any violation is error-level, so a misleading description is
     /// never emitted.
     fn errors(&self) -> Result<()> {
-        let errors: Vec<Violation> = self
+        let errors: Vec<Violation<RouterError>> = self
             .violations
             .iter()
             .filter(|violation| violation.severity == Severity::Error)
@@ -533,7 +542,7 @@ struct TrialTable {
 impl TrialTable {
     /// Tries a described key, skipping a shape already held (the validator
     /// reports that as `DuplicatePathTemplate`).
-    fn insert_template(&mut self, template: &kynos_openapi::PathTemplate) -> Option<SpecError> {
+    fn insert_template(&mut self, template: &kynos_openapi::PathTemplate) -> Option<RouterError> {
         if self.held.contains(template.as_str()) || !self.shapes.insert(template.normalized()) {
             return None;
         }
@@ -542,7 +551,7 @@ impl TrialTable {
 
     /// Tries a matching pattern, as `build` inserts it; a pattern already held
     /// is not tried again.
-    fn insert(&mut self, pattern: &str) -> Option<SpecError> {
+    fn insert(&mut self, pattern: &str) -> Option<RouterError> {
         if !self.held.insert(pattern.to_owned()) {
             return None;
         }
@@ -554,13 +563,13 @@ impl TrialTable {
 }
 
 /// What the match table refusing `pattern` means.
-pub(super) fn match_table_refusal(pattern: &str, error: matchit::InsertError) -> SpecError {
+pub(super) fn match_table_refusal(pattern: &str, error: matchit::InsertError) -> RouterError {
     match error {
-        matchit::InsertError::Conflict { with } => SpecError::RouteConflict {
+        matchit::InsertError::Conflict { with } => RouterError::RouteConflict {
             pattern: pattern.to_owned(),
             existing: with,
         },
-        _ => SpecError::InvalidRoutePattern {
+        _ => RouterError::InvalidRoutePattern {
             pattern: pattern.to_owned(),
         },
     }

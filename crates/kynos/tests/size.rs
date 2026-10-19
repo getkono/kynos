@@ -22,7 +22,7 @@ use std::{convert::Infallible, error::Error as StdError, mem::size_of_val};
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Empty, Full};
-use kynos::{Error, openapi::Violation};
+use kynos::{Error, error::RouterError, openapi::Violation};
 
 /// What the erased error type is, spelled the way `body.rs` spells it, so the
 /// witnesses below measure the type the library actually erases rather than a
@@ -36,7 +36,7 @@ type BoxError = Box<dyn StdError + Send + Sync>;
 #[test]
 fn a_build_failure_does_not_inline_a_violation() {
     let error = size_of::<Error>();
-    let violation = size_of::<Violation>();
+    let violation = size_of::<Violation<RouterError>>();
 
     assert!(
         error < violation,

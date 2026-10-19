@@ -94,7 +94,7 @@ pub trait Responses {
 ///
 /// `#[derive(kynos::ApiError)]` emits both from one declaration. A hand-written
 /// implementation is checked while the router is built, and a mismatch is
-/// [`SpecError::ShortCircuitMismatch`](kynos_openapi::SpecError::ShortCircuitMismatch).
+/// [`RouterError::ShortCircuitMismatch`](crate::error::RouterError::ShortCircuitMismatch).
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot be an interceptor's short circuit",
     label = "not a short circuit",
@@ -126,7 +126,7 @@ pub(crate) fn described_statuses(responses: &kynos_openapi::Responses) -> Vec<u1
 #[must_use]
 pub(crate) fn short_circuit_mismatch<S: ShortCircuit>(
     registry: &mut Registry,
-) -> Option<kynos_openapi::SpecError> {
+) -> Option<crate::error::RouterError> {
     mismatch_between(
         std::any::type_name::<S>(),
         S::STATUSES,
@@ -139,7 +139,7 @@ fn mismatch_between(
     name: &str,
     statuses: &[u16],
     responses: &kynos_openapi::Responses,
-) -> Option<kynos_openapi::SpecError> {
+) -> Option<crate::error::RouterError> {
     let normalize = |mut codes: Vec<u16>| {
         codes.sort_unstable();
         codes.dedup();
@@ -153,7 +153,7 @@ fn mismatch_between(
         return None;
     }
 
-    Some(kynos_openapi::SpecError::ShortCircuitMismatch {
+    Some(crate::error::RouterError::ShortCircuitMismatch {
         name: name.to_owned(),
         declared,
         described,
