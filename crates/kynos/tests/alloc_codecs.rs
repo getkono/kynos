@@ -870,9 +870,11 @@ mod multipart {
     /// multipart walks the octets through a parser holding its own state,
     /// produces an owned `Part` per part — field name, optional file name,
     /// optional media type — and then converts each part into its declared
-    /// field. The responding direction pays a comparable bill for the mirror
-    /// of that: a delimiter derived from the parts' octets, a header block
-    /// rendered per part, and the framing around them.
+    /// field. Most of that decoding bill is `multer`'s, per part, which
+    /// [`performance.md`](../../../docs/performance.md#the-allocation)
+    /// attributes. The responding direction pays less: the parts' owned names
+    /// and media types, and one buffer the header blocks and the framing are
+    /// written into, under a delimiter that allocates nothing.
     const RECORDED: Table = Table {
         bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 7),
         transport_floor: (
@@ -891,9 +893,9 @@ mod multipart {
             "POST /multipart",
             decode_request,
             StatusCode::NO_CONTENT,
-            31,
+            24,
         ),
-        encoding: ("GET /multipart/out", encode_request, StatusCode::OK, 26),
+        encoding: ("GET /multipart/out", encode_request, StatusCode::OK, 14),
     };
 
     /// The record: what each operation of this service costs today.
