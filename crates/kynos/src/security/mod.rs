@@ -242,7 +242,10 @@ pub trait SecurityScheme: Send + Sync + 'static {
     /// one.
     ///
     /// Declared on the scheme so the challenge in the description and the one
-    /// on the wire are one string.
+    /// on the wire are one string. RFC 9110 section 15.5.2 requires one on
+    /// every 401, so every scheme in [`schemes`] and every derived kind but
+    /// `http` names one; the default of none is only for a scheme whose
+    /// challenge the application alone can state.
     #[must_use]
     fn challenge() -> Option<&'static str> {
         None

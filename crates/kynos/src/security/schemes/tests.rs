@@ -53,11 +53,16 @@ fn every_configuration_free_scheme_describes_itself_and_names_its_challenge() {
                 Some(r#"Basic realm="api", charset="UTF-8""#),
                 None
             ),
-            // No challenge: the certificate is presented during the TLS
-            // handshake, so a 401 has no `WWW-Authenticate` scheme to name
-            // -- there is none registered for it, and inventing one would
-            // advertise a challenge no client could answer.
-            ("MutualTls", Described::mutual_tls(), None, None),
+            // RFC 9110 section 15.5.2: a 401 MUST carry a challenge. None is
+            // registered for a certificate presented during the TLS
+            // handshake, so the challenge is a bare unregistered
+            // `auth-scheme` naming the OpenAPI `mutualTLS` type.
+            (
+                "MutualTls",
+                Described::mutual_tls(),
+                Some("MutualTLS"),
+                None
+            ),
         ]
     );
 }

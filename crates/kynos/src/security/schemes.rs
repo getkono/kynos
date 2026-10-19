@@ -208,8 +208,6 @@ impl<T: Send + 'static, P: Scope, R: Realm> SecurityScheme for Basic<T, P, R> {
     }
 }
 
-// No `challenge`: no HTTP authentication scheme is registered for a
-// certificate presented during the TLS handshake.
 impl<T: Send + 'static, P: Scope> SecurityScheme for MutualTls<T, P> {
     const NAME: &'static str = "MutualTls";
     type Credential = T;
@@ -217,6 +215,14 @@ impl<T: Send + 'static, P: Scope> SecurityScheme for MutualTls<T, P> {
 
     fn describe() -> kynos_openapi::SecurityScheme {
         kynos_openapi::SecurityScheme::mutual_tls()
+    }
+
+    /// `MutualTLS`: RFC 9110 section 15.5.2 requires a challenge on every 401,
+    /// and no registered scheme names a certificate presented during the TLS
+    /// handshake, so the challenge names the OpenAPI `mutualTLS` type, an
+    /// unregistered `auth-scheme` token (section 11.1) carrying no parameter.
+    fn challenge() -> Option<&'static str> {
+        Some("MutualTLS")
     }
 }
 
