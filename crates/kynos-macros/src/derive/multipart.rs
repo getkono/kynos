@@ -79,6 +79,12 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let reads = declared.iter().map(Declared::read);
     let idents = declared.iter().map(Declared::ident);
     let writes = declared.iter().map(Declared::write);
+    // How many parts the fields write, so the list is allocated once.
+    let count = declared
+        .iter()
+        .map(Declared::count)
+        .reduce(|sum, count| quote!(#sum + #count))
+        .unwrap_or_else(|| quote!(0));
     let moved = declared.iter().map(Declared::ident);
 
     let name = &input.ident;
@@ -110,7 +116,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
             fn into_parts(self) -> ::std::vec::Vec<::kynos::extract::body::multipart::Part> {
                 let Self { #(#moved),* } = self;
                 let mut parts: ::std::vec::Vec<::kynos::extract::body::multipart::Part> =
-                    ::std::vec::Vec::new();
+                    ::std::vec::Vec::with_capacity(#count);
                 #(#writes)*
                 parts
             }
@@ -195,11 +201,11 @@ fn dispatch(declared: &[Declared<'_>], closed: bool) -> TokenStream2 {
         quote!({})
     };
     declared.iter().rev().fold(undeclared, |rest, field| {
-        let gathered = field.gathered();
+        let gather = field.gather();
         let name = field.name;
         quote! {
             if part.name == #name {
-                #gathered.push(part);
+                #gather
             } else #rest
         }
     })
@@ -270,26 +276,85 @@ impl<'a> Declared<'a> {
         format_ident!("__kynos_parts_{}", self.index)
     }
 
-    fn binding(&self) -> TokenStream2 {
-        let gathered = self.gathered();
-        quote! {
-            let mut #gathered: ::std::vec::Vec<::kynos::extract::body::multipart::Part> =
-                ::std::vec::Vec::new();
+    /// One part converted into this field's element, spanned at the field so
+    /// a missing `FromPart` is reported there.
+    fn convert(&self) -> TokenStream2 {
+        let element = self.element;
+        quote_spanned! {self.field.ty.span()=>
+            <#element as ::kynos::extract::body::multipart::FromPart>::from_part(part)
         }
     }
 
-    /// Binds this field from the parts gathered for it, spanned at the field
-    /// so a missing `FromPart` is reported there.
+    /// The local's declaration. A single part is held as it arrived; a
+    /// repeated field's are converted as they arrive, keeping the first
+    /// failure to report in declaration order.
+    fn binding(&self) -> TokenStream2 {
+        let gathered = self.gathered();
+        let element = self.element;
+        match self.arity {
+            Arity::One | Arity::Optional => quote! {
+                let mut #gathered: ::core::option::Option<
+                    ::kynos::extract::body::multipart::Part,
+                > = ::core::option::Option::None;
+            },
+            Arity::Repeated => quote! {
+                let mut #gathered: ::core::result::Result<
+                    ::std::vec::Vec<#element>,
+                    ::kynos::error::rejection::BodyRejection,
+                > = ::core::result::Result::Ok(::std::vec::Vec::new());
+            },
+        }
+    }
+
+    /// Takes in one part naming this field. Only the first is kept for a
+    /// single part, and nothing more is converted once a repeated one fails.
+    fn gather(&self) -> TokenStream2 {
+        let gathered = self.gathered();
+        match self.arity {
+            Arity::One | Arity::Optional => quote! {
+                if ::core::option::Option::is_none(&#gathered) {
+                    #gathered = ::core::option::Option::Some(part);
+                }
+            },
+            Arity::Repeated => {
+                let convert = self.convert();
+                quote! {
+                    if let ::core::result::Result::Ok(values) = &mut #gathered {
+                        match #convert {
+                            ::core::result::Result::Ok(value) => values.push(value),
+                            ::core::result::Result::Err(rejection) => {
+                                #gathered = ::core::result::Result::Err(rejection);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// How many parts this field writes.
+    fn count(&self) -> TokenStream2 {
+        let ident = self.ident();
+        match self.arity {
+            Arity::One => quote!(1usize),
+            Arity::Optional => quote! {
+                <::core::primitive::usize as ::core::convert::From<::core::primitive::bool>>::from(
+                    ::core::option::Option::is_some(&#ident),
+                )
+            },
+            Arity::Repeated => quote!(#ident.len()),
+        }
+    }
+
+    /// Binds this field from what was gathered for it.
     fn read(&self) -> TokenStream2 {
         let ident = self.ident();
         let gathered = self.gathered();
-        let element = self.element;
         let span = self.field.ty.span();
         let name = self.name;
 
-        let one = quote_spanned! {span=>
-            <#element as ::kynos::extract::body::multipart::FromPart>::from_part(part)?
-        };
+        let one = self.convert();
+        let one = quote!(#one?);
 
         // What the field is when no part carries it: its `default`, else
         // what its arity says absence is.
@@ -316,28 +381,26 @@ impl<'a> Declared<'a> {
         };
 
         match self.arity {
-            // Only the first part under this name is read.
+            // Only the first part under this name was kept.
             Arity::One => quote! {
-                let #ident = match ::core::iter::IntoIterator::into_iter(#gathered).next() {
+                let #ident = match #gathered {
                     ::core::option::Option::Some(part) => #one,
                     ::core::option::Option::None => #missing,
                 };
             },
             Arity::Optional => quote! {
-                let #ident = match ::core::iter::IntoIterator::into_iter(#gathered).next() {
+                let #ident = match #gathered {
                     ::core::option::Option::Some(part) => ::core::option::Option::Some(#one),
                     ::core::option::Option::None => #missing,
                 };
             },
             Arity::Repeated => quote! {
-                let #ident = if #gathered.is_empty() {
-                    #missing
-                } else {
-                    let mut #ident = ::std::vec::Vec::with_capacity(#gathered.len());
-                    for part in #gathered {
-                        #ident.push(#one);
+                let #ident = match #gathered {
+                    ::core::result::Result::Ok(values) if values.is_empty() => #missing,
+                    ::core::result::Result::Ok(values) => values,
+                    ::core::result::Result::Err(rejection) => {
+                        return ::core::result::Result::Err(rejection);
                     }
-                    #ident
                 };
             },
         }
