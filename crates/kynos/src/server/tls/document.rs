@@ -4,9 +4,15 @@
 //! is the one listener setting that reaches the OpenAPI document. Enabling mTLS
 //! and documenting it are the same act.
 
-use crate::server::error::ServerError;
+use crate::{
+    security::{SecurityScheme, schemes::MutualTls},
+    server::error::ServerError,
+};
 
-pub(in crate::server) const MUTUAL_TLS_NAME: &str = "MutualTls";
+/// The component key the scheme is registered under: the name a `MutualTls`
+/// guard registers it under, so a guard's entry is the same scheme rather than
+/// a conflict.
+pub(in crate::server) const MUTUAL_TLS_NAME: &str = <MutualTls as SecurityScheme>::NAME;
 
 pub(in crate::server) fn apply_mutual_tls(
     document: &mut kynos_openapi::Document,
