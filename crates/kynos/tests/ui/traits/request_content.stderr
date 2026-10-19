@@ -17,9 +17,9 @@ help: the trait `RequestContent` is not implemented for `NotABody`
             MultipartForm<T>
             OneOf<L, R>
             Protobuf<T>
-            Text
             kynos::extract::body::binary::Binary<M>
             kynos::extract::body::form::Form<T>
+            kynos::extract::body::text::Text
             kynos::prelude::Json<T>
 note: required by a bound in `is_content`
  --> tests/ui/traits/request_content.rs:5:18
