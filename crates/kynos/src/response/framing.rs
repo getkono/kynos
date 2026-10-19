@@ -61,10 +61,8 @@ pub(crate) fn boundary<'a>(bodies: impl Iterator<Item = &'a [u8]> + Clone) -> Bo
     let mut counter: u64 = 0;
     loop {
         let candidate = Boundary::new(counter);
-        if !bodies
-            .clone()
-            .any(|body| contains(body, candidate.as_bytes()))
-        {
+        // The octets themselves, which a `str` would validate on every part.
+        if !bodies.clone().any(|body| contains(body, &candidate.0)) {
             return candidate;
         }
         counter += 1;
@@ -177,7 +175,11 @@ pub(crate) fn unfolded(value: &str) -> String {
 /// [`unfolded`], written to `sink` rather than allocated.
 #[cfg(feature = "multipart")]
 pub(crate) fn put_unfolded(value: &str, sink: &mut impl Sink) {
-    for piece in value.split(['\r', '\n']) {
-        sink.put(piece.as_bytes());
+    // Split on octets: both are ASCII, which no UTF-8 sequence contains.
+    for piece in value
+        .as_bytes()
+        .split(|&octet| octet == b'\r' || octet == b'\n')
+    {
+        sink.put(piece);
     }
 }

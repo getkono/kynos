@@ -172,16 +172,19 @@ impl Encapsulation for Part {
 /// `\\` escapes its closing quote and breaks the header: lossy everywhere
 /// beats unreadable to some.
 fn put_quoted(value: &str, sink: &mut impl Sink) {
-    let mut rest = value;
-    // Each is ASCII, so it never splits a UTF-8 sequence.
-    while let Some(at) = rest.find(['"', '\\', '\r', '\n']) {
-        sink.put(&rest.as_bytes()[..at]);
-        if rest.as_bytes()[at] == b'"' {
+    // Scanned as octets: each is ASCII, which no UTF-8 sequence contains.
+    let mut rest = value.as_bytes();
+    while let Some(at) = rest
+        .iter()
+        .position(|octet| matches!(octet, b'"' | b'\\' | b'\r' | b'\n'))
+    {
+        sink.put(&rest[..at]);
+        if rest[at] == b'"' {
             sink.put(b"\\\"");
         }
         rest = &rest[at + 1..];
     }
-    sink.put(rest.as_bytes());
+    sink.put(rest);
 }
 
 /// [`put_quoted`]'s output, for the tests and the fuzz target that read it.
