@@ -2,12 +2,11 @@
 //! and preflights, and the small functions that shape an emitted document.
 
 use super::{
-    Arc, Catch, Document, ErasedInterceptor, Error, FallbackPolicy, Info, PanicPolicy, PathEntry,
-    Result, Severity, SpecError, SpecVersion, Violation, dispatch,
+    Arc, Catch, Document, ErasedInterceptor, Error, FallbackPolicy, HashMap, Info, PanicPolicy,
+    PathEntry, Result, Severity, SpecError, SpecVersion, Violation, describe::match_table_refusal,
+    dispatch,
 };
-
-#[cfg(feature = "unchecked")]
-use super::{HashMap, describe::match_table_refusal};
+use crate::schema::constraints::Pointer;
 
 /// Adds the routes no path template expresses to the match table.
 ///
@@ -25,25 +24,14 @@ pub(super) fn install_unchecked<C>(
     index_of: &mut HashMap<String, usize>,
 ) -> Result<()> {
     for route in &unchecked.routes {
-        let key = route.pattern.clone();
-        let index = if let Some(index) = index_of.get(&key) {
-            *index
-        } else {
-            let index = paths.len();
-            matcher
-                .insert(key.clone(), index)
-                .map_err(|error| invalid(match_table_refusal(&key, error)))?;
-            paths.push(PathEntry {
-                template: key.clone(),
-                matched: crate::extract::connection::MatchedPath(dispatch::intern(&key)),
-                // From the pattern, since a catch-all is no `PathTemplate`.
-                variables: matcher_variables(&key),
-                allow: dispatch::allow_header(&[]),
-                operations: Vec::new(),
-            });
-            index_of.insert(key, index);
-            index
-        };
+        // Variables from the pattern, since a catch-all is no `PathTemplate`.
+        let index = path_entry(
+            &route.pattern,
+            || matcher_variables(&route.pattern),
+            matcher,
+            paths,
+            index_of,
+        )?;
 
         let mut unchecked_layers = unchecked.layers.clone();
         unchecked_layers.extend(route.layers.iter().cloned());
@@ -72,6 +60,38 @@ pub(super) fn install_unchecked<C>(
     Ok(())
 }
 
+/// The index of the entry serving `key`, adding it to the match table first
+/// when no earlier operation did, with the variable names `variables` gives.
+///
+/// # Errors
+///
+/// Returns [`Error::Invalid`] when the match table refuses `key`.
+pub(super) fn path_entry<C>(
+    key: &str,
+    variables: impl FnOnce() -> Vec<&'static str>,
+    matcher: &mut matchit::Router<usize>,
+    paths: &mut Vec<PathEntry<C>>,
+    index_of: &mut HashMap<String, usize>,
+) -> Result<usize> {
+    if let Some(index) = index_of.get(key) {
+        return Ok(*index);
+    }
+
+    let index = paths.len();
+    matcher
+        .insert(key, index)
+        .map_err(|error| invalid(match_table_refusal(key, error)))?;
+    paths.push(PathEntry {
+        template: key.to_owned(),
+        matched: crate::extract::connection::MatchedPath(dispatch::intern(key)),
+        variables: variables(),
+        allow: dispatch::allow_header(&[]),
+        operations: Vec::new(),
+    });
+    index_of.insert(key.to_owned(), index);
+    Ok(index)
+}
+
 /// The variable names a matching pattern captures; `{*name}` captures `name`,
 /// as matchit reports it.
 #[cfg(feature = "unchecked")]
@@ -89,6 +109,19 @@ pub(super) fn matcher_variables(pattern: &str) -> Vec<&'static str> {
 /// Whether `P` selected recovery, by type identity.
 pub(super) fn catches<P: PanicPolicy>() -> bool {
     std::any::TypeId::of::<P>() == std::any::TypeId::of::<Catch>()
+}
+
+/// Refuses, in the constant evaluation calling it, selecting recovery in a
+/// build that cannot unwind: under `panic = "abort"` there is nothing to catch.
+#[expect(
+    clippy::assertions_on_constants,
+    reason = "constant per build by design; a caller's `const` block evaluates it only once recovery is selected"
+)]
+pub(super) const fn require_unwind() {
+    assert!(
+        cfg!(panic = "unwind"),
+        "Kynos panic recovery requires `panic = \"unwind\"`; remove `catch_panics` or enable unwinding"
+    );
 }
 
 /// The highest version this build can express, which is what a description is
@@ -311,7 +344,30 @@ pub(super) fn invalid(error: SpecError) -> Error {
     }
 }
 
-/// Escapes one `paths` key for use as a JSON Pointer token, per RFC 6901.
-pub(super) fn pointer_token(key: &str) -> String {
-    key.replace('~', "~0").replace('/', "~1")
+/// Parses a mount-site path literal, or records why it is malformed in
+/// `violations`, located at `#/paths` since it names no key yet.
+pub(super) fn parse_or_record(
+    path: &str,
+    violations: &mut Vec<Violation>,
+) -> Option<kynos_openapi::PathTemplate> {
+    kynos_openapi::PathTemplate::parse(path)
+        .map_err(|reason| {
+            violations.push(Violation {
+                location: "#/paths".to_owned(),
+                severity: Severity::Error,
+                error: SpecError::InvalidPathTemplate {
+                    template: path.to_owned(),
+                    reason,
+                },
+            });
+        })
+        .ok()
+}
+
+/// Where one `paths` key sits in the document: `#/paths/` and the key as an
+/// RFC 6901 reference token.
+pub(super) fn path_location(key: &str) -> String {
+    let paths = Pointer::root();
+    let paths = paths.member("paths");
+    format!("#{}", paths.member(key))
 }

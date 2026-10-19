@@ -195,7 +195,7 @@ impl OperationCx<'_> {
     ) {
         let name = name.into();
 
-        if status.is_range() {
+        let StatusPattern::Code(code) = status else {
             let covered: Vec<String> = self
                 .operation
                 .responses
@@ -213,20 +213,25 @@ impl OperationCx<'_> {
             }
 
             return;
-        }
+        };
 
-        let key = status.to_string();
+        let key = code.to_string();
         self.operation
             .responses
             .responses
             .entry(key.clone())
-            .or_insert_with(|| RefOr::Item(Response::new(describe_status(status))));
+            .or_insert_with(|| RefOr::Item(Response::new(describe_code(code))));
         declare_header(&mut self.operation.responses.responses, &key, &name, header);
     }
 
     /// Sets the operation identifier.
     pub fn set_operation_id(&mut self, id: impl Into<String>) {
         self.operation.operation_id = Some(id.into());
+    }
+
+    /// The operation identifier set so far, empty when none is.
+    pub(crate) fn operation_id(&self) -> &str {
+        self.operation.operation_id.as_deref().unwrap_or_default()
     }
 
     /// Sets the summary.
@@ -309,23 +314,13 @@ fn declare_header(
 }
 
 /// The description given to a response entry created only to carry a header:
-/// the status's RFC 9110 reason phrase.
-fn describe_status(status: StatusPattern) -> String {
-    let class = match status {
-        StatusPattern::Code(code) => {
-            return StatusCode::from_u16(code)
-                .ok()
-                .and_then(|code| code.canonical_reason())
-                .map_or_else(|| format!("a `{code}` response"), str::to_owned);
-        }
-        StatusPattern::Informational => "informational",
-        StatusPattern::Success => "successful",
-        StatusPattern::Redirection => "redirection",
-        StatusPattern::ClientError => "client error",
-        StatusPattern::ServerError => "server error",
-    };
-
-    format!("a {class} response")
+/// the code's RFC 9110 reason phrase. A range never mints an entry, so only an
+/// exact code is described.
+fn describe_code(code: u16) -> String {
+    StatusCode::from_u16(code)
+        .ok()
+        .and_then(|status| status.canonical_reason())
+        .map_or_else(|| format!("a `{code}` response"), str::to_owned)
 }
 
 /// A tag, as a type.

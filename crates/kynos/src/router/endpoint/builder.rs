@@ -149,12 +149,7 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
     /// ```
     #[must_use]
     pub fn catch_panics(self) -> EndpointBuilder<C, H, A, Catch, I> {
-        const {
-            assert!(
-                cfg!(panic = "unwind"),
-                "Kynos panic recovery requires `panic = \"unwind\"`; remove `catch_panics` or enable unwinding"
-            );
-        }
+        const { install::require_unwind() }
         self.retype()
     }
 
@@ -269,13 +264,8 @@ where
         // First, so the handler's responses win over an interceptor's.
         <H as Handler<C, A>>::describe(operation);
 
-        let route = Route::new(
-            self.path.as_str(),
-            self.operation_id.unwrap_or_default(),
-            self.method,
-        );
         for interceptor in &self.interceptors {
-            interceptor.describe(route, operation);
+            interceptor.describe(operation);
         }
 
         if let Some(id) = self.operation_id {
@@ -292,7 +282,7 @@ where
         }
         operation.set_deprecated(self.deprecated);
 
-        if recovers::<P>() {
+        if install::catches::<P>() {
             let responses = dispatch::recovery::panic_responses(operation.registry());
             operation.add_responses(&responses);
         }
@@ -319,7 +309,7 @@ where
             }
         };
 
-        if recovers::<P>() {
+        if install::catches::<P>() {
             match dispatch::recovery::recover(served).await {
                 Ok(response) => response,
                 Err(payload) => dispatch::recovery::recovered_response(payload),
@@ -355,9 +345,4 @@ where
     ) -> Pin<Box<dyn Future<Output = Response> + Send + 'a>> {
         Box::pin(Handler::call(self.handler.clone(), request, context))
     }
-}
-
-/// Whether `P` selected recovery, by type identity.
-fn recovers<P: PanicPolicy>() -> bool {
-    std::any::TypeId::of::<P>() == std::any::TypeId::of::<Catch>()
 }

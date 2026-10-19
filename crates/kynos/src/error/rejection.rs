@@ -76,256 +76,179 @@ fn pointer_errors(failures: BTreeMap<String, String>) -> Vec<serde_json::Value> 
         .collect()
 }
 
-/// A path parameter did not match its declared schema.
-#[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
-pub enum PathRejection {
-    /// The parameter could not be decoded. Produces 400.
-    #[error("path parameter `{name}` is not valid")]
-    Invalid {
-        /// The parameter that failed.
-        name: String,
-        /// What was wrong with it.
-        detail: String,
-    },
-
-    /// The parameter decoded as a value that breaks a bound its schema
-    /// declares. Produces 400.
-    ///
-    /// Raised by a derived `PathParams` for a field's `#[schema(...)]` bound or
-    /// its type's. 400 rather than 422, as for a query parameter: a path is part
-    /// of the request's target, not its content.
-    #[error("path parameter `{name}` does not satisfy its schema")]
-    Schema {
-        /// The parameter that failed.
-        name: String,
-        /// The failures, keyed by JSON Pointer into the decoded parameter.
-        failures: BTreeMap<String, String>,
-    },
-}
-
-impl PathRejection {
-    /// The status this rejection produces.
-    #[must_use]
-    pub fn status(&self) -> StatusCode {
-        match self {
-            Self::Invalid { .. } | Self::Schema { .. } => StatusCode::BAD_REQUEST,
+/// Declares a parameter rejection: an `Invalid` and a `Schema` variant, both
+/// 400, over the `subject` ("parameter", "header", ...) its field docs name.
+///
+/// A leading `#[cfg(...)]` gates the type and every implementation with it.
+/// Each invocation spells its own derive, so a sweep reading declarations from
+/// source finds every rejection by name.
+macro_rules! parameter_rejection {
+    (#[cfg($cfg:meta)] $($rest:tt)*) => {
+        parameter_rejection!(@[$cfg] $($rest)*);
+    };
+    (
+        @[$($cfg:meta)?]
+        subject: $subject:literal,
+        $(#[$meta:meta])*
+        pub enum $name:ident {
+            $(#[$invalid:meta])*
+            Invalid,
+            $(#[$schema:meta])*
+            Schema $(,)?
         }
-    }
-}
+    ) => {
+        $(#[cfg($cfg)])?
+        $(#[$meta])*
+        pub enum $name {
+            $(#[$invalid])*
+            Invalid {
+                #[doc = concat!("The ", $subject, " that failed.")]
+                name: String,
+                /// What was wrong with it.
+                detail: String,
+            },
 
-impl IntoProblem for PathRejection {
-    fn into_problem(self) -> Problem {
-        let status = self.status();
-        let summary = self.to_string();
+            $(#[$schema])*
+            Schema {
+                #[doc = concat!("The ", $subject, " that failed.")]
+                name: String,
+                #[doc = concat!(
+                    "The failures, keyed by JSON Pointer into the decoded ",
+                    $subject,
+                    "."
+                )]
+                failures: BTreeMap<String, String>,
+            },
+        }
 
-        match self {
-            Self::Invalid { detail, .. } => {
-                Problem::new(status).with_detail(format!("{summary}: {detail}"))
+        $(#[cfg($cfg)])?
+        impl $name {
+            /// The status this rejection produces.
+            #[must_use]
+            pub fn status(&self) -> StatusCode {
+                match self {
+                    Self::Invalid { .. } | Self::Schema { .. } => StatusCode::BAD_REQUEST,
+                }
             }
-            // Pointers are relative to the parameter the detail names.
-            Self::Schema { failures, .. } => Problem::new(status)
-                .with_detail(summary)
-                .with_extension("errors", pointer_errors(failures)),
         }
-    }
 
-    fn statuses() -> &'static [StatusCode] {
-        &[StatusCode::BAD_REQUEST]
-    }
-}
+        $(#[cfg($cfg)])?
+        impl IntoProblem for $name {
+            fn into_problem(self) -> Problem {
+                let status = self.status();
+                let summary = self.to_string();
 
-rejection_response!(PathRejection);
-
-/// A query parameter was missing or malformed.
-#[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
-pub enum QueryRejection {
-    /// The parameter was absent or could not be decoded. Produces 400.
-    #[error("query parameter `{name}` is not valid")]
-    Invalid {
-        /// The parameter that failed.
-        name: String,
-        /// What was wrong with it.
-        detail: String,
-    },
-
-    /// The parameter decoded as a value that breaks a bound its schema
-    /// declares. Produces 400.
-    ///
-    /// Raised by
-    /// [`QueryString`](crate::extract::params::querystring::QueryString), and
-    /// by [`Query`](crate::extract::params::query::Query) over a derived
-    /// `QueryParams` for a field's `#[schema(...)]` bound or its type's.
-    /// 400 rather than 422, since RFC 9110's 422 is about the request's
-    /// content and a query string is part of its target.
-    #[error("query parameter `{name}` does not satisfy its schema")]
-    Schema {
-        /// The parameter that failed.
-        name: String,
-        /// The failures, keyed by JSON Pointer into the decoded parameter.
-        failures: BTreeMap<String, String>,
-    },
-}
-
-impl QueryRejection {
-    /// The status this rejection produces.
-    #[must_use]
-    pub fn status(&self) -> StatusCode {
-        match self {
-            Self::Invalid { .. } | Self::Schema { .. } => StatusCode::BAD_REQUEST,
-        }
-    }
-}
-
-impl IntoProblem for QueryRejection {
-    fn into_problem(self) -> Problem {
-        let status = self.status();
-        let summary = self.to_string();
-
-        match self {
-            Self::Invalid { detail, .. } => {
-                Problem::new(status).with_detail(format!("{summary}: {detail}"))
+                match self {
+                    Self::Invalid { detail, .. } => {
+                        Problem::new(status).with_detail(format!("{summary}: {detail}"))
+                    }
+                    // Pointers are relative to the subject the detail names.
+                    Self::Schema { failures, .. } => Problem::new(status)
+                        .with_detail(summary)
+                        .with_extension("errors", pointer_errors(failures)),
+                }
             }
-            // Pointers are relative to the parameter the detail names.
-            Self::Schema { failures, .. } => Problem::new(status)
-                .with_detail(summary)
-                .with_extension("errors", pointer_errors(failures)),
-        }
-    }
 
-    fn statuses() -> &'static [StatusCode] {
-        &[StatusCode::BAD_REQUEST]
-    }
-}
-
-rejection_response!(QueryRejection);
-
-/// A header was missing or malformed.
-#[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
-pub enum HeaderRejection {
-    /// The header was absent or could not be decoded. Produces 400.
-    #[error("header `{name}` is not valid")]
-    Invalid {
-        /// The header that failed.
-        name: String,
-        /// What was wrong with it.
-        detail: String,
-    },
-
-    /// The header decoded as a value that breaks a bound its schema
-    /// declares. Produces 400.
-    ///
-    /// Raised by a derived `HeaderParams` for a field's `#[schema(...)]` bound
-    /// or its type's. 400 rather than 422, since RFC 9110's 422 is about the
-    /// request's content and a header field is not part of it.
-    #[error("header `{name}` does not satisfy its schema")]
-    Schema {
-        /// The header that failed.
-        name: String,
-        /// The failures, keyed by JSON Pointer into the decoded header.
-        failures: BTreeMap<String, String>,
-    },
-}
-
-impl HeaderRejection {
-    /// The status this rejection produces.
-    #[must_use]
-    pub fn status(&self) -> StatusCode {
-        match self {
-            Self::Invalid { .. } | Self::Schema { .. } => StatusCode::BAD_REQUEST,
-        }
-    }
-}
-
-impl IntoProblem for HeaderRejection {
-    fn into_problem(self) -> Problem {
-        let status = self.status();
-        let summary = self.to_string();
-
-        match self {
-            Self::Invalid { detail, .. } => {
-                Problem::new(status).with_detail(format!("{summary}: {detail}"))
+            fn statuses() -> &'static [StatusCode] {
+                &[StatusCode::BAD_REQUEST]
             }
-            // Pointers are relative to the header the detail names.
-            Self::Schema { failures, .. } => Problem::new(status)
-                .with_detail(summary)
-                .with_extension("errors", pointer_errors(failures)),
         }
-    }
 
-    fn statuses() -> &'static [StatusCode] {
-        &[StatusCode::BAD_REQUEST]
+        $(#[cfg($cfg)])?
+        rejection_response!($name);
+    };
+    ($($rest:tt)*) => {
+        parameter_rejection!(@[] $($rest)*);
+    };
+}
+
+parameter_rejection! {
+    subject: "parameter",
+    /// A path parameter did not match its declared schema.
+    #[derive(Debug, thiserror::Error)]
+    #[non_exhaustive]
+    pub enum PathRejection {
+        /// The parameter could not be decoded. Produces 400.
+        #[error("path parameter `{name}` is not valid")]
+        Invalid,
+
+        /// The parameter decoded as a value that breaks a bound its schema
+        /// declares. Produces 400.
+        ///
+        /// Raised by a derived `PathParams` for a field's `#[schema(...)]` bound or
+        /// its type's. 400 rather than 422, as for a query parameter: a path is part
+        /// of the request's target, not its content.
+        #[error("path parameter `{name}` does not satisfy its schema")]
+        Schema,
     }
 }
 
-rejection_response!(HeaderRejection);
+parameter_rejection! {
+    subject: "parameter",
+    /// A query parameter was missing or malformed.
+    #[derive(Debug, thiserror::Error)]
+    #[non_exhaustive]
+    pub enum QueryRejection {
+        /// The parameter was absent or could not be decoded. Produces 400.
+        #[error("query parameter `{name}` is not valid")]
+        Invalid,
 
-/// A cookie was missing or malformed.
-#[cfg(feature = "cookie")]
-#[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
-pub enum CookieRejection {
-    /// The cookie was absent or could not be decoded. Produces 400.
-    #[error("cookie `{name}` is not valid")]
-    Invalid {
-        /// The cookie that failed.
-        name: String,
-        /// What was wrong with it.
-        detail: String,
-    },
-
-    /// The cookie decoded as a value that breaks a bound its schema
-    /// declares. Produces 400.
-    ///
-    /// Raised by a derived `CookieParams` for a field's `#[schema(...)]` bound
-    /// or its type's. 400 rather than 422, since a cookie travels in a header
-    /// field rather than the request's content.
-    #[error("cookie `{name}` does not satisfy its schema")]
-    Schema {
-        /// The cookie that failed.
-        name: String,
-        /// The failures, keyed by JSON Pointer into the decoded cookie.
-        failures: BTreeMap<String, String>,
-    },
-}
-
-#[cfg(feature = "cookie")]
-impl CookieRejection {
-    /// The status this rejection produces.
-    #[must_use]
-    pub fn status(&self) -> StatusCode {
-        match self {
-            Self::Invalid { .. } | Self::Schema { .. } => StatusCode::BAD_REQUEST,
-        }
+        /// The parameter decoded as a value that breaks a bound its schema
+        /// declares. Produces 400.
+        ///
+        /// Raised by
+        /// [`QueryString`](crate::extract::params::querystring::QueryString), and
+        /// by [`Query`](crate::extract::params::query::Query) over a derived
+        /// `QueryParams` for a field's `#[schema(...)]` bound or its type's.
+        /// 400 rather than 422, since RFC 9110's 422 is about the request's
+        /// content and a query string is part of its target.
+        #[error("query parameter `{name}` does not satisfy its schema")]
+        Schema,
     }
 }
 
-#[cfg(feature = "cookie")]
-impl IntoProblem for CookieRejection {
-    fn into_problem(self) -> Problem {
-        let status = self.status();
-        let summary = self.to_string();
+parameter_rejection! {
+    subject: "header",
+    /// A header was missing or malformed.
+    #[derive(Debug, thiserror::Error)]
+    #[non_exhaustive]
+    pub enum HeaderRejection {
+        /// The header was absent or could not be decoded. Produces 400.
+        #[error("header `{name}` is not valid")]
+        Invalid,
 
-        match self {
-            Self::Invalid { detail, .. } => {
-                Problem::new(status).with_detail(format!("{summary}: {detail}"))
-            }
-            // Pointers are relative to the cookie the detail names.
-            Self::Schema { failures, .. } => Problem::new(status)
-                .with_detail(summary)
-                .with_extension("errors", pointer_errors(failures)),
-        }
-    }
-
-    fn statuses() -> &'static [StatusCode] {
-        &[StatusCode::BAD_REQUEST]
+        /// The header decoded as a value that breaks a bound its schema
+        /// declares. Produces 400.
+        ///
+        /// Raised by a derived `HeaderParams` for a field's `#[schema(...)]` bound
+        /// or its type's. 400 rather than 422, since RFC 9110's 422 is about the
+        /// request's content and a header field is not part of it.
+        #[error("header `{name}` does not satisfy its schema")]
+        Schema,
     }
 }
 
-#[cfg(feature = "cookie")]
-rejection_response!(CookieRejection);
+parameter_rejection! {
+    #[cfg(feature = "cookie")]
+    subject: "cookie",
+    /// A cookie was missing or malformed.
+    #[derive(Debug, thiserror::Error)]
+    #[non_exhaustive]
+    pub enum CookieRejection {
+        /// The cookie was absent or could not be decoded. Produces 400.
+        #[error("cookie `{name}` is not valid")]
+        Invalid,
+
+        /// The cookie decoded as a value that breaks a bound its schema
+        /// declares. Produces 400.
+        ///
+        /// Raised by a derived `CookieParams` for a field's `#[schema(...)]` bound
+        /// or its type's. 400 rather than 422, since a cookie travels in a header
+        /// field rather than the request's content.
+        #[error("cookie `{name}` does not satisfy its schema")]
+        Schema,
+    }
+}
 
 /// The request body could not be turned into the handler's argument.
 #[derive(Debug, thiserror::Error)]

@@ -2,7 +2,7 @@
 
 use std::{marker::PhantomData, sync::Arc};
 
-use kynos_openapi::{PathTemplate, Severity, SpecError, Violation};
+use kynos_openapi::Violation;
 
 use crate::{
     middleware::{
@@ -15,6 +15,7 @@ use crate::{
     router::{
         ShortCircuitCheck,
         endpoint::{DynEndpoint, set::IntoEndpoints},
+        install,
         operation::{DeclaredTag, Tag},
     },
 };
@@ -79,20 +80,10 @@ impl<C> Group<C, Propagate, ()> {
     #[must_use]
     pub fn new(prefix: &str) -> Self {
         // A malformed prefix is recorded as a violation rather than returned.
-        let (prefix, violations) = match PathTemplate::parse(prefix) {
-            Ok(template) => (template.as_str().to_owned(), Vec::new()),
-            Err(reason) => (
-                String::new(),
-                vec![Violation {
-                    location: "#/paths".to_owned(),
-                    severity: Severity::Error,
-                    error: SpecError::InvalidPathTemplate {
-                        template: prefix.to_owned(),
-                        reason,
-                    },
-                }],
-            ),
-        };
+        let mut violations = Vec::new();
+        let prefix = install::parse_or_record(prefix, &mut violations)
+            .map(|template| template.as_str().to_owned())
+            .unwrap_or_default();
 
         Self {
             prefix,
@@ -160,12 +151,7 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
     /// ```
     #[must_use]
     pub fn catch_panics(self) -> Group<C, Catch, I, S> {
-        const {
-            assert!(
-                cfg!(panic = "unwind"),
-                "Kynos panic recovery requires `panic = \"unwind\"`; remove `catch_panics` or enable unwinding"
-            );
-        }
+        const { install::require_unwind() }
         self.retype()
     }
 
