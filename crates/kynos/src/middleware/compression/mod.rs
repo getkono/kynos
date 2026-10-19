@@ -11,7 +11,6 @@ use async_compression::{
     zstd::CParameter,
 };
 use bytes::{Bytes, BytesMut};
-use http_body::Body as _;
 use http_body_util::BodyExt;
 use tokio::io::{AsyncRead, ReadBuf};
 
@@ -689,11 +688,12 @@ where
             _ => return Ok(continued.with_headers(ContentEncoding::default())),
         };
 
-        let body = continued.take_body();
+        let mut body = continued.take_body();
+        let length = body.exact_length();
 
         // An unknown length streams regardless of `min_size`; `Required`
         // outranks `min_size` but not an empty body.
-        let worth_encoding = match body.size_hint().exact() {
+        let worth_encoding = match length {
             Some(length) => length > 0 && (length >= self.min_size || policy == Encoding::Required),
             None => true,
         };
@@ -708,7 +708,7 @@ where
             return Ok(continued.with_headers(ContentEncoding::default()));
         }
 
-        if body.size_hint().exact().is_none() {
+        if length.is_none() {
             continued.set_body(crate::http::body::Body::from_body(Streamed::new(
                 body,
                 coding,

@@ -455,12 +455,10 @@ fn refuses_cross_origin(headers: &HeaderMap) -> bool {
 /// part-way comes back as a body failing the same way: RFC 9111 section 3.3
 /// forbids sending an incomplete response unmarked.
 async fn bounded(
-    body: crate::http::body::Body,
+    mut body: crate::http::body::Body,
     limit: u64,
 ) -> Result<bytes::Bytes, crate::http::body::Body> {
-    use http_body::Body as _;
-
-    if body.size_hint().exact().is_none_or(|length| length > limit) {
+    if body.exact_length().is_none_or(|length| length > limit) {
         return Err(body);
     }
 
