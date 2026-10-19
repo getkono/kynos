@@ -246,13 +246,20 @@ async fn sixteen_with_body(
     NoContent
 }
 
-/// Refuses every token: nothing here runs a guard, and the witnesses below need
-/// only a context that can check one.
+/// The one token `Tokens` accepts.
+const VALID_TOKEN: &str = "valid";
+
+/// Accepts `VALID_TOKEN` and refuses every other: the witnesses below need only
+/// a context that can check one, and the ordering case a token that passes.
 struct Tokens;
 
 impl<C: Sync> Authenticator<Bearer, C> for Tokens {
-    async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
-        Err(AuthRejection::unauthenticated())
+    async fn authenticate(&self, token: BearerToken, _: &C) -> Result<String, AuthRejection> {
+        if token.as_str() == VALID_TOKEN {
+            Ok(token.into_inner())
+        } else {
+            Err(AuthRejection::unauthenticated())
+        }
     }
 
     async fn authorize(
@@ -361,6 +368,67 @@ fn both_ends_of_the_arity_list_are_handlers() {
     is_handler::<App, _, _>(guard_one_body);
     is_handler::<App, _, _>(guard_sixteen_parts);
     is_handler::<App, _, _>(guard_sixteen_with_body);
+}
+
+/// A guard, then the body, mounted so a request reaches it.
+#[kynos::post("/guarded")]
+async fn guarded_create(caller: Auth<Bearer>, Json(user): Json<User>) -> NoContent {
+    let _ = (caller, user);
+    NoContent
+}
+
+/// Sends a malformed JSON body to `guarded_create`, with `authorization` when
+/// given one, through `Service::call` for the reason `cors.rs`'s `send` gives.
+async fn send_malformed(authorization: Option<&str>) -> kynos::http::Response {
+    use kynos::http::{HeaderValue, Method, Request, header};
+
+    let service = kynos::Router::<App>::new()
+        .mount(kynos::routes![guarded_create])
+        .build(App { pool: Pool(1) })
+        .expect("a describable router");
+
+    let mut request = Request::new(kynos::http::body::Body::from("{"));
+    *request.method_mut() = Method::POST;
+    *request.uri_mut() = "/guarded".parse().expect("a usable path");
+    request.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    if let Some(value) = authorization {
+        request.headers_mut().insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(value).expect("a usable field value"),
+        );
+    }
+
+    service.call(request).await
+}
+
+/// The guard runs before every other argument, so a request both
+/// unauthenticated and malformed is refused for its credential: 401 with the
+/// challenge RFC 9110 section 11.6.1 requires, never the 400 the body earns,
+/// which would tell a caller with no credential how the operation parses.
+///
+/// The control sends the same body under a token the guard accepts, and is
+/// refused for the body, so the 401 is the guard's and not a refusal of
+/// everything.
+#[tokio::test]
+async fn the_guard_refuses_before_the_body_is_read() {
+    use kynos::http::{StatusCode, header};
+
+    let refused = send_malformed(None).await;
+    assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        refused
+            .headers()
+            .get(header::WWW_AUTHENTICATE)
+            .map(|value| value.to_str().expect("a visible challenge")),
+        Some("Bearer"),
+    );
+
+    let control = send_malformed(Some(&format!("Bearer {VALID_TOKEN}"))).await;
+    assert_eq!(control.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(control.headers().get(header::WWW_AUTHENTICATE), None);
 }
 
 /// The witnessed top arity, counted against the list that produces it.
