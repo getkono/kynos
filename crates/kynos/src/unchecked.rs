@@ -344,7 +344,8 @@ impl<C> Service<C> {
     /// Converts this service into an explicitly unchecked Tower service.
     ///
     /// Every operation in the document is flagged
-    /// [`OpaqueReason::UntypedLayer`] at conversion time, because whatever
+    /// [`OpaqueReason::UntypedLayer`](kynos_openapi::OpaqueReason::UntypedLayer)
+    /// at conversion time, because whatever
     /// wraps the returned service is outside the description.
     ///
     /// ```no_run

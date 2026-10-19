@@ -296,7 +296,8 @@ pub trait Scopes: Send + Sync + 'static {
     /// # What it promises
     ///
     /// That every 403 a `Scoped<S, R>` argument produces carries this URI or
-    /// `about:blank` — the whole guard, so an [`Authenticator::authenticate`]
+    /// `about:blank` — the whole guard, so an
+    /// [`Authenticator::authenticate`](crate::security::Authenticator::authenticate)
     /// refusing with a *third* URI breaks it too. The type system does not hold
     /// it; the conformance harness checks it.
     ///
