@@ -3,36 +3,45 @@ use crate::server::protocol::http1::Http1Config;
 #[cfg(feature = "http2")]
 use crate::server::protocol::http2::{Http2Config, Http2FlowControl, Http2KeepAlive};
 
+/// The whole struct, so a field added or changed without a decision here
+/// fails rather than going unchecked.
 #[cfg(feature = "http1")]
 #[test]
 fn http1_defaults_are_owned_by_kynos() {
-    let http1 = Http1Config::default();
-    assert!(http1.keep_alive);
-    assert_eq!(http1.max_headers, 100);
-    assert_eq!(http1.max_buffer_size, 417_792);
+    assert_eq!(
+        Http1Config::default(),
+        Http1Config {
+            keep_alive: true,
+            header_read_timeout: Some(std::time::Duration::from_secs(30)),
+            max_headers: 100,
+            max_buffer_size: 417_792,
+        }
+    );
 }
 
+/// The whole struct, for the reason the HTTP/1 case gives.
 #[cfg(feature = "http2")]
 #[test]
 fn http2_defaults_are_owned_by_kynos() {
-    let http2 = Http2Config::default();
-    assert_eq!(http2.max_concurrent_streams, 200);
-    assert_eq!(http2.max_header_list_size, 16 * 1024);
     assert_eq!(
-        http2.flow_control,
-        Http2FlowControl::Fixed {
-            initial_stream_window_size: 1024 * 1024,
-            initial_connection_window_size: 1024 * 1024,
+        Http2Config::default(),
+        Http2Config {
+            max_concurrent_streams: 200,
+            flow_control: Http2FlowControl::Fixed {
+                initial_stream_window_size: 1024 * 1024,
+                initial_connection_window_size: 1024 * 1024,
+            },
+            keep_alive: Some(Http2KeepAlive {
+                interval: std::time::Duration::from_secs(30),
+                timeout: std::time::Duration::from_secs(20),
+            }),
+            idle_timeout: Some(std::time::Duration::from_secs(30)),
+            max_header_list_size: 16 * 1024,
+            max_send_buffer_size: 400 * 1024,
+            max_pending_accept_reset_streams: 20,
+            max_local_error_reset_streams: 1024,
         }
     );
-    assert_eq!(
-        http2.keep_alive,
-        Some(Http2KeepAlive {
-            interval: std::time::Duration::from_secs(30),
-            timeout: std::time::Duration::from_secs(20),
-        })
-    );
-    assert_eq!(http2.idle_timeout, Some(std::time::Duration::from_secs(30)));
 }
 
 /// Every setter writes its own field and no other: each value differs from
@@ -545,9 +554,16 @@ fn a_transport_config_is_cheap_to_clone_per_connection() {
     );
 }
 
+/// What `Server::new` starts from, read off the server it builds rather than
+/// off the constants it was meant to read: the drain deadline its setter
+/// documents, leaving a margin under a 30-second termination window, and the
+/// connection cap `max_connections` documents.
 #[test]
-fn shutdown_default_leaves_an_orchestrator_margin() {
-    assert_eq!(super::DEFAULT_SHUTDOWN_TIMEOUT.as_secs(), 25);
+fn a_new_server_starts_from_its_documented_limits() {
+    let server = crate::server::Server::new(test_service());
+
+    assert_eq!(server.shutdown_timeout, std::time::Duration::from_secs(25));
+    assert_eq!(server.max_connections.get(), 10_000);
 }
 
 #[tokio::test]
