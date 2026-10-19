@@ -5405,8 +5405,21 @@ mod request_body_idle {
         tokio::sync::oneshot::Sender<()>,
         tokio::task::JoinHandle<crate::error::Result<()>>,
     ) {
+        idle_timed_server_over(reading_service(), idle).await
+    }
+
+    /// [`idle_timed_server`] over `service`.
+    #[cfg(any(feature = "http1", feature = "http2"))]
+    async fn idle_timed_server_over(
+        service: crate::router::service::Service<()>,
+        idle: Option<Duration>,
+    ) -> (
+        std::net::SocketAddr,
+        tokio::sync::oneshot::Sender<()>,
+        tokio::task::JoinHandle<crate::error::Result<()>>,
+    ) {
         let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
-        let bound = Server::new(reading_service())
+        let bound = Server::new(service)
             .request_body_idle_timeout(idle)
             .bind((std::net::Ipv4Addr::LOCALHOST, 0))
             .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
@@ -5461,6 +5474,169 @@ mod request_body_idle {
             response.contains("\r\ncontent-type: application/problem+json\r\n"),
             "{response}"
         );
+        assert!(
+            response.contains(r#""detail":"the request body sent nothing for 200ms""#),
+            "the 408 names the limit the body passed: {response}"
+        );
+
+        let _ = shutdown_sender.send(());
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
+    }
+
+    /// A service that waits `delay` before it reads its body, says on
+    /// `reading` when it starts, and answers as [`reading_service`] does.
+    #[cfg(feature = "http1")]
+    fn late_reading_service(
+        delay: Duration,
+        reading: std::sync::Arc<tokio::sync::Notify>,
+    ) -> crate::router::service::Service<()> {
+        use http_body_util::BodyExt as _;
+
+        let document = kynos_openapi::Document::new(
+            kynos_openapi::SpecVersion::V3_1,
+            kynos_openapi::Info::new("Test", "1"),
+        );
+        crate::router::service::Service::new(document, move |request: crate::http::Request| {
+            let reading = std::sync::Arc::clone(&reading);
+            async move {
+                tokio::time::sleep(delay).await;
+                reading.notify_one();
+                let (status, body) = match request.into_body().collect().await {
+                    Ok(collected) => (
+                        crate::http::StatusCode::OK,
+                        collected.to_bytes().len().to_string(),
+                    ),
+                    Err(error) => (crate::http::StatusCode::BAD_REQUEST, error.to_string()),
+                };
+                let mut response =
+                    crate::http::Response::new(crate::http::body::Body::from_bytes(body.into()));
+                *response.status_mut() = status;
+                response
+            }
+        })
+    }
+
+    /// The clock starts when the handler reads, not when the request arrives:
+    /// a handler that waits three limits before reading, and then waits half
+    /// of one for the rest of the body, reads it whole. Counted from arrival,
+    /// the limit would long have passed.
+    #[cfg(feature = "http1")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_handler_that_reads_late_is_not_charged_for_the_wait() {
+        use tokio::io::AsyncWriteExt as _;
+
+        const LIMIT: Duration = Duration::from_millis(400);
+
+        let reading = std::sync::Arc::new(tokio::sync::Notify::new());
+        let service = late_reading_service(LIMIT * 3, std::sync::Arc::clone(&reading));
+        let (address, shutdown_sender, server) = idle_timed_server_over(service, Some(LIMIT)).await;
+
+        let mut stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("server accepts");
+        stream
+            .write_all(
+                b"POST / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 10\r\n\r\nabc",
+            )
+            .await
+            .expect("the head and part of the body write");
+        tokio::time::timeout(STALL_BOUND, reading.notified())
+            .await
+            .expect("the handler starts reading");
+        tokio::time::sleep(LIMIT / 2).await;
+        stream.write_all(b"defghij").await.expect("the rest writes");
+        let response = read_until_closed(&mut stream).await;
+
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+        assert!(response.ends_with("\r\n\r\n10"), "{response}");
+
+        let _ = shutdown_sender.send(());
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
+    }
+
+    /// A client sending `Expect: 100-continue` sends no body until it is told
+    /// to, which happens on the handler's first read, so waiting for the
+    /// `100 Continue` is not a stall: the clock starts with the read that
+    /// sends it, here two limits after the request arrived.
+    #[cfg(feature = "http1")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_client_awaiting_100_continue_is_not_a_stall() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        const LIMIT: Duration = Duration::from_millis(400);
+        const CONTINUE: &[u8] = b"HTTP/1.1 100 Continue\r\n\r\n";
+
+        let reading = std::sync::Arc::new(tokio::sync::Notify::new());
+        let service = late_reading_service(LIMIT * 2, reading);
+        let (address, shutdown_sender, server) = idle_timed_server_over(service, Some(LIMIT)).await;
+
+        let mut stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("server accepts");
+        stream
+            .write_all(
+                b"POST / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nExpect: 100-continue\r\nContent-Length: 3\r\n\r\n",
+            )
+            .await
+            .expect("the head writes");
+        let mut interim = vec![0_u8; CONTINUE.len()];
+        tokio::time::timeout(STALL_BOUND, stream.read_exact(&mut interim))
+            .await
+            .expect("the server asks for the body")
+            .expect("the interim response reads");
+        assert_eq!(interim, CONTINUE, "{}", String::from_utf8_lossy(&interim));
+        tokio::time::sleep(LIMIT / 2).await;
+        stream.write_all(b"abc").await.expect("the body writes");
+        let response = read_until_closed(&mut stream).await;
+
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+        assert!(response.ends_with("\r\n\r\n3"), "{response}");
+
+        let _ = shutdown_sender.send(());
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
+    }
+
+    /// A response the handler returned before the body stalled stands: its
+    /// head may already be on the wire, so the stall ends that response's
+    /// body rather than turning it into a 408.
+    #[cfg(feature = "http1")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_response_returned_before_the_stall_stands() {
+        use tokio::io::AsyncWriteExt as _;
+
+        let document = kynos_openapi::Document::new(
+            kynos_openapi::SpecVersion::V3_1,
+            kynos_openapi::Info::new("Test", "1"),
+        );
+        // Answers at once, echoing the request body as its own.
+        let echo = crate::router::service::Service::new(
+            document,
+            |request: crate::http::Request| async move {
+                crate::http::Response::new(request.into_body())
+            },
+        );
+        let (address, shutdown_sender, server) = idle_timed_server_over(echo, Some(IDLE)).await;
+
+        let mut stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("server accepts");
+        stream
+            .write_all(STALLED_HEAD)
+            .await
+            .expect("request writes");
+        let response = read_until_closed(&mut stream).await;
+
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+        assert!(!response.contains(" 408 "), "{response}");
 
         let _ = shutdown_sender.send(());
         server
@@ -5602,6 +5778,23 @@ mod request_body_idle {
                 .contains_key(crate::http::header::CONNECTION),
             "{:?}",
             response.headers()
+        );
+        assert_eq!(
+            response.headers().get(crate::http::header::CONTENT_TYPE),
+            Some(&crate::http::HeaderValue::from_static(
+                "application/problem+json"
+            )),
+            "{:?}",
+            response.headers()
+        );
+        let body = http_body_util::BodyExt::collect(response.into_body())
+            .await
+            .expect("the problem document reads")
+            .to_bytes();
+        let body = String::from_utf8_lossy(&body);
+        assert!(
+            body.contains(r#""detail":"the request body sent nothing for 200ms""#),
+            "the 408 names the limit the body passed: {body}"
         );
 
         drop(sender);
