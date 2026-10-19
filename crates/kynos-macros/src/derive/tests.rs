@@ -119,6 +119,16 @@ mod schema {
                 "takes a number",
             ),
             case(
+                "a numeric constraint given a suffixed number",
+                quote::quote!(
+                    struct Order {
+                        #[schema(minimum = 5u8)]
+                        total: u32,
+                    }
+                ),
+                "takes a plain decimal number",
+            ),
+            case(
                 "a count constraint given a string",
                 quote::quote!(
                     struct Order {
