@@ -454,3 +454,8 @@ pub trait Observer<C>: Send + Sync + 'static {
 
 #[cfg(test)]
 mod tests;
+
+/// Named as a test file, since it holds nothing but test fixtures.
+#[cfg(test)]
+#[path = "interrupted_tests.rs"]
+pub(crate) mod testing;

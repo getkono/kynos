@@ -1,26 +1,16 @@
 //! The parts of decompression that decide before anything is read, and what it
 //! hands on when the read fails.
 
-use std::{
-    io,
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::io;
 
 use async_compression::tokio::bufread::{BrotliEncoder, GzipEncoder, ZstdEncoder};
 use bytes::Bytes;
-use http_body::Frame;
-use http_body_util::BodyExt;
 
 use super::{Coding, Decompression, MAX_CODINGS, Reason, declared, decode, drain_capped};
 use crate::{
     Router,
-    extract::body::{binary::Binary, text::Text},
-    http::{
-        self, Request, Response, StatusCode,
-        body::{Body, BoxError},
-        media::OctetStream,
-    },
+    http::{self, StatusCode, body::Body},
+    middleware::testing::{interrupted, read, upload},
     openapi::{Method, PathTemplate},
     router::{endpoint::builder::EndpointBuilder, service::Service},
 };
@@ -250,42 +240,191 @@ async fn input_after_the_coded_stream_is_malformed() {
     );
 }
 
-/// One data frame, then the connection fails.
-///
-/// Hand-written through the `pub(crate)` `Body::from_body` for the reason
-/// `limits/tests.rs` writes its own: no public surface builds a body that
-/// fails.
-struct Failing {
-    /// The octets that arrive before the failure.
-    arrived: &'static [u8],
-    /// How many times the body has been polled.
-    polls: u8,
+/// What a client sent before coding it.
+const PLAIN: &[u8] = b"the body the client sent, before any coding was applied";
+
+/// A brotli body decodes to what was coded.
+#[tokio::test]
+async fn a_brotli_body_decodes_to_what_was_coded() {
+    assert_eq!(
+        decode(Coding::Brotli, encode(Coding::Brotli, PLAIN).await, 1024).await,
+        Ok(Bytes::from_static(PLAIN))
+    );
 }
 
-impl http_body::Body for Failing {
-    type Data = Bytes;
-    type Error = BoxError;
+/// RFC 9110 section 8.4: `Content-Encoding: gzip, br` says gzip was applied
+/// first, so br is undone first. Undoing in the order listed is the control,
+/// and it fails: the outer layer is not gzip.
+#[tokio::test]
+async fn a_mixed_chain_is_undone_in_the_reverse_of_the_order_applied() {
+    let applied = encode(Coding::Brotli, &encode(Coding::Gzip, PLAIN).await).await;
+    let decompression = Decompression::new(1024);
 
-    fn poll_frame(
-        mut self: Pin<&mut Self>,
-        _: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
-        self.polls += 1;
-        Poll::Ready(match self.polls {
-            1 => Some(Ok(Frame::data(Bytes::from_static(self.arrived)))),
-            2 => Some(Err(Box::new(io::Error::new(
-                io::ErrorKind::ConnectionReset,
-                "peer went away",
-            )))),
-            _ => None,
-        })
+    assert_eq!(
+        decompression
+            .undo(&[Coding::Gzip, Coding::Brotli], applied.clone())
+            .await,
+        Ok(Bytes::from_static(PLAIN))
+    );
+    assert_eq!(
+        decompression
+            .undo(&[Coding::Brotli, Coding::Gzip], applied)
+            .await,
+        Err(Reason::Malformed)
+    );
+}
+
+/// RFC 9110 section 5.6.1: a recipient ignores empty list elements, so a
+/// stray comma names no coding — neither one to refuse nor a layer to undo.
+#[test]
+fn an_empty_list_element_names_no_coding() {
+    let cases: &[(&[&str], &[Coding])] = &[
+        (&["gzip, , br"], &[Coding::Gzip, Coding::Brotli]),
+        (&[", gzip,"], &[Coding::Gzip]),
+        (&[" , "], &[]),
+        (&["", "br"], &[Coding::Brotli]),
+    ];
+
+    for (lines, expected) in cases {
+        assert_eq!(
+            declared(&encoded(lines)),
+            Some(expected.to_vec()),
+            "{lines:?}"
+        );
     }
 }
 
-/// Accepts whatever octets arrive, which is what makes a truncation visible:
-/// nothing here parses, so nothing here would notice one.
-async fn upload(body: Binary<OctetStream>) -> Text {
-    Text(format!("stored {} octets", body.into_inner().len()))
+/// The request the chain beneath `Decompression` was handed.
+mod handed_on {
+    use std::{
+        convert::Infallible,
+        sync::{Arc, Mutex},
+    };
+
+    use super::{Coding, PLAIN, encode};
+    use crate::{
+        Router,
+        http::{self, HeaderMap, Request, StatusCode, body::Body},
+        middleware::{Continued, Interceptor, Next, decompression::Decompression, testing},
+        openapi::{Method, PathTemplate},
+        router::{endpoint::builder::EndpointBuilder, service::Service},
+    };
+
+    /// Keeps the headers of the request it is handed.
+    struct Seen(Arc<Mutex<Option<HeaderMap>>>);
+
+    impl Interceptor<()> for Seen {
+        type Reads = ();
+        type Adds = ();
+        type Short = Infallible;
+
+        async fn intercept(
+            &self,
+            request: Request,
+            (): (),
+            (): &(),
+            next: Next<'_, ()>,
+        ) -> Result<Continued, Infallible> {
+            *self.0.lock().expect("an unpoisoned lock") = Some(request.headers().clone());
+            Ok(next.run(request).await)
+        }
+    }
+
+    /// The upload under `Decompression`, and what the chain beneath it saw.
+    fn service() -> (Service<()>, Arc<Mutex<Option<HeaderMap>>>) {
+        let seen = Arc::new(Mutex::new(None));
+        let endpoint = EndpointBuilder::new(
+            Method::Post,
+            PathTemplate::parse("/upload").expect("a valid path"),
+            testing::upload,
+        );
+        let service = Router::<()>::new()
+            .mount(endpoint)
+            .intercept(Decompression::new(1024))
+            .intercept(Seen(Arc::clone(&seen)))
+            .build(())
+            .expect("a describable router");
+        (service, seen)
+    }
+
+    /// The three digest fields a client may send, each over the octets it
+    /// sent.
+    const DIGESTS: [(&str, &str); 3] = [
+        ("content-digest", "sha-256=:deadbeef:"),
+        ("digest", "sha-256=deadbeef"),
+        ("content-md5", "Q2hlY2sgSW50ZWdyaXR5IQ=="),
+    ];
+
+    /// `body` posted under `coding` when it names one, carrying every digest
+    /// field and its own length.
+    fn upload(coding: Option<&str>, body: bytes::Bytes) -> Request {
+        let mut builder = ::http::Request::builder()
+            .method("POST")
+            .uri("/upload")
+            .header(http::header::CONTENT_TYPE, "application/octet-stream")
+            .header(http::header::CONTENT_LENGTH, body.len());
+        if let Some(coding) = coding {
+            builder = builder.header(http::header::CONTENT_ENCODING, coding);
+        }
+        for (name, value) in DIGESTS {
+            builder = builder.header(name, value);
+        }
+        builder
+            .body(Body::from_bytes(body))
+            .expect("a well-formed request")
+    }
+
+    /// Decoding a `gzip, br` chain hands on the octets the client coded,
+    /// without the coding, with the decoded length, and with none of
+    /// `Content-Digest`, `Digest` or `Content-MD5`: each was computed over
+    /// octets no longer there.
+    #[tokio::test]
+    async fn a_decoded_body_goes_on_without_any_digest_of_the_coded_form() {
+        let (service, seen) = service();
+        let applied = encode(Coding::Brotli, &encode(Coding::Gzip, PLAIN).await).await;
+
+        let (status, body) =
+            testing::read(service.call(upload(Some("gzip, br"), applied)).await).await;
+        let seen = seen.lock().expect("an unpoisoned lock").take();
+        let seen = seen.expect("the chain beneath ran");
+
+        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+        assert_eq!(body, format!("stored {} octets", PLAIN.len()));
+        assert_eq!(seen.get(http::header::CONTENT_ENCODING), None);
+        assert_eq!(
+            seen.get(http::header::CONTENT_LENGTH)
+                .map(http::HeaderValue::as_bytes),
+            Some(PLAIN.len().to_string().as_bytes())
+        );
+        for (name, _) in DIGESTS {
+            assert_eq!(seen.get(name), None, "{name} survived the decode");
+        }
+    }
+
+    /// The control: an uncoded body's digests still describe it, and every
+    /// one goes on unchanged.
+    #[tokio::test]
+    async fn an_uncoded_body_keeps_every_digest() {
+        let (service, seen) = service();
+
+        let (status, _) = testing::read(
+            service
+                .call(upload(None, bytes::Bytes::from_static(PLAIN)))
+                .await,
+        )
+        .await;
+        let seen = seen.lock().expect("an unpoisoned lock").take();
+        let seen = seen.expect("the chain beneath ran");
+
+        assert_eq!(status, StatusCode::OK);
+        for (name, value) in DIGESTS {
+            assert_eq!(
+                seen.get(name).map(http::HeaderValue::as_bytes),
+                Some(value.as_bytes()),
+                "{name}"
+            );
+        }
+    }
 }
 
 /// The upload operation, under `Decompression` when `limit` names one.
@@ -305,39 +444,6 @@ fn decompressed(router: Router<()>, limit: Option<u64>) -> Service<()> {
         None => router.build(()),
     }
     .expect("a describable router")
-}
-
-/// A `content_type` upload of `arrived` that then fails, under `coding` when
-/// it names one.
-fn interrupted_as(content_type: &str, coding: Option<&str>, arrived: &'static [u8]) -> Request {
-    let mut builder = ::http::Request::builder()
-        .method("POST")
-        .uri("/upload")
-        .header(http::header::CONTENT_TYPE, content_type);
-    if let Some(coding) = coding {
-        builder = builder.header(http::header::CONTENT_ENCODING, coding);
-    }
-    builder
-        .body(Body::from_body(Failing { arrived, polls: 0 }))
-        .expect("a well-formed request")
-}
-
-/// An octet-stream upload that fails part-way, under `coding` when it names
-/// one.
-fn interrupted(coding: Option<&str>) -> Request {
-    interrupted_as("application/octet-stream", coding, b"the first half of")
-}
-
-/// A response's status and body bytes.
-async fn read(response: Response) -> (StatusCode, Bytes) {
-    let status = response.status();
-    let body = response
-        .into_body()
-        .collect()
-        .await
-        .expect("a response body that completes")
-        .to_bytes();
-    (status, body)
 }
 
 /// The ratio is measured against what arrived, so stacking codings must not
@@ -420,30 +526,14 @@ async fn a_body_that_fails_part_way_is_refused_as_it_is_without_decompression() 
 /// it.
 #[cfg(all(feature = "json", feature = "openapi32"))]
 mod streamed {
-    use super::{decompressed, interrupted_as, read};
+    use super::decompressed;
     use crate::{
         Router,
-        extract::body::{
-            json_lines::{JsonLines, records::Records},
-            text::Text,
-        },
         http::StatusCode,
+        middleware::testing::{interrupted_as, read, tally},
         openapi::{Method, PathTemplate},
         router::{endpoint::builder::EndpointBuilder, service::Service},
     };
-
-    /// Reads records until the body ends or fails, and says which it did.
-    async fn tally(JsonLines { mut items }: JsonLines<Records<u32>>) -> Text {
-        let mut read = Vec::new();
-        let ending = loop {
-            match items.next().await {
-                Some(Ok(record)) => read.push(record),
-                Some(Err(_)) => break "a rejection",
-                None => break "the end of the body",
-            }
-        };
-        Text(format!("read {read:?}, then {ending}"))
-    }
 
     /// The tally operation, under `Decompression` when `limit` names one.
     fn service(limit: Option<u64>) -> Service<()> {

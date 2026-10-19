@@ -213,6 +213,64 @@ fn if_match_is_one_list_across_its_field_lines() {
     );
 }
 
+/// A tag renders with its quotes and its weakness marker.
+#[test]
+fn a_tag_renders_the_way_the_grammar_writes_it() {
+    assert_eq!(
+        super::ETag::strong("abc").encode(),
+        Some(HeaderValue::from_static(r#""abc""#))
+    );
+    assert_eq!(
+        super::ETag::weak("abc").encode(),
+        Some(HeaderValue::from_static(r#"W/"abc""#))
+    );
+}
+
+/// RFC 9110 section 8.8.3's `etagc`, transcribed: `%x21 / %x23-7E /
+/// obs-text`. `obs-text` is the one part `encode` refuses, as its
+/// documentation says, because a `str`'s non-ASCII bytes are UTF-8 rather
+/// than opaque octets.
+fn is_etagc(character: char) -> bool {
+    character == '\u{21}' || ('\u{23}'..='\u{7e}').contains(&character)
+}
+
+/// Every ASCII character, and non-ASCII ones, as a one-character tag: each
+/// `etagc` renders quoted, weak or strong, and every other character renders
+/// nothing. A quote would end the tag early, a space or a control would end
+/// the field, and a comma is legal — which is why the list parser has to be
+/// quote-aware.
+#[test]
+fn a_tag_renders_exactly_when_every_character_is_an_etagc() {
+    for character in ('\0'..='\u{7f}').chain(['\u{80}', 'é', '\u{ff}', '€']) {
+        let value = character.to_string();
+        let (strong, weak) = if is_etagc(character) {
+            (
+                Some(HeaderValue::try_from(format!("\"{character}\"")).expect("a field value")),
+                Some(HeaderValue::try_from(format!("W/\"{character}\"")).expect("a field value")),
+            )
+        } else {
+            (None, None)
+        };
+
+        assert_eq!(
+            super::ETag::strong(value.clone()).encode(),
+            strong,
+            "{character:?}"
+        );
+        assert_eq!(
+            super::ETag::weak(value.clone()).encode(),
+            weak,
+            "{character:?}"
+        );
+        // One refused character refuses the whole tag, wherever it sits.
+        assert_eq!(
+            super::ETag::strong(format!("a{value}b")).encode().is_some(),
+            is_etagc(character),
+            "{character:?} inside a tag"
+        );
+    }
+}
+
 /// A tag that is no `entity-tag` refuses its group naming `ETag`, where it
 /// was once encoded as no field at all and the response went out untagged.
 #[test]

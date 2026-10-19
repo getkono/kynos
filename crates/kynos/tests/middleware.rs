@@ -56,7 +56,8 @@ impl RateLimitPolicy<App> for AlwaysAllows {
     }
 }
 
-/// A policy that always denies.
+/// A policy that always denies, for 30 seconds, while its one quota resets in
+/// 45: two numbers, so each field shows which of them it reports.
 #[derive(Clone, Debug)]
 struct AlwaysDenies(Vec<QuotaPolicy>);
 
@@ -74,7 +75,7 @@ impl RateLimitPolicy<App> for AlwaysDenies {
     async fn check(&self, _: &Request, _: Route<'_>, _: &App) -> Decision {
         Decision::deny(
             std::time::Duration::from_secs(30),
-            ServiceLimit::new("default", 100, 0, std::time::Duration::from_secs(30)),
+            ServiceLimit::new("default", 100, 0, std::time::Duration::from_secs(45)),
         )
     }
 }
@@ -98,7 +99,8 @@ async fn a_rate_limited_service_attaches_the_headers_its_declaration_names() {
 }
 
 /// A denial reports no remaining requests, and reuses the delay it already
-/// computed rather than asking the policy for a second number.
+/// computed rather than asking the policy for a second number: the 30-second
+/// `Retry-After`, not the 45 seconds the quota itself resets in.
 #[tokio::test]
 async fn a_denial_carries_the_headers_its_own_response_type_describes() {
     let service = support::router()
@@ -122,8 +124,57 @@ async fn a_denial_carries_the_headers_its_own_response_type_describes() {
     assert_eq!(reply.json()["type"], "about:blank");
 }
 
+/// The header names each covered operation's success response declares, by
+/// operation, sorted.
+fn success_headers(document: &impl serde::Serialize) -> Vec<(String, Vec<String>)> {
+    let document = serde_json::to_value(document).expect("a serializable document");
+    let operations = [
+        ("/users/{id}", "get", "200"),
+        ("/users", "get", "200"),
+        ("/users", "post", "201"),
+        ("/users/{id}", "delete", "204"),
+    ];
+
+    operations
+        .into_iter()
+        .map(|(path, method, status)| {
+            let mut names: Vec<String> =
+                document["paths"][path][method]["responses"][status]["headers"]
+                    .as_object()
+                    .map(|headers| headers.keys().cloned().collect())
+                    .unwrap_or_default();
+            names.sort();
+            (format!("{method} {path} {status}"), names)
+        })
+        .collect()
+}
+
+/// Every covered operation's success response declaring `names` beside its
+/// own: the `Location` a 201 states.
+fn every_success_declaring(names: &[&str]) -> Vec<(String, Vec<String>)> {
+    [
+        ("get /users/{id} 200", None),
+        ("get /users 200", None),
+        ("post /users 201", Some("Location")),
+        ("delete /users/{id} 204", None),
+    ]
+    .into_iter()
+    .map(|(operation, own)| {
+        let mut declared: Vec<String> = names
+            .iter()
+            .copied()
+            .chain(own)
+            .map(str::to_owned)
+            .collect();
+        declared.sort();
+        (operation.to_owned(), declared)
+    })
+    .collect()
+}
+
 /// Setting a header means declaring it, and declaring it means a client
-/// generator can see it.
+/// generator can see it: every covered operation's success response declares
+/// the triple, and nothing else.
 #[test]
 fn the_description_carries_the_rate_limit_headers_on_a_success() {
     let document = support::router()
@@ -131,11 +182,14 @@ fn the_description_carries_the_rate_limit_headers_on_a_success() {
         .openapi()
         .expect("a describable router");
 
-    let emitted = serde_json::to_string(&document).expect("a serializable document");
-
-    assert!(emitted.contains("X-RateLimit-Limit"), "{emitted}");
-    assert!(emitted.contains("X-RateLimit-Remaining"), "{emitted}");
-    assert!(emitted.contains("X-RateLimit-Reset"), "{emitted}");
+    assert_eq!(
+        success_headers(&document),
+        every_success_declaring(&[
+            "X-RateLimit-Limit",
+            "X-RateLimit-Remaining",
+            "X-RateLimit-Reset"
+        ])
+    );
 }
 
 /// The standard spelling reports every quota, which is why it exists.
@@ -183,9 +237,11 @@ async fn a_standard_spelling_refusal_reports_every_quota_too() {
         reply.field(header::RETRY_AFTER.as_str()).as_deref(),
         Some("30")
     );
+    // Each quota's own reset, where the `X-` triple has room only for the
+    // retry delay.
     assert_eq!(
         reply.field("ratelimit").as_deref(),
-        Some(r#""default";r=0;t=30"#)
+        Some(r#""default";r=0;t=45"#)
     );
     assert_eq!(
         reply.field("ratelimit-policy").as_deref(),
@@ -193,19 +249,19 @@ async fn a_standard_spelling_refusal_reports_every_quota_too() {
     );
 }
 
-/// The standard spelling declares its own field names, not the `X-` ones.
+/// The standard spelling declares its own field names, not the `X-` ones, on
+/// every covered operation's success response.
 #[test]
 fn the_description_carries_whichever_spelling_was_selected() {
-    let emitted = serde_json::to_string(
-        &support::router()
-            .intercept(RateLimit::new(AlwaysAllows::new()).standard_fields())
-            .openapi()
-            .expect("a describable router"),
-    )
-    .expect("a serializable document");
+    let document = support::router()
+        .intercept(RateLimit::new(AlwaysAllows::new()).standard_fields())
+        .openapi()
+        .expect("a describable router");
 
-    assert!(emitted.contains("RateLimit-Policy"), "{emitted}");
-    assert!(!emitted.contains("X-RateLimit-Limit"), "{emitted}");
+    assert_eq!(
+        success_headers(&document),
+        every_success_declaring(&["RateLimit", "RateLimit-Policy"])
+    );
 }
 
 /// The problem type this fixture's refusals carry.
@@ -319,7 +375,7 @@ async fn a_named_refusal_type_survives_taking_the_standard_fields() {
     // not the legacy limiter under another name.
     assert_eq!(
         reply.field("ratelimit").as_deref(),
-        Some(r#""default";r=0;t=30"#)
+        Some(r#""default";r=0;t=45"#)
     );
     assert!(reply.field("x-ratelimit-limit").is_none());
 
@@ -488,6 +544,56 @@ mod security_headers {
             );
         }
     }
+
+    /// A request a trusted hop says arrived over HTTPS is answered with the
+    /// configured policy — one field, replacing whatever the handler set —
+    /// and one the hop says arrived over HTTP gets none.
+    #[tokio::test]
+    async fn hsts_reaches_a_request_a_trusted_hop_says_was_secure() {
+        use kynos::http::forwarded::{ProxyHeader, TrustedProxies};
+
+        let policies = [
+            (
+                StrictTransportSecurity::max_age(Duration::from_secs(31_536_000)),
+                "max-age=31536000",
+            ),
+            (
+                StrictTransportSecurity::max_age(Duration::from_secs(600)).include_subdomains(),
+                "max-age=600; includeSubDomains",
+            ),
+        ];
+
+        for (policy, sent) in policies {
+            let service = Router::<()>::new()
+                .mount(kynos::routes![plain, pinned])
+                .trusted_proxies(TrustedProxies::hops(ProxyHeader::Forwarded, 1))
+                .intercept(SecurityHeaders::new().strict_transport_security(policy))
+                .build(())
+                .expect("a describable router");
+
+            for path in ["/plain", "/pinned"] {
+                let secure = get(&service, path)
+                    .header("forwarded", "for=203.0.113.7;proto=https")
+                    .call()
+                    .await;
+                let plain = get(&service, path)
+                    .header("forwarded", "for=203.0.113.7;proto=http")
+                    .call()
+                    .await;
+
+                assert_eq!(
+                    secure.fields(header::STRICT_TRANSPORT_SECURITY.as_str()),
+                    [sent],
+                    "{path}"
+                );
+                assert_eq!(
+                    plain.fields(header::STRICT_TRANSPORT_SECURITY.as_str()),
+                    Vec::<String>::new(),
+                    "{path}"
+                );
+            }
+        }
+    }
 }
 
 /// Compression must not re-encode anything a byte range is calculated against.
@@ -585,6 +691,35 @@ mod partial {
         }
     }
 
+    /// The same octets, already in a coding the handler applied itself.
+    #[kynos::get("/recordings/precoded")]
+    async fn precoded() -> WithHeaders<Binary<OctetStream>, StatedCoding> {
+        WithHeaders::new(Binary::new(octets()), StatedCoding("gzip"))
+    }
+
+    /// A `Content-Encoding` a handler attaches to its own response.
+    #[derive(Clone, Copy, Debug)]
+    struct StatedCoding(&'static str);
+
+    impl kynos::extract::params::header::HeaderParams for StatedCoding {
+        const NAMES: &'static [&'static str] = &["content-encoding"];
+        const DESCRIBED: bool = false;
+    }
+
+    impl kynos::extract::params::header::EncodeHeaders for StatedCoding {
+        fn encode(
+            &self,
+        ) -> Result<
+            Vec<(kynos::http::HeaderName, kynos::http::HeaderValue)>,
+            kynos::extract::params::header::UnencodableHeader,
+        > {
+            Ok(vec![(
+                header::CONTENT_ENCODING,
+                kynos::http::HeaderValue::from_static(self.0),
+            )])
+        }
+    }
+
     /// The same octets under a *weak* one, which is the control.
     #[kynos::get("/recordings/weakly-tagged")]
     async fn weakly_tagged() -> WithHeaders<Binary<OctetStream>, ETag> {
@@ -598,7 +733,8 @@ mod partial {
                 transcript,
                 tagged,
                 weakly_tagged,
-                measured
+                measured,
+                precoded
             ])
             // Every size encoded, because these cases are about which
             // representations may be encoded rather than which are worth it.
@@ -751,6 +887,23 @@ mod partial {
             "the stated length names the identity octets, not the ones sent"
         );
         assert!(stated < octets().len());
+    }
+
+    /// A response already in a coding is sent as the handler made it: one
+    /// `Content-Encoding` naming that coding, and its octets unchanged. Nothing
+    /// else here advertises a range or a validator, so the coding is the only
+    /// reason it is left alone; `/recordings/transcript` is its control.
+    #[tokio::test]
+    async fn an_already_encoded_response_is_left_as_the_handler_coded_it() {
+        let service = service();
+        let reply = get(&service, "/recordings/precoded")
+            .header("accept-encoding", "zstd, gzip")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(reply.fields(header::CONTENT_ENCODING.as_str()), ["gzip"]);
+        assert_eq!(reply.body, octets());
     }
 
     /// A weak validator does not, which is the control.
@@ -1123,11 +1276,16 @@ mod levels {
 mod encoding_policy {
     use kynos::{
         Router,
+        error::rejection::RangeRejection,
         extract::body::binary::Binary,
-        http::{StatusCode, header, media::OctetStream},
+        http::{StatusCode, etag::ETag, header, media::OctetStream},
         middleware::compression::{
             Compression,
             policy::{Encoding, WithEncoding},
+        },
+        response::{
+            headers::WithHeaders,
+            range::{Range, Ranged},
         },
         router::service::Service,
     };
@@ -1164,9 +1322,38 @@ mod encoding_policy {
         Binary::new(octets())
     }
 
+    /// Requires an encoding of a response under a strong validator, which
+    /// `Compression` must leave alone.
+    #[kynos::get("/tagged-export")]
+    async fn tagged_export() -> WithEncoding<WithHeaders<Binary<OctetStream>, ETag>> {
+        WithEncoding::new(
+            WithHeaders::new(Binary::new(octets()), ETag::strong("rev-42")),
+            Encoding::Required,
+        )
+    }
+
+    /// Requires an encoding of a response that advertises ranges, which
+    /// `Compression` must leave alone too.
+    #[kynos::get("/ranged-export")]
+    async fn ranged_export(
+        range: Range<Binary<OctetStream>>,
+    ) -> Result<WithEncoding<Ranged<Binary<OctetStream>>>, RangeRejection> {
+        Ok(WithEncoding::new(
+            range.apply(Binary::new(octets()))?,
+            Encoding::Required,
+        ))
+    }
+
     fn service() -> Service<App> {
         Router::<App>::new()
-            .mount(kynos::routes![confirm, export, empty_export, report])
+            .mount(kynos::routes![
+                confirm,
+                export,
+                empty_export,
+                report,
+                tagged_export,
+                ranged_export
+            ])
             .intercept(Compression::new())
             .build(App::new())
             .expect("a describable router")
@@ -1251,6 +1438,35 @@ mod encoding_policy {
             .await;
 
         assert_eq!(reply.status, StatusCode::NOT_ACCEPTABLE);
+    }
+
+    /// A response that requires a coding and is one `Compression` must leave
+    /// alone — strongly tagged, or advertising ranges, whole or partial — has
+    /// two demands nothing can meet, and is refused 406 though the client
+    /// accepts gzip. `/export` above is the control: the same requirement, and
+    /// nothing that leaves it alone.
+    #[tokio::test]
+    async fn a_required_encoding_of_a_response_left_alone_is_refused() {
+        let service = service();
+
+        for (target, range) in [
+            ("/tagged-export", None),
+            ("/ranged-export", None),
+            ("/ranged-export", Some("bytes=0-99")),
+        ] {
+            let mut request = get(&service, target).header("accept-encoding", "gzip");
+            if let Some(range) = range {
+                request = request.header("range", range);
+            }
+            let reply = request.call().await;
+
+            assert_eq!(
+                reply.status,
+                StatusCode::NOT_ACCEPTABLE,
+                "{target}, range {range:?}"
+            );
+            assert_eq!(reply.field(header::CONTENT_ENCODING.as_str()), None);
+        }
     }
 
     /// RFC 9110 section 12.5.3 rule 1: with no `Accept-Encoding`, "any content

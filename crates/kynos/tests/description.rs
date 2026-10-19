@@ -1110,9 +1110,17 @@ fn an_operation_lists_its_own_tag_first_then_each_enclosing_scope_outermost_firs
         ["admin", "ops", "users"]
     );
 
-    for name in ["admin", "ops", "users"] {
-        assert!(documented(&document, name).is_some(), "{name}");
+    // Each scope's metadata, the router's and the group's as well as the
+    // operation's own, and nothing beside them.
+    for (name, description) in [
+        ("admin", "Restricted to staff"),
+        ("ops", "Health and readiness"),
+        ("users", "Managing user accounts"),
+    ] {
+        let tag = documented(&document, name).unwrap_or_else(|| panic!("`{name}` documented"));
+        assert_eq!(tag.description.as_deref(), Some(description), "{name}");
     }
+    assert_eq!(document.tags.len(), 3, "{:?}", document.tags);
 }
 
 /// An operation with no tag of its own is filed under its *outermost*

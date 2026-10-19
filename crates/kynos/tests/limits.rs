@@ -63,7 +63,12 @@ async fn a_body_past_the_limit_is_refused_with_the_status_its_type_declares() {
     assert_eq!(reply.status, StatusCode::PAYLOAD_TOO_LARGE);
     // The limit is in the detail, so the client is told what it exceeded rather
     // than only that it exceeded something.
-    assert!(reply.text().contains("16"), "{}", reply.text());
+    assert_eq!(
+        reply.json()["detail"],
+        "the request body exceeds 16 bytes",
+        "{}",
+        reply.text()
+    );
 }
 
 /// The control: the same request under a limit it fits inside.
@@ -242,20 +247,43 @@ async fn a_released_slot_is_available_to_the_next_request() {
     }
 }
 
-/// A limit that short-circuits still leaves the rest of the router alone: a
-/// request to a path no operation declares is still a 404 rather than the
-/// limit's own status.
+/// A router's own limit covers its fallback too, so an oversized body to a
+/// path no operation declares is refused 413 before the 404 is reached; the
+/// same limit on a group covers only that group's operations, and the same
+/// request is the router's 404.
 #[tokio::test]
-async fn a_limit_does_not_answer_for_a_route_that_does_not_exist() {
-    let service = support::router()
+async fn a_router_limit_covers_its_fallback_and_a_group_limit_does_not() {
+    let oversized = vec![b'x'; 8192];
+    let rooted = support::router()
         .intercept(Timeout::new(Duration::from_secs(30)))
         .intercept(BodySize::new(4096))
         .build(App::new())
         .expect("a describable router");
+    let grouped = Router::<App>::new()
+        .group(
+            kynos::router::group::Group::new("/")
+                .mount(kynos::routes![
+                    support::get_user,
+                    support::list_users,
+                    support::create_user,
+                    support::delete_user
+                ])
+                .intercept(BodySize::new(4096)),
+        )
+        .build(App::new())
+        .expect("a describable router");
 
-    let reply = send(&service, Method::GET, "/nothing-here").call().await;
+    let refused = send(&rooted, Method::POST, "/nothing-here")
+        .body(oversized.clone())
+        .call()
+        .await;
+    let unmatched = send(&grouped, Method::POST, "/nothing-here")
+        .body(oversized)
+        .call()
+        .await;
 
-    assert_eq!(reply.status, StatusCode::NOT_FOUND);
+    assert_eq!(refused.status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(unmatched.status, StatusCode::NOT_FOUND);
 }
 
 // --- What applies when nothing is mounted --------------------------------
@@ -294,8 +322,9 @@ async fn a_service_with_no_body_limit_refuses_a_body_past_the_default() {
         .await;
 
     assert_eq!(reply.status, StatusCode::PAYLOAD_TOO_LARGE);
-    assert!(
-        reply.text().contains(&DEFAULT_LIMIT.to_string()),
+    assert_eq!(
+        reply.json()["detail"],
+        format!("the request body exceeds {DEFAULT_LIMIT} bytes"),
         "{}",
         reply.text()
     );
@@ -498,7 +527,12 @@ async fn a_body_limit_below_the_default_still_governs() {
         .await;
 
     assert_eq!(reply.status, StatusCode::PAYLOAD_TOO_LARGE);
-    assert!(reply.text().contains("64"), "{}", reply.text());
+    assert_eq!(
+        reply.json()["detail"],
+        "the request body exceeds 64 bytes",
+        "{}",
+        reply.text()
+    );
 }
 
 /// A timeout and a body limit stacked together each declare their own status.
@@ -887,7 +921,7 @@ async fn a_substituted_timeout_response_reaches_the_client_and_the_document() {
 
     let timed_out = get(&service, "/slow").call().await;
     assert_eq!(timed_out.status, StatusCode::GATEWAY_TIMEOUT);
-    assert!(timed_out.text().contains("20"), "{}", timed_out.text());
+    assert_eq!(timed_out.text(), "gave up after 20ms");
 
     // The control: a handler inside the limit is untouched by the substitution.
     assert_eq!(
@@ -1219,6 +1253,40 @@ async fn a_keep_alive_frame_resets_an_idle_body_timeout() {
         outcome.is_err(),
         "an event stream sending keep-alives every 5 ms tripped a 30 ms idle \
          limit: {outcome:?}"
+    );
+}
+
+/// The other direction `docs/middleware.md` claims: keep-alives restart no
+/// deadline, so the same event stream is ended once the deadline passes
+/// although its connection is demonstrably alive.
+#[cfg(all(feature = "openapi32", feature = "json"))]
+#[tokio::test]
+async fn a_deadline_ends_an_event_stream_its_keep_alives_hold_open() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![heartbeat])
+        .intercept(
+            kynos::middleware::limits::body_timeout::BodyTimeout::deadline(Duration::from_millis(
+                100,
+            )),
+        )
+        .build(())
+        .expect("a describable router");
+
+    let failure = tokio::time::timeout(
+        Duration::from_secs(10),
+        http_body_util::BodyExt::collect(body_of(&service, "/heartbeat").await),
+    )
+    .await
+    .expect("the deadline ended the stream long before the window closed")
+    .expect_err("an event stream held open by keep-alives outlived its deadline");
+
+    let timed_out = failure
+        .downcast_ref::<kynos::middleware::limits::body_timeout::BodyTimedOut>()
+        .expect("the failure is the body timeout's own error");
+    assert_eq!(timed_out.after(), Duration::from_millis(100));
+    assert_eq!(
+        failure.to_string(),
+        "the response body did not finish within 100ms"
     );
 }
 

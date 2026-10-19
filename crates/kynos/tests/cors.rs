@@ -224,9 +224,11 @@ async fn a_preflight_is_answered_where_the_path_declares_no_options_operation() 
         Some("https://app.example.com")
     );
 
-    let methods = field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS).expect("the method list");
-    assert!(methods.contains("GET"), "{methods}");
-    assert!(methods.contains("DELETE"), "{methods}");
+    // Every covered method, and the HEAD the covered GET answers.
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS).as_deref(),
+        Some("GET, HEAD, DELETE")
+    );
 }
 
 /// The pass control: the same request against the same router with no CORS
@@ -304,9 +306,11 @@ async fn the_allow_header_on_a_405_never_names_the_synthesized_options() {
     let (status, fields) = send(&service, Method::POST, "/widgets", &[]).await;
 
     assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
-    let allow = field(&fields, header::ALLOW).expect("an Allow header");
-    assert!(!allow.contains("OPTIONS"), "{allow}");
-    assert!(allow.contains("HEAD"), "{allow}");
+    assert_eq!(
+        field(&fields, header::ALLOW).as_deref(),
+        Some("GET, HEAD, DELETE"),
+        "Allow named other than the declared methods and the implied HEAD"
+    );
 }
 
 /// A preflight contributes nothing to the description: it is registered after
@@ -344,11 +348,7 @@ async fn a_cross_origin_response_varies_on_the_origin_it_answered() {
     )
     .await;
 
-    let vary = field(&fields, header::VARY).expect("a Vary header");
-    assert!(
-        vary.split(',').any(|name| name.trim() == "origin"),
-        "{vary}"
-    );
+    assert_eq!(field(&fields, header::VARY).as_deref(), Some("origin"));
 }
 
 /// A group-scoped `Cors` advertises the methods *that group* covers — its
@@ -379,12 +379,10 @@ async fn a_group_scoped_cors_advertises_only_the_methods_it_covers() {
     .await;
 
     assert_eq!(status, StatusCode::NO_CONTENT);
-    let methods = field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS).expect("the method list");
-
-    assert!(methods.contains("GET"), "{methods}");
-    assert!(
-        !methods.contains("DELETE"),
-        "advertised a method the covering scope does not hold: {methods}"
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS).as_deref(),
+        Some("GET, HEAD"),
+        "advertised other than the GET the group covers and the HEAD it answers"
     );
 }
 
@@ -625,12 +623,10 @@ async fn a_preflight_answers_from_the_cors_covering_the_method_it_proposes() {
         "answered a DELETE preflight from the configuration covering GET"
     );
 
-    let methods = field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS).expect("the method list");
-
-    assert!(methods.contains("DELETE"), "{methods}");
-    assert!(
-        !methods.contains("GET"),
-        "advertised a method the covering scope does not hold: {methods}"
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS).as_deref(),
+        Some("DELETE"),
+        "advertised a method the covering scope does not hold"
     );
 }
 
@@ -849,4 +845,293 @@ async fn a_cors_mounted_on_one_endpoint_answers_no_preflight() {
 /// attribute expands into a type rather than a callable.
 async fn list_widgets_handler() -> NoContent {
     NoContent
+}
+
+/// The `Access-Control-*` fields a response carries, sorted by name.
+fn cors_fields(fields: &HeaderMap) -> Vec<(String, String)> {
+    let mut found: Vec<_> = fields
+        .iter()
+        .filter(|(name, _)| name.as_str().starts_with("access-control-"))
+        .map(|(name, value)| {
+            (
+                name.as_str().to_owned(),
+                value.to_str().expect("a printable field").to_owned(),
+            )
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+/// A case's name, its configuration, the `Origin` sent, and the fields owed.
+type Case = (
+    &'static str,
+    Cors,
+    Option<&'static str>,
+    &'static [(&'static str, &'static str)],
+);
+
+/// The real-response table: each configuration, the `Origin` it is asked
+/// with, and every `Access-Control-*` field it owes.
+fn real_response_cases() -> Vec<Case> {
+    const APP: &str = "https://app.example.com";
+
+    let named = || Cors::new().allow_origins([APP]);
+
+    vec![
+        (
+            "a named origin",
+            named(),
+            Some(APP),
+            &[("access-control-allow-origin", APP)],
+        ),
+        (
+            "credentials",
+            named().allow_credentials(),
+            Some(APP),
+            &[
+                ("access-control-allow-credentials", "true"),
+                ("access-control-allow-origin", APP),
+            ],
+        ),
+        (
+            "an exposure list",
+            named().expose_headers(["x-total", "x-page"]),
+            Some(APP),
+            &[
+                ("access-control-allow-origin", APP),
+                ("access-control-expose-headers", "x-total, x-page"),
+            ],
+        ),
+        (
+            "every header exposed",
+            named().expose_any_header(),
+            Some(APP),
+            &[
+                ("access-control-allow-origin", APP),
+                ("access-control-expose-headers", "*"),
+            ],
+        ),
+        (
+            "any origin",
+            Cors::new().allow_any_origin(),
+            Some("https://anyone.example"),
+            &[("access-control-allow-origin", "*")],
+        ),
+        (
+            "an origin in another case",
+            named(),
+            Some("HTTPS://APP.EXAMPLE.COM"),
+            &[("access-control-allow-origin", "HTTPS://APP.EXAMPLE.COM")],
+        ),
+        (
+            "a predicate's origin",
+            Cors::new()
+                .allow_origins_matching(|origin| origin.ends_with(".example.com"))
+                .allow_credentials(),
+            Some("https://tenant.example.com"),
+            &[
+                ("access-control-allow-credentials", "true"),
+                ("access-control-allow-origin", "https://tenant.example.com"),
+            ],
+        ),
+        (
+            "no Origin",
+            named().allow_credentials().expose_headers(["x-total"]),
+            None,
+            &[],
+        ),
+        (
+            "an origin not permitted",
+            named().allow_credentials().expose_headers(["x-total"]),
+            Some("https://evil.example.com"),
+            &[],
+        ),
+        (
+            "any origin, but no Origin",
+            Cors::new().allow_any_origin(),
+            None,
+            &[],
+        ),
+    ]
+}
+
+/// What a real response carries for each configuration and `Origin`, read
+/// field for field: the origin echoed or `*`, `Access-Control-Allow-Credentials`
+/// only when credentials are allowed, the exposure list as one field, nothing
+/// at all for a request with no `Origin` or one not permitted, and an origin
+/// matched case-insensitively and echoed as it was sent. Every one carries
+/// `Vary: origin`, granted or not, since a cache cannot see which case it
+/// stored.
+#[tokio::test]
+async fn a_real_response_carries_exactly_the_fields_its_configuration_grants() {
+    for (case, cors, origin, expected) in real_response_cases() {
+        let service = router()
+            .intercept(cors)
+            .build(())
+            .expect("a describable router");
+        let request: Vec<(&str, &str)> = origin
+            .map(|origin| ("origin", origin))
+            .into_iter()
+            .collect();
+
+        let (status, fields) = send(&service, Method::GET, "/widgets", &request).await;
+
+        assert_eq!(status, StatusCode::NO_CONTENT, "{case}");
+        let expected: Vec<(String, String)> = expected
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect();
+        assert_eq!(cors_fields(&fields), expected, "{case}");
+        assert_eq!(
+            field(&fields, header::VARY).as_deref(),
+            Some("origin"),
+            "{case}"
+        );
+    }
+}
+
+/// A `Cors` that documents its response headers is still the `Cors` the
+/// router reads for preflight and for its conflict check: its preflight is
+/// answered, its real response carries the same fields, an unhonourable
+/// configuration is refused, and the description declares the three fields
+/// on the operation it covers.
+mod documented {
+    use kynos::{
+        http::{Method, StatusCode, header},
+        middleware::cors::Cors,
+    };
+
+    use super::{cors_fields, field, router, send};
+
+    fn cors() -> kynos::middleware::cors::Cors<kynos::middleware::cors::Documented> {
+        Cors::new()
+            .allow_origins(["https://app.example.com"])
+            .expose_headers(["x-total"])
+            .allow_credentials()
+            .document_response_headers()
+    }
+
+    #[tokio::test]
+    async fn its_preflight_is_answered_from_its_configuration() {
+        let service = router()
+            .intercept(cors())
+            .build(())
+            .expect("a describable router");
+
+        let (status, fields) = send(
+            &service,
+            Method::OPTIONS,
+            "/widgets",
+            &[
+                ("origin", "https://app.example.com"),
+                ("access-control-request-method", "DELETE"),
+            ],
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(
+            cors_fields(&fields),
+            [
+                ("access-control-allow-credentials", "true"),
+                ("access-control-allow-methods", "GET, HEAD, DELETE"),
+                ("access-control-allow-origin", "https://app.example.com"),
+            ]
+            .map(|(name, value)| (name.to_owned(), value.to_owned()))
+        );
+    }
+
+    #[tokio::test]
+    async fn its_real_response_carries_the_fields_it_declares() {
+        let service = router()
+            .intercept(cors())
+            .build(())
+            .expect("a describable router");
+
+        let (_, fields) = send(
+            &service,
+            Method::GET,
+            "/widgets",
+            &[("origin", "https://app.example.com")],
+        )
+        .await;
+
+        assert_eq!(
+            cors_fields(&fields),
+            [
+                ("access-control-allow-credentials", "true"),
+                ("access-control-allow-origin", "https://app.example.com"),
+                ("access-control-expose-headers", "x-total"),
+            ]
+            .map(|(name, value)| (name.to_owned(), value.to_owned()))
+        );
+        assert_eq!(field(&fields, header::VARY).as_deref(), Some("origin"));
+    }
+
+    #[test]
+    fn an_unhonourable_configuration_is_refused_as_it_is_undocumented() {
+        let refused = router()
+            .intercept(
+                Cors::new()
+                    .allow_any_origin()
+                    .allow_credentials()
+                    .document_response_headers(),
+            )
+            .build(());
+
+        assert!(
+            matches!(
+                refused,
+                Err(kynos::Error::Middleware(
+                    kynos::middleware::MiddlewareError::CredentialedWildcardOrigin
+                ))
+            ),
+            "a documented wildcard origin with credentials was not refused"
+        );
+    }
+
+    /// The three fields, on the response the covered operation declares, and
+    /// not when the same configuration stays undocumented.
+    #[test]
+    fn the_description_declares_its_three_fields_on_what_it_covers() {
+        let headers_of = |document: &serde_json::Value| {
+            let mut names: Vec<String> =
+                document["paths"]["/widgets"]["get"]["responses"]["204"]["headers"]
+                    .as_object()
+                    .map(|headers| headers.keys().cloned().collect())
+                    .unwrap_or_default();
+            names.sort();
+            names
+        };
+
+        let documented = serde_json::to_value(
+            router()
+                .intercept(cors())
+                .openapi()
+                .expect("a describable router"),
+        )
+        .expect("a serializable document");
+        let undocumented = serde_json::to_value(
+            router()
+                .intercept(
+                    Cors::new()
+                        .allow_origins(["https://app.example.com"])
+                        .allow_credentials(),
+                )
+                .openapi()
+                .expect("a describable router"),
+        )
+        .expect("a serializable document");
+
+        assert_eq!(
+            headers_of(&documented),
+            [
+                "access-control-allow-credentials",
+                "access-control-allow-origin",
+                "access-control-expose-headers",
+            ]
+        );
+        assert_eq!(headers_of(&undocumented), Vec::<String>::new());
+    }
 }
