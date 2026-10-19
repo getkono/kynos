@@ -7,6 +7,10 @@
 //! field yields the whole representation and a 200, never a 400. The reason is
 //! reported as a [`spec::Ignored`].
 //!
+//! The declared parameter's `pattern` is the grammar a sender writes; the
+//! parser reads a little more, as a recipient should, which [`spec`] spells
+//! out.
+//!
 //! A handler returning `Result<Ranged<T>, RangeRejection>` declares all three
 //! statuses it can produce: 200 and 206 from [`Ranged<T>`], 416 from
 //! [`RangeRejection`].

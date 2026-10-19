@@ -28,6 +28,17 @@
 //!   as section 14.1.1 requires; every saturated value still resolves correctly.
 //! * More than eight specs is [`Ignored::TooManyRanges`], the line Kynos draws
 //!   against section 17.15's "many small ranges".
+//!
+//! # Sender grammar and recipient lenience
+//!
+//! The emitted `Range` parameter's `pattern` is the grammar a sender writes: a
+//! case-insensitive unit, optional whitespace after the `=` and around each
+//! comma, and one to eight specs. The parser reads more than that, as section
+//! 5.6.1.2 asks of a recipient: it skips empty list elements, so
+//! `bytes=0-1,,2-3` reads as two specs and an empty element does not count
+//! toward the cap, and it ignores whitespace around the unit. A field only the
+//! parser admits is still applied; the pattern does not tell a sender it may
+//! write one.
 
 use crate::http::{HeaderMap, HeaderValue, Method, etag, header};
 
@@ -42,12 +53,23 @@ pub(crate) const MAX_RANGES: usize = 8;
 /// Section 14.1: *all range unit names are case-insensitive*.
 pub(crate) const UNIT: &str = "bytes";
 
-/// The `pattern` an emitted `Range` parameter carries, built from
+/// The `pattern` an emitted `Range` parameter carries, built from [`UNIT`] and
 /// [`MAX_RANGES`].
+///
+/// The sender grammar the module docs state: `OWS` after the `=` is section
+/// 14.1.2's own example, and `OWS` around each comma is section 5.6.1.1's `1#`
+/// list.
 #[must_use]
 pub(crate) fn pattern() -> String {
+    const SPEC: &str = r"(?:\d+-\d*|-\d+)";
+    const OWS: &str = r"[ \t]*";
+
+    let unit: String = UNIT
+        .chars()
+        .flat_map(|letter| ['[', letter.to_ascii_uppercase(), letter, ']'])
+        .collect();
     format!(
-        r"^bytes=(?:\d+-\d*|-\d+)(?:\s*,\s*(?:\d+-\d*|-\d+)){{0,{}}}$",
+        "^{unit}={OWS}{SPEC}(?:{OWS},{OWS}{SPEC}){{0,{}}}$",
         MAX_RANGES - 1
     )
 }
