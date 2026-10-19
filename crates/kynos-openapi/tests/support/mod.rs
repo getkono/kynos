@@ -16,12 +16,15 @@
 
 #![allow(dead_code)]
 
+#[cfg(feature = "openapi32")]
+use kynos_openapi::XmlNodeType;
 use kynos_openapi::{
     Callback, Components, Contact, Discriminator, Document, Encoding, EncodingStyle, Example,
     Extensions, ExternalDocumentation, Header, HeaderShape, HeaderStyle, Info, License, Link, Map,
     MediaType, Method, OAuthFlow, OAuthFlows, Operation, Parameter, ParameterIn, ParameterShape,
     PathItem, Paths, Ref, RefOr, RequestBody, Response, Responses, Schema, SchemaObject,
     SecurityRequirement, SecurityScheme, Server, ServerVariable, SpecVersion, Style, Tag, Xml,
+    XmlNode,
     annotation::{
         NOT_AUTHORITATIVE_ANNOTATION, OPAQUE_OPERATION_ANNOTATION, OPAQUE_ROUTES_ANNOTATION,
     },
@@ -467,28 +470,40 @@ pub(crate) fn arb_xml() -> BoxedStrategy<Xml> {
         arb_opt_text(),
         arb_opt_text(),
         arb_opt_text(),
-        arb_flag(),
-        arb_flag(),
-        arb_opt_text(),
+        arb_xml_node(),
         arb_extensions(EXTENSION_KEYS),
     )
-        .prop_map(
-            |(name, namespace, prefix, attribute, wrapped, node_type, extensions)| {
-                #[cfg(not(feature = "openapi32"))]
-                let _ = node_type;
-                Xml {
-                    #[cfg(feature = "openapi32")]
-                    node_type,
-                    name,
-                    namespace,
-                    prefix,
-                    attribute,
-                    wrapped,
-                    extensions,
-                }
-            },
-        )
+        .prop_map(|(name, namespace, prefix, node, extensions)| Xml {
+            name,
+            namespace,
+            prefix,
+            node,
+            extensions,
+        })
         .boxed()
+}
+
+fn arb_xml_node() -> BoxedStrategy<XmlNode> {
+    let flags = (arb_flag(), arb_flag())
+        .prop_map(|(attribute, wrapped)| XmlNode::Flags { attribute, wrapped });
+
+    #[cfg(feature = "openapi32")]
+    let node = prop_oneof![
+        flags,
+        select(&[
+            XmlNodeType::Element,
+            XmlNodeType::Attribute,
+            XmlNodeType::Text,
+            XmlNodeType::Cdata,
+            XmlNodeType::None,
+        ])
+        .prop_map(XmlNode::Type),
+    ];
+
+    #[cfg(not(feature = "openapi32"))]
+    let node = flags;
+
+    node.boxed()
 }
 
 pub(crate) fn arb_discriminator() -> BoxedStrategy<Discriminator> {

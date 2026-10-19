@@ -763,13 +763,10 @@ fn schema_fields(at: At<'_>, schema: &Schema, found: &mut Found<'_>) {
     }
     if let Some(xml) = xml {
         let Xml {
-            #[cfg(feature = "openapi32")]
-                node_type: _,
             name: _,
             namespace: _,
             prefix: _,
-            attribute: _,
-            wrapped: _,
+            node: _,
             extensions,
         } = xml;
         check(at.key("xml"), extensions, found);
