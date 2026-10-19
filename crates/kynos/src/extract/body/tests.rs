@@ -381,7 +381,10 @@ mod a_part_disposition_is_read_quote_aware {
         error::rejection::BodyRejection,
         extract::{
             FromRequest,
-            body::multipart::{Disposition, FromMultipart, MultipartForm, Part, disposition},
+            body::multipart::{
+                FromMultipart, MultipartForm, Part,
+                disposition::{self, Disposition},
+            },
         },
         http::{HeaderValue, Request, StatusCode, body::Body, header},
         schema::{Schema, registry::Registry},
@@ -511,7 +514,7 @@ mod a_part_disposition_is_read_quote_aware {
     /// The field a well-formed disposition names, as `(name, file_name)`.
     fn named(value: &str) -> (String, Option<String>) {
         let Disposition { name, file_name } =
-            disposition(value).unwrap_or_else(|detail| panic!("`{value}`: {detail}"));
+            disposition::parse(value).unwrap_or_else(|detail| panic!("`{value}`: {detail}"));
         (name, file_name)
     }
 
@@ -583,7 +586,7 @@ mod a_part_disposition_is_read_quote_aware {
             "form-data; name=\"a\" x",
             "form-data name=a",
         ] {
-            assert!(disposition(value).is_err(), "`{value}` was admitted");
+            assert!(disposition::parse(value).is_err(), "`{value}` was admitted");
         }
     }
 }

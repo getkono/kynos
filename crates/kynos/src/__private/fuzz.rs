@@ -195,7 +195,7 @@ fn ready<F: std::future::Future>(future: F) -> F::Output {
 /// declares, or why it declares no field.
 #[cfg(feature = "multipart")]
 pub fn disposition(field: &str) -> Result<(String, Option<String>), String> {
-    crate::extract::body::multipart::disposition(field)
+    crate::extract::body::multipart::disposition::parse(field)
         .map(|disposition| (disposition.name, disposition.file_name))
 }
 
