@@ -119,10 +119,6 @@ fn weight(accept: &str, token: &str) -> Option<Weight> {
 /// A tie with identity goes to the encoded coding; among encoded codings, to
 /// the earlier entry in `available`.
 #[must_use]
-#[cfg_attr(
-    not(any(test, feature = "assets")),
-    expect(dead_code, reason = "the asset server is its only caller")
-)]
 pub(crate) fn preferred<'a>(accept: &str, available: &[&'a str]) -> Option<&'a str> {
     let mut best: Option<(&'a str, u16)> = None;
 

@@ -42,6 +42,13 @@ impl Coding {
     /// Every coding, most preferred first.
     const ALL: [Self; 3] = [Self::Zstd, Self::Brotli, Self::Gzip];
 
+    /// Every coding's token, in [`ALL`](Coding::ALL)'s order.
+    const TOKENS: [&'static str; 3] = [
+        Self::ALL[0].token(),
+        Self::ALL[1].token(),
+        Self::ALL[2].token(),
+    ];
+
     /// The token this coding is named by on the wire.
     const fn token(self) -> &'static str {
         match self {
@@ -224,41 +231,23 @@ fn negotiate(headers: &http::HeaderMap) -> Negotiated {
     };
     let accept = &*accept;
 
-    let mut best: Option<(Coding, u16)> = None;
-    for coding in Coding::ALL {
-        let Some(weight) = crate::http::coding::quality(accept, coding.token()) else {
-            continue;
-        };
-
-        if weight == 0 {
-            continue;
-        }
-
-        if best.is_none_or(|(_, best)| weight > best) {
-            best = Some((coding, weight));
-        }
+    // A tie with identity goes to the coding, so plain `Accept-Encoding: gzip`
+    // encodes; a tie between codings goes to `Coding::ALL`'s order.
+    if let Some(coding) =
+        crate::http::coding::preferred(accept, &Coding::TOKENS).and_then(Coding::from_token)
+    {
+        return Negotiated::Encode(coding);
     }
 
     // Rule 2: identity is excluded only by `identity;q=0`, or `*;q=0` with no
     // more specific `identity` entry; a weight that is not a qvalue excludes
     // nothing.
-    let identity = crate::http::coding::identity_quality(accept);
-
-    let Some((coding, weight)) = best else {
-        return if identity > 0 {
-            Negotiated::Identity
-        } else {
-            // Every coding unacceptable and identity excluded. An empty field
-            // value excludes nothing, so it resolves to identity above.
-            Negotiated::Nothing
-        };
-    };
-
-    // A tie goes to the coding, so plain `Accept-Encoding: gzip` encodes.
-    if identity <= weight {
-        Negotiated::Encode(coding)
-    } else {
+    if crate::http::coding::identity_quality(accept) > 0 {
         Negotiated::Identity
+    } else {
+        // Every coding unacceptable and identity excluded. An empty field
+        // value excludes nothing, so it resolves to identity above.
+        Negotiated::Nothing
     }
 }
 
