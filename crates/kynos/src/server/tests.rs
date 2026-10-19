@@ -4786,6 +4786,281 @@ async fn a_request_head_past_the_http1_header_cap_is_answered_431() {
     }
 }
 
+/// A plaintext server over [`test_service`], configured by `configure`.
+#[cfg(any(feature = "http1", feature = "http2"))]
+async fn configured_server(
+    configure: impl FnOnce(crate::server::Server<()>) -> crate::server::Server<()>,
+) -> (
+    std::net::SocketAddr,
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<crate::error::Result<()>>,
+) {
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let bound = configure(crate::server::Server::new(test_service()))
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+            let _ = shutdown_receiver.await;
+        }))
+        .prepare()
+        .await
+        .expect("loopback listener binds");
+    let address = bound.local_addrs()[0];
+    (address, shutdown_sender, tokio::spawn(bound.serve()))
+}
+
+/// `keep_alive(false)` reaches the driver: the response says `close`, and the
+/// server closes after it. A client that asked for nothing is what tells this
+/// apart from honouring the client's own `close`; with keep-alive on, the
+/// read below would wait for a close that never came.
+#[cfg(feature = "http1")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_http1_server_without_keep_alive_closes_after_one_response() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    let (address, shutdown_sender, server) =
+        configured_server(|server| server.http1(Http1Config::default().keep_alive(false))).await;
+
+    let mut stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        .await
+        .expect("the request writes");
+    let mut response = Vec::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        stream.read_to_end(&mut response),
+    )
+    .await
+    .expect("the server closes the connection")
+    .expect("the response reads");
+    let response = String::from_utf8(response)
+        .expect("the response is text")
+        .to_ascii_lowercase();
+
+    assert!(response.starts_with("http/1.1 200 ok\r\n"), "{response}");
+    assert!(response.contains("\r\nconnection: close\r\n"), "{response}");
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// `max_buffer_size` reaches the driver: a head of four fields filling the
+/// 8 KiB floor is answered 431 under that floor, while a longer one is served
+/// under the default.
+///
+/// The refused head is exactly 8 KiB and unterminated, so the driver has read
+/// every byte when it refuses: unread bytes at its close would reset the
+/// connection, and a reset may discard the 431 before the client reads it.
+#[cfg(feature = "http1")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_head_past_the_http1_buffer_is_answered_431() {
+    use std::io::{Read as _, Write as _};
+
+    const PREFIX: &str = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nX-Padding: ";
+
+    for (http1, head, status) in [
+        (
+            Http1Config::default(),
+            format!("{PREFIX}{}\r\n\r\n", "a".repeat(12 * 1024)),
+            "HTTP/1.1 200 ",
+        ),
+        (
+            Http1Config::default().max_buffer_size(8_192),
+            format!("{PREFIX}{}", "a".repeat(8_192 - PREFIX.len())),
+            "HTTP/1.1 431 ",
+        ),
+    ] {
+        let (address, shutdown_sender, server) =
+            configured_server(|server| server.http1(http1)).await;
+
+        let response = tokio::task::spawn_blocking(move || {
+            let mut stream = std::net::TcpStream::connect(address).expect("server accepts");
+            stream.write_all(head.as_bytes()).expect("request writes");
+            let mut response = String::new();
+            stream
+                .read_to_string(&mut response)
+                .expect("response reads");
+            response
+        })
+        .await
+        .expect("blocking client joins");
+
+        assert!(response.starts_with(status), "{http1:?}: {response}");
+
+        let _ = shutdown_sender.send(());
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
+    }
+}
+
+/// What a server announces at the start of an HTTP/2 connection, read off the
+/// frames it sends before it acknowledges the client's SETTINGS.
+#[cfg(feature = "http2")]
+#[derive(Debug, PartialEq, Eq)]
+struct Announced {
+    /// The server's SETTINGS frame, by identifier (RFC 9113 §6.5.2).
+    settings: std::collections::BTreeMap<u16, u32>,
+    /// The connection window: RFC 9113 §6.9.2's 65,535 plus every
+    /// WINDOW_UPDATE the server sent on stream 0.
+    connection_window: u32,
+}
+
+/// Opens a prior-knowledge HTTP/2 connection to `address` and reads what the
+/// server announces, until it answers a PING sent once it acknowledged the
+/// client's empty SETTINGS: the driver writes what it queued at the start of
+/// the connection before it answers the PING.
+#[cfg(feature = "http2")]
+async fn announced(address: std::net::SocketAddr) -> Announced {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    let mut stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    stream
+        .write_all(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n\0\0\0\x04\0\0\0\0\0")
+        .await
+        .expect("the preface and an empty SETTINGS write");
+
+    let mut announced = Announced {
+        settings: std::collections::BTreeMap::new(),
+        connection_window: 65_535,
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let mut header = [0_u8; 9];
+            stream
+                .read_exact(&mut header)
+                .await
+                .expect("a frame header reads");
+            let length = u32::from_be_bytes([0, header[0], header[1], header[2]]);
+            let (kind, flags) = (header[3], header[4]);
+            let stream_id = u32::from_be_bytes([header[5], header[6], header[7], header[8]]);
+            let mut payload = vec![0_u8; usize::try_from(length).expect("a frame fits")];
+            stream
+                .read_exact(&mut payload)
+                .await
+                .expect("a frame payload reads");
+            match (kind, flags & 0x1, stream_id) {
+                // SETTINGS with ACK: the server has read the client's.
+                (0x4, 0x1, 0) => stream
+                    .write_all(b"\0\0\x08\x06\0\0\0\0\0kynos-ok")
+                    .await
+                    .expect("a PING writes"),
+                // The PING's ACK.
+                (0x6, 0x1, 0) => return,
+                (0x4, 0x0, 0) => {
+                    for entry in payload.chunks_exact(6) {
+                        announced.settings.insert(
+                            u16::from_be_bytes([entry[0], entry[1]]),
+                            u32::from_be_bytes([entry[2], entry[3], entry[4], entry[5]]),
+                        );
+                    }
+                }
+                (0x8, _, 0) => {
+                    let increment =
+                        u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+                    announced.connection_window += increment & 0x7fff_ffff;
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("the server acknowledges the client's SETTINGS and its PING");
+    announced
+}
+
+/// The HTTP/2 settings that reach a client do so as configured: the stream
+/// cap, both fixed windows and the header-list cap, under the defaults and
+/// under values that differ from every one of them. An adaptive window starts
+/// from the protocol's own 65,535 on both sides and grows from there, so the
+/// fixed windows it replaces reach no frame.
+///
+/// The send buffer and the two reset-stream caps announce nothing, so no
+/// frame can show them reaching the driver; they are left to the setter and
+/// validation cases.
+#[cfg(feature = "http2")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_http2_server_announces_the_settings_it_was_configured_with() {
+    const MAX_CONCURRENT_STREAMS: u16 = 0x3;
+    const INITIAL_WINDOW_SIZE: u16 = 0x4;
+    const MAX_HEADER_LIST_SIZE: u16 = 0x6;
+
+    let fixed = Http2Config::default()
+        .max_concurrent_streams(64)
+        .flow_control(Http2FlowControl::Fixed {
+            initial_stream_window_size: 256 * 1024,
+            initial_connection_window_size: 512 * 1024,
+        })
+        .max_header_list_size(8 * 1024);
+    let adaptive = Http2Config::default().flow_control(Http2FlowControl::Adaptive);
+
+    for (http2, settings, connection_window) in [
+        (
+            Http2Config::default(),
+            vec![
+                (MAX_CONCURRENT_STREAMS, 200),
+                (INITIAL_WINDOW_SIZE, 1024 * 1024),
+                (MAX_HEADER_LIST_SIZE, 16 * 1024),
+            ],
+            1024 * 1024,
+        ),
+        (
+            fixed,
+            vec![
+                (MAX_CONCURRENT_STREAMS, 64),
+                (INITIAL_WINDOW_SIZE, 256 * 1024),
+                (MAX_HEADER_LIST_SIZE, 8 * 1024),
+            ],
+            512 * 1024,
+        ),
+        (
+            adaptive,
+            vec![
+                (MAX_CONCURRENT_STREAMS, 200),
+                (INITIAL_WINDOW_SIZE, 65_535),
+                (MAX_HEADER_LIST_SIZE, 16 * 1024),
+            ],
+            65_535,
+        ),
+    ] {
+        let (address, shutdown_sender, server) =
+            configured_server(|server| server.http2(http2)).await;
+
+        let mut announced = announced(address).await;
+        // Only what Kynos configures; the frame size, say, is hyper's own.
+        announced.settings.retain(|identifier, _| {
+            [
+                MAX_CONCURRENT_STREAMS,
+                INITIAL_WINDOW_SIZE,
+                MAX_HEADER_LIST_SIZE,
+            ]
+            .contains(identifier)
+        });
+        assert_eq!(
+            announced,
+            Announced {
+                settings: settings.into_iter().collect(),
+                connection_window,
+            },
+            "{http2:?}"
+        );
+
+        let _ = shutdown_sender.send(());
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
+    }
+}
+
 /// Requests over HTTP/1 with a head of exactly `fields` header fields, `Host`
 /// and `Connection: close` among them.
 #[cfg(feature = "http1")]
