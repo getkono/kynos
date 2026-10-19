@@ -21,10 +21,9 @@ use crate::{
         IntoResponse,
         disposition::ContentDisposition,
         range::{
-            Selection,
-            headers::{AcceptRanges, ContentRange},
+            Precondition, Selection,
             source::{ByteSource, Spans},
-            spec,
+            spec, write_selection,
         },
     },
 };
@@ -167,7 +166,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
         // Steps 3 and 4: the cache validations.
         if self.unmodified(conditions, current) {
             let response = self
-                .head(StatusCode::NOT_MODIFIED, None, complete_length, tag)
+                .head(None, complete_length, tag)
                 .unwrap_or_else(crate::extract::params::header::refused);
             return Ok(Delivery::new(response));
         }
@@ -186,9 +185,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
 
         // A refused head is answered as it is: the content goes only under
         // the fields that describe it.
-        let Some(mut response) =
-            self.head(selection.status(), Some(selection), complete_length, tag)
-        else {
+        let Some(mut response) = self.head(Some(selection), complete_length, tag) else {
             return Ok(Delivery::new(crate::extract::params::header::refused()));
         };
 
@@ -204,7 +201,8 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
         Ok(Delivery::new(response))
     }
 
-    /// The response fields, for whichever status is being sent.
+    /// The response fields: the 200 or 206 `selection` frames, or the 304
+    /// where there is none.
     ///
     /// `tag` is [`etag`](Self::etag) as `deliver` encoded it, moved in so it
     /// is not encoded twice. `None` where a field cannot be encoded: the
@@ -212,22 +210,23 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
     /// content.
     fn head(
         &self,
-        status: StatusCode,
         selection: Option<Selection>,
         complete_length: u64,
         tag: Option<HeaderValue>,
     ) -> Option<Response> {
         let mut response = Response::new(crate::http::body::Body::empty());
-        *response.status_mut() = status;
+
+        // Section 14.3: `Accept-Ranges` is advertised on every response
+        // carrying a representation, which a 304 does not; section 15.4.5 asks
+        // a 304 for no metadata beyond its validators and `Cache-Control`, so
+        // the name stays here too.
+        match selection {
+            Some(selection) => write_selection(&mut response, selection).ok()?,
+            None => *response.status_mut() = StatusCode::NOT_MODIFIED,
+        }
         let fields = response.headers_mut();
 
-        // Section 14.3: advertised on every response carrying a representation,
-        // which a 304 does not; section 15.4.5 asks a 304 for no metadata
-        // beyond its validators and `Cache-Control`, so the name stays here too.
-        if status != StatusCode::NOT_MODIFIED {
-            if crate::extract::params::header::write(fields, &AcceptRanges).is_err() {
-                return None;
-            }
+        if selection.is_some() {
             // Static where `from_static` takes it, so it costs no allocation;
             // anything else is copied, and a marker that is no field value is
             // omitted, as before.
@@ -266,23 +265,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
         }
 
         match selection {
-            Some(Selection::Part {
-                first,
-                last,
-                complete_length,
-            }) => {
-                if crate::extract::params::header::write(
-                    fields,
-                    &ContentRange::Satisfied {
-                        first,
-                        last,
-                        complete_length,
-                    },
-                )
-                .is_err()
-                {
-                    return None;
-                }
+            Some(Selection::Part { first, last, .. }) => {
                 fields.insert(header::CONTENT_LENGTH, decimal(last - first + 1));
             }
             Some(Selection::Whole(_)) => {
@@ -491,34 +474,13 @@ impl crate::extract::describe::Describe for Conditions {
         operation.add_parameter(crate::response::range::parameter());
         operation.add_parameter(crate::response::range::conditional_parameter());
 
-        for (name, description) in [
-            (
-                "If-Match",
-                "The entity tag the client's copy was taken from, per RFC 9110 section 13.1.1",
-            ),
-            (
-                "If-Unmodified-Since",
-                "The date the client's copy carries, refused if the representation changed since, \
-                 per RFC 9110 section 13.1.4",
-            ),
-            (
-                "If-None-Match",
-                "The entity tag the client already holds, per RFC 9110 section 13.1.2",
-            ),
-            (
-                "If-Modified-Since",
-                "The date the client's copy carries, per RFC 9110 section 13.1.3",
-            ),
+        for precondition in [
+            Precondition::Match,
+            Precondition::UnmodifiedSince,
+            Precondition::NoneMatch,
+            Precondition::ModifiedSince,
         ] {
-            operation.add_parameter(
-                kynos_openapi::Parameter::header(
-                    name,
-                    kynos_openapi::Schema::of_type(
-                        kynos_openapi::model::schema::types::SchemaType::String,
-                    ),
-                )
-                .with_description(description),
-            );
+            operation.add_parameter(precondition.parameter());
         }
     }
 }

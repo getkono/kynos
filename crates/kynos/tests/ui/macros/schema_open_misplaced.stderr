@@ -1,0 +1,11 @@
+error: `#[schema(open)]` says what a flattened field contributes to the object carrying it, and only a flattened field has anything to contribute: an ordinary field is one property, whose own schema already states what it admits. Add `#[serde(flatten)]`, or drop the attribute
+  --> tests/ui/macros/schema_open_misplaced.rs:12:14
+   |
+12 |     #[schema(open)]
+   |              ^^^^
+
+error: `#[schema(open)]` may appear once per container object: it supplies that object's `unevaluatedProperties`, which is one keyword, so a second open field could only overwrite what the first one said. Merge the two maps, or give one of them a named field of its own
+  --> tests/ui/macros/schema_open_misplaced.rs:22:14
+   |
+22 |     #[schema(open)]
+   |              ^^^^

@@ -791,7 +791,9 @@ interval shorter than the limit therefore never trips one. That is the intended
 reading — the connection is demonstrably alive — but it means `idle` bounds the
 transport rather than the application there, and `deadline` is what bounds how
 long such a stream may run at all. Both directions are asserted in
-[`tests/limits.rs`](../crates/kynos/tests/limits.rs).
+[`tests/limits.rs`](../crates/kynos/tests/limits.rs):
+`a_keep_alive_frame_resets_an_idle_body_timeout` and
+`a_deadline_ends_an_event_stream_its_keep_alives_hold_open`.
 
 **A timeout answers 408, and neither status is exact.** RFC 9110 §15.6.5 scopes
 504 to a server "acting as a gateway or proxy" awaiting an upstream — which an

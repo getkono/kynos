@@ -2,15 +2,12 @@
 //! conversion, a function override, an untagged or catch-all decoding rule, and
 //! a transparent struct that writes and reads through different fields.
 
-use syn::{Data, DeriveInput, Field, Fields, spanned::Spanned};
+use syn::{Data, DeriveInput, Field, Fields};
 
-use crate::derive::{
-    common::skip_value,
-    schema::{
-        Container,
-        attributes::{is_skipped_both_ways, serde_flag, serde_key_span, transparent_picks},
-        described_variants, is_written,
-    },
+use crate::derive::schema::{
+    Container,
+    attributes::{is_skipped_both_ways, serde_flag, serde_key_span, transparent_picks},
+    described_variants, is_written,
 };
 
 /// serde's keys that hand a value to a function instead of its own
@@ -60,27 +57,13 @@ pub(super) fn reject_untagged(input: &DeriveInput) -> syn::Result<()> {
         return Ok(());
     };
 
-    for attr in &input.attrs {
-        if !attr.path().is_ident("serde") {
-            continue;
-        }
-        let mut found = None;
-        let _ = attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("untagged") {
-                found = Some(meta.path.span());
-            } else {
-                skip_value(&meta)?;
-            }
-            Ok(())
-        });
-        if let Some(span) = found {
-            return Err(syn::Error::new(
-                span,
-                "an untagged enum has no describable decoding rule: `anyOf` without a \
-                 discriminator is ambiguous, and serde's first-match tie-break cannot be \
-                 expressed. Use `#[serde(tag = \"...\")]`, which becomes a `discriminator`",
-            ));
-        }
+    if let Some((_, span)) = serde_key_span(&input.attrs, &["untagged"]) {
+        return Err(syn::Error::new(
+            span,
+            "an untagged enum has no describable decoding rule: `anyOf` without a \
+             discriminator is ambiguous, and serde's first-match tie-break cannot be \
+             expressed. Use `#[serde(tag = \"...\")]`, which becomes a `discriminator`",
+        ));
     }
 
     for variant in described_variants(data, &Container::read(input)) {

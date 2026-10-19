@@ -1,0 +1,31 @@
+error: a route attribute needs a path, as in `#[kynos::get("/users/{id}")]`
+  --> tests/ui/macros/route_argument_refusals.rs:12:1
+   |
+12 | #[kynos::operation(method = "GET", operation_id = "getHealth")]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `kynos::operation` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: expected a string literal
+  --> tests/ui/macros/route_argument_refusals.rs:15:43
+   |
+15 | #[kynos::operation(method = "GET", path = 7)]
+   |                                           ^
+
+error: expected a path string literal, `operation_id = "..."`, `tag = Tag`, or `catch_panics`
+  --> tests/ui/macros/route_argument_refusals.rs:18:25
+   |
+18 | #[kynos::get("/health", nonsense)]
+   |                         ^^^^^^^^
+
+error: expected `name = value`, not a list
+  --> tests/ui/macros/route_argument_refusals.rs:21:25
+   |
+21 | #[kynos::get("/health", tag(Users))]
+   |                         ^^^
+
+error: expected the name of a type deriving `Tag`
+  --> tests/ui/macros/route_argument_refusals.rs:24:31
+   |
+24 | #[kynos::get("/health", tag = "Users")]
+   |                               ^^^^^^^

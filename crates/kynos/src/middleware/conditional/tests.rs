@@ -1,10 +1,29 @@
-use crate::http::etag::ETag;
-
-use super::{IfNoneMatch, NotModified, Preconditions, matched};
+use super::{NotModified, Preconditions, matched};
 use crate::{
     extract::params::header::DecodeHeaders,
     http::{HeaderMap, HeaderValue, header},
 };
+
+/// The tags `read`'s condition lists, or `None` for `*`.
+fn listed(read: &Preconditions) -> Option<Vec<&str>> {
+    read.if_none_match
+        .as_ref()
+        .expect("a precondition")
+        .tags()
+        .map(Iterator::collect)
+}
+
+/// A request head carrying one `If-None-Match` line for each of `lines`.
+fn preconditions(lines: &[&str]) -> Preconditions {
+    let mut request = HeaderMap::new();
+    for line in lines {
+        request.append(
+            header::IF_NONE_MATCH,
+            HeaderValue::from_str(line).expect("a printable field"),
+        );
+    }
+    Preconditions::decode(&request).expect("decoding a precondition never fails")
+}
 
 /// A response head carrying `fields`.
 fn headers(fields: &[(&crate::http::HeaderName, &str)]) -> HeaderMap {
@@ -20,46 +39,7 @@ fn headers(fields: &[(&crate::http::HeaderName, &str)]) -> HeaderMap {
 
 /// A request head carrying one `If-None-Match`.
 fn precondition(value: &str) -> Preconditions {
-    let mut request = HeaderMap::new();
-    request.insert(
-        header::IF_NONE_MATCH,
-        HeaderValue::from_str(value).expect("a printable field"),
-    );
-    Preconditions::decode(&request).expect("decoding a precondition never fails")
-}
-
-/// A tag renders with its quotes and its weakness marker.
-#[test]
-fn a_tag_renders_the_way_the_grammar_writes_it() {
-    assert_eq!(
-        ETag::strong("abc")
-            .encode()
-            .map(|value| value.to_str().expect("printable").to_owned()),
-        Some("\"abc\"".to_owned())
-    );
-    assert_eq!(
-        ETag::weak("abc")
-            .encode()
-            .map(|value| value.to_str().expect("printable").to_owned()),
-        Some("W/\"abc\"".to_owned())
-    );
-}
-
-/// A tag the grammar cannot carry renders nothing.
-///
-/// RFC 9110 section 8.8.3 gives `etagc` a narrow grammar, and a quote inside a
-/// tag would end it early -- a different tag than the one that was meant. A
-/// comma is *legal*, which is why the list parser has to be quote-aware.
-#[test]
-fn a_tag_that_cannot_be_a_field_renders_nothing() {
-    for value in ["a\"b", "a b", "a\nb"] {
-        assert_eq!(ETag::strong(value).encode(), None, "{value:?}");
-    }
-
-    // The controls, including the comma the grammar permits.
-    for value in ["a-b_c.1", "a,b"] {
-        assert!(ETag::strong(value).encode().is_some(), "{value:?}");
-    }
+    preconditions(&[value])
 }
 
 /// A comma inside a tag belongs to the tag.
@@ -68,17 +48,11 @@ fn a_tag_that_cannot_be_a_field_renders_nothing() {
 /// two tags and matches neither -- a 200 where a 304 was owed.
 #[test]
 fn a_comma_inside_a_tag_does_not_split_it() {
-    assert_eq!(
-        precondition("\"a,b\"").if_none_match,
-        Some(IfNoneMatch::Tags(vec!["\"a,b\"".to_owned()]))
-    );
+    assert_eq!(listed(&precondition("\"a,b\"")), Some(vec!["\"a,b\""]));
 
     assert_eq!(
-        precondition("\"a,b\", \"c\"").if_none_match,
-        Some(IfNoneMatch::Tags(vec![
-            "\"a,b\"".to_owned(),
-            "\"c\"".to_owned()
-        ]))
+        listed(&precondition("\"a,b\", \"c\"")),
+        Some(vec!["\"a,b\"", "\"c\""])
     );
 
     let current = headers(&[(&header::ETAG, "\"a,b\"")]);
@@ -105,66 +79,74 @@ fn decoding_a_precondition_never_fails() {
     assert_eq!(decoded.if_none_match, None);
 }
 
+/// A line that is not visible ASCII names no tag, so it is dropped while the
+/// lines beside it still count.
+#[test]
+fn an_unreadable_line_beside_a_readable_one_is_dropped() {
+    let mut headers = HeaderMap::new();
+    headers.append(
+        header::IF_NONE_MATCH,
+        HeaderValue::from_bytes(b"\xff").expect("a legal field value"),
+    );
+    headers.append(header::IF_NONE_MATCH, HeaderValue::from_static("\"a\""));
+
+    let decoded = Preconditions::decode(&headers).expect("never fails");
+    assert_eq!(decoded, precondition("\"a\""));
+    assert_eq!(listed(&decoded), Some(vec!["\"a\""]));
+}
+
 #[test]
 fn a_wildcard_precondition_is_read_as_one() {
-    assert_eq!(precondition("*").if_none_match, Some(IfNoneMatch::Any));
+    assert_eq!(listed(&precondition("*")), None);
 }
 
 /// RFC 9110 section 5.3: two `If-None-Match` lines are one list, so a tag on
 /// the second line is read as surely as one on the first.
 #[test]
 fn every_if_none_match_line_is_read() {
-    let mut request = HeaderMap::new();
-    for line in ["\"a\"", "\"b\""] {
-        request.append(
-            header::IF_NONE_MATCH,
-            HeaderValue::from_str(line).expect("a printable field"),
-        );
-    }
-
-    let read = Preconditions::decode(&request)
-        .expect("decoding a precondition never fails")
-        .if_none_match;
-    assert_eq!(
-        read,
-        Some(IfNoneMatch::Tags(vec![
-            "\"a\"".to_owned(),
-            "\"b\"".to_owned()
-        ]))
-    );
+    let read = preconditions(&["\"a\"", "\"b\""]);
+    assert_eq!(listed(&read), Some(vec!["\"a\"", "\"b\""]));
 
     let current = headers(&[(&header::ETAG, "\"b\"")]);
-    assert!(matched(&read.expect("a precondition"), &current));
+    assert!(matched(
+        &read.if_none_match.expect("a precondition"),
+        &current
+    ));
 }
 
-/// A `*` line among tag lines makes the whole condition `Any`, whatever line
-/// came before it.
+/// A `*` line among tag lines makes the whole condition `*`, whatever line
+/// came before it, and it then matches a tag no line lists.
 #[test]
 fn a_star_line_beside_a_tag_line_reads_as_any() {
-    let mut request = HeaderMap::new();
-    for line in ["\"a\"", "*"] {
-        request.append(
-            header::IF_NONE_MATCH,
-            HeaderValue::from_str(line).expect("a printable field"),
-        );
-    }
+    let read = preconditions(&["\"a\"", "*"]);
+    assert_eq!(listed(&read), None);
 
-    assert_eq!(
-        Preconditions::decode(&request)
-            .expect("decoding a precondition never fails")
-            .if_none_match,
-        Some(IfNoneMatch::Any)
-    );
+    let current = headers(&[(&header::ETAG, "\"other\"")]);
+    assert!(matched(
+        &read.if_none_match.expect("a precondition"),
+        &current
+    ));
+}
+
+/// A `*` among tags on one line is no `entity-tag` and no wildcard: it is
+/// listed verbatim and names nothing.
+#[test]
+fn a_star_among_tags_is_not_a_wildcard() {
+    let read = precondition("\"a\", *");
+    assert_eq!(listed(&read), Some(vec!["\"a\"", "*"]));
+
+    let current = headers(&[(&header::ETAG, "\"other\"")]);
+    assert!(!matched(
+        &read.if_none_match.expect("a precondition"),
+        &current
+    ));
 }
 
 #[test]
 fn a_list_of_tags_is_read_as_a_list() {
     assert_eq!(
-        precondition("\"a\", W/\"b\"").if_none_match,
-        Some(IfNoneMatch::Tags(vec![
-            "\"a\"".to_owned(),
-            "W/\"b\"".to_owned()
-        ]))
+        listed(&precondition("\"a\", W/\"b\"")),
+        Some(vec!["\"a\"", "W/\"b\""])
     );
 }
 
@@ -211,25 +193,117 @@ fn a_response_with_no_tag_matches_nothing() {
 /// RFC 9110 section 15.4.5 lists them. What is *not* replayed matters as much:
 /// no `Content-Type`, no `Content-Length`, and no body -- a 304 says "what you
 /// have is current", not "here it is again".
+///
+/// Every one of the eight is given, `Vary` on two lines so a replay of only
+/// the first would show, beside fields a 304 must not carry; the replay is
+/// compared whole.
 #[test]
 fn a_not_modified_replays_what_a_cache_needs_and_nothing_else() {
-    let produced = headers(&[
-        (&header::ETAG, "\"abc\""),
+    let replayed_fields: [(&crate::http::HeaderName, &str); 9] = [
         (&header::CACHE_CONTROL, "max-age=60"),
+        (&header::CONTENT_LOCATION, "/documents/1"),
+        (&header::DATE, "Tue, 15 Nov 1994 08:12:31 GMT"),
+        (&header::ETAG, "\"abc\""),
+        (&header::EXPIRES, "Tue, 15 Nov 1994 08:13:31 GMT"),
         (&header::VARY, "accept-encoding"),
+        (&header::VARY, "accept-language"),
+        (&header::AGE, "12"),
+        (&header::LAST_MODIFIED, "Mon, 14 Nov 1994 08:12:31 GMT"),
+    ];
+    let dropped_fields: [(&crate::http::HeaderName, &str); 4] = [
         (&header::CONTENT_TYPE, "application/json"),
         (&header::CONTENT_LENGTH, "42"),
-    ]);
+        (&header::SET_COOKIE, "session=1"),
+        (&header::CONTENT_ENCODING, "gzip"),
+    ];
 
-    let replayed = NotModified::from_headers(&produced).replayed;
+    let mut produced = HeaderMap::new();
+    let mut expected = HeaderMap::new();
+    for (name, value) in replayed_fields {
+        let value = HeaderValue::from_static(value);
+        produced.append(name.clone(), value.clone());
+        expected.append(name.clone(), value);
+    }
+    for (name, value) in dropped_fields {
+        produced.append(name.clone(), HeaderValue::from_static(value));
+    }
 
-    assert_eq!(
-        replayed.get(header::ETAG).and_then(|v| v.to_str().ok()),
-        Some("\"abc\"")
-    );
-    assert!(replayed.contains_key(header::CACHE_CONTROL));
-    assert!(replayed.contains_key(header::VARY));
+    assert_eq!(NotModified::from_headers(&produced).replayed, expected);
+}
 
-    assert!(!replayed.contains_key(header::CONTENT_TYPE));
-    assert!(!replayed.contains_key(header::CONTENT_LENGTH));
+/// RFC 9110 section 13.1.2: a matched `If-None-Match` is answered 304 only for
+/// GET and HEAD. Every other method's response goes on as the handler made it
+/// — the 412 those methods call for is not this interceptor's to send.
+mod methods {
+    use crate::{
+        Router,
+        extract::body::text::Text,
+        http::{Method, StatusCode, body::Body, etag::ETag, header},
+        middleware::conditional::Conditional,
+        openapi::{Method as Operation, PathTemplate},
+        response::headers::WithHeaders,
+        router::{endpoint::builder::EndpointBuilder, service::Service},
+    };
+
+    async fn tagged() -> WithHeaders<Text, ETag> {
+        WithHeaders::new(Text("the document".to_owned()), ETag::strong("abc"))
+    }
+
+    /// `/doc` under `Conditional`, answering every method but HEAD, which
+    /// falls back to the GET.
+    fn service() -> Service<()> {
+        let endpoint = |method| {
+            EndpointBuilder::new(
+                method,
+                PathTemplate::parse("/doc").expect("a valid path"),
+                tagged,
+            )
+        };
+        Router::<()>::new()
+            .mount((
+                endpoint(Operation::Get),
+                endpoint(Operation::Post),
+                endpoint(Operation::Put),
+                endpoint(Operation::Patch),
+                endpoint(Operation::Delete),
+                endpoint(Operation::Options),
+            ))
+            .intercept(Conditional::new())
+            .build(())
+            .expect("a describable router")
+    }
+
+    #[tokio::test]
+    async fn only_get_and_head_are_answered_not_modified() {
+        let service = service();
+        let cases = [
+            (Method::GET, StatusCode::NOT_MODIFIED),
+            (Method::HEAD, StatusCode::NOT_MODIFIED),
+            (Method::POST, StatusCode::OK),
+            (Method::PUT, StatusCode::OK),
+            (Method::PATCH, StatusCode::OK),
+            (Method::DELETE, StatusCode::OK),
+            (Method::OPTIONS, StatusCode::OK),
+        ];
+
+        for (method, expected) in cases {
+            let request = http::Request::builder()
+                .method(method.clone())
+                .uri("/doc")
+                .header(header::IF_NONE_MATCH, "\"abc\"")
+                .body(Body::empty())
+                .expect("a well-formed request");
+            let response = service.call(request).await;
+
+            assert_eq!(response.status(), expected, "{method}");
+            assert_eq!(
+                response
+                    .headers()
+                    .get(header::ETAG)
+                    .map(http::HeaderValue::as_bytes),
+                Some(b"\"abc\"".as_slice()),
+                "{method}"
+            );
+        }
+    }
 }

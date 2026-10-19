@@ -192,90 +192,6 @@ pub(crate) fn set_retry_after(response: &mut Response, delay: std::time::Duratio
     );
 }
 
-/// Merges `names` into whatever `Vary` a response already carries.
-///
-/// A union, since `Vary` is a set several interceptors contribute to (RFC 9110
-/// section 12.5.5). Names compare case-insensitively (section 5.1), every
-/// `Vary` line counts (section 5.3), and `Vary: *` is never narrowed. Merged
-/// over bytes so a non-UTF-8 line survives; lines are rewritten only when a
-/// name is added.
-///
-/// Builds no line when no name is added, borrows the name when the one name
-/// added is the whole field, and otherwise allocates the rewritten line once,
-/// sized exactly.
-pub(crate) fn vary_on(fields: &mut crate::http::HeaderMap, names: &'static [&'static str]) {
-    use crate::http::{HeaderMap, HeaderValue, header::VARY};
-
-    /// Every non-empty member of every `Vary` line, trimmed.
-    fn members(fields: &HeaderMap) -> impl Iterator<Item = &[u8]> {
-        fields
-            .get_all(VARY)
-            .into_iter()
-            .flat_map(|line| line.as_bytes().split(|&byte| byte == b','))
-            .map(<[u8]>::trim_ascii)
-            .filter(|member| !member.is_empty())
-    }
-
-    /// Each of `names` neither a member nor an earlier name, in any case.
-    fn added<'a>(
-        fields: &'a HeaderMap,
-        names: &'static [&'static str],
-    ) -> impl Iterator<Item = &'static [u8]> + 'a {
-        names.iter().enumerate().filter_map(move |(index, name)| {
-            let name = name.as_bytes();
-            let known = members(fields)
-                .chain(names[..index].iter().map(|earlier| earlier.as_bytes()))
-                .any(|member| member.eq_ignore_ascii_case(name));
-            (!known).then_some(name)
-        })
-    }
-
-    let mut count = 0;
-    let mut length = 0;
-
-    for member in members(fields) {
-        if member == b"*" {
-            return;
-        }
-        count += 1;
-        length += member.len();
-    }
-
-    let present = count;
-    let mut last: &'static [u8] = b"";
-
-    for name in added(fields, names) {
-        count += 1;
-        length += name.len();
-        last = name;
-    }
-
-    let line = match count - present {
-        0 => return,
-        // The one name is the whole field, so it is borrowed rather than copied.
-        1 if present == 0 => bytes::Bytes::from_static(last),
-        _ => {
-            let mut line = Vec::with_capacity(length + b", ".len() * (count - 1));
-
-            for member in members(fields).chain(added(fields, names).map(|name| -> &[u8] { name }))
-            {
-                if !line.is_empty() {
-                    line.extend_from_slice(b", ");
-                }
-                line.extend_from_slice(member);
-            }
-
-            // Sized exactly, so the value takes the buffer over without a copy.
-            bytes::Bytes::from(line)
-        }
-    };
-
-    // Unreachable for a field name; a missing cache hint beats a panicking response.
-    if let Ok(value) = HeaderValue::from_maybe_shared(line) {
-        fields.insert(VARY, value);
-    }
-}
-
 /// A response that came back through the rest of the chain.
 ///
 /// Obtainable only from [`Next::run`], so an interceptor either forwards what
@@ -386,7 +302,7 @@ impl<H> Continued<H> {
         debug_assert!(
             G::NAMES
                 .iter()
-                .any(|declared| stack::header_name_eq(declared, name.as_str())),
+                .any(|declared| crate::http::header_name_eq(declared, name.as_str())),
             "`{}` removes `{}`, which its `NAMES` does not declare",
             std::any::type_name::<G>(),
             name.as_str(),
@@ -538,3 +454,8 @@ pub trait Observer<C>: Send + Sync + 'static {
 
 #[cfg(test)]
 mod tests;
+
+/// Named as a test file, since it holds nothing but test fixtures.
+#[cfg(test)]
+#[path = "interrupted_tests.rs"]
+pub(crate) mod testing;

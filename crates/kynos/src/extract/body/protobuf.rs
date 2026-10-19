@@ -36,8 +36,8 @@ use crate::{
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Protobuf<T>(pub T);
 
-/// The media type decoded and described.
-pub(super) const MEDIA_TYPE: &str = "application/protobuf";
+/// The media type decoded, described and written by the response half.
+pub(crate) const MEDIA_TYPE: &str = "application/protobuf";
 
 /// `T: Schema` because the bounds a derived field declares are checked once `T`
 /// is decoded.

@@ -214,6 +214,66 @@ fn the_closing_event_carries_the_method() {
     assert!(unmatched.contains("method=<unmatched> "), "{unmatched}");
 }
 
+/// Several recorded headers go out as one field, joined in the order they
+/// were listed rather than the order the request sent them, with a listed
+/// header the request lacks left out and a redacted one marked.
+#[test]
+fn recorded_headers_are_joined_in_the_order_listed() {
+    let trace = Trace::new().record_headers(&["x-tenant", "x-absent", "authorization", "x-region"]);
+    let recorded = trace.recorded(&map(&[
+        ("x-region", "eu"),
+        ("authorization", "Bearer eyJ"),
+        ("x-tenant", "acme"),
+    ]));
+
+    assert_eq!(
+        recorded,
+        "x-tenant=acme, authorization=<redacted>, x-region=eu"
+    );
+}
+
+/// A recovered panic is one `ERROR` event naming the matched operation and
+/// what the payload says — whatever level the rest are emitted at, and for
+/// each payload shape `panic!` makes as well as one it does not.
+#[test]
+fn a_panic_is_reported_at_error_with_its_operation_and_message() {
+    let trace = Trace::new().level(tracing::Level::DEBUG);
+    let route = Route::new("/users/{id}", "deleteUser", Method::Delete);
+    let payloads: [(Box<dyn std::any::Any + Send>, &str); 3] = [
+        (Box::new("a static message"), "a static message"),
+        (
+            Box::new(String::from("a formatted message")),
+            "a formatted message",
+        ),
+        (Box::new(42_u32), "<non-string panic payload>"),
+    ];
+
+    for (payload, message) in payloads {
+        let lines = captured(|| Observer::<()>::on_panic(&trace, payload.as_ref(), Some(route)));
+
+        assert_eq!(
+            lines,
+            format!(
+                "ERROR kynos::middleware::trace: handler panicked \
+                 matched_path=\"/users/{{id}}\" operation_id=\"deleteUser\" panic=\"{message}\"\n"
+            )
+        );
+    }
+}
+
+/// A panic no operation matched for still reports, under the placeholder the
+/// other events use, so its shape never varies.
+#[test]
+fn an_unmatched_panic_is_reported_under_the_placeholder() {
+    let lines = captured(|| Observer::<()>::on_panic(&Trace::new(), &"boom", None));
+
+    assert_eq!(
+        lines,
+        "ERROR kynos::middleware::trace: handler panicked matched_path=\"<unmatched>\" \
+         operation_id=\"<unmatched>\" panic=\"boom\"\n"
+    );
+}
+
 /// A group of two names, to tell the first declared from the first present.
 struct Pair(HeaderValue);
 

@@ -1,0 +1,5 @@
+error: this already declares a status, and a response has one
+  --> tests/ui/macros/reply_status_twice_on_a_variant.rs:10:36
+   |
+10 |     #[reply(status = 200, status = 201)]
+   |                                    ^^^

@@ -50,6 +50,15 @@ pub trait Requirement: sealed::Sealed + Send + Sync + 'static {
     /// one challenge a client can answer.
     fn challenge() -> Option<&'static str>;
 
+    /// The `WWW-Authenticate` challenge a 403 refusing this requirement's
+    /// default scopes may send.
+    ///
+    /// The first scheme's that has default scopes and an
+    /// [`insufficient_scope_challenge`](SecurityScheme::insufficient_scope_challenge),
+    /// in declaration order: a scheme with no defaults is never authorized by
+    /// a guard naming no scope set, so it never refuses a scope.
+    fn insufficient_scope_challenge() -> Option<&'static str>;
+
     /// Registers every scheme named, and returns the alternatives in the order
     /// the operation's `security` lists them.
     fn declare(operation: &mut OperationCx<'_>) -> Vec<SecurityRequirement>;
@@ -80,6 +89,10 @@ impl<S: SecurityScheme> Requirement for S {
         <S as SecurityScheme>::challenge()
     }
 
+    fn insufficient_scope_challenge() -> Option<&'static str> {
+        owed_scope_challenge::<S>()
+    }
+
     fn declare(operation: &mut OperationCx<'_>) -> Vec<SecurityRequirement> {
         vec![require::<S>(operation, defaults::<S>())]
     }
@@ -96,7 +109,9 @@ where
             return Ok(None);
         };
 
-        verify::<S, C>(presented, context).await.map(Some)
+        verify::<S, C>(presented, owed_defaults::<S>(), context)
+            .await
+            .map(Some)
     }
 }
 
@@ -195,6 +210,10 @@ macro_rules! any_of {
                 first_challenge(&[$(<$scheme as SecurityScheme>::challenge),+])
             }
 
+            fn insufficient_scope_challenge() -> Option<&'static str> {
+                first_challenge(&[$(owed_scope_challenge::<$scheme>),+])
+            }
+
             fn declare(operation: &mut OperationCx<'_>) -> Vec<SecurityRequirement> {
                 // Two schemes registered under one key are one alternative.
                 let mut alternatives = Vec::new();
@@ -245,6 +264,10 @@ macro_rules! all_of {
                 first_challenge(&[$(<$scheme as SecurityScheme>::challenge),+])
             }
 
+            fn insufficient_scope_challenge() -> Option<&'static str> {
+                first_challenge(&[$(owed_scope_challenge::<$scheme>),+])
+            }
+
             fn declare(operation: &mut OperationCx<'_>) -> Vec<SecurityRequirement> {
                 let mut together = SecurityRequirement::anonymous();
                 $(
@@ -280,12 +303,12 @@ macro_rules! all_of {
                 // Every authentication before any authorization, so a request
                 // one scheme cannot authenticate is a 401, never a 403, and is
                 // never authorized.
+                $( let $scheme = authenticate::<$scheme, C>($scheme, context).await?; )+
                 $(
-                    let $scheme = <C as Authenticates<$scheme>>::authenticator(context)
-                        .authenticate($scheme, context)
-                        .await?;
+                    let $scheme =
+                        authorize::<$scheme, C>($scheme, owed_defaults::<$scheme>(), context)
+                            .await?;
                 )+
-                $( let $scheme = authorize_defaults::<$scheme, C>($scheme, context).await?; )+
                 Ok(Some(($($scheme,)+)))
             }
         }
@@ -300,42 +323,87 @@ all_of!(A, B);
 all_of!(A, B, D);
 all_of!(A, B, D, E);
 
-/// Authenticates `presented` as scheme `S`, then authorizes the scheme's
-/// default scopes, so a guard naming no scope set enforces what
-/// [`declare`](Requirement::declare) wrote for it.
-async fn verify<S, C>(presented: S::Presented, context: &C) -> Result<S::Credential, AuthRejection>
-where
-    S: Carries,
-    C: Authenticates<S>,
-{
-    let credential = context
-        .authenticator()
-        .authenticate(presented, context)
-        .await?;
-    authorize_defaults::<S, C>(credential, context).await
-}
-
-/// Authorizes `credential` for scheme `S`'s default scopes, and hands it back.
+/// Authenticates `presented` as scheme `S`, then authorizes it for `scopes`
+/// where they are given.
 ///
-/// Owned rather than borrowed, so the future needs no `Sync` credential to be
-/// `Send`. A scheme with no default scopes is never authorized here: its
-/// requirement declares none, so there is nothing to check.
-async fn authorize_defaults<S, C>(
-    credential: S::Credential,
+/// `None` skips `authorize`, as a guard naming no scope set does for a scheme
+/// with no default scopes ([`owed_defaults`]); `Some` calls it even with an
+/// empty slice, as [`Scoped`](crate::security::auth::Scoped) does.
+pub(crate) async fn verify<S, C>(
+    presented: S::Presented,
+    scopes: Option<&[S::Scope]>,
     context: &C,
 ) -> Result<S::Credential, AuthRejection>
 where
     S: Carries,
     C: Authenticates<S>,
 {
-    let defaults = S::scopes();
-    if !defaults.is_empty() {
+    let credential = authenticate::<S, C>(presented, context).await?;
+    authorize::<S, C>(credential, scopes, context).await
+}
+
+/// Authenticates `presented` as scheme `S`.
+///
+/// A 403 here declines a credential rather than a scope, so it sends no
+/// challenge, whatever the authenticator set.
+async fn authenticate<S, C>(
+    presented: S::Presented,
+    context: &C,
+) -> Result<S::Credential, AuthRejection>
+where
+    S: Carries,
+    C: Authenticates<S>,
+{
+    context
+        .authenticator()
+        .authenticate(presented, context)
+        .await
+        .map_err(|rejection| rejection.with_scope_challenge(None))
+}
+
+/// Authorizes `credential` for scheme `S`'s `scopes` where they are given, and
+/// hands it back.
+///
+/// A 403 here refused a scope, so it carries
+/// [`SecurityScheme::insufficient_scope_challenge`]. Owned rather than
+/// borrowed, so the future needs no `Sync` credential to be `Send`.
+async fn authorize<S, C>(
+    credential: S::Credential,
+    scopes: Option<&[S::Scope]>,
+    context: &C,
+) -> Result<S::Credential, AuthRejection>
+where
+    S: Carries,
+    C: Authenticates<S>,
+{
+    if let Some(scopes) = scopes {
         context
             .authenticator()
-            .authorize(&credential, defaults, context)
-            .await?;
+            .authorize(&credential, scopes, context)
+            .await
+            // The scheme's own, not `Requirement`'s, which only a guard naming
+            // no scope set may declare.
+            .map_err(|rejection| {
+                rejection
+                    .with_scope_challenge(<S as SecurityScheme>::insufficient_scope_challenge())
+            })?;
     }
     Ok(credential)
+}
+
+/// What a guard naming no scope set authorizes for scheme `S`: its default
+/// scopes, so the guard enforces what [`declare`](Requirement::declare) wrote
+/// for it. `None` for a scheme with none, which is never authorized: its
+/// requirement declares none, so there is nothing to check.
+fn owed_defaults<S: SecurityScheme>() -> Option<&'static [S::Scope]> {
+    Some(S::scopes()).filter(|scopes| !scopes.is_empty())
+}
+
+/// The challenge a guard naming no scope set may send on a 403 for scheme
+/// `S`: its insufficient-scope challenge, where [`owed_defaults`] authorizes
+/// it at all.
+fn owed_scope_challenge<S: SecurityScheme>() -> Option<&'static str> {
+    owed_defaults::<S>().and_then(|_| S::insufficient_scope_challenge())
 }
 
 /// Registers scheme `S` and returns the requirement naming it with `scopes`.

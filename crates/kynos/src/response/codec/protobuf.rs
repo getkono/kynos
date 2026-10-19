@@ -1,7 +1,7 @@
 //! Writing `application/protobuf` as a response.
 
 use crate::{
-    extract::body::protobuf::Protobuf,
+    extract::body::protobuf::{MEDIA_TYPE, Protobuf},
     http::{HeaderValue, Response, body::Body, header},
     response::{IntoResponse, Responses},
     schema::{Schema, registry::Registry},
@@ -13,10 +13,9 @@ impl<T: prost::Message> IntoResponse for Protobuf<T> {
         let encoded = self.0.encode_to_vec();
 
         let mut response = Response::new(Body::from_bytes(bytes::Bytes::from(encoded)));
-        response.headers_mut().insert(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("application/protobuf"),
-        );
+        response
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, HeaderValue::from_static(MEDIA_TYPE));
         response
     }
 }
@@ -27,7 +26,7 @@ impl<T: Schema> Responses for Protobuf<T> {
             200,
             kynos_openapi::Response::with_content(
                 "OK",
-                "application/protobuf",
+                MEDIA_TYPE,
                 kynos_openapi::MediaType::new(registry.resolve::<T>()),
             ),
         )

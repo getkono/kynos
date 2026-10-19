@@ -44,6 +44,16 @@ fn aliases(token: &str) -> &'static [&'static str] {
     }
 }
 
+/// Whether `name` names the coding `token`: case-insensitively (RFC 9110
+/// section 8.4.1), or as one of its deprecated aliases.
+#[must_use]
+pub(crate) fn names(name: &str, token: &str) -> bool {
+    name.eq_ignore_ascii_case(token)
+        || aliases(token)
+            .iter()
+            .any(|alias| alias.eq_ignore_ascii_case(name))
+}
+
 /// The quality `accept` assigns `token`, honouring `*`, in thousandths.
 ///
 /// `0..=1000` (RFC 9110 section 12.4.2). `None` when neither the token nor a
@@ -89,11 +99,7 @@ fn weight(accept: &str, token: &str) -> Option<Weight> {
                 super::quality::parse(weight.trim()).map_or(Weight::Malformed, Weight::Qvalue)
             });
 
-        if name.eq_ignore_ascii_case(token)
-            || aliases(token)
-                .iter()
-                .any(|alias| alias.eq_ignore_ascii_case(name))
-        {
+        if names(name, token) {
             return Some(weight);
         }
 
@@ -113,10 +119,6 @@ fn weight(accept: &str, token: &str) -> Option<Weight> {
 /// A tie with identity goes to the encoded coding; among encoded codings, to
 /// the earlier entry in `available`.
 #[must_use]
-#[cfg_attr(
-    not(any(test, feature = "assets")),
-    expect(dead_code, reason = "the asset server is its only caller")
-)]
 pub(crate) fn preferred<'a>(accept: &str, available: &[&'a str]) -> Option<&'a str> {
     let mut best: Option<(&'a str, u16)> = None;
 

@@ -540,3 +540,164 @@ fn only_a_json_based_body_is_validated_against_its_schema() {
     let reasons = conformance(&document, &observed(200, Some("text/plain"), "{}"));
     assert!(reasons.is_empty(), "{reasons:?}");
 }
+
+/// Every reason `conformance` gives that names the exchange rather than the
+/// body's content, word for word: the sentence is what a failing suite prints,
+/// so a reworded one is a changed contract.
+#[test]
+fn every_reason_is_reported_in_its_own_sentence() {
+    use kynos_openapi::{Ref, RefOr, Responses};
+
+    let mut unresolved = Responses::new();
+    unresolved
+        .responses
+        .insert("200".to_owned(), RefOr::Ref(Ref::response("Missing")));
+
+    let posted = crate::test::Observed {
+        method: crate::http::Method::POST,
+        ..observed(200, None, "")
+    };
+    let purged = crate::test::Observed {
+        method: crate::http::Method::from_bytes(b"PURGE").expect("a method token"),
+        ..observed(200, None, "")
+    };
+    let elsewhere = crate::test::Observed {
+        path: "/elsewhere".to_owned(),
+        ..observed(200, None, "")
+    };
+
+    let not_json = serde_json::from_slice::<serde_json::Value>(b"not json")
+        .expect_err("not JSON")
+        .to_string();
+
+    let cases: Vec<(&str, Document, crate::test::Observed, Vec<String>)> = vec![
+        (
+            "no path",
+            document_declaring(json_ok()),
+            elsewhere,
+            vec!["no declared path matches this request".to_owned()],
+        ),
+        (
+            "an undeclarable method",
+            document_declaring(json_ok()),
+            purged,
+            vec!["`PURGE` is not a method a description can declare".to_owned()],
+        ),
+        (
+            "no operation",
+            document_declaring(json_ok()),
+            posted,
+            vec!["`/thing` declares no `POST` operation".to_owned()],
+        ),
+        (
+            "an undeclared status",
+            document_declaring(json_ok()),
+            observed(404, Some("application/json"), "{}"),
+            vec!["status 404 is not declared".to_owned()],
+        ),
+        (
+            "an unresolved response `$ref`",
+            document_declaring(unresolved),
+            observed(200, None, ""),
+            vec!["the `200` response resolves to no component".to_owned()],
+        ),
+        (
+            "no `Content-Type`",
+            document_declaring(json_ok()),
+            observed(200, None, "{}"),
+            vec![
+                "no `Content-Type` was sent, but the description declares application/json"
+                    .to_owned(),
+            ],
+        ),
+        (
+            "an undeclared representation",
+            document_declaring(json_ok()),
+            observed(200, Some("text/plain"), "{}"),
+            vec![
+                "`text/plain` is not a declared representation; the description declares \
+                 application/json"
+                    .to_owned(),
+            ],
+        ),
+        (
+            "a body that is not JSON",
+            document_declaring(json_ok()),
+            observed(200, Some("application/json"), "not json"),
+            vec![format!("the body is not valid JSON: {not_json}")],
+        ),
+    ];
+
+    for (case, document, record, expected) in cases {
+        assert_eq!(conformance(&document, &record), expected, "{case}");
+    }
+}
+
+/// A required header the response did not send is reported by name, whether
+/// it is declared inline or behind a `#/components/headers` `$ref`; an
+/// optional one is not.
+#[test]
+fn a_missing_required_header_is_reported_inline_and_by_reference() {
+    use kynos_openapi::{Header, Ref, RefOr, Response, Responses, Schema};
+
+    let mut headed = Response::new("the thing");
+    let mut required = Header::new(Schema::default());
+    required.required = Some(true);
+    headed
+        .headers
+        .insert("X-Inline".to_owned(), RefOr::Item(required.clone()));
+    headed.headers.insert(
+        "X-Shared".to_owned(),
+        RefOr::Ref(Ref::new("#/components/headers/Shared")),
+    );
+    headed.headers.insert(
+        "X-Optional".to_owned(),
+        RefOr::Item(Header::new(Schema::default())),
+    );
+    let mut document = document_declaring(Responses::new().with(200, headed));
+    document
+        .components
+        .headers
+        .insert("Shared".to_owned(), RefOr::Item(required));
+
+    assert_eq!(
+        conformance(&document, &observed(200, None, "")),
+        [
+            "the declared required header `X-Inline` was not sent",
+            "the declared required header `X-Shared` was not sent",
+        ]
+    );
+}
+
+/// A declared schema the validator cannot compile is reported as the
+/// description's fault, in the validator's own words, rather than as a body
+/// that failed it.
+#[test]
+fn a_schema_that_does_not_compile_is_reported_as_such() {
+    let mut ok = kynos_openapi::Response::new("the thing");
+    let unclosed = kynos_openapi::Schema::Object(Box::new(kynos_openapi::SchemaObject {
+        pattern: Some("(".to_owned()),
+        ..kynos_openapi::SchemaObject::default()
+    }));
+    ok.content.insert(
+        "application/json".to_owned(),
+        kynos_openapi::MediaType::new(unclosed),
+    );
+    let document = document_declaring(kynos_openapi::Responses::new().with(200, ok));
+
+    let root = serde_json::json!({
+        "pattern": "(",
+        "components": serde_json::to_value(&document.components).expect("serializable"),
+    });
+    let error = jsonschema::draft202012::new(&root)
+        .expect_err("an unclosed group is no pattern")
+        .to_string();
+
+    assert_eq!(
+        conformance(
+            &document,
+            &observed(200, Some("application/json"), r#""text""#)
+        ),
+        [format!("the declared schema does not compile: {error}")]
+    );
+}

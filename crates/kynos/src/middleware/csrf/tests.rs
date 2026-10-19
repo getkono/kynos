@@ -307,3 +307,113 @@ fn an_origin_reduces_to_its_authority() {
     // never equal to a host and is refused unless explicitly trusted.
     assert_eq!(authority_of("null"), "null");
 }
+
+/// A trusted origin is compared ASCII case-insensitively, as its builder
+/// documents, so it passes in whatever case either side spells it — and
+/// another origin in the same case does not.
+#[test]
+fn a_trusted_origin_is_matched_whatever_its_case() {
+    let csrf = Csrf::new().trusting_origin("https://Admin.Example.com");
+    let cross_site = |origin| [("sec-fetch-site", "cross-site"), ("origin", origin)];
+
+    for origin in [
+        "https://admin.example.com",
+        "HTTPS://ADMIN.EXAMPLE.COM",
+        "https://Admin.Example.com",
+    ] {
+        assert!(
+            permits(&csrf, &Method::POST, &cross_site(origin)),
+            "{origin}"
+        );
+    }
+    assert!(!permits(
+        &csrf,
+        &Method::POST,
+        &cross_site("HTTPS://EVIL.EXAMPLE.COM")
+    ));
+}
+
+/// What `Csrf` answers on the wire, where the authority it compares comes
+/// from the request target rather than from an argument.
+mod wire {
+    use http_body_util::BodyExt;
+
+    use crate::{
+        Router,
+        extract::body::text::Text,
+        http::{Request, StatusCode, body::Body, header},
+        middleware::csrf::Csrf,
+        openapi::{Method, PathTemplate},
+        router::{endpoint::builder::EndpointBuilder, service::Service},
+    };
+
+    async fn submit() -> Text {
+        Text("accepted".to_owned())
+    }
+
+    fn service() -> Service<()> {
+        let endpoint = EndpointBuilder::new(
+            Method::Post,
+            PathTemplate::parse("/submit").expect("a valid path"),
+            submit,
+        );
+        Router::<()>::new()
+            .mount(endpoint)
+            .intercept(Csrf::new())
+            .build(())
+            .expect("a describable router")
+    }
+
+    /// A `POST` in absolute form to `api.example.com`, its `Host` naming
+    /// another authority, from `origin` by a browser sending no
+    /// `Sec-Fetch-Site`.
+    fn absolute(origin: &str) -> Request {
+        http::Request::builder()
+            .method("POST")
+            .uri("http://api.example.com/submit")
+            .header(header::HOST, "other.example.com")
+            .header(header::ORIGIN, origin)
+            .body(Body::empty())
+            .expect("a well-formed request")
+    }
+
+    /// RFC 9112 section 3.2.2: the target's authority outranks `Host`, so a
+    /// request from the target's own origin is served.
+    #[tokio::test]
+    async fn the_target_authority_admits_its_own_origin() {
+        let response = service().call(absolute("http://api.example.com")).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    /// And one whose origin matches only the ignored `Host` is refused with
+    /// the 403 problem `Csrf` declares, before the handler runs.
+    #[tokio::test]
+    async fn an_origin_matching_only_the_host_field_is_refused() {
+        let response = service().call(absolute("http://other.example.com")).await;
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .map(crate::http::HeaderValue::as_bytes),
+            Some(b"application/problem+json".as_slice())
+        );
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("a complete body")
+            .to_bytes();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).expect("a problem document"),
+            serde_json::json!({
+                "type": "about:blank",
+                "title": "Forbidden",
+                "status": 403,
+                "detail": "this request came from another site",
+            })
+        );
+    }
+}

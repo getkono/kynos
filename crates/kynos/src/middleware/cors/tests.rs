@@ -1,4 +1,4 @@
-use super::{Cors, CorsConfig, CorsDocumentation, Documented, Undocumented, Wildcards};
+use super::{Cors, CorsConfig, CorsDocumentation, Documented, Undocumented, Wildcards, join_names};
 use crate::{extract::params::header::HeaderParams, http::HeaderValue};
 
 /// The router reads a `Cors` back out of a type-erased chain by downcasting
@@ -35,7 +35,10 @@ fn permitting_any_origin_alongside_credentials_is_a_conflict() {
         ..CorsConfig::default()
     };
 
-    assert!(config.conflict().is_some());
+    assert!(matches!(
+        config.conflict(),
+        Some(crate::middleware::MiddlewareError::CredentialedWildcardOrigin)
+    ));
 }
 
 /// Each half alone is an ordinary deployment: a public API allows any
@@ -138,5 +141,17 @@ fn exposing_every_header_alone_sends_a_wildcard() {
         cors.config().exposed(),
         Some(HeaderValue::from_static("*")),
         "a named list narrowed a wildcard that already covers it"
+    );
+}
+
+/// Every CORS list field is one comma-joined value, and an empty list is no
+/// field at all rather than an empty one.
+#[test]
+fn a_cors_list_field_joins_its_names_and_an_empty_list_sends_none() {
+    assert_eq!(join_names([]), None);
+    assert_eq!(join_names(["x-a"]), Some(HeaderValue::from_static("x-a")));
+    assert_eq!(
+        join_names(["x-a", "x-b"]),
+        Some(HeaderValue::from_static("x-a, x-b"))
     );
 }

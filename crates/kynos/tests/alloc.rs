@@ -83,8 +83,9 @@ const SHAPES: [(&str, StatusCode, usize); 3] = [
     ("/ping", StatusCode::NO_CONTENT, 5),
     // One path parameter, captured and deserialized.
     ("/users/7", StatusCode::NO_CONTENT, 5),
-    // A request matching no route at all.
-    ("/nope", StatusCode::NOT_FOUND, 6),
+    // A request matching no route at all, answered with a problem document
+    // written on the stack and copied once into a body of its length.
+    ("/nope", StatusCode::NOT_FOUND, 5),
 ];
 
 #[derive(Schema, kynos::PathParams)]

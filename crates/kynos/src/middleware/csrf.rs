@@ -143,9 +143,8 @@ impl<T> Csrf<T> {
 
         // An older browser still sends `Origin` on an unsafe request.
         match origin {
-            Some(origin) => {
-                own_authority(headers, authority).is_some_and(|host| host == authority_of(origin))
-            }
+            Some(origin) => http::own_authority(headers, authority)
+                .is_some_and(|host| host == authority_of(origin)),
             // Neither field: not a browser, so not subject to CSRF.
             None => true,
         }
@@ -176,23 +175,6 @@ fn authority_of(origin: &str) -> String {
         .split_once("://")
         .map_or(origin.trim(), |(_, authority)| authority)
         .to_ascii_lowercase()
-}
-
-/// The request's own authority, from the target or from `Host`.
-///
-/// HTTP/2's `:authority` (RFC 9113 section 8.3.1) lands on the URI, not in the
-/// map. The target wins where both are present: RFC 9112 section 3.2.2 says an
-/// absolute-form target means the server "MUST ignore the received Host header
-/// field".
-pub(crate) fn own_authority(headers: &HeaderMap, authority: Option<&str>) -> Option<String> {
-    authority
-        .or_else(|| {
-            headers
-                .get(http::header::HOST)
-                .and_then(|value| value.to_str().ok())
-        })
-        .map(|host| host.trim().to_ascii_lowercase())
-        .filter(|host| !host.is_empty())
 }
 
 /// What a refused request is answered with.

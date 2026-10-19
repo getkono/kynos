@@ -226,7 +226,8 @@ content map for `Content-Type`, and `#[derive(SecurityScheme)]` for
 build target, and a wire contract must not), `SystemTime` (serde emits a
 seconds/nanos struct nobody wants as a contract), and `Box<dyn Trait>`. The
 accepted and rejected sets, and the `format` each describable type carries, are
-normative in [`schema.md`](schema.md).
+the mapping tables in the
+[`kynos::schema`](https://docs.rs/kynos/latest/kynos/schema/index.html) rustdoc.
 
 ## Rationale
 

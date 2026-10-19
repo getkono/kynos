@@ -52,6 +52,14 @@ impl Scopes for EditReports {
     const REQUIRED: &'static [Grant] = &[Grant::ReadReports, Grant::WriteReports];
 }
 
+/// A scope set requiring nothing.
+struct NoScopes;
+
+impl Scopes for NoScopes {
+    type Scope = Grant;
+    const REQUIRED: &'static [Grant] = &[];
+}
+
 /// A scheme demanding `audit` and `reports:read` of every operation by default.
 struct Audited;
 
@@ -66,6 +74,10 @@ impl SecurityScheme for Audited {
 
     fn scopes() -> &'static [Grant] {
         &[Grant::Audit, Grant::ReadReports]
+    }
+
+    fn insufficient_scope_challenge() -> Option<&'static str> {
+        <Bearer as SecurityScheme>::insufficient_scope_challenge()
     }
 }
 
@@ -626,6 +638,25 @@ async fn scoped_adds_its_own_scopes_to_the_defaults() {
     );
 }
 
+/// A `Scoped` whose demanded set is empty still calls `authorize`, once and
+/// with no scopes, and its refusal answers 403: unlike `Auth`, `Scoped` never
+/// skips `authorize`.
+#[tokio::test]
+async fn scoped_with_an_empty_demand_still_authorizes() {
+    let refusing = Recording::refusing();
+    let refused = <Scoped<Bearer<String, Grant>, NoScopes> as Guard<_>>::guard(
+        &presenting_a_token(),
+        &refusing,
+    )
+    .await;
+
+    assert_eq!(
+        refused.err().map(|r| r.into_inner().status()),
+        Some(StatusCode::FORBIDDEN)
+    );
+    assert_eq!(refusing.0.authorized(), [Vec::<&str>::new()]);
+}
+
 impl Authenticates<Bearer<String, Grant>> for Recording {
     type Authenticator = Recorder;
 
@@ -761,4 +792,177 @@ async fn a_challenge_that_is_no_field_value_is_neither_sent_nor_declared() {
             .headers
             .contains_key("WWW-Authenticate")
     );
+}
+
+// --- A scope refusal's challenge --------------------------------------------
+
+impl Authenticates<Basic<String, Grant>> for Recording {
+    type Authenticator = Recorder;
+
+    fn authenticator(&self) -> &Recorder {
+        &self.0
+    }
+}
+
+/// Declines every bearer token in `authenticate`, as a suspended account is: a
+/// valid credential refused, not a scope.
+struct Suspending;
+
+impl<C: Sync> Authenticator<Bearer<String, Grant>, C> for Suspending {
+    async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
+        Err(AuthRejection::forbidden())
+    }
+
+    async fn authorize(&self, _: &String, _: &[Grant], _: &C) -> Result<(), AuthRejection> {
+        Ok(())
+    }
+}
+
+/// A context whose authenticator declines every credential before any scope
+/// is checked.
+struct Suspended;
+
+impl Authenticates<Bearer<String, Grant>> for Suspended {
+    type Authenticator = Suspending;
+
+    fn authenticator(&self) -> &Suspending {
+        &Suspending
+    }
+}
+
+/// The `WWW-Authenticate` values on the response guard `G` refuses `parts`
+/// with under `context`, which must be a 403.
+async fn forbidden_challenges<C: Sync, G: Guard<C>>(parts: &Parts, context: &C) -> Vec<String> {
+    use crate::response::IntoResponse as _;
+
+    let Err(refused) = G::guard(parts, context).await else {
+        panic!("the request is refused");
+    };
+    let response = refused.into_response();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    response
+        .headers()
+        .get_all(crate::http::header::WWW_AUTHENTICATE)
+        .iter()
+        .map(|value| value.to_str().expect("a visible challenge").to_owned())
+        .collect()
+}
+
+/// The `WWW-Authenticate` an operation guarded by `D` declares on its 403, as
+/// JSON, if it declares one.
+fn declared_scope_challenge<D: Describe>() -> Option<serde_json::Value> {
+    let (operation, _) = described::<D>();
+    operation.responses.responses["403"]
+        .as_item()
+        .expect("an inline 403")
+        .headers
+        .get("WWW-Authenticate")
+        .map(|header| serde_json::to_value(header).expect("a serializable header"))
+}
+
+/// A request head presenting `Authorization: Basic dTpw`, `u:p`.
+fn presenting_credentials() -> Parts {
+    let mut request = Request::new(Body::empty());
+    request
+        .headers_mut()
+        .insert(AUTHORIZATION, HeaderValue::from_static("Basic dTpw"));
+    request.into_parts().0
+}
+
+/// RFC 6750 section 3: a resource server MUST send `WWW-Authenticate` when a
+/// bearer token does not enable access, and section 3.1 names
+/// `insufficient_scope` for the 403 a missing scope earns. A `Bearer` scope
+/// refusal sends exactly that, and a `Basic` one, which no such error is
+/// registered for, sends nothing.
+#[tokio::test]
+async fn a_bearer_scope_refusal_challenges_with_insufficient_scope() {
+    let refusing = Recording::refusing();
+
+    assert_eq!(
+        forbidden_challenges::<_, Scoped<Bearer<String, Grant>, ReadReports>>(
+            &presenting_a_token(),
+            &refusing,
+        )
+        .await,
+        [r#"Bearer error="insufficient_scope""#]
+    );
+    assert!(
+        forbidden_challenges::<_, Scoped<Basic<String, Grant>, ReadReports>>(
+            &presenting_credentials(),
+            &refusing,
+        )
+        .await
+        .is_empty()
+    );
+}
+
+/// A 403 from `authenticate` declines the credential, not a scope, so even a
+/// bearer scheme's carries no challenge: `insufficient_scope` would send the
+/// client off for a token it could never be granted.
+#[tokio::test]
+async fn a_credential_declined_before_any_scope_sends_no_challenge() {
+    assert!(
+        forbidden_challenges::<_, Scoped<Bearer<String, Grant>, ReadReports>>(
+            &presenting_a_token(),
+            &Suspended,
+        )
+        .await
+        .is_empty()
+    );
+}
+
+/// The description says what the wire sends: a `Bearer` guard that refuses
+/// scopes declares the challenge on its 403, not required, since a 403 from
+/// `authenticate` sends none. `Auth<Bearer>` authorizes no scope, and `Basic`
+/// has no challenge for one, so neither declares it.
+#[test]
+fn a_scope_refusal_declares_the_challenge_it_sends() {
+    let header = declared_scope_challenge::<Scoped<Bearer<String, Grant>, ReadReports>>()
+        .expect("a declared challenge");
+    assert_eq!(
+        header["example"],
+        serde_json::json!(r#"Bearer error="insufficient_scope""#),
+        "{header}"
+    );
+    assert_ne!(header["required"], serde_json::json!(true), "{header}");
+
+    assert_eq!(declared_scope_challenge::<Auth<Bearer>>(), None);
+    assert_eq!(
+        declared_scope_challenge::<Scoped<Basic<String, Grant>, ReadReports>>(),
+        None
+    );
+}
+
+/// A guard naming no scope set refuses a scope only through a scheme's default
+/// scopes, so that scheme's challenge is the one sent and declared, wherever
+/// it sits in a combination.
+#[tokio::test]
+async fn a_default_scope_refusal_challenges_with_the_refusing_schemes_challenge() {
+    const INSUFFICIENT: &str = r#"Bearer error="insufficient_scope""#;
+    let refusing = Recording::refusing();
+
+    assert_eq!(
+        forbidden_challenges::<_, Auth<Audited>>(&presenting_a_token(), &refusing).await,
+        [INSUFFICIENT]
+    );
+    assert_eq!(
+        forbidden_challenges::<_, Auth<AllOf<(Bearer, Audited)>>>(&presenting_a_token(), &refusing)
+            .await,
+        [INSUFFICIENT]
+    );
+
+    // `Bearer` leads, but owes no scope, so it is `Audited`'s that is declared.
+    for declared in [
+        declared_scope_challenge::<Auth<Audited>>(),
+        declared_scope_challenge::<MaybeAuth<Audited>>(),
+        declared_scope_challenge::<Auth<AnyOf<(Bearer, Audited)>>>(),
+        declared_scope_challenge::<Auth<AllOf<(Bearer, Audited)>>>(),
+    ] {
+        let header = declared.expect("a declared challenge");
+        assert_eq!(
+            header["example"],
+            serde_json::json!(INSUFFICIENT),
+            "{header}"
+        );
+    }
 }

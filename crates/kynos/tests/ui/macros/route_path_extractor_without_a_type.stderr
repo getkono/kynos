@@ -1,0 +1,5 @@
+error: Path needs one type argument
+  --> tests/ui/macros/route_path_extractor_without_a_type.rs:10:91
+   |
+10 | async fn get_user(kynos::extract::params::path::Path(path): kynos::extract::params::path::Path) {
+   |                                                                                           ^^^^

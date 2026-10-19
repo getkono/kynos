@@ -63,47 +63,33 @@ pub(super) fn respond<H: EncodeHeaders>(
         Selection::Part { first, last, .. } => clamped(&octets, first, last),
     };
 
-    assembled(body, selection, media_type, headers)
+    assembled(
+        crate::http::body::Body::from_bytes(body),
+        selection,
+        media_type,
+        headers,
+    )
 }
 
 /// The response carrying `body`, which is whatever `selection` said to send.
+///
+/// A body rather than octets, so a file on disk can hand over one that reads
+/// a span at a time once polled; its exact size hint is what frames it.
 pub(super) fn assembled<H: EncodeHeaders>(
-    body: Bytes,
+    body: crate::http::body::Body,
     selection: Selection,
     media_type: &str,
     headers: &H,
 ) -> Response {
-    let mut response = Response::new(crate::http::body::Body::from_bytes(body));
+    let mut response = Response::new(body);
 
     if let Ok(value) = HeaderValue::from_str(media_type) {
         response.headers_mut().insert(header::CONTENT_TYPE, value);
     }
-    let fields = response.headers_mut();
-    // Section 14.3: `Accept-Ranges` is advertised on every representation
-    // served.
-    let written = crate::extract::params::header::write(fields, headers)
-        .and_then(|()| crate::extract::params::header::write(fields, &AcceptRanges))
-        .and_then(|()| match selection {
-            Selection::Part {
-                first,
-                last,
-                complete_length,
-            } => crate::extract::params::header::write(
-                fields,
-                &ContentRange::Satisfied {
-                    first,
-                    last,
-                    complete_length,
-                },
-            ),
-            Selection::Whole(_) => Ok(()),
-        });
+    let written = crate::extract::params::header::write(response.headers_mut(), headers)
+        .and_then(|()| range::write_selection(&mut response, selection));
     if written.is_err() {
         return crate::extract::params::header::refused();
-    }
-
-    if matches!(selection, Selection::Part { .. }) {
-        *response.status_mut() = StatusCode::PARTIAL_CONTENT;
     }
 
     response
@@ -119,11 +105,7 @@ pub(super) fn unsatisfiable(rejection: RangeRejection) -> Response {
 /// Called with the 200 and the 304 already declared; fields are attached to
 /// the 200 and 206 only.
 pub(super) fn describe(operation: &mut OperationCx<'_>, media_type: &str) {
-    let partial = kynos_openapi::Response::with_content(
-        "the requested part of the file",
-        media_type,
-        kynos_openapi::MediaType::new(kynos_openapi::Schema::Object(Box::default())),
-    );
+    let partial = range::content_response("the requested part of the file", media_type);
     operation.add_responses(&kynos_openapi::Responses::new().with(206, partial));
 
     // Declared by the rejection that produces it.

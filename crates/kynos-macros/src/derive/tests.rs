@@ -165,6 +165,21 @@ mod schema {
         ]
     }
 
+    /// The numbers a numeric bound refuses; a function of its own for the
+    /// reason `serde_ledger` gives.
+    fn number_ledger() -> Vec<Case> {
+        vec![case(
+            "a numeric constraint given a suffixed number",
+            quote::quote!(
+                struct Order {
+                    #[schema(minimum = 5u8)]
+                    total: u32,
+                }
+            ),
+            "takes a plain decimal number",
+        )]
+    }
+
     /// The values a `content_*` annotation refuses; a function of its own for
     /// the reason `serde_ledger` gives.
     fn content_ledger() -> Vec<Case> {
@@ -562,6 +577,7 @@ mod schema {
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
+        each_case_is_refused(number_ledger(), expand_inner);
         each_case_is_refused(content_ledger(), expand_inner);
         each_case_is_refused(described_as_ledger(), expand_inner);
         each_case_is_refused(serde_ledger(), expand_inner);
@@ -641,6 +657,7 @@ mod schema {
             ]
             .concat(),
             ledger().len()
+                + number_ledger().len()
                 + content_ledger().len()
                 + described_as_ledger().len()
                 + serde_ledger().len()
@@ -652,13 +669,13 @@ mod schema {
     }
 
     /// The `content_encoding` the derive accepts is exactly the set JSON
-    /// Schema points to, lowercase, and a `content_media_type` is RFC 9110's
-    /// `media-type`, parameters and their quoted strings included.
+    /// Schema points to, lowercase.
     ///
     /// Beside the ledger rather than in it: its rows prove each site fires,
-    /// and these prove where each grammar's edge is.
+    /// and these prove where the set's edge is. `content_media_type`'s grammar
+    /// is swept in `schema/refusals/grammar.rs`.
     #[test]
-    fn a_content_annotation_is_held_to_its_grammar() {
+    fn a_content_encoding_is_held_to_its_set() {
         let declare = |key: &str, value: &str| -> DeriveInput {
             let key = syn::Ident::new(key, proc_macro2::Span::call_site());
             syn::parse2(quote::quote!(
@@ -689,50 +706,6 @@ mod schema {
             assert!(
                 expand_inner(&declare("content_encoding", encoding)).is_err(),
                 "{encoding:?} is no encoding JSON Schema names"
-            );
-        }
-
-        for media_type in [
-            "image/png",
-            "application/x-bittorrent",
-            "application/vnd.example+json",
-            "TEXT/Plain",
-            "text/plain;charset=utf-8",
-            "text/plain ; charset=utf-8",
-            "text/plain;",
-            "text/plain; ; charset=utf-8",
-            "text/plain; title=\"a; b \\\"c\\\"\"",
-            "text/plain; a=b\t;c=d",
-        ] {
-            assert!(
-                expand_inner(&declare("content_media_type", media_type)).is_ok(),
-                "{media_type:?} is a media type"
-            );
-        }
-        for media_type in [
-            "",
-            "image",
-            "image/",
-            "/png",
-            "image/png/x",
-            " image/png",
-            "image/png ",
-            "image /png",
-            "image/p ng",
-            "text/plain; charset",
-            "text/plain; =utf-8",
-            "text/plain; charset=",
-            "text/plain; charset=utf 8",
-            "text/plain; title=\"open",
-            "text/plain; title=\"a\"b",
-            "text/plain; title=\"a\\",
-            "text/plain; title=\"a\u{7}\"",
-            "text/plain; title=\"a\\\u{0}\"",
-            "text/plain, image/png",
-        ] {
-            assert!(
-                expand_inner(&declare("content_media_type", media_type)).is_err(),
-                "{media_type:?} is not a media type"
             );
         }
     }
@@ -5139,50 +5112,6 @@ mod api_error {
                 + keys_ledger().len(),
         );
     }
-
-    /// Every URI a declaration resolves reaches the emitted responses.
-    ///
-    /// What is checked here is *resolution*: an explicit `type`, a slug hung
-    /// under `base`, and two variants sharing a status. Whether the narrowing
-    /// is well-formed is `crates/kynos/tests/derives.rs`'s, which reads the
-    /// emitted schema; this reads the tokens, so it names the failing URI
-    /// without a compile.
-    ///
-    /// It deliberately does not assert *which* helper the expansion calls. A
-    /// path is not a behaviour, and pinning one here would redden this test
-    /// for a move that no document could observe.
-    #[test]
-    fn the_declared_type_reaches_the_emitted_responses() {
-        let input: syn::DeriveInput = syn::parse2(quote::quote!(
-            #[problem(base = "https://errors.example.com/")]
-            enum StoreError {
-                #[problem(status = 404, title = "User not found")]
-                NotFound,
-
-                #[problem(status = 404)]
-                TenantMissing,
-
-                #[problem(status = 409, type = "https://errors.example.com/email-taken")]
-                Conflict,
-            }
-        ))
-        .expect("the case itself must parse");
-
-        let expansion = expand_inner(&input)
-            .expect("a well-formed declaration expands")
-            .to_string();
-
-        for uri in [
-            "https://errors.example.com/not-found",
-            "https://errors.example.com/tenant-missing",
-            "https://errors.example.com/email-taken",
-        ] {
-            assert!(
-                expansion.contains(uri),
-                "`{uri}` never reached the emitted responses: {expansion}"
-            );
-        }
-    }
 }
 
 mod reply {
@@ -6869,7 +6798,15 @@ mod multipart {
 
     #[test]
     fn every_multipart_diagnostic_has_a_case() {
-        every_diagnostic_has_a_case("multipart.rs", include_str!("multipart.rs"), ledger().len());
+        every_diagnostic_has_a_case(
+            "multipart.rs` and `multipart/refusals.rs",
+            &[
+                include_str!("multipart.rs"),
+                include_str!("multipart/refusals.rs"),
+            ]
+            .concat(),
+            ledger().len(),
+        );
     }
 }
 

@@ -578,13 +578,13 @@ pub(crate) fn constraints(field: &Field) -> Option<TokenStream2> {
     })
 }
 
-/// A numeric literal as an `f64` one, its digits kept as written.
+/// A numeric literal as an `f64` one, its digits kept as written: plain
+/// decimal, since `check_constraints` refuses a suffix and any other base.
 pub(super) fn as_float(literal: &Lit) -> Option<LitFloat> {
     let (digits, span) = match literal {
         Lit::Int(value) => (value.token().to_string(), value.span()),
         Lit::Float(value) => (value.token().to_string(), value.span()),
         _ => return None,
     };
-    let digits = digits.trim_end_matches(|character: char| character.is_alphabetic());
     Some(LitFloat::new(&format!("{digits}f64"), span))
 }

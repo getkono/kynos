@@ -1,0 +1,35 @@
+error: `unique_items` is a flag; write it alone, or leave it out
+  --> tests/ui/macros/schema_constraint_value_of_the_wrong_kind.rs:10:14
+   |
+10 |     #[schema(unique_items = 1)]
+   |              ^^^^^^^^^^^^
+
+error: `minimum` takes a number
+  --> tests/ui/macros/schema_constraint_value_of_the_wrong_kind.rs:16:24
+   |
+16 |     #[schema(minimum = "x")]
+   |                        ^^^
+
+error: `minimum` takes a plain decimal number, as a JSON Schema bound is written: a type suffix or a `0x`, `0o` or `0b` base says nothing the bound can carry. Write it as `5`
+  --> tests/ui/macros/schema_constraint_value_of_the_wrong_kind.rs:22:24
+   |
+22 |     #[schema(minimum = 5u8)]
+   |                        ^^^
+
+error: `maximum` takes a plain decimal number, as a JSON Schema bound is written: a type suffix or a `0x`, `0o` or `0b` base says nothing the bound can carry. Write it as `16`
+  --> tests/ui/macros/schema_constraint_value_of_the_wrong_kind.rs:28:24
+   |
+28 |     #[schema(maximum = 0x10)]
+   |                        ^^^^
+
+error: `multiple_of` takes a plain decimal number, as a JSON Schema bound is written: a type suffix or a `0x`, `0o` or `0b` base says nothing the bound can carry. Write it as `0.5`
+  --> tests/ui/macros/schema_constraint_value_of_the_wrong_kind.rs:34:28
+   |
+34 |     #[schema(multiple_of = 0.5f32)]
+   |                            ^^^^^^
+
+error: `min_length` takes a non-negative whole number
+  --> tests/ui/macros/schema_constraint_value_of_the_wrong_kind.rs:40:27
+   |
+40 |     #[schema(min_length = "x")]
+   |                           ^^^

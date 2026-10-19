@@ -45,7 +45,7 @@ pub enum Error {
     )]
     Invalid {
         /// Every violation found, most structural first.
-        violations: Vec<kynos_openapi::Violation>,
+        violations: Vec<kynos_openapi::Violation<crate::router::error::RouterError>>,
     },
 
     /// A path template was malformed, or collided with another.

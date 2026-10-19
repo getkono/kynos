@@ -763,13 +763,18 @@ mod directory {
 
         // The one violation is the mount itself, under the pattern it would
         // have registered.
-        let reported = |violations: &[kynos::openapi::Violation]| match violations {
-            [violation] => match &violation.error {
-                kynos::openapi::SpecError::OpaqueRoute { pattern } => Some(pattern.clone()),
-                _ => None,
-            },
-            _ => None,
-        };
+        let reported =
+            |violations: &[kynos::openapi::Violation<kynos::router::error::RouterError>]| {
+                match violations {
+                    [violation] => match &violation.error {
+                        kynos::router::error::RouterError::Spec(
+                            kynos::openapi::SpecError::OpaqueRoute { pattern },
+                        ) => Some(pattern.clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            };
 
         let violations = router.validate().expect("validation itself succeeds");
         assert_eq!(
@@ -848,7 +853,11 @@ mod directory {
 
         let reply = get(&service, "/files/docs/").call().await;
 
-        assert!(reply.text().contains("Docs"));
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(
+            reply.text(),
+            std::fs::read_to_string("tests/assets/docs/index.html").expect("the fixture index")
+        );
         assert_eq!(
             reply
                 .field(kynos::http::header::CONTENT_TYPE.as_str())
@@ -885,14 +894,50 @@ mod directory {
         }
     }
 
-    /// A file that is not there is a 404, and so is one that cannot be read.
+    /// A file that is not there is a 404, and so is a path that cannot be read:
+    /// one naming a file as though it were a directory, whose lookup fails the
+    /// way a `PermissionDenied` does and is answered the same way.
     #[tokio::test]
     async fn a_file_that_is_not_there_is_not_found() {
         let service = served().build(()).expect("a buildable router");
+        assert!(
+            std::path::Path::new("tests/assets/index.html").is_file(),
+            "the file the unreadable path runs through exists"
+        );
 
+        for path in ["/files/nothing.css", "/files/index.html/beneath"] {
+            let reply = get(&service, path).call().await;
+
+            assert_eq!(reply.status, StatusCode::NOT_FOUND, "{path}");
+            assert!(reply.body.is_empty(), "{path}");
+        }
+    }
+
+    /// A directory with no index is a 404 rather than a listing, with or
+    /// without its trailing slash; and an index switched off makes one that
+    /// has an index a 404 too, while the default serves it.
+    #[tokio::test]
+    async fn a_directory_without_an_index_is_not_found() {
+        let service = served().build(()).expect("a buildable router");
+        let unindexed = Router::<()>::new()
+            .assets_directory("/files", Directory::new("tests/assets").no_index())
+            .build(())
+            .expect("a buildable router");
+
+        for path in ["/files/css/", "/files/css"] {
+            assert_eq!(
+                get(&service, path).call().await.status,
+                StatusCode::NOT_FOUND,
+                "{path}"
+            );
+        }
         assert_eq!(
-            get(&service, "/files/nothing.css").call().await.status,
+            get(&unindexed, "/files/docs/").call().await.status,
             StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            get(&service, "/files/docs/").call().await.status,
+            StatusCode::OK
         );
     }
 

@@ -34,12 +34,13 @@ zstd = "0.14.2"
 
 # The baseline, plus only the features a fuzzed parser lives behind, since a
 # smaller graph is a faster instrumented build: `multipart` for its
-# `Content-Disposition` reader, `compression` for request decompression, and
-# `json` with `openapi32` for the `JsonLines` and `JsonSeq` record framer.
+# `Content-Disposition` reader, `compression` for request decompression,
+# `json` with `openapi32` for the `JsonLines` and `JsonSeq` record framer, and
+# `form` for `Form<T>`'s in-place UTF-8 check.
 [dependencies.kynos]
 path = "../crates/kynos"
 default-features = false
-features = ["openapi32", "multipart", "compression", "json"]
+features = ["openapi32", "multipart", "compression", "json", "form"]
 
 [[bin]]
 name = "accept"

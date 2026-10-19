@@ -607,6 +607,65 @@ mod multipart {
         );
     }
 
+    /// A part named `name`, carrying `bytes`.
+    fn part(name: &str, bytes: &'static [u8]) -> kynos::extract::body::multipart::Part {
+        kynos::extract::body::multipart::Part {
+            name: name.to_owned(),
+            file_name: None,
+            content_type: None,
+            bytes: bytes::Bytes::from_static(bytes),
+        }
+    }
+
+    /// A single field reads the first part naming it, and never converts a
+    /// later one; a list reads every part naming it, in arrival order.
+    #[test]
+    fn a_field_reads_its_first_part_and_a_list_reads_every_one_in_order() {
+        use kynos::extract::body::multipart::FromMultipart;
+
+        let parts = vec![
+            part("tags", b"a"),
+            part("name", b"first"),
+            part("tags", b"b"),
+            part("name", b"\xff"),
+        ];
+
+        assert_eq!(
+            Noted::from_parts(parts).expect("the later `name` is never read"),
+            Noted {
+                name: "first".to_owned(),
+                note: String::new(),
+                tags: vec!["a".to_owned(), "b".to_owned()],
+            }
+        );
+    }
+
+    /// Of several failing fields, the one declared first is reported, whichever
+    /// part arrived first: a list's malformed element loses to the field
+    /// declared above it, malformed or missing.
+    #[test]
+    fn the_first_declared_failing_field_is_the_one_reported() {
+        use kynos::extract::body::multipart::FromMultipart;
+
+        let malformed = Noted::from_parts(vec![part("tags", b"\xff"), part("name", b"\xff")])
+            .expect_err("both parts are malformed");
+        let missing =
+            Noted::from_parts(vec![part("tags", b"\xff")]).expect_err("`name` is missing");
+
+        for (rejection, detail) in [
+            (malformed, "the part is not valid UTF-8"),
+            (missing, "the part is required"),
+        ] {
+            let BodyRejection::Schema { failures } = rejection else {
+                panic!("expected a schema failure, got {rejection:?}");
+            };
+            assert_eq!(
+                failures,
+                BTreeMap::from([("/name".to_owned(), detail.to_owned())])
+            );
+        }
+    }
+
     /// A form serde closes to undeclared members.
     #[derive(Debug, Schema, Deserialize, kynos::MultipartForm)]
     #[serde(deny_unknown_fields)]

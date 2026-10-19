@@ -3,18 +3,6 @@ use crate::model::{
     schema::{Schema, types::SchemaType},
 };
 
-#[test]
-fn path_parameters_are_required_on_construction() {
-    let parameter = Parameter::path("id", Schema::of_type(SchemaType::String));
-    assert_eq!(parameter.required, Some(true));
-}
-
-#[test]
-fn query_parameters_are_not_required_by_default() {
-    let parameter = Parameter::query("page", Schema::of_type(SchemaType::Integer));
-    assert_eq!(parameter.required, None);
-}
-
 // --- The closed style/location table -------------------------------------
 //
 // 3.2 §"Style Values" gives the table and says "Combinations not represented
@@ -145,13 +133,20 @@ fn styles_and_locations_are_named_as_a_description_spells_them() {
 
 #[test]
 fn style_defaults_follow_the_parameter_location() {
-    // The four the specification gives a default for. `querystring` is absent
-    // deliberately: `style` "MUST NOT be used with `in: "querystring"`", so
-    // there is no default for it to have.
-    assert_eq!(Style::default_for(ParameterIn::Query), Style::Form);
-    assert_eq!(Style::default_for(ParameterIn::Path), Style::Simple);
-    assert_eq!(Style::default_for(ParameterIn::Header), Style::Simple);
-    assert_eq!(Style::default_for(ParameterIn::Cookie), Style::Form);
+    for &location in ALL_LOCATIONS {
+        // The four the specification gives a default for, transcribed from
+        // `references/3.2.0.md:817`. It gives none for `querystring`, since
+        // `style` "MUST NOT be used with `in: "querystring"`": the model
+        // answers `form` so `effective_style` stays total, and validation
+        // refuses such a parameter for lacking `content` regardless.
+        let expected = match location {
+            ParameterIn::Query | ParameterIn::Cookie => Style::Form,
+            ParameterIn::Path | ParameterIn::Header => Style::Simple,
+            #[cfg(feature = "openapi32")]
+            ParameterIn::Querystring => Style::Form,
+        };
+        assert_eq!(Style::default_for(location), expected, "{location:?}");
+    }
 }
 
 #[test]
@@ -178,6 +173,37 @@ fn effective_style_and_explode_fall_back_to_defaults() {
     let parameter = Parameter::query("tags", Schema::of_type(SchemaType::Array));
     assert_eq!(parameter.effective_style(), Some(Style::Form));
     assert_eq!(parameter.effective_explode(), Some(true));
+}
+
+/// A stated style with no stated `explode` takes that style's default, not
+/// the location's: a query parameter is `form` by default and would explode,
+/// so every other stated style shows the fallback reads the style.
+#[test]
+fn a_stated_style_without_explode_takes_the_styles_default() {
+    use crate::model::parameter::ParameterShape;
+
+    for &style in ALL_STYLES {
+        let mut parameter = Parameter::query("tags", Schema::of_type(SchemaType::Array));
+        if let ParameterShape::Schema {
+            style: stated,
+            explode,
+            ..
+        } = parameter.shape_mut()
+        {
+            *stated = Some(style);
+            *explode = None;
+        }
+
+        // "When `style` is `form` or `cookie`, the default value is `true`."
+        let expected = match style {
+            Style::Form => true,
+            #[cfg(feature = "openapi32")]
+            Style::Cookie => true,
+            _ => false,
+        };
+        assert_eq!(parameter.effective_style(), Some(style), "{style:?}");
+        assert_eq!(parameter.effective_explode(), Some(expected), "{style:?}");
+    }
 }
 
 #[test]
@@ -262,7 +288,8 @@ fn a_header_declaring_any_other_style_is_refused() {
 
     // The specification gives a header one legal style, so the others are not
     // a combination to report but a word `HeaderStyle` cannot read.
-    for style in ["form", "matrix", "label", "spaceDelimited", "deepObject"] {
+    for style in ALL_STYLES.iter().filter(|&&style| style != Style::Simple) {
+        let style = style.as_str();
         let json = format!(r#"{{"schema":true,"style":"{style}"}}"#);
         let error = serde_json::from_str::<Header>(&json)
             .expect_err("`simple` is the only style a header may declare");

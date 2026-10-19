@@ -9,8 +9,18 @@ use crate::security::{SecurityScheme, Unscoped, carrier::Credentials};
 /// reads as the whole and is not: `docs/testing.md` records
 /// `the_style_location_table_is_closed` asserting five of forty pairs and
 /// the name claiming closedness that the body did not have.
-fn row<S: SecurityScheme>() -> (&'static str, Described, Option<&'static str>) {
-    (S::NAME, S::describe(), S::challenge())
+fn row<S: SecurityScheme>() -> (
+    &'static str,
+    Described,
+    Option<&'static str>,
+    Option<&'static str>,
+) {
+    (
+        S::NAME,
+        S::describe(),
+        S::challenge(),
+        S::insufficient_scope_challenge(),
+    )
 }
 
 #[test]
@@ -24,7 +34,15 @@ fn every_configuration_free_scheme_describes_itself_and_names_its_challenge() {
     assert_eq!(
         table,
         [
-            ("Bearer", Described::bearer(None), Some("Bearer")),
+            // RFC 6750 section 3.1: a token lacking a demanded scope is
+            // answered `insufficient_scope`. No other scheme registers an
+            // error for a scope refusal, so the rows below send none.
+            (
+                "Bearer",
+                Described::bearer(None),
+                Some("Bearer"),
+                Some(r#"Bearer error="insufficient_scope""#)
+            ),
             // RFC 7617 section 2: `realm` is REQUIRED, so an unnamed one is
             // `ApiRealm`'s; and `charset` is what tells a client to send a
             // non-ASCII password as UTF-8, `UTF-8` being the only value the
@@ -32,13 +50,14 @@ fn every_configuration_free_scheme_describes_itself_and_names_its_challenge() {
             (
                 "Basic",
                 Described::basic(),
-                Some(r#"Basic realm="api", charset="UTF-8""#)
+                Some(r#"Basic realm="api", charset="UTF-8""#),
+                None
             ),
             // No challenge: the certificate is presented during the TLS
             // handshake, so a 401 has no `WWW-Authenticate` scheme to name
             // -- there is none registered for it, and inventing one would
             // advertise a challenge no client could answer.
-            ("MutualTls", Described::mutual_tls(), None),
+            ("MutualTls", Described::mutual_tls(), None, None),
         ]
     );
 }

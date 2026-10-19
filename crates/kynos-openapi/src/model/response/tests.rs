@@ -188,6 +188,28 @@ fn extensions_survive_a_round_trip() {
     assert_eq!(parsed.responses.len(), 1);
 }
 
+/// `Operation.responses` is skipped when it is empty, so a `Responses` that
+/// carries only extensions must not read as empty — or a round trip drops it.
+#[test]
+fn a_responses_holding_only_extensions_is_not_empty() {
+    use crate::model::paths::operation::Operation;
+
+    let mut responses = Responses::new();
+    assert!(responses.is_empty());
+
+    responses
+        .extensions
+        .insert("x-poll-interval", serde_json::json!(30));
+    assert!(!responses.is_empty());
+
+    let operation = Operation::new("listUsers").with_responses(responses);
+    let json = serde_json::to_string(&operation).expect("serializable");
+    assert!(
+        json.contains("x-poll-interval"),
+        "the extension was dropped: {json}"
+    );
+}
+
 #[test]
 fn merging_keeps_the_existing_entry_on_conflict() {
     let mut base = Responses::new().with(200, Response::new("mine"));

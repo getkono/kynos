@@ -401,16 +401,8 @@ impl CorsConfig {
             return CorsHeaders::default();
         }
 
-        // `conflict` already refused `*` with credentials, so the echo arm is
-        // the named allow-list's answer, not a fallback.
-        let allowed = if self.any.origin && !self.credentials {
-            http::HeaderValue::from_static("*")
-        } else {
-            origin.clone()
-        };
-
         CorsHeaders {
-            origin: Some(allowed),
+            origin: Some(self.allow_origin_value(origin)),
             credentials: self.credentials,
             expose: self.exposed(),
         }
@@ -423,19 +415,39 @@ impl CorsConfig {
             return Some(http::HeaderValue::from_static("*"));
         }
 
-        if self.expose.is_empty() {
-            return None;
-        }
-
-        let exposed = self
-            .expose
-            .iter()
-            .map(Cow::as_ref)
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        http::HeaderValue::from_str(&exposed).ok()
+        join_names(self.expose.iter().map(Cow::as_ref))
     }
+
+    /// The `Access-Control-Allow-Origin` value answering a permitted `origin`.
+    ///
+    /// `*` only where credentials are off; `conflict` already refused `*`
+    /// with credentials, so the echo arm is the named allow-list's answer, not
+    /// a fallback.
+    pub(crate) fn allow_origin_value(&self, origin: &http::HeaderValue) -> http::HeaderValue {
+        if self.any.origin && !self.credentials {
+            http::HeaderValue::from_static("*")
+        } else {
+            origin.clone()
+        }
+    }
+}
+
+/// `names` as one comma-separated field value.
+///
+/// `None` when there is no name, or when the joined names are not a field
+/// value.
+pub(crate) fn join_names<'a>(
+    names: impl IntoIterator<Item = &'a str>,
+) -> Option<http::HeaderValue> {
+    let mut names = names.into_iter();
+    let mut joined = names.next()?.to_owned();
+
+    for name in names {
+        joined.push_str(", ");
+        joined.push_str(name);
+    }
+
+    http::HeaderValue::from_str(&joined).ok()
 }
 
 impl Cors<Undocumented> {

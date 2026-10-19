@@ -143,7 +143,11 @@ impl PathItem {
         slot.replace(Box::new(operation)).map(|boxed| *boxed)
     }
 
-    /// Iterates over the declared operations and their methods.
+    /// Iterates over the declared fixed-method operations and their methods,
+    /// in [`Method::all`] order.
+    ///
+    /// This omits the 3.2 `additional_operations`, which have no [`Method`];
+    /// [`operations_mut`](Self::operations_mut) visits them too.
     pub fn operations(&self) -> impl Iterator<Item = (Method, &Operation)> {
         Method::all()
             .iter()

@@ -17,10 +17,10 @@ use bytes::{Buf, Bytes};
 use http_body::{Body as HttpBody, Frame, SizeHint};
 use tokio::io::AsyncWrite;
 
-use crate::middleware::compression::{Coding, Levels, as_level, zstd_window};
-
-/// The error a body reports, whatever produced it.
-type BoxError = Box<dyn std::error::Error + Send + Sync>;
+use crate::{
+    http::body::BoxError,
+    middleware::compression::{Coding, Levels, as_level, zstd_window},
+};
 
 /// How eagerly encoded bytes are handed to the client.
 ///

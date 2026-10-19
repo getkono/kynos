@@ -316,7 +316,8 @@ cookie = []
 compression = ["dep:async-compression"]
 
 # --- Scalar formats --------------------------------------------------------
-# The mapping to JSON Schema `format` is normative in `docs/schema.md`.
+# The mapping to JSON Schema `format` is the `kynos::schema` rustdoc's
+# "Behind a feature flag" table.
 uuid = ["dep:uuid"]
 
 # Umbrellas holding the shapes their backends share; neither compiles alone.
@@ -476,7 +477,8 @@ opentelemetry-semantic-conventions = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 uuid = { workspace = true, features = ["serde"] }
 
-# `setrlimit` for `connection_adversarial.rs`.
+# `setrlimit` for `connection_adversarial.rs`, and `kill_process` for the
+# server's signal test.
 [target.'cfg(unix)'.dev-dependencies]
 rustix = { workspace = true, features = ["process"] }
 

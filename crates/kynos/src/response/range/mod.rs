@@ -7,6 +7,10 @@
 //! field yields the whole representation and a 200, never a 400. The reason is
 //! reported as a [`spec::Ignored`].
 //!
+//! The declared parameter's `pattern` is the grammar a sender writes; the
+//! parser reads a little more, as a recipient should, which [`spec`] spells
+//! out.
+//!
 //! A handler returning `Result<Ranged<T>, RangeRejection>` declares all three
 //! statuses it can produce: 200 and 206 from [`Ranged<T>`], 416 from
 //! [`RangeRejection`].
@@ -271,6 +275,68 @@ pub(crate) fn conditional_parameter() -> Parameter {
     )
 }
 
+/// A precondition field a validated delivery reads besides `If-Range`.
+///
+/// One declaration per field, shared by a [`Served`](served::Served) delivery
+/// and a ranged asset, so the two describe it in the same words.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Precondition {
+    /// `If-Match`, section 13.1.1.
+    Match,
+    /// `If-Unmodified-Since`, section 13.1.4.
+    UnmodifiedSince,
+    /// `If-None-Match`, section 13.1.2.
+    NoneMatch,
+    /// `If-Modified-Since`, section 13.1.3.
+    ModifiedSince,
+}
+
+impl Precondition {
+    /// The header parameter declaring this field.
+    pub(crate) fn parameter(self) -> Parameter {
+        let (name, description) = match self {
+            Self::Match => (
+                "If-Match",
+                "The entity tag the client's copy was taken from, per RFC 9110 section 13.1.1",
+            ),
+            Self::UnmodifiedSince => (
+                "If-Unmodified-Since",
+                "The date the client's copy carries, refused if the representation changed since, \
+                 per RFC 9110 section 13.1.4",
+            ),
+            Self::NoneMatch => (
+                "If-None-Match",
+                "The entity tag the client already holds, per RFC 9110 section 13.1.2",
+            ),
+            Self::ModifiedSince => (
+                "If-Modified-Since",
+                "The date the client's copy carries, per RFC 9110 section 13.1.3",
+            ),
+        };
+
+        Parameter::header(
+            name,
+            kynos_openapi::Schema::of_type(kynos_openapi::model::schema::types::SchemaType::String),
+        )
+        .with_description(description)
+    }
+}
+
+/// A 200 or 206 carrying `media_type`, its schema unconstrained, as every
+/// binary codec describes its bytes.
+pub(crate) fn content_response(description: &str, media_type: &str) -> kynos_openapi::Response {
+    kynos_openapi::Response::with_content(
+        description,
+        media_type,
+        kynos_openapi::MediaType::new(kynos_openapi::Schema::Object(Box::default())),
+    )
+}
+
+/// The 304 a validated delivery sends when the client's copy is current.
+pub(crate) fn not_modified_response() -> kynos_openapi::Response {
+    kynos_openapi::Response::new("the client's copy is current")
+}
+
 /// A representation, or the part of it a request asked for.
 ///
 /// Built only by [`Range::apply`], so a 206 is always a part some `Range`
@@ -297,36 +363,47 @@ impl<T> Ranged<T> {
 /// 200 with `Accept-Ranges`, or 206 with `Accept-Ranges` and `Content-Range`.
 impl<T: Rangeable> IntoResponse for Ranged<T> {
     fn into_response(self) -> Response {
-        let selection = self.selection;
         let mut response = self.body.into_response();
 
-        if crate::extract::params::header::write(response.headers_mut(), &AcceptRanges).is_err() {
+        if write_selection(&mut response, self.selection).is_err() {
             return crate::extract::params::header::refused();
-        }
-
-        if let Selection::Part {
-            first,
-            last,
-            complete_length,
-        } = selection
-        {
-            if crate::extract::params::header::write(
-                response.headers_mut(),
-                &ContentRange::Satisfied {
-                    first,
-                    last,
-                    complete_length,
-                },
-            )
-            .is_err()
-            {
-                return crate::extract::params::header::refused();
-            }
-            *response.status_mut() = StatusCode::PARTIAL_CONTENT;
         }
 
         response
     }
+}
+
+/// Marks `response` as carrying `selection`: `Accept-Ranges` on every
+/// representation (section 14.3), and for a part its `Content-Range` and 206.
+///
+/// The one place a single-part ranged answer is framed, whether a handler, a
+/// served source or a file builds it; a `multipart/byteranges` answer frames
+/// its own 206 in `parts`.
+pub(crate) fn write_selection(
+    response: &mut Response,
+    selection: Selection,
+) -> Result<(), crate::extract::params::header::UnencodableHeader> {
+    let fields = response.headers_mut();
+    crate::extract::params::header::write(fields, &AcceptRanges)?;
+
+    if let Selection::Part {
+        first,
+        last,
+        complete_length,
+    } = selection
+    {
+        crate::extract::params::header::write(
+            fields,
+            &ContentRange::Satisfied {
+                first,
+                last,
+                complete_length,
+            },
+        )?;
+        *response.status_mut() = StatusCode::PARTIAL_CONTENT;
+    }
+
+    Ok(())
 }
 
 /// The two statuses this type can produce, each carrying the fields it sends.
@@ -345,11 +422,8 @@ impl<T: Rangeable> Responses for Ranged<T> {
             }
         }
 
-        let mut partial = kynos_openapi::Response::with_content(
-            "the requested part of the representation",
-            T::media_type(),
-            kynos_openapi::MediaType::new(kynos_openapi::Schema::Object(Box::default())),
-        );
+        let mut partial =
+            content_response("the requested part of the representation", T::media_type());
         declare(&mut partial, &advertised);
         declare(&mut partial, &enclosed);
 
@@ -380,9 +454,8 @@ pub(crate) fn delivery_responses(
     registry: &mut Registry,
     media_type: &str,
 ) -> kynos_openapi::Responses {
-    use kynos_openapi::{Header, MediaType, Response as OpenApiResponse, Schema, StatusPattern};
+    use kynos_openapi::{Header, Response as OpenApiResponse, Schema, StatusPattern};
 
-    let content = || MediaType::new(Schema::Object(Box::default()));
     let string = || {
         Header::new(Schema::of_type(
             kynos_openapi::model::schema::types::SchemaType::String,
@@ -401,13 +474,13 @@ pub(crate) fn delivery_responses(
     let mut responses = kynos_openapi::Responses::new()
         .with(
             200,
-            OpenApiResponse::with_content("the whole representation", media_type, content()),
+            content_response("the whole representation", media_type),
         )
         .with(
             206,
-            OpenApiResponse::with_content("the part the request asked for", media_type, content()),
+            content_response("the part the request asked for", media_type),
         )
-        .with(304, OpenApiResponse::new("the client's copy is current"))
+        .with(304, not_modified_response())
         .with(
             412,
             OpenApiResponse::new("the representation is not the one the client's copy came from"),

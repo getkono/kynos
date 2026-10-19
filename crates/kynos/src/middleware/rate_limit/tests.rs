@@ -826,3 +826,93 @@ async fn a_refusal_waits_out_the_longest_denial_in_either_quota_order() {
         assert_eq!(denial.retry_after, longest, "{denial:?}");
     }
 }
+
+// --- What the shipped keys and quotas state --------------------------------
+
+/// The partition `key` gives a request carrying `fields`.
+fn partition_of<K: super::key::RateLimitKey<()>>(
+    key: &K,
+    fields: &[(&str, &[u8])],
+) -> Option<String> {
+    let mut request = crate::http::Request::new(Body::empty());
+    for (name, value) in fields {
+        request.headers_mut().append(
+            crate::http::HeaderName::from_bytes(name.as_bytes()).expect("a legal field name"),
+            crate::http::HeaderValue::from_bytes(value).expect("a legal field value"),
+        );
+    }
+    key.partition(
+        &request,
+        Route::new("/counted", "counted", Method::Get),
+        &(),
+    )
+    .map(std::borrow::Cow::into_owned)
+}
+
+/// A request without the field, or with one that is not text, counts against
+/// the one shared `none` bucket rather than escaping the limit — so removing
+/// the header, or garbling it, is no way past it.
+#[test]
+fn a_header_key_puts_every_request_without_a_readable_value_in_one_bucket() {
+    let key = super::key::ByHeader(crate::http::HeaderName::from_static("x-tenant"));
+
+    assert_eq!(
+        partition_of(&key, &[("x-tenant", b"acme")]).as_deref(),
+        Some("x-tenant:acme")
+    );
+    assert_eq!(partition_of(&key, &[]).as_deref(), Some("x-tenant:none"));
+    assert_eq!(
+        partition_of(&key, &[("x-tenant", b"\xff")]).as_deref(),
+        Some("x-tenant:none")
+    );
+}
+
+/// `And` joins two partitions, and either half exempting the request exempts
+/// it: a key with a missing part is not a key.
+#[test]
+fn a_joined_key_is_exempt_when_either_half_is() {
+    use super::key::And;
+
+    let exempt = |_: &crate::http::Request,
+                  _: Route<'_>,
+                  (): &()|
+     -> Option<std::borrow::Cow<'static, str>> { None };
+
+    let a = || Shared("a".into());
+    let b = || Shared("b".into());
+
+    assert_eq!(partition_of(&And(a(), b()), &[]).as_deref(), Some("a|b"));
+    assert_eq!(partition_of(&And(a(), exempt), &[]), None);
+    assert_eq!(partition_of(&And(exempt, b()), &[]), None);
+}
+
+/// Each named constructor advertises the window its name says.
+#[test]
+fn each_named_quota_advertises_the_window_its_name_says() {
+    for (quota, seconds) in [
+        (Quota::per_second("q", 1), 1),
+        (Quota::per_minute("q", 1), 60),
+        (Quota::per_hour("q", 1), 3_600),
+        (Quota::per_day("q", 1), 86_400),
+    ] {
+        assert_eq!(
+            quota.policy().window,
+            Some(Duration::from_secs(seconds)),
+            "{quota:?}"
+        );
+    }
+}
+
+/// A policy stating no window omits `w` rather than writing a zero.
+#[test]
+fn a_policy_with_no_window_renders_no_w_parameter() {
+    let fields = RateLimitFields {
+        limits: Vec::new(),
+        policies: vec![QuotaPolicy::new("open", 5, None, QuotaUnit::Requests)],
+    };
+
+    assert_eq!(
+        rendered(&fields),
+        [("ratelimit-policy".to_owned(), r#""open";q=5"#.to_owned())]
+    );
+}

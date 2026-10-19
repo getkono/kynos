@@ -101,10 +101,3 @@ impl Http1Config {
             .and_then(|timeout| accepted.checked_add(timeout))
     }
 }
-
-/// The HTTP/1 header cap the driver is told about.
-///
-/// A function so the decision can be asserted without a socket.
-pub(in crate::server) const fn forwarded_max_headers(config: &Http1Config) -> usize {
-    config.max_headers
-}

@@ -1,0 +1,17 @@
+error: a security scheme must say what kind it is: `#[security(bearer)]`, `#[security(basic)]`, `#[security(api_key(in = "header", name = "X-Api-Key"))]`, `#[security(mutual_tls)]`, `#[security(openid_connect(url = "..."))]` or `#[security(oauth2(...))]`
+  --> tests/ui/macros/security_scheme_kind_refusals.rs:10:8
+   |
+10 | struct Unnamed;
+   |        ^^^^^^^
+
+error: a security scheme has exactly one kind, and this one is already `bearer`
+  --> tests/ui/macros/security_scheme_kind_refusals.rs:13:20
+   |
+13 | #[security(bearer, basic)]
+   |                    ^^^^^
+
+error: `bearer` takes its options in a list, as `bearer(...)`, not a value
+  --> tests/ui/macros/security_scheme_kind_refusals.rs:17:12
+   |
+17 | #[security(bearer = "JWT")]
+   |            ^^^^^^

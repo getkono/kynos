@@ -50,31 +50,13 @@ emits them; see [Binary content](#binary-content).
 
 ## The standard library
 
-Every row below is built. A leaf implementation returns its schema directly; a
-composite — `Vec<T>`, a map, a tuple, a derived struct — reaches its members
-through [`Registry::resolve`](../crates/kynos/src/schema/registry.rs), which
-registers a named type once and hands back a `$ref`.
-
-| Rust | `type` | `format` | Also emitted |
-| --- | --- | --- | --- |
-| `bool` | `boolean` | — | |
-| `String` | `string` | — | |
-| `char` | `string` | `char` | `minLength: 1`, `maxLength: 1` |
-| `i8`, `i16`, `i32` | `integer` | `int8`, `int16`, `int32` | the type's exact range |
-| `u8`, `u16`, `u32` | `integer` | `uint8`, `uint16`, `uint32` | the type's exact range |
-| `i64` | `integer` | `int64` | — |
-| `u64` | `integer` | `uint64` | `minimum: 0` |
-| `f32`, `f64` | `number` | `float`, `double` | |
-| `Option<T>` | `T`, widened to admit `null` | | |
-| `Box<T>`, `Arc<T>` | `T`, under `T`'s own component name | | |
-| `Vec<T>`, `VecDeque<T>`, `[T]` | `array` | — | `items` |
-| `[T; N]` | `array` | — | `minItems: N`, `maxItems: N` |
-| `HashSet<T>`, `BTreeSet<T>` | `array` | — | `uniqueItems` |
-| `HashMap<K, V>`, `BTreeMap<K, V>` | `object` | — | `K: MapKey` supplies `propertyNames` |
-| tuples up to twelve | `array` | — | `prefixItems`, closed with `items: false` and bounded by `minItems` |
-| `()` | `null` | — | |
-| `Ipv4Addr`, `Ipv6Addr` | `string` | `ipv4`, `ipv6` | |
-| `IpAddr` | — | — | `anyOf` of the two above |
+The mapping is the table under
+[What the standard library gets](https://docs.rs/kynos/latest/kynos/schema/index.html#what-the-standard-library-gets)
+in the `kynos::schema` rustdoc, beside the implementations it describes. A leaf
+implementation returns its schema directly; a composite — `Vec<T>`, a map, a
+tuple, a derived struct — reaches its members through
+[`Registry::resolve`](../crates/kynos/src/schema/registry.rs), which registers a
+named type once and hands back a `$ref`.
 
 `i64` and `u64` carry no maximum because `i64::MAX` and `u64::MAX` are not
 representable in an `f64`, and JSON Schema bounds are numbers. A rounded bound
@@ -102,23 +84,9 @@ backend; enabling an umbrella without a backend is a compile error.
 | `decimal-rust` | `decimal` | `rust_decimal` |
 | `decimal-big` | `decimal` | `bigdecimal` |
 
-Every feature above is built.
-
-| Rust | `type` | `format` | Feature |
-| --- | --- | --- | --- |
-| `uuid::Uuid` | `string` | `uuid` | `uuid` |
-| `chrono::NaiveDate` | `string` | `date` | `time-chrono` |
-| `chrono::NaiveTime` | `string` | `time-local` | `time-chrono` |
-| `chrono::NaiveDateTime` | `string` | `date-time-local` | `time-chrono` |
-| `chrono::DateTime<Utc>`, `<FixedOffset>` | `string` | `date-time` | `time-chrono` |
-| `jiff::civil::Date` | `string` | `date` | `time-jiff` |
-| `jiff::civil::Time` | `string` | `time-local` | `time-jiff` |
-| `jiff::civil::DateTime` | `string` | `date-time-local` | `time-jiff` |
-| `jiff::Timestamp` | `string` | `date-time` | `time-jiff` |
-| `jiff::Zoned` | `string` | `date-time-zoned` + `pattern` | `time-jiff` |
-| `jiff::Span`, `jiff::SignedDuration` | `string` | `duration` | `time-jiff` |
-| `rust_decimal::Decimal` | `string` | `decimal` | `decimal-rust` |
-| `bigdecimal::BigDecimal` | `string` | `decimal` | `decimal-big` |
+Each type these features describe, and its schema, is the table under
+[Behind a feature flag](https://docs.rs/kynos/latest/kynos/schema/index.html#behind-a-feature-flag)
+in the `kynos::schema` rustdoc.
 
 ### Why the offset-less types are not `date-time`
 
@@ -195,23 +163,14 @@ names: chrono's `NaiveDateTime` and `DateTime` put a space where RFC 3339 has a
 writes RFC 3339, carries a date-time; `rust_decimal`, or a newtype whose
 `Display` writes fixed-point digits, carries a decimal.
 
-Kept in despite it, where `Display` writes text the schema does not admit and
-`FromStr` reads it back:
-
-- `f32` and `f64` write `NaN`, `inf` or `-inf` for a non-finite value, which no
-  `number` admits.
-- chrono's `NaiveDate` writes a sign outside the years 0000–9999,
-  `+10000-01-01` or `-0001-01-01`, and jiff's `civil::Date`, `civil::DateTime`,
-  `Timestamp` and `Zoned` a sign and six digits before year 0,
-  `-000001-01-01`, which neither RFC 3339 nor `Zoned`'s pattern admits.
-- jiff's `Span` and `SignedDuration` write ISO 8601 durations, which RFC 3339's
-  `duration` only partly admits: a leading `-` (`-PT1H`), fractional seconds
-  (`PT0.5S`), a skipped unit (`PT1H30S`) and weeks with days (`P1W2D`) fall
-  outside it.
-
-The dates and durations write what serde writes for a body, so a parameter of
-one claims nothing its body's description does not; the exclusions above are
-values the format can express that `Display` writes otherwise. A newtype whose
+Some are kept in despite writing text the schema does not admit for some
+values, which `FromStr` reads back — non-finite floats, out-of-range dates and
+ISO 8601 durations; the
+[`ParamValue`](https://docs.rs/kynos/latest/kynos/schema/trait.ParamValue.html)
+rustdoc lists each. The dates and durations write what serde writes for a body,
+so a parameter of one claims nothing its body's description does not; the
+exclusions above are values the format can express that `Display` writes
+otherwise. A newtype whose
 `FromStr` refuses those values is the remedy.
 
 Your own newtype or enum opts in with `impl ParamValue for UserId {}` once its
@@ -277,18 +236,9 @@ handler's, and `max_length` beside them still bounds the encoded text.
 A type that cannot produce a *constraining* schema has no implementation. There
 is no degradation to `{}` behind your back — see
 [`Unchecked`](../crates/kynos/src/schema/unchecked.rs) for saying so on purpose.
-
-| Rejected | Why | Use instead |
-| --- | --- | --- |
-| `serde_json::Value`, `Map`, `RawValue` | the schema would be `true` | a derived type, or `Unchecked` |
-| `HashMap<String, Value>` | `additionalProperties: true` | `HashMap<String, T> where T: Schema` |
-| `usize`, `isize` | width depends on the build target; a wire contract must not | `u32`/`u64`/`i32`/`i64` |
-| `u128`, `i128` | outside JSON's safe integer range, and no registered format covers them | a newtype over `String` carrying its own `Schema`, or `u64` |
-| `std::time::SystemTime`, `Instant`, `Duration` | serde emits a seconds/nanos pair nobody wants as a contract | `chrono::DateTime<Utc>` or `jiff::Timestamp`; `jiff::Span` for a duration |
-| `chrono::TimeDelta` | serializes as a `[seconds, nanos]` array, the shape `std::time::Duration` is refused for | `jiff::Span`, or a newtype emitting `string`/`duration` |
-| `chrono::DateTime<Local>` | the zone depends on the process environment, which is the `usize` argument in another guise | `DateTime<Utc>`, or `DateTime<FixedOffset>` to keep an offset |
-| `PathBuf`, `OsString` | platform-dependent, not guaranteed to be UTF-8 | `String` |
-| `Box<dyn Trait>` | no schema exists | a closed enum deriving `Schema` |
+Each refused type, why, and what to use instead is the table under
+[Types deliberately left without an implementation](https://docs.rs/kynos/latest/kynos/schema/index.html#types-deliberately-left-without-an-implementation)
+in the `kynos::schema` rustdoc.
 
 Each row has a `compile_fail` case under
 [`tests/ui/schema/`](../crates/kynos/tests/ui/schema/) and a passing sibling that

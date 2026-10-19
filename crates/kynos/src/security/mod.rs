@@ -247,6 +247,21 @@ pub trait SecurityScheme: Send + Sync + 'static {
     fn challenge() -> Option<&'static str> {
         None
     }
+
+    /// The `WWW-Authenticate` challenge sent with a 403 refusing a scope, if
+    /// this scheme has one.
+    ///
+    /// RFC 6750 section 3.1 defines `Bearer error="insufficient_scope"` for a
+    /// bearer token lacking a scope the request demands, so
+    /// [`Bearer`](schemes::Bearer) and a derived `bearer`, `oauth2` or
+    /// `openid_connect` scheme answer that. Any other scheme has no registered
+    /// error to send. Only a refusal from [`Authenticator::authorize`] carries
+    /// it; a 403 from [`Authenticator::authenticate`] declines a credential
+    /// rather than a scope, and sends none.
+    #[must_use]
+    fn insufficient_scope_challenge() -> Option<&'static str> {
+        None
+    }
 }
 
 /// One scope a [`SecurityScheme`] can demand, as a value.

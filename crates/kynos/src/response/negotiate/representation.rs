@@ -102,7 +102,7 @@ impl<T> Representation for MultipartForm<T> where
 // `containment:check` allows it.
 #[cfg(feature = "protobuf")]
 impl<T> sealed::SealedRepresentation for Protobuf<T> {
-    const MEDIA_TYPE: &'static str = "application/protobuf";
+    const MEDIA_TYPE: &'static str = crate::extract::body::protobuf::MEDIA_TYPE;
 }
 
 #[cfg(feature = "protobuf")]

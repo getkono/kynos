@@ -184,6 +184,11 @@ impl<T: Send + 'static, P: Scope> SecurityScheme for Bearer<T, P> {
     fn challenge() -> Option<&'static str> {
         Some("Bearer")
     }
+
+    /// RFC 6750 section 3.1's error for a token lacking a demanded scope.
+    fn insufficient_scope_challenge() -> Option<&'static str> {
+        Some(r#"Bearer error="insufficient_scope""#)
+    }
 }
 
 impl<T: Send + 'static, P: Scope, R: Realm> SecurityScheme for Basic<T, P, R> {

@@ -58,6 +58,8 @@ pub mod validate;
 
 // The curated crate-root facade: shortcuts to items whose canonical paths are
 // inside `annotation`, `model` or `validate`.
+#[cfg(feature = "openapi32")]
+pub use crate::model::schema::xml::XmlNodeType;
 pub use crate::{
     annotation::{MalformedAnnotation, Opaque, OpaqueReason, OpaqueRoute},
     model::{
@@ -80,7 +82,12 @@ pub use crate::{
         },
         reference::{Ref, RefOr},
         response::{Response, Responses, status::StatusPattern},
-        schema::{Schema, discriminator::Discriminator, object::SchemaObject, xml::Xml},
+        schema::{
+            Schema,
+            discriminator::Discriminator,
+            object::SchemaObject,
+            xml::{Xml, XmlNode},
+        },
         security::{
             SecurityScheme,
             oauth::{OAuthFlow, OAuthFlows},

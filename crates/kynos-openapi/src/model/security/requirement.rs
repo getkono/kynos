@@ -7,9 +7,13 @@ use crate::Map;
 /// The security schemes that must be satisfied to invoke an operation.
 ///
 /// Each key names a scheme in
-/// [`Components::security_schemes`](crate::Components::security_schemes); the
-/// value lists the required scopes, which is meaningful only for `oauth2` and
-/// `openIdConnect`. All entries in one requirement must be satisfied together;
+/// [`Components::security_schemes`](crate::Components::security_schemes); from
+/// OpenAPI 3.2 a key may instead be the URI of a Security Scheme Object, though
+/// a key matching a component name is always that component. The value lists
+/// the scope names required for an `oauth2` or `openIdConnect` scheme, and for
+/// any other scheme type the role names required, which the specification
+/// leaves undefined in-band. Either list may be empty. All entries in one
+/// requirement must be satisfied together;
 /// a list of requirements is satisfied when any one of them is.
 ///
 /// An empty requirement means anonymous access is permitted.

@@ -2,12 +2,16 @@
 //!
 //! The figure every buffering codec reads under, shared by all of them.
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use http_body_util::{BodyExt, Collected, LengthLimitError, Limited};
 
 use crate::{
     error::rejection::BodyRejection,
-    http::{HeaderMap, Request, body::Body, header},
+    http::{
+        HeaderMap, Request,
+        body::{Body, BoxError},
+        header,
+    },
 };
 
 /// The most bytes a body extractor holds in memory when no limit covering its
@@ -79,6 +83,55 @@ pub(crate) fn refuse_declared(headers: &HeaderMap, limit: u64) -> Result<(), Bod
         Some(declared) if declared > limit => Err(BodyRejection::TooLarge { limit }),
         _ => Ok(()),
     }
+}
+
+/// What [`collect_capped`] read of a body.
+pub(crate) enum Capped {
+    /// Every byte the body carried.
+    Whole(Bytes),
+    /// What arrived before the read failed, and that failure.
+    FailedPartWay {
+        /// The octets read before the failure.
+        arrived: Bytes,
+        /// The failure itself.
+        error: BoxError,
+    },
+    /// A frame would have taken the running total past the limit.
+    Exceeded,
+}
+
+/// Reads `body` while the running total stays within `limit`.
+///
+/// For an interceptor that must decide a 413 before the extractor runs. A
+/// failed read comes back as it failed, for the extractor beneath to refuse;
+/// swallowing it would hand on a truncated payload.
+pub(crate) async fn collect_capped(mut body: Body, limit: u64) -> Capped {
+    let mut collected = BytesMut::new();
+
+    while let Some(frame) = body.frame().await {
+        let frame = match frame {
+            Ok(frame) => frame,
+            Err(error) => {
+                return Capped::FailedPartWay {
+                    arrived: collected.freeze(),
+                    error,
+                };
+            }
+        };
+        let Ok(data) = frame.into_data() else {
+            continue;
+        };
+
+        let so_far = u64::try_from(collected.len()).unwrap_or(u64::MAX);
+        let arriving = u64::try_from(data.len()).unwrap_or(u64::MAX);
+        if so_far.saturating_add(arriving) > limit {
+            return Capped::Exceeded;
+        }
+
+        collected.extend_from_slice(&data);
+    }
+
+    Capped::Whole(collected.freeze())
 }
 
 /// Reads `body` whole, refusing it on the frame that passes `limit`. A

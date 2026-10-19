@@ -16,12 +16,15 @@
 
 use std::collections::BTreeSet;
 
+#[cfg(feature = "openapi32")]
+use kynos_openapi::XmlNodeType;
 use kynos_openapi::{
     Callback, ComponentName, Components, Contact, Discriminator, Document, Encoding, EncodingStyle,
     Example, Extensions, ExternalDocumentation, Header, HeaderStyle, Info, License, Link, Map,
-    MediaType, Method, OAuthFlow, OAuthFlows, Operation, Parameter, ParameterIn, PathItem,
-    PathTemplate, Paths, Ref, RefOr, RequestBody, Response, Responses, Schema, SchemaObject,
-    SecurityRequirement, SecurityScheme, Server, ServerVariable, SpecVersion, Style, Tag, Xml,
+    MediaType, Method, OAuthFlow, OAuthFlows, Operation, Parameter, ParameterIn, ParameterShape,
+    PathItem, PathTemplate, Paths, Ref, RefOr, RequestBody, Response, Responses, Schema,
+    SchemaObject, SecurityRequirement, SecurityScheme, Server, ServerVariable, SpecVersion, Style,
+    Tag, Xml, XmlNode,
     model::schema::types::{SchemaType, TypeSet},
 };
 use serde::Serialize;
@@ -150,6 +153,28 @@ fn schema_cases() -> Vec<Case> {
             },
             json!({ "name": "order" }),
         ),
+        case(
+            "Xml",
+            &Xml {
+                node: XmlNode::Flags {
+                    attribute: Some(true),
+                    wrapped: Some(false),
+                },
+                ..Xml::default()
+            },
+            json!({ "attribute": true, "wrapped": false }),
+        ),
+        #[cfg(feature = "openapi32")]
+        case(
+            "Xml",
+            &Xml {
+                node: XmlNode::Type(XmlNodeType::Cdata),
+                ..Xml::default()
+            },
+            json!({ "nodeType": "cdata" }),
+        ),
+        #[cfg(feature = "openapi32")]
+        case("XmlNodeType", &XmlNodeType::Text, json!("text")),
     ]
 }
 
@@ -188,6 +213,26 @@ fn parameter_cases() -> Vec<Case> {
                 "name": "id",
                 "in": "path",
                 "required": true,
+                "schema": { "type": "string" }
+            }),
+        ),
+        // The two hand-renamed flags, set without passing through a parse, and
+        // `required` absent where no constructor states it.
+        case(
+            "Parameter",
+            &{
+                let mut parameter = Parameter::query("q", schema());
+                parameter.allow_empty_value = Some(true);
+                if let ParameterShape::Schema { allow_reserved, .. } = parameter.shape_mut() {
+                    *allow_reserved = Some(true);
+                }
+                parameter
+            },
+            json!({
+                "name": "q",
+                "in": "query",
+                "allowEmptyValue": true,
+                "allowReserved": true,
                 "schema": { "type": "string" }
             }),
         ),
@@ -349,12 +394,31 @@ fn security_cases() -> Vec<Case> {
             &SecurityRequirement::scoped("OAuth", ["read:orders"]),
             json!({ "OAuth": ["read:orders"] }),
         ),
+        // A scheme's `description`, and 3.2's `oauth2MetadataUrl`.
+        case(
+            "SecurityScheme",
+            &SecurityScheme::mutual_tls().with_description("Partner access"),
+            json!({ "type": "mutualTLS", "description": "Partner access" }),
+        ),
+        #[cfg(feature = "openapi32")]
+        case(
+            "SecurityScheme",
+            &SecurityScheme::oauth2(OAuthFlows::default())
+                .with_oauth2_metadata_url("https://example.com/meta"),
+            json!({
+                "type": "oauth2",
+                "flows": {},
+                "oauth2MetadataUrl": "https://example.com/meta"
+            }),
+        ),
         case(
             "OAuthFlow",
             &OAuthFlow::new([("read:orders".to_owned(), "Read orders".to_owned())])
-                .with_token_url("https://example.com/token"),
+                .with_token_url("https://example.com/token")
+                .with_refresh_url("https://example.com/refresh"),
             json!({
                 "tokenUrl": "https://example.com/token",
+                "refreshUrl": "https://example.com/refresh",
                 "scopes": { "read:orders": "Read orders" }
             }),
         ),
@@ -502,16 +566,22 @@ fn wire_types_in_source() -> BTreeSet<String> {
                     .take_while(|c| c.is_alphanumeric() || *c == '_')
                     .collect();
 
-                // The derive sits in the attribute block immediately above.
-                let derives_serialize = lines[..index]
+                // The derive sits in the attribute block immediately above,
+                // beside any gate that compiles the type out of this build.
+                let attributes: Vec<&&str> = lines[..index]
                     .iter()
                     .rev()
                     .take_while(|above| {
                         above.starts_with('#') || above.starts_with("//") || above.trim().is_empty()
                     })
-                    .any(|above| above.contains("Serialize"));
+                    .collect();
+                let derives_serialize = attributes.iter().any(|above| above.contains("Serialize"));
+                let compiled = cfg!(feature = "openapi32")
+                    || !attributes
+                        .iter()
+                        .any(|above| above.starts_with("#[cfg(feature = \"openapi32\")]"));
 
-                if derives_serialize {
+                if derives_serialize && compiled {
                     found.insert(name);
                 }
             }
@@ -770,6 +840,91 @@ fn every_extensible_object_round_trips_an_extension() {
         "an XML Object",
         r#"{"name":"order","x-audience":"internal"}"#,
     );
+}
+
+/// Every `nodeType` value, against `references/3.2.0.md:3837-3841`: five
+/// values, each written as the specification spells it and read back.
+///
+/// The `match` has no wildcard, so a variant added without a spelling here
+/// fails to compile.
+#[cfg(feature = "openapi32")]
+#[test]
+fn each_xml_node_type_is_spelled_as_the_specification_spells_it() {
+    fn spelling(node_type: XmlNodeType) -> &'static str {
+        match node_type {
+            XmlNodeType::Element => "element",
+            XmlNodeType::Attribute => "attribute",
+            XmlNodeType::Text => "text",
+            XmlNodeType::Cdata => "cdata",
+            XmlNodeType::None => "none",
+        }
+    }
+
+    for node_type in [
+        XmlNodeType::Element,
+        XmlNodeType::Attribute,
+        XmlNodeType::Text,
+        XmlNodeType::Cdata,
+        XmlNodeType::None,
+    ] {
+        let spelled = json!(spelling(node_type));
+        assert_eq!(
+            serde_json::to_value(node_type).expect("serializable"),
+            spelled
+        );
+        assert_eq!(
+            serde_json::from_value::<XmlNodeType>(spelled).expect("a defined value"),
+            node_type
+        );
+    }
+    assert!(
+        serde_json::from_value::<XmlNodeType>(json!("comment")).is_err(),
+        "a value the specification does not define is refused"
+    );
+}
+
+/// Every combination of the XML Object's node fields, against
+/// `references/3.2.0.md:3822-3823`: `attribute` and `wrapped` "MUST NOT be
+/// present" beside `nodeType`, and each flag alone, both, `nodeType` alone, or
+/// none at all is an XML Object.
+#[cfg(feature = "openapi32")]
+#[test]
+fn each_combination_of_xml_node_fields_is_read_as_the_specification_says() {
+    const CONFLICT: &str =
+        "`attribute` and `wrapped` must not be present beside `nodeType` on an XML Object";
+    let flags = |attribute, wrapped| Ok(XmlNode::Flags { attribute, wrapped });
+
+    let table: [(Value, Result<XmlNode, &str>); 8] = [
+        (json!({}), flags(None, None)),
+        (json!({ "attribute": true }), flags(Some(true), None)),
+        (json!({ "wrapped": false }), flags(None, Some(false))),
+        (
+            json!({ "attribute": false, "wrapped": true }),
+            flags(Some(false), Some(true)),
+        ),
+        (
+            json!({ "nodeType": "element" }),
+            Ok(XmlNode::Type(XmlNodeType::Element)),
+        ),
+        (
+            json!({ "nodeType": "element", "attribute": false }),
+            Err(CONFLICT),
+        ),
+        (
+            json!({ "nodeType": "element", "wrapped": true }),
+            Err(CONFLICT),
+        ),
+        (
+            json!({ "nodeType": "element", "attribute": true, "wrapped": true }),
+            Err(CONFLICT),
+        ),
+    ];
+    for (object, expected) in table {
+        let read = serde_json::from_value::<Xml>(object.clone())
+            .map(|xml| xml.node)
+            .map_err(|error| error.to_string());
+        assert_eq!(read, expected.map_err(str::to_owned), "{object}");
+    }
 }
 
 /// A `PathItem` carrying both `$ref` and siblings loses the siblings.

@@ -184,6 +184,25 @@ fn if_match_any_holds_whatever_the_representation_is_tagged() {
     }
 }
 
+/// A field line that is not visible ASCII names nothing, under either
+/// comparison, even where it also lists the current tag in plain ASCII.
+///
+/// Preconditions are read as visible ASCII, and `obs-text` makes the whole
+/// line unreadable rather than just the member holding it.
+#[test]
+fn a_field_that_is_not_visible_ascii_names_nothing() {
+    let field = HeaderValue::from_bytes(b"\"r3\", \"\xe9\"").expect("obs-text is a legal value");
+
+    assert!(!matches(&field, r#""r3""#));
+    assert!(!matches(&field, r#"W/"r3""#));
+    assert!(!matches_strongly(&field, Some(r#""r3""#)));
+
+    // The same list without the unreadable member names the tag.
+    let readable = HeaderValue::from_static(r#""r3", "e""#);
+    assert!(matches(&readable, r#""r3""#));
+    assert!(matches_strongly(&readable, Some(r#""r3""#)));
+}
+
 /// `If-Match` is one list across its field lines: a tag on the second line
 /// holds, two lines naming neither the current tag fail, and an absent field
 /// is told apart from a failed one without the tag being asked for.
@@ -211,6 +230,64 @@ fn if_match_is_one_list_across_its_field_lines() {
         }),
         None
     );
+}
+
+/// A tag renders with its quotes and its weakness marker.
+#[test]
+fn a_tag_renders_the_way_the_grammar_writes_it() {
+    assert_eq!(
+        super::ETag::strong("abc").encode(),
+        Some(HeaderValue::from_static(r#""abc""#))
+    );
+    assert_eq!(
+        super::ETag::weak("abc").encode(),
+        Some(HeaderValue::from_static(r#"W/"abc""#))
+    );
+}
+
+/// RFC 9110 section 8.8.3's `etagc`, transcribed: `%x21 / %x23-7E /
+/// obs-text`. `obs-text` is the one part `encode` refuses, as its
+/// documentation says, because a `str`'s non-ASCII bytes are UTF-8 rather
+/// than opaque octets.
+fn is_etagc(character: char) -> bool {
+    character == '\u{21}' || ('\u{23}'..='\u{7e}').contains(&character)
+}
+
+/// Every ASCII character, and non-ASCII ones, as a one-character tag: each
+/// `etagc` renders quoted, weak or strong, and every other character renders
+/// nothing. A quote would end the tag early, a space or a control would end
+/// the field, and a comma is legal — which is why the list parser has to be
+/// quote-aware.
+#[test]
+fn a_tag_renders_exactly_when_every_character_is_an_etagc() {
+    for character in ('\0'..='\u{7f}').chain(['\u{80}', 'é', '\u{ff}', '€']) {
+        let value = character.to_string();
+        let (strong, weak) = if is_etagc(character) {
+            (
+                Some(HeaderValue::try_from(format!("\"{character}\"")).expect("a field value")),
+                Some(HeaderValue::try_from(format!("W/\"{character}\"")).expect("a field value")),
+            )
+        } else {
+            (None, None)
+        };
+
+        assert_eq!(
+            super::ETag::strong(value.clone()).encode(),
+            strong,
+            "{character:?}"
+        );
+        assert_eq!(
+            super::ETag::weak(value.clone()).encode(),
+            weak,
+            "{character:?}"
+        );
+        // One refused character refuses the whole tag, wherever it sits.
+        assert_eq!(
+            super::ETag::strong(format!("a{value}b")).encode().is_some(),
+            is_etagc(character),
+            "{character:?} inside a tag"
+        );
+    }
 }
 
 /// A tag that is no `entity-tag` refuses its group naming `ETag`, where it

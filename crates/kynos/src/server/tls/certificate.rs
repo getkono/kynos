@@ -20,20 +20,22 @@ pub(in crate::server) struct CertificateMaterial {
     pub(in crate::server) private_key: PrivateKeyDer<'static>,
 }
 
-pub(in crate::server) fn parse_certificates(
+/// Every `T` PEM section in `bytes`, refusing malformed PEM and PEM holding
+/// none; `kind` names the material in either refusal.
+pub(in crate::server) fn parse_pem<T: PemObject>(
     bytes: &[u8],
     kind: &'static str,
-) -> std::result::Result<Vec<CertificateDer<'static>>, TlsError> {
-    let certificates = CertificateDer::pem_slice_iter(bytes)
+) -> std::result::Result<Vec<T>, TlsError> {
+    let parsed = T::pem_slice_iter(bytes)
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|error| TlsError::Pem {
             kind,
             source: Box::new(error),
         })?;
-    if certificates.is_empty() {
+    if parsed.is_empty() {
         return Err(TlsError::EmptyPem { kind });
     }
-    Ok(certificates)
+    Ok(parsed)
 }
 
 /// `names`, lowercased, unless one is refused as an SNI name: the list is
@@ -82,7 +84,7 @@ pub(in crate::server) fn parse_certificate_material(
     certificate_chain: &[u8],
     private_key: &[u8],
 ) -> std::result::Result<CertificateMaterial, TlsError> {
-    let certificates = parse_certificates(certificate_chain, "certificate")?;
+    let certificates = parse_pem(certificate_chain, "certificate")?;
     let private_key =
         PrivateKeyDer::from_pem_slice(private_key).map_err(|error| TlsError::Pem {
             kind: "private key",

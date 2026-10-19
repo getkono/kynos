@@ -5,19 +5,50 @@ use kynos_openapi::model::schema::types::SchemaType;
 use crate::{
     error::rejection::HeaderRejection,
     extract::params::header::{DecodeHeaders, HeaderParams},
-    http::{self, HeaderMap, etag, header},
+    http::{self, HeaderMap, HeaderValue, etag, header},
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
     schema::registry::Registry,
 };
 
-/// What the client already holds.
+/// What the client already holds: a request's `If-None-Match` field lines.
+///
+/// The lines are kept as sent and read only where they are compared, so a
+/// request pays for no copy of its tags. Only lines of visible ASCII are kept,
+/// since no other line can name a tag. Two are equal when they hold the same
+/// lines.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum IfNoneMatch {
-    /// `*`: any representation the server has.
-    Any,
-    /// The entity tags the client holds, verbatim.
-    Tags(Vec<String>),
+pub struct IfNoneMatch {
+    // Split from the rest so the one line a request almost always sends needs
+    // no buffer.
+    first: HeaderValue,
+    rest: Vec<HeaderValue>,
+}
+
+impl IfNoneMatch {
+    /// The entity tags the client holds, verbatim, or `None` where it sent
+    /// `*`, which names any representation the server has.
+    ///
+    /// Every field line is read as one list (RFC 9110 section 5.3); a line
+    /// that is `*` makes the whole condition `*`.
+    #[must_use]
+    pub fn tags(&self) -> Option<impl Iterator<Item = &str>> {
+        if self.texts().any(|text| etag::listed(text).is_none()) {
+            return None;
+        }
+
+        Some(self.texts().flat_map(etag::split))
+    }
+
+    /// The field lines, in the order they were sent.
+    fn lines(&self) -> impl Iterator<Item = &HeaderValue> {
+        core::iter::once(&self.first).chain(&self.rest)
+    }
+
+    /// The field lines as text, which every kept line is.
+    fn texts(&self) -> impl Iterator<Item = &str> {
+        self.lines().filter_map(|line| line.to_str().ok())
+    }
 }
 
 /// The preconditions [`Conditional`] evaluates.
@@ -55,29 +86,21 @@ impl DecodeHeaders for Preconditions {
     /// Never fails.
     ///
     /// RFC 9110 section 13.1: a recipient ignores a condition it cannot
-    /// evaluate, so a malformed precondition is absent rather than a 400.
-    ///
-    /// Every field line is read as one list (RFC 9110 section 5.3); a line
-    /// that is `*` makes the whole condition [`IfNoneMatch::Any`].
+    /// evaluate, so a malformed precondition is absent rather than a 400. A
+    /// field none of whose lines is visible ASCII is absent.
     fn decode(headers: &HeaderMap) -> Result<Self, HeaderRejection> {
-        let mut if_none_match = None;
-
-        for text in headers
+        // A field value shares the request's buffer, so a clone copies no
+        // bytes.
+        let mut lines = headers
             .get_all(header::IF_NONE_MATCH)
             .iter()
-            .filter_map(|value| value.to_str().ok())
-        {
-            if text.trim() == etag::ANY {
-                if_none_match = Some(IfNoneMatch::Any);
-                break;
-            }
+            .filter(|line| line.to_str().is_ok())
+            .cloned();
 
-            if let IfNoneMatch::Tags(tags) =
-                if_none_match.get_or_insert_with(|| IfNoneMatch::Tags(Vec::new()))
-            {
-                tags.extend(etag::split(text).map(str::to_owned));
-            }
-        }
+        let if_none_match = lines.next().map(|first| IfNoneMatch {
+            first,
+            rest: lines.collect(),
+        });
 
         Ok(Self { if_none_match })
     }
@@ -215,20 +238,18 @@ impl<C: Sync + 'static> Interceptor<C> for Conditional {
 
 /// Whether the client's copy is the one the response carries.
 ///
-/// The weak comparison, per RFC 9110 section 13.1.2.
+/// [`etag::if_none_match_lines`], save that a response carrying no tag matches
+/// nothing, `*` included, which that would match: with no validator to
+/// compare, a 304 would call the client's copy current on no evidence.
 fn matched(condition: &IfNoneMatch, headers: &HeaderMap) -> bool {
     let Some(current) = headers
         .get(header::ETAG)
         .and_then(|value| value.to_str().ok())
     else {
-        // No validator matches nothing, `*` included.
         return false;
     };
 
-    match condition {
-        IfNoneMatch::Any => true,
-        IfNoneMatch::Tags(tags) => tags.iter().any(|tag| etag::weak_match(tag, current)),
-    }
+    etag::if_none_match_lines(condition.lines(), || Some(current)) == Some(true)
 }
 
 #[cfg(test)]

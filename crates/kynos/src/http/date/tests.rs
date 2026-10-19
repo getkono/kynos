@@ -52,6 +52,69 @@ fn every_day_across_a_leap_boundary_round_trips() {
     }
 }
 
+/// Every day from the epoch through 2100, against a calendar counted one day at
+/// a time.
+///
+/// The oracle shares nothing with the module's arithmetic: it starts on
+/// Thursday 1 January 1970 and steps a weekday, a day of the month and a month
+/// forward, so a writer and a reader that agree with each other but not with
+/// the calendar fail here. Each day is checked in all three formats the reader
+/// accepts, RFC 850's two-digit year only where it names the year itself.
+#[test]
+fn every_day_through_2100_is_the_day_a_calendar_counts() {
+    const LONG_DAYS: [&str; 7] = [
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+    ];
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+
+    let (mut year, mut month, mut day) = (1970_u64, 0_usize, 1_u64);
+    let mut days = 0_u64;
+
+    while year <= 2100 {
+        let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+        let february = if leap { 29 } else { 28 };
+        let length = [31, february, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+        let long = LONG_DAYS[usize::try_from(days % 7).expect("a weekday")];
+        let short = &long[..3];
+        let name = MONTHS[month];
+        // A time whose every field is non-zero and distinct.
+        let time = UNIX_EPOCH + Duration::from_secs(days * 86_400 + 12 * 3600 + 34 * 60 + 56);
+
+        let imf = format!("{short}, {day:02} {name} {year} 12:34:56 GMT");
+        assert_eq!(format(time).as_deref(), Some(imf.as_str()), "day {days}");
+        assert_eq!(parse(&imf), Some(time), "{imf}");
+        let asctime = format!("{short} {name} {day:>2} 12:34:56 {year}");
+        assert_eq!(parse(&asctime), Some(time), "{asctime}");
+        if year < 2070 {
+            let rfc850 = format!("{long}, {day:02}-{name}-{:02} 12:34:56 GMT", year % 100);
+            assert_eq!(parse(&rfc850), Some(time), "{rfc850}");
+        }
+
+        days += 1;
+        day += 1;
+        if day > length[month] {
+            day = 1;
+            month += 1;
+            if month == 12 {
+                month = 0;
+                year += 1;
+            }
+        }
+    }
+
+    // 1970 through 2100 is 131 years, 32 of them leap.
+    assert_eq!(days, 131 * 365 + 32);
+}
+
 /// The two-digit year is anchored to the format's era, not to today's clock.
 ///
 /// A sliding window would make this function's answer depend on when it ran,
@@ -120,9 +183,15 @@ fn a_numeral_is_read_only_at_the_width_its_grammar_gives() {
 /// 29 February exists in a leap year and not otherwise.
 #[test]
 fn the_leap_day_is_admitted_only_where_it_exists() {
-    assert!(
-        parse("Tue, 29 Feb 2000 00:00:00 GMT").is_some(),
+    assert_eq!(
+        parse("Tue, 29 Feb 2000 00:00:00 GMT"),
+        Some(UNIX_EPOCH + Duration::from_secs(951_782_400)),
         "2000 is a leap year"
+    );
+    assert_eq!(
+        parse("Wed, 01 Mar 2000 00:00:00 GMT"),
+        Some(UNIX_EPOCH + Duration::from_secs(951_868_800)),
+        "the day after it is one day later"
     );
     assert!(
         parse("Mon, 29 Feb 1900 00:00:00 GMT").is_none(),

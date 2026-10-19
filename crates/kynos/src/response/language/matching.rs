@@ -1,8 +1,13 @@
 //! Matching a language range against the tags a service offers.
 //!
-//! RFC 4647 Lookup (3.4), falling back to Basic Filtering (3.3.1) where Lookup
-//! has no answer; `docs/standards.md` records why. Ranges that diverge mid-way
-//! (`en-GB` against `en-US`) match under neither.
+//! RFC 4647 Lookup (3.4) and Basic Filtering (3.3.1) together;
+//! `docs/standards.md` records why. The client's range order wins, so a tag
+//! Basic Filtering reaches through the first range beats a Lookup match on the
+//! second. A tag ranks at the order of its most specific matching range, not
+//! its earliest: `de-AT, de` against `de` and `de-AT-1996` selects
+//! `de-AT-1996`, since `de` ranks through its exact match on the second range.
+//! Lookup outranks Filtering only between tags whose most specific range is
+//! the same one. Ranges that diverge mid-way (`en-GB` against `en-US`) match under neither.
 
 /// How a range and an offered tag relate; a greater value is a better relation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

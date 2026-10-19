@@ -18,6 +18,8 @@ use std::{future::Future, pin::Pin, task::Poll};
 
 use bytes::Bytes;
 
+use super::rangeable::clamped;
+
 /// How much of a representation is read at a time.
 ///
 /// A response is streamed in spans of this size, so the full representation is
@@ -163,21 +165,11 @@ impl ByteSource for InMemory {
     }
 }
 
-/// The octets from `first` to `last` inclusive, clamped to what is there.
-fn clamped(octets: &Bytes, first: u64, last: u64) -> Bytes {
-    let len = octets.len();
-    let first = usize::try_from(first).unwrap_or(usize::MAX).min(len);
-    let end = usize::try_from(last.saturating_add(1))
-        .unwrap_or(usize::MAX)
-        .min(len);
-    octets.slice(first..end.max(first))
-}
-
 /// A body that reads one span at a time.
 ///
 /// An [`http_body::Body`] rather than a `Stream`: `futures_core` is gated on
 /// `openapi32` and ranged delivery is not.
-pub(super) struct Spans<S: ByteSource> {
+pub(crate) struct Spans<S: ByteSource> {
     source: std::sync::Arc<S>,
     /// The next offset to read, and the last one enclosed.
     cursor: u64,
@@ -205,7 +197,7 @@ impl<S: ByteSource> std::fmt::Debug for Spans<S> {
 
 impl<S: ByteSource> Spans<S> {
     /// Reads `first..=last` from `source`, one [`SPAN`] at a time.
-    pub(super) fn new(source: std::sync::Arc<S>, first: u64, last: u64) -> Self {
+    pub(crate) fn new(source: std::sync::Arc<S>, first: u64, last: u64) -> Self {
         Self {
             source,
             cursor: first,

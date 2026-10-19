@@ -302,6 +302,84 @@ fn a_query_string_splits_and_decodes_with_form_rules() {
     }
 }
 
+/// The in-place check agrees with decoding every pair and reading each half as
+/// UTF-8, over every escape of one and two octets, every two-octet tail of the
+/// three-octet lead `%E2`, and escapes meeting literal text on either side.
+#[cfg(feature = "form")]
+#[test]
+fn the_in_place_utf8_check_agrees_with_decoding_every_pair() {
+    use crate::__private::uri::check_percent_decoded_utf8;
+
+    let decoded = |text: &str| {
+        query_pairs(Some(text)).all(|(name, value)| {
+            std::str::from_utf8(&name).is_ok() && std::str::from_utf8(&value).is_ok()
+        })
+    };
+
+    let mut texts: Vec<String> = [
+        "",
+        "a=b",
+        "a+b=c+d",
+        "k=%",
+        "k=%4",
+        "k=%zz",
+        "k=%%C3%A9",
+        "%C3%A9=%E2%82%AC",
+        "k=%F0%9F%98%80",
+        "k=%ED%A0%80",
+        "k=%C0%AF",
+        "k=%F4%90%80%80",
+        "k=%C3",
+        "k=%C3a",
+        "k=%C3+",
+        "k=%C3&k=%A9",
+        "k=%C3=%A9",
+        "k=%C3%26",
+        "k=é%A9",
+        "k=%C3é",
+        "k=é%C3%A9é",
+        "k=%c3%a9",
+        "k=%A9",
+    ]
+    .map(str::to_owned)
+    .into();
+    for first in 0u8..=0xff {
+        texts.push(format!("k=%{first:02X}"));
+        for second in 0u8..=0xff {
+            texts.push(format!("k=%{first:02X}%{second:02x}"));
+            texts.push(format!("k=%E2%{first:02X}%{second:02X}"));
+        }
+    }
+
+    for text in &texts {
+        assert_eq!(
+            check_percent_decoded_utf8(text).is_ok(),
+            decoded(text),
+            "{text}"
+        );
+    }
+}
+
+/// A refusal names where the offending character's first escape begins, not
+/// where it was found to be broken.
+#[cfg(feature = "form")]
+#[test]
+fn the_in_place_utf8_check_names_the_escape_that_began_the_sequence() {
+    use crate::__private::uri::check_percent_decoded_utf8;
+
+    let cases = [
+        ("k=%FF", 2),
+        ("ok=1&name=caf%C3", 13),
+        ("k=%C3%A9%E2%82", 8),
+        ("k=%E2%82a", 2),
+        ("k=%C3%26", 2),
+    ];
+
+    for (text, offset) in cases {
+        assert_eq!(check_percent_decoded_utf8(text), Err(offset), "{text}");
+    }
+}
+
 /// A `#[derive(Reply)]` variant with a body answers with the status it
 /// declared, the body as JSON, and the type its description names.
 #[tokio::test]

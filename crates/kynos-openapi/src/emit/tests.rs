@@ -783,7 +783,12 @@ mod blockers {
             paths::{item::PathItem, method::Method, operation::Operation, template::PathTemplate},
             reference::RefOr,
             response::{Response, Responses},
-            schema::{Schema, discriminator::Discriminator, object::SchemaObject, xml::Xml},
+            schema::{
+                Schema,
+                discriminator::Discriminator,
+                object::SchemaObject,
+                xml::{Xml, XmlNode, XmlNodeType},
+            },
             security::{
                 SecurityScheme,
                 oauth::{OAuthFlow, OAuthFlows},
@@ -1162,7 +1167,7 @@ mod blockers {
                 (
                     with_request_content(MediaType::new(Schema::Object(Box::new(SchemaObject {
                         xml: Some(Xml {
-                            node_type: Some("element".to_owned()),
+                            node: XmlNode::Type(XmlNodeType::Element),
                             ..Xml::default()
                         }),
                         ..SchemaObject::default()

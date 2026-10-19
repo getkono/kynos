@@ -16,7 +16,7 @@ use kynos_openapi::{
 
 use crate::{
     http::{HeaderValue, StatusCode, body::Body, header},
-    response::IntoResponse,
+    response::{IntoResponse, codec::json_bytes},
     schema::{Schema, flatten::Flatten, registry::Registry},
 };
 
@@ -230,11 +230,14 @@ impl IntoResponse for Problem {
     fn into_response(self) -> crate::http::Response {
         let status = self.status;
         // Cannot fail in practice; the fallback keeps the response path panic-free.
-        let body = serde_json::to_vec(&self).unwrap_or_else(|_| {
-            format!(r#"{{"type":"{ABOUT_BLANK}","status":{}}}"#, status.as_u16()).into_bytes()
+        let body = json_bytes(&self).unwrap_or_else(|_| {
+            Bytes::from(format!(
+                r#"{{"type":"{ABOUT_BLANK}","status":{}}}"#,
+                status.as_u16()
+            ))
         });
 
-        let mut response = crate::http::Response::new(Body::from_bytes(Bytes::from(body)));
+        let mut response = crate::http::Response::new(Body::from_bytes(body));
         *response.status_mut() = status;
         response.headers_mut().insert(
             header::CONTENT_TYPE,

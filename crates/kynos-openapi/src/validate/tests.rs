@@ -89,23 +89,32 @@ fn an_operation_outside_paths_is_validated_too() {
     };
 
     // The one in `paths` is the first sighting; each case below adds a second
-    // somewhere the walk did not reach.
+    // somewhere the walk did not reach, and the violation sits at that second
+    // operation's own escaped pointer.
     let with_second = |place: &dyn Fn(&mut Document)| {
         let mut document = document_with(&[("/users", duplicate())]);
         place(&mut document);
-        errors(&document)
+        located_errors(&document)
+    };
+    let duplicate_at = |location: &str| {
+        vec![(
+            location.to_owned(),
+            SpecError::DuplicateOperationId {
+                operation_id: "shared".to_owned(),
+                first: "#/paths/~1users/get".to_owned(),
+            },
+        )]
     };
 
     let webhooks = with_second(&|document| {
         document
             .webhooks
-            .insert("orderPlaced".to_owned(), duplicate());
+            .insert("order/placed".to_owned(), duplicate());
     });
-    assert!(
-        webhooks
-            .iter()
-            .any(|error| matches!(error, SpecError::DuplicateOperationId { .. })),
-        "a webhook describes an operation; got {webhooks:?}"
+    assert_eq!(
+        webhooks,
+        duplicate_at("#/webhooks/order~1placed/get"),
+        "a webhook describes an operation"
     );
 
     let components = with_second(&|document| {
@@ -114,11 +123,10 @@ fn an_operation_outside_paths_is_validated_too() {
             .path_items
             .insert("Shared".to_owned(), duplicate());
     });
-    assert!(
-        components
-            .iter()
-            .any(|error| matches!(error, SpecError::DuplicateOperationId { .. })),
-        "a reusable path item describes an operation; got {components:?}"
+    assert_eq!(
+        components,
+        duplicate_at("#/components/pathItems/Shared/get"),
+        "a reusable path item describes an operation"
     );
 
     let callbacks = with_second(&|document| {
@@ -127,11 +135,10 @@ fn an_operation_outside_paths_is_validated_too() {
             RefOr::Item(Callback::new().with("{$request.body#/url}", duplicate())),
         );
     });
-    assert!(
-        callbacks
-            .iter()
-            .any(|error| matches!(error, SpecError::DuplicateOperationId { .. })),
-        "a callback describes an operation; got {callbacks:?}"
+    assert_eq!(
+        callbacks,
+        duplicate_at("#/components/callbacks/onData/{$request.body#~1url}/get"),
+        "a callback describes an operation"
     );
 }
 
@@ -700,13 +707,71 @@ fn a_reusable_parameters_extensions_are_checked_at_its_escaped_pointer() {
     parameter.extensions.insert("x-oai-reserved", true);
     let document = document_with_component_parameter(&[], "a/b", crate::RefOr::Item(parameter));
 
-    let found = Validator::new(SpecVersion::V3_1).validate(&document);
-    assert!(
-        found.iter().any(|violation| {
-            violation.location == "#/components/parameters/a~1b"
-                && matches!(violation.error, SpecError::InvalidExtensionName { .. })
-        }),
-        "got {found:?}"
+    // `a/b` is no valid component name either, reported at the same pointer.
+    assert_eq!(
+        Validator::new(SpecVersion::V3_1).validate(&document),
+        vec![
+            Violation::error(
+                "#/components/parameters/a~1b",
+                SpecError::InvalidComponentName {
+                    name: "a/b".to_owned()
+                },
+            ),
+            Violation {
+                location: "#/components/parameters/a~1b".to_owned(),
+                severity: super::Severity::Warning,
+                error: SpecError::InvalidExtensionName {
+                    name: "x-oai-reserved".to_owned(),
+                },
+            },
+        ]
+    );
+}
+
+/// Every object the extension-name rule is called on reports a reserved
+/// prefix at its own pointer, as a warning: the document root, an operation,
+/// an inline parameter (at the operation whose list holds it) and a response
+/// header.
+/// `x-oas-` is reserved alongside `x-oai-`, and `x-oaith` is not.
+#[test]
+fn a_reserved_extension_name_is_a_warning_wherever_it_is_written() {
+    use crate::model::parameter::header::Header;
+
+    let mut parameter = Parameter::query("page", Schema::of_type(SchemaType::Integer));
+    parameter.extensions.insert("x-oas-parameter", true);
+    let mut header = Header::new(Schema::of_type(SchemaType::String));
+    header.extensions.insert("x-oai-header", true);
+    let mut operation = Operation::new("listUsers")
+        .with_parameter(parameter)
+        .with_responses(
+            Responses::new().with(200, Response::new("ok").with_header("X-Rate/Limit", header)),
+        );
+    operation.extensions.insert("x-oai-operation", true);
+    operation.extensions.insert("x-oaith", true);
+    let mut document = document_with(&[(
+        "/users",
+        PathItem::new().with_operation(Method::Get, operation),
+    )]);
+    document.extensions.insert("x-oas-root", true);
+
+    let warning = |location: &str, name: &str| Violation {
+        location: location.to_owned(),
+        severity: super::Severity::Warning,
+        error: SpecError::InvalidExtensionName {
+            name: name.to_owned(),
+        },
+    };
+    assert_eq!(
+        violations(&document),
+        vec![
+            warning("#/paths/~1users/get", "x-oas-parameter"),
+            warning(
+                "#/paths/~1users/get/responses/200/headers/X-Rate~1Limit",
+                "x-oai-header"
+            ),
+            warning("#/paths/~1users/get", "x-oai-operation"),
+            warning("#", "x-oas-root"),
+        ]
     );
 }
 
@@ -747,11 +812,43 @@ fn duplicate_name_and_location_pairs_are_rejected() {
             .with_responses(ok_responses()),
     );
 
-    let found = errors(&document_with(&[("/users", item)]));
-    assert!(matches!(
-        found.as_slice(),
-        [SpecError::DuplicateParameter { name, .. }] if name == "page"
-    ));
+    assert_eq!(
+        located_errors(&document_with(&[("/users", item)])),
+        vec![(
+            "#/paths/~1users/get".to_owned(),
+            SpecError::DuplicateParameter {
+                name: "page".to_owned(),
+                location: "query".to_owned(),
+            },
+        )]
+    );
+}
+
+/// A Path Item's own list is held to the same uniqueness, and reported at the
+/// Path Item rather than at the operations that inherit it.
+#[test]
+fn a_duplicate_within_the_path_items_parameters_is_rejected_at_the_item() {
+    let mut item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("listUsers").with_responses(ok_responses()),
+    );
+    for _ in 0..2 {
+        item.parameters.push(crate::RefOr::Item(Parameter::cookie(
+            "session",
+            Schema::of_type(SchemaType::String),
+        )));
+    }
+
+    assert_eq!(
+        located_errors(&document_with(&[("/users", item)])),
+        vec![(
+            "#/paths/~1users".to_owned(),
+            SpecError::DuplicateParameter {
+                name: "session".to_owned(),
+                location: "cookie".to_owned(),
+            },
+        )]
+    );
 }
 
 /// The list is unique by what each entry *is*, so a duplicate that arrives by
@@ -810,12 +907,16 @@ fn two_cases_of_one_header_name_are_one_parameter() {
             .with_responses(ok_responses()),
     );
 
-    let found = errors(&document_with(&[("/users", item)]));
-    assert!(
-        found
-            .iter()
-            .any(|error| matches!(error, SpecError::DuplicateParameter { .. })),
-        "got {found:?}"
+    // The duplicate is named as its own entry spells it, not as the folded key.
+    assert_eq!(
+        located_errors(&document_with(&[("/users", item)])),
+        vec![(
+            "#/paths/~1users/get".to_owned(),
+            SpecError::DuplicateParameter {
+                name: "accept-language".to_owned(),
+                location: "header".to_owned(),
+            },
+        )]
     );
 }
 
@@ -909,16 +1010,14 @@ fn a_response_header_named_content_type_is_reported() {
         Operation::new("listUsers").with_responses(Responses::new().with(200, response)),
     );
 
-    let found = errors(&document_with(&[("/users", item)]));
     assert_eq!(
-        found.len(),
-        1,
-        "a `Content-Type` response header should be reported exactly once, got {found:?}"
-    );
-    assert!(
-        found[0].to_string().contains("Content-Type"),
-        "the violation should name the header, got: {}",
-        found[0]
+        located_errors(&document_with(&[("/users", item)])),
+        vec![(
+            "#/paths/~1users/get/responses/200/headers".to_owned(),
+            SpecError::IgnoredHeader {
+                name: "Content-Type".to_owned()
+            },
+        )]
     );
 }
 
@@ -948,16 +1047,15 @@ fn an_encoding_header_named_content_type_is_reported() {
             .with_responses(ok_responses()),
     );
 
-    let found = errors(&document_with(&[("/uploads", item)]));
     assert_eq!(
-        found.len(),
-        1,
-        "a `content-type` encoding header should be reported exactly once, got {found:?}"
-    );
-    assert!(
-        found[0].to_string().contains("content-type"),
-        "the violation should name the header, got: {}",
-        found[0]
+        located_errors(&document_with(&[("/uploads", item)])),
+        vec![(
+            "#/paths/~1uploads/post/requestBody/content/multipart~1form-data/encoding/part/headers"
+                .to_owned(),
+            SpecError::IgnoredHeader {
+                name: "content-type".to_owned()
+            },
+        )]
     );
 }
 
@@ -1551,6 +1649,52 @@ fn a_fixed_method_in_additional_operations_is_reported_at_its_key() {
     );
 }
 
+/// An operation under `additionalOperations` is held to the operation rules
+/// like one under a fixed field, at its own key: a missing response, a reused
+/// `operationId` (naming the fixed-field operation as the first), an
+/// undeclared security scheme and a path variable it does not declare.
+#[cfg(feature = "openapi32")]
+#[test]
+fn an_additional_operation_is_held_to_the_operation_rules_at_its_key() {
+    let mut item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("getUser")
+            .with_parameter(Parameter::path("id", Schema::of_type(SchemaType::String)))
+            .with_responses(ok_responses()),
+    );
+    item.additional_operations.insert(
+        "PROPFIND".to_owned(),
+        Box::new(Operation::new("getUser").with_security(SecurityRequirement::scheme("Typo"))),
+    );
+
+    let at = "#/paths/~1users~1{id}/additionalOperations/PROPFIND";
+    assert_eq!(
+        located_errors_3_2(&document_with(&[("/users/{id}", item)])),
+        vec![
+            (
+                at.to_owned(),
+                SpecError::DuplicateOperationId {
+                    operation_id: "getUser".to_owned(),
+                    first: "#/paths/~1users~1{id}/get".to_owned(),
+                },
+            ),
+            (at.to_owned(), SpecError::NoResponses),
+            (
+                at.to_owned(),
+                SpecError::UnknownSecurityScheme {
+                    name: "Typo".to_owned()
+                },
+            ),
+            (
+                at.to_owned(),
+                SpecError::UndeclaredPathVariable {
+                    name: "id".to_owned()
+                },
+            ),
+        ]
+    );
+}
+
 /// Every component section's keys are checked, not five of them.
 ///
 /// `references/3.1.2.md:593`: "**All** the fixed fields declared above are
@@ -1693,6 +1837,47 @@ fn a_server_variable_is_located_at_its_escaped_pointer() {
         .collect();
 
     assert_eq!(located, ["#/servers/0/variables/a~1b~0c"]);
+}
+
+/// Each Server Variable rule fires exactly where its MUST is broken
+/// (`references/3.1.2.md:565-566`), naming the variable as written: an empty
+/// `enum` is refused without also reporting its `default`, a `default`
+/// outside a non-empty `enum` is refused, and a variable with no `enum`, or
+/// with one holding its `default`, is clean.
+#[test]
+fn each_server_variable_rule_fires_exactly_where_it_is_broken() {
+    use crate::model::server::{Server, ServerVariable};
+
+    let mut document = document_with(&[]);
+    document.servers = vec![
+        Server::new("https://example.com/{free}/{listed}")
+            .with_variable("free", ServerVariable::new("anything"))
+            .with_variable("listed", ServerVariable::enumerated("eu", ["us", "eu"])),
+        Server::new("https://example.com/{empty}/{a/b}")
+            .with_variable(
+                "empty",
+                ServerVariable::enumerated("eu", Vec::<String>::new()),
+            )
+            .with_variable("a/b", ServerVariable::enumerated("eu", ["us"])),
+    ];
+
+    assert_eq!(
+        violations(&document),
+        vec![
+            Violation::error(
+                "#/servers/1/variables/empty",
+                SpecError::EmptyServerVariableEnum {
+                    name: "empty".to_owned()
+                },
+            ),
+            Violation::error(
+                "#/servers/1/variables/a~1b",
+                SpecError::ServerVariableDefaultNotInEnum {
+                    name: "a/b".to_owned()
+                },
+            ),
+        ]
+    );
 }
 
 /// Every Server Object is held to the Server Variable MUSTs, not only the
@@ -2126,6 +2311,35 @@ fn a_response_without_a_description_is_a_three_one_violation() {
     );
 }
 
+/// The 3.1 requirement reaches the `default` response as well as a keyed one,
+/// each at its own pointer, in every build: an undescribed response needs no
+/// 3.2 field to construct.
+#[test]
+fn an_undescribed_default_response_is_a_three_one_violation_at_its_key() {
+    let item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("getOrder").with_responses(
+            Responses::new()
+                .with(200, Response::default())
+                .with_default(Response::default()),
+        ),
+    );
+
+    assert_eq!(
+        located_errors(&document_with(&[("/orders", item)])),
+        vec![
+            (
+                "#/paths/~1orders/get/responses/default".to_owned(),
+                SpecError::MissingResponseDescription,
+            ),
+            (
+                "#/paths/~1orders/get/responses/200".to_owned(),
+                SpecError::MissingResponseDescription,
+            ),
+        ]
+    );
+}
+
 #[test]
 fn security_requirements_must_name_a_declared_scheme() {
     let item = PathItem::new().with_operation(
@@ -2175,7 +2389,14 @@ fn a_three_two_requirement_may_name_a_scheme_by_uri() {
             .count()
     };
 
-    for name in ["./foo", "https://example.com/schemes#/Bearer"] {
+    // One name per character that makes a name read as a URI: `/`, `:` and
+    // `#`.
+    for name in [
+        "./foo",
+        "https://example.com/schemes#/Bearer",
+        "urn:example:bearer",
+        "#Bearer",
+    ] {
         let document = requiring(name);
         assert_eq!(
             unknown_schemes(&document, SpecVersion::V3_2),
@@ -2470,25 +2691,104 @@ fn using_an_undeclared_tag_is_a_warning() {
 fn duplicate_tag_names_are_rejected() {
     let mut document = document_with(&[]);
     document.tags.push(crate::Tag::new("users"));
+    document.tags.push(crate::Tag::new("orders"));
     document.tags.push(crate::Tag::new("users"));
 
-    assert!(
-        errors(&document)
-            .iter()
-            .any(|e| matches!(e, SpecError::DuplicateTag { .. }))
+    // At the second declaration, not the first.
+    assert_eq!(
+        located_errors(&document),
+        vec![(
+            "#/tags/2".to_owned(),
+            SpecError::DuplicateTag {
+                name: "users".to_owned()
+            },
+        )]
     );
 }
 
+/// `references/3.2.0.md:2901`: the parent "MUST exist in the API
+/// description, and circular references between parent and child tags MUST
+/// NOT be used". Each case is reported at the tag declaring the parent; a
+/// chain ending at a root is clean however deep it is.
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_tag_parent_must_exist_and_must_not_lead_back_to_the_tag() {
+    use crate::Tag;
+
+    let reported = |tags: Vec<Tag>| {
+        let mut document = document_with(&[]);
+        document.tags = tags;
+        located_errors_3_2(&document)
+    };
+    let cycle = |index: usize, name: &str| {
+        (
+            format!("#/tags/{index}"),
+            SpecError::TagParentCycle {
+                name: name.to_owned(),
+            },
+        )
+    };
+
+    assert_eq!(
+        reported(vec![
+            Tag::new("c").with_parent("b"),
+            Tag::new("b").with_parent("a"),
+            Tag::new("a"),
+        ]),
+        [],
+        "a chain ending at a root"
+    );
+    assert_eq!(
+        reported(vec![Tag::new("a"), Tag::new("b").with_parent("absent")]),
+        [(
+            "#/tags/1".to_owned(),
+            SpecError::UnknownTagParent {
+                name: "b".to_owned(),
+                parent: "absent".to_owned(),
+            },
+        )],
+        "an undeclared parent"
+    );
+    assert_eq!(
+        reported(vec![Tag::new("root"), Tag::new("a").with_parent("a")]),
+        [cycle(1, "a")],
+        "a tag that is its own parent"
+    );
+    assert_eq!(
+        reported(vec![
+            Tag::new("a").with_parent("b"),
+            Tag::new("b").with_parent("c"),
+            Tag::new("c").with_parent("a"),
+        ]),
+        [cycle(0, "a"), cycle(1, "b"), cycle(2, "c")],
+        "every tag on a cycle"
+    );
+}
+
+/// `Document::validate` returns the errors `Validator::validate` finds and
+/// drops its warnings, so the case carries one of each.
 #[test]
 fn validate_reports_errors_and_hides_warnings() {
-    let item = PathItem::new().with_operation(Method::Get, Operation::new("listUsers"));
+    let item =
+        PathItem::new().with_operation(Method::Get, Operation::new("listUsers").with_tag("users"));
     let document = document_with(&[("/users", item)]);
-    let result = document.validate(SpecVersion::V3_1);
-    let reported = result.expect_err("has an error");
-    assert!(
-        reported
-            .iter()
-            .all(|v| v.severity == super::Severity::Error)
+
+    let no_responses = Violation::error("#/paths/~1users/get", SpecError::NoResponses);
+    assert_eq!(
+        Validator::new(SpecVersion::V3_1).validate(&document),
+        vec![
+            no_responses.clone(),
+            Violation::warning(
+                "#/paths/~1users/get",
+                SpecError::UndocumentedTag {
+                    name: "users".to_owned()
+                },
+            ),
+        ]
+    );
+    assert_eq!(
+        document.validate(SpecVersion::V3_1),
+        Err(vec![no_responses])
     );
 }
 
@@ -2702,26 +3002,6 @@ fn violation_locations_escape_their_path_keys() {
     );
 }
 
-/// `Operation.responses` is skipped when it is empty, so a `Responses` that
-/// carries only extensions must not read as empty — or a round trip drops it.
-#[test]
-fn a_responses_holding_only_extensions_is_not_empty() {
-    let mut responses = Responses::new();
-    assert!(responses.is_empty());
-
-    responses
-        .extensions
-        .insert("x-poll-interval", serde_json::json!(30));
-    assert!(!responses.is_empty());
-
-    let operation = Operation::new("listUsers").with_responses(responses);
-    let json = serde_json::to_string(&operation).expect("serializable");
-    assert!(
-        json.contains("x-poll-interval"),
-        "the extension was dropped: {json}"
-    );
-}
-
 /// `validate` promises violations "most structural first", so a caller
 /// diffing two runs of one document must not see them shuffle.
 #[test]
@@ -2736,10 +3016,15 @@ fn violation_order_does_not_depend_on_hashing() {
         PathItem::new().with_operation(Method::Get, operation),
     )]);
 
-    let first = errors(&document);
-    for _ in 0..16 {
-        assert_eq!(errors(&document), first);
-    }
+    // Declaration order, which no hash order reproduces by chance across five
+    // names.
+    let unused = |name: &str| SpecError::UnusedPathParameter {
+        name: name.to_owned(),
+    };
+    assert_eq!(
+        errors(&document),
+        ["alpha", "beta", "gamma", "delta", "epsilon"].map(unused)
+    );
 }
 
 /// A violation is printed, not walked: `Router::validate` hands back a list and
@@ -2748,16 +3033,23 @@ fn violation_order_does_not_depend_on_hashing() {
 /// reporter print that sentence twice.
 #[test]
 fn a_violation_says_everything_in_one_line() {
-    let violation = Violation::error("/paths/~1users/get", SpecError::NoResponses);
-
-    let rendered = violation.to_string();
-
-    assert!(rendered.contains("/paths/~1users/get"), "{rendered}");
-    assert!(
-        rendered.contains(&SpecError::NoResponses.to_string()),
-        "{rendered}"
+    let error = Violation::error("#/paths/~1users/get", SpecError::NoResponses);
+    let warning = Violation::warning(
+        "#/paths/~1users/get",
+        SpecError::UndocumentedTag {
+            name: "users".to_owned(),
+        },
     );
-    assert!(std::error::Error::source(&violation).is_none());
+
+    assert_eq!(
+        error.to_string(),
+        format!("error at #/paths/~1users/get: {}", SpecError::NoResponses)
+    );
+    assert_eq!(
+        warning.to_string(),
+        format!("warning at #/paths/~1users/get: {}", warning.error)
+    );
+    assert!(std::error::Error::source(&error).is_none());
 }
 
 // --- `in: querystring` ----------------------------------------------------
@@ -3124,7 +3416,6 @@ fn variant_name(error: &SpecError) -> &'static str {
     match error {
         SpecError::DuplicateOperationId { .. } => "DuplicateOperationId",
         SpecError::DuplicatePathTemplate { .. } => "DuplicatePathTemplate",
-        SpecError::DuplicateOperation { .. } => "DuplicateOperation",
         #[cfg(feature = "openapi32")]
         SpecError::FixedMethodInAdditionalOperations { .. } => "FixedMethodInAdditionalOperations",
         SpecError::InvalidPathTemplate { .. } => "InvalidPathTemplate",
@@ -3138,7 +3429,6 @@ fn variant_name(error: &SpecError) -> &'static str {
         SpecError::DuplicateQuerystring { .. } => "DuplicateQuerystring",
         #[cfg(feature = "openapi32")]
         SpecError::QueryBesideQuerystring { .. } => "QueryBesideQuerystring",
-        SpecError::ShortCircuitMismatch { .. } => "ShortCircuitMismatch",
         SpecError::IllegalStyle { .. } => "IllegalStyle",
         SpecError::IgnoredHeaderParameter { .. } => "IgnoredHeaderParameter",
         SpecError::IgnoredHeader { .. } => "IgnoredHeader",
@@ -3173,9 +3463,6 @@ fn variant_name(error: &SpecError) -> &'static str {
         SpecError::NotAuthoritative => "NotAuthoritative",
         SpecError::OpaqueOperation { .. } => "OpaqueOperation",
         SpecError::OpaqueRoute { .. } => "OpaqueRoute",
-        SpecError::RouteConflict { .. } => "RouteConflict",
-        SpecError::InvalidRoutePattern { .. } => "InvalidRoutePattern",
-        SpecError::NestedRouterPolicy { .. } => "NestedRouterPolicy",
         SpecError::AuthorityNotStamped => "AuthorityNotStamped",
         SpecError::StaleAuthorityStamp => "StaleAuthorityStamp",
         SpecError::MalformedAnnotation { .. } => "MalformedAnnotation",
@@ -3189,20 +3476,6 @@ fn variant_name(error: &SpecError) -> &'static str {
 /// what keeps [`every_variant_has_a_case`] a statement about this validator
 /// rather than about the enum.
 const RAISED_ELSEWHERE: &[&str] = &[
-    // Prevented by the model rather than reported: a `PathItem` has one slot
-    // per method, so no document holds a second operation for one. `kynos`'s
-    // `Router::describe` raises it when two mounts claim the same slot, and
-    // `crates/kynos/tests/routing.rs` covers it there.
-    "DuplicateOperation",
-    // About the router's match table, which no document has: `kynos`'s
-    // `TrialTable` raises both, and `crates/kynos/tests/routing.rs` and
-    // `crates/kynos/tests/unchecked.rs` cover them there.
-    "RouteConflict",
-    "InvalidRoutePattern",
-    // About a router absorbing another, which no document records: `kynos`'s
-    // `nest` and `merge` raise it, and `crates/kynos/tests/description.rs`
-    // covers it there.
-    "NestedRouterPolicy",
     // `encoding` conflicts with `prefixEncoding` and `itemEncoding`,
     // neither of which a 3.1 build has.
     #[cfg(not(feature = "openapi32"))]
@@ -3221,10 +3494,6 @@ const RAISED_ELSEWHERE: &[&str] = &[
     // `additionalOperations` is a 3.2 field, absent from a 3.1 build.
     #[cfg(not(feature = "openapi32"))]
     "FixedMethodInAdditionalOperations",
-    // `kynos`'s `short_circuit_mismatch` compares an interceptor's declared
-    // statuses against the responses it describes. No document reaches it, and
-    // `crates/kynos/src/response/mod.rs` covers it where it lives.
-    "ShortCircuitMismatch",
     // Tag hierarchy arrived in 3.2, so `check_tag_hierarchy` is compiled out of
     // a baseline build along with the only code paths that raise these two.
     #[cfg(not(feature = "openapi32"))]

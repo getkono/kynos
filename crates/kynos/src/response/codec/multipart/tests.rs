@@ -129,7 +129,7 @@ fn the_delimiter_is_one_no_part_contains() {
 
     let chosen = boundary(&parts);
 
-    assert_ne!(chosen, first);
+    assert_ne!(&*chosen, first);
     assert!(!contains(&parts[0].bytes, chosen.as_bytes()));
 }
 
@@ -144,7 +144,7 @@ fn the_search_passes_every_candidate_a_body_encapsulates() {
 
     let chosen = boundary(&parts);
 
-    assert_eq!(chosen, format!("{BOUNDARY_PREFIX}{:016x}", 4));
+    assert_eq!(&*chosen, format!("{BOUNDARY_PREFIX}{:016x}", 4));
 }
 
 /// A line ending in a name would end the header rather than appear in it,
@@ -158,6 +158,36 @@ fn a_line_ending_cannot_reach_a_header_value() {
     assert_eq!(
         unfolded("text/plain\r\n X-Injected: yes"),
         "text/plain X-Injected: yes".to_owned()
+    );
+}
+
+/// The header block is written into the body as `quoted` and `unfolded`
+/// would have it, so a line ending reaches neither the name, the file name
+/// nor the media type of a rendered part.
+#[test]
+fn a_rendered_header_block_drops_every_line_ending() {
+    let parts = vec![Part {
+        name: "na\"me\r\nX-Injected: yes".to_owned(),
+        file_name: Some("fi\\le\n.txt".to_owned()),
+        content_type: Some("text/plain\r\n X-Injected: yes".to_owned()),
+        bytes: bytes::Bytes::from_static(b"x"),
+    }];
+    let delimiter = boundary(&parts);
+
+    let body = render(parts, &delimiter);
+
+    assert_eq!(
+        body,
+        format!(
+            "--{delimiter}\r\n\
+             Content-Disposition: form-data; name=\"na\\\"meX-Injected: yes\"; \
+             filename=\"file.txt\"\r\n\
+             Content-Type: text/plain X-Injected: yes\r\n\
+             \r\n\
+             x\r\n\
+             --{delimiter}--\r\n"
+        )
+        .as_bytes()
     );
 }
 

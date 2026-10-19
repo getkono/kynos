@@ -1,0 +1,23 @@
+error: `extension` is already set, and a field's `#[problem(...)]` takes each marker once
+  --> tests/ui/macros/api_error_field_marker_refusals.rs:29:19
+   |
+29 |         #[problem(extension)]
+   |                   ^^^^^^^^^
+
+error: `extension` is a bare marker and takes no value; write `#[problem(extension)]`
+  --> tests/ui/macros/api_error_field_marker_refusals.rs:39:19
+   |
+39 |         #[problem(extension = "user_id")]
+   |                   ^^^^^^^^^
+
+error: a header group is sent as response fields, not published in the body. Mark this field `extension` or `headers`, not both
+  --> tests/ui/macros/api_error_field_marker_refusals.rs:49:9
+   |
+49 |         #[problem(extension, headers)]
+   |         ^
+
+error: this failure already sends the header group in `retry`; one group holds every header it sends
+  --> tests/ui/macros/api_error_field_marker_refusals.rs:60:5
+   |
+60 |     #[problem(headers)]
+   |     ^

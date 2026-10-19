@@ -122,27 +122,7 @@ fn is_asset_path(path: &str) -> bool {
     !path.is_empty()
         && !path.starts_with('/')
         && !path.contains(['{', '}'])
-        && !path.split('/').any(is_dot_segment)
+        // A client removes a dot segment before sending.
+        && !path.split('/').any(crate::__private::uri::is_dot_segment)
         && PathTemplate::parse(format!("/{path}")).is_ok()
-}
-
-/// `.` or `..`, literal or `%2e`: a client removes both before sending.
-fn is_dot_segment(segment: &str) -> bool {
-    let mut rest = segment;
-    let mut dots = 0;
-    while !rest.is_empty() {
-        if let Some(after) = rest.strip_prefix('.') {
-            rest = after;
-        } else if rest
-            .as_bytes()
-            .get(..3)
-            .is_some_and(|head| head.eq_ignore_ascii_case(b"%2e"))
-        {
-            rest = &rest[3..];
-        } else {
-            return false;
-        }
-        dots += 1;
-    }
-    matches!(dots, 1 | 2)
 }

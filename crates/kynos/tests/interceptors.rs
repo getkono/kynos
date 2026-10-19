@@ -123,10 +123,11 @@ async fn a_client_supplied_id_is_used_only_when_it_was_trusted() {
         .header("x-request-id", "from-the-client")
         .call()
         .await;
-    assert_ne!(
+    // Replaced, not dropped: the first identifier the default counter mints.
+    assert_eq!(
         replaced.field("x-request-id").as_deref(),
-        Some("from-the-client"),
-        "an untrusted client id was echoed back"
+        Some("0"),
+        "an untrusted client id was echoed back, or dropped rather than replaced"
     );
 }
 
@@ -352,14 +353,85 @@ async fn two_interceptors_contributing_vary_both_appear_in_it() {
         .call()
         .await;
 
-    let vary = reply.field("vary").expect("a Vary field");
+    let vary = reply.fields("vary").join(", ");
     let names: BTreeSet<String> = vary
         .split(',')
         .map(|name| name.trim().to_ascii_lowercase())
         .collect();
 
-    assert!(names.contains("origin"), "{vary}");
-    assert!(names.contains("accept-encoding"), "{vary}");
+    assert_eq!(
+        names,
+        ["accept-encoding", "origin"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<BTreeSet<_>>(),
+        "{vary}"
+    );
+}
+
+/// `SecurityHeaders` adds exactly the names its group declares, in each of
+/// its four shapes: the fixed three, `X-Frame-Options` once framing is
+/// denied, and `Strict-Transport-Security` on a response a trusted hop says
+/// went out over HTTPS.
+#[tokio::test]
+async fn security_headers_add_only_the_names_they_declare() {
+    use std::time::Duration;
+
+    use kynos::{
+        http::forwarded::{ProxyHeader, TrustedProxies},
+        middleware::security_headers::{SecurityFields, SecurityHeaders, StrictTransportSecurity},
+    };
+
+    let hsts = || StrictTransportSecurity::max_age(Duration::from_secs(600));
+    let behind_proxy =
+        || support::router().trusted_proxies(TrustedProxies::hops(ProxyHeader::Forwarded, 1));
+    let built = "a describable router";
+    let cases = [
+        (
+            behind_proxy()
+                .intercept(SecurityHeaders::new())
+                .build(App::new())
+                .expect(built),
+            declared::<SecurityFields<false, false>>(),
+        ),
+        (
+            behind_proxy()
+                .intercept(SecurityHeaders::new().deny_framing())
+                .build(App::new())
+                .expect(built),
+            declared::<SecurityFields<false, true>>(),
+        ),
+        (
+            behind_proxy()
+                .intercept(SecurityHeaders::new().strict_transport_security(hsts()))
+                .build(App::new())
+                .expect(built),
+            declared::<SecurityFields<true, false>>(),
+        ),
+        (
+            behind_proxy()
+                .intercept(
+                    SecurityHeaders::new()
+                        .strict_transport_security(hsts())
+                        .deny_framing(),
+                )
+                .build(App::new())
+                .expect(built),
+            declared::<SecurityFields<true, true>>(),
+        ),
+    ];
+    let baseline = baseline().await;
+
+    for (service, names) in cases {
+        let reply = get(&service, "/users/1")
+            .header("forwarded", "for=203.0.113.7;proto=https")
+            .call()
+            .await;
+        assert_eq!(reply.status, StatusCode::OK);
+
+        let added: BTreeSet<String> = fields(&reply).difference(&baseline).cloned().collect();
+        assert_eq!(added, names);
+    }
 }
 
 // --- The two closed sets --------------------------------------------------
@@ -396,6 +468,7 @@ fn every_interceptor_kynos_ships_is_accounted_for() {
         "Decompression",
         "RateLimit",
         "RequestId",
+        "SecurityHeaders",
         "SetCookies",
         "Timeout",
     ];
@@ -454,8 +527,18 @@ fn implementors_of(marker: &str) -> BTreeSet<String> {
         "no sources found under `src/middleware/`"
     );
 
+    implementors_in(marker, &sources)
+}
+
+/// The scan [`implementors_of`] runs, over source it is handed.
+///
+/// Whitespace is collapsed first: rustfmt wraps a long impl head before its
+/// `for`, and a marker matched against the raw text misses that implementor —
+/// which is how `SecurityHeaders` went uncounted.
+fn implementors_in(marker: &str, sources: &[String]) -> BTreeSet<String> {
     sources
         .iter()
+        .map(|source| source.split_whitespace().collect::<Vec<_>>().join(" "))
         .flat_map(|source| {
             source
                 .match_indices(marker)
@@ -468,6 +551,26 @@ fn implementors_of(marker: &str) -> BTreeSet<String> {
                 .collect::<Vec<_>>()
         })
         .collect()
+}
+
+/// The scan finds an implementor whose head rustfmt wrapped before `for`, as
+/// it does one written on one line, and still skips the erased trait.
+#[test]
+fn the_interceptor_scan_reads_a_wrapped_impl_head() {
+    let sources = [
+        "impl<C: Sync + 'static> Interceptor<C> for OneLine {".to_owned(),
+        "impl<C, const A: bool, const B: bool> Interceptor<C>\n    for Wrapped<A, B>\nwhere"
+            .to_owned(),
+        "impl<C> ErasedInterceptor<C> for Erased {".to_owned(),
+    ];
+
+    assert_eq!(
+        implementors_in("> Interceptor<C> for ", &sources),
+        ["OneLine", "Wrapped"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<BTreeSet<_>>()
+    );
 }
 
 /// Every `.rs` file under `directory`, read, except a sibling `tests.rs`.
@@ -967,10 +1070,14 @@ fn a_refusal_is_send_and_sync_whatever_marker_names_it() {
         limits::{body_size::BodySizeExceeded, concurrency::AtCapacity, timeout::TimedOut},
     };
 
+    use kynos::middleware::rate_limit::refusal::{RateLimited, RateLimitedFields};
+
     assert_send_sync::<BodySizeExceeded<Unsendable>>();
     assert_send_sync::<TimedOut<Unsendable>>();
     assert_send_sync::<AtCapacity<Unsendable>>();
     assert_send_sync::<CrossSite<Unsendable>>();
+    assert_send_sync::<RateLimited<Unsendable>>();
+    assert_send_sync::<RateLimitedFields<Unsendable>>();
 
     #[cfg(feature = "compression")]
     {
@@ -979,6 +1086,104 @@ fn a_refusal_is_send_and_sync_whatever_marker_names_it() {
         assert_send_sync::<NotAcceptable<Unsendable>>();
         assert_send_sync::<Undecodable<Unsendable, Unsendable, Unsendable>>();
     }
+}
+
+/// A policy stand-in: only `RateLimit`'s own bounds are under test, so this
+/// need not be a `RateLimitPolicy`.
+#[derive(Clone, Debug)]
+struct Policy;
+
+/// The refusals `naming_a_problem_type_costs_the_marker_no_derives` and
+/// `a_refusal_is_send_and_sync_whatever_marker_names_it` witness. Sorted.
+const MARKED_REFUSALS: &[&str] = &[
+    "AtCapacity",
+    "BodySizeExceeded",
+    "CrossSite",
+    "NotAcceptable",
+    "RateLimited",
+    "RateLimitedFields",
+    "TimedOut",
+    "Undecodable",
+];
+
+/// The interceptors `naming_a_problem_type_costs_the_marker_no_derives`
+/// witnesses. Sorted.
+const MARKED_INTERCEPTORS: &[&str] = &[
+    "BodySize",
+    "Compression",
+    "Concurrency",
+    "Csrf",
+    "Decompression",
+    "RateLimit",
+    "Timeout",
+];
+
+/// Every type that names a problem type, read off disk and named against the
+/// sets the two witnesses above cover — so a refusal or an interceptor gaining
+/// a marker fails here until something holds what the marker costs it.
+///
+/// A refusal is a `ShortCircuit` whose implementation is bounded on
+/// `ProblemType`; an interceptor is what a `problem_type` builder returns.
+#[test]
+fn every_type_naming_a_problem_type_is_witnessed() {
+    let mut sources = Vec::new();
+    collect_sources(
+        std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src/middleware")),
+        &mut sources,
+    );
+    // Comments dropped, so a doc example's `impl` is not read as one, and
+    // whitespace collapsed, so a wrapped impl head reads as one line.
+    let sources: Vec<String> = sources
+        .iter()
+        .map(|source| {
+            source
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("//"))
+                .flat_map(str::split_whitespace)
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect();
+    let named = |names: &[&str]| -> BTreeSet<String> {
+        names.iter().map(|name| (*name).to_owned()).collect()
+    };
+    let identifier = |text: &str| -> String {
+        text.chars()
+            .take_while(|character| character.is_alphanumeric() || *character == '_')
+            .collect()
+    };
+
+    // An impl head runs from `impl<` to its body's `{`, where clause included.
+    let refusals: BTreeSet<String> = sources
+        .iter()
+        .flat_map(|source| {
+            source
+                .match_indices("impl<")
+                .filter_map(|(at, _)| {
+                    let head = &source[at..at + source[at..].find('{')?];
+                    let trait_at = head.find("ShortCircuit for ")?;
+                    head.contains("ProblemType")
+                        .then(|| identifier(&head[trait_at + "ShortCircuit for ".len()..]))
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let interceptors: BTreeSet<String> = sources
+        .iter()
+        .flat_map(|source| {
+            source
+                .match_indices("problem_type<")
+                .filter_map(|(at, _)| {
+                    let rest = &source[at..];
+                    let arrow = rest.find("(self) -> ")?;
+                    Some(identifier(&rest[arrow + "(self) -> ".len()..]))
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    assert_eq!(refusals, named(MARKED_REFUSALS));
+    assert_eq!(interceptors, named(MARKED_INTERCEPTORS));
 }
 
 /// A refusal and its interceptor keep their implementations whatever names the
@@ -997,14 +1202,27 @@ fn naming_a_problem_type_costs_the_marker_no_derives() {
         },
     };
 
+    use kynos::middleware::{
+        limits::timeout::Timeout,
+        rate_limit::{
+            Legacy, RateLimit, Structured,
+            refusal::{RateLimited, RateLimitedFields},
+        },
+    };
+
     assert_refusal_traits::<BodySizeExceeded<Bare>>();
     assert_refusal_traits::<TimedOut<Bare>>();
     assert_refusal_traits::<AtCapacity<Bare>>();
     assert_refusal_traits::<CrossSite<Bare>>();
+    assert_refusal_traits::<RateLimited<Bare>>();
+    assert_refusal_traits::<RateLimitedFields<Bare>>();
 
     assert_clone_and_debug::<BodySize<Bare>>();
     assert_clone_and_debug::<Concurrency<Bare>>();
     assert_clone_and_debug::<Csrf<Bare>>();
+    assert_clone_and_debug::<Timeout<TimedOut<Bare>>>();
+    assert_clone_and_debug::<RateLimit<Policy, Legacy, Bare>>();
+    assert_clone_and_debug::<RateLimit<Policy, Structured, Bare>>();
 
     #[cfg(feature = "compression")]
     {
