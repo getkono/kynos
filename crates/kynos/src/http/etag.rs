@@ -255,7 +255,17 @@ pub(crate) fn if_none_match<S: AsRef<str>>(
     fields: &HeaderMap,
     current: impl FnOnce() -> Option<S>,
 ) -> Option<bool> {
-    let mut lines = fields.get_all(header::IF_NONE_MATCH).iter().peekable();
+    if_none_match_lines(fields.get_all(header::IF_NONE_MATCH), current)
+}
+
+/// [`if_none_match`] over `If-None-Match` field `lines` already taken from
+/// their request, for a caller that no longer holds its fields.
+#[must_use]
+pub(crate) fn if_none_match_lines<'a, S: AsRef<str>>(
+    lines: impl IntoIterator<Item = &'a HeaderValue>,
+    current: impl FnOnce() -> Option<S>,
+) -> Option<bool> {
+    let mut lines = lines.into_iter().peekable();
     lines.peek()?;
 
     let current = current();
