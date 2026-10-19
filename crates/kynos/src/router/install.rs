@@ -91,6 +91,19 @@ pub(super) fn catches<P: PanicPolicy>() -> bool {
     std::any::TypeId::of::<P>() == std::any::TypeId::of::<Catch>()
 }
 
+/// Refuses, in the constant evaluation calling it, selecting recovery in a
+/// build that cannot unwind: under `panic = "abort"` there is nothing to catch.
+#[expect(
+    clippy::assertions_on_constants,
+    reason = "constant per build by design; a caller's `const` block evaluates it only once recovery is selected"
+)]
+pub(super) const fn require_unwind() {
+    assert!(
+        cfg!(panic = "unwind"),
+        "Kynos panic recovery requires `panic = \"unwind\"`; remove `catch_panics` or enable unwinding"
+    );
+}
+
 /// The highest version this build can express, which is what a description is
 /// assembled at before it is emitted downwards.
 pub(super) fn highest_version() -> SpecVersion {

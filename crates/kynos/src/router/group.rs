@@ -15,6 +15,7 @@ use crate::{
     router::{
         ShortCircuitCheck,
         endpoint::{DynEndpoint, set::IntoEndpoints},
+        install,
         operation::{DeclaredTag, Tag},
     },
 };
@@ -160,12 +161,7 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
     /// ```
     #[must_use]
     pub fn catch_panics(self) -> Group<C, Catch, I, S> {
-        const {
-            assert!(
-                cfg!(panic = "unwind"),
-                "Kynos panic recovery requires `panic = \"unwind\"`; remove `catch_panics` or enable unwinding"
-            );
-        }
+        const { install::require_unwind() }
         self.retype()
     }
 

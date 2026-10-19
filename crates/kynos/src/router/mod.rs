@@ -384,12 +384,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// ```
     #[must_use]
     pub fn catch_panics(self) -> Router<C, Catch, I, S> {
-        const {
-            assert!(
-                cfg!(panic = "unwind"),
-                "Kynos panic recovery requires `panic = \"unwind\"`; remove `catch_panics` or enable unwinding"
-            );
-        }
+        const { install::require_unwind() }
         self.retype()
     }
 
