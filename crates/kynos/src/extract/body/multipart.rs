@@ -179,10 +179,16 @@ impl FromPart for Bytes {
 
 /// A part that is not UTF-8 is a 422. Octets nothing else holds become the
 /// string in place; shared ones are copied.
+///
+/// Taking over the last reference to a buffer takes over all of it, so the
+/// string is shrunk to its length: a short field never keeps the rest of the
+/// request body alive.
 impl FromPart for String {
     fn from_part(part: Part) -> Result<Self, BodyRejection> {
-        Self::from_utf8(Vec::from(part.bytes))
-            .map_err(|_| malformed_part(&part.name, "the part is not valid UTF-8"))
+        let mut text = Self::from_utf8(Vec::from(part.bytes))
+            .map_err(|_| malformed_part(&part.name, "the part is not valid UTF-8"))?;
+        text.shrink_to_fit();
+        Ok(text)
     }
 }
 
