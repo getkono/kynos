@@ -563,15 +563,7 @@ fn each_case_raises_the_diagnostic_it_names() {
 fn every_shared_diagnostic_has_a_case() {
     const SOURCE: &str = include_str!("../common.rs");
 
-    // These tests live in the file they count, and they name both
-    // diagnostic constructors in the very strings they count with. So
-    // counting stops where the implementation does.
-    let implementation = SOURCE
-        .split_once("\n#[cfg(test)]")
-        .map_or(SOURCE, |(before, _)| before);
-
-    let sites = implementation.matches("syn::Error::new(").count()
-        + implementation.matches("meta.error(").count();
+    let sites = SOURCE.matches("syn::Error::new(").count() + SOURCE.matches("meta.error(").count();
     assert_eq!(
         cases().len(),
         sites,

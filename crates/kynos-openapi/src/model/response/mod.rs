@@ -108,7 +108,11 @@ impl Responses {
 
     /// Merges another set into this one, keeping existing entries on conflict.
     ///
-    /// This is how an interceptor's declared responses join an operation's own.
+    /// `other`'s `default` and each status it declares join only where this
+    /// set has none; `other`'s set-level `x-` extensions are not carried
+    /// over. This is how a `Result<T, E>` handler's error responses join the
+    /// success responses `T` declares; an interceptor's join through
+    /// [`union_from`](Responses::union_from) instead.
     pub fn merge_from(&mut self, other: &Self) {
         if self.default_response.is_none() {
             self.default_response.clone_from(&other.default_response);
