@@ -8,7 +8,7 @@ There is no way to guard an operation without describing the guard, and no way
 to describe one without enforcing it. `Auth<S>` is the only door, and taking one
 as a handler's guard sets `security`, registers each scheme under
 `components.securitySchemes`, adds 401 and 403 to `responses`, and declares the
-`WWW-Authenticate` the 401 carries. Four things, one argument, no way to do a
+`WWW-Authenticate` each carries. Four things, one argument, no way to do a
 subset.
 
 ## Policy
@@ -80,6 +80,33 @@ time. A realm is US-ASCII only, a deliberate policy: a control fails the build
 instead of a 401 silently losing its challenge, and a byte beyond ASCII, which
 RFC 9110 section 5.5 leaves opaque to a recipient, fails it too, since no client
 can be relied on to show it as written.
+
+### A bearer token's scope refusal challenges too
+
+RFC 6750 section 3 requires `WWW-Authenticate` whenever a bearer token "does not
+… enable access", and section 3.1 names `insufficient_scope` for the 403 a
+missing scope earns. So a scheme has a second challenge,
+`SecurityScheme::insufficient_scope_challenge`, defaulting to none:
+
+| Scheme | On a scope-refusing 403 |
+| --- | --- |
+| `Bearer`, and the derived `bearer`, `oauth2` and `openid_connect` kinds | `Bearer error="insufficient_scope"` |
+| every other | none: no registered scheme defines an error for it |
+
+- **Only `authorize` earns it.** A 403 from `authenticate` declines the
+  credential, not a scope, and sends none: the guard sets a 403's challenge
+  itself, replacing whatever the authenticator put there, so the wire and the
+  description agree.
+- **It is declared where a scope can be refused.** `Scoped<S, R>` always
+  authorizes, so it always declares `S`'s. `Auth` and `MaybeAuth` authorize only
+  a scheme's default scopes, so they declare the first one among the schemes
+  that have defaults. On the 403 it is not `required`, because the 403
+  `authenticate` answers sends none.
+- **It names no `scope` or `realm`.** Section 3.1 makes `scope` optional, and
+  the scopes refused are a run-time fact while the challenge is a
+  `&'static str` the description states once. `challenge = "..."` on a derive
+  replaces the 401's alone; a hand-implemented scheme may name a realm in
+  both.
 
 ### The three states of a presented credential
 
@@ -307,7 +334,7 @@ What Kynos *does* ship is the part that is the same for everyone:
 | The carrier for every scheme kind | It follows from the description, and hand-rolling it is where the bugs are |
 | RFC 7617 basic decoding | base64, the *first* colon, and UTF-8 — a fixed wire form |
 | [`constant_time_eq`](../crates/kynos/src/security/mod.rs) | `==` on a shared secret says how much of a guess was right |
-| The `WWW-Authenticate` challenge | It is part of what the 401 *is*, and it has to match the description |
+| The `WWW-Authenticate` challenge | It is part of what the 401, and a bearer token's scope-refusing 403, *is*, and it has to match the description |
 | 401 and 403 on the operation | A guard that did not declare them would make the document wrong |
 | The `type` seam on a 403 | Which authorization rule refused is the application's to say, and nothing but the authorizer can say it |
 | `Scopes::FORBIDDEN_TYPE` | The description half of that seam: the scope set is the one type an operation names that a per-check refusal can be pinned to |
