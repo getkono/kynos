@@ -548,6 +548,25 @@ async fn a_predicate_permits_an_origin_on_the_preflight_and_the_response_alike()
         "the preflight refused an origin the predicate accepts"
     );
 
+    let (status, fields) = send(
+        &service,
+        Method::OPTIONS,
+        "/widgets",
+        &[
+            ("origin", "https://app.example.net"),
+            ("access-control-request-method", "GET"),
+        ],
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_ORIGIN),
+        None,
+        "the preflight approved an origin the predicate rejects"
+    );
+    assert_eq!(field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS), None);
+
     let (_, fields) = send(
         &service,
         Method::GET,
