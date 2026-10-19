@@ -158,18 +158,23 @@ pub(in crate::validate) fn check_tag_hierarchy(
             continue;
         }
 
-        // Walk upward, bounded by the number of tags: a chain longer than
-        // that has necessarily revisited a node.
+        // Walk upward until the chain returns to this tag, which puts it on
+        // a cycle. The walk is bounded by the number of tags: a chain longer
+        // than that has entered a cycle this tag is not on, which is reported
+        // at that cycle's own members rather than here.
         let mut current = parent;
         let mut steps = 0;
         while let Some(next) = parents.get(current) {
-            if *next == tag.name.as_str() || steps > document.tags.len() {
+            if *next == tag.name.as_str() {
                 violations.push(Violation::error(
                     &location,
                     SpecError::TagParentCycle {
                         name: tag.name.clone(),
                     },
                 ));
+                break;
+            }
+            if steps > document.tags.len() {
                 break;
             }
             current = next;
