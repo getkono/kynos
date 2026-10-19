@@ -208,6 +208,50 @@ mod a_file_part_describes_itself {
     }
 }
 
+/// A `String` field taking over its part's octets must not take over the rest
+/// of the buffer they were sliced from: a short field would keep the whole
+/// request body alive for as long as the value lives.
+#[cfg(feature = "multipart")]
+mod a_text_part_holds_only_its_own_octets {
+    use bytes::Bytes;
+
+    use crate::extract::body::multipart::{FromPart, Part};
+
+    fn part(bytes: Bytes) -> Part {
+        Part {
+            name: "a".to_owned(),
+            file_name: None,
+            content_type: None,
+            bytes,
+        }
+    }
+
+    /// The last reference to a larger buffer, as a decoded part is once the
+    /// body around it is dropped.
+    #[test]
+    fn a_sole_slice_of_a_larger_buffer_is_released() {
+        let mut buffer = Vec::with_capacity(4096);
+        buffer.extend_from_slice(b"--x\r\nhi");
+        let body = Bytes::from(buffer);
+        let octets = body.slice(5..);
+        drop(body);
+
+        let text = String::from_part(part(octets)).expect("UTF-8");
+        assert_eq!(text, "hi");
+        assert_eq!(text.capacity(), text.len());
+    }
+
+    /// Octets something else still holds are copied at their length.
+    #[test]
+    fn a_shared_slice_is_copied_at_its_length() {
+        let body = Bytes::from(b"--x\r\nhi".to_vec());
+        let text = String::from_part(part(body.slice(5..))).expect("UTF-8");
+        assert_eq!(text, "hi");
+        assert_eq!(text.capacity(), text.len());
+        assert_eq!(&body[..], b"--x\r\nhi");
+    }
+}
+
 /// The `boundary` is read by the same rule that accepted the media type:
 /// RFC 9110 section 5.6.6 allows optional whitespace on both sides of each
 /// `;`, so a `Content-Type` spelled with it decodes the parts rather than being
@@ -289,6 +333,66 @@ mod a_multipart_boundary_is_read_past_optional_whitespace {
         }
     }
 
+    /// A stream yielding each of its chunks in turn, then ending, and pending
+    /// once before each, as a transport waiting on the next frame does; a
+    /// stream always ready would be read whole before any part is parsed.
+    struct Chunks {
+        chunks: std::collections::VecDeque<bytes::Bytes>,
+        ready: bool,
+    }
+
+    impl futures_core::Stream for Chunks {
+        type Item = Result<bytes::Bytes, std::convert::Infallible>;
+
+        fn poll_next(
+            mut self: std::pin::Pin<&mut Self>,
+            context: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Self::Item>> {
+            if !std::mem::replace(&mut self.ready, false) {
+                self.ready = true;
+                context.waker().wake_by_ref();
+                return std::task::Poll::Pending;
+            }
+            std::task::Poll::Ready(self.chunks.pop_front().map(Ok))
+        }
+    }
+
+    /// A part's octets arrive whole however the transport splits them: here
+    /// one octet per frame, so every non-empty part spans several chunks, and
+    /// an empty part between two others stays empty.
+    #[tokio::test]
+    async fn a_part_split_across_frames_is_read_whole() {
+        let body: &[u8] =
+            b"--x\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nhello world\r\n\
+            --x\r\nContent-Disposition: form-data; name=\"b\"\r\n\r\n\r\n\
+            --x\r\nContent-Disposition: form-data; name=\"c\"\r\n\r\nz\r\n--x--\r\n";
+        let chunks = body
+            .iter()
+            .map(|octet| bytes::Bytes::copy_from_slice(std::slice::from_ref(octet)))
+            .collect();
+        let mut request = Request::new(Body::from_stream(Chunks {
+            chunks,
+            ready: false,
+        }));
+        request.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("multipart/form-data; boundary=x"),
+        );
+
+        let MultipartForm(parts) = MultipartForm::<Parts>::from_request(request, &())
+            .await
+            .expect("a well-formed body");
+
+        assert_eq!(
+            parts,
+            Parts(vec![
+                ("a".to_owned(), bytes::Bytes::from_static(b"hello world")),
+                ("b".to_owned(), bytes::Bytes::new()),
+                ("c".to_owned(), bytes::Bytes::from_static(b"z")),
+            ])
+        );
+    }
+
     /// An empty `boundary` delimits nothing, so it is the 400 a missing one is,
     /// not a media type the codec refuses.
     #[tokio::test]
@@ -321,7 +425,10 @@ mod a_part_disposition_is_read_quote_aware {
         error::rejection::BodyRejection,
         extract::{
             FromRequest,
-            body::multipart::{Disposition, FromMultipart, MultipartForm, Part, disposition},
+            body::multipart::{
+                FromMultipart, MultipartForm, Part,
+                disposition::{self, Disposition},
+            },
         },
         http::{HeaderValue, Request, StatusCode, body::Body, header},
         schema::{Schema, registry::Registry},
@@ -451,7 +558,7 @@ mod a_part_disposition_is_read_quote_aware {
     /// The field a well-formed disposition names, as `(name, file_name)`.
     fn named(value: &str) -> (String, Option<String>) {
         let Disposition { name, file_name } =
-            disposition(value).unwrap_or_else(|detail| panic!("`{value}`: {detail}"));
+            disposition::parse(value).unwrap_or_else(|detail| panic!("`{value}`: {detail}"));
         (name, file_name)
     }
 
@@ -523,7 +630,7 @@ mod a_part_disposition_is_read_quote_aware {
             "form-data; name=\"a\" x",
             "form-data name=a",
         ] {
-            assert!(disposition(value).is_err(), "`{value}` was admitted");
+            assert!(disposition::parse(value).is_err(), "`{value}` was admitted");
         }
     }
 }

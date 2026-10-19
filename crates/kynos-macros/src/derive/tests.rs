@@ -6781,7 +6781,15 @@ mod multipart {
 
     #[test]
     fn every_multipart_diagnostic_has_a_case() {
-        every_diagnostic_has_a_case("multipart.rs", include_str!("multipart.rs"), ledger().len());
+        every_diagnostic_has_a_case(
+            "multipart.rs` and `multipart/refusals.rs",
+            &[
+                include_str!("multipart.rs"),
+                include_str!("multipart/refusals.rs"),
+            ]
+            .concat(),
+            ledger().len(),
+        );
     }
 }
 

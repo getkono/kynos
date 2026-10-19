@@ -229,6 +229,18 @@ brotli and zstd backends, so the row prices the encoders rather than the
 interceptor over them. A figure that attributed that to the framework would be
 a wrong number rather than an imprecise one.
 
+**Most of multipart's decoding bill is `multer`'s.** On `codecs.multipart_echo`,
+90 text parts fed to it as one chunk, it allocates 12 blocks per part: a
+header map and a copy of each header value,
+its own copy of the field name (three times: parsed, looked up against the size
+limits, kept as the current field), the parsed `Mime`, and the delimiter
+`format!`ed afresh at each field and at each read of its data. That is 1,086 of the
+row's 1,565 blocks. Kynos keeps the chunk `multer` yields for a part rather than
+copying it through `Field::bytes`, which saved up to two more per part. What remains
+Kynos's is [`Part`](../crates/kynos/src/extract/body/multipart.rs)'s owned
+currency — a name and a media type each way, and a `String` field's copy out
+of the shared body — and one buffer for the whole response.
+
 ## The feature grading
 
 Every flag `crates/kynos` declares appears in exactly one column below. The

@@ -8,7 +8,7 @@ alloc_counter_agreement.miss	2439	6	3384
 alloc_counter_agreement.stacked_4	3326	9	7964
 alloc_counter_agreement.stacked_8	4586	13	12188
 alloc_counter_agreement.static_match	2066	5	3740
-codecs.multipart_echo	1157131	2016	177938
+codecs.multipart_echo	1118642	1565	112765
 codecs.protobuf_echo	20487	44	9089
 codecs.reject_413	6041	12	5575
 codecs.reject_415	5856	15	5678
@@ -37,8 +37,8 @@ connection_h1.echo_chunked	56583	66	45122
 connection_h1.echo_cl	50871	65	45026
 connection_h1.plaintext	14309	28	39473
 connection_h1.second	11787	11	4489
-connection_h2.plaintext	39174	41	40209
-connection_h2.second	32178	14	5557
+connection_h2.plaintext	39171	41	40209
+connection_h2.second	32173	14	5557
 extract.auth_401	4945	13	4951
 extract.auth_apikey	3013	10	4778
 extract.auth_basic	4196	12	4816
@@ -50,7 +50,7 @@ extract.one_of	36534	44	9770
 extract.query_unused_8	9828	15	6342
 extract.querystring	5880	15	5057
 extract.text_body	4387	10	5473
-form_echo.form_echo	215967	72	19008
+form_echo.form_echo	137881	68	17830
 interceptors.body_size	4452	14	5954
 interceptors.body_timeout	5176	14	5754
 interceptors.cache_hit	4880	15	5412
@@ -66,7 +66,7 @@ interceptors.security_headers	5079	13	6098
 interceptors.set_cookies	5671	18	6362
 interceptors.timeout	4740	12	5698
 interceptors.unchecked_layer	4477	17	6906
-rate_limit.rate_limit	10439	27	6716
+rate_limit.rate_limit	10396	27	6714
 realistic.stack_typical	18668	31	23288
 request_id_random.request_id_random	6680	20	6786
 respond.binary_full	5148	13	5312
@@ -100,7 +100,7 @@ scope.group_layers_4	5000	15	8762
 scope.observer_noop	4086	13	4618
 scope.trace_nosub	4134	13	4618
 scope.trace_sub	4784	13	4618
-statics.assets_hit	4766	13	4204
+statics.assets_hit	4746	13	4204
 statics.docs_json	2528	8	3788
 stream.binary_stream_16	3948	9	4428
 stream.compressed_stream_gzip	370727	167	347451
