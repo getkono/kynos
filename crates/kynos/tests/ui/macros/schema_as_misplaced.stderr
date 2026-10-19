@@ -1,0 +1,23 @@
+error: `as` may appear once per field: a field is described as one type, so a second `as` could only overwrite the first. Keep the one the wire carries
+  --> tests/ui/macros/schema_as_misplaced.rs:23:30
+   |
+23 |     #[schema(min_length = 1, as = String)]
+   |                              ^^
+
+error: `as` describes a field as one value of another type, and a flattened field is no one value: serde writes its members into the object carrying it. Describe the flattened type itself, or drop `#[serde(flatten)]`
+  --> tests/ui/macros/schema_as_misplaced.rs:35:14
+   |
+35 |     #[schema(as = Line)]
+   |              ^^
+
+error: `as` describes a field as one value of another type, and an internally tagged newtype variant's payload is no one value: serde writes its members beside the tag, as it does a flattened field's. Describe the payload type itself
+  --> tests/ui/macros/schema_as_misplaced.rs:42:22
+   |
+42 |     Created(#[schema(as = Line)] Line),
+   |                      ^^
+
+error: `as` describes a field as another type, and a `PhantomData` is the `null` serde writes and reads for it, whatever it is described as. Drop the key
+  --> tests/ui/macros/schema_as_misplaced.rs:47:14
+   |
+47 |     #[schema(as = String)]
+   |              ^^

@@ -1,0 +1,5 @@
+error: `Schema` cannot describe a union: no JSON value corresponds to one
+ --> tests/ui/macros/schema_union.rs:8:1
+  |
+8 | union Payload {
+  | ^^^^^

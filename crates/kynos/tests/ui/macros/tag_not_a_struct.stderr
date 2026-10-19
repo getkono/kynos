@@ -1,0 +1,5 @@
+error: `Tag` marks a type that names a group of operations, so it must be a unit struct
+ --> tests/ui/macros/tag_not_a_struct.rs:7:1
+  |
+7 | enum Users {
+  | ^^^^

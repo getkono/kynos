@@ -1,0 +1,5 @@
+error: a `routes!` member takes no attributes; gate the handler or the whole `routes!` call
+  --> tests/ui/macros/routes_member_with_an_attribute.rs:15:9
+   |
+15 |         #[cfg(any())]
+   |         ^

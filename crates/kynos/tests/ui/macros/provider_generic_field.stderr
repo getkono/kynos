@@ -1,0 +1,5 @@
+error: `value` is `T`, one of this context's own type parameters, so it would supply every type at once and collide with the other fields. Wrap it in a newtype, or opt it out with `#[provide(skip)]`
+  --> tests/ui/macros/provider_generic_field.rs:13:5
+   |
+13 |     value: T,
+   |     ^^^^^
