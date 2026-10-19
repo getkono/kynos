@@ -289,6 +289,66 @@ mod a_multipart_boundary_is_read_past_optional_whitespace {
         }
     }
 
+    /// A stream yielding each of its chunks in turn, then ending, and pending
+    /// once before each, as a transport waiting on the next frame does; a
+    /// stream always ready would be read whole before any part is parsed.
+    struct Chunks {
+        chunks: std::collections::VecDeque<bytes::Bytes>,
+        ready: bool,
+    }
+
+    impl futures_core::Stream for Chunks {
+        type Item = Result<bytes::Bytes, std::convert::Infallible>;
+
+        fn poll_next(
+            mut self: std::pin::Pin<&mut Self>,
+            context: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Self::Item>> {
+            if !std::mem::replace(&mut self.ready, false) {
+                self.ready = true;
+                context.waker().wake_by_ref();
+                return std::task::Poll::Pending;
+            }
+            std::task::Poll::Ready(self.chunks.pop_front().map(Ok))
+        }
+    }
+
+    /// A part's octets arrive whole however the transport splits them: here
+    /// one octet per frame, so every non-empty part spans several chunks, and
+    /// an empty part between two others stays empty.
+    #[tokio::test]
+    async fn a_part_split_across_frames_is_read_whole() {
+        let body: &[u8] =
+            b"--x\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nhello world\r\n\
+            --x\r\nContent-Disposition: form-data; name=\"b\"\r\n\r\n\r\n\
+            --x\r\nContent-Disposition: form-data; name=\"c\"\r\n\r\nz\r\n--x--\r\n";
+        let chunks = body
+            .iter()
+            .map(|octet| bytes::Bytes::copy_from_slice(std::slice::from_ref(octet)))
+            .collect();
+        let mut request = Request::new(Body::from_stream(Chunks {
+            chunks,
+            ready: false,
+        }));
+        request.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("multipart/form-data; boundary=x"),
+        );
+
+        let MultipartForm(parts) = MultipartForm::<Parts>::from_request(request, &())
+            .await
+            .expect("a well-formed body");
+
+        assert_eq!(
+            parts,
+            Parts(vec![
+                ("a".to_owned(), bytes::Bytes::from_static(b"hello world")),
+                ("b".to_owned(), bytes::Bytes::new()),
+                ("c".to_owned(), bytes::Bytes::from_static(b"z")),
+            ])
+        );
+    }
+
     /// An empty `boundary` delimits nothing, so it is the 400 a missing one is,
     /// not a media type the codec refuses.
     #[tokio::test]

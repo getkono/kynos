@@ -173,10 +173,11 @@ impl FromPart for Bytes {
     }
 }
 
-/// A part that is not UTF-8 is a 422.
+/// A part that is not UTF-8 is a 422. Octets nothing else holds become the
+/// string in place; shared ones are copied.
 impl FromPart for String {
     fn from_part(part: Part) -> Result<Self, BodyRejection> {
-        Self::from_utf8(part.bytes.to_vec())
+        Self::from_utf8(Vec::from(part.bytes))
             .map_err(|_| malformed_part(&part.name, "the part is not valid UTF-8"))
     }
 }
@@ -323,6 +324,29 @@ fn malformed_body(error: &multer::Error) -> BodyRejection {
     }
 }
 
+/// A part's octets.
+///
+/// `multer` yields a part it holds whole as one chunk sharing the body's
+/// buffer, which is kept rather than copied; its own `bytes` copies every part
+/// into a fresh buffer and boxes it again to share it. A part spread over
+/// several chunks is joined.
+async fn octets(mut field: multer::Field<'_>) -> Result<Bytes, multer::Error> {
+    let Some(first) = field.chunk().await? else {
+        return Ok(Bytes::new());
+    };
+    let Some(second) = field.chunk().await? else {
+        return Ok(first);
+    };
+
+    let mut joined = Vec::with_capacity(first.len() + second.len());
+    joined.extend_from_slice(&first);
+    joined.extend_from_slice(&second);
+    while let Some(chunk) = field.chunk().await? {
+        joined.extend_from_slice(&chunk);
+    }
+    Ok(Bytes::from(joined))
+}
+
 /// `T: Schema` because the bounds a derived field declares are checked once `T`
 /// is built, each part under its field's name.
 impl<C: Sync, T: FromMultipart + Schema + Send> FromRequest<C> for MultipartForm<T> {
@@ -359,8 +383,10 @@ impl<C: Sync, T: FromMultipart + Schema + Send> FromRequest<C> for MultipartForm
                 .map_err(str::to_owned)
                 .and_then(disposition)
                 .map_err(|detail| BodyRejection::Syntax { detail })?;
-            let content_type = field.content_type().map(ToString::to_string);
-            let bytes = field.bytes().await.map_err(|e| malformed_body(&e))?;
+            let content_type = field
+                .content_type()
+                .map(|mime| AsRef::<str>::as_ref(mime).to_owned());
+            let bytes = octets(field).await.map_err(|e| malformed_body(&e))?;
 
             parts.push(Part {
                 name,
