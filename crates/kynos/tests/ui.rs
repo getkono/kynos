@@ -14,7 +14,11 @@
 //! Cases that could only fail with a feature *off* are therefore not here.
 //! [`ui/PENDING.md`](ui/PENDING.md) names them.
 
-use std::{fs, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+};
 
 #[test]
 fn ui() {
@@ -98,6 +102,9 @@ fn compile_fail_cases(directory: &Path) -> usize {
 /// An explicit mapping rather than a search for the trait's name, because half
 /// the messages deliberately never spell it: `Handler`'s says "is not a Kynos
 /// handler", which is the improvement being made and not something to grep for.
+/// The mapping is held to the source both ways: its names are the set of
+/// guided traits, and each snapshot records its trait's `message`, read from
+/// the attribute, so a snapshot of some other diagnostic does not stand in.
 #[test]
 fn every_guided_diagnostic_has_a_snapshot() {
     /// One row per `#[diagnostic::on_unimplemented]` in `crates/kynos/src`.
@@ -144,44 +151,528 @@ fn every_guided_diagnostic_has_a_snapshot() {
     ];
 
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut guided = BTreeMap::new();
+    guided_traits_in_source(&root.join("src"), &mut guided);
+
+    let recorded: BTreeSet<&str> = RECORDED.iter().map(|(name, _)| *name).collect();
+    assert_eq!(
+        recorded,
+        guided.keys().map(String::as_str).collect(),
+        "the traits `crates/kynos/src` guides are not the ones with a snapshot; a diagnostic \
+         nobody snapshotted is a diagnostic nobody checked"
+    );
+
     for (trait_name, snapshot) in RECORDED {
         let path = root.join("tests/ui").join(snapshot);
         let recorded = fs::read_to_string(&path)
             .unwrap_or_else(|_| panic!("`{trait_name}` names {snapshot}, which is not there"));
+        let message = &guided[*trait_name];
         assert!(
-            !recorded.trim().is_empty(),
-            "`{trait_name}`'s snapshot is empty, so it records no diagnostic"
+            renders(message, &recorded),
+            "{snapshot} does not record `{trait_name}`'s message {message:?}"
         );
     }
-
-    let guided = guided_traits_in_source(&root.join("src"));
-    assert_eq!(
-        guided,
-        RECORDED.len(),
-        "`crates/kynos/src` guides {guided} trait(s) and {} have a snapshot; a diagnostic nobody \
-         snapshotted is a diagnostic nobody checked",
-        RECORDED.len()
-    );
 }
 
-/// The `#[diagnostic::on_unimplemented]` attributes under `directory`.
-fn guided_traits_in_source(directory: &Path) -> usize {
-    let mut found = 0;
+/// Every `#[diagnostic::on_unimplemented]` under `directory`, by the trait it
+/// guides, with its `message` as written.
+fn guided_traits_in_source(directory: &Path, found: &mut BTreeMap<String, String>) {
+    const ATTRIBUTE: &str = "#[diagnostic::on_unimplemented(";
+
     for entry in fs::read_dir(directory).expect("the crate's own source is readable") {
         let path = entry.expect("readable entry").path();
         if path.is_dir() {
-            found += guided_traits_in_source(&path);
+            guided_traits_in_source(&path, found);
             continue;
         }
         if path.extension().is_none_or(|extension| extension != "rs") {
             continue;
         }
-        found += fs::read_to_string(&path)
-            .expect("readable source")
-            .matches("#[diagnostic::on_unimplemented")
-            .count();
+        let source = fs::read_to_string(&path).expect("readable source");
+        for (at, _) in source.match_indices(ATTRIBUTE) {
+            let attribute = &source[at + ATTRIBUTE.len()..];
+            let message = attribute
+                .split_once("message = \"")
+                .and_then(|(_, rest)| string_literal(rest))
+                .unwrap_or_else(|| panic!("{}: an attribute with no `message`", path.display()));
+            let name: String = attribute
+                .split_once("trait ")
+                .unwrap_or_else(|| panic!("{}: an attribute on no trait", path.display()))
+                .1
+                .chars()
+                .take_while(|character| character.is_alphanumeric() || *character == '_')
+                .collect();
+            let previous = found.insert(name.clone(), message);
+            assert!(previous.is_none(), "`{name}` is guided twice");
+        }
     }
-    found
+}
+
+/// The value of the string literal whose opening quote precedes `text`, with
+/// its escapes and line continuations resolved as rustc resolves them, or
+/// `None` where it is unclosed or holds an escape rustc refuses.
+fn string_literal(text: &str) -> Option<String> {
+    let mut value = String::new();
+    let mut characters = text.chars().peekable();
+    loop {
+        match characters.next()? {
+            '"' => return Some(value),
+            '\\' => match characters.next()? {
+                '\n' => while characters.next_if(|next| next.is_whitespace()).is_some() {},
+                'n' => value.push('\n'),
+                'r' => value.push('\r'),
+                't' => value.push('\t'),
+                '0' => value.push('\0'),
+                'x' => {
+                    let digits: String = characters.by_ref().take(2).collect();
+                    let code = u8::from_str_radix(&digits, 16).ok().filter(u8::is_ascii)?;
+                    value.push(char::from(code));
+                }
+                'u' => {
+                    let digits: String = characters
+                        .by_ref()
+                        .skip(1)
+                        .take_while(|next| *next != '}')
+                        .filter(|next| *next != '_')
+                        .collect();
+                    let code = u32::from_str_radix(&digits, 16).ok()?;
+                    value.push(char::from_u32(code)?);
+                }
+                escaped @ ('\\' | '\'' | '"') => value.push(escaped),
+                _ => return None,
+            },
+            character => value.push(character),
+        }
+    }
+}
+
+/// Whether `snapshot` records `message`, each `{Parameter}` it names standing
+/// for whatever type the snapshot's program put there.
+fn renders(message: &str, snapshot: &str) -> bool {
+    let mut rest = snapshot;
+    for (index, fixed) in message.split(['{', '}']).enumerate() {
+        // Odd pieces are the parameters' names.
+        if index % 2 == 1 || fixed.is_empty() {
+            continue;
+        }
+        let Some(at) = rest.find(fixed) else {
+            return false;
+        };
+        rest = &rest[at + fixed.len()..];
+    }
+    true
+}
+
+/// Every row of every `kynos-macros` diagnostic ledger, against a `ui/macros/`
+/// snapshot recording what it says.
+///
+/// A ledger row asserts *which* rule fired by a fragment of its message, and
+/// the macro crate counts its rows against the diagnostic sites of the files
+/// they cover; what the rule *says* is only seen rendered here. So each row's
+/// fragment must appear in some snapshot, or the message it identifies is one
+/// no reader has seen. A mapping by text rather than a count, since a count
+/// cannot tell a snapshot of this rule from one of its neighbour's.
+///
+/// A row built only with a feature off — under `#[cfg(not(..))]` — is not
+/// held: the snapshots record an `--all-features` build, which never reaches
+/// it, for the reason [`ui/PENDING.md`](ui/PENDING.md) gives. Rows sharing a
+/// fragment share a snapshot, since the fragment is all a row says about the
+/// message.
+#[test]
+fn every_ledgered_diagnostic_has_a_snapshot() {
+    /// The rows no case here can reach, by fragment, each with the reason.
+    ///
+    /// An `assets!` walk needs a directory, and a case is compiled from a
+    /// project `trybuild` generates under the target directory, which
+    /// `cargo llvm-cov` moves; no committed `dir` names the same directory
+    /// from both. The two unreadable-directory rows also go on in the
+    /// operating system's own words.
+    const UNREACHABLE: &[(&str, &str)] = &[
+        (
+            "requires `panic = \"unwind\"`",
+            "emitted under `panic = \"abort\"` alone, and the suite builds with unwinding",
+        ),
+        (
+            "`no-such-directory` could not be read: ",
+            "an `assets!` walk",
+        ),
+        ("`{..}` could not be read: ", "an `assets!` walk"),
+        (
+            "`{..}` holds no servable file; an asset set that serves nothing is one no route needs",
+            "an `assets!` walk",
+        ),
+        ("`{..}` nests deeper than 1 levels", "an `assets!` walk"),
+        ("`{..}` holds more than 2 files", "an `assets!` walk"),
+        (
+            "`nested/a b.txt` has a name no path template can express, so it cannot be \
+             described; rename it, or add it to `exclude`",
+            "an `assets!` walk",
+        ),
+    ];
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    let macros = root.join("../kynos-macros/src");
+    let mut ledgers = Vec::new();
+    ledger_files(&macros, &mut ledgers);
+    let rows: Vec<(String, Vec<String>)> = ledgers
+        .iter()
+        .flat_map(|path| {
+            let source = fs::read_to_string(path).expect("the macro crate's source is readable");
+            let file = path
+                .strip_prefix(&macros)
+                .expect("walked from the root")
+                .display()
+                .to_string();
+            ledger_rows(&source)
+                .into_iter()
+                .map(move |fragment| (file.clone(), fragment))
+        })
+        .collect();
+
+    let directory = root.join("tests/ui/macros");
+    let snapshots: Vec<String> = fs::read_dir(&directory)
+        .expect("`ui/macros/` is readable")
+        .map(|entry| entry.expect("readable entry").path())
+        .filter(|path| path.extension().is_some_and(|it| it == "stderr"))
+        .map(|path| fs::read_to_string(path).expect("a readable snapshot"))
+        .collect();
+
+    let fragment = |pieces: &[String]| pieces.join("{..}");
+    for (unreachable, _) in UNREACHABLE {
+        assert!(
+            rows.iter()
+                .any(|(_, pieces)| fragment(pieces) == *unreachable),
+            "{unreachable:?} is listed as unreachable and no ledger row says it any more"
+        );
+    }
+
+    let unrecorded: BTreeSet<String> = rows
+        .iter()
+        .filter(|(_, pieces)| {
+            !UNREACHABLE
+                .iter()
+                .any(|(unreachable, _)| fragment(pieces) == *unreachable)
+                && !snapshots
+                    .iter()
+                    .any(|snapshot| renders_pieces(pieces, snapshot))
+        })
+        .map(|(file, pieces)| format!("{file}: {:?}", fragment(pieces)))
+        .collect();
+    assert!(
+        unrecorded.is_empty(),
+        "{} ledgered diagnostic(s) have no `ui/macros/` snapshot saying them; add a case whose \
+         `.stderr` records each:\n{}",
+        unrecorded.len(),
+        unrecorded.into_iter().collect::<Vec<_>>().join("\n")
+    );
+
+    // The control: the walk read the ledgers this crate is known to keep,
+    // which held 172 rows when this was written.
+    assert!(
+        rows.len() > 150,
+        "the sweep read only {} ledger row(s) from {} file(s)",
+        rows.len(),
+        ledgers.len()
+    );
+}
+
+/// Every `tests.rs` under `directory`, where the macro crate keeps its ledgers.
+fn ledger_files(directory: &Path, found: &mut Vec<std::path::PathBuf>) {
+    for entry in fs::read_dir(directory).expect("the macro crate's source is readable") {
+        let path = entry.expect("readable entry").path();
+        if path.is_dir() {
+            ledger_files(&path, found);
+        } else if path.file_name().is_some_and(|name| name == "tests.rs") {
+            found.push(path);
+        }
+    }
+}
+
+/// The fragment of each row of each ledger in `source`, as the pieces a
+/// rendered message holds in order.
+///
+/// A ledger is a function whose name ends in `ledger` or `cases`, and its rows
+/// are the elements of the `vec![..]` it builds and of each `.push(..)` it
+/// makes: a `case(..)` call or a tuple, whose last argument is the fragment.
+fn ledger_rows(source: &str) -> Vec<Vec<String>> {
+    let mut rows = Vec::new();
+    let mut at = 0;
+    while at < source.len() {
+        if let Some(end) = opaque_end(source, at) {
+            at = end;
+            continue;
+        }
+        let rest = &source[at..];
+        if rest.starts_with("fn ") && !ident_before(source, at) {
+            let name: String = rest[3..].chars().take_while(|c| is_ident(*c)).collect();
+            if (name.ends_with("ledger") || name.ends_with("cases")) && !feature_off(source, at) {
+                let open = code_find(source, at, '{').expect("a ledger has a body");
+                let close = matching(source, open);
+                rows.extend(body_rows(source, open + 1, close));
+                at = close;
+                continue;
+            }
+        }
+        at += rest.chars().next().map_or(1, char::len_utf8);
+    }
+    rows
+}
+
+/// The rows of the ledger whose body spans `start..end`.
+fn body_rows(source: &str, start: usize, end: usize) -> Vec<Vec<String>> {
+    let mut rows = Vec::new();
+    let mut at = start;
+    while at < end {
+        if let Some(after) = opaque_end(source, at) {
+            at = after;
+            continue;
+        }
+        let rest = &source[at..];
+        // Rows pushed only with a feature off, for the reason a
+        // `#[cfg(not(..))]` row is skipped.
+        if rest.starts_with("if !cfg!(") {
+            let open = code_find(source, at, '{').expect("an `if` has a block");
+            at = matching(source, open);
+            continue;
+        }
+        let elements = if rest.starts_with("vec![") {
+            let close = matching(source, at + 4);
+            let elements = split_top_level(&source[at + 5..close]);
+            at = close;
+            elements
+        } else if rest.starts_with(".push(") {
+            let close = matching(source, at + 5);
+            let element = vec![&source[at + 6..close]];
+            at = close;
+            element
+        } else {
+            at += rest.chars().next().map_or(1, char::len_utf8);
+            continue;
+        };
+        for element in elements {
+            // A row built only with a feature off is out of reach here.
+            let Some(element) = strip_attributes(element.trim()) else {
+                continue;
+            };
+            if element.is_empty() {
+                continue;
+            }
+            let inner = element
+                .strip_prefix("case(")
+                .or_else(|| element.strip_prefix('('))
+                .and_then(|inner| inner.strip_suffix(')'))
+                .unwrap_or_else(|| {
+                    panic!("a ledger row that is no `case(..)` or tuple: {element}")
+                });
+            let arguments = split_top_level(inner);
+            let fragment = arguments
+                .iter()
+                .rev()
+                .map(|argument| argument.trim())
+                .find(|argument| !argument.is_empty())
+                .expect("a row has arguments");
+            rows.push(resolve(source, fragment));
+        }
+    }
+    rows
+}
+
+/// What a row's fragment expression says, as the pieces a rendering holds.
+fn resolve(source: &str, expression: &str) -> Vec<String> {
+    if let Some(literal) = expression.strip_prefix('"') {
+        return vec![string_literal(literal).expect("a closed string literal")];
+    }
+    if let Some(owned) = expression.strip_suffix(".to_owned()") {
+        return resolve(source, owned);
+    }
+    if let Some(arguments) = expression.strip_prefix("format!(") {
+        let template =
+            split_top_level(arguments.strip_suffix(')').expect("a closed `format!`"))[0].trim();
+        let template = string_literal(template.strip_prefix('"').expect("a literal template"))
+            .expect("a closed string literal");
+        return template
+            .split(['{', '}'])
+            .step_by(2)
+            .filter(|piece| !piece.is_empty())
+            .map(str::to_owned)
+            .collect();
+    }
+    if expression.chars().all(is_ident) {
+        let declaration = format!("const {expression}: &str = \"");
+        let (_, literal) = source
+            .split_once(&declaration)
+            .unwrap_or_else(|| panic!("`{expression}` is no `&str` constant of its file"));
+        return vec![string_literal(literal).expect("a closed string literal")];
+    }
+    panic!("a ledger row whose fragment this sweep cannot read: {expression}")
+}
+
+/// Whether `snapshot` holds each of `pieces`, in order.
+fn renders_pieces(pieces: &[String], snapshot: &str) -> bool {
+    let mut rest = snapshot;
+    for piece in pieces {
+        let Some(at) = rest.find(piece.as_str()) else {
+            return false;
+        };
+        rest = &rest[at + piece.len()..];
+    }
+    true
+}
+
+/// `element` without the comments and outer attributes leading it, or `None`
+/// where one of them is a `#[cfg(not(..))]`.
+fn strip_attributes(mut element: &str) -> Option<&str> {
+    loop {
+        if element.starts_with("#[cfg(not(") {
+            return None;
+        } else if element.starts_with("#[") {
+            let close = matching(element, 1);
+            element = element[close + 1..].trim_start();
+        } else if element.starts_with("//") {
+            element = element[opaque_end(element, 0).expect("a comment")..].trim_start();
+        } else {
+            return Some(element);
+        }
+    }
+}
+
+/// Whether the item whose `fn` starts at `at` is compiled only with a feature
+/// off, by the `#[cfg(not(..))]` among the attributes above it.
+fn feature_off(source: &str, at: usize) -> bool {
+    source[..at]
+        .lines()
+        .rev()
+        .skip(1)
+        .map(str::trim)
+        .take_while(|line| line.starts_with("#[") || line.starts_with("//"))
+        .any(|line| line.starts_with("#[cfg(not("))
+}
+
+fn is_ident(character: char) -> bool {
+    character.is_alphanumeric() || character == '_'
+}
+
+fn ident_before(source: &str, at: usize) -> bool {
+    source[..at].chars().next_back().is_some_and(is_ident)
+}
+
+/// Where the string, character literal or comment starting at `at` ends, or
+/// `None` where none starts there.
+fn opaque_end(source: &str, at: usize) -> Option<usize> {
+    let rest = &source[at..];
+    if rest.starts_with("//") {
+        return Some(at + rest.find('\n').unwrap_or(rest.len()));
+    }
+    if rest.starts_with("/*") {
+        return Some(at + rest.find("*/").expect("a closed comment") + 2);
+    }
+    if let Some(raw) = rest.strip_prefix('r').filter(|_| !ident_before(source, at)) {
+        let hashes = raw.len() - raw.trim_start_matches('#').len();
+        if raw[hashes..].starts_with('"') {
+            let closing = format!("\"{}", "#".repeat(hashes));
+            let body = 1 + hashes + 1;
+            return Some(
+                at + body
+                    + rest[body..].find(&closing).expect("a closed raw string")
+                    + closing.len(),
+            );
+        }
+    }
+    if rest.starts_with('"') {
+        let mut characters = rest.char_indices().skip(1);
+        while let Some((index, character)) = characters.next() {
+            match character {
+                '\\' => {
+                    characters.next();
+                }
+                '"' => return Some(at + index + 1),
+                _ => {}
+            }
+        }
+        panic!("an unclosed string literal");
+    }
+    if let Some(after) = rest.strip_prefix('\'') {
+        // A character literal rather than a lifetime: an escape, or one
+        // character and a closing quote.
+        if after.starts_with('\\') {
+            return Some(at + 1 + after[2..].find('\'').expect("a closed character") + 3);
+        }
+        let mut characters = after.chars();
+        if let (Some(character), Some('\'')) = (characters.next(), characters.next()) {
+            return Some(at + 1 + character.len_utf8() + 1);
+        }
+    }
+    None
+}
+
+/// The first `target` at or after `from` outside any literal or comment.
+fn code_find(source: &str, from: usize, target: char) -> Option<usize> {
+    let mut at = from;
+    while at < source.len() {
+        if let Some(end) = opaque_end(source, at) {
+            at = end;
+            continue;
+        }
+        let character = source[at..].chars().next()?;
+        if character == target {
+            return Some(at);
+        }
+        at += character.len_utf8();
+    }
+    None
+}
+
+/// The bracket closing the one that opens at `open`.
+fn matching(source: &str, open: usize) -> usize {
+    let mut depth = 0usize;
+    let mut at = open;
+    while at < source.len() {
+        if let Some(end) = opaque_end(source, at) {
+            at = end;
+            continue;
+        }
+        let character = source[at..].chars().next().expect("within the source");
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return at;
+                }
+            }
+            _ => {}
+        }
+        at += character.len_utf8();
+    }
+    panic!("an unclosed bracket")
+}
+
+/// `text` split at each comma no bracket, literal or comment encloses.
+fn split_top_level(text: &str) -> Vec<&str> {
+    let mut pieces = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    let mut at = 0;
+    while at < text.len() {
+        if let Some(end) = opaque_end(text, at) {
+            at = end;
+            continue;
+        }
+        let character = text[at..].chars().next().expect("within the text");
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                pieces.push(&text[start..at]);
+                start = at + 1;
+            }
+            _ => {}
+        }
+        at += character.len_utf8();
+    }
+    pieces.push(&text[start..]);
+    pieces
 }
 
 /// Every `Router` and `Group` builder carries all four type parameters across.

@@ -1,0 +1,11 @@
+error: `token_uri` is not part of the `client_credentials(...)` grammar
+  --> tests/ui/macros/security_scheme_oauth2_flow_key_refusals.rs:10:5
+   |
+10 |     token_uri = "https://auth.example.com/token",
+   |     ^^^^^^^^^
+
+error: `token_url` is already set, and `client_credentials(...)` takes each key once
+  --> tests/ui/macros/security_scheme_oauth2_flow_key_refusals.rs:17:5
+   |
+17 |     token_url = "https://auth.example.com/b",
+   |     ^^^^^^^^^

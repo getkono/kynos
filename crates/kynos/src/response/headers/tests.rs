@@ -139,6 +139,71 @@ fn a_field_two_failures_send_is_declared_once_as_the_first_describes_it() {
     assert_eq!(item(&alone["Retry-After"]).required, None);
 }
 
+/// One side's responses, each status declaring the headers given.
+fn statuses(declared: &[(u16, Map<RefOr<Header>>)]) -> kynos_openapi::Responses {
+    let mut responses = kynos_openapi::Responses::new();
+    for (status, headers) in declared {
+        let mut response = kynos_openapi::Response::new("");
+        response.headers.clone_from(headers);
+        responses = responses.with(*status, response);
+    }
+    responses
+}
+
+/// The headers `status` declares after a union, by name.
+fn headers_at<'a>(responses: &'a kynos_openapi::Responses, status: &str) -> &'a Map<RefOr<Header>> {
+    match &responses.responses[status] {
+        RefOr::Item(response) => &response.headers,
+        RefOr::Ref(_) => panic!("declared inline"),
+    }
+}
+
+/// A status both sides declare unions their groups as one status's failures
+/// are unioned: required only where both sides require it, a side sending no
+/// group counting as one that does not, and described as this side first
+/// describes it. A status only one side declares keeps that side's headers.
+#[test]
+fn a_union_requires_a_header_only_where_both_sides_require_it() {
+    let mut responses = statuses(&[
+        (429, group("Retry-After", "here", true)),
+        (409, Map::new()),
+        (503, group("Retry-After", "here", true)),
+        (500, group("Retry-After", "here only", true)),
+    ]);
+    let held = statuses(&[
+        (429, Map::new()),
+        (409, group("Retry-After", "held", true)),
+        (503, group("retry-after", "held", true)),
+        (404, group("Retry-After", "held only", true)),
+    ]);
+    super::union_from(&mut responses, &held);
+
+    let declared = |status: &str| {
+        headers_at(&responses, status)
+            .iter()
+            .map(|(name, header)| {
+                let header = item(header);
+                (
+                    name.as_str(),
+                    header.description.as_deref(),
+                    header.required,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(declared("429"), [("Retry-After", Some("here"), None)]);
+    assert_eq!(declared("409"), [("Retry-After", Some("held"), None)]);
+    assert_eq!(declared("503"), [("Retry-After", Some("here"), Some(true))]);
+    assert_eq!(
+        declared("500"),
+        [("Retry-After", Some("here only"), Some(true))]
+    );
+    assert_eq!(
+        declared("404"),
+        [("Retry-After", Some("held only"), Some(true))]
+    );
+}
+
 /// A group left out of the description declares nothing on a failure's
 /// status either.
 #[test]

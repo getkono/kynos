@@ -1,0 +1,17 @@
+error: `QueryParams` describes a group of named values, so it needs a struct with named fields
+ --> tests/ui/macros/query_params_not_named_fields.rs:8:18
+  |
+8 | struct Positional(u32);
+  |                  ^^^^^
+
+error: `QueryParams` describes a group of named values, which an enum is not
+  --> tests/ui/macros/query_params_not_named_fields.rs:11:1
+   |
+11 | enum Choice {
+   | ^^^^
+
+error: `QueryParams` cannot describe a union
+  --> tests/ui/macros/query_params_not_named_fields.rs:16:1
+   |
+16 | union Overlaid {
+   | ^^^^^

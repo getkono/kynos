@@ -1,0 +1,17 @@
+error: an API key must say where it travels: `in = "header"`, `"query"` or `"cookie"`
+ --> tests/ui/macros/security_scheme_api_key_incomplete.rs:7:12
+  |
+7 | #[security(api_key(name = "X-Api-Key"))]
+  |            ^^^^^^^
+
+error: an API key must say which field carries it: `name = "X-Api-Key"`
+  --> tests/ui/macros/security_scheme_api_key_incomplete.rs:11:12
+   |
+11 | #[security(api_key(in = "header"))]
+   |            ^^^^^^^
+
+error: `name` is already set, and `api_key(...)` takes each option once
+  --> tests/ui/macros/security_scheme_api_key_incomplete.rs:15:55
+   |
+15 | #[security(api_key(in = "header", name = "X-Api-Key", name = "X-Key"))]
+   |                                                       ^^^^

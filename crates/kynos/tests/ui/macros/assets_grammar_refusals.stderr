@@ -1,0 +1,29 @@
+error: an asset set needs a unit struct to name it: `pub struct Site;`
+  --> tests/ui/macros/assets_grammar_refusals.rs:10:5
+   |
+10 |     dir = "no-such-directory",
+   |     ^^^
+
+error: an asset set needs `dir = "..."`, relative to the crate root
+  --> tests/ui/macros/assets_grammar_refusals.rs:14:12
+   |
+14 |     struct Dirless;
+   |            ^^^^^^^
+
+error: `nonsense` is not part of the `assets!` grammar, which takes `dir`, `exclude` and `warn_over`
+  --> tests/ui/macros/assets_grammar_refusals.rs:20:5
+   |
+20 |     nonsense = "x",
+   |     ^^^^^^^^
+
+error: `warn_over` takes a size such as "4MiB" or the word "none"; the units are B, KiB, MiB and GiB
+  --> tests/ui/macros/assets_grammar_refusals.rs:26:17
+   |
+26 |     warn_over = "4KB",
+   |                 ^^^^^
+
+error: an `exclude` entry is a file name or an extension beginning with a dot, and an empty string is neither
+  --> tests/ui/macros/assets_grammar_refusals.rs:32:16
+   |
+32 |     exclude = [""],
+   |                ^^

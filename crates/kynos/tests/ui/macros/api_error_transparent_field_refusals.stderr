@@ -1,0 +1,11 @@
+error: a transparent variant sends the headers of the error it holds, which is not a header group itself
+  --> tests/ui/macros/api_error_transparent_field_refusals.rs:20:12
+   |
+20 |     Lookup(#[problem(headers)] LookupError),
+   |            ^
+
+error: a transparent variant's statuses are a `const`, which cannot depend on the type's generic parameter `'a`; name a concrete error type
+  --> tests/ui/macros/api_error_transparent_field_refusals.rs:31:12
+   |
+31 |     Lookup(Wrapped<&'a E>),
+   |            ^^^^^^^

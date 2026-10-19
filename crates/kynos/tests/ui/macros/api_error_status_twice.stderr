@@ -1,0 +1,11 @@
+error: this already declares a status, and a response has one
+  --> tests/ui/macros/api_error_status_twice.rs:10:34
+   |
+10 | #[problem(status = 404, status = 410)]
+   |                                  ^^^
+
+error: this already declares a status, and a response has one
+  --> tests/ui/macros/api_error_status_twice.rs:17:24
+   |
+17 |     #[problem(status = 410)]
+   |                        ^^^

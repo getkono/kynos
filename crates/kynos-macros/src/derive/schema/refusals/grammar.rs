@@ -338,3 +338,6 @@ fn after_quoted_string(text: &str) -> Option<&str> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests;
