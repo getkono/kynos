@@ -31,8 +31,6 @@ use crate::{
     },
 };
 
-#[cfg(feature = "tls")]
-use crate::extract::connection::TlsIdentity;
 #[cfg(feature = "http2")]
 use crate::server::protocol::http2::{Http2FlowControl, InFlight, Streams};
 
@@ -58,21 +56,8 @@ pub(in crate::server) async fn serve_connection<C: 'static>(
         };
         match handshake {
             Ok(Ok(stream)) => {
-                let (_, session) = stream.get_ref();
                 // Built once and reference-counted onto every request.
-                let mut identity = TlsIdentity::default().with_peer_certificates(
-                    session
-                        .peer_certificates()
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|certificate| bytes::Bytes::copy_from_slice(certificate.as_ref())),
-                );
-                if let Some(name) = session.server_name() {
-                    identity = identity.with_server_name(name);
-                }
-                if let Some(protocol) = session.alpn_protocol() {
-                    identity = identity.with_alpn_protocol(protocol);
-                }
+                let identity = crate::server::tls::identity(stream.get_ref().1);
                 let connection = Connection::from_tls_peer(peer_addr, local_addr, identity);
                 let served = serve_http(stream, service, config, connection, lifecycle, deadline);
                 if let Err(error) = served.await {

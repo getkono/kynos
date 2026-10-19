@@ -9,16 +9,17 @@ pub mod ticket;
 use std::{collections::BTreeMap, fmt, num::NonZeroUsize, sync::Arc, time::Duration};
 
 use tokio_rustls::rustls::{
-    RootCertStore, ServerConfig as RustlsServerConfig,
+    RootCertStore, ServerConfig as RustlsServerConfig, ServerConnection,
     crypto::{CryptoProvider, aws_lc_rs::Ticketer},
-    pki_types::{CertificateDer, CertificateRevocationListDer, pem::PemObject},
+    pki_types::{CertificateDer, CertificateRevocationListDer},
     server::{NoServerSessionStorage, ServerSessionMemoryCache, WebPkiClientVerifier},
 };
 
+use crate::extract::connection::TlsIdentity;
 use crate::server::tls::{
     certificate::{
         CertificateMaterial, StaticCertificateResolver, certified_key, parse_certificate_material,
-        parse_certificates,
+        parse_pem,
     },
     error::TlsError,
     ticket::{SharedTicketer, TicketKeys},
@@ -40,7 +41,7 @@ impl ClientCertificateConfig {
     /// [`TlsError::EmptyPem`] when it holds no certificate.
     pub fn from_pem_roots(roots: &[u8]) -> std::result::Result<Self, TlsError> {
         Ok(Self {
-            roots: parse_certificates(roots, "client root certificate")?,
+            roots: parse_pem(roots, "client root certificate")?,
             crls: Vec::new(),
         })
     }
@@ -52,18 +53,8 @@ impl ClientCertificateConfig {
     /// [`TlsError::Pem`] when `crls` is not well-formed PEM, and
     /// [`TlsError::EmptyPem`] when it holds no certificate-revocation list.
     pub fn with_pem_crls(mut self, crls: &[u8]) -> std::result::Result<Self, TlsError> {
-        let parsed = CertificateRevocationListDer::pem_slice_iter(crls)
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|error| TlsError::Pem {
-                kind: "certificate revocation list",
-                source: Box::new(error),
-            })?;
-        if parsed.is_empty() {
-            return Err(TlsError::EmptyPem {
-                kind: "certificate revocation list",
-            });
-        }
-        self.crls.extend(parsed);
+        self.crls
+            .extend(parse_pem(crls, "certificate revocation list")?);
         Ok(self)
     }
 }
@@ -337,6 +328,25 @@ pub(in crate::server) fn crypto_provider() -> Arc<CryptoProvider> {
         || Arc::new(tokio_rustls::rustls::crypto::aws_lc_rs::default_provider()),
         Arc::clone,
     )
+}
+
+/// What a completed handshake established about its connection: the client's
+/// verified certificate chain, the SNI name, and the negotiated ALPN protocol.
+pub(in crate::server) fn identity(session: &ServerConnection) -> TlsIdentity {
+    let mut identity = TlsIdentity::default().with_peer_certificates(
+        session
+            .peer_certificates()
+            .unwrap_or_default()
+            .iter()
+            .map(|certificate| bytes::Bytes::copy_from_slice(certificate.as_ref())),
+    );
+    if let Some(name) = session.server_name() {
+        identity = identity.with_server_name(name);
+    }
+    if let Some(protocol) = session.alpn_protocol() {
+        identity = identity.with_alpn_protocol(protocol);
+    }
+    identity
 }
 
 #[derive(Clone)]
