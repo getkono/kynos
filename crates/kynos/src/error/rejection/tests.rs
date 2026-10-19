@@ -529,10 +529,13 @@ fn every_rejection_a_caller_can_receive_has_a_case() {
         "AuthRejection",
     ];
 
+    // Indented too, since `parameter_rejection!` declares its four inside an
+    // invocation; its own `$name` placeholder is not a rejection.
     let declared: Vec<&str> = SOURCE
         .lines()
-        .filter_map(|line| line.strip_prefix("pub enum "))
+        .filter_map(|line| line.trim_start().strip_prefix("pub enum "))
         .filter_map(|rest| rest.strip_suffix(" {"))
+        .filter(|name| !name.starts_with('$'))
         .collect();
 
     assert_eq!(
