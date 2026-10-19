@@ -29,8 +29,8 @@ use crate::{
     },
 };
 
-/// A content coding this crate can produce, ordered by server preference to
-/// break ties between equally weighted codings.
+/// A content coding this crate can produce and decode, ordered by server
+/// preference to break ties between equally weighted codings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Coding {
     Zstd,
@@ -43,12 +43,20 @@ impl Coding {
     const ALL: [Self; 3] = [Self::Zstd, Self::Brotli, Self::Gzip];
 
     /// The token this coding is named by on the wire.
-    fn token(self) -> &'static str {
+    const fn token(self) -> &'static str {
         match self {
             Self::Zstd => "zstd",
             Self::Brotli => "br",
             Self::Gzip => "gzip",
         }
+    }
+
+    /// The coding `token` names, case-insensitively (RFC 9110 section 8.4.1),
+    /// accepting a deprecated alias such as `x-gzip` (section 8.4.1.3).
+    pub(crate) fn from_token(token: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|coding| crate::http::coding::names(token, coding.token()))
     }
 }
 
@@ -254,15 +262,41 @@ fn negotiate(headers: &http::HeaderMap) -> Negotiated {
     }
 }
 
-/// How much of an encoder's output one read takes.
+/// How much of a codec's output one read takes.
 ///
 /// Mirrored by `DRAIN_CHUNK` in `tests/alloc_codecs.rs`; change both together.
 const DRAIN_CHUNK: usize = 8 * 1024;
 
-/// Reads an encoder to its end, by hand so compression needs nothing of tokio
-/// beyond `AsyncRead`.
-async fn drain<R: AsyncRead + Unpin>(mut source: R) -> io::Result<Bytes> {
-    let mut encoded = BytesMut::new();
+/// Why [`drain`] stopped before its source ended.
+#[derive(Debug)]
+pub(crate) enum DrainError {
+    /// The source failed.
+    Read(io::Error),
+    /// The output would have passed the cap.
+    PastCap,
+}
+
+impl From<DrainError> for io::Error {
+    /// The read's own failure; `PastCap` arises only under a cap, which
+    /// encoding never sets.
+    fn from(error: DrainError) -> Self {
+        match error {
+            DrainError::Read(error) => error,
+            DrainError::PastCap => io::ErrorKind::FileTooLarge.into(),
+        }
+    }
+}
+
+/// Reads an encoder or a decoder to its end, by hand so neither direction
+/// needs anything of tokio beyond `AsyncRead`.
+///
+/// With a `cap`, refuses to produce more than that many bytes. Checked per
+/// chunk, so a decompression bomb is refused while still small.
+pub(crate) async fn drain<R: AsyncRead + Unpin>(
+    mut source: R,
+    cap: Option<u64>,
+) -> Result<Bytes, DrainError> {
+    let mut drained = BytesMut::new();
     let mut chunk = [0_u8; DRAIN_CHUNK];
 
     loop {
@@ -271,44 +305,63 @@ async fn drain<R: AsyncRead + Unpin>(mut source: R) -> io::Result<Bytes> {
             std::task::ready!(Pin::new(&mut source).poll_read(context, &mut buffer))?;
             Poll::Ready(io::Result::Ok(buffer.filled().len()))
         })
-        .await?;
+        .await
+        .map_err(DrainError::Read)?;
 
         if read == 0 {
-            return Ok(encoded.freeze());
+            return Ok(drained.freeze());
         }
 
-        encoded.extend_from_slice(&chunk[..read]);
+        if let Some(cap) = cap {
+            let so_far = u64::try_from(drained.len()).unwrap_or(u64::MAX);
+            if so_far.saturating_add(u64::try_from(read).unwrap_or(u64::MAX)) > cap {
+                return Err(DrainError::PastCap);
+            }
+        }
+
+        drained.extend_from_slice(&chunk[..read]);
     }
 }
 
 /// Applies `coding` to `bytes` at the level `levels` sets for it.
 async fn encode(coding: Coding, bytes: Bytes, levels: Levels) -> io::Result<Bytes> {
-    match coding {
+    let encoded = match coding {
         Coding::Zstd => {
-            drain(ZstdEncoder::with_quality_and_params(
-                io::Cursor::new(bytes),
-                Level::Precise(levels.zstd.get()),
-                zstd_window(levels.zstd).as_slice(),
-            ))
+            drain(
+                ZstdEncoder::with_quality_and_params(
+                    io::Cursor::new(bytes),
+                    Level::Precise(levels.zstd.get()),
+                    zstd_window(levels.zstd).as_slice(),
+                ),
+                None,
+            )
             .await
         }
         // Boxed because brotli's encoder state is measured in kilobytes, and an
         // interceptor's future is held for the whole exchange.
         Coding::Brotli => {
-            Box::pin(drain(BrotliEncoder::with_quality(
-                io::Cursor::new(bytes),
-                Level::Precise(as_level(levels.brotli.get())),
-            )))
-            .await
-        }
-        Coding::Gzip => {
-            drain(GzipEncoder::with_quality(
-                io::Cursor::new(bytes),
-                Level::Precise(as_level(levels.gzip.get())),
+            Box::pin(drain(
+                BrotliEncoder::with_quality(
+                    io::Cursor::new(bytes),
+                    Level::Precise(as_level(levels.brotli.get())),
+                ),
+                None,
             ))
             .await
         }
-    }
+        Coding::Gzip => {
+            drain(
+                GzipEncoder::with_quality(
+                    io::Cursor::new(bytes),
+                    Level::Precise(as_level(levels.gzip.get())),
+                ),
+                None,
+            )
+            .await
+        }
+    };
+
+    encoded.map_err(io::Error::from)
 }
 
 /// The window cap zstd needs beside `level`, if it needs one.

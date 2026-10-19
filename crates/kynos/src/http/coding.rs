@@ -44,6 +44,16 @@ fn aliases(token: &str) -> &'static [&'static str] {
     }
 }
 
+/// Whether `name` names the coding `token`: case-insensitively (RFC 9110
+/// section 8.4.1), or as one of its deprecated aliases.
+#[must_use]
+pub(crate) fn names(name: &str, token: &str) -> bool {
+    name.eq_ignore_ascii_case(token)
+        || aliases(token)
+            .iter()
+            .any(|alias| alias.eq_ignore_ascii_case(name))
+}
+
 /// The quality `accept` assigns `token`, honouring `*`, in thousandths.
 ///
 /// `0..=1000` (RFC 9110 section 12.4.2). `None` when neither the token nor a
@@ -89,11 +99,7 @@ fn weight(accept: &str, token: &str) -> Option<Weight> {
                 super::quality::parse(weight.trim()).map_or(Weight::Malformed, Weight::Qvalue)
             });
 
-        if name.eq_ignore_ascii_case(token)
-            || aliases(token)
-                .iter()
-                .any(|alias| alias.eq_ignore_ascii_case(name))
-        {
+        if names(name, token) {
             return Some(weight);
         }
 
