@@ -1,4 +1,4 @@
-use super::{DecodePath, INLINE, Path, PathCaptures, PathParams, Spans, decode_capture};
+use super::{DecodePath, INLINE, Path, PathCaptures, PathParams, Spans, decode_capture, narrow};
 use crate::{
     error::rejection::PathRejection,
     extract::{FromRequestParts, describe::Describe},
@@ -198,6 +198,26 @@ fn a_path_past_sixteen_bit_offsets_is_read_back_whole() {
 
     assert!(matches!(recorded.spans, Spans::Long(_)), "{recorded:?}");
     assert_eq!(recorded.get(path, "tail"), Some("tail"));
+}
+
+/// A span ending past `u32::MAX` does not narrow to the wide width, and the
+/// record it falls back to reads as absent rather than as a truncated value.
+#[test]
+fn a_span_past_thirty_two_bit_offsets_reads_as_absent() {
+    let past = u64::from(u32::MAX) + 1;
+    assert_eq!(narrow::<u64, u32>([0, past]), None);
+    assert_eq!(narrow::<u64, u32>([past, past]), None);
+    assert_eq!(
+        narrow::<u64, u32>([0, u64::from(u32::MAX)]),
+        Some([0, u32::MAX])
+    );
+
+    let path = "/v/1";
+    let fallback = PathCaptures {
+        names: &["a"],
+        spans: Spans::Long(Box::new([[u32::MAX, 0]])),
+    };
+    assert_eq!(fallback.get(path, "a"), None);
 }
 
 /// A variable the template declares but the match did not capture reads as
