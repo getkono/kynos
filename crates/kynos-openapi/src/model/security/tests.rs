@@ -1,13 +1,31 @@
 use crate::model::security::SecurityScheme;
 
+/// The `type` the specification gives each variant, beside the set of them.
+///
+/// An exhaustive match, so a variant added to the enum stops this file
+/// compiling until its wire spelling is written here and in `VARIANT_TAGS`,
+/// and the constructor test then fails until a row reaches it.
+fn wire_tag(scheme: &SecurityScheme) -> &'static str {
+    match scheme {
+        SecurityScheme::ApiKey { .. } => "apiKey",
+        SecurityScheme::Http { .. } => "http",
+        SecurityScheme::MutualTls { .. } => "mutualTLS",
+        SecurityScheme::OAuth2 { .. } => "oauth2",
+        SecurityScheme::OpenIdConnect { .. } => "openIdConnect",
+    }
+}
+
+const VARIANT_TAGS: [&str; 5] = ["apiKey", "http", "mutualTLS", "oauth2", "openIdConnect"];
+
 /// Each constructor builds the variant its name claims, in the spelling the
 /// specification gives it.
 ///
 /// This counts the *spellings*, which are what a caller writes and what a
-/// reader of the emitted document sees. Every variant has a constructor, so
-/// the rows reach each variant's `type`; three of the five differ from their
-/// Rust name by more than case, and the three `apiKey` helpers differ from
-/// each other only in a field.
+/// reader of the emitted document sees, and names the variants the rows
+/// reach against [`wire_tag`], so every variant has a constructor by
+/// assertion rather than by intent. Three of the five differ from their Rust
+/// name by more than case, and the three `apiKey` helpers differ from each
+/// other only in a field.
 #[test]
 fn every_constructor_builds_what_it_names() {
     use crate::model::security::oauth::OAuthFlows;
@@ -56,12 +74,26 @@ fn every_constructor_builds_what_it_names() {
         ),
     ];
 
+    let mut reached = std::collections::BTreeSet::new();
     for (scheme, expected) in &cases {
         assert_eq!(
             &serde_json::to_value(scheme).expect("serializable"),
             expected
         );
+        assert_eq!(
+            expected.get("type").and_then(serde_json::Value::as_str),
+            Some(wire_tag(scheme)),
+            "{scheme:?} carried the wrong `type`"
+        );
+        reached.insert(wire_tag(scheme));
     }
+
+    // Named rather than counted, so a failure says which variant no row reaches.
+    assert_eq!(
+        reached,
+        VARIANT_TAGS.into_iter().collect(),
+        "every `SecurityScheme` variant needs a constructor row"
+    );
 
     // Counted against the source, so a ninth constructor without a row fails
     // the build rather than joining a silent majority.
