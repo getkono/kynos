@@ -2,12 +2,9 @@
 
 use std::{fmt, marker::PhantomData};
 
-use bytes::BytesMut;
-use http_body_util::BodyExt;
-
 use crate::{
     error::problem::{ProblemType, refusal_problem, refusal_response},
-    extract::body::limit::{BodyLimit, declared_length},
+    extract::body::limit::{BodyLimit, Capped, collect_capped, declared_length},
     http::{self, body::Body},
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
@@ -161,37 +158,6 @@ impl BodySize<()> {
     }
 }
 
-/// Reads `body` while the running total stays within `limit`; `None` on the
-/// frame that passes it.
-///
-/// A failed read is handed on as it failed (bytes so far, then the error), so
-/// the extractor beneath refuses it rather than parsing a truncated payload.
-async fn read_capped(mut body: Body, limit: u64) -> Option<Body> {
-    let mut collected = BytesMut::new();
-
-    while let Some(frame) = body.frame().await {
-        let frame = match frame {
-            Ok(frame) => frame,
-            Err(error) => {
-                return Some(Body::failed_after(collected.freeze(), error));
-            }
-        };
-        let Ok(data) = frame.into_data() else {
-            continue;
-        };
-
-        let collected_so_far = u64::try_from(collected.len()).unwrap_or(u64::MAX);
-        let arriving = u64::try_from(data.len()).unwrap_or(u64::MAX);
-        if collected_so_far.saturating_add(arriving) > limit {
-            return None;
-        }
-
-        collected.extend_from_slice(&data);
-    }
-
-    Some(Body::from_bytes(collected.freeze()))
-}
-
 impl<C, T> Interceptor<C> for BodySize<T>
 where
     C: Sync + 'static,
@@ -224,8 +190,13 @@ where
         }
 
         let (parts, body) = request.into_parts();
-        let Some(body) = read_capped(body, self.limit).await else {
-            return Err(BodySizeExceeded::new(self.limit));
+        // A failed read is handed on as it failed (bytes so far, then the
+        // error), so the extractor beneath refuses it rather than parsing a
+        // truncated payload.
+        let body = match collect_capped(body, self.limit).await {
+            Capped::Whole(bytes) => Body::from_bytes(bytes),
+            Capped::FailedPartWay { arrived, error } => Body::failed_after(arrived, error),
+            Capped::Exceeded => return Err(BodySizeExceeded::new(self.limit)),
         };
 
         let request = http::Request::from_parts(parts, body);

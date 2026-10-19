@@ -4213,7 +4213,7 @@ mod protocol_configuration {
 /// timeout cases, the mutual-TLS case here, and `tests/serve_io.rs`.
 const CONFIGURATION_REFUSALS: &[(&str, &str)] = &[
     (
-        "middleware/limits/request_body.rs",
+        "server/request_body.rs",
         "request_body_idle_timeout must be non-zero when enabled",
     ),
     (
@@ -4626,7 +4626,7 @@ mod request_body_idle {
     use std::time::Duration;
 
     use crate::{
-        middleware::limits::request_body::{
+        server::request_body::{
             DEFAULT_REQUEST_BODY_IDLE_TIMEOUT, validate_request_body_idle_timeout,
         },
         server::{Server, error::ServerError},
@@ -4700,7 +4700,7 @@ mod request_body_idle {
 
         use crate::{
             http::{StatusCode, Version},
-            middleware::limits::request_body::{answer, bounded},
+            server::request_body::{answer, bounded},
         };
 
         let (body, stall) = bounded(Silent, Some(Duration::MAX), Version::HTTP_11, |_| {
@@ -4736,7 +4736,7 @@ mod request_body_idle {
         use http_body::Body as _;
         use http_body_util::Full;
 
-        use crate::{http::Version, middleware::limits::request_body::bounded};
+        use crate::{http::Version, server::request_body::bounded};
 
         let (body, _) = bounded(
             Full::new(Bytes::from_static(b"abc")),
@@ -4774,7 +4774,7 @@ mod request_body_idle {
 
         use crate::{
             http::{HeaderValue, StatusCode, Version, header},
-            middleware::limits::request_body::{answer, bounded},
+            server::request_body::{answer, bounded},
         };
 
         let limit = Duration::from_millis(1);
