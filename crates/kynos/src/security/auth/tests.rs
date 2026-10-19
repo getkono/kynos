@@ -270,14 +270,14 @@ fn a_guard_declares_the_requirement_the_scheme_the_statuses_and_the_challenge() 
     );
 }
 
-/// A scheme carried outside the `Authorization` header advertises nothing,
-/// because there is no challenge a client could answer.
+/// A scheme declaring no challenge advertises none, rather than one its 401
+/// does not send.
 ///
 /// The control for the case above: without it, that test would pass against
 /// a `declare` that attached a challenge to every scheme.
 #[test]
 fn a_scheme_with_no_challenge_declares_no_www_authenticate() {
-    let (operation, _) = described::<Auth<MutualTls>>();
+    let (operation, _) = described::<Auth<Audited>>();
 
     assert!(operation.responses.responses.contains_key("401"));
     assert!(
@@ -455,11 +455,10 @@ fn maybe_auth_leads_a_combination_with_the_anonymous_alternative() {
 }
 
 /// A combination's 401 advertises the first challenge among its schemes, so a
-/// scheme carried outside `Authorization` leading the tuple does not leave the
-/// 401 without one.
+/// scheme declaring none leading the tuple does not leave the 401 without one.
 #[test]
 fn a_combination_challenges_with_its_first_scheme_that_has_one() {
-    let (operation, _) = described::<Auth<AnyOf<(MutualTls, Bearer)>>>();
+    let (operation, _) = described::<Auth<AnyOf<(Audited, Bearer)>>>();
 
     let unauthorized = operation.responses.responses["401"]
         .as_item()
@@ -729,9 +728,10 @@ async fn challenges_sent<G: Guard<Recording>>(parts: &Parts) -> Vec<String> {
 /// scheme sends on the wire, under each guard that attaches it, is exactly
 /// the challenge it declares, or nothing where it declares none.
 ///
-/// `MutualTls` has no HTTP authentication scheme to challenge with, so its 401
-/// sends none, and an `AnyOf` it leads challenges with the first scheme after
-/// it that has one.
+/// `MutualTls` has no registered HTTP authentication scheme, so its 401 names
+/// the unregistered `MutualTLS`, and an `AnyOf` it leads challenges with it as
+/// the first in tuple order. A scheme declaring none sends none, and an `AnyOf`
+/// it leads challenges with the first scheme after it that has one.
 #[tokio::test]
 async fn every_built_in_scheme_sends_its_own_challenge_on_a_401() {
     let anonymous = Request::new(Body::empty()).into_parts().0;
@@ -745,13 +745,21 @@ async fn every_built_in_scheme_sends_its_own_challenge_on_a_401() {
         challenges_sent::<Auth<Basic<String>>>(&anonymous).await,
         [basic]
     );
+    assert_eq!(
+        challenges_sent::<Auth<MutualTls<String>>>(&anonymous).await,
+        ["MutualTLS"]
+    );
+    assert_eq!(
+        challenges_sent::<Auth<AnyOf<(MutualTls<String>, Bearer)>>>(&anonymous).await,
+        ["MutualTLS"]
+    );
     assert!(
-        challenges_sent::<Auth<MutualTls<String>>>(&anonymous)
+        challenges_sent::<Auth<Audited>>(&anonymous)
             .await
             .is_empty()
     );
     assert_eq!(
-        challenges_sent::<Auth<AnyOf<(MutualTls<String>, Bearer)>>>(&anonymous).await,
+        challenges_sent::<Auth<AnyOf<(Audited, Bearer)>>>(&anonymous).await,
         ["Bearer"]
     );
     assert_eq!(

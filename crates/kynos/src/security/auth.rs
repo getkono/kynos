@@ -504,8 +504,9 @@ fn declare(
     let responses = auth_responses(operation.registry(), forbidden_type);
     operation.add_responses(&responses);
 
-    // RFC 9110 section 11.6.1: a 401 MUST carry a challenge; only a scheme that
-    // has one declares it.
+    // RFC 9110 section 15.5.2: a 401 MUST carry a challenge. A scheme that
+    // declares none -- one implemented by hand, or a derived `http` kind not
+    // told its parameters -- has nothing to declare.
     declare_challenge(
         operation,
         StatusCode::UNAUTHORIZED,

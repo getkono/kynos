@@ -44,7 +44,9 @@ satisfying it means authenticating *and* holding them: see
   request.
 - **A combination's 401 carries the first challenge among its schemes.** A
   field value is one string, and RFC 9110 section 11.6.1 asks for at least one
-  challenge the client can answer.
+  challenge the client can answer. Every built-in scheme has one, so tuple
+  order picks it: `AnyOf<(MutualTls, Bearer)>` challenges `MutualTLS`, and
+  listing `Bearer` first advertises `Bearer`.
 - **A combinator takes schemes, from two to four**, never another combinator,
   and `Scoped` stays single-scheme. Nesting would give one shape two spellings.
 
@@ -71,8 +73,16 @@ replaces it, typically to name another `realm`:
 | --- | --- | --- |
 | `bearer`, `oauth2`, `openid_connect` | `Bearer` | Each reads an access token from `Authorization`; RFC 6750 section 3 |
 | `basic` | `Basic realm="api", charset="UTF-8"` | RFC 7617 section 2 requires `realm`; the same string `Basic` sends |
+| `api_key` | `ApiKey` | RFC 9110 section 15.5.2 requires a challenge on every 401, and no registered scheme names a key |
+| `mutual_tls` | `MutualTLS` | The same, for a certificate presented in the handshake; the same string `MutualTls` sends |
 | `http(scheme = ..)` | none | Its parameters are the application's to know |
-| `api_key`, `mutual_tls` | none | Travels outside `Authorization`, so no registered scheme names it |
+
+`ApiKey` and `MutualTLS` are unregistered `auth-scheme` tokens (RFC 9110
+section 11.1) spelling the OpenAPI `type`, with no parameters: they satisfy the
+MUST and tell a client which of the operation's described schemes refused it,
+while where the key travels stays the description's to say, not a second copy
+of it in a header. A client answers them by presenting the credential where
+the scheme describes, not in `Authorization`.
 
 `Basic<T, P, R>` names its realm as a type, `R: Realm`, `ApiRealm` unless
 named. A realm is fixed per scheme, so it composes into the challenge at compile

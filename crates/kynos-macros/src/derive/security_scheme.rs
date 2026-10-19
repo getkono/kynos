@@ -348,13 +348,20 @@ fn of_kind(args: &SchemeArgs, kind: &Ident) -> proc_macro2::TokenStream {
 /// `bearer`, `oauth2` and `openid_connect` answer `Bearer` (RFC 6750 section
 /// 3); `basic` answers what `kynos::security::schemes::Basic` does, naming
 /// its default realm and `charset="UTF-8"` (RFC 7617 section 2), so the two
-/// cannot drift; `challenge = "..."` names another realm. The other kinds have
-/// no default.
+/// cannot drift; `challenge = "..."` names another realm. RFC 9110 section
+/// 15.5.2 requires a challenge on every 401, so `api_key` answers `ApiKey` and
+/// `mutual_tls` what `kynos::security::schemes::MutualTls` does, each an
+/// unregistered `auth-scheme` token naming the OpenAPI type. `http` has no
+/// default: its scheme's parameters are the application's to know.
 fn default_challenge(kind: &Ident) -> proc_macro2::TokenStream {
     match kind.to_string().as_str() {
         "bearer" | "oauth2" | "openid_connect" => quote!(::core::option::Option::Some("Bearer")),
         "basic" => quote! {
             <::kynos::security::schemes::Basic as ::kynos::security::SecurityScheme>::challenge()
+        },
+        "api_key" => quote!(::core::option::Option::Some("ApiKey")),
+        "mutual_tls" => quote! {
+            <::kynos::security::schemes::MutualTls as ::kynos::security::SecurityScheme>::challenge()
         },
         _ => quote!(::core::option::Option::None),
     }
