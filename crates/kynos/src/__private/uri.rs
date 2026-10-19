@@ -275,13 +275,35 @@ fn dot_segment<'t>(template: &'t str, rendered: &str) -> Option<(&'t str, &'stat
     template
         .split('/')
         .zip(rendered.split('/'))
-        .filter(|(segment, _)| segment.contains('{'))
-        .find_map(|(segment, rendered)| {
-            let dots = match &*percent_encoding::percent_decode_str(rendered).collect::<Vec<u8>>() {
-                b"." => ".",
-                b".." => "..",
-                _ => return None,
+        .find(|(segment, rendered)| segment.contains('{') && is_dot_segment(rendered))
+        .map(|(segment, rendered)| {
+            // A dot segment decodes to one byte or two.
+            let dots = match percent_encoding::percent_decode_str(rendered).count() {
+                1 => ".",
+                _ => "..",
             };
-            Some((segment, dots))
+            (segment, dots)
         })
+}
+
+/// `.` or `..`, literal or `%2e` in either case: what resolution (RFC 3986
+/// §5.2.4) removes once it decodes the segment.
+pub(crate) fn is_dot_segment(segment: &str) -> bool {
+    let mut rest = segment;
+    let mut dots = 0;
+    while !rest.is_empty() {
+        if let Some(after) = rest.strip_prefix('.') {
+            rest = after;
+        } else if rest
+            .as_bytes()
+            .get(..3)
+            .is_some_and(|head| head.eq_ignore_ascii_case(b"%2e"))
+        {
+            rest = &rest[3..];
+        } else {
+            return false;
+        }
+        dots += 1;
+    }
+    matches!(dots, 1 | 2)
 }
