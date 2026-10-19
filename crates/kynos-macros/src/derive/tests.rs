@@ -165,6 +165,21 @@ mod schema {
         ]
     }
 
+    /// The numbers a numeric bound refuses; a function of its own for the
+    /// reason `serde_ledger` gives.
+    fn number_ledger() -> Vec<Case> {
+        vec![case(
+            "a numeric constraint given a suffixed number",
+            quote::quote!(
+                struct Order {
+                    #[schema(minimum = 5u8)]
+                    total: u32,
+                }
+            ),
+            "takes a plain decimal number",
+        )]
+    }
+
     /// The values a `content_*` annotation refuses; a function of its own for
     /// the reason `serde_ledger` gives.
     fn content_ledger() -> Vec<Case> {
@@ -562,6 +577,7 @@ mod schema {
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
+        each_case_is_refused(number_ledger(), expand_inner);
         each_case_is_refused(content_ledger(), expand_inner);
         each_case_is_refused(described_as_ledger(), expand_inner);
         each_case_is_refused(serde_ledger(), expand_inner);
@@ -641,6 +657,7 @@ mod schema {
             ]
             .concat(),
             ledger().len()
+                + number_ledger().len()
                 + content_ledger().len()
                 + described_as_ledger().len()
                 + serde_ledger().len()

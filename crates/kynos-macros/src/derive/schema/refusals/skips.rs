@@ -12,7 +12,7 @@ use crate::derive::{
             is_described, is_flattened, is_open, is_required, is_unit_like, serde_flag,
             serde_key_span,
         },
-        described_variants, is_written, one_way_skip_span, positional_members,
+        described_variants, is_written, one_way_skip_span, positional_members, written_groups,
     },
 };
 
@@ -77,22 +77,12 @@ pub(super) fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> 
         return Ok(());
     }
 
-    let groups: Vec<&Fields> = match &input.data {
-        Data::Struct(data) => vec![&data.fields],
-        Data::Enum(data) => data
-            .variants
-            .iter()
-            .filter(|variant| is_written(variant))
-            .map(|variant| &variant.fields)
-            .collect(),
-        // Refused at the top of `expand_inner`.
-        Data::Union(_) => Vec::new(),
-    };
-
-    let named = groups.into_iter().filter_map(|fields| match fields {
-        Fields::Named(named) => Some(&named.named),
-        Fields::Unnamed(_) | Fields::Unit => None,
-    });
+    let named = written_groups(input)
+        .into_iter()
+        .filter_map(|fields| match fields {
+            Fields::Named(named) => Some(&named.named),
+            Fields::Unnamed(_) | Fields::Unit => None,
+        });
 
     for field in named.flatten().filter(|field| is_described(field)) {
         let Some((key, span)) =

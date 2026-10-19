@@ -186,13 +186,7 @@ fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
     }
 
     if NUMERIC.contains(&name.as_str()) {
-        return match meta.value()?.parse()? {
-            Lit::Int(_) | Lit::Float(_) => Ok(()),
-            other => Err(syn::Error::new(
-                other.span(),
-                format!("`{name}` takes a number"),
-            )),
-        };
+        return check_number(&name, &meta.value()?.parse()?);
     }
 
     if COUNTS.contains(&name.as_str()) {
@@ -260,6 +254,37 @@ fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
              `content_encoding` and `content_media_type`; plus `open`, which says a flattened \
              field's members are not named, and `as = T`, which describes a field as the type \
              `T`"
+        ),
+    ))
+}
+
+/// A numeric bound `name`'s value: a number, written in plain decimal, since
+/// [`as_float`](crate::derive::schema::attributes::as_float) emits it as
+/// written with `f64` appended.
+fn check_number(name: &str, literal: &Lit) -> syn::Result<()> {
+    let (token, suffix, digits) = match literal {
+        Lit::Int(value) => (value.token(), value.suffix(), value.base10_digits()),
+        Lit::Float(value) => (value.token(), value.suffix(), value.base10_digits()),
+        other => {
+            return Err(syn::Error::new(
+                other.span(),
+                format!("`{name}` takes a number"),
+            ));
+        }
+    };
+    let token = token.to_string();
+    let based = ["0x", "0o", "0b"]
+        .iter()
+        .any(|base| token.starts_with(base));
+    if suffix.is_empty() && !based {
+        return Ok(());
+    }
+    Err(syn::Error::new(
+        literal.span(),
+        format!(
+            "`{name}` takes a plain decimal number, as a JSON Schema bound is written: a type \
+             suffix or a `0x`, `0o` or `0b` base says nothing the bound can carry. Write it as \
+             `{digits}`"
         ),
     ))
 }
