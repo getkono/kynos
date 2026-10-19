@@ -376,8 +376,9 @@ impl<T: Rangeable> IntoResponse for Ranged<T> {
 /// Marks `response` as carrying `selection`: `Accept-Ranges` on every
 /// representation (section 14.3), and for a part its `Content-Range` and 206.
 ///
-/// The one place a ranged answer is framed, whether a handler, a served
-/// source or a file builds it.
+/// The one place a single-part ranged answer is framed, whether a handler, a
+/// served source or a file builds it; a `multipart/byteranges` answer frames
+/// its own 206 in `parts`.
 pub(crate) fn write_selection(
     response: &mut Response,
     selection: Selection,
