@@ -38,8 +38,14 @@ use support::get;
 /// Fifteen lines, and that is the point: the seam is two methods because
 /// anything richer would be unimplementable against Redis. `examples/rate_limit.rs`
 /// is the same shape over `moka`, with eviction.
+///
+/// It keeps every expiry it was handed beside the counts, so the lifetime a
+/// limiter asks a real store for is visible; a map never expires anything.
 #[derive(Clone, Debug, Default)]
-struct Counters(Arc<Mutex<HashMap<String, u64>>>);
+struct Counters(
+    Arc<Mutex<HashMap<String, u64>>>,
+    Arc<Mutex<Vec<(String, Duration)>>>,
+);
 
 /// A store that always fails, for the two failure policies.
 #[derive(Clone, Copy, Debug, Default)]
@@ -62,7 +68,11 @@ impl RateLimitStore for Counters {
             .unwrap_or(0))
     }
 
-    async fn increment(&self, key: &str, by: u64, _: Duration) -> Result<u64, Self::Error> {
+    async fn increment(&self, key: &str, by: u64, expiry: Duration) -> Result<u64, Self::Error> {
+        self.1
+            .lock()
+            .expect("no test panics while holding this")
+            .push((key.to_owned(), expiry));
         let mut counters = self.0.lock().expect("no test panics while holding this");
         let counter = counters.entry(key.to_owned()).or_insert(0);
         *counter += by;
@@ -548,25 +558,32 @@ async fn an_exempt_request_spends_nothing_and_is_told_so() {
 
 // --- When the store cannot answer ----------------------------------------
 
-/// A counter store outage must not become an API outage.
+/// A counter store outage must not become an API outage: every request is
+/// served and told the whole quota is left, since nothing could be counted.
+///
+/// The window is one second, so the rest of it rounds up to exactly one at
+/// every instant, the way the recovery case above pins its delay.
 #[tokio::test]
 async fn a_store_that_cannot_answer_allows_by_default() {
     let service = limited(Quotas::new(shared(), Broken).quota(Quota::new(
         "fixed",
-        1,
-        Duration::from_secs(600),
+        3,
+        Duration::from_secs(1),
     )));
 
     for _ in 0..5 {
-        assert_eq!(
-            get(&service, "/counted").call().await.status,
-            StatusCode::NO_CONTENT
-        );
+        let reply = get(&service, "/counted").call().await;
+
+        assert_eq!(reply.status, StatusCode::NO_CONTENT);
+        assert_eq!(reply.field("x-ratelimit-limit").as_deref(), Some("3"));
+        assert_eq!(reply.field("x-ratelimit-remaining").as_deref(), Some("3"));
+        assert_eq!(reply.field("x-ratelimit-reset").as_deref(), Some("1"));
     }
 }
 
 /// A deployment that would rather refuse can say so, and gets the 429 the
-/// limiter already declares.
+/// limiter already declares, with nothing left and a wait of the rest of the
+/// window — exactly one second, for the reason the case above gives.
 ///
 /// Not a 503: a second status here would collide with `Concurrency` on any
 /// route carrying both, and `CompatibleWith` would refuse to compile it.
@@ -575,12 +592,50 @@ async fn a_store_that_cannot_answer_refuses_where_that_was_selected() {
     let service = limited(
         Quotas::new(shared(), Broken)
             .on_store_failure(StoreFailure::Deny)
-            .quota(Quota::new("fixed", 1, Duration::from_secs(600))),
+            .quota(Quota::new("fixed", 3, Duration::from_secs(1))),
     );
 
+    let reply = get(&service, "/counted").call().await;
+
+    assert_eq!(reply.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(reply.field("retry-after").as_deref(), Some("1"));
+    assert_eq!(reply.field("x-ratelimit-limit").as_deref(), Some("3"));
+    assert_eq!(reply.field("x-ratelimit-remaining").as_deref(), Some("0"));
+    assert_eq!(reply.field("x-ratelimit-reset").as_deref(), Some("1"));
+}
+
+/// A counter is kept for two of its windows, since the sliding estimate reads
+/// the previous window's count as well as the current one; a store honouring
+/// a shorter lifetime would forget the count the estimate carries over.
+#[tokio::test]
+async fn each_counter_is_kept_for_two_of_its_windows() {
+    let counters = Counters::default();
+    let service = limited(
+        Quotas::new(shared(), counters.clone())
+            .quota(Quota::new("burst", 5, Duration::from_secs(600)))
+            .quota(Quota::new("daily", 1_000, Duration::from_secs(86_400))),
+    );
+
+    let reply = get(&service, "/counted").call().await;
+    assert_eq!(reply.status, StatusCode::NO_CONTENT);
+
+    let expiries: Vec<(String, Duration)> = counters
+        .1
+        .lock()
+        .expect("no panic")
+        .iter()
+        .map(|(key, expiry)| {
+            let quota = key.split('|').nth(1).expect("a quota name in the key");
+            (quota.to_owned(), *expiry)
+        })
+        .collect();
+
     assert_eq!(
-        get(&service, "/counted").call().await.status,
-        StatusCode::TOO_MANY_REQUESTS
+        expiries,
+        [
+            ("burst".to_owned(), Duration::from_secs(1_200)),
+            ("daily".to_owned(), Duration::from_secs(172_800)),
+        ]
     );
 }
 

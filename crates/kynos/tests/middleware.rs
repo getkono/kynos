@@ -56,7 +56,8 @@ impl RateLimitPolicy<App> for AlwaysAllows {
     }
 }
 
-/// A policy that always denies.
+/// A policy that always denies, for 30 seconds, while its one quota resets in
+/// 45: two numbers, so each field shows which of them it reports.
 #[derive(Clone, Debug)]
 struct AlwaysDenies(Vec<QuotaPolicy>);
 
@@ -74,7 +75,7 @@ impl RateLimitPolicy<App> for AlwaysDenies {
     async fn check(&self, _: &Request, _: Route<'_>, _: &App) -> Decision {
         Decision::deny(
             std::time::Duration::from_secs(30),
-            ServiceLimit::new("default", 100, 0, std::time::Duration::from_secs(30)),
+            ServiceLimit::new("default", 100, 0, std::time::Duration::from_secs(45)),
         )
     }
 }
@@ -98,7 +99,8 @@ async fn a_rate_limited_service_attaches_the_headers_its_declaration_names() {
 }
 
 /// A denial reports no remaining requests, and reuses the delay it already
-/// computed rather than asking the policy for a second number.
+/// computed rather than asking the policy for a second number: the 30-second
+/// `Retry-After`, not the 45 seconds the quota itself resets in.
 #[tokio::test]
 async fn a_denial_carries_the_headers_its_own_response_type_describes() {
     let service = support::router()
@@ -122,8 +124,57 @@ async fn a_denial_carries_the_headers_its_own_response_type_describes() {
     assert_eq!(reply.json()["type"], "about:blank");
 }
 
+/// The header names each covered operation's success response declares, by
+/// operation, sorted.
+fn success_headers(document: &impl serde::Serialize) -> Vec<(String, Vec<String>)> {
+    let document = serde_json::to_value(document).expect("a serializable document");
+    let operations = [
+        ("/users/{id}", "get", "200"),
+        ("/users", "get", "200"),
+        ("/users", "post", "201"),
+        ("/users/{id}", "delete", "204"),
+    ];
+
+    operations
+        .into_iter()
+        .map(|(path, method, status)| {
+            let mut names: Vec<String> =
+                document["paths"][path][method]["responses"][status]["headers"]
+                    .as_object()
+                    .map(|headers| headers.keys().cloned().collect())
+                    .unwrap_or_default();
+            names.sort();
+            (format!("{method} {path} {status}"), names)
+        })
+        .collect()
+}
+
+/// Every covered operation's success response declaring `names` beside its
+/// own: the `Location` a 201 states.
+fn every_success_declaring(names: &[&str]) -> Vec<(String, Vec<String>)> {
+    [
+        ("get /users/{id} 200", None),
+        ("get /users 200", None),
+        ("post /users 201", Some("Location")),
+        ("delete /users/{id} 204", None),
+    ]
+    .into_iter()
+    .map(|(operation, own)| {
+        let mut declared: Vec<String> = names
+            .iter()
+            .copied()
+            .chain(own)
+            .map(str::to_owned)
+            .collect();
+        declared.sort();
+        (operation.to_owned(), declared)
+    })
+    .collect()
+}
+
 /// Setting a header means declaring it, and declaring it means a client
-/// generator can see it.
+/// generator can see it: every covered operation's success response declares
+/// the triple, and nothing else.
 #[test]
 fn the_description_carries_the_rate_limit_headers_on_a_success() {
     let document = support::router()
@@ -131,11 +182,14 @@ fn the_description_carries_the_rate_limit_headers_on_a_success() {
         .openapi()
         .expect("a describable router");
 
-    let emitted = serde_json::to_string(&document).expect("a serializable document");
-
-    assert!(emitted.contains("X-RateLimit-Limit"), "{emitted}");
-    assert!(emitted.contains("X-RateLimit-Remaining"), "{emitted}");
-    assert!(emitted.contains("X-RateLimit-Reset"), "{emitted}");
+    assert_eq!(
+        success_headers(&document),
+        every_success_declaring(&[
+            "X-RateLimit-Limit",
+            "X-RateLimit-Remaining",
+            "X-RateLimit-Reset"
+        ])
+    );
 }
 
 /// The standard spelling reports every quota, which is why it exists.
@@ -183,9 +237,11 @@ async fn a_standard_spelling_refusal_reports_every_quota_too() {
         reply.field(header::RETRY_AFTER.as_str()).as_deref(),
         Some("30")
     );
+    // Each quota's own reset, where the `X-` triple has room only for the
+    // retry delay.
     assert_eq!(
         reply.field("ratelimit").as_deref(),
-        Some(r#""default";r=0;t=30"#)
+        Some(r#""default";r=0;t=45"#)
     );
     assert_eq!(
         reply.field("ratelimit-policy").as_deref(),
@@ -193,19 +249,19 @@ async fn a_standard_spelling_refusal_reports_every_quota_too() {
     );
 }
 
-/// The standard spelling declares its own field names, not the `X-` ones.
+/// The standard spelling declares its own field names, not the `X-` ones, on
+/// every covered operation's success response.
 #[test]
 fn the_description_carries_whichever_spelling_was_selected() {
-    let emitted = serde_json::to_string(
-        &support::router()
-            .intercept(RateLimit::new(AlwaysAllows::new()).standard_fields())
-            .openapi()
-            .expect("a describable router"),
-    )
-    .expect("a serializable document");
+    let document = support::router()
+        .intercept(RateLimit::new(AlwaysAllows::new()).standard_fields())
+        .openapi()
+        .expect("a describable router");
 
-    assert!(emitted.contains("RateLimit-Policy"), "{emitted}");
-    assert!(!emitted.contains("X-RateLimit-Limit"), "{emitted}");
+    assert_eq!(
+        success_headers(&document),
+        every_success_declaring(&["RateLimit", "RateLimit-Policy"])
+    );
 }
 
 /// The problem type this fixture's refusals carry.
@@ -319,7 +375,7 @@ async fn a_named_refusal_type_survives_taking_the_standard_fields() {
     // not the legacy limiter under another name.
     assert_eq!(
         reply.field("ratelimit").as_deref(),
-        Some(r#""default";r=0;t=30"#)
+        Some(r#""default";r=0;t=45"#)
     );
     assert!(reply.field("x-ratelimit-limit").is_none());
 
