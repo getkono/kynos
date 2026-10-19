@@ -272,3 +272,116 @@ fn an_unserializable_event_is_refused_rather_than_half_written() {
 
     assert!(encode(&Event::new(data)).is_err());
 }
+
+/// A zero interval re-arms the keep-alive timer at the instant it fired, so an
+/// idle stream would write heartbeat records back to back. It is refused where
+/// it is configured rather than discovered on a live connection.
+#[test]
+#[should_panic(expected = "a keep-alive interval must be greater than zero")]
+fn a_zero_keep_alive_interval_is_refused() {
+    let _ = super::KeepAlive::new().interval(Duration::ZERO);
+}
+
+/// An event stream answers as `text/event-stream`, whatever its keep-alive.
+///
+/// On a runtime, since a keep-alive's timer is created with the response.
+#[tokio::test]
+async fn an_event_stream_is_sent_as_text_event_stream() {
+    use crate::response::IntoResponse;
+
+    for sse in [
+        super::Sse::new(Ticking::new(0, Duration::ZERO)),
+        super::Sse::new(Ticking::new(0, Duration::ZERO)).keep_alive(super::KeepAlive::new()),
+    ] {
+        let response = sse.into_response();
+
+        assert_eq!(
+            response
+                .headers()
+                .get_all(crate::http::header::CONTENT_TYPE)
+                .iter()
+                .collect::<Vec<_>>(),
+            ["text/event-stream"]
+        );
+    }
+}
+
+/// Yields `remaining` events, one every `gap`, then ends.
+struct Ticking {
+    remaining: u8,
+    gap: Duration,
+    timer: std::pin::Pin<Box<tokio::time::Sleep>>,
+}
+
+impl Ticking {
+    fn new(remaining: u8, gap: Duration) -> Self {
+        Self {
+            remaining,
+            gap,
+            timer: Box::pin(tokio::time::sleep(gap)),
+        }
+    }
+}
+
+impl futures_core::Stream for Ticking {
+    type Item = Result<Event<u8>, std::convert::Infallible>;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        if this.remaining == 0 {
+            return std::task::Poll::Ready(None);
+        }
+
+        std::task::ready!(this.timer.as_mut().poll(context));
+        this.remaining -= 1;
+        let next = tokio::time::Instant::now() + this.gap;
+        this.timer.as_mut().reset(next);
+
+        std::task::Poll::Ready(Some(Ok(Event::new(this.remaining))))
+    }
+}
+
+/// The records a stream of four events `gap` apart sends under a 100 ms
+/// keep-alive, `true` for each heartbeat and `false` for each event.
+async fn records_under_keep_alive(gap: Duration) -> Vec<bool> {
+    use http_body_util::BodyExt as _;
+
+    use crate::response::IntoResponse;
+
+    let mut body = super::Sse::new(Ticking::new(4, gap))
+        .keep_alive(super::KeepAlive::new().interval(Duration::from_millis(100)))
+        .into_response()
+        .into_body();
+    let mut records = Vec::new();
+
+    while let Some(frame) = body.frame().await {
+        let data = frame.expect("a record").into_data().expect("a data frame");
+        records.push(data.starts_with(b":"));
+    }
+
+    records
+}
+
+/// Every event restarts the keep-alive, so a stream whose events come more
+/// often than the interval never sends one: here every 60 ms under a 100 ms
+/// keep-alive, which a timer left running would interrupt at 100 and 200.
+#[tokio::test(start_paused = true)]
+async fn an_event_restarts_the_keep_alive() {
+    assert_eq!(
+        records_under_keep_alive(Duration::from_millis(60)).await,
+        [false; 4]
+    );
+}
+
+/// The control: events 150 ms apart leave each 100 ms silence one heartbeat
+/// long, so a heartbeat precedes every event.
+#[tokio::test(start_paused = true)]
+async fn a_silence_longer_than_the_interval_sends_a_keep_alive() {
+    assert_eq!(
+        records_under_keep_alive(Duration::from_millis(150)).await,
+        [true, false, true, false, true, false, true, false]
+    );
+}

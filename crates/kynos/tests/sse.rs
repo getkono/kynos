@@ -25,7 +25,6 @@ use std::{
 use kynos::{
     Router,
     di::inject::Inject,
-    extract::body::text::Text,
     http::{Request, Response},
     middleware::Observer,
     response::stream::sse::{Event, KeepAlive, Sse},
@@ -159,23 +158,32 @@ async fn an_idle_event_stream_sends_the_configured_keep_alive_comment() {
 
 /// The pass control: the same stream, differing in exactly the property under
 /// test. A stream configured without keep-alive stays silent.
+///
+/// It must have read the stream to say so: the head and the one event are
+/// asserted first, or an empty read would pass for silence.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_stream_configured_without_keep_alive_sends_no_comment() {
     let lines = serving(|address| read_for("/quiet", address, Duration::from_millis(400))).await;
 
+    assert_eq!(
+        lines.first().map(String::as_str),
+        Some("HTTP/1.1 200 OK"),
+        "{lines:?}"
+    );
     assert!(
-        !lines.iter().any(|line| line.starts_with(": ")),
+        lines
+            .iter()
+            .any(|line| line.eq_ignore_ascii_case("content-type: text/event-stream")),
+        "{lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line == "data: 1"),
+        "the event never arrived: {lines:?}"
+    );
+    assert!(
+        !lines.iter().any(|line| line.starts_with(':')),
         "a stream with no keep-alive sent one anyway: {lines:?}"
     );
-}
-
-/// A zero interval re-arms the keep-alive timer at the instant it fired, so an
-/// idle stream would write heartbeat records back to back. It is refused where
-/// it is configured rather than discovered on a live connection.
-#[test]
-#[should_panic(expected = "a keep-alive interval must be greater than zero")]
-fn a_zero_keep_alive_interval_is_refused() {
-    let _ = KeepAlive::new().interval(Duration::ZERO);
 }
 
 /// What a departing client leaves behind.
@@ -191,10 +199,12 @@ struct Witness {
     disconnects: AtomicUsize,
 }
 
-/// The same one-event-then-silence stream, holding the witness it marks on drop.
+/// The same one-event stream, holding the witness it marks on drop: silent
+/// after its event, or ended after it where `ends`.
 struct Marking {
     witness: Arc<Witness>,
     sent: bool,
+    ends: bool,
 }
 
 impl futures_core::Stream for Marking {
@@ -205,7 +215,11 @@ impl futures_core::Stream for Marking {
         _: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
         if self.sent {
-            return std::task::Poll::Pending;
+            return if self.ends {
+                std::task::Poll::Ready(None)
+            } else {
+                std::task::Poll::Pending
+            };
         }
 
         self.sent = true;
@@ -227,6 +241,7 @@ async fn marked(Inject(witness): Inject<Arc<Witness>>) -> Sse<Marking> {
     Sse::new(Marking {
         witness,
         sent: false,
+        ends: false,
     })
     .keep_alive(
         KeepAlive::new()
@@ -235,11 +250,21 @@ async fn marked(Inject(witness): Inject<Arc<Witness>>) -> Sse<Marking> {
     )
 }
 
-/// A response that ends, against which a departure signal has something to be
-/// wrong about.
+/// The same stream and keep-alive, ending after its event: a response that
+/// ends, against which a departure signal has something to be wrong about,
+/// and a stream that is released by finishing rather than by a departure.
 #[kynos::get("/finite")]
-async fn finite() -> Text {
-    Text("done".to_owned())
+async fn finite(Inject(witness): Inject<Arc<Witness>>) -> Sse<Marking> {
+    Sse::new(Marking {
+        witness,
+        sent: false,
+        ends: true,
+    })
+    .keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_millis(20))
+            .comment("ping"),
+    )
 }
 
 struct Counting(Arc<Witness>);
@@ -298,8 +323,10 @@ fn read_a_finite_response_fully(address: std::net::SocketAddr) {
     // To end of stream, which `Connection: close` makes the end of the body.
     while matches!(reader.read_line(&mut body), Ok(read) if read > 0) {}
 
+    // The chunked encoding's last chunk follows the event, so the event
+    // arrived and the body ended.
     assert!(
-        body.ends_with("done"),
+        body.contains("data: 1\n\n") && body.ends_with("0\r\n\r\n"),
         "the control did not read a complete response: {body:?}"
     );
 }
@@ -398,7 +425,8 @@ async fn a_client_that_leaves_after_a_complete_response_is_not_reported() {
     let (stream_dropped, disconnects) =
         witnessing(read_a_finite_response_fully, Duration::from_millis(500)).await;
 
-    assert!(!stream_dropped, "the finite route holds no stream to drop");
+    // Both routes hold a stream; this one is released by finishing.
+    assert!(stream_dropped, "the finished stream was never released");
     assert_eq!(
         disconnects, 0,
         "a response the client received in full was reported as one it did not"
