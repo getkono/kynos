@@ -13,7 +13,7 @@ use super::install::{
 };
 use super::{
     Arc, DeclaredTag, Dispatch, Document, EndpointTerminal, Error, HashMap, OperationCx,
-    PanicPolicy, PathEntry, PathItem, Paths, Registry, Result, Route, Router, Service, Severity,
+    PanicPolicy, PathEntry, PathItem, Paths, Registry, Result, Router, Service, Severity,
     SpecError, SpecVersion, TrailingSlashPolicy, Violation, dispatch,
 };
 
@@ -366,25 +366,15 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             let location = format!("#/paths/{}", pointer_token(&key));
             let method = mounted.endpoint.method();
 
-            // The `Route` needs the id before the operation exists; a throwaway
-            // registry keeps the probe from recording conflicts twice.
-            let operation_id = {
-                let mut probe = Registry::new();
-                let mut cx = OperationCx::new(&mut probe);
-                mounted.endpoint.describe(&mut cx);
-                cx.finish().operation_id.unwrap_or_default()
-            };
-            let route = Route::new(&key, &operation_id, method);
-
             let mut cx = OperationCx::new(&mut registry);
             mounted.endpoint.describe(&mut cx);
 
-            links.record(&operation_id, method, &mounted.path, cx.links());
+            links.record(cx.operation_id(), method, &mounted.path, cx.links());
 
             // Router's interceptors outermost, then the enclosing scopes'; the
             // endpoint described itself first, so its responses win.
             for interceptor in self.interceptors.iter().chain(&mounted.interceptors) {
-                interceptor.describe(route, &mut cx);
+                interceptor.describe(&mut cx);
             }
 
             for tag in self.tags.iter().chain(&mounted.tags) {

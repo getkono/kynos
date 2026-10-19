@@ -229,6 +229,11 @@ impl OperationCx<'_> {
         self.operation.operation_id = Some(id.into());
     }
 
+    /// The operation identifier set so far, empty when none is.
+    pub(crate) fn operation_id(&self) -> &str {
+        self.operation.operation_id.as_deref().unwrap_or_default()
+    }
+
     /// Sets the summary.
     pub fn set_summary(&mut self, summary: impl Into<String>) {
         self.operation.summary = Some(summary.into());

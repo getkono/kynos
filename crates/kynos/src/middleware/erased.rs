@@ -13,13 +13,14 @@ use crate::{
     http::{Request, Response},
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses},
-    router::operation::{OperationCx, Route},
+    router::operation::OperationCx,
 };
 
 /// The object-safe form of [`Interceptor`].
 pub(crate) trait ErasedInterceptor<C>: Send + Sync + 'static {
-    /// Adds this interceptor's three declarations to `operation`.
-    fn describe(&self, route: Route<'_>, operation: &mut OperationCx<'_>);
+    /// Adds this interceptor's three declarations to `operation`, which are
+    /// the same for every operation it covers.
+    fn describe(&self, operation: &mut OperationCx<'_>);
 
     fn intercept<'a>(
         &'a self,
@@ -42,10 +43,7 @@ where
     C: Sync + 'static,
     I: Interceptor<C>,
 {
-    fn describe(&self, route: Route<'_>, operation: &mut OperationCx<'_>) {
-        // An interceptor declares the same thing for every operation it covers.
-        let _ = route;
-
+    fn describe(&self, operation: &mut OperationCx<'_>) {
         if <I::Reads as HeaderParams>::DESCRIBED {
             let parameters = <I::Reads as HeaderParams>::parameters(operation.registry());
             for parameter in parameters {

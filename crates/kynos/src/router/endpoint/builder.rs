@@ -269,13 +269,8 @@ where
         // First, so the handler's responses win over an interceptor's.
         <H as Handler<C, A>>::describe(operation);
 
-        let route = Route::new(
-            self.path.as_str(),
-            self.operation_id.unwrap_or_default(),
-            self.method,
-        );
         for interceptor in &self.interceptors {
-            interceptor.describe(route, operation);
+            interceptor.describe(operation);
         }
 
         if let Some(id) = self.operation_id {

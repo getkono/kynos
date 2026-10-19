@@ -44,7 +44,7 @@ use crate::{
         dispatch::{Dispatch, EndpointTerminal, PathEntry},
         endpoint::{DynEndpoint, set::IntoEndpoints},
         group::Group,
-        operation::{DeclaredTag, OperationCx, Route, Tag},
+        operation::{DeclaredTag, OperationCx, Tag},
         policy::{FallbackPolicy, TrailingSlashPolicy},
         service::Service,
     },
