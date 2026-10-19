@@ -45,6 +45,19 @@ impl Body {
         }
     }
 
+    /// The exact length the body states, read without locking it.
+    ///
+    /// For an owned body, in place of [`HttpBody::size_hint`]: that takes
+    /// `&self`, so it locks, and where `std`'s mutex is a lazily boxed pthread
+    /// mutex (macOS among others) the first lock is a heap allocation.
+    pub(crate) fn exact_length(&mut self) -> Option<u64> {
+        self.inner
+            .get_mut()
+            .expect("a mutably borrowed body mutex cannot be poisoned")
+            .size_hint()
+            .exact()
+    }
+
     /// A body that yields `arrived` and then fails with `error`.
     ///
     /// For a buffering interceptor whose read failed part-way, so the extractor
