@@ -648,6 +648,10 @@ async fn binding_is_atomic_when_a_later_address_is_unavailable() {
 /// address it resolves to gets a listener of its own, in the resolver's
 /// order. `localhost` is the one name every host resolves without asking a
 /// network, often to both loopback addresses.
+///
+/// A host may list `::1` for `localhost` while its IPv6 loopback is disabled.
+/// Binding is atomic, so there the expected answer is the refusal of the
+/// first address the host cannot bind, which a probe bind finds beforehand.
 #[tokio::test]
 async fn a_name_is_bound_once_per_address_it_resolves_to() {
     let resolved = tokio::net::lookup_host("localhost:0")
@@ -655,16 +659,32 @@ async fn a_name_is_bound_once_per_address_it_resolves_to() {
         .expect("localhost resolves")
         .map(|address| address.ip())
         .collect::<Vec<_>>();
+    let unbindable = resolved
+        .iter()
+        .map(|ip| std::net::SocketAddr::new(*ip, 0))
+        .find(|address| std::net::TcpListener::bind(address).is_err());
 
     for configured in [
         crate::server::address::BindAddress::from("localhost:0"),
         crate::server::address::BindAddress::from(("localhost", 0)),
     ] {
-        let bound = crate::server::Server::new(test_service())
+        let prepared = crate::server::Server::new(test_service())
             .bind(configured.clone())
             .prepare()
-            .await
-            .unwrap_or_else(|error| panic!("{configured} binds: {error:?}"));
+            .await;
+        if let Some(unbindable) = unbindable {
+            let error = prepared.expect_err("an address the host cannot bind is refused");
+            assert!(
+                matches!(
+                    &error,
+                    crate::Error::Server(crate::server::error::ServerError::Bind { address, .. })
+                        if *address == unbindable
+                ),
+                "{configured}: {error:?}"
+            );
+            continue;
+        }
+        let bound = prepared.unwrap_or_else(|error| panic!("{configured} binds: {error:?}"));
         let addresses = bound.local_addrs();
 
         assert_eq!(
@@ -683,14 +703,15 @@ async fn a_name_is_bound_once_per_address_it_resolves_to() {
 }
 
 /// A name that does not resolve is refused as itself, before anything binds,
-/// in either form a name takes: one string, or a host and a port. Neither
-/// needs a network to fail: the first has no port to parse, and RFC 6761
-/// §6.4 reserves `.invalid` so that no name under it resolves.
+/// in either form a name takes: one string, or a host and a port. Both are
+/// refused before any resolver is asked, so the outcome does not depend on
+/// the host's DNS: the first has no port to parse, and the second holds a NUL
+/// byte, which no C resolver call can be handed.
 #[tokio::test]
 async fn a_name_that_does_not_resolve_is_refused_as_itself() {
     for configured in [
         crate::server::address::BindAddress::from("localhost"),
-        crate::server::address::BindAddress::from(("kynos.invalid", 80)),
+        crate::server::address::BindAddress::from(("kynos\0invalid", 80)),
     ] {
         let error = crate::server::Server::new(test_service())
             .bind(configured.clone())
