@@ -21,8 +21,9 @@ mod tests;
 
 /// Serializes `value` as JSON into a body of exactly its length.
 ///
-/// Every JSON body the framework writes goes through here: [`Json`], a
-/// `#[derive(Reply)]` variant and a [`Problem`]. Ungated, since a problem
+/// The body of a [`Json`], a `#[derive(Reply)]` variant and a [`Problem`]
+/// goes through here; streamed JSON records, server-sent events and the
+/// OpenAPI description serialize on their own. Ungated, since a problem
 /// document is written without the `json` feature.
 ///
 /// [`Json`]: crate::extract::body::json::Json
