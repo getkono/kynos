@@ -56,6 +56,12 @@ pub mod model;
 pub mod pattern;
 pub mod validate;
 
+// Internal: the locations `emit` and `validate` both report, kept below both
+// so neither depends on the other for them.
+mod pointer;
+// Internal: the one walk over Path Items and Operations the rules share.
+mod visit;
+
 // The curated crate-root facade: shortcuts to items whose canonical paths are
 // inside `annotation`, `model` or `validate`.
 #[cfg(feature = "openapi32")]

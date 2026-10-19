@@ -57,13 +57,6 @@ impl<E: std::fmt::Display> std::fmt::Display for Violation<E> {
 /// already includes the error.
 impl<E: std::fmt::Debug + std::fmt::Display> std::error::Error for Violation<E> {}
 
-/// Escapes one map key for use as a JSON Pointer token, per RFC 6901.
-///
-/// Every `paths` key contains a `/`, which must not split the location.
-pub(crate) fn pointer_token(key: &str) -> String {
-    key.replace('~', "~0").replace('/', "~1")
-}
-
 /// A way in which a document fails to conform.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]

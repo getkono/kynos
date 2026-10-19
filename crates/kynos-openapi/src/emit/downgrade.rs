@@ -6,19 +6,18 @@ mod unrecognised;
 mod walk;
 
 #[cfg(feature = "openapi32")]
-use walk::{collect_components_blockers, collect_path_item_blockers, collect_servers_blockers};
+use walk::{Blockers, collect_components_blockers, collect_servers_blockers};
 
 use crate::model::document::Document;
 #[cfg(feature = "openapi32")]
-use crate::validate::violation::pointer_token;
+use crate::pointer::pointer_token;
 
 // Reached only while collecting 3.2 blockers.
 #[cfg(feature = "openapi32")]
 use crate::model::{
     body::{encoding::Encoding, media_type::MediaType},
-    callback::Callback,
     components::Components,
-    example::{Example, ExampleValue, Examples},
+    example::{Example, ExampleValue},
     link::Link,
     parameter::{Parameter, ParameterIn, header::Header},
     paths::{item::PathItem, operation::Operation},
@@ -131,21 +130,15 @@ fn collect_three_two_fields(document: &Document, blockers: &mut Vec<String>) {
             }
         }
     }
-    collect_components_blockers("#/components", &document.components, blockers);
-
-    for (raw, item) in &document.paths.items {
-        collect_path_item_blockers(&format!("#/paths/{}", pointer_token(raw)), item, blockers);
-    }
+    collect_components_blockers(
+        crate::pointer::At::ROOT.key("components"),
+        &document.components,
+        blockers,
+    );
 
     // A webhook is a Path Item, and every 3.2 construct one can carry is
     // one a Path Item under `paths` can carry.
-    for (name, item) in &document.webhooks {
-        collect_path_item_blockers(
-            &format!("#/webhooks/{}", pointer_token(name)),
-            item,
-            blockers,
-        );
-    }
+    crate::visit::routes(document, &mut Blockers { blockers });
 }
 
 /// Visits each present item of a `RefOr` map, at the pointer it lives at.

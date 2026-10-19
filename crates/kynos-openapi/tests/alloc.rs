@@ -63,14 +63,14 @@
 //! for unrecognised fields that every build runs renders a pointer only for a
 //! field it reports, so on this fixture a baseline build allocates nothing
 //! walking and does the clone alone: stage two reads 125,
-//! 1205 and 12 005 there against the 374, 3524 and 35 024 at
+//! 1205 and 12 005 there against the 299, 2819 and 28 019 at
 //! `--all-features`. Enforcing the larger number at baseline would run
-//! `mise run test:baseline` — a gate of its own — at a ratchet roughly three
-//! times looser than its own measurement, which is the guessed ceiling
+//! `mise run test:baseline` — a gate of its own — at a ratchet more than twice
+//! as loose as its own measurement, which is the guessed ceiling
 //! [`nfr.md`](../../../docs/nfr.md#thresholds) refuses; a per-operation
 //! allocation added to `three_two_only_constructs`'s baseline arm, which
 //! `--all-features` never compiles, would fit inside the slack. So
-//! `EMIT_CEILINGS` is the one `#[cfg]`-gated item in the file and every other
+//! `EMIT_CEILINGS` is the one `#[cfg]`-gated number in the file and every other
 //! number is shared: stage one and the byte counts are identical under both,
 //! since neither feature changes what 3.1 serializes.
 //!
@@ -102,12 +102,12 @@
 //!   fires on `n^2.0001` and on `n³`; it does not fire at exactly `n²` over a
 //!   linear cost, at any coefficient, over any span of sizes. Concretely: a
 //!   descent in `three_two_only_constructs` allocating one pointer per
-//!   (path, path) pair reads 474, 13 524 and 1 035 024 at `--all-features` —
+//!   (path, path) pair reads 399, 12 819 and 1 028 019 at `--all-features` —
 //!   each recorded ceiling plus n², which is how `NESTED_WALK` below derives
 //!   them from whichever ceilings the build enforces, and over 95% of the cost
 //!   at a thousand operations — and *both* decades satisfy the relation.
 //!
-//!   **The per-size ceilings are what catch that case** (474 exceeds the 374
+//!   **The per-size ceilings are what catch that case** (399 exceeds the 299
 //!   recorded at ten operations), and they are what catch the sub-quadratic
 //!   exponents above. That is the division of labour, and it is the reverse of
 //!   what a reader expects: the relation is the half that carries no recorded
@@ -164,13 +164,13 @@ struct Size {
 /// What one [`Document::emit`] allocates at each of [`SIZES`]'s points, at
 /// `--all-features`.
 ///
-/// The only `#[cfg]`-gated item here, and it is gated because the cost it
+/// The only `#[cfg]`-gated number here, and it is gated because the cost it
 /// records is: `emit::downgrade::three_two_only_constructs` builds a pointer
 /// per node of `paths` under `openapi32` and none without it, so one table
-/// enforced under both would be roughly three times looser than its own
+/// enforced under both would be more than twice as loose as its own
 /// measurement in the build that reads it lower.
 #[cfg(feature = "openapi32")]
-const EMIT_CEILINGS: [usize; 3] = [374, 3524, 35_024];
+const EMIT_CEILINGS: [usize; 3] = [299, 2819, 28_019];
 
 /// ...and at baseline, where the typed downgrade walk is compiled out, the
 /// walk for unrecognised fields allocates nothing on this fixture, and
@@ -585,6 +585,29 @@ fn one_emission_allocates_what_was_recorded() {
             A_CEILING_MOVES_BY_DECISION,
         );
     }
+}
+
+/// Emitting at 3.2 looks for nothing 3.1 cannot express, so it costs exactly
+/// the copy it returns.
+///
+/// Gated because 3.2 is: without `openapi32` there is no version to emit at
+/// whose walk could be skipped. Compared with a copy counted here rather than
+/// with a recorded number, so it holds whatever a copy comes to cost.
+#[cfg(feature = "openapi32")]
+#[test]
+fn emitting_at_three_two_walks_nothing() {
+    let document = document(SIZES[SIZES.len() - 1].operations);
+
+    let (copied, copy) = counted(|| document.clone());
+    drop(copy);
+    let (emitted, emission) = counted(|| document.emit(SpecVersion::V3_2));
+    drop(emission.expect("a 3.1 document emits as 3.2"));
+
+    assert_eq!(
+        emitted, copied,
+        "emitting at 3.2 allocated {emitted} times and a copy {copied}; the difference is a \
+         search for 3.2-only constructs that 3.2 expresses anyway"
+    );
 }
 
 /// The requirement itself, over both stages: cost per operation does not grow

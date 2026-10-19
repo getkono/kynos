@@ -11,7 +11,6 @@ use crate::{
     annotation::UNCHECKED_SCHEMA_ANNOTATION,
     model::{
         body::{RequestBody, media_type::MediaType},
-        callback::Callback,
         components::Components,
         document::{Document, SpecVersion},
         parameter::{
@@ -23,10 +22,12 @@ use crate::{
         response::Response,
         schema::{Schema, object::SchemaObject},
     },
+    pointer::{At, pointer_token},
     validate::{
         rules::{content::for_each_encoding, discriminator::Discriminators},
-        violation::{SpecError, Violation, pointer_token},
+        violation::{SpecError, Violation},
     },
+    visit::{self, Visit},
 };
 
 /// What one walk over a document's schemas reads and gathers.
@@ -55,12 +56,7 @@ pub(in crate::validate) fn check_schemas(
 }
 
 fn walk_document(document: &Document, walk: &mut Walk<'_>) {
-    for (raw, item) in &document.paths.items {
-        check_path_item(&format!("#/paths/{}", pointer_token(raw)), item, walk);
-    }
-    for (name, item) in &document.webhooks {
-        check_path_item(&format!("#/webhooks/{}", pointer_token(name)), item, walk);
-    }
+    visit::routes(document, walk);
 
     let components = &document.components;
     for (name, schema) in &components.schemas {
@@ -82,15 +78,16 @@ fn walk_document(document: &Document, walk: &mut Walk<'_>) {
     for (location, header) in items("#/components/headers", &components.headers) {
         check_header(&location, header, walk);
     }
-    for (location, callback) in items("#/components/callbacks", &components.callbacks) {
-        check_callback(&location, callback, walk);
+    let at = At::ROOT.key("components");
+    let callbacks = at.key("callbacks");
+    for (name, callback) in &components.callbacks {
+        if let Some(callback) = callback.as_item() {
+            visit::callback(callbacks.key(name), callback, walk);
+        }
     }
+    let path_items = at.key("pathItems");
     for (name, item) in &components.path_items {
-        check_path_item(
-            &format!("#/components/pathItems/{}", pointer_token(name)),
-            item,
-            walk,
-        );
+        visit::path_item(path_items.key(name), item, walk);
     }
     #[cfg(feature = "openapi32")]
     for (location, media_type) in items("#/components/mediaTypes", &components.media_types) {
@@ -110,51 +107,31 @@ fn items<'doc, T>(
     })
 }
 
-fn check_path_item(location: &str, item: &PathItem, walk: &mut Walk<'_>) {
-    check_parameters(location, &item.parameters, walk);
-
-    for (method, operation) in item.operations() {
-        check_operation(
-            &format!("{location}/{}", method.as_wire_str().to_lowercase()),
-            operation,
-            walk,
-        );
-    }
-    #[cfg(feature = "openapi32")]
-    for (method, operation) in &item.additional_operations {
-        check_operation(
-            &format!("{location}/additionalOperations/{}", pointer_token(method)),
-            operation,
-            walk,
-        );
-    }
-}
-
-fn check_operation(location: &str, operation: &Operation, walk: &mut Walk<'_>) {
-    check_parameters(location, &operation.parameters, walk);
-
-    if let Some(RefOr::Item(body)) = &operation.request_body {
-        check_request_body(&format!("{location}/requestBody"), body, walk);
+/// The schemas each Path Item and operation holds; the walk reaches their
+/// callbacks' after them.
+impl<'doc> Visit<'doc> for Walk<'_> {
+    fn path_item(&mut self, at: At<'_>, item: &'doc PathItem, _path: Option<&'doc str>) -> bool {
+        check_parameters(&at.pointer(), &item.parameters, self);
+        true
     }
 
-    if let Some(RefOr::Item(response)) = &operation.responses.default_response {
-        check_response(&format!("{location}/responses/default"), response, walk);
-    }
-    for (location, response) in items(
-        &format!("{location}/responses"),
-        &operation.responses.responses,
-    ) {
-        check_response(&location, response, walk);
-    }
+    fn operation(&mut self, at: At<'_>, _item: &'doc PathItem, operation: &'doc Operation) {
+        let location = at.pointer();
+        check_parameters(&location, &operation.parameters, self);
 
-    for (location, callback) in items(&format!("{location}/callbacks"), &operation.callbacks) {
-        check_callback(&location, callback, walk);
-    }
-}
+        if let Some(RefOr::Item(body)) = &operation.request_body {
+            check_request_body(&format!("{location}/requestBody"), body, self);
+        }
 
-fn check_callback(location: &str, callback: &Callback, walk: &mut Walk<'_>) {
-    for (location, item) in items(location, &callback.items) {
-        check_path_item(&location, item, walk);
+        if let Some(RefOr::Item(response)) = &operation.responses.default_response {
+            check_response(&format!("{location}/responses/default"), response, self);
+        }
+        for (location, response) in items(
+            &format!("{location}/responses"),
+            &operation.responses.responses,
+        ) {
+            check_response(&location, response, self);
+        }
     }
 }
 

@@ -9,10 +9,11 @@ use std::collections::HashMap;
 
 use crate::{
     model::{components::ComponentName, document::Document, link::Link, server::Server},
+    pointer::pointer_token,
     validate::{
         Validator,
         rules::parameters::check_parameter,
-        violation::{SpecError, Violation, pointer_token},
+        violation::{SpecError, Violation},
     },
 };
 

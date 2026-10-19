@@ -7,7 +7,6 @@ use std::collections::{HashMap, HashSet};
 use crate::{
     Map,
     model::{
-        callback::Callback,
         components::Components,
         document::Document,
         link::{Link, LinkTarget},
@@ -15,6 +14,7 @@ use crate::{
         reference::RefOr,
         response::status::StatusPattern,
     },
+    pointer::{At, pointer_token},
     validate::{
         Validator,
         rules::{
@@ -24,8 +24,9 @@ use crate::{
             parameters::check_parameter_list,
             paths::check_path_correspondence,
         },
-        violation::{SpecError, Violation, pointer_token},
+        violation::{SpecError, Violation},
     },
+    visit::{self, Visit},
 };
 
 impl Validator {
@@ -150,82 +151,33 @@ struct Targets<'doc> {
     elsewhere: bool,
 }
 
+impl<'doc> Visit<'doc> for Targets<'doc> {
+    /// A Path Item's own `$ref` stops the walk as much as a referenced one.
+    fn path_item(&mut self, at: At<'_>, item: &'doc PathItem, _path: Option<&'doc str>) -> bool {
+        if let Some(uri) = &item.reference {
+            self.reference(at, uri);
+        }
+        true
+    }
+
+    fn operation_walked(&mut self, at: At<'_>, operation: &'doc Operation) {
+        if let Some(id) = &operation.operation_id {
+            self.ids.insert(id);
+        }
+        self.operations.push((at.pointer(), operation));
+    }
+
+    fn reference(&mut self, at: At<'_>, uri: &'doc str) {
+        self.elsewhere |= !uri.starts_with('#');
+        self.references.push(at.pointer());
+    }
+}
+
 impl<'doc> Targets<'doc> {
     fn of(document: &'doc Document) -> Self {
         let mut targets = Self::default();
-        for (raw, item) in &document.paths.items {
-            targets.item(&format!("#/paths/{}", pointer_token(raw)), item);
-        }
-        for (name, item) in &document.webhooks {
-            targets.item(&format!("#/webhooks/{}", pointer_token(name)), item);
-        }
-        for (name, item) in &document.components.path_items {
-            targets.item(
-                &format!("#/components/pathItems/{}", pointer_token(name)),
-                item,
-            );
-        }
-        for (name, callback) in &document.components.callbacks {
-            targets.callback(
-                &format!("#/components/callbacks/{}", pointer_token(name)),
-                callback,
-            );
-        }
+        visit::document(document, &mut targets);
         targets
-    }
-
-    fn reference(&mut self, location: &str, uri: &str) {
-        self.elsewhere |= !uri.starts_with('#');
-        self.references.push(location.to_owned());
-    }
-
-    fn item(&mut self, location: &str, item: &'doc PathItem) {
-        if let Some(uri) = &item.reference {
-            self.reference(location, uri);
-        }
-        let named = item
-            .operations()
-            .map(|(method, operation)| (method.as_wire_str().to_lowercase(), operation));
-        #[cfg(feature = "openapi32")]
-        let named = named.chain(
-            item.additional_operations
-                .iter()
-                .map(|(method, operation)| {
-                    (
-                        format!("additionalOperations/{}", pointer_token(method)),
-                        &**operation,
-                    )
-                }),
-        );
-        for (segment, operation) in named {
-            let location = format!("{location}/{segment}");
-            if let Some(id) = &operation.operation_id {
-                self.ids.insert(id);
-            }
-            for (name, callback) in &operation.callbacks {
-                self.callback(
-                    &format!("{location}/callbacks/{}", pointer_token(name)),
-                    callback,
-                );
-            }
-            self.operations.push((location, operation));
-        }
-    }
-
-    fn callback(&mut self, location: &str, callback: &'doc RefOr<Callback>) {
-        let callback = match callback {
-            RefOr::Ref(reference) => {
-                return self.reference(location, &reference.location);
-            }
-            RefOr::Item(callback) => callback,
-        };
-        for (expression, item) in &callback.items {
-            let location = format!("{location}/{}", pointer_token(expression));
-            match item {
-                RefOr::Ref(reference) => self.reference(&location, &reference.location),
-                RefOr::Item(item) => self.item(&location, item),
-            }
-        }
     }
 
     /// Whether `operation_ref`, a same-document reference, may point at an

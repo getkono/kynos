@@ -13,9 +13,10 @@ use crate::{
         },
         reference::RefOr,
     },
+    pointer::pointer_token,
     validate::{
         rules::extensions::check_extensions,
-        violation::{SpecError, Violation, pointer_token},
+        violation::{SpecError, Violation},
     },
 };
 

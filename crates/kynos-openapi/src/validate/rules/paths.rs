@@ -10,14 +10,16 @@ use crate::{
         parameter::ParameterIn,
         paths::{item::PathItem, operation::Operation, template::PathTemplate},
     },
+    pointer::At,
     validate::{
         Validator,
         rules::{
             document::check_server_list,
             parameters::{Resolved, check_parameter_list, resolve_parameter},
         },
-        violation::{SpecError, Violation, pointer_token},
+        violation::{SpecError, Violation},
     },
+    visit::{self, Visit},
 };
 
 impl Validator {
@@ -35,135 +37,97 @@ impl Validator {
         let declared_tags: HashSet<&str> =
             document.tags.iter().map(|tag| tag.name.as_str()).collect();
 
-        let mut operation_ids: HashMap<&str, String> = HashMap::new();
-        let mut normalized_paths: HashMap<String, &String> = HashMap::new();
+        // Every container an operation can be described in, since
+        // `operationId` is unique across "all operations described in the API".
+        visit::document(
+            document,
+            &mut Items {
+                validator: self,
+                components: &document.components,
+                declared_schemes,
+                declared_tags,
+                operation_ids: HashMap::new(),
+                normalized_paths: HashMap::new(),
+                template: None,
+                violations,
+            },
+        );
+    }
+}
 
-        for (raw, item) in &document.paths.items {
-            let location = format!("#/paths/{}", pointer_token(raw));
+/// What the walk over every Path Item and operation reads and gathers.
+struct Items<'doc, 'v> {
+    validator: Validator,
+    components: &'doc Components,
+    declared_schemes: HashSet<&'doc str>,
+    declared_tags: HashSet<&'doc str>,
+    /// Where each `operationId` was first seen.
+    operation_ids: HashMap<&'doc str, String>,
+    /// The `paths` key each normalized template was first seen under.
+    normalized_paths: HashMap<String, &'doc str>,
+    /// The template of the `paths` entry being walked, with its Path Item.
+    ///
+    /// Only that item's own operations read it: webhook names and callback
+    /// expressions, including those below it, are not paths.
+    template: Option<(&'doc PathItem, PathTemplate)>,
+    violations: &'v mut Vec<Violation>,
+}
 
-            let template = match PathTemplate::parse(raw.clone()) {
+impl<'doc> Visit<'doc> for Items<'doc, '_> {
+    /// One Path Item's template, where it has one, and parameters.
+    ///
+    /// A `paths` key that is no template skips the item: nothing below it can
+    /// be judged against its variables.
+    fn path_item(&mut self, at: At<'_>, item: &'doc PathItem, path: Option<&'doc str>) -> bool {
+        let location = at.pointer();
+
+        if let Some(raw) = path {
+            let template = match PathTemplate::parse(raw) {
                 Ok(template) => template,
                 Err(error) => {
                     // A deserialized key never passed through `parse`; this is
                     // the only place it is checked.
-                    violations.push(Violation::error(
+                    self.violations.push(Violation::error(
                         &location,
                         SpecError::InvalidPathTemplate {
-                            template: raw.clone(),
+                            template: raw.to_owned(),
                             reason: error,
                         },
                     ));
-                    continue;
+                    return false;
                 }
             };
 
-            if let Some(existing) = normalized_paths.insert(template.normalized(), raw) {
+            if let Some(existing) = self.normalized_paths.insert(template.normalized(), raw) {
                 if existing != raw {
-                    violations.push(Violation::error(
+                    self.violations.push(Violation::error(
                         &location,
                         SpecError::DuplicatePathTemplate {
-                            template: raw.clone(),
-                            existing: existing.clone(),
+                            template: raw.to_owned(),
+                            existing: existing.to_owned(),
                         },
                     ));
                 }
             }
 
-            self.check_item(
-                &location,
-                Some(&template),
-                item,
-                &document.components,
-                &declared_schemes,
-                &declared_tags,
-                &mut operation_ids,
-                violations,
-            );
+            self.template = Some((item, template));
         }
 
-        // Every other container an operation can be described in, since
-        // `operationId` is unique across "all operations described in the API".
-        // No template: webhook names and callback expressions are not paths.
-        for (name, item) in &document.webhooks {
-            self.check_item(
-                &format!("#/webhooks/{}", pointer_token(name)),
-                None,
-                item,
-                &document.components,
-                &declared_schemes,
-                &declared_tags,
-                &mut operation_ids,
-                violations,
-            );
-        }
-
-        for (name, item) in &document.components.path_items {
-            self.check_item(
-                &format!("#/components/pathItems/{}", pointer_token(name)),
-                None,
-                item,
-                &document.components,
-                &declared_schemes,
-                &declared_tags,
-                &mut operation_ids,
-                violations,
-            );
-        }
-
-        for (name, callback) in &document.components.callbacks {
-            let Some(callback) = callback.as_item() else {
-                continue;
-            };
-            for (expression, item) in &callback.items {
-                let Some(item) = item.as_item() else { continue };
-                self.check_item(
-                    &format!(
-                        "#/components/callbacks/{}/{}",
-                        pointer_token(name),
-                        pointer_token(expression)
-                    ),
-                    None,
-                    item,
-                    &document.components,
-                    &declared_schemes,
-                    &declared_tags,
-                    &mut operation_ids,
-                    violations,
-                );
-            }
-        }
-    }
-
-    /// One Path Item's parameters and every operation on it.
-    ///
-    /// `template` is `None` where the item hangs off a webhook, a reusable
-    /// component or a callback expression. Inline callbacks are walked too.
-    #[allow(clippy::too_many_arguments)]
-    fn check_item<'doc>(
-        self,
-        location: &str,
-        template: Option<&PathTemplate>,
-        item: &'doc PathItem,
-        components: &Components,
-        declared_schemes: &HashSet<&str>,
-        declared_tags: &HashSet<&str>,
-        operation_ids: &mut HashMap<&'doc str, String>,
-        violations: &mut Vec<Violation>,
-    ) {
-        check_server_list(location, &item.servers, violations);
-        check_parameter_list(location, &item.parameters, components, violations);
+        check_server_list(&location, &item.servers, self.violations);
+        check_parameter_list(
+            &location,
+            &item.parameters,
+            self.components,
+            self.violations,
+        );
         #[cfg(feature = "openapi32")]
         super::parameters::check_querystring(
-            location,
+            &location,
             &[],
             &item.parameters,
-            components,
-            violations,
+            self.components,
+            self.violations,
         );
-
-        let named = item
-            .operations()
-            .map(|(method, operation)| (method.as_wire_str().to_lowercase(), operation));
 
         // `operations()` never yields an operation under 3.2's
         // `additionalOperations`. A key naming a fixed-field method is refused
@@ -171,63 +135,36 @@ impl Validator {
         #[cfg(feature = "openapi32")]
         for key in item.additional_operations.keys() {
             if let Some(method) = crate::model::paths::method::Method::from_wire_str(key) {
-                violations.push(Violation::error(
-                    format!("{location}/additionalOperations/{}", pointer_token(key)),
+                self.violations.push(Violation::error(
+                    format!(
+                        "{location}/additionalOperations/{}",
+                        crate::pointer::pointer_token(key)
+                    ),
                     SpecError::FixedMethodInAdditionalOperations { method },
                 ));
             }
         }
-        #[cfg(feature = "openapi32")]
-        let named = named.chain(
-            item.additional_operations
-                .iter()
-                .map(|(method, operation)| {
-                    (
-                        format!("additionalOperations/{}", pointer_token(method)),
-                        &**operation,
-                    )
-                }),
+
+        true
+    }
+
+    fn operation(&mut self, at: At<'_>, item: &'doc PathItem, operation: &'doc Operation) {
+        let template = self
+            .template
+            .as_ref()
+            .filter(|(holder, _)| std::ptr::eq(*holder, item))
+            .map(|(_, template)| template);
+        self.validator.check_operation(
+            &at.pointer(),
+            template,
+            item,
+            operation,
+            self.components,
+            &self.declared_schemes,
+            &self.declared_tags,
+            &mut self.operation_ids,
+            self.violations,
         );
-
-        for (segment, operation) in named {
-            let location = format!("{location}/{segment}");
-            self.check_operation(
-                &location,
-                template,
-                item,
-                operation,
-                components,
-                declared_schemes,
-                declared_tags,
-                operation_ids,
-                violations,
-            );
-
-            // Inline callbacks only, without a template; a referenced one is
-            // checked at its component, which also bounds the recursion.
-            for (name, callback) in &operation.callbacks {
-                let Some(callback) = callback.as_item() else {
-                    continue;
-                };
-                for (expression, item) in &callback.items {
-                    let Some(item) = item.as_item() else { continue };
-                    self.check_item(
-                        &format!(
-                            "{location}/callbacks/{}/{}",
-                            pointer_token(name),
-                            pointer_token(expression)
-                        ),
-                        None,
-                        item,
-                        components,
-                        declared_schemes,
-                        declared_tags,
-                        operation_ids,
-                        violations,
-                    );
-                }
-            }
-        }
     }
 }
 

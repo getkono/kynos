@@ -336,6 +336,25 @@ pub enum Examples {
     Named(Map<RefOr<Example>>),
 }
 
+/// What each holder's `example` and `named_examples` accessors read.
+impl Examples {
+    /// The inline example, when the value is shown with one.
+    pub(crate) fn as_inline(&self) -> Option<&Value> {
+        match self {
+            Self::Inline(value) => Some(value),
+            Self::Named(_) => None,
+        }
+    }
+
+    /// The named examples, when the value is shown with those.
+    pub(crate) fn as_named(&self) -> Option<&Map<RefOr<Example>>> {
+        match self {
+            Self::Named(named) => Some(named),
+            Self::Inline(_) => None,
+        }
+    }
+}
+
 /// An object setting both of the mutually exclusive example fields.
 #[derive(Debug)]
 pub(crate) struct ExamplesConflict;

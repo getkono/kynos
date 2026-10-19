@@ -10,41 +10,14 @@ use crate::{
         MalformedAnnotation, NOT_AUTHORITATIVE_ANNOTATION, OPAQUE_ROUTES_ANNOTATION, Opaque,
         OpaqueRoute,
     },
-    model::{
-        callback::Callback,
-        document::Document,
-        extensions::EXTENSION_PREFIX,
-        paths::{item::PathItem, operation::Operation},
-        reference::RefOr,
-    },
-    validate::violation::{SpecError, Violation, pointer_token},
+    model::{document::Document, extensions::EXTENSION_PREFIX, paths::operation::Operation},
+    pointer::{At, pointer_token},
+    validate::violation::{SpecError, Violation},
+    visit::{self, Visit},
 };
 
 pub(in crate::validate) fn check_opaque(document: &Document, violations: &mut Vec<Violation>) {
-    for (raw, item) in &document.paths.items {
-        check_item(&format!("#/paths/{}", pointer_token(raw)), item, violations);
-    }
-    for (name, item) in &document.webhooks {
-        check_item(
-            &format!("#/webhooks/{}", pointer_token(name)),
-            item,
-            violations,
-        );
-    }
-    for (name, item) in &document.components.path_items {
-        check_item(
-            &format!("#/components/pathItems/{}", pointer_token(name)),
-            item,
-            violations,
-        );
-    }
-    for (name, callback) in &document.components.callbacks {
-        check_callback(
-            &format!("#/components/callbacks/{}", pointer_token(name)),
-            callback,
-            violations,
-        );
-    }
+    visit::document(document, &mut Operations { violations });
 
     check_routes(document, violations);
 
@@ -62,74 +35,44 @@ pub(in crate::validate) fn check_opaque(document: &Document, violations: &mut Ve
     }
 }
 
-fn check_item(location: &str, item: &PathItem, violations: &mut Vec<Violation>) {
-    for (method, operation) in item.operations() {
-        check_operation(
-            &format!("{location}/{}", method.as_wire_str().to_lowercase()),
-            operation,
-            violations,
-        );
-    }
-
-    #[cfg(feature = "openapi32")]
-    for (method, operation) in &item.additional_operations {
-        check_operation(
-            &format!("{location}/additionalOperations/{}", pointer_token(method)),
-            operation,
-            violations,
-        );
-    }
+/// Every operation, wherever it is declared: a callback's are as much part of
+/// the service as any other.
+struct Operations<'v> {
+    violations: &'v mut Vec<Violation>,
 }
 
-/// A callback holds path items of its own, and an operation inside one is as
-/// much part of the service as any other.
-///
-/// This walk reaches every callback that is not a `$ref` exactly once, so it
-/// also carries the one rule about a callback's keys: an item keyed `x-` would
-/// be read back as an extension.
-fn check_callback(location: &str, callback: &RefOr<Callback>, violations: &mut Vec<Violation>) {
-    let Some(callback) = callback.as_item() else {
-        return;
-    };
-    for (expression, item) in &callback.items {
-        let location = format!("{location}/{}", pointer_token(expression));
+impl<'doc> Visit<'doc> for Operations<'_> {
+    /// The walk reaches every callback that is not a `$ref` exactly once, so it
+    /// also carries the one rule about a callback's keys: an item keyed `x-`
+    /// would be read back as an extension.
+    fn callback_entry(&mut self, at: At<'_>, expression: &'doc str) {
         if expression.starts_with(EXTENSION_PREFIX) {
-            violations.push(Violation::error(
-                &location,
+            self.violations.push(Violation::error(
+                at.pointer(),
                 SpecError::CallbackKeyedAsExtension {
-                    expression: expression.clone(),
+                    expression: expression.to_owned(),
                 },
             ));
         }
-        if let Some(item) = item.as_item() {
-            check_item(&location, item, violations);
+    }
+
+    /// After its callbacks, so their operations are reported first.
+    fn operation_walked(&mut self, at: At<'_>, operation: &'doc Operation) {
+        if !Opaque::is_annotated(operation) {
+            return;
         }
-    }
-}
 
-fn check_operation(location: &str, operation: &Operation, violations: &mut Vec<Violation>) {
-    for (name, callback) in &operation.callbacks {
-        check_callback(
-            &format!("{location}/callbacks/{}", pointer_token(name)),
-            callback,
-            violations,
-        );
-    }
-
-    if !Opaque::is_annotated(operation) {
-        return;
-    }
-
-    match Opaque::of(operation) {
-        Ok(Some(marker)) => violations.push(Violation::warning(
-            location,
-            SpecError::OpaqueOperation {
-                reasons: marker.reasons,
-            },
-        )),
-        // `is_annotated` was true, so the annotation is present.
-        Ok(None) => {}
-        Err(error) => violations.push(malformed(location, &error)),
+        match Opaque::of(operation) {
+            Ok(Some(marker)) => self.violations.push(Violation::warning(
+                at.pointer(),
+                SpecError::OpaqueOperation {
+                    reasons: marker.reasons,
+                },
+            )),
+            // `is_annotated` was true, so the annotation is present.
+            Ok(None) => {}
+            Err(error) => self.violations.push(malformed(at.pointer(), &error)),
+        }
     }
 }
 
