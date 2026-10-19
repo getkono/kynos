@@ -84,7 +84,8 @@ pub(super) fn path_entry<C>(
     paths.push(PathEntry {
         template: key.to_owned(),
         matched: crate::extract::connection::MatchedPath(dispatch::intern(key)),
-        variables: variables(),
+        // Interned as the names are: leaked once per path a router builds.
+        variables: Box::leak(variables().into_boxed_slice()),
         allow: dispatch::allow_header(&[]),
         operations: Vec::new(),
     });

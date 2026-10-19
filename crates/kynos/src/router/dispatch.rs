@@ -141,9 +141,9 @@ pub(crate) struct PathEntry<C> {
     /// The same key, interned so that
     /// [`MatchedPath`](crate::extract::connection::MatchedPath) can hold it.
     pub(crate) matched: crate::extract::connection::MatchedPath,
-    /// The template's variable names, in declaration order, interned because
-    /// [`PathCaptures`] stores `&'static str`.
-    pub(crate) variables: Vec<&'static str>,
+    /// The template's variable names, in declaration order, interned with the
+    /// list holding them because every [`PathCaptures`] borrows that list.
+    pub(crate) variables: &'static [&'static str],
     /// The `Allow` header a 405 on this path carries, derived from the
     /// operations below plus `HEAD` wherever `GET` is one of them.
     pub(crate) allow: HeaderValue,
@@ -270,15 +270,9 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
             };
 
             let index = *matched.value;
-            let variables = &self.paths[index].variables;
-            let captures = (!variables.is_empty()).then(|| {
-                PathCaptures::new(
-                    path,
-                    variables
-                        .iter()
-                        .filter_map(|name| matched.params.get(name).map(|value| (*name, value))),
-                )
-            });
+            let variables = self.paths[index].variables;
+            let captures = (!variables.is_empty())
+                .then(|| PathCaptures::new(path, variables, |name| matched.params.get(name)));
 
             (index, captures)
         };

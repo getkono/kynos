@@ -212,7 +212,7 @@ fn routed(path: &'static str) -> crate::http::Request {
     let raw = path
         .strip_prefix("/static/")
         .expect("a path under the prefix");
-    let captures = crate::extract::params::path::PathCaptures::new(path, [("path", raw)]);
+    let captures = crate::extract::params::path::PathCaptures::new(path, &["path"], |_| Some(raw));
     let forwarded = crate::http::forwarded::Forwarded::resolve(
         request.headers(),
         None,
