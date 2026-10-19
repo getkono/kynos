@@ -1949,9 +1949,24 @@ class Main(unittest.TestCase):
         )
         status, failures = self.report(corpus=corpus)
         self.assertEqual(status, 1)
-        reported = self.naming(failures, "`hyper` and `hyper-util` are named only in")
+        reported = self.naming(failures, "`hyper` is named only in")
         self.assertEqual(len(reported), 1)
         self.assertIn("crates/kynos/src/unchecked.rs", reported[0])
+
+    def test_hyper_util_is_reported_where_only_hyper_is_allowed(self):
+        # `architecture.md`'s graph lets `http/body.rs` name `hyper`, for
+        # `Incoming`, and not `hyper-util`, whose tokio adapters only the
+        # connection driver needs. While both crates shared one row the file
+        # could name either, so the row is two, and this holds them apart.
+        corpus = self.appending(
+            "crates/kynos/src/http/body.rs", "\nuse hyper_util::rt::TokioIo;\n"
+        )
+        status, failures = self.report(corpus=corpus)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "`hyper-util` is named only in")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/http/body.rs", reported[0])
+        self.assertEqual(self.naming(failures, "`hyper` is named only in"), [])
 
     def test_a_crate_confined_to_one_file_is_reported_outside_it(self):
         # Each row of that loop is a separate claim and widening one says
@@ -2080,12 +2095,12 @@ class Main(unittest.TestCase):
         # to one site turns the other, which the tree names, into a stray.
         broken = self.rewriting(
             gate.NFR,
-            "are named only in `server/connection.rs` and `http/body.rs`",
-            "are named only in `server/connection.rs`",
+            "`hyper` is named only in `server/connection.rs` and `http/body.rs`",
+            "`hyper` is named only in `server/connection.rs`",
         )
         status, failures = self.report(nfr=broken)
         self.assertEqual(status, 1)
-        reported = self.naming(failures, "`hyper` and `hyper-util` are named only in")
+        reported = self.naming(failures, "`hyper` is named only in")
         self.assertEqual(len(reported), 1)
         self.assertIn("crates/kynos/src/http/body.rs", reported[0])
 
