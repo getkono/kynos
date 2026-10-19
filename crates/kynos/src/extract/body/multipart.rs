@@ -55,7 +55,8 @@ pub struct FilePart {
     pub file_name: Option<String>,
     /// The declared media type of this part.
     pub content_type: Option<String>,
-    /// The part's bytes.
+    /// The part's bytes. Decoded, they share the request body's buffer, which
+    /// a part kept past the request keeps alive.
     pub bytes: bytes::Bytes,
 }
 
@@ -83,7 +84,8 @@ pub struct Part {
     pub file_name: Option<String>,
     /// The declared media type of this part.
     pub content_type: Option<String>,
-    /// The part's bytes.
+    /// The part's bytes. Decoded, they share the request body's buffer, which
+    /// a part kept past the request keeps alive.
     pub bytes: Bytes,
 }
 

@@ -236,7 +236,7 @@ its own copy of the field name (three times: parsed, looked up against the size
 limits, kept as the current field), the parsed `Mime`, and the delimiter
 `format!`ed afresh at each field and at each read of its data. That is 1,086 of the
 row's 1,565 blocks. Kynos keeps the chunk `multer` yields for a part rather than
-copying it through `Field::bytes`, which saved two more per part. What remains
+copying it through `Field::bytes`, which saved up to two more per part. What remains
 Kynos's is [`Part`](../crates/kynos/src/extract/body/multipart.rs)'s owned
 currency — a name and a media type each way, and a `String` field's copy out
 of the shared body — and one buffer for the whole response.
