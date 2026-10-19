@@ -440,26 +440,74 @@ fn the_cacheable_set_is_the_one_the_specification_names() {
     assert!(!CACHEABLE.contains(&206));
 }
 
-/// The fields a stored response must not keep.
+/// The fields a stored response must not keep, transcribed rather than read
+/// from [`HOP_BY_HOP`]: RFC 9110 section 7.6.1's connection-specific fields,
+/// and `Age`, which RFC 9111 section 5.1 has a cache recompute. Everything
+/// else survives, every line of it.
 #[test]
 fn a_stored_response_keeps_no_connection_specific_field() {
-    let mut headers = map(&[
+    let dropped = [
         ("connection", "keep-alive"),
+        ("proxy-connection", "keep-alive"),
         ("keep-alive", "timeout=5"),
+        ("te", "trailers"),
+        ("trailer", "x-checksum"),
         ("transfer-encoding", "chunked"),
+        ("upgrade", "h2c"),
         ("age", "42"),
+    ];
+    let kept = [
         ("etag", "\"abc\""),
         ("content-type", "application/json"),
-    ]);
+        ("cache-control", "max-age=60"),
+        ("vary", "accept-encoding"),
+        ("vary", "accept-language"),
+        ("x-custom", "kept"),
+    ];
 
+    let mut headers = map(&[dropped.as_slice(), kept.as_slice()].concat());
     freshness::strip(&mut headers);
 
-    for name in HOP_BY_HOP {
-        assert!(!headers.contains_key(*name), "{name} survived");
+    assert_eq!(headers, map(&kept));
+    assert_eq!(
+        HOP_BY_HOP.len(),
+        dropped.len(),
+        "a stripped field has no case"
+    );
+}
+
+/// A derived tag is a strong tag of sixteen hex digits, the same for the same
+/// body and different for different ones. The empty body's is FNV-1a's own
+/// published vector for one zero octet, since the empty hash folded with a
+/// length of zero is exactly that.
+#[test]
+fn a_derived_tag_is_a_strong_digest_of_the_body() {
+    let tag = |body: &'static [u8]| super::derived_etag(&bytes::Bytes::from_static(body));
+
+    assert_eq!(tag(b""), "\"af63bd4c8601b7df\"");
+
+    let bodies: [&'static [u8]; 4] = [b"a", b"b", b"ab", b"ba"];
+    for body in bodies {
+        let derived = tag(body);
+        assert_eq!(derived.len(), 18, "{derived}");
+        assert!(
+            derived.starts_with('"') && derived.ends_with('"'),
+            "{derived}"
+        );
+        assert!(
+            derived[1..17]
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+            "{derived}"
+        );
+        assert_eq!(tag(body), derived, "not stable");
     }
-    // And the fields that are not connection-specific do survive.
-    assert!(headers.contains_key(header::ETAG));
-    assert!(headers.contains_key(header::CONTENT_TYPE));
+
+    let mut distinct: Vec<String> = bodies.iter().map(|body| tag(body)).collect();
+    distinct.push(tag(b""));
+    distinct.sort();
+    distinct.dedup();
+    assert_eq!(distinct.len(), 5, "two bodies share a tag");
 }
 
 /// `Vary` is read as a set: lowercased, sorted, deduplicated.

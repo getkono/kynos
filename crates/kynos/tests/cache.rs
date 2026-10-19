@@ -139,6 +139,23 @@ async fn create() -> NoContent {
     NoContent
 }
 
+/// An unsafe method whose response states the lifetime `/reports` does.
+#[kynos::post("/submissions")]
+async fn submit() -> WithHeaders<Json<Report>, CacheControl> {
+    CALLS.fetch_add(1, Ordering::SeqCst);
+    WithHeaders::new(Json(Report { id: 10 }), CacheControl)
+}
+
+/// States a lifetime of zero: storable, and stale from the moment it is.
+#[kynos::get("/stale")]
+async fn stale() -> WithHeaders<Json<Report>, Stated> {
+    CALLS.fetch_add(1, Ordering::SeqCst);
+    WithHeaders::new(
+        Json(Report { id: 11 }),
+        Stated(&[("cache-control", "max-age=0")]),
+    )
+}
+
 /// A 204 that carries a validator.
 ///
 /// Legal, and the case RFC 9110 section 15.4.5 excludes from 304: the status
@@ -201,7 +218,9 @@ fn cached(store: Stored) -> kynos::router::service::Service<()> {
             uncacheable,
             tagged,
             create,
-            empty
+            empty,
+            submit,
+            stale
         ])
         .intercept(Cache::new(store).namespace("test"))
         .build(())
@@ -268,20 +287,29 @@ async fn sibling_variants_survive_each_others_storage() {
 }
 
 /// A hit replays a status the operation already declares, which is why the
-/// cache's `Short` is `Infallible`.
+/// cache's `Short` is `Infallible` — and every field and octet stored with it,
+/// `Age` aside, which a hit recomputes.
+///
+/// `/numbered` names the call that produced it, so the second answer is shown
+/// to be the first one replayed rather than a second one that happens to
+/// match.
 #[tokio::test]
 async fn a_hit_replays_the_status_and_the_headers_that_were_stored() {
     let service = cached(Stored::default());
+    let before = CALLS.load(Ordering::SeqCst);
 
-    let first = get(&service, "/reports").call().await;
-    let second = get(&service, "/reports").call().await;
+    let first = get(&service, "/numbered").call().await;
+    let second = get(&service, "/numbered").call().await;
 
-    assert_eq!(first.status, second.status);
-    assert_eq!(
-        first.field(header::CONTENT_TYPE.as_str()),
-        second.field(header::CONTENT_TYPE.as_str())
-    );
-    assert_eq!(first.body, second.body);
+    assert_eq!(calls_during(before), 1, "the second request was not a hit");
+    assert_eq!(first.status, StatusCode::OK);
+    assert_eq!(second.status, first.status);
+    let mut stored = first.headers.clone();
+    let mut replayed = second.headers.clone();
+    stored.remove(header::AGE);
+    replayed.remove(header::AGE);
+    assert_eq!(replayed, stored);
+    assert_eq!(second.body, first.body);
 }
 
 /// A response that said nothing about reuse is not reused.
@@ -301,6 +329,28 @@ async fn a_response_with_no_freshness_is_never_stored() {
         calls_during(before),
         3,
         "a response that stated no lifetime was reused anyway"
+    );
+}
+
+/// A stored response past its lifetime is not served: `/stale` is stored, and
+/// the handler still answers the next request, since nothing here
+/// revalidates.
+#[tokio::test]
+async fn a_stale_entry_is_stored_but_not_served() {
+    let store = Stored::default();
+    let service = cached(store.clone());
+    let before = CALLS.load(Ordering::SeqCst);
+
+    let first = get(&service, "/stale").call().await;
+    assert_eq!(first.status, StatusCode::OK);
+    assert!(!is_empty(&store), "a zero lifetime was not stored at all");
+
+    let second = get(&service, "/stale").call().await;
+    assert_eq!(second.status, StatusCode::OK);
+    assert_eq!(
+        calls_during(before),
+        2,
+        "a stored response past its lifetime was served"
     );
 }
 
@@ -329,17 +379,30 @@ async fn a_request_no_operation_matched_is_neither_stored_nor_aged() {
     assert!(is_empty(&store), "a fallback was stored");
 }
 
-/// An unsafe method is neither stored nor served from the store.
+/// An unsafe method is neither stored nor served from the store, even where
+/// its response states a lifetime a `GET`'s would be stored under.
 #[tokio::test]
 async fn an_unsafe_method_is_not_cached() {
-    let service = cached(Stored::default());
+    let store = Stored::default();
+    let service = cached(store.clone());
+    let before = CALLS.load(Ordering::SeqCst);
 
     for _ in 0..2 {
         assert_eq!(
-            send(&service, Method::POST, "/reports").call().await.status,
-            StatusCode::NO_CONTENT
+            send(&service, Method::POST, "/submissions")
+                .call()
+                .await
+                .status,
+            StatusCode::OK
         );
     }
+
+    assert_eq!(
+        calls_during(before),
+        2,
+        "a POST was answered from the store"
+    );
+    assert!(is_empty(&store), "a POST's response was stored");
 }
 
 // --- What a precondition may answer ----------------------------------------
@@ -353,24 +416,42 @@ async fn an_unsafe_method_is_not_cached() {
 /// where the client asked for a range and a 304 replays `ETag` and `Vary` but
 /// no `Content-Range`, leaving it unable to tell "your range is current" from
 /// "the whole representation is current".
+///
+/// Over a `Cache`, as `docs/middleware.md` arranges the two, storing the 204
+/// under a default lifetime: the condition then meets a hit, and the hit is
+/// still a 204.
 #[tokio::test]
 async fn a_204_carrying_a_matching_validator_is_not_turned_into_a_304() {
     let service = Router::<()>::new()
         .mount(kynos::routes![reports, uncacheable, tagged, create, empty])
         .intercept(Conditional::new())
+        .intercept(
+            Cache::new(Stored::default())
+                .namespace("test")
+                .default_freshness(std::time::Duration::from_secs(60)),
+        )
         .build(())
         .expect("a describable router");
+    let before = CALLS.load(Ordering::SeqCst);
 
-    let response = get(&service, "/empty")
-        .header(header::IF_NONE_MATCH.as_str(), "\"e1\"")
-        .call()
-        .await;
+    for answer in ["the miss", "the hit"] {
+        let response = get(&service, "/empty")
+            .header(header::IF_NONE_MATCH.as_str(), "\"e1\"")
+            .call()
+            .await;
 
-    assert_eq!(
-        response.status,
-        StatusCode::NO_CONTENT,
-        "a 204 was rewritten as a 304, which claims a 200 was what the handler would have sent"
-    );
+        assert_eq!(
+            response.status,
+            StatusCode::NO_CONTENT,
+            "{answer}: a 204 was rewritten as a 304, which claims a 200 was what the handler \
+             would have sent"
+        );
+        assert_eq!(
+            response.field(header::ETAG.as_str()).as_deref(),
+            Some("\"e1\"")
+        );
+    }
+    assert_eq!(calls_during(before), 1, "the second request was not a hit");
 }
 
 // --- What a write drops -----------------------------------------------------
@@ -916,12 +997,31 @@ fn the_age_field_is_declared_and_not_described() {
         .openapi()
         .expect("a describable router");
 
-    let emitted = serde_json::to_string(&document).expect("a serializable document");
-    assert!(!emitted.contains("\"Age\""), "{emitted}");
+    assert_eq!(
+        described_fields(&document, "/reports", "200"),
+        Vec::<String>::new()
+    );
+}
+
+/// The header names a `GET` operation's `status` response describes, sorted
+/// and lowercased, so no spelling of a name escapes the comparison.
+fn described_fields(document: &impl Serialize, path: &str, status: &str) -> Vec<String> {
+    let document = serde_json::to_value(document).expect("a serializable document");
+    let mut names: Vec<String> = document["paths"][path]["get"]["responses"][status]["headers"]
+        .as_object()
+        .map(|headers| {
+            headers
+                .keys()
+                .map(|name| name.to_ascii_lowercase())
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
 }
 
 /// Deriving tags describes the `ETag` it adds, because a consumer can act on
-/// one.
+/// one — and nothing else beside it.
 #[test]
 fn a_deriving_cache_describes_the_tag_it_adds() {
     let document = Router::<()>::new()
@@ -930,8 +1030,7 @@ fn a_deriving_cache_describes_the_tag_it_adds() {
         .openapi()
         .expect("a describable router");
 
-    let emitted = serde_json::to_string(&document).expect("a serializable document");
-    assert!(emitted.contains("ETag"), "{emitted}");
+    assert_eq!(described_fields(&document, "/reports", "200"), ["etag"]);
 }
 
 /// A derived tag is stable across a hit, which is what makes it a validator.
@@ -1312,6 +1411,10 @@ fn a_cache_and_a_conditional_declare_disjoint_fields() {
     statuses.sort_unstable();
 
     assert_eq!(statuses, ["200", "304"]);
+    // The handler's own tag on the 200, the tag the 304 replays, and nothing
+    // from either interceptor: `Age` is declared but not described.
+    assert_eq!(described_fields(&document, "/tagged", "200"), ["etag"]);
+    assert_eq!(described_fields(&document, "/tagged", "304"), ["etag"]);
 }
 
 // --- Security headers around a cache ---------------------------------------
@@ -1390,5 +1493,151 @@ async fn security_headers_inside_a_cache_leave_it_nothing_to_store() {
         calls_during(before),
         2,
         "a response saying `no-store` was stored"
+    );
+}
+
+// --- What separates two entries ------------------------------------------
+
+/// A key carries the namespace, so two caches over one store keep apart: a
+/// deploy bumping it never reads what the old binary stored.
+#[tokio::test]
+async fn a_namespace_separates_entries_in_one_store() {
+    let store = Stored::default();
+    let under = |namespace| {
+        Router::<()>::new()
+            .mount(kynos::routes![numbered])
+            .intercept(Cache::new(store.clone()).namespace(namespace))
+            .build(())
+            .expect("a describable router")
+    };
+    let (old, new) = (under("v1"), under("v2"));
+    let before = CALLS.load(Ordering::SeqCst);
+
+    let stored = get(&old, "/numbered").call().await;
+    let other = get(&new, "/numbered").call().await;
+    let hit = get(&old, "/numbered").call().await;
+
+    assert_eq!(
+        calls_during(before),
+        2,
+        "one namespace read the other's entry"
+    );
+    assert_ne!(other.json()["id"], stored.json()["id"]);
+    assert_eq!(hit.json()["id"], stored.json()["id"]);
+}
+
+/// A key carries the query, so one operation's targets differing only in it
+/// are two entries, and the same query again is a hit on its own.
+#[tokio::test]
+async fn a_query_separates_entries_for_one_operation() {
+    let service = cached(Stored::default());
+    let before = CALLS.load(Ordering::SeqCst);
+
+    let first = get(&service, "/numbered?page=1").call().await;
+    let second = get(&service, "/numbered?page=2").call().await;
+    let first_again = get(&service, "/numbered?page=1").call().await;
+    let bare = get(&service, "/numbered").call().await;
+
+    assert_eq!(calls_during(before), 3, "two queries shared one entry");
+    assert_ne!(second.json()["id"], first.json()["id"]);
+    assert_eq!(first_again.json()["id"], first.json()["id"]);
+    assert_ne!(bare.json()["id"], first.json()["id"]);
+}
+
+// --- A cache and `Cors` ---------------------------------------------------
+
+/// A response carrying CORS fields its handler set, with no `Vary: origin`.
+#[kynos::get("/shared-widely")]
+async fn shared_widely() -> WithHeaders<Json<Report>, OneOrigin> {
+    CALLS.fetch_add(1, Ordering::SeqCst);
+    WithHeaders::new(Json(Report { id: 12 }), OneOrigin)
+}
+
+/// What `shared_widely` adds: a lifetime, and one origin's permission varying
+/// on nothing.
+#[derive(Clone, Copy, Debug)]
+struct OneOrigin;
+
+impl kynos::extract::params::header::HeaderParams for OneOrigin {
+    const NAMES: &'static [&'static str] = &["cache-control", "access-control-allow-origin"];
+    const DESCRIBED: bool = false;
+}
+
+impl kynos::extract::params::header::EncodeHeaders for OneOrigin {
+    fn encode(&self) -> Result<Fields, UnencodableHeader> {
+        Ok(vec![
+            (
+                header::CACHE_CONTROL,
+                kynos::http::HeaderValue::from_static("max-age=60"),
+            ),
+            (
+                header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                kynos::http::HeaderValue::from_static("https://a.example.com"),
+            ),
+        ])
+    }
+}
+
+/// Mounted outside `Cors`, as `docs/middleware.md` arranges them, the cache
+/// keeps one entry per origin: `Cors` varies on `origin`, so each origin is
+/// served its own `Access-Control-Allow-Origin`, and a repeat from either is a
+/// hit on its own entry.
+#[tokio::test]
+async fn a_cache_outside_cors_serves_each_origin_its_own_answer() {
+    use kynos::middleware::cors::Cors;
+
+    let service = Router::<()>::new()
+        .mount(kynos::routes![numbered])
+        .intercept(Cache::new(Stored::default()).namespace("test"))
+        .intercept(Cors::new().allow_origins(["https://a.example.com", "https://b.example.com"]))
+        .build(())
+        .expect("a describable router");
+    let before = CALLS.load(Ordering::SeqCst);
+    let from = |origin| get(&service, "/numbered").header("origin", origin).call();
+
+    for origin in ["https://a.example.com", "https://b.example.com"] {
+        let miss = from(origin).await;
+        let hit = from(origin).await;
+
+        for answer in [&miss, &hit] {
+            assert_eq!(
+                answer.field("access-control-allow-origin").as_deref(),
+                Some(origin)
+            );
+        }
+        assert_eq!(hit.json()["id"], miss.json()["id"], "{origin}");
+    }
+    assert_eq!(
+        calls_during(before),
+        2,
+        "one origin was served the other's entry"
+    );
+}
+
+/// A response carrying CORS fields that does not vary on `origin` is never
+/// stored, so it can hand no origin's permission to another.
+#[tokio::test]
+async fn a_cors_response_not_varying_on_origin_is_never_stored() {
+    let store = Stored::default();
+    let service = Router::<()>::new()
+        .mount(kynos::routes![shared_widely])
+        .intercept(Cache::new(store.clone()).namespace("test"))
+        .build(())
+        .expect("a describable router");
+    let before = CALLS.load(Ordering::SeqCst);
+
+    for _ in 0..2 {
+        let reply = get(&service, "/shared-widely").call().await;
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(
+            reply.field("access-control-allow-origin").as_deref(),
+            Some("https://a.example.com")
+        );
+    }
+
+    assert_eq!(calls_during(before), 2);
+    assert!(
+        is_empty(&store),
+        "a CORS response varying on nothing was stored"
     );
 }
