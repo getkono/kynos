@@ -174,7 +174,8 @@ impl<C: 'static> Server<C> {
         self
     }
 
-    /// Caps accepted connections and TLS handshakes across all listeners.
+    /// Caps accepted connections and TLS handshakes across all listeners. The
+    /// default is 10,000.
     ///
     /// A connection upgraded by a `Router::upgrade_unchecked` route releases
     /// its permit once its `101` is written, so upgraded sockets the handler

@@ -477,7 +477,8 @@ opentelemetry-semantic-conventions = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 uuid = { workspace = true, features = ["serde"] }
 
-# `setrlimit` for `connection_adversarial.rs`.
+# `setrlimit` for `connection_adversarial.rs`, and `kill_process` for the
+# server's signal test.
 [target.'cfg(unix)'.dev-dependencies]
 rustix = { workspace = true, features = ["process"] }
 

@@ -3,36 +3,45 @@ use crate::server::protocol::http1::Http1Config;
 #[cfg(feature = "http2")]
 use crate::server::protocol::http2::{Http2Config, Http2FlowControl, Http2KeepAlive};
 
+/// The whole struct, so a field added or changed without a decision here
+/// fails rather than going unchecked.
 #[cfg(feature = "http1")]
 #[test]
 fn http1_defaults_are_owned_by_kynos() {
-    let http1 = Http1Config::default();
-    assert!(http1.keep_alive);
-    assert_eq!(http1.max_headers, 100);
-    assert_eq!(http1.max_buffer_size, 417_792);
+    assert_eq!(
+        Http1Config::default(),
+        Http1Config {
+            keep_alive: true,
+            header_read_timeout: Some(std::time::Duration::from_secs(30)),
+            max_headers: 100,
+            max_buffer_size: 417_792,
+        }
+    );
 }
 
+/// The whole struct, for the reason the HTTP/1 case gives.
 #[cfg(feature = "http2")]
 #[test]
 fn http2_defaults_are_owned_by_kynos() {
-    let http2 = Http2Config::default();
-    assert_eq!(http2.max_concurrent_streams, 200);
-    assert_eq!(http2.max_header_list_size, 16 * 1024);
     assert_eq!(
-        http2.flow_control,
-        Http2FlowControl::Fixed {
-            initial_stream_window_size: 1024 * 1024,
-            initial_connection_window_size: 1024 * 1024,
+        Http2Config::default(),
+        Http2Config {
+            max_concurrent_streams: 200,
+            flow_control: Http2FlowControl::Fixed {
+                initial_stream_window_size: 1024 * 1024,
+                initial_connection_window_size: 1024 * 1024,
+            },
+            keep_alive: Some(Http2KeepAlive {
+                interval: std::time::Duration::from_secs(30),
+                timeout: std::time::Duration::from_secs(20),
+            }),
+            idle_timeout: Some(std::time::Duration::from_secs(30)),
+            max_header_list_size: 16 * 1024,
+            max_send_buffer_size: 400 * 1024,
+            max_pending_accept_reset_streams: 20,
+            max_local_error_reset_streams: 1024,
         }
     );
-    assert_eq!(
-        http2.keep_alive,
-        Some(Http2KeepAlive {
-            interval: std::time::Duration::from_secs(30),
-            timeout: std::time::Duration::from_secs(20),
-        })
-    );
-    assert_eq!(http2.idle_timeout, Some(std::time::Duration::from_secs(30)));
 }
 
 /// Every setter writes its own field and no other: each value differs from
@@ -545,9 +554,16 @@ fn a_transport_config_is_cheap_to_clone_per_connection() {
     );
 }
 
+/// What `Server::new` starts from, read off the server it builds rather than
+/// off the constants it was meant to read: the drain deadline its setter
+/// documents, leaving a margin under a 30-second termination window, and the
+/// connection cap `max_connections` documents.
 #[test]
-fn shutdown_default_leaves_an_orchestrator_margin() {
-    assert_eq!(super::DEFAULT_SHUTDOWN_TIMEOUT.as_secs(), 25);
+fn a_new_server_starts_from_its_documented_limits() {
+    let server = crate::server::Server::new(test_service());
+
+    assert_eq!(server.shutdown_timeout, std::time::Duration::from_secs(25));
+    assert_eq!(server.max_connections.get(), 10_000);
 }
 
 #[tokio::test]
@@ -587,21 +603,131 @@ async fn prepare_accepts_a_standard_library_listener() {
     assert_eq!(bound.local_addrs(), [expected]);
 }
 
+/// A failed bind names the address that failed, and lets go of every listener
+/// prepared before it: a supplied one and one bound from an earlier address
+/// can both be bound again at once.
+///
+/// The earlier address is a port reserved and freed just before, since only
+/// a known port can be checked for release.
 #[tokio::test]
 async fn binding_is_atomic_when_a_later_address_is_unavailable() {
-    let occupied =
-        std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).expect("port is reserved");
+    let local = || std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0));
+    let supplied = local().expect("a supplied listener binds");
+    let supplied_address = supplied.local_addr().expect("listener has an address");
+    let earlier_address = local()
+        .and_then(|reserved| reserved.local_addr())
+        .expect("a port is reserved and freed");
+    let occupied = local().expect("port is reserved");
     let occupied_address = occupied.local_addr().expect("listener has an address");
+
     let error = crate::server::Server::new(test_service())
-        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .listener(supplied)
+        .bind(earlier_address)
         .bind(occupied_address)
         .prepare()
         .await
         .expect_err("the occupied address prevents preparation");
-    assert!(matches!(
-        error,
-        crate::Error::Server(crate::server::error::ServerError::Bind { .. })
-    ));
+
+    assert!(
+        matches!(
+            &error,
+            crate::Error::Server(crate::server::error::ServerError::Bind { address, .. })
+                if *address == occupied_address
+        ),
+        "{error:?}"
+    );
+    for released in [supplied_address, earlier_address] {
+        drop(
+            std::net::TcpListener::bind(released)
+                .unwrap_or_else(|error| panic!("{released} is still held: {error}")),
+        );
+    }
+}
+
+/// A configured name is resolved when the server is prepared, and every
+/// address it resolves to gets a listener of its own, in the resolver's
+/// order. `localhost` is the one name every host resolves without asking a
+/// network, often to both loopback addresses.
+///
+/// A host may list `::1` for `localhost` while its IPv6 loopback is disabled.
+/// Binding is atomic, so there the expected answer is the refusal of the
+/// first address the host cannot bind, which a probe bind finds beforehand.
+#[tokio::test]
+async fn a_name_is_bound_once_per_address_it_resolves_to() {
+    let resolved = tokio::net::lookup_host("localhost:0")
+        .await
+        .expect("localhost resolves")
+        .map(|address| address.ip())
+        .collect::<Vec<_>>();
+    let unbindable = resolved
+        .iter()
+        .map(|ip| std::net::SocketAddr::new(*ip, 0))
+        .find(|address| std::net::TcpListener::bind(address).is_err());
+
+    for configured in [
+        crate::server::address::BindAddress::from("localhost:0"),
+        crate::server::address::BindAddress::from(("localhost", 0)),
+    ] {
+        let prepared = crate::server::Server::new(test_service())
+            .bind(configured.clone())
+            .prepare()
+            .await;
+        if let Some(unbindable) = unbindable {
+            let error = prepared.expect_err("an address the host cannot bind is refused");
+            assert!(
+                matches!(
+                    &error,
+                    crate::Error::Server(crate::server::error::ServerError::Bind { address, .. })
+                        if *address == unbindable
+                ),
+                "{configured}: {error:?}"
+            );
+            continue;
+        }
+        let bound = prepared.unwrap_or_else(|error| panic!("{configured} binds: {error:?}"));
+        let addresses = bound.local_addrs();
+
+        assert_eq!(
+            addresses
+                .iter()
+                .map(std::net::SocketAddr::ip)
+                .collect::<Vec<_>>(),
+            resolved,
+            "{configured}"
+        );
+        assert!(
+            addresses.iter().all(|address| address.port() != 0),
+            "{configured}: {addresses:?}"
+        );
+    }
+}
+
+/// A name that does not resolve is refused as itself, before anything binds,
+/// in either form a name takes: one string, or a host and a port. Both are
+/// refused before any resolver is asked, so the outcome does not depend on
+/// the host's DNS: the first has no port to parse, and the second holds a NUL
+/// byte, which no C resolver call can be handed.
+#[tokio::test]
+async fn a_name_that_does_not_resolve_is_refused_as_itself() {
+    for configured in [
+        crate::server::address::BindAddress::from("localhost"),
+        crate::server::address::BindAddress::from(("kynos\0invalid", 80)),
+    ] {
+        let error = crate::server::Server::new(test_service())
+            .bind(configured.clone())
+            .prepare()
+            .await
+            .expect_err("an unresolvable name prevents preparation");
+
+        assert!(
+            matches!(
+                &error,
+                crate::Error::Server(crate::server::error::ServerError::Resolve { address, .. })
+                    if *address == configured
+            ),
+            "{configured}: {error:?}"
+        );
+    }
 }
 
 #[cfg(feature = "http1")]
@@ -965,8 +1091,116 @@ async fn repeated_shutdown_trigger_forces_an_incomplete_drain() {
     client.await.expect("client task joins");
 }
 
+/// A zero drain deadline reports `ShutdownTimeout` even when nothing was in
+/// flight, as `shutdown_timeout` and `is_requested_shutdown` both say.
+#[tokio::test]
+async fn zero_shutdown_timeout_reports_a_timeout_with_nothing_in_flight() {
+    let error = crate::server::Server::new(test_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .shutdown_timeout(std::time::Duration::ZERO)
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async {}))
+        .serve()
+        .await
+        .expect_err("a zero drain deadline is reported");
+
+    assert!(
+        matches!(
+            &error,
+            crate::Error::Server(crate::server::error::ServerError::ShutdownTimeout { timeout })
+                if timeout.is_zero()
+        ),
+        "{error:?}"
+    );
+}
+
+/// A trigger that fails, as an operating-system signal that cannot be
+/// registered does, ends serving with `ServerError::Signal` carrying that
+/// failure, rather than serving on without a way to stop.
+#[tokio::test]
+async fn a_failing_shutdown_trigger_ends_serving_with_its_error() {
+    use std::io;
+
+    let shutdown = crate::server::shutdown::Shutdown {
+        future: Box::pin(async { Err(io::Error::other("no signal for you")) }),
+    };
+    let error = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        crate::server::Server::new(test_service())
+            .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .graceful_shutdown(shutdown)
+            .serve(),
+    )
+    .await
+    .expect("a failed trigger ends serving")
+    .expect_err("the failed trigger is reported");
+
+    let crate::Error::Server(crate::server::error::ServerError::Signal(source)) = &error else {
+        panic!("not a signal failure: {error:?}");
+    };
+    assert_eq!(source.to_string(), "no signal for you");
+    assert!(matches!(&error, crate::Error::Server(error) if !error.is_requested_shutdown()));
+}
+
+/// `Shutdown::signals` over real signals: the first `SIGTERM` stops the
+/// listener while a request drains, and a second forces the drain to end.
+///
+/// The signals go to this process alone, which nextest gives this test to
+/// itself. A current-thread runtime makes the order certain: `serve` registers
+/// its listeners on the poll that spawns the accept loops, so no request can
+/// reach the handler, and no signal be sent, before they exist.
+#[cfg(all(unix, feature = "http1"))]
+#[tokio::test(flavor = "current_thread")]
+async fn a_second_termination_signal_forces_the_drain() {
+    use rustix::process::{Signal, getpid, kill_process};
+
+    let (service, started, _release) = blocking_service();
+    let bound = crate::server::Server::new(service)
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .shutdown_timeout(std::time::Duration::from_secs(25))
+        .graceful_shutdown(crate::server::shutdown::Shutdown::signals())
+        .prepare()
+        .await
+        .expect("loopback listener binds");
+    let address = bound.local_addrs()[0];
+    let server = tokio::spawn(bound.serve());
+    let client = tokio::task::spawn_blocking(move || request_http1(address));
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
+        .await
+        .expect("the request reaches the handler");
+    kill_process(getpid(), Signal::TERM).expect("the first signal is sent");
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while tokio::net::TcpStream::connect(address).await.is_ok() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the first signal stops the listener");
+    assert!(!server.is_finished(), "the request is still draining");
+
+    kill_process(getpid(), Signal::TERM).expect("the second signal is sent");
+    let error = tokio::time::timeout(std::time::Duration::from_secs(5), server)
+        .await
+        .expect("the second signal ends the drain promptly")
+        .expect("server task joins")
+        .expect_err("the forced drain is reported");
+    assert!(
+        matches!(
+            &error,
+            crate::Error::Server(crate::server::error::ServerError::ShutdownForced)
+        ),
+        "{error:?}"
+    );
+    client.await.expect("client task joins");
+}
+
 /// Only the two incomplete-drain variants are a requested shutdown; every
 /// other one is a server that stopped on its own or never started.
+///
+/// [`server_error_variant`] names every variant in an exhaustive match, so a
+/// variant added to `ServerError` stops this compiling until it is named;
+/// the list below is what catches one named and given no value.
 #[test]
 fn only_an_incomplete_drain_is_a_requested_shutdown() {
     use std::{io, net::Ipv4Addr};
@@ -975,7 +1209,7 @@ fn only_an_incomplete_drain_is_a_requested_shutdown() {
 
     let io_error = || io::Error::other("failure");
     let address = (Ipv4Addr::LOCALHOST, 0).into();
-    let failures = [
+    let every = [
         ServerError::NoListeners,
         ServerError::InvalidConfiguration("setting"),
         ServerError::Resolve {
@@ -993,11 +1227,68 @@ fn only_an_incomplete_drain_is_a_requested_shutdown() {
         },
         ServerError::AcceptLoop { panicked: true },
         ServerError::Signal(io_error()),
+        ServerError::ShutdownTimeout {
+            timeout: std::time::Duration::ZERO,
+        },
+        ServerError::ShutdownForced,
         #[cfg(feature = "tls")]
         ServerError::MutualTlsConflict,
+        #[cfg(feature = "tls")]
+        ServerError::Tls(crate::server::tls::error::TlsError::ZeroHandshakeTimeout),
     ];
-    for failure in failures {
-        assert!(!failure.is_requested_shutdown(), "{failure:?}");
+
+    let witnessed = every.iter().map(server_error_variant).collect::<Vec<_>>();
+    assert_eq!(
+        witnessed,
+        [
+            "NoListeners",
+            "InvalidConfiguration",
+            "Resolve",
+            "Bind",
+            "Listener",
+            "Accept",
+            "AcceptLoop",
+            "Signal",
+            "ShutdownTimeout",
+            "ShutdownForced",
+            #[cfg(feature = "tls")]
+            "MutualTlsConflict",
+            #[cfg(feature = "tls")]
+            "Tls",
+        ],
+        "a variant has no value"
+    );
+    for error in &every {
+        assert_eq!(
+            error.is_requested_shutdown(),
+            matches!(
+                server_error_variant(error),
+                "ShutdownTimeout" | "ShutdownForced"
+            ),
+            "{error:?}"
+        );
+    }
+}
+
+/// The name of `error`'s variant, with no wildcard arm.
+fn server_error_variant(error: &crate::server::error::ServerError) -> &'static str {
+    use crate::server::error::ServerError;
+
+    match error {
+        ServerError::NoListeners => "NoListeners",
+        ServerError::InvalidConfiguration(_) => "InvalidConfiguration",
+        ServerError::Resolve { .. } => "Resolve",
+        ServerError::Bind { .. } => "Bind",
+        ServerError::Listener(_) => "Listener",
+        ServerError::Accept { .. } => "Accept",
+        ServerError::AcceptLoop { .. } => "AcceptLoop",
+        ServerError::Signal(_) => "Signal",
+        ServerError::ShutdownTimeout { .. } => "ShutdownTimeout",
+        ServerError::ShutdownForced => "ShutdownForced",
+        #[cfg(feature = "tls")]
+        ServerError::MutualTlsConflict => "MutualTlsConflict",
+        #[cfg(feature = "tls")]
+        ServerError::Tls(_) => "Tls",
     }
 }
 
@@ -2564,6 +2855,203 @@ async fn a_client_contradicting_its_negotiated_protocol_is_refused() {
         .expect("server exits cleanly");
 }
 
+/// One request over an established `stream`, as HTTP/2 when `http2` and as
+/// HTTP/1.1 otherwise, and the body the server answered with.
+#[cfg(all(feature = "tls", any(feature = "http1", feature = "http2")))]
+async fn served_over<S>(stream: S, http2: bool) -> bytes::Bytes
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    use http_body_util::{BodyExt as _, Empty};
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+
+    let request = hyper::Request::builder()
+        .uri("https://localhost/")
+        .header(hyper::header::HOST, "localhost")
+        .body(Empty::<bytes::Bytes>::new())
+        .expect("request builds");
+    let response = if http2 {
+        let (mut sender, connection) =
+            hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+                .await
+                .expect("HTTP/2 handshake completes");
+        tokio::spawn(connection);
+        sender.send_request(request).await
+    } else {
+        let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+            .await
+            .expect("HTTP/1 handshake completes");
+        tokio::spawn(connection);
+        sender.send_request(request).await
+    };
+    response
+        .expect("the request succeeds")
+        .into_body()
+        .collect()
+        .await
+        .expect("response body reads")
+        .to_bytes()
+}
+
+/// Offered both identifiers, in the order that puts HTTP/1.1 first, the
+/// server settles on `h2`: its own preference decides, and the connection is
+/// then served as HTTP/2.
+#[cfg(all(feature = "tls", feature = "http1", feature = "http2"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_client_offering_both_protocols_is_served_h2() {
+    use tokio_rustls::rustls::pki_types::ServerName;
+
+    let (address, authority, shutdown_sender, server) =
+        tls_server(negotiated_protocol_service()).await;
+
+    let stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    let stream = alpn_connector(authority.as_bytes(), &[b"http/1.1", b"h2"])
+        .connect(
+            ServerName::try_from("localhost").expect("valid DNS name"),
+            stream,
+        )
+        .await
+        .expect("the handshake succeeds");
+    assert_eq!(stream.get_ref().1.alpn_protocol(), Some(&b"h2"[..]));
+    assert_eq!(
+        served_over(stream, true).await,
+        bytes::Bytes::from_static(b"h2 HTTP/2.0")
+    );
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// A client offering no ALPN identifier settles nothing, so the server reads
+/// the protocol off the first bytes, as on a plaintext listener: an HTTP/1.1
+/// request is served as one, and so is an HTTP/2 preface sent with no
+/// negotiation at all.
+#[cfg(all(feature = "tls", any(feature = "http1", feature = "http2")))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_client_offering_no_protocol_is_served_what_it_speaks() {
+    use tokio_rustls::rustls::pki_types::ServerName;
+
+    let (address, authority, shutdown_sender, server) =
+        tls_server(negotiated_protocol_service()).await;
+
+    for (http2, expected) in [
+        #[cfg(feature = "http1")]
+        (false, "none HTTP/1.1"),
+        #[cfg(feature = "http2")]
+        (true, "none HTTP/2.0"),
+    ] {
+        let stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("server accepts");
+        let stream = alpn_connector(authority.as_bytes(), &[])
+            .connect(
+                ServerName::try_from("localhost").expect("valid DNS name"),
+                stream,
+            )
+            .await
+            .expect("the handshake succeeds");
+        assert_eq!(stream.get_ref().1.alpn_protocol(), None);
+        assert_eq!(
+            served_over(stream, http2).await,
+            bytes::Bytes::from(expected),
+            "HTTP/2: {http2}"
+        );
+    }
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// The certificate a handshake presents is the one registered for the name
+/// the client sent: each name its own leaf, a certificate registered under
+/// two names presented for either, a name compared without regard to case,
+/// and the default for a name nothing registered.
+#[cfg(feature = "tls")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_handshake_presents_the_certificate_registered_for_its_server_name() {
+    use tokio_rustls::rustls::pki_types::{CertificateDer, ServerName, pem::PemObject as _};
+
+    let (issued, servers) =
+        authority_issuing(&[&["a.example.test"], &["b.example.test", "c.example.test"]]);
+    let tls = crate::server::tls::TlsConfig::from_pem(
+        issued.server.certificate.as_bytes(),
+        issued.server.key.as_bytes(),
+    )
+    .expect("server identity parses")
+    .with_server_certificate(
+        ["a.example.test"],
+        servers[0].certificate.as_bytes(),
+        servers[0].key.as_bytes(),
+    )
+    .expect("the first SNI identity registers")
+    .with_server_certificate(
+        ["B.Example.Test", "c.example.test"],
+        servers[1].certificate.as_bytes(),
+        servers[1].key.as_bytes(),
+    )
+    .expect("the second SNI identity registers");
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let bound = crate::server::Server::new(test_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .tls(tls)
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+            let _ = shutdown_receiver.await;
+        }))
+        .prepare()
+        .await
+        .expect("TLS listener prepares");
+    let address = bound.local_addrs()[0];
+    let server = tokio::spawn(bound.serve());
+
+    let connector = alpn_connector(issued.certificate.as_bytes(), &[]);
+    for (name, expected) in [
+        ("a.example.test", &servers[0]),
+        ("b.example.test", &servers[1]),
+        ("C.EXAMPLE.TEST", &servers[1]),
+        ("localhost", &issued.server),
+    ] {
+        let stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("server accepts");
+        let stream = connector
+            .connect(
+                ServerName::try_from(name)
+                    .expect("valid DNS name")
+                    .to_owned(),
+                stream,
+            )
+            .await
+            .unwrap_or_else(|error| panic!("{name}: the handshake succeeds: {error}"));
+        let presented = stream
+            .get_ref()
+            .1
+            .peer_certificates()
+            .and_then(<[CertificateDer<'_>]>::first)
+            .expect("the server presents a certificate")
+            .clone();
+        assert_eq!(
+            presented,
+            CertificateDer::from_pem_slice(expected.certificate.as_bytes())
+                .expect("the expected leaf parses"),
+            "{name}"
+        );
+    }
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
 /// A TLS connection that negotiated `protocol` and then says nothing is closed
 /// at the header-read timeout, counted from accept.
 ///
@@ -2927,37 +3415,12 @@ async fn connect(
     (kind, String::from_utf8_lossy(&body).into_owned())
 }
 
-/// A returning client resumes by default, over either protocol version.
-#[cfg(all(feature = "tls", feature = "http1"))]
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_returning_client_resumes_its_session_by_default() {
-    use tokio_rustls::rustls::{HandshakeKind, version};
-
-    let (address, issued, shutdown_sender, server) = resumption_server(None, false).await;
-
-    for version in [&version::TLS13, &version::TLS12] {
-        let client = resuming_client(&issued, version, false);
-        assert_eq!(
-            connect(&client, address).await.0,
-            HandshakeKind::Full,
-            "{version:?}"
-        );
-        assert_eq!(
-            connect(&client, address).await.0,
-            HandshakeKind::Resumed,
-            "{version:?}"
-        );
-    }
-
-    let _ = shutdown_sender.send(());
-    server
-        .await
-        .expect("server task joins")
-        .expect("server exits cleanly");
-}
-
 /// By default a session is a ticket the client holds, so no number of other
 /// clients evicts it.
+///
+/// It also holds that a returning client resumes by default at all, over
+/// either version: its first connection is a full handshake and its return a
+/// resumed one, which is everything a case asserting only that would.
 ///
 /// This is what separates the default from rustls's own, so it builds its
 /// config without the setter rather than naming a variant: reverting the
@@ -3188,6 +3651,78 @@ fn shared_ticketer(
         &crate::server::tls::crypto_provider(),
     )
     .expect("an hour is a valid ticket lifetime")
+}
+
+/// The ticket construction `ticket.rs` documents, byte for byte, on both
+/// providers: what lets replicas on different providers resume one another's
+/// sessions is that the construction is fixed, so it is pinned rather than
+/// round-tripped, which a construction that changed would also pass.
+///
+/// The expected ticket was computed outside Rust, from RFC 5869's HKDF over
+/// SHA-384 and AES-256-GCM, for the secret `[7; 32]`, a salt of thirty-two
+/// `0x5a` bytes standing in for the random one, the second 1,700,000,000 and
+/// the session `kynos session`: the name expanded under the name label, then
+/// the key and the IV expanded under the key label, the salt and `key` or
+/// `iv`, sealing the session under the name, salt and second as associated
+/// data.
+#[cfg(feature = "tls")]
+#[test]
+fn a_shared_ticket_is_the_documented_construction_on_either_provider() {
+    use tokio_rustls::rustls::crypto::{
+        CryptoProvider, GetRandomFailed, SecureRandom, aws_lc_rs, ring,
+    };
+
+    use crate::server::tls::ticket::{SharedTicketer, TicketKey, TicketKeys};
+
+    #[derive(Debug)]
+    struct FixedSalt;
+
+    impl SecureRandom for FixedSalt {
+        fn fill(&self, buffer: &mut [u8]) -> Result<(), GetRandomFailed> {
+            buffer.fill(0x5a);
+            Ok(())
+        }
+    }
+
+    const ISSUED: u64 = 1_700_000_000;
+    const SESSION: &[u8] = b"kynos session";
+    const NAME: &str = "c531bf1f7144eb2212f6a827bc52aafe";
+    const TICKET: &str = concat!(
+        "c531bf1f7144eb2212f6a827bc52aafe",
+        "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "000000006553f100",
+        "ff07768047b4e0ab04f64f9167",
+        "b58e64c4396dca0e61260881fd44f4e3",
+    );
+
+    let hex = |bytes: &[u8]| {
+        use std::fmt::Write as _;
+
+        bytes.iter().fold(String::new(), |mut hex, byte| {
+            write!(hex, "{byte:02x}").expect("a String takes any write");
+            hex
+        })
+    };
+    for provider in [aws_lc_rs::default_provider(), ring::default_provider()] {
+        let provider = CryptoProvider {
+            secure_random: &FixedSalt,
+            ..provider
+        };
+        let key = TicketKey::derive(&provider, &[7; 32]).expect("the provider seals tickets");
+        assert_eq!(format!("{key:?}"), format!("TicketKey({NAME})"));
+
+        let ticketer = SharedTicketer::new(
+            TicketKeys::new(key, []),
+            std::time::Duration::from_secs(3600),
+            &provider,
+        )
+        .expect("an hour is a valid ticket lifetime");
+        let ticket = ticketer
+            .seal_at(ISSUED, SESSION)
+            .expect("the session seals");
+        assert_eq!(hex(&ticket), TICKET);
+        assert_eq!(ticketer.open_at(ISSUED, &ticket).as_deref(), Some(SESSION));
+    }
 }
 
 /// A ticket opens under its issuing key and under a key that is merely
@@ -3474,6 +4009,105 @@ fn a_malformed_pem_keeps_its_parser_failure_as_a_cause() {
         std::error::Error::source(&error).is_some(),
         "the parser failure must survive as a cause, not as a formatted string"
     );
+}
+
+/// Each malformed PEM names the material it was read for: the private key
+/// beside a certificate, and a revocation list beside client roots.
+#[cfg(feature = "tls")]
+#[test]
+fn a_malformed_pem_names_the_material_it_was_read_for() {
+    use crate::server::tls::error::TlsError;
+
+    let identity = server_identity();
+
+    assert!(matches!(
+        crate::server::tls::TlsConfig::from_pem(
+            identity.certificate.as_bytes(),
+            b"-----BEGIN PRIVATE KEY-----\nnot base64",
+        ),
+        Err(TlsError::Pem {
+            kind: "private key",
+            ..
+        })
+    ));
+
+    let client = crate::server::tls::ClientCertificateConfig::from_pem_roots(
+        identity.certificate.as_bytes(),
+    )
+    .expect("certificate parses as a trust anchor");
+    assert!(matches!(
+        client.with_pem_crls(b"-----BEGIN X509 CRL-----\nnot base64"),
+        Err(TlsError::Pem {
+            kind: "certificate revocation list",
+            ..
+        })
+    ));
+}
+
+/// A private key that is not the certificate's own is refused when the
+/// runtime is built, for the default certificate and for one selected by SNI.
+#[cfg(feature = "tls")]
+#[test]
+fn a_private_key_that_does_not_match_its_certificate_is_refused() {
+    use crate::server::tls::{TlsConfig, error::TlsError};
+
+    let (certified, other) = (server_identity(), server_identity());
+
+    let error = TlsConfig::from_pem(certified.certificate.as_bytes(), other.key.as_bytes())
+        .expect("both halves parse")
+        .build()
+        .expect_err("a mismatched default key is refused");
+    assert!(matches!(error, TlsError::PrivateKey(_)), "{error:?}");
+
+    let error = TlsConfig::from_pem(certified.certificate.as_bytes(), certified.key.as_bytes())
+        .expect("server identity parses")
+        .with_server_certificate(
+            ["example.com"],
+            certified.certificate.as_bytes(),
+            other.key.as_bytes(),
+        )
+        .expect("both halves parse")
+        .build()
+        .expect_err("a mismatched SNI key is refused");
+    assert!(matches!(error, TlsError::PrivateKey(_)), "{error:?}");
+}
+
+/// Client-certificate material that parses as PEM but cannot verify anyone
+/// is refused when the runtime is built: a root whose DER is not a
+/// certificate, and a revocation list whose DER is not one either. Both keep
+/// rustls's account as their cause.
+#[cfg(feature = "tls")]
+#[test]
+fn client_verification_material_that_cannot_verify_is_refused() {
+    use crate::server::tls::{ClientCertificateConfig, TlsConfig, error::TlsError};
+
+    let identity = server_identity();
+    let build = |client: ClientCertificateConfig| {
+        TlsConfig::from_pem(identity.certificate.as_bytes(), identity.key.as_bytes())
+            .expect("server identity parses")
+            .require_client_certificate(client)
+            .build()
+    };
+
+    let root = ClientCertificateConfig::from_pem_roots(
+        b"-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n",
+    )
+    .expect("well-formed PEM parses");
+    let crl = ClientCertificateConfig::from_pem_roots(identity.certificate.as_bytes())
+        .expect("certificate parses as a trust anchor")
+        .with_pem_crls(b"-----BEGIN X509 CRL-----\nAAAA\n-----END X509 CRL-----\n")
+        .expect("well-formed PEM parses");
+    for (case, client) in [("root", root), ("revocation list", crl)] {
+        let error = build(client).expect_err("unusable material is refused");
+        assert!(
+            matches!(error, TlsError::ClientVerifier(_)),
+            "{case}: {error:?}"
+        );
+        assert!(
+            std::error::Error::source(&error).is_some(),
+            "{case}: rustls's account survives as a cause"
+        );
+    }
 }
 
 #[cfg(feature = "tls")]
@@ -3763,17 +4397,9 @@ fn a_caller_installed_crypto_provider_is_the_one_build_runs_on() {
     .expect_err("a provider that serves nothing cannot build a TLS runtime");
 
     assert!(
-        !matches!(
+        matches!(
             error,
-            crate::server::tls::error::TlsError::Pem { .. }
-                | crate::server::tls::error::TlsError::EmptyPem { .. }
-                | crate::server::tls::error::TlsError::PrivateKey(_)
-                | crate::server::tls::error::TlsError::ServerName(_)
-                | crate::server::tls::error::TlsError::ClientVerifier(_)
-                | crate::server::tls::error::TlsError::Ticketer(_)
-                | crate::server::tls::error::TlsError::TicketCipher
-                | crate::server::tls::error::TlsError::TicketLifetime(_)
-                | crate::server::tls::error::TlsError::ZeroHandshakeTimeout
+            crate::server::tls::error::TlsError::CryptoProvider(_)
         ),
         "an unusable provider is its own failure, not a certificate one: {error}"
     );
@@ -3825,6 +4451,13 @@ struct Authority {
 
 #[cfg(feature = "tls")]
 fn authority() -> Authority {
+    authority_issuing(&[]).0
+}
+
+/// [`authority`], also issuing one server identity per entry of `servers`,
+/// each for the names that entry lists.
+#[cfg(feature = "tls")]
+fn authority_issuing(servers: &[&[&str]]) -> (Authority, Vec<Identity>) {
     use rcgen::{
         BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose,
         IsCa, KeyPair, KeyUsagePurpose,
@@ -3859,7 +4492,7 @@ fn authority() -> Authority {
         }
     };
 
-    Authority {
+    let authority = Authority {
         certificate: issuer.pem(),
         server: leaf(
             vec!["localhost".to_owned()],
@@ -3871,7 +4504,19 @@ fn authority() -> Authority {
             "Kynos test client",
             ExtendedKeyUsagePurpose::ClientAuth,
         ),
-    }
+    };
+    let servers = servers
+        .iter()
+        .enumerate()
+        .map(|(index, names)| {
+            leaf(
+                names.iter().map(|name| (*name).to_owned()).collect(),
+                &format!("Kynos test server {index}"),
+                ExtendedKeyUsagePurpose::ServerAuth,
+            )
+        })
+        .collect();
+    (authority, servers)
 }
 
 fn test_service() -> crate::router::service::Service<()> {
@@ -4516,6 +5161,281 @@ async fn a_request_head_past_the_http1_header_cap_is_answered_431() {
     }
 }
 
+/// A plaintext server over [`test_service`], configured by `configure`.
+#[cfg(any(feature = "http1", feature = "http2"))]
+async fn configured_server(
+    configure: impl FnOnce(crate::server::Server<()>) -> crate::server::Server<()>,
+) -> (
+    std::net::SocketAddr,
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<crate::error::Result<()>>,
+) {
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let bound = configure(crate::server::Server::new(test_service()))
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+            let _ = shutdown_receiver.await;
+        }))
+        .prepare()
+        .await
+        .expect("loopback listener binds");
+    let address = bound.local_addrs()[0];
+    (address, shutdown_sender, tokio::spawn(bound.serve()))
+}
+
+/// `keep_alive(false)` reaches the driver: the response says `close`, and the
+/// server closes after it. A client that asked for nothing is what tells this
+/// apart from honouring the client's own `close`; with keep-alive on, the
+/// read below would wait for a close that never came.
+#[cfg(feature = "http1")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_http1_server_without_keep_alive_closes_after_one_response() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    let (address, shutdown_sender, server) =
+        configured_server(|server| server.http1(Http1Config::default().keep_alive(false))).await;
+
+    let mut stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        .await
+        .expect("the request writes");
+    let mut response = Vec::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        stream.read_to_end(&mut response),
+    )
+    .await
+    .expect("the server closes the connection")
+    .expect("the response reads");
+    let response = String::from_utf8(response)
+        .expect("the response is text")
+        .to_ascii_lowercase();
+
+    assert!(response.starts_with("http/1.1 200 ok\r\n"), "{response}");
+    assert!(response.contains("\r\nconnection: close\r\n"), "{response}");
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// `max_buffer_size` reaches the driver: a head of four fields filling the
+/// 8 KiB floor is answered 431 under that floor, while a longer one is served
+/// under the default.
+///
+/// The refused head is exactly 8 KiB and unterminated, so the driver has read
+/// every byte when it refuses: unread bytes at its close would reset the
+/// connection, and a reset may discard the 431 before the client reads it.
+#[cfg(feature = "http1")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_head_past_the_http1_buffer_is_answered_431() {
+    use std::io::{Read as _, Write as _};
+
+    const PREFIX: &str = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nX-Padding: ";
+
+    for (http1, head, status) in [
+        (
+            Http1Config::default(),
+            format!("{PREFIX}{}\r\n\r\n", "a".repeat(12 * 1024)),
+            "HTTP/1.1 200 ",
+        ),
+        (
+            Http1Config::default().max_buffer_size(8_192),
+            format!("{PREFIX}{}", "a".repeat(8_192 - PREFIX.len())),
+            "HTTP/1.1 431 ",
+        ),
+    ] {
+        let (address, shutdown_sender, server) =
+            configured_server(|server| server.http1(http1)).await;
+
+        let response = tokio::task::spawn_blocking(move || {
+            let mut stream = std::net::TcpStream::connect(address).expect("server accepts");
+            stream.write_all(head.as_bytes()).expect("request writes");
+            let mut response = String::new();
+            stream
+                .read_to_string(&mut response)
+                .expect("response reads");
+            response
+        })
+        .await
+        .expect("blocking client joins");
+
+        assert!(response.starts_with(status), "{http1:?}: {response}");
+
+        let _ = shutdown_sender.send(());
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
+    }
+}
+
+/// What a server announces at the start of an HTTP/2 connection, read off the
+/// frames it sends before it answers the client's first PING.
+#[cfg(feature = "http2")]
+#[derive(Debug, PartialEq, Eq)]
+struct Announced {
+    /// The server's SETTINGS frame, by identifier (RFC 9113 §6.5.2).
+    settings: std::collections::BTreeMap<u16, u32>,
+    /// The connection window: RFC 9113 §6.9.2's 65,535 plus every
+    /// `WINDOW_UPDATE` the server sent on stream 0.
+    connection_window: u32,
+}
+
+/// Opens a prior-knowledge HTTP/2 connection to `address` and reads what the
+/// server announces, until it answers a PING sent once it acknowledged the
+/// client's empty SETTINGS: the driver writes what it queued at the start of
+/// the connection before it answers the PING.
+#[cfg(feature = "http2")]
+async fn announced(address: std::net::SocketAddr) -> Announced {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    let mut stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    stream
+        .write_all(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n\0\0\0\x04\0\0\0\0\0")
+        .await
+        .expect("the preface and an empty SETTINGS write");
+
+    let mut announced = Announced {
+        settings: std::collections::BTreeMap::new(),
+        connection_window: 65_535,
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let mut header = [0_u8; 9];
+            stream
+                .read_exact(&mut header)
+                .await
+                .expect("a frame header reads");
+            let length = u32::from_be_bytes([0, header[0], header[1], header[2]]);
+            let (kind, flags) = (header[3], header[4]);
+            let stream_id = u32::from_be_bytes([header[5], header[6], header[7], header[8]]);
+            let mut payload = vec![0_u8; usize::try_from(length).expect("a frame fits")];
+            stream
+                .read_exact(&mut payload)
+                .await
+                .expect("a frame payload reads");
+            match (kind, flags & 0x1, stream_id) {
+                // SETTINGS with ACK: the server has read the client's.
+                (0x4, 0x1, 0) => stream
+                    .write_all(b"\0\0\x08\x06\0\0\0\0\0kynos-ok")
+                    .await
+                    .expect("a PING writes"),
+                // The PING's ACK.
+                (0x6, 0x1, 0) => return,
+                (0x4, 0x0, 0) => {
+                    for entry in payload.chunks_exact(6) {
+                        announced.settings.insert(
+                            u16::from_be_bytes([entry[0], entry[1]]),
+                            u32::from_be_bytes([entry[2], entry[3], entry[4], entry[5]]),
+                        );
+                    }
+                }
+                (0x8, _, 0) => {
+                    let increment =
+                        u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+                    announced.connection_window += increment & 0x7fff_ffff;
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("the server acknowledges the client's SETTINGS and its PING");
+    announced
+}
+
+/// The HTTP/2 settings that reach a client do so as configured: the stream
+/// cap, both fixed windows and the header-list cap, under the defaults and
+/// under values that differ from every one of them. An adaptive window starts
+/// from the protocol's own 65,535 on both sides and grows from there, so the
+/// fixed windows it replaces reach no frame.
+///
+/// The send buffer and the two reset-stream caps announce nothing, so no
+/// frame can show them reaching the driver; they are left to the setter and
+/// validation cases.
+#[cfg(feature = "http2")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_http2_server_announces_the_settings_it_was_configured_with() {
+    const MAX_CONCURRENT_STREAMS: u16 = 0x3;
+    const INITIAL_WINDOW_SIZE: u16 = 0x4;
+    const MAX_HEADER_LIST_SIZE: u16 = 0x6;
+
+    let fixed = Http2Config::default()
+        .max_concurrent_streams(64)
+        .flow_control(Http2FlowControl::Fixed {
+            initial_stream_window_size: 256 * 1024,
+            initial_connection_window_size: 512 * 1024,
+        })
+        .max_header_list_size(8 * 1024);
+    let adaptive = Http2Config::default().flow_control(Http2FlowControl::Adaptive);
+
+    for (http2, settings, connection_window) in [
+        (
+            Http2Config::default(),
+            vec![
+                (MAX_CONCURRENT_STREAMS, 200),
+                (INITIAL_WINDOW_SIZE, 1024 * 1024),
+                (MAX_HEADER_LIST_SIZE, 16 * 1024),
+            ],
+            1024 * 1024,
+        ),
+        (
+            fixed,
+            vec![
+                (MAX_CONCURRENT_STREAMS, 64),
+                (INITIAL_WINDOW_SIZE, 256 * 1024),
+                (MAX_HEADER_LIST_SIZE, 8 * 1024),
+            ],
+            512 * 1024,
+        ),
+        (
+            adaptive,
+            vec![
+                (MAX_CONCURRENT_STREAMS, 200),
+                (INITIAL_WINDOW_SIZE, 65_535),
+                (MAX_HEADER_LIST_SIZE, 16 * 1024),
+            ],
+            65_535,
+        ),
+    ] {
+        let (address, shutdown_sender, server) =
+            configured_server(|server| server.http2(http2)).await;
+
+        let mut announced = announced(address).await;
+        // Only what Kynos configures; the frame size, say, is hyper's own.
+        announced.settings.retain(|identifier, _| {
+            [
+                MAX_CONCURRENT_STREAMS,
+                INITIAL_WINDOW_SIZE,
+                MAX_HEADER_LIST_SIZE,
+            ]
+            .contains(identifier)
+        });
+        assert_eq!(
+            announced,
+            Announced {
+                settings: settings.into_iter().collect(),
+                connection_window,
+            },
+            "{http2:?}"
+        );
+
+        let _ = shutdown_sender.send(());
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
+    }
+}
+
 /// Requests over HTTP/1 with a head of exactly `fields` header fields, `Host`
 /// and `Connection: close` among them.
 #[cfg(feature = "http1")]
@@ -4860,8 +5780,21 @@ mod request_body_idle {
         tokio::sync::oneshot::Sender<()>,
         tokio::task::JoinHandle<crate::error::Result<()>>,
     ) {
+        idle_timed_server_over(reading_service(), idle).await
+    }
+
+    /// [`idle_timed_server`] over `service`.
+    #[cfg(any(feature = "http1", feature = "http2"))]
+    async fn idle_timed_server_over(
+        service: crate::router::service::Service<()>,
+        idle: Option<Duration>,
+    ) -> (
+        std::net::SocketAddr,
+        tokio::sync::oneshot::Sender<()>,
+        tokio::task::JoinHandle<crate::error::Result<()>>,
+    ) {
         let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
-        let bound = Server::new(reading_service())
+        let bound = Server::new(service)
             .request_body_idle_timeout(idle)
             .bind((std::net::Ipv4Addr::LOCALHOST, 0))
             .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
@@ -4916,6 +5849,169 @@ mod request_body_idle {
             response.contains("\r\ncontent-type: application/problem+json\r\n"),
             "{response}"
         );
+        assert!(
+            response.contains(r#""detail":"the request body sent nothing for 200ms""#),
+            "the 408 names the limit the body passed: {response}"
+        );
+
+        let _ = shutdown_sender.send(());
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
+    }
+
+    /// A service that waits `delay` before it reads its body, says on
+    /// `reading` when it starts, and answers as [`reading_service`] does.
+    #[cfg(feature = "http1")]
+    fn late_reading_service(
+        delay: Duration,
+        reading: std::sync::Arc<tokio::sync::Notify>,
+    ) -> crate::router::service::Service<()> {
+        use http_body_util::BodyExt as _;
+
+        let document = kynos_openapi::Document::new(
+            kynos_openapi::SpecVersion::V3_1,
+            kynos_openapi::Info::new("Test", "1"),
+        );
+        crate::router::service::Service::new(document, move |request: crate::http::Request| {
+            let reading = std::sync::Arc::clone(&reading);
+            async move {
+                tokio::time::sleep(delay).await;
+                reading.notify_one();
+                let (status, body) = match request.into_body().collect().await {
+                    Ok(collected) => (
+                        crate::http::StatusCode::OK,
+                        collected.to_bytes().len().to_string(),
+                    ),
+                    Err(error) => (crate::http::StatusCode::BAD_REQUEST, error.to_string()),
+                };
+                let mut response =
+                    crate::http::Response::new(crate::http::body::Body::from_bytes(body.into()));
+                *response.status_mut() = status;
+                response
+            }
+        })
+    }
+
+    /// The clock starts when the handler reads, not when the request arrives:
+    /// a handler that waits three limits before reading, and then waits half
+    /// of one for the rest of the body, reads it whole. Counted from arrival,
+    /// the limit would long have passed.
+    #[cfg(feature = "http1")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_handler_that_reads_late_is_not_charged_for_the_wait() {
+        use tokio::io::AsyncWriteExt as _;
+
+        const LIMIT: Duration = Duration::from_millis(400);
+
+        let reading = std::sync::Arc::new(tokio::sync::Notify::new());
+        let service = late_reading_service(LIMIT * 3, std::sync::Arc::clone(&reading));
+        let (address, shutdown_sender, server) = idle_timed_server_over(service, Some(LIMIT)).await;
+
+        let mut stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("server accepts");
+        stream
+            .write_all(
+                b"POST / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 10\r\n\r\nabc",
+            )
+            .await
+            .expect("the head and part of the body write");
+        tokio::time::timeout(STALL_BOUND, reading.notified())
+            .await
+            .expect("the handler starts reading");
+        tokio::time::sleep(LIMIT / 2).await;
+        stream.write_all(b"defghij").await.expect("the rest writes");
+        let response = read_until_closed(&mut stream).await;
+
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+        assert!(response.ends_with("\r\n\r\n10"), "{response}");
+
+        let _ = shutdown_sender.send(());
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
+    }
+
+    /// A client sending `Expect: 100-continue` sends no body until it is told
+    /// to, which happens on the handler's first read, so waiting for the
+    /// `100 Continue` is not a stall: the clock starts with the read that
+    /// sends it, here two limits after the request arrived.
+    #[cfg(feature = "http1")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_client_awaiting_100_continue_is_not_a_stall() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        const LIMIT: Duration = Duration::from_millis(400);
+        const CONTINUE: &[u8] = b"HTTP/1.1 100 Continue\r\n\r\n";
+
+        let reading = std::sync::Arc::new(tokio::sync::Notify::new());
+        let service = late_reading_service(LIMIT * 2, reading);
+        let (address, shutdown_sender, server) = idle_timed_server_over(service, Some(LIMIT)).await;
+
+        let mut stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("server accepts");
+        stream
+            .write_all(
+                b"POST / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nExpect: 100-continue\r\nContent-Length: 3\r\n\r\n",
+            )
+            .await
+            .expect("the head writes");
+        let mut interim = vec![0_u8; CONTINUE.len()];
+        tokio::time::timeout(STALL_BOUND, stream.read_exact(&mut interim))
+            .await
+            .expect("the server asks for the body")
+            .expect("the interim response reads");
+        assert_eq!(interim, CONTINUE, "{}", String::from_utf8_lossy(&interim));
+        tokio::time::sleep(LIMIT / 2).await;
+        stream.write_all(b"abc").await.expect("the body writes");
+        let response = read_until_closed(&mut stream).await;
+
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+        assert!(response.ends_with("\r\n\r\n3"), "{response}");
+
+        let _ = shutdown_sender.send(());
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
+    }
+
+    /// A response the handler returned before the body stalled stands: its
+    /// head may already be on the wire, so the stall ends that response's
+    /// body rather than turning it into a 408.
+    #[cfg(feature = "http1")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_response_returned_before_the_stall_stands() {
+        use tokio::io::AsyncWriteExt as _;
+
+        let document = kynos_openapi::Document::new(
+            kynos_openapi::SpecVersion::V3_1,
+            kynos_openapi::Info::new("Test", "1"),
+        );
+        // Answers at once, echoing the request body as its own.
+        let echo = crate::router::service::Service::new(
+            document,
+            |request: crate::http::Request| async move {
+                crate::http::Response::new(request.into_body())
+            },
+        );
+        let (address, shutdown_sender, server) = idle_timed_server_over(echo, Some(IDLE)).await;
+
+        let mut stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("server accepts");
+        stream
+            .write_all(STALLED_HEAD)
+            .await
+            .expect("request writes");
+        let response = read_until_closed(&mut stream).await;
+
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+        assert!(!response.contains(" 408 "), "{response}");
 
         let _ = shutdown_sender.send(());
         server
@@ -5057,6 +6153,23 @@ mod request_body_idle {
                 .contains_key(crate::http::header::CONNECTION),
             "{:?}",
             response.headers()
+        );
+        assert_eq!(
+            response.headers().get(crate::http::header::CONTENT_TYPE),
+            Some(&crate::http::HeaderValue::from_static(
+                "application/problem+json"
+            )),
+            "{:?}",
+            response.headers()
+        );
+        let body = http_body_util::BodyExt::collect(response.into_body())
+            .await
+            .expect("the problem document reads")
+            .to_bytes();
+        let body = String::from_utf8_lossy(&body);
+        assert!(
+            body.contains(r#""detail":"the request body sent nothing for 200ms""#),
+            "the 408 names the limit the body passed: {body}"
         );
 
         drop(sender);
