@@ -315,7 +315,32 @@ fn an_unchecked_route_is_recorded_where_a_generator_cannot_act_on_it() {
     assert_eq!(recorded[0].pattern, "/static/{*path}");
     assert_eq!(recorded[0].prefix.as_deref(), Some("/static"));
     assert_eq!(recorded[0].methods, ["GET"]);
+    assert_eq!(recorded[0].reason, OpaqueReason::UntypedRoute);
+    assert_eq!(recorded[0].note, None);
 
+    assert!(!document.is_authoritative());
+}
+
+/// An upgrade route is recorded the same way, under the reason and the note
+/// `upgrade_unchecked` documents, served on `GET` alone.
+#[test]
+fn an_upgrade_route_is_recorded_as_a_protocol_upgrade() {
+    let document = Router::<()>::new()
+        .upgrade_unchecked("/rooms/{room}/socket", echo_path)
+        .openapi()
+        .expect("a describable router");
+
+    assert!(document.paths.items.is_empty());
+    let recorded = OpaqueRoute::all(&document).expect("a readable record");
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].pattern, "/rooms/{room}/socket");
+    assert_eq!(recorded[0].prefix.as_deref(), Some("/rooms"));
+    assert_eq!(recorded[0].methods, ["GET"]);
+    assert_eq!(recorded[0].reason, OpaqueReason::ProtocolUpgrade);
+    assert_eq!(
+        recorded[0].note.as_deref(),
+        Some("the connection leaves HTTP, which no version of the specification models")
+    );
     assert!(!document.is_authoritative());
 }
 
@@ -436,6 +461,96 @@ fn a_router_layer_alone_marks_every_operation() {
             [OpaqueReason::UntypedLayer],
             "{path}"
         );
+    }
+}
+
+/// A `tower` layer that stamps every response it wraps, so a test sees where
+/// it ran.
+#[derive(Clone, Copy, Debug)]
+struct Stamp;
+
+impl<S> tower::Layer<S> for Stamp {
+    type Service = Stamped<S>;
+
+    fn layer(&self, inner: S) -> Stamped<S> {
+        Stamped(inner)
+    }
+}
+
+/// What [`Stamp`] wraps a service in.
+#[derive(Clone, Debug)]
+struct Stamped<S>(S);
+
+impl<S> tower::Service<Request> for Stamped<S>
+where
+    S: tower::Service<Request, Response = Response, Error = std::convert::Infallible>,
+    S::Future: Send + 'static,
+{
+    type Response = Response;
+    type Error = std::convert::Infallible;
+    type Future = std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Response, std::convert::Infallible>> + Send>,
+    >;
+
+    fn poll_ready(
+        &mut self,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.0.poll_ready(context)
+    }
+
+    fn call(&mut self, request: Request) -> Self::Future {
+        let answered = self.0.call(request);
+        Box::pin(async move {
+            let mut response = answered.await?;
+            response
+                .headers_mut()
+                .insert("x-stamped", kynos::http::HeaderValue::from_static("yes"));
+            Ok(response)
+        })
+    }
+}
+
+/// [`layered`]'s shape with [`Stamp`] in place of the identity layer, built.
+fn stamped(on_router: bool, on_group: bool) -> kynos::router::service::Service<()> {
+    let mut group = Group::new("/").mount(kynos::routes![inside]);
+    if on_group {
+        group = group.layer_unchecked(Stamp);
+    }
+    let mut router = Router::<()>::new()
+        .mount(kynos::routes![outside])
+        .group(group);
+    if on_router {
+        router = router.layer_unchecked(Stamp);
+    }
+    router.build(()).expect("a buildable router")
+}
+
+/// A layer runs on exactly the operations it flags: a group's on the group's
+/// operation and not its sibling, a router's on both — and neither on a
+/// request no route matched, which never reaches a layer.
+#[tokio::test]
+async fn an_unchecked_layer_runs_on_exactly_the_operations_it_flags() {
+    let cases = [
+        ("the group's layer", stamped(false, true), [true, false]),
+        ("the router's layer", stamped(true, false), [true, true]),
+    ];
+
+    for (case, service, [on_inside, on_outside]) in cases {
+        for (path, expected) in [("/inside", on_inside), ("/outside", on_outside)] {
+            let reply = get(&service, path).call().await;
+
+            assert_eq!(reply.status, StatusCode::NO_CONTENT, "{case}, {path}");
+            assert_eq!(
+                reply.field("x-stamped").as_deref(),
+                expected.then_some("yes"),
+                "{case}, {path}"
+            );
+        }
+
+        let unmatched = get(&service, "/nowhere").call().await;
+        assert_eq!(unmatched.status, StatusCode::NOT_FOUND, "{case}");
+        assert_eq!(unmatched.field("x-stamped"), None, "{case}");
     }
 }
 
