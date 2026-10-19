@@ -373,6 +373,35 @@ fn a_delegated_scheme_challenges_for_a_bearer_token() {
     );
 }
 
+/// A scope refusal under any bearer kind answers RFC 6750 section 3.1's
+/// `insufficient_scope`, as `Bearer` does; a kind with no registered error for
+/// it sends none.
+#[test]
+fn a_bearer_kind_challenges_a_scope_refusal_with_insufficient_scope() {
+    const INSUFFICIENT: Option<&str> = Some(r#"Bearer error="insufficient_scope""#);
+
+    assert_eq!(
+        <BearerAuth as SecuritySchemeTrait>::insufficient_scope_challenge(),
+        INSUFFICIENT
+    );
+    assert_eq!(
+        <Delegated as SecuritySchemeTrait>::insufficient_scope_challenge(),
+        INSUFFICIENT
+    );
+    assert_eq!(
+        <Federated as SecuritySchemeTrait>::insufficient_scope_challenge(),
+        INSUFFICIENT
+    );
+    assert_eq!(
+        <BasicLogin as SecuritySchemeTrait>::insufficient_scope_challenge(),
+        None
+    );
+    assert_eq!(
+        <SessionCookie as SecuritySchemeTrait>::insufficient_scope_challenge(),
+        None
+    );
+}
+
 fn scoped_by<S: SecuritySchemeTrait<Scope = P>, P>() {}
 
 /// `scope = Type` names the scheme's scope type, a scheme naming none is

@@ -75,6 +75,10 @@ impl SecurityScheme for Audited {
     fn scopes() -> &'static [Grant] {
         &[Grant::Audit, Grant::ReadReports]
     }
+
+    fn insufficient_scope_challenge() -> Option<&'static str> {
+        <Bearer as SecurityScheme>::insufficient_scope_challenge()
+    }
 }
 
 impl Carries for Audited {
@@ -927,4 +931,38 @@ fn a_scope_refusal_declares_the_challenge_it_sends() {
         declared_scope_challenge::<Scoped<Basic<String, Grant>, ReadReports>>(),
         None
     );
+}
+
+/// A guard naming no scope set refuses a scope only through a scheme's default
+/// scopes, so that scheme's challenge is the one sent and declared, wherever
+/// it sits in a combination.
+#[tokio::test]
+async fn a_default_scope_refusal_challenges_with_the_refusing_schemes_challenge() {
+    const INSUFFICIENT: &str = r#"Bearer error="insufficient_scope""#;
+    let refusing = Recording::refusing();
+
+    assert_eq!(
+        forbidden_challenges::<_, Auth<Audited>>(&presenting_a_token(), &refusing).await,
+        [INSUFFICIENT]
+    );
+    assert_eq!(
+        forbidden_challenges::<_, Auth<AllOf<(Bearer, Audited)>>>(&presenting_a_token(), &refusing)
+            .await,
+        [INSUFFICIENT]
+    );
+
+    // `Bearer` leads, but owes no scope, so it is `Audited`'s that is declared.
+    for declared in [
+        declared_scope_challenge::<Auth<Audited>>(),
+        declared_scope_challenge::<MaybeAuth<Audited>>(),
+        declared_scope_challenge::<Auth<AnyOf<(Bearer, Audited)>>>(),
+        declared_scope_challenge::<Auth<AllOf<(Bearer, Audited)>>>(),
+    ] {
+        let header = declared.expect("a declared challenge");
+        assert_eq!(
+            header["example"],
+            serde_json::json!(INSUFFICIENT),
+            "{header}"
+        );
+    }
 }

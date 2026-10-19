@@ -493,6 +493,46 @@ fn a_named_403_survives_the_challenge_pass_and_still_sends_none() {
     assert_eq!(unauthenticated.type_uri, "about:blank");
 }
 
+/// A scope refusal's challenge is the 403's own: set on a 403 it is reported
+/// and sent, with the named type kept; it never reaches a 401, and replacing
+/// it with `None` sends none.
+#[test]
+fn a_scope_challenge_is_set_on_a_403_alone() {
+    use crate::{http::header, response::IntoResponse};
+
+    const BANNED: &str = "https://example.test/problems/account-banned";
+    const INSUFFICIENT: &str = "Bearer error=\"insufficient_scope\"";
+
+    let refused = AuthRejection::forbidden_as(BANNED).with_scope_challenge(Some(INSUFFICIENT));
+    assert_eq!(refused.challenge(), Some(INSUFFICIENT));
+
+    let response = refused.into_response();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(response.headers()[header::WWW_AUTHENTICATE], INSUFFICIENT);
+
+    let named = AuthRejection::forbidden_as(BANNED)
+        .with_scope_challenge(Some(INSUFFICIENT))
+        .into_problem();
+    assert_eq!(named.type_uri, BANNED);
+
+    // Replaced, not kept: a guard's 403 carries exactly what it declares.
+    let cleared = AuthRejection::forbidden()
+        .with_scope_challenge(Some(INSUFFICIENT))
+        .with_scope_challenge(None);
+    assert_eq!(cleared.challenge(), None);
+    assert!(
+        !cleared
+            .into_response()
+            .headers()
+            .contains_key(header::WWW_AUTHENTICATE)
+    );
+
+    let unauthenticated = AuthRejection::unauthenticated()
+        .with_challenge(Some("Bearer"))
+        .with_scope_challenge(Some(INSUFFICIENT));
+    assert_eq!(unauthenticated.challenge(), Some("Bearer"));
+}
+
 // --- The closed set --------------------------------------------------------
 
 /// Every rejection type, counted against the ones this file exercises.
