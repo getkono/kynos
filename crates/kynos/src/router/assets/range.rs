@@ -105,11 +105,7 @@ pub(super) fn unsatisfiable(rejection: RangeRejection) -> Response {
 /// Called with the 200 and the 304 already declared; fields are attached to
 /// the 200 and 206 only.
 pub(super) fn describe(operation: &mut OperationCx<'_>, media_type: &str) {
-    let partial = kynos_openapi::Response::with_content(
-        "the requested part of the file",
-        media_type,
-        kynos_openapi::MediaType::new(kynos_openapi::Schema::Object(Box::default())),
-    );
+    let partial = range::content_response("the requested part of the file", media_type);
     operation.add_responses(&kynos_openapi::Responses::new().with(206, partial));
 
     // Declared by the rejection that produces it.

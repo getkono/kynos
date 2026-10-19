@@ -5,7 +5,7 @@ use kynos_openapi::{Method, PathTemplate};
 use crate::{
     extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http::{HeaderValue, Request, Response, StatusCode, etag, header},
-    response::range::spec,
+    response::range::{Precondition, content_response, not_modified_response, spec},
     router::{
         assets::{Asset, range},
         endpoint::{Endpoint, operation_id},
@@ -228,21 +228,11 @@ impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
         operation.set_operation_id(&self.operation_id);
         operation.set_summary(format!("Serves {}", self.asset.path()));
 
-        let mut responses = kynos_openapi::Responses::new().with(
-            200,
-            kynos_openapi::Response::with_content(
-                "the file",
-                self.asset.media_type(),
-                // Unconstrained, as every binary codec describes its bytes.
-                kynos_openapi::MediaType::new(kynos_openapi::Schema::Object(Box::default())),
-            ),
-        );
+        let mut responses = kynos_openapi::Responses::new()
+            .with(200, content_response("the file", self.asset.media_type()));
 
         // Reachable because the 200 carries an `ETag`.
-        responses = responses.with(
-            304,
-            kynos_openapi::Response::new("the client's copy is current"),
-        );
+        responses = responses.with(304, not_modified_response());
 
         // An `If-Match` naming a tag the file no longer carries.
         responses = responses.with(
@@ -253,28 +243,8 @@ impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
         operation.add_responses(&responses);
 
         // Read directly rather than extracted, but still declared.
-        operation.add_parameter(
-            kynos_openapi::Parameter::header(
-                "If-Match",
-                kynos_openapi::Schema::of_type(
-                    kynos_openapi::model::schema::types::SchemaType::String,
-                ),
-            )
-            .with_description(
-                "The entity tag the client's copy was taken from, per RFC 9110 section 13.1.1",
-            ),
-        );
-        operation.add_parameter(
-            kynos_openapi::Parameter::header(
-                "If-None-Match",
-                kynos_openapi::Schema::of_type(
-                    kynos_openapi::model::schema::types::SchemaType::String,
-                ),
-            )
-            .with_description(
-                "The entity tag the client already holds, per RFC 9110 section 13.1.2",
-            ),
-        );
+        operation.add_parameter(Precondition::Match.parameter());
+        operation.add_parameter(Precondition::NoneMatch.parameter());
 
         // Declared only where there is something to choose between.
         if !self.asset.encodings().is_empty() {

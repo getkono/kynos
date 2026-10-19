@@ -21,7 +21,7 @@ use crate::{
         IntoResponse,
         disposition::ContentDisposition,
         range::{
-            Selection,
+            Precondition, Selection,
             source::{ByteSource, Spans},
             spec, write_selection,
         },
@@ -474,34 +474,13 @@ impl crate::extract::describe::Describe for Conditions {
         operation.add_parameter(crate::response::range::parameter());
         operation.add_parameter(crate::response::range::conditional_parameter());
 
-        for (name, description) in [
-            (
-                "If-Match",
-                "The entity tag the client's copy was taken from, per RFC 9110 section 13.1.1",
-            ),
-            (
-                "If-Unmodified-Since",
-                "The date the client's copy carries, refused if the representation changed since, \
-                 per RFC 9110 section 13.1.4",
-            ),
-            (
-                "If-None-Match",
-                "The entity tag the client already holds, per RFC 9110 section 13.1.2",
-            ),
-            (
-                "If-Modified-Since",
-                "The date the client's copy carries, per RFC 9110 section 13.1.3",
-            ),
+        for precondition in [
+            Precondition::Match,
+            Precondition::UnmodifiedSince,
+            Precondition::NoneMatch,
+            Precondition::ModifiedSince,
         ] {
-            operation.add_parameter(
-                kynos_openapi::Parameter::header(
-                    name,
-                    kynos_openapi::Schema::of_type(
-                        kynos_openapi::model::schema::types::SchemaType::String,
-                    ),
-                )
-                .with_description(description),
-            );
+            operation.add_parameter(precondition.parameter());
         }
     }
 }
