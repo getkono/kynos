@@ -256,7 +256,10 @@ fails a file raising one that no ledger names, so a rule added without a case
 fails the build;
 `tests/ui/macros/` asserts what that rule *says*. Neither substitutes for the
 other: a count cannot read a message, and a snapshot suite cannot notice a rule
-nobody wrote a case for.
+nobody wrote a case for. `every_ledgered_diagnostic_has_a_snapshot` in
+[`tests/ui.rs`](../crates/kynos/tests/ui.rs) joins them: each ledger row's
+fragment must appear in some snapshot, save a row built only with a feature off
+and the few it lists as out of a case's reach.
 
 Nothing here renders the documentation that emitter writes, and nothing here
 can: rendering it needs the facade, and this crate cannot depend on it.
