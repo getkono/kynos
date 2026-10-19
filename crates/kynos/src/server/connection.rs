@@ -173,9 +173,7 @@ macro_rules! tune_http1 {
             .header_read_timeout(config.header_read_timeout)
             .max_buf_size(config.max_buffer_size)
             .timer(TokioTimer::new());
-        http1.max_headers(crate::server::protocol::http1::forwarded_max_headers(
-            config,
-        ));
+        http1.max_headers(config.max_headers);
     }};
 }
 
