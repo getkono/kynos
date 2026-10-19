@@ -3455,14 +3455,30 @@ fn a_tuple_member_keeps_its_constraints_at_its_position() {
 /// constraints inside the branch.
 #[test]
 fn a_variant_member_keeps_its_constraints() {
-    let schema = emitted::<Measure>();
     assert_eq!(
-        schema["oneOf"][0]["properties"]["Range"]["prefixItems"][0]["minimum"],
-        serde_json::json!(1.0)
-    );
-    assert_eq!(
-        schema["oneOf"][1]["properties"]["Title"],
-        serde_json::json!({"type": "string", "minLength": 1})
+        emitted::<Measure>(),
+        serde_json::json!({"oneOf": [
+            {
+                "type": "object",
+                "properties": {"Range": {
+                    "type": "array",
+                    "prefixItems": [
+                        {"type": "integer", "format": "uint64", "minimum": 1.0},
+                        emitted::<u64>(),
+                    ],
+                    "items": false,
+                    "minItems": 2,
+                }},
+                "required": ["Range"],
+                "additionalProperties": false,
+            },
+            {
+                "type": "object",
+                "properties": {"Title": {"type": "string", "minLength": 1}},
+                "required": ["Title"],
+                "additionalProperties": false,
+            },
+        ]})
     );
 }
 
@@ -3554,27 +3570,17 @@ fn a_newtype_member_is_described_as_the_type_it_names() {
 /// type's, which is what serde reads.
 #[test]
 fn a_named_field_is_described_as_the_type_it_names() {
-    let schema = emitted::<Submission>();
-
     assert_eq!(
-        schema["properties"]["lines"]["minItems"],
-        serde_json::json!(1)
-    );
-    assert_eq!(
-        schema["properties"]["lines"]["items"],
-        serde_json::json!({"type": "string"})
-    );
-    assert_eq!(
-        schema["properties"]["owner"],
-        serde_json::json!({"$ref": "#/components/schemas/Label"})
-    );
-    assert_eq!(
-        schema["properties"]["digest"],
-        serde_json::json!({"$ref": "#/components/schemas/HashHex"})
-    );
-    assert_eq!(
-        schema["required"],
-        serde_json::json!(["lines", "owner", "digest"])
+        emitted::<Submission>(),
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "lines": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                "owner": {"$ref": "#/components/schemas/Label"},
+                "digest": {"$ref": "#/components/schemas/HashHex"},
+            },
+            "required": ["lines", "owner", "digest"],
+        })
     );
 }
 
@@ -3674,9 +3680,28 @@ fn a_variant_serde_reads_but_never_writes_is_described() {
 /// since serde refuses the shorter array.
 #[test]
 fn a_tuple_variant_serde_never_writes_admits_no_fewer_members_than_it_reads() {
-    let schema = emitted::<Batch>();
-    let queued = &schema["oneOf"][1]["properties"]["Queued"];
-    assert_eq!(queued["minItems"], serde_json::json!(2), "{schema}");
+    assert_eq!(
+        emitted::<Batch>(),
+        serde_json::json!({"oneOf": [
+            {
+                "type": "object",
+                "properties": {"Now": emitted::<u64>()},
+                "required": ["Now"],
+                "additionalProperties": false,
+            },
+            {
+                "type": "object",
+                "properties": {"Queued": {
+                    "type": "array",
+                    "prefixItems": [emitted::<u64>(), emitted::<u64>()],
+                    "items": false,
+                    "minItems": 2,
+                }},
+                "required": ["Queued"],
+                "additionalProperties": false,
+            },
+        ]})
+    );
     assert!(serde_json::from_str::<Batch>(r#"{"Queued":[1]}"#).is_err());
     assert!(serde_json::from_str::<Batch>(r#"{"Queued":[1,0]}"#).is_ok());
 }
@@ -4509,6 +4534,24 @@ enum GatewayError {
     Upstream,
 }
 
+/// Statuses where one side requires the group and the other sends none: 503,
+/// which every held failure sends it on and this one does not, and 409, which
+/// this failure sends it on and no held one does.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum RelayError {
+    #[error(transparent)]
+    #[problem(transparent)]
+    Session(SessionError),
+
+    #[error("the relay is down")]
+    #[problem(status = 503)]
+    Down,
+
+    #[error("the relay is busy with that session")]
+    #[problem(status = 409)]
+    Busy(#[problem(headers)] RetryAfter),
+}
+
 /// The `Retry-After` a response carries, if any.
 fn retry_after(response: &kynos::http::Response) -> (u16, Option<String>) {
     let status = response.status().as_u16();
@@ -4567,12 +4610,25 @@ async fn a_struct_sends_its_header_group_beside_its_extensions() {
         limit: 10,
         retry: RetryAfter { retry_after: 2 },
     };
-    let Answered { headers, body, .. } = answered(error.into_response()).await;
+    let Answered {
+        status,
+        headers,
+        body,
+    } = answered(error.into_response()).await;
 
+    assert_eq!(status, 429);
     assert_eq!(headers["retry-after"], "2");
     let body: serde_json::Value = serde_json::from_slice(&body).expect("a JSON body");
-    assert_eq!(body["limit"], 10);
-    assert_eq!(body.get("retry"), None, "{body}");
+    assert_eq!(
+        body,
+        serde_json::json!({
+            "type": "about:blank",
+            "title": "Too Many Requests",
+            "status": 429,
+            "detail": "over the limit of 10",
+            "limit": 10,
+        })
+    );
 }
 
 /// A failure sending a group whose field renders as text.
@@ -4609,20 +4665,31 @@ fn a_header_group_is_declared_under_its_failures_status_alone() {
 
     assert_eq!(responses["409"].get("headers"), None, "{responses}");
     assert_eq!(
-        responses["503"]["headers"]["Retry-After"]["required"],
-        serde_json::json!(true),
+        responses["503"]["headers"],
+        retry_after_declared(true),
         "{responses}"
     );
-    let shared = &responses["429"]["headers"]["Retry-After"];
-    assert!(shared.is_object(), "{responses}");
-    assert_eq!(shared.get("required"), None, "{responses}");
+    assert_eq!(
+        responses["429"]["headers"],
+        retry_after_declared(false),
+        "{responses}"
+    );
 
     let alone = emitted_responses::<OverLimit>();
     assert_eq!(
-        alone["429"]["headers"]["Retry-After"]["required"],
-        serde_json::json!(true),
+        alone["429"]["headers"],
+        retry_after_declared(true),
         "{alone}"
     );
+}
+
+/// The `headers` a response declares for `RetryAfter`, required or not.
+fn retry_after_declared(required: bool) -> serde_json::Value {
+    let mut header = serde_json::json!({"schema": emitted::<u64>()});
+    if required {
+        header["required"] = serde_json::json!(true);
+    }
+    serde_json::json!({"Retry-After": header})
 }
 
 /// A transparent variant answers as its field answers, header group included,
@@ -4657,13 +4724,26 @@ fn a_status_shared_with_a_transparent_variant_declares_both_sides_headers() {
     let responses = emitted_responses::<GatewayError>();
 
     assert_eq!(
-        responses["503"]["headers"]["Retry-After"]["required"],
-        serde_json::json!(true),
+        responses["503"]["headers"],
+        retry_after_declared(true),
         "{responses}"
     );
-    let shared = &responses["429"]["headers"]["Retry-After"];
-    assert!(shared.is_object(), "{responses}");
-    assert_eq!(shared.get("required"), None, "{responses}");
+    assert_eq!(
+        responses["429"]["headers"],
+        retry_after_declared(false),
+        "{responses}"
+    );
+
+    // One side requiring the group and the other sending none requires
+    // nothing, whichever side the requiring one is.
+    let relayed = emitted_responses::<RelayError>();
+    for status in ["503", "409"] {
+        assert_eq!(
+            relayed[status]["headers"],
+            retry_after_declared(false),
+            "{status}: {relayed}"
+        );
+    }
 }
 
 // --- A member is named as serde names it ------------------------------------
@@ -4790,8 +4870,7 @@ fn a_raw_identifier_parameter_is_named_as_serde_names_it() {
 #[test]
 fn a_split_rename_is_described_under_the_side_serde_uses() {
     let schema = emitted::<ReadOnlyRenamed>();
-    assert!(schema["properties"].get("r").is_some(), "{schema}");
-    assert!(schema["properties"].get("x").is_none(), "{schema}");
+    assert_eq!(keys(&schema["properties"]), ["r", "y"], "{schema}");
     let read: ReadOnlyRenamed =
         serde_json::from_str(r#"{"r":1,"y":2}"#).expect("serde reads the deserialize side");
     assert_eq!(read.x, 1);
