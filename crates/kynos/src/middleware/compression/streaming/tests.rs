@@ -354,3 +354,167 @@ async fn a_failed_stream_yields_no_trailers_after_its_error() {
         "a failed stream yielded its held trailers after its error"
     );
 }
+
+/// The trailers a handler sent, which a client must find after every encoded
+/// octet and unchanged.
+fn checksum() -> http::HeaderMap {
+    let mut trailers = http::HeaderMap::new();
+    trailers.insert("x-checksum", http::HeaderValue::from_static("sha-256=abc"));
+    trailers
+}
+
+/// A body of unknown length that yields two data frames, then its trailers,
+/// then ends.
+struct Trailed(u8);
+
+impl HttpBody for Trailed {
+    type Data = Bytes;
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        let this = self.get_mut();
+        this.0 += 1;
+
+        Poll::Ready(match this.0 {
+            1 => Some(Ok(Frame::data(Bytes::from_static(FRAMES[0].as_bytes())))),
+            2 => Some(Ok(Frame::data(Bytes::from_static(FRAMES[1].as_bytes())))),
+            3 => Some(Ok(Frame::trailers(checksum()))),
+            _ => None,
+        })
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        SizeHint::default()
+    }
+}
+
+/// Trailers are last: the handler's arrive after the whole coded stream,
+/// which they describe, and the body reports its end only once they have
+/// been taken — a driver reading `is_end_stream` after the last data frame
+/// would otherwise drop them.
+#[tokio::test]
+async fn trailers_follow_the_whole_coded_stream_and_the_end_waits_for_them() {
+    let mut body = Streamed::new(
+        crate::http::body::Body::from_body(Trailed(0)),
+        Coding::Gzip,
+        Levels::default(),
+        LatencyMode::Interactive,
+    );
+    let mut data = Vec::new();
+
+    let trailers = loop {
+        let frame = Pin::new(&mut body)
+            .frame()
+            .await
+            .expect("the trailers before the end")
+            .expect("an encoded frame");
+        match frame.into_data() {
+            Ok(chunk) => {
+                assert!(!body.is_end_stream(), "the end came before the trailers");
+                data.push(chunk);
+            }
+            Err(frame) => break frame.into_trailers().expect("trailers"),
+        }
+    };
+
+    assert_eq!(trailers, checksum());
+    assert_eq!(decoded(&data).await, FRAMES[..2].concat());
+    assert!(body.is_end_stream());
+    assert!(Pin::new(&mut body).frame().await.is_none());
+}
+
+/// A body fed by the test one frame at a time, pending while it holds none.
+struct Fed(std::sync::Arc<std::sync::Mutex<VecDeque<Bytes>>>);
+
+impl HttpBody for Fed {
+    type Data = Bytes;
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        match self.0.lock().expect("an unpoisoned lock").pop_front() {
+            Some(data) => Poll::Ready(Some(Ok(Frame::data(data)))),
+            None => Poll::Pending,
+        }
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        SizeHint::default()
+    }
+}
+
+/// What a client decodes from a coded stream that has not ended: the octets
+/// the prefix carries, and none it does not.
+async fn decoded_prefix(encoded: &[Bytes]) -> String {
+    let joined: Vec<u8> = encoded.iter().flat_map(|chunk| chunk.to_vec()).collect();
+    let mut text = Vec::new();
+
+    // The prefix has no gzip trailer, so the read ends in an error once it
+    // runs out; what it decoded before that is what a client could show.
+    let _unfinished = GzipDecoder::new(std::io::Cursor::new(joined))
+        .read_to_end(&mut text)
+        .await;
+
+    String::from_utf8(text).expect("decoded text")
+}
+
+/// Feeds each of `FRAMES` in turn and, once the encoder is waiting for the
+/// next, reports what everything it has sent so far decodes to.
+async fn decodable_after_each_frame(latency: LatencyMode) -> Vec<String> {
+    let queue = std::sync::Arc::new(std::sync::Mutex::new(VecDeque::new()));
+    let mut body = Streamed::new(
+        crate::http::body::Body::from_body(Fed(std::sync::Arc::clone(&queue))),
+        Coding::Gzip,
+        Levels::default(),
+        latency,
+    );
+    let mut context = Context::from_waker(std::task::Waker::noop());
+    let mut sent = Vec::new();
+    let mut readable = Vec::new();
+
+    for frame in FRAMES {
+        queue
+            .lock()
+            .expect("an unpoisoned lock")
+            .push_back(Bytes::from_static(frame.as_bytes()));
+
+        while let Poll::Ready(frame) = Pin::new(&mut body).poll_frame(&mut context) {
+            let frame = frame
+                .expect("a body that has not ended")
+                .expect("an encoded frame");
+            sent.push(frame.into_data().expect("a data frame"));
+        }
+
+        readable.push(decoded_prefix(&sent).await);
+    }
+
+    readable
+}
+
+/// `Interactive`'s promise is not a frame count but a reader's: once a frame
+/// has gone in, everything sent so far decodes to every frame up to it. A
+/// flush that emitted bytes without closing the block would pass a count and
+/// leave the reader waiting.
+#[tokio::test]
+async fn interactive_makes_each_frame_decodable_as_soon_as_it_arrives() {
+    let readable = decodable_after_each_frame(LatencyMode::Interactive).await;
+    let expected: Vec<String> = (1..=FRAMES.len())
+        .map(|sent| FRAMES[..sent].concat())
+        .collect();
+
+    assert_eq!(readable, expected);
+}
+
+/// The control: `Throughput`, fed the same frames the same way, leaves the
+/// first of them undecodable until the codec chooses to emit.
+#[tokio::test]
+async fn throughput_holds_a_frame_back_from_the_reader() {
+    let readable = decodable_after_each_frame(LatencyMode::Throughput).await;
+
+    assert_eq!(readable[0], "");
+}

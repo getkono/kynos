@@ -1,4 +1,5 @@
 use super::{BrotliLevel, GzipLevel, ZstdLevel};
+use crate::middleware::compression::{Compression, Levels};
 
 /// Every boundary of every range, swept rather than sampled: the failure a
 /// range check has is off-by-one at exactly one end, and a sample of the
@@ -64,6 +65,24 @@ fn the_default_is_the_documented_one() {
     assert_eq!(GzipLevel::default(), GzipLevel::DEFAULT);
     assert_eq!(BrotliLevel::default(), BrotliLevel::DEFAULT);
     assert_eq!(ZstdLevel::default(), ZstdLevel::DEFAULT);
+}
+
+/// The numbers `Compression`'s documentation states — gzip 6, brotli 4, zstd
+/// 3 — are the levels both of its constructors hand every encode. `new` and
+/// `Default` are written out separately, so each is held.
+#[test]
+fn both_constructors_encode_at_gzip_6_brotli_4_and_zstd_3() {
+    let documented = Levels {
+        gzip: GzipLevel::new(6).expect("a DEFLATE level"),
+        brotli: BrotliLevel::new(4).expect("a brotli quality"),
+        zstd: ZstdLevel::new(3).expect("a zstd level"),
+    };
+
+    assert_eq!(GzipLevel::DEFAULT.get(), 6);
+    assert_eq!(ZstdLevel::DEFAULT.get(), 3);
+    assert_eq!(Levels::default(), documented);
+    assert_eq!(Compression::new().levels, documented);
+    assert_eq!(Compression::<()>::default().levels, documented);
 }
 
 /// Brotli's default is the one worth asserting outright, because it is the

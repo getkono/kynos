@@ -373,3 +373,277 @@ mod failing {
         );
     }
 }
+
+/// What `Compression` sends, read as a client reads it.
+mod wire {
+    use std::{
+        convert::Infallible,
+        pin::Pin,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        task::{Context, Poll},
+    };
+
+    use async_compression::tokio::bufread::{BrotliDecoder, GzipDecoder, ZstdDecoder};
+    use bytes::Bytes;
+    use http_body::{Frame, SizeHint};
+    use http_body_util::BodyExt;
+    use tokio::io::AsyncReadExt as _;
+
+    use crate::{
+        Router,
+        extract::body::text::Text,
+        http::{
+            Request, Response, StatusCode,
+            body::{Body, BoxError},
+            header,
+        },
+        middleware::{
+            Continued, Interceptor, Next,
+            compression::{
+                Coding, Compression, Levels, encode,
+                streaming::{LatencyMode, Streamed},
+            },
+        },
+        openapi::{Method, PathTemplate},
+        router::{endpoint::builder::EndpointBuilder, service::Service},
+    };
+
+    /// What the handler sends: long and repetitive enough for every coding to
+    /// shrink it.
+    fn page_text() -> String {
+        "a line of the page the handler sends\n".repeat(256)
+    }
+
+    async fn page() -> Text {
+        Text(page_text())
+    }
+
+    /// What a client decoding `encoded` under `coding` reads, through each
+    /// coding's own decoder rather than anything `Compression` shares.
+    async fn decoded(coding: Coding, encoded: &[u8]) -> Vec<u8> {
+        let input = std::io::Cursor::new(encoded);
+        let mut decoded = Vec::new();
+        match coding {
+            Coding::Gzip => GzipDecoder::new(input).read_to_end(&mut decoded).await,
+            Coding::Brotli => BrotliDecoder::new(input).read_to_end(&mut decoded).await,
+            Coding::Zstd => ZstdDecoder::new(input).read_to_end(&mut decoded).await,
+        }
+        .unwrap_or_else(|error| panic!("{coding:?} did not decode: {error}"));
+        decoded
+    }
+
+    /// Hands on another body's frames while stating no length, which is what
+    /// sends `Compression` down its streaming path.
+    struct Unsized(Body);
+
+    impl http_body::Body for Unsized {
+        type Data = Bytes;
+        type Error = BoxError;
+
+        fn poll_frame(
+            mut self: Pin<&mut Self>,
+            context: &mut Context<'_>,
+        ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
+            Pin::new(&mut self.0).poll_frame(context)
+        }
+
+        fn size_hint(&self) -> SizeHint {
+            SizeHint::default()
+        }
+    }
+
+    /// Records that the chain beneath `Compression` ran, and makes the body
+    /// it produced unsized when `unsize` says so.
+    struct Beneath {
+        ran: Arc<AtomicBool>,
+        unsize: bool,
+    }
+
+    impl Interceptor<()> for Beneath {
+        type Reads = ();
+        type Adds = ();
+        type Short = Infallible;
+
+        async fn intercept(
+            &self,
+            request: Request,
+            (): (),
+            (): &(),
+            next: Next<'_, ()>,
+        ) -> Result<Continued, Infallible> {
+            self.ran.store(true, Ordering::SeqCst);
+            let mut continued = next.run(request).await;
+            if self.unsize {
+                let body = continued.take_body();
+                continued.set_body(Body::from_body(Unsized(body)));
+            }
+            Ok(continued)
+        }
+    }
+
+    /// The page under `Compression`, its body unsized when `unsize`, with the
+    /// flag the chain beneath sets when it runs.
+    fn service(unsize: bool) -> (Service<()>, Arc<AtomicBool>) {
+        let ran = Arc::new(AtomicBool::new(false));
+        let endpoint = EndpointBuilder::new(
+            Method::Get,
+            PathTemplate::parse("/page").expect("a valid path"),
+            page,
+        );
+        let service = Router::<()>::new()
+            .mount(endpoint)
+            .intercept(Compression::new())
+            .intercept(Beneath {
+                ran: Arc::clone(&ran),
+                unsize,
+            })
+            .build(())
+            .expect("a describable router");
+        (service, ran)
+    }
+
+    /// `GET /page` accepting `accept`.
+    async fn fetch(service: &Service<()>, accept: &str) -> Response {
+        let request = http::Request::builder()
+            .method("GET")
+            .uri("/page")
+            .header(header::ACCEPT_ENCODING, accept)
+            .body(Body::empty())
+            .expect("a well-formed request");
+        service.call(request).await
+    }
+
+    /// The buffered encoder and the streaming one each produce, for every
+    /// coding, a stream that coding's own decoder reads back to the body.
+    #[tokio::test]
+    async fn every_coding_decodes_to_the_body_on_both_encoding_paths() {
+        let body = Bytes::from(page_text());
+
+        for coding in Coding::ALL {
+            let buffered = encode(coding, body.clone(), Levels::default())
+                .await
+                .expect("an encodable body");
+            let streamed = Streamed::new(
+                Body::from_bytes(body.clone()),
+                coding,
+                Levels::default(),
+                LatencyMode::Interactive,
+            )
+            .collect()
+            .await
+            .expect("an encodable body")
+            .to_bytes();
+
+            for (path, encoded) in [("buffered", buffered), ("streamed", streamed)] {
+                assert!(
+                    encoded.len() < body.len(),
+                    "{coding:?}, {path}: not smaller"
+                );
+                assert_eq!(decoded(coding, &encoded).await, body, "{coding:?}, {path}");
+            }
+        }
+    }
+
+    /// Each coding a client names is the one the response carries, labelled
+    /// with its token, and decodes to the page: with the encoded length stated
+    /// when the body's length was known, and with none when it streamed.
+    #[tokio::test]
+    async fn each_named_coding_reaches_the_wire_labelled_and_decodable() {
+        for unsize in [false, true] {
+            let (service, _) = service(unsize);
+
+            for (token, coding) in [
+                ("gzip", Coding::Gzip),
+                ("br", Coding::Brotli),
+                ("zstd", Coding::Zstd),
+            ] {
+                let response = fetch(&service, token).await;
+                let case = format!("{token}, streamed: {unsize}");
+
+                assert_eq!(response.status(), StatusCode::OK, "{case}");
+                assert_eq!(
+                    response
+                        .headers()
+                        .get_all(header::CONTENT_ENCODING)
+                        .iter()
+                        .collect::<Vec<_>>(),
+                    [token],
+                    "{case}"
+                );
+                let stated = response
+                    .headers()
+                    .get(header::CONTENT_LENGTH)
+                    .map(|value| value.to_str().expect("a printable length").to_owned());
+                let body = response
+                    .into_body()
+                    .collect()
+                    .await
+                    .expect("a complete body")
+                    .to_bytes();
+
+                assert_eq!(stated, (!unsize).then(|| body.len().to_string()), "{case}");
+                assert_eq!(
+                    decoded(coding, &body).await,
+                    page_text().as_bytes(),
+                    "{case}"
+                );
+            }
+        }
+    }
+
+    /// RFC 9110 section 12.4.1: a request refusing every coding and identity
+    /// too is answered 406 by `Compression` itself, before anything beneath it
+    /// runs, with the problem document its declaration names.
+    #[tokio::test]
+    async fn a_request_refusing_every_coding_and_identity_is_refused_before_the_chain_runs() {
+        let (service, ran) = service(false);
+        let response = fetch(&service, "*;q=0, identity;q=0").await;
+
+        assert_eq!(response.status(), StatusCode::NOT_ACCEPTABLE);
+        assert!(
+            !ran.load(Ordering::SeqCst),
+            "the chain beneath ran for a request nothing could answer"
+        );
+        assert_eq!(response.headers().get(header::CONTENT_ENCODING), None);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .map(http::HeaderValue::as_bytes),
+            Some(b"application/problem+json".as_slice())
+        );
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("a complete body")
+            .to_bytes();
+        let problem: serde_json::Value =
+            serde_json::from_slice(&body).expect("a JSON problem document");
+        assert_eq!(
+            problem,
+            serde_json::json!({
+                "type": "about:blank",
+                "title": "Not Acceptable",
+                "status": 406,
+                "detail": "no representation of this resource has an acceptable content coding",
+            })
+        );
+    }
+
+    /// The control, differing in exactly what the request refuses: identity
+    /// admitted by name beside the same wildcard refusal, so the chain runs
+    /// and the page is sent as it is.
+    #[tokio::test]
+    async fn a_request_readmitting_identity_runs_the_chain_and_is_sent_identity() {
+        let (service, ran) = service(false);
+        let response = fetch(&service, "*;q=0, identity").await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(ran.load(Ordering::SeqCst));
+        assert_eq!(response.headers().get(header::CONTENT_ENCODING), None);
+    }
+}

@@ -585,6 +585,35 @@ mod partial {
         }
     }
 
+    /// The same octets, already in a coding the handler applied itself.
+    #[kynos::get("/recordings/precoded")]
+    async fn precoded() -> WithHeaders<Binary<OctetStream>, StatedCoding> {
+        WithHeaders::new(Binary::new(octets()), StatedCoding("gzip"))
+    }
+
+    /// A `Content-Encoding` a handler attaches to its own response.
+    #[derive(Clone, Copy, Debug)]
+    struct StatedCoding(&'static str);
+
+    impl kynos::extract::params::header::HeaderParams for StatedCoding {
+        const NAMES: &'static [&'static str] = &["content-encoding"];
+        const DESCRIBED: bool = false;
+    }
+
+    impl kynos::extract::params::header::EncodeHeaders for StatedCoding {
+        fn encode(
+            &self,
+        ) -> Result<
+            Vec<(kynos::http::HeaderName, kynos::http::HeaderValue)>,
+            kynos::extract::params::header::UnencodableHeader,
+        > {
+            Ok(vec![(
+                header::CONTENT_ENCODING,
+                kynos::http::HeaderValue::from_static(self.0),
+            )])
+        }
+    }
+
     /// The same octets under a *weak* one, which is the control.
     #[kynos::get("/recordings/weakly-tagged")]
     async fn weakly_tagged() -> WithHeaders<Binary<OctetStream>, ETag> {
@@ -598,7 +627,8 @@ mod partial {
                 transcript,
                 tagged,
                 weakly_tagged,
-                measured
+                measured,
+                precoded
             ])
             // Every size encoded, because these cases are about which
             // representations may be encoded rather than which are worth it.
@@ -751,6 +781,23 @@ mod partial {
             "the stated length names the identity octets, not the ones sent"
         );
         assert!(stated < octets().len());
+    }
+
+    /// A response already in a coding is sent as the handler made it: one
+    /// `Content-Encoding` naming that coding, and its octets unchanged. Nothing
+    /// else here advertises a range or a validator, so the coding is the only
+    /// reason it is left alone; `/recordings/transcript` is its control.
+    #[tokio::test]
+    async fn an_already_encoded_response_is_left_as_the_handler_coded_it() {
+        let service = service();
+        let reply = get(&service, "/recordings/precoded")
+            .header("accept-encoding", "zstd, gzip")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(reply.fields(header::CONTENT_ENCODING.as_str()), ["gzip"]);
+        assert_eq!(reply.body, octets());
     }
 
     /// A weak validator does not, which is the control.
@@ -1123,11 +1170,16 @@ mod levels {
 mod encoding_policy {
     use kynos::{
         Router,
+        error::rejection::RangeRejection,
         extract::body::binary::Binary,
-        http::{StatusCode, header, media::OctetStream},
+        http::{StatusCode, etag::ETag, header, media::OctetStream},
         middleware::compression::{
             Compression,
             policy::{Encoding, WithEncoding},
+        },
+        response::{
+            headers::WithHeaders,
+            range::{Range, Ranged},
         },
         router::service::Service,
     };
@@ -1164,9 +1216,38 @@ mod encoding_policy {
         Binary::new(octets())
     }
 
+    /// Requires an encoding of a response under a strong validator, which
+    /// `Compression` must leave alone.
+    #[kynos::get("/tagged-export")]
+    async fn tagged_export() -> WithEncoding<WithHeaders<Binary<OctetStream>, ETag>> {
+        WithEncoding::new(
+            WithHeaders::new(Binary::new(octets()), ETag::strong("rev-42")),
+            Encoding::Required,
+        )
+    }
+
+    /// Requires an encoding of a response that advertises ranges, which
+    /// `Compression` must leave alone too.
+    #[kynos::get("/ranged-export")]
+    async fn ranged_export(
+        range: Range<Binary<OctetStream>>,
+    ) -> Result<WithEncoding<Ranged<Binary<OctetStream>>>, RangeRejection> {
+        Ok(WithEncoding::new(
+            range.apply(Binary::new(octets()))?,
+            Encoding::Required,
+        ))
+    }
+
     fn service() -> Service<App> {
         Router::<App>::new()
-            .mount(kynos::routes![confirm, export, empty_export, report])
+            .mount(kynos::routes![
+                confirm,
+                export,
+                empty_export,
+                report,
+                tagged_export,
+                ranged_export
+            ])
             .intercept(Compression::new())
             .build(App::new())
             .expect("a describable router")
@@ -1251,6 +1332,35 @@ mod encoding_policy {
             .await;
 
         assert_eq!(reply.status, StatusCode::NOT_ACCEPTABLE);
+    }
+
+    /// A response that requires a coding and is one `Compression` must leave
+    /// alone — strongly tagged, or advertising ranges, whole or partial — has
+    /// two demands nothing can meet, and is refused 406 though the client
+    /// accepts gzip. `/export` above is the control: the same requirement, and
+    /// nothing that leaves it alone.
+    #[tokio::test]
+    async fn a_required_encoding_of_a_response_left_alone_is_refused() {
+        let service = service();
+
+        for (target, range) in [
+            ("/tagged-export", None),
+            ("/ranged-export", None),
+            ("/ranged-export", Some("bytes=0-99")),
+        ] {
+            let mut request = get(&service, target).header("accept-encoding", "gzip");
+            if let Some(range) = range {
+                request = request.header("range", range);
+            }
+            let reply = request.call().await;
+
+            assert_eq!(
+                reply.status,
+                StatusCode::NOT_ACCEPTABLE,
+                "{target}, range {range:?}"
+            );
+            assert_eq!(reply.field(header::CONTENT_ENCODING.as_str()), None);
+        }
     }
 
     /// RFC 9110 section 12.5.3 rule 1: with no `Accept-Encoding`, "any content
