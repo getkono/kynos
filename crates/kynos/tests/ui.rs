@@ -14,7 +14,11 @@
 //! Cases that could only fail with a feature *off* are therefore not here.
 //! [`ui/PENDING.md`](ui/PENDING.md) names them.
 
-use std::{fs, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+};
 
 #[test]
 fn ui() {
@@ -98,6 +102,9 @@ fn compile_fail_cases(directory: &Path) -> usize {
 /// An explicit mapping rather than a search for the trait's name, because half
 /// the messages deliberately never spell it: `Handler`'s says "is not a Kynos
 /// handler", which is the improvement being made and not something to grep for.
+/// The mapping is held to the source both ways: its names are the set of
+/// guided traits, and each snapshot records its trait's `message`, read from
+/// the attribute, so a snapshot of some other diagnostic does not stand in.
 #[test]
 fn every_guided_diagnostic_has_a_snapshot() {
     /// One row per `#[diagnostic::on_unimplemented]` in `crates/kynos/src`.
@@ -144,44 +151,96 @@ fn every_guided_diagnostic_has_a_snapshot() {
     ];
 
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut guided = BTreeMap::new();
+    guided_traits_in_source(&root.join("src"), &mut guided);
+
+    let recorded: BTreeSet<&str> = RECORDED.iter().map(|(name, _)| *name).collect();
+    assert_eq!(
+        recorded,
+        guided.keys().map(String::as_str).collect(),
+        "the traits `crates/kynos/src` guides are not the ones with a snapshot; a diagnostic \
+         nobody snapshotted is a diagnostic nobody checked"
+    );
+
     for (trait_name, snapshot) in RECORDED {
         let path = root.join("tests/ui").join(snapshot);
         let recorded = fs::read_to_string(&path)
             .unwrap_or_else(|_| panic!("`{trait_name}` names {snapshot}, which is not there"));
+        let message = &guided[*trait_name];
         assert!(
-            !recorded.trim().is_empty(),
-            "`{trait_name}`'s snapshot is empty, so it records no diagnostic"
+            renders(message, &recorded),
+            "{snapshot} does not record `{trait_name}`'s message {message:?}"
         );
     }
-
-    let guided = guided_traits_in_source(&root.join("src"));
-    assert_eq!(
-        guided,
-        RECORDED.len(),
-        "`crates/kynos/src` guides {guided} trait(s) and {} have a snapshot; a diagnostic nobody \
-         snapshotted is a diagnostic nobody checked",
-        RECORDED.len()
-    );
 }
 
-/// The `#[diagnostic::on_unimplemented]` attributes under `directory`.
-fn guided_traits_in_source(directory: &Path) -> usize {
-    let mut found = 0;
+/// Every `#[diagnostic::on_unimplemented]` under `directory`, by the trait it
+/// guides, with its `message` as written.
+fn guided_traits_in_source(directory: &Path, found: &mut BTreeMap<String, String>) {
+    const ATTRIBUTE: &str = "#[diagnostic::on_unimplemented(";
+
     for entry in fs::read_dir(directory).expect("the crate's own source is readable") {
         let path = entry.expect("readable entry").path();
         if path.is_dir() {
-            found += guided_traits_in_source(&path);
+            guided_traits_in_source(&path, found);
             continue;
         }
         if path.extension().is_none_or(|extension| extension != "rs") {
             continue;
         }
-        found += fs::read_to_string(&path)
-            .expect("readable source")
-            .matches("#[diagnostic::on_unimplemented")
-            .count();
+        let source = fs::read_to_string(&path).expect("readable source");
+        for (at, _) in source.match_indices(ATTRIBUTE) {
+            let attribute = &source[at + ATTRIBUTE.len()..];
+            let message = attribute
+                .split_once("message = \"")
+                .and_then(|(_, rest)| string_literal(rest))
+                .unwrap_or_else(|| panic!("{}: an attribute with no `message`", path.display()));
+            let name: String = attribute
+                .split_once("trait ")
+                .unwrap_or_else(|| panic!("{}: an attribute on no trait", path.display()))
+                .1
+                .chars()
+                .take_while(|character| character.is_alphanumeric() || *character == '_')
+                .collect();
+            let previous = found.insert(name.clone(), message);
+            assert!(previous.is_none(), "`{name}` is guided twice");
+        }
     }
-    found
+}
+
+/// The value of the string literal whose opening quote precedes `text`, with
+/// its escapes and line continuations resolved as rustc resolves them.
+fn string_literal(text: &str) -> Option<String> {
+    let mut value = String::new();
+    let mut characters = text.chars().peekable();
+    loop {
+        match characters.next()? {
+            '"' => return Some(value),
+            '\\' => match characters.next()? {
+                '\n' => while characters.next_if(|next| next.is_whitespace()).is_some() {},
+                'n' => value.push('\n'),
+                escaped => value.push(escaped),
+            },
+            character => value.push(character),
+        }
+    }
+}
+
+/// Whether `snapshot` records `message`, each `{Parameter}` it names standing
+/// for whatever type the snapshot's program put there.
+fn renders(message: &str, snapshot: &str) -> bool {
+    let mut rest = snapshot;
+    for (index, fixed) in message.split(['{', '}']).enumerate() {
+        // Odd pieces are the parameters' names.
+        if index % 2 == 1 || fixed.is_empty() {
+            continue;
+        }
+        let Some(at) = rest.find(fixed) else {
+            return false;
+        };
+        rest = &rest[at + fixed.len()..];
+    }
+    true
 }
 
 /// Every `Router` and `Group` builder carries all four type parameters across.
