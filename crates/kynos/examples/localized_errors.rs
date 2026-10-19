@@ -182,9 +182,10 @@ impl Localize {
             .unwrap_or("about:blank")
             .to_owned();
 
-        if let Some(title) = self.titles.get(&(type_uri.as_str(), status, language))
-            && let Some(object) = problem.as_object_mut()
-        {
+        if let (Some(title), Some(object)) = (
+            self.titles.get(&(type_uri.as_str(), status, language)),
+            problem.as_object_mut(),
+        ) {
             object.insert("title".to_owned(), serde_json::Value::from(*title));
         }
 
