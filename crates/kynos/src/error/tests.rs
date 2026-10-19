@@ -18,14 +18,15 @@ fn invalid() -> Error {
             Violation {
                 location: "/paths/~1users/get".to_owned(),
                 severity: Severity::Error,
-                error: SpecError::NoResponses,
+                error: SpecError::NoResponses.into(),
             },
             Violation {
                 location: "/tags/1".to_owned(),
                 severity: Severity::Warning,
                 error: SpecError::DuplicateTag {
                     name: "admin".to_owned(),
-                },
+                }
+                .into(),
             },
         ],
     }

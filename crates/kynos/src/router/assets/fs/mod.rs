@@ -371,7 +371,8 @@ impl<C: Send + Sync + 'static, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 severity: kynos_openapi::Severity::Error,
                 error: kynos_openapi::SpecError::OpaqueRoute {
                     pattern: format!("{prefix}/{{*path}}"),
-                },
+                }
+                .into(),
             });
             return self;
         }

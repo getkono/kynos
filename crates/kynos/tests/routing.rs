@@ -20,7 +20,7 @@ use kynos::{
     handler::Handler,
     openapi::{Method as OpenApiMethod, PathTemplate, SpecError, Violation},
     response::status::NoContent,
-    router::{endpoint::builder::EndpointBuilder, group::Group},
+    router::{endpoint::builder::EndpointBuilder, error::RouterError, group::Group},
 };
 
 /// What `/files/{path}` captures.
@@ -74,10 +74,10 @@ fn opaque_route(result: Result<(), Error>) -> Option<String> {
 }
 
 /// The same, over the violations `validate` reports rather than raises.
-fn sole_opaque_route(violations: &[Violation]) -> Option<String> {
+fn sole_opaque_route(violations: &[Violation<RouterError>]) -> Option<String> {
     match violations {
         [violation] => match &violation.error {
-            SpecError::OpaqueRoute { pattern } => Some(pattern.clone()),
+            RouterError::Spec(SpecError::OpaqueRoute { pattern }) => Some(pattern.clone()),
             _ => None,
         },
         _ => None,
@@ -158,7 +158,7 @@ async fn a_named_file(Path(_): Path<FileName>) -> NoContent {
 }
 
 /// The violations a refused build carries.
-fn refusal(result: Result<(), Error>) -> Vec<Violation> {
+fn refusal(result: Result<(), Error>) -> Vec<Violation<RouterError>> {
     match result {
         Err(Error::Invalid { violations }) => violations,
         Err(other) => panic!("refused for another reason: {other}"),
@@ -187,7 +187,7 @@ fn mounting_one_method_on_one_path_twice_fails_the_build() {
     };
     assert_eq!(
         violation.error,
-        SpecError::DuplicateOperation {
+        RouterError::DuplicateOperation {
             method: OpenApiMethod::Get,
             path: "/files/{path}".to_owned(),
         }
@@ -227,7 +227,7 @@ fn two_templates_the_matcher_cannot_order_fail_every_entry_point() {
     };
     assert_eq!(
         violation.error,
-        SpecError::RouteConflict {
+        RouterError::RouteConflict {
             pattern: "/files/v{name}".to_owned(),
             existing: "/files/{path}.txt".to_owned(),
         }
@@ -267,10 +267,10 @@ fn two_templates_differing_only_in_variable_names_fail_the_build() {
     };
     assert_eq!(
         violation.error,
-        SpecError::DuplicatePathTemplate {
+        RouterError::Spec(SpecError::DuplicatePathTemplate {
             template: "/files/{name}".to_owned(),
             existing: "/files/{path}".to_owned(),
-        }
+        })
     );
     assert_eq!(
         violation.to_string(),

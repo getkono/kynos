@@ -3,8 +3,8 @@
 
 use super::{
     Arc, Catch, Document, ErasedInterceptor, Error, FallbackPolicy, HashMap, Info, PanicPolicy,
-    PathEntry, Result, Severity, SpecError, SpecVersion, Violation, describe::match_table_refusal,
-    dispatch,
+    PathEntry, Result, RouterError, Severity, SpecError, SpecVersion, Violation,
+    describe::match_table_refusal, dispatch,
 };
 use crate::schema::constraints::Pointer;
 
@@ -329,18 +329,30 @@ pub(super) fn unroutable(path: &kynos_openapi::PathTemplate) -> Option<SpecError
 }
 
 /// One error-level violation.
-pub(super) fn error_at(location: impl Into<String>, error: SpecError) -> Violation {
+pub(super) fn error_at(
+    location: impl Into<String>,
+    error: impl Into<RouterError>,
+) -> Violation<RouterError> {
     Violation {
         location: location.into(),
         severity: Severity::Error,
-        error,
+        error: error.into(),
     }
 }
 
 /// One error-level violation, as the framework error carrying it.
-pub(super) fn invalid(error: SpecError) -> Error {
+pub(super) fn invalid(error: impl Into<RouterError>) -> Error {
     Error::Invalid {
         violations: vec![error_at("#", error)],
+    }
+}
+
+/// A validator's violation, in the vocabulary a router reports.
+pub(super) fn lift(violation: Violation) -> Violation<RouterError> {
+    Violation {
+        location: violation.location,
+        severity: violation.severity,
+        error: RouterError::Spec(violation.error),
     }
 }
 
@@ -348,18 +360,17 @@ pub(super) fn invalid(error: SpecError) -> Error {
 /// `violations`, located at `#/paths` since it names no key yet.
 pub(super) fn parse_or_record(
     path: &str,
-    violations: &mut Vec<Violation>,
+    violations: &mut Vec<Violation<RouterError>>,
 ) -> Option<kynos_openapi::PathTemplate> {
     kynos_openapi::PathTemplate::parse(path)
         .map_err(|reason| {
-            violations.push(Violation {
-                location: "#/paths".to_owned(),
-                severity: Severity::Error,
-                error: SpecError::InvalidPathTemplate {
+            violations.push(error_at(
+                "#/paths",
+                SpecError::InvalidPathTemplate {
                     template: path.to_owned(),
                     reason,
                 },
-            });
+            ));
         })
         .ok()
 }

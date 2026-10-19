@@ -3,11 +3,13 @@
 //! [`Router`] is the root and lives here. [`endpoint`] holds one declared
 //! operation and the builder a route attribute expands into, [`group`] a set of
 //! operations sharing a prefix, [`operation`] the description being assembled,
-//! [`policy`] the application-wide fallbacks, and [`service`] the built result.
+//! [`policy`] the application-wide fallbacks, [`service`] the built result, and
+//! [`error`] what a router reports wrong with itself.
 
 mod describe;
 mod install;
 
+use error::RouterError;
 use install::{catches, error_at, path_location, unroutable};
 
 #[cfg(feature = "assets")]
@@ -15,6 +17,7 @@ pub mod assets;
 #[cfg(feature = "docs")]
 pub mod docs;
 pub mod endpoint;
+pub mod error;
 pub mod group;
 pub mod operation;
 pub mod policy;
@@ -53,7 +56,7 @@ use crate::{
 };
 
 /// A `ShortCircuit`'s two halves, compared once the registry exists.
-pub(crate) type ShortCircuitCheck = fn(&mut Registry) -> Option<SpecError>;
+pub(crate) type ShortCircuitCheck = fn(&mut Registry) -> Option<RouterError>;
 
 /// One endpoint, plus what the scopes it passed through contributed to it.
 pub(crate) struct Mounted<C> {
@@ -135,7 +138,7 @@ pub struct Router<C, P = Propagate, I = (), S = ()> {
     pub(crate) tag_metadata: Vec<kynos_openapi::Tag>,
     pub(crate) security_schemes: Vec<(&'static str, kynos_openapi::SecurityScheme)>,
     /// Problems found while mounting, which the fluent methods cannot return.
-    pub(crate) violations: Vec<Violation>,
+    pub(crate) violations: Vec<Violation<RouterError>>,
     /// The four application-wide policies, `None` until set, so a router
     /// absorbing this one can tell a setting from a default.
     pub(crate) not_found: Option<FallbackPolicy>,
@@ -348,7 +351,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
         ] {
             if set {
                 self.violations
-                    .push(error_at("#", SpecError::NestedRouterPolicy { policy }));
+                    .push(error_at("#", RouterError::NestedRouterPolicy { policy }));
             }
         }
         self.deny_unchecked_schemas |= other.deny_unchecked_schemas;
@@ -646,7 +649,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// contributes no `paths` entry.
     ///
     /// Set on the root router: on a router that is then nested or merged, it
-    /// is a [`NestedRouterPolicy`](SpecError::NestedRouterPolicy) violation.
+    /// is a [`NestedRouterPolicy`](RouterError::NestedRouterPolicy) violation.
     #[must_use]
     pub fn not_found(mut self, policy: FallbackPolicy) -> Self {
         self.not_found = Some(policy);
@@ -668,7 +671,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// `OPTIONS`. See `docs/middleware.md`.
     ///
     /// Set on the root router: on a router that is then nested or merged, it
-    /// is a [`NestedRouterPolicy`](SpecError::NestedRouterPolicy) violation.
+    /// is a [`NestedRouterPolicy`](RouterError::NestedRouterPolicy) violation.
     #[must_use]
     pub fn method_not_allowed(mut self, policy: FallbackPolicy) -> Self {
         self.method_not_allowed = Some(policy);
@@ -682,7 +685,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// routes, and uses 308 so the request method and body are preserved.
     ///
     /// Set on the root router: on a router that is then nested or merged, it
-    /// is a [`NestedRouterPolicy`](SpecError::NestedRouterPolicy) violation.
+    /// is a [`NestedRouterPolicy`](RouterError::NestedRouterPolicy) violation.
     #[must_use]
     pub fn trailing_slashes(mut self, policy: TrailingSlashPolicy) -> Self {
         self.trailing_slashes = Some(policy);
@@ -694,7 +697,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// One application-level policy, like
     /// [`trailing_slashes`](Self::trailing_slashes), so it too is set on the
     /// root router: on a router that is then nested or merged, it is a
-    /// [`NestedRouterPolicy`](SpecError::NestedRouterPolicy) violation.
+    /// [`NestedRouterPolicy`](RouterError::NestedRouterPolicy) violation.
     ///
     /// Unset, nothing is believed: RFC 7239 section 8.1 notes the field may be
     /// modified by every node on the way, including the client, so trusting it

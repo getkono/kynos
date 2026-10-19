@@ -191,6 +191,13 @@ differ only in variable name, a security requirement naming a scheme nobody
 declared. `build` runs the same structural checks, so an API that cannot be
 described correctly fails at startup rather than at documentation time.
 
+What each violation says is wrong is a `kynos::router::error::RouterError`. A
+rule the document breaks arrives as `RouterError::Spec`, wrapping the
+`SpecError` a standalone `kynos-openapi` validator would report; the other
+variants are what no document can hold — a match-table conflict, an operation
+mounted twice, a short circuit disagreeing with its responses, a policy set on
+an absorbed router. `kynos-openapi` stays the document's vocabulary alone.
+
 ### One router value, described and built
 
 The three readers borrow and `build` consumes, so a context that needs the
@@ -291,7 +298,7 @@ the root router, and have no per-route form.
 Only the root router's policies apply, so a router that is nested or merged may
 not set one: each of the three below, and `trusted_proxies`
 ([`http::forwarded`](../crates/kynos/src/http/forwarded.rs)), called on an
-absorbed router is a `SpecError::NestedRouterPolicy` violation that fails
+absorbed router is a `RouterError::NestedRouterPolicy` violation that fails
 `openapi` and `build`. Setting the default counts too — the root's value would
 override it just the same, and a setting that is silently dropped, a trusted
 proxy above all, is worse than a refused one.

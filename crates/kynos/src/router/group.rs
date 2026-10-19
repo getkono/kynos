@@ -12,6 +12,7 @@ use crate::{
         stack::{CompatibleStack, CompatibleWith, Cons, Flatten},
     },
     response::short_circuit_mismatch,
+    router::error::RouterError,
     router::{
         ShortCircuitCheck,
         endpoint::{DynEndpoint, set::IntoEndpoints},
@@ -39,7 +40,7 @@ pub struct Group<C, P = Propagate, I = (), S = ()> {
     tag_metadata: Vec<kynos_openapi::Tag>,
     /// Problems found while the group was assembled, which the fluent methods
     /// cannot return.
-    violations: Vec<Violation>,
+    violations: Vec<Violation<RouterError>>,
     /// Layers of undeclared effect covering this group's operations, outermost
     /// first. `pub(crate)` because `unchecked` mounts them.
     #[cfg(feature = "unchecked")]
@@ -70,7 +71,7 @@ pub(crate) struct GroupParts<C> {
     pub(crate) short_circuit_checks: Vec<ShortCircuitCheck>,
     pub(crate) tags: Vec<DeclaredTag>,
     pub(crate) tag_metadata: Vec<kynos_openapi::Tag>,
-    pub(crate) violations: Vec<Violation>,
+    pub(crate) violations: Vec<Violation<RouterError>>,
     #[cfg(feature = "unchecked")]
     pub(crate) unchecked_layers: Vec<Arc<dyn crate::unchecked::ErasedLayer>>,
 }
