@@ -52,6 +52,14 @@ impl Scopes for EditReports {
     const REQUIRED: &'static [Grant] = &[Grant::ReadReports, Grant::WriteReports];
 }
 
+/// A scope set requiring nothing.
+struct NoScopes;
+
+impl Scopes for NoScopes {
+    type Scope = Grant;
+    const REQUIRED: &'static [Grant] = &[];
+}
+
 /// A scheme demanding `audit` and `reports:read` of every operation by default.
 struct Audited;
 
@@ -624,6 +632,25 @@ async fn scoped_adds_its_own_scopes_to_the_defaults() {
         admitting.0.authorized(),
         [vec!["audit", "reports:read", "reports:write"]]
     );
+}
+
+/// A `Scoped` whose demanded set is empty still calls `authorize`, once and
+/// with no scopes, and its refusal answers 403: unlike `Auth`, `Scoped` never
+/// skips `authorize`.
+#[tokio::test]
+async fn scoped_with_an_empty_demand_still_authorizes() {
+    let refusing = Recording::refusing();
+    let refused = <Scoped<Bearer<String, Grant>, NoScopes> as Guard<_>>::guard(
+        &presenting_a_token(),
+        &refusing,
+    )
+    .await;
+
+    assert_eq!(
+        refused.err().map(|r| r.into_inner().status()),
+        Some(StatusCode::FORBIDDEN)
+    );
+    assert_eq!(refusing.0.authorized(), [Vec::<&str>::new()]);
 }
 
 impl Authenticates<Bearer<String, Grant>> for Recording {

@@ -96,7 +96,9 @@ where
             return Ok(None);
         };
 
-        verify::<S, C>(presented, context).await.map(Some)
+        verify::<S, C>(presented, owed_defaults::<S>(), context)
+            .await
+            .map(Some)
     }
 }
 
@@ -285,7 +287,11 @@ macro_rules! all_of {
                         .authenticate($scheme, context)
                         .await?;
                 )+
-                $( let $scheme = authorize_defaults::<$scheme, C>($scheme, context).await?; )+
+                $(
+                    let $scheme =
+                        authorize::<$scheme, C>($scheme, owed_defaults::<$scheme>(), context)
+                            .await?;
+                )+
                 Ok(Some(($($scheme,)+)))
             }
         }
@@ -300,10 +306,17 @@ all_of!(A, B);
 all_of!(A, B, D);
 all_of!(A, B, D, E);
 
-/// Authenticates `presented` as scheme `S`, then authorizes the scheme's
-/// default scopes, so a guard naming no scope set enforces what
-/// [`declare`](Requirement::declare) wrote for it.
-async fn verify<S, C>(presented: S::Presented, context: &C) -> Result<S::Credential, AuthRejection>
+/// Authenticates `presented` as scheme `S`, then authorizes it for `scopes`
+/// where they are given.
+///
+/// `None` skips `authorize`, as a guard naming no scope set does for a scheme
+/// with no default scopes ([`owed_defaults`]); `Some` calls it even with an
+/// empty slice, as [`Scoped`](crate::security::auth::Scoped) does.
+pub(crate) async fn verify<S, C>(
+    presented: S::Presented,
+    scopes: Option<&[S::Scope]>,
+    context: &C,
+) -> Result<S::Credential, AuthRejection>
 where
     S: Carries,
     C: Authenticates<S>,
@@ -312,30 +325,38 @@ where
         .authenticator()
         .authenticate(presented, context)
         .await?;
-    authorize_defaults::<S, C>(credential, context).await
+    authorize::<S, C>(credential, scopes, context).await
 }
 
-/// Authorizes `credential` for scheme `S`'s default scopes, and hands it back.
+/// Authorizes `credential` for scheme `S`'s `scopes` where they are given, and
+/// hands it back.
 ///
 /// Owned rather than borrowed, so the future needs no `Sync` credential to be
-/// `Send`. A scheme with no default scopes is never authorized here: its
-/// requirement declares none, so there is nothing to check.
-async fn authorize_defaults<S, C>(
+/// `Send`.
+async fn authorize<S, C>(
     credential: S::Credential,
+    scopes: Option<&[S::Scope]>,
     context: &C,
 ) -> Result<S::Credential, AuthRejection>
 where
     S: Carries,
     C: Authenticates<S>,
 {
-    let defaults = S::scopes();
-    if !defaults.is_empty() {
+    if let Some(scopes) = scopes {
         context
             .authenticator()
-            .authorize(&credential, defaults, context)
+            .authorize(&credential, scopes, context)
             .await?;
     }
     Ok(credential)
+}
+
+/// What a guard naming no scope set authorizes for scheme `S`: its default
+/// scopes, so the guard enforces what [`declare`](Requirement::declare) wrote
+/// for it. `None` for a scheme with none, which is never authorized: its
+/// requirement declares none, so there is nothing to check.
+fn owed_defaults<S: SecurityScheme>() -> Option<&'static [S::Scope]> {
+    Some(S::scopes()).filter(|scopes| !scopes.is_empty())
 }
 
 /// Registers scheme `S` and returns the requirement naming it with `scopes`.

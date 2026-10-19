@@ -16,9 +16,9 @@ use crate::{
     http::{HeaderValue, Parts, StatusCode},
     router::operation::OperationCx,
     security::{
-        Authenticates, Authenticator, Guard, Scope, SecurityScheme,
+        Authenticates, Guard, Scope, SecurityScheme,
         carrier::Carries,
-        requirement::{CheckedBy, Requirement, require},
+        requirement::{CheckedBy, Requirement, require, verify},
         sealed,
     },
 };
@@ -296,7 +296,8 @@ pub trait Scopes: Send + Sync + 'static {
     /// # What it promises
     ///
     /// That every 403 a `Scoped<S, R>` argument produces carries this URI or
-    /// `about:blank` — the whole guard, so an [`Authenticator::authenticate`]
+    /// `about:blank` — the whole guard, so an
+    /// [`Authenticator::authenticate`](crate::security::Authenticator::authenticate)
     /// refusing with a *third* URI breaks it too. The type system does not hold
     /// it; the conformance harness checks it.
     ///
@@ -443,13 +444,7 @@ where
             .ok_or_else(AuthRejection::unauthenticated)
             .map_err(challenged)?;
 
-        let authenticator = context.authenticator();
-        let credential = authenticator
-            .authenticate(presented, context)
-            .await
-            .map_err(challenged)?;
-        authenticator
-            .authorize(&credential, &demanded::<S, R>(), context)
+        let credential = verify::<S, C>(presented, Some(&demanded::<S, R>()), context)
             .await
             .map_err(challenged)?;
         Ok(Self(credential, std::marker::PhantomData))
