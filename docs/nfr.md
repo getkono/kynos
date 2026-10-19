@@ -224,8 +224,12 @@ noisy readings.
 
 **A capture costs nothing of its own up to four variables.** It once cost
 three blocks: the capture vector the router records, and the extractor's
-decoded values and the pairs it hands the derive. All three are held in place
-until a fifth variable spills them, one past `matchit`'s own spill at four.
+decoded values and the pairs it hands the derive. The record now keeps 16-bit
+offsets in place beside the route's interned names, and the extractor decodes
+on its stack, until a fifth variable or a path past 64 KiB takes one block for
+them, one past `matchit`'s own spill at four. The offsets are narrow because a
+wider record cost more in the copies that move routing state than the block it
+saved.
 
 **Each of the seven was attributed with DHAT's per-site output, and each got a
 decision.** DHAT over `alloc_counter_agreement.static_match`, the same request
