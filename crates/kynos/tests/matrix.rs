@@ -966,7 +966,9 @@ async fn exercise_the_rejections(client: &TestClient<App>) {
         .send()
         .await
         .assert_status(StatusCode::FORBIDDEN)
-        .assert_problem_type(INSUFFICIENT_SCOPE);
+        .assert_problem_type(INSUFFICIENT_SCOPE)
+        // RFC 6750 section 3.1, whichever type the authorizer named.
+        .assert_header("www-authenticate", r#"Bearer error="insufficient_scope""#);
 
     client
         .get("/reports")
@@ -974,7 +976,8 @@ async fn exercise_the_rejections(client: &TestClient<App>) {
         .send()
         .await
         .assert_status(StatusCode::FORBIDDEN)
-        .assert_problem_type("about:blank");
+        .assert_problem_type("about:blank")
+        .assert_header("www-authenticate", r#"Bearer error="insufficient_scope""#);
 
     // And the 401 beside them, which narrows whatever the scope set declares.
     client
