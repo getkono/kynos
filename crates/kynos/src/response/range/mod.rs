@@ -301,36 +301,46 @@ impl<T> Ranged<T> {
 /// 200 with `Accept-Ranges`, or 206 with `Accept-Ranges` and `Content-Range`.
 impl<T: Rangeable> IntoResponse for Ranged<T> {
     fn into_response(self) -> Response {
-        let selection = self.selection;
         let mut response = self.body.into_response();
 
-        if crate::extract::params::header::write(response.headers_mut(), &AcceptRanges).is_err() {
+        if write_selection(&mut response, self.selection).is_err() {
             return crate::extract::params::header::refused();
-        }
-
-        if let Selection::Part {
-            first,
-            last,
-            complete_length,
-        } = selection
-        {
-            if crate::extract::params::header::write(
-                response.headers_mut(),
-                &ContentRange::Satisfied {
-                    first,
-                    last,
-                    complete_length,
-                },
-            )
-            .is_err()
-            {
-                return crate::extract::params::header::refused();
-            }
-            *response.status_mut() = StatusCode::PARTIAL_CONTENT;
         }
 
         response
     }
+}
+
+/// Marks `response` as carrying `selection`: `Accept-Ranges` on every
+/// representation (section 14.3), and for a part its `Content-Range` and 206.
+///
+/// The one place a ranged answer is framed, whether a handler, a served
+/// source or a file builds it.
+pub(crate) fn write_selection(
+    response: &mut Response,
+    selection: Selection,
+) -> Result<(), crate::extract::params::header::UnencodableHeader> {
+    let fields = response.headers_mut();
+    crate::extract::params::header::write(fields, &AcceptRanges)?;
+
+    if let Selection::Part {
+        first,
+        last,
+        complete_length,
+    } = selection
+    {
+        crate::extract::params::header::write(
+            fields,
+            &ContentRange::Satisfied {
+                first,
+                last,
+                complete_length,
+            },
+        )?;
+        *response.status_mut() = StatusCode::PARTIAL_CONTENT;
+    }
+
+    Ok(())
 }
 
 /// The two statuses this type can produce, each carrying the fields it sends.
