@@ -603,21 +603,110 @@ async fn prepare_accepts_a_standard_library_listener() {
     assert_eq!(bound.local_addrs(), [expected]);
 }
 
+/// A failed bind names the address that failed, and lets go of every listener
+/// prepared before it: a supplied one and one bound from an earlier address
+/// can both be bound again at once.
+///
+/// The earlier address is a port reserved and freed just before, since only
+/// a known port can be checked for release.
 #[tokio::test]
 async fn binding_is_atomic_when_a_later_address_is_unavailable() {
-    let occupied =
-        std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).expect("port is reserved");
+    let local = || std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0));
+    let supplied = local().expect("a supplied listener binds");
+    let supplied_address = supplied.local_addr().expect("listener has an address");
+    let earlier_address = local()
+        .and_then(|reserved| reserved.local_addr())
+        .expect("a port is reserved and freed");
+    let occupied = local().expect("port is reserved");
     let occupied_address = occupied.local_addr().expect("listener has an address");
+
     let error = crate::server::Server::new(test_service())
-        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .listener(supplied)
+        .bind(earlier_address)
         .bind(occupied_address)
         .prepare()
         .await
         .expect_err("the occupied address prevents preparation");
-    assert!(matches!(
-        error,
-        crate::Error::Server(crate::server::error::ServerError::Bind { .. })
-    ));
+
+    assert!(
+        matches!(
+            &error,
+            crate::Error::Server(crate::server::error::ServerError::Bind { address, .. })
+                if *address == occupied_address
+        ),
+        "{error:?}"
+    );
+    for released in [supplied_address, earlier_address] {
+        drop(
+            std::net::TcpListener::bind(released)
+                .unwrap_or_else(|error| panic!("{released} is still held: {error}")),
+        );
+    }
+}
+
+/// A configured name is resolved when the server is prepared, and every
+/// address it resolves to gets a listener of its own, in the resolver's
+/// order. `localhost` is the one name every host resolves without asking a
+/// network, often to both loopback addresses.
+#[tokio::test]
+async fn a_name_is_bound_once_per_address_it_resolves_to() {
+    let resolved = tokio::net::lookup_host("localhost:0")
+        .await
+        .expect("localhost resolves")
+        .map(|address| address.ip())
+        .collect::<Vec<_>>();
+
+    for configured in [
+        crate::server::address::BindAddress::from("localhost:0"),
+        crate::server::address::BindAddress::from(("localhost", 0)),
+    ] {
+        let bound = crate::server::Server::new(test_service())
+            .bind(configured.clone())
+            .prepare()
+            .await
+            .unwrap_or_else(|error| panic!("{configured} binds: {error:?}"));
+        let addresses = bound.local_addrs();
+
+        assert_eq!(
+            addresses
+                .iter()
+                .map(std::net::SocketAddr::ip)
+                .collect::<Vec<_>>(),
+            resolved,
+            "{configured}"
+        );
+        assert!(
+            addresses.iter().all(|address| address.port() != 0),
+            "{configured}: {addresses:?}"
+        );
+    }
+}
+
+/// A name that does not resolve is refused as itself, before anything binds,
+/// in either form a name takes: one string, or a host and a port. Neither
+/// needs a network to fail: the first has no port to parse, and RFC 6761
+/// §6.4 reserves `.invalid` so that no name under it resolves.
+#[tokio::test]
+async fn a_name_that_does_not_resolve_is_refused_as_itself() {
+    for configured in [
+        crate::server::address::BindAddress::from("localhost"),
+        crate::server::address::BindAddress::from(("kynos.invalid", 80)),
+    ] {
+        let error = crate::server::Server::new(test_service())
+            .bind(configured.clone())
+            .prepare()
+            .await
+            .expect_err("an unresolvable name prevents preparation");
+
+        assert!(
+            matches!(
+                &error,
+                crate::Error::Server(crate::server::error::ServerError::Resolve { address, .. })
+                    if *address == configured
+            ),
+            "{configured}: {error:?}"
+        );
+    }
 }
 
 #[cfg(feature = "http1")]
@@ -981,8 +1070,116 @@ async fn repeated_shutdown_trigger_forces_an_incomplete_drain() {
     client.await.expect("client task joins");
 }
 
+/// A zero drain deadline reports `ShutdownTimeout` even when nothing was in
+/// flight, as `shutdown_timeout` and `is_requested_shutdown` both say.
+#[tokio::test]
+async fn zero_shutdown_timeout_reports_a_timeout_with_nothing_in_flight() {
+    let error = crate::server::Server::new(test_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .shutdown_timeout(std::time::Duration::ZERO)
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async {}))
+        .serve()
+        .await
+        .expect_err("a zero drain deadline is reported");
+
+    assert!(
+        matches!(
+            &error,
+            crate::Error::Server(crate::server::error::ServerError::ShutdownTimeout { timeout })
+                if timeout.is_zero()
+        ),
+        "{error:?}"
+    );
+}
+
+/// A trigger that fails, as an operating-system signal that cannot be
+/// registered does, ends serving with `ServerError::Signal` carrying that
+/// failure, rather than serving on without a way to stop.
+#[tokio::test]
+async fn a_failing_shutdown_trigger_ends_serving_with_its_error() {
+    use std::io;
+
+    let shutdown = crate::server::shutdown::Shutdown {
+        future: Box::pin(async { Err(io::Error::other("no signal for you")) }),
+    };
+    let error = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        crate::server::Server::new(test_service())
+            .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .graceful_shutdown(shutdown)
+            .serve(),
+    )
+    .await
+    .expect("a failed trigger ends serving")
+    .expect_err("the failed trigger is reported");
+
+    let crate::Error::Server(crate::server::error::ServerError::Signal(source)) = &error else {
+        panic!("not a signal failure: {error:?}");
+    };
+    assert_eq!(source.to_string(), "no signal for you");
+    assert!(matches!(&error, crate::Error::Server(error) if !error.is_requested_shutdown()));
+}
+
+/// `Shutdown::signals` over real signals: the first `SIGTERM` stops the
+/// listener while a request drains, and a second forces the drain to end.
+///
+/// The signals go to this process alone, which nextest gives this test to
+/// itself. A current-thread runtime makes the order certain: `serve` registers
+/// its listeners on the poll that spawns the accept loops, so no request can
+/// reach the handler, and no signal be sent, before they exist.
+#[cfg(all(unix, feature = "http1"))]
+#[tokio::test(flavor = "current_thread")]
+async fn a_second_termination_signal_forces_the_drain() {
+    use rustix::process::{Signal, getpid, kill_process};
+
+    let (service, started, _release) = blocking_service();
+    let bound = crate::server::Server::new(service)
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .shutdown_timeout(std::time::Duration::from_secs(25))
+        .graceful_shutdown(crate::server::shutdown::Shutdown::signals())
+        .prepare()
+        .await
+        .expect("loopback listener binds");
+    let address = bound.local_addrs()[0];
+    let server = tokio::spawn(bound.serve());
+    let client = tokio::task::spawn_blocking(move || request_http1(address));
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
+        .await
+        .expect("the request reaches the handler");
+    kill_process(getpid(), Signal::TERM).expect("the first signal is sent");
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while tokio::net::TcpStream::connect(address).await.is_ok() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the first signal stops the listener");
+    assert!(!server.is_finished(), "the request is still draining");
+
+    kill_process(getpid(), Signal::TERM).expect("the second signal is sent");
+    let error = tokio::time::timeout(std::time::Duration::from_secs(5), server)
+        .await
+        .expect("the second signal ends the drain promptly")
+        .expect("server task joins")
+        .expect_err("the forced drain is reported");
+    assert!(
+        matches!(
+            &error,
+            crate::Error::Server(crate::server::error::ServerError::ShutdownForced)
+        ),
+        "{error:?}"
+    );
+    client.await.expect("client task joins");
+}
+
 /// Only the two incomplete-drain variants are a requested shutdown; every
 /// other one is a server that stopped on its own or never started.
+///
+/// [`server_error_variant`] names every variant in an exhaustive match, so a
+/// variant added to `ServerError` stops this compiling until it is named;
+/// the list below is what catches one named and given no value.
 #[test]
 fn only_an_incomplete_drain_is_a_requested_shutdown() {
     use std::{io, net::Ipv4Addr};
@@ -991,7 +1188,7 @@ fn only_an_incomplete_drain_is_a_requested_shutdown() {
 
     let io_error = || io::Error::other("failure");
     let address = (Ipv4Addr::LOCALHOST, 0).into();
-    let failures = [
+    let every = [
         ServerError::NoListeners,
         ServerError::InvalidConfiguration("setting"),
         ServerError::Resolve {
@@ -1009,11 +1206,68 @@ fn only_an_incomplete_drain_is_a_requested_shutdown() {
         },
         ServerError::AcceptLoop { panicked: true },
         ServerError::Signal(io_error()),
+        ServerError::ShutdownTimeout {
+            timeout: std::time::Duration::ZERO,
+        },
+        ServerError::ShutdownForced,
         #[cfg(feature = "tls")]
         ServerError::MutualTlsConflict,
+        #[cfg(feature = "tls")]
+        ServerError::Tls(crate::server::tls::error::TlsError::ZeroHandshakeTimeout),
     ];
-    for failure in failures {
-        assert!(!failure.is_requested_shutdown(), "{failure:?}");
+
+    let witnessed = every.iter().map(server_error_variant).collect::<Vec<_>>();
+    assert_eq!(
+        witnessed,
+        [
+            "NoListeners",
+            "InvalidConfiguration",
+            "Resolve",
+            "Bind",
+            "Listener",
+            "Accept",
+            "AcceptLoop",
+            "Signal",
+            "ShutdownTimeout",
+            "ShutdownForced",
+            #[cfg(feature = "tls")]
+            "MutualTlsConflict",
+            #[cfg(feature = "tls")]
+            "Tls",
+        ],
+        "a variant has no value"
+    );
+    for error in &every {
+        assert_eq!(
+            error.is_requested_shutdown(),
+            matches!(
+                server_error_variant(error),
+                "ShutdownTimeout" | "ShutdownForced"
+            ),
+            "{error:?}"
+        );
+    }
+}
+
+/// The name of `error`'s variant, with no wildcard arm.
+fn server_error_variant(error: &crate::server::error::ServerError) -> &'static str {
+    use crate::server::error::ServerError;
+
+    match error {
+        ServerError::NoListeners => "NoListeners",
+        ServerError::InvalidConfiguration(_) => "InvalidConfiguration",
+        ServerError::Resolve { .. } => "Resolve",
+        ServerError::Bind { .. } => "Bind",
+        ServerError::Listener(_) => "Listener",
+        ServerError::Accept { .. } => "Accept",
+        ServerError::AcceptLoop { .. } => "AcceptLoop",
+        ServerError::Signal(_) => "Signal",
+        ServerError::ShutdownTimeout { .. } => "ShutdownTimeout",
+        ServerError::ShutdownForced => "ShutdownForced",
+        #[cfg(feature = "tls")]
+        ServerError::MutualTlsConflict => "MutualTlsConflict",
+        #[cfg(feature = "tls")]
+        ServerError::Tls(_) => "Tls",
     }
 }
 
