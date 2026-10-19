@@ -47,6 +47,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from collections import namedtuple
 from pathlib import Path
 from unittest import mock
 
@@ -781,6 +782,85 @@ class SinceRelease(unittest.TestCase):
                 self.assertEqual(self.released(Path(root)), (None, {}))
 
 
+#: Per `--kind`: the sweep `main` calls, the baseline it reads and records, the
+#: table every run writes beside the report, the section that reports it, and
+#: how this file records a baseline of that kind.
+Kind = namedtuple("Kind", ("sweep", "baseline", "table", "title", "record"))
+KINDS = {
+    "binary": Kind(
+        "sweep_binary", cost.BINARY_TSV, "cost-binary.tsv", "### Binary delta",
+        recorded_binary,
+    ),
+    "codegen": Kind(
+        "sweep_codegen", cost.CODEGEN_TSV, "cost-codegen.tsv", "### Codegen delta",
+        recorded_codegen,
+    ),
+    "codec": Kind(
+        "sweep_codec", cost.CODEC_TSV, "cost-codec.tsv", "### Codec delta",
+        recorded_codec,
+    ),
+}
+
+#: What `main` did, and what it left behind under `ROOT` and `COST`.
+Ran = namedtuple("Ran", ("code", "said", "report", "sweeps", "tables", "baselines"))
+
+
+def run_main(kind, mode, measured, recorded=None):
+    """`main --kind kind` under `KYNOS_COST=mode`, with every sweep stubbed out.
+
+    `recorded` is the rows this kind's committed baseline holds before the run,
+    or `None` for none. Each table and baseline `main` wrote is read back by the
+    real `read_recorded` once `main` is done, keyed by file name, `None` for one
+    it did not write.
+    """
+    own = KINDS[kind]
+    swept = (measured, codegen_functions(measured)) if kind == "codegen" else measured
+    # Another kind's sweep returns nothing usable: `main` must not call it.
+    sweeps = {
+        k.sweep: mock.Mock(return_value=swept if k is own else None)
+        for k in KINDS.values()
+    }
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        was = None if recorded is None else own.record(directory, recorded)
+        environ = {"KYNOS_COST": mode} if mode else {}
+        argv = ["cost_features.py", "--kind", kind]
+        with contextlib.ExitStack() as stack:
+            for name, value in (
+                ("ROOT", root),
+                ("COST", root / "cost"),
+                ("sweep_env", mock.Mock(return_value={})),
+                ("toolchain", mock.Mock(return_value=LIVE)),
+                ("released", mock.Mock(return_value=(None, {}))),
+                ("read_recorded", mock.Mock(side_effect=lambda path: (
+                    was if path.name == own.baseline else None
+                ))),
+                *sweeps.items(),
+            ):
+                stack.enter_context(mock.patch.object(cost, name, value))
+            stack.enter_context(mock.patch.object(sys, "argv", argv))
+            stack.enter_context(mock.patch.dict(os.environ, environ, clear=True))
+            stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+            said = stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+            try:
+                cost.main()
+                code = 0
+            except SystemExit as stopped:
+                code = stopped.code
+        report = root / "cost-report.md"
+        return Ran(
+            code,
+            said.getvalue(),
+            report.read_text() if report.is_file() else None,
+            [name for name, sweep in sweeps.items() if sweep.called],
+            {k.table: cost.read_recorded(root / k.table) for k in KINDS.values()},
+            {
+                k.baseline: cost.read_recorded(root / "cost" / k.baseline)
+                for k in KINDS.values()
+            },
+        )
+
+
 class ReleaseGate(unittest.TestCase):
     """`KYNOS_COST=check`: whether the committed baselines are what was measured.
 
@@ -885,33 +965,8 @@ class ReleaseGate(unittest.TestCase):
 
     def run_main(self, mode, measured, recorded):
         """`main` over a binary-only run, with the sweep itself stubbed out."""
-        with tempfile.TemporaryDirectory() as directory:
-            was = recorded_binary(directory, recorded)
-            environ = {"KYNOS_COST": mode} if mode else {}
-            argv = ["cost_features.py", "--kind", "binary"]
-            with contextlib.ExitStack() as stack:
-                for name, value in (
-                    ("ROOT", Path(directory)),
-                    ("sweep_env", mock.Mock(return_value={})),
-                    ("toolchain", mock.Mock(return_value=LIVE)),
-                    ("sweep_binary", mock.Mock(return_value=measured)),
-                    ("released", mock.Mock(return_value=(None, {}))),
-                    ("read_recorded", mock.Mock(side_effect=lambda path: (
-                        was if path.name == cost.BINARY_TSV else None
-                    ))),
-                ):
-                    stack.enter_context(mock.patch.object(cost, name, value))
-                stack.enter_context(mock.patch.object(sys, "argv", argv))
-                stack.enter_context(mock.patch.dict(os.environ, environ, clear=True))
-                stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
-                said = stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
-                try:
-                    cost.main()
-                    code = 0
-                except SystemExit as stopped:
-                    code = stopped.code
-                left = (Path(directory) / "cost-report.md").is_file()
-        return code, said.getvalue(), left
+        ran = run_main("binary", mode, measured, recorded)
+        return ran.code, ran.said, ran.report is not None
 
     def test_unrecorded_numbers_stop_the_gate_with_their_own_code(self):
         code, said, _ = self.run_main(
@@ -936,6 +991,86 @@ class ReleaseGate(unittest.TestCase):
             None, binary_rows(openapi32=76000), binary_rows(openapi32=75920)
         )
         self.assertEqual(code, 0)
+
+
+class Main(unittest.TestCase):
+    """What `--kind` runs and what each run writes, `KYNOS_COST=overwrite` too."""
+
+    MEASURED = {
+        "binary": binary_rows(openapi32=75920, uuid=-32),
+        "codegen": codegen_rows(openapi32=101, uuid=-4),
+        "codec": codec_rows(json=4096, protobuf=-12),
+    }
+
+    def test_each_kind_runs_its_own_sweep_and_reports_it_alone(self):
+        for kind, own in KINDS.items():
+            with self.subTest(kind=kind):
+                ran = run_main(kind, None, self.MEASURED[kind])
+                self.assertEqual(ran.code, 0)
+                self.assertEqual(ran.sweeps, [own.sweep])
+                for other in KINDS.values():
+                    if other is own:
+                        self.assertIn(other.title, ran.report)
+                    else:
+                        self.assertNotIn(other.title, ran.report)
+
+    def test_each_kind_writes_its_own_table_beside_the_report(self):
+        for kind, own in KINDS.items():
+            with self.subTest(kind=kind):
+                ran = run_main(kind, None, self.MEASURED[kind])
+                self.assertEqual(
+                    ran.tables,
+                    {
+                        other.table: cost.Recorded(*LIVE, self.MEASURED[kind])
+                        if other is own
+                        else None
+                        for other in KINDS.values()
+                    },
+                )
+
+    def test_a_compared_run_records_no_baseline(self):
+        for kind in KINDS:
+            with self.subTest(kind=kind):
+                ran = run_main(kind, None, self.MEASURED[kind], self.MEASURED[kind])
+                self.assertEqual(set(ran.baselines.values()), {None})
+
+    def test_overwrite_records_what_was_measured_as_the_baseline(self):
+        for kind, own in KINDS.items():
+            with self.subTest(kind=kind):
+                measured = self.MEASURED[kind]
+                ran = run_main(kind, "overwrite", measured, None)
+                self.assertEqual(ran.code, 0)
+                self.assertEqual(
+                    ran.baselines,
+                    {
+                        other.baseline: cost.Recorded(*LIVE, measured)
+                        if other is own
+                        else None
+                        for other in KINDS.values()
+                    },
+                )
+                self.assertRegex(
+                    ran.said, rf"(?m)^cost: recorded \S+/cost/{own.baseline}$"
+                )
+                # What overwrite wrote is what the release gate then accepts.
+                self.assertEqual(
+                    cost.unrecorded(
+                        own.baseline, measured, ran.baselines[own.baseline], LIVE
+                    ),
+                    [],
+                )
+
+    def test_a_kind_with_no_baseline_says_how_to_record_one(self):
+        ran = run_main("codec", None, self.MEASURED["codec"])
+        self.assertIn(
+            f"cost: no baseline recorded for {cost.CODEC_TSV}; "
+            "run `mise run cost:record`\n",
+            ran.said,
+        )
+
+    def test_overwrite_does_not_ask_for_the_baseline_it_just_recorded(self):
+        ran = run_main("codegen", "overwrite", self.MEASURED["codegen"])
+        self.assertNotIn("no baseline recorded", ran.said)
 
 
 class Exclusions(unittest.TestCase):
