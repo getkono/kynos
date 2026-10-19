@@ -13,8 +13,8 @@ use crate::http::{HeaderName, HeaderValue, Parts, Request, header::AUTHORIZATION
 pub(super) fn assert_refused<T>(read: Result<Option<T>, AuthRejection>, case: &str) {
     assert!(
         matches!(
-            read,
-            Err(AuthRejection::Unauthenticated { challenge: None })
+            read.err(),
+            Some(AuthRejection::Unauthenticated { challenge: None })
         ),
         "{case} must be refused with an unchallenged 401"
     );
