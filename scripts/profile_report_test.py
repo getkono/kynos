@@ -737,7 +737,7 @@ class Cli(unittest.TestCase):
         self.assertEqual(calls.measure.call_count, 0)
         self.assertEqual(calls.main.call_args.kwargs["earlier"], [])
 
-    def test_main_reads_the_run_it_was_given_where_it_was_written(self):
+    def test_main_is_handed_the_run_s_paths_host_catalog_and_annotator(self):
         _, calls = self.cli(["--run"])
         self.assertEqual(
             calls.main.call_args,
