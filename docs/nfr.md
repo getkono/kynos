@@ -218,14 +218,18 @@ stream counts 41, and a chunked body one block more than a `content-length`
 one.
 
 **The zero does not hold.** A static match allocates five times, of the seven
-the attribution below decided on, a capture eight and a miss six, each stable to the allocation across a
+the attribution below decided on, a capture and a miss five as well, each stable to the allocation across a
 ten-thousand-request replay, so these are properties of the path rather than
 noisy readings.
 
-The capture's excess is dispatch *and* the `Path` extractor that deserializes
-it: one block is the capture vector the router records, and two are the
-extractor's own — the handler's decoded-value vector and the pairs it hands
-the derive.
+**A capture costs nothing of its own up to four variables.** It once cost
+three blocks: the capture vector the router records, and the extractor's
+decoded values and the pairs it hands the derive. The record now keeps 16-bit
+offsets in place beside the route's interned names, and the extractor decodes
+on its stack, until a fifth variable or a path past 64 KiB takes one block for
+them, one past `matchit`'s own spill at four. The offsets are narrow because a
+wider record cost more in the copies that move routing state than the block it
+saved.
 
 **Each of the seven was attributed with DHAT's per-site output, and each got a
 decision.** DHAT over `alloc_counter_agreement.static_match`, the same request

@@ -80,13 +80,21 @@ pub(crate) fn decode_path_value(
 pub fn query_pairs(
     query: Option<&str>,
 ) -> impl Iterator<Item = (std::borrow::Cow<'_, [u8]>, std::borrow::Cow<'_, [u8]>)> {
+    query_names(query).map(|(name, value)| (name, decode_query_component(value)))
+}
+
+/// [`query_pairs`] with each value left as the target wrote it, for a reader
+/// that decodes only the values it reads, through [`decode_query_component`].
+pub fn query_names(
+    query: Option<&str>,
+) -> impl Iterator<Item = (std::borrow::Cow<'_, [u8]>, &str)> {
     query
         .unwrap_or_default()
         .split('&')
         .filter(|pair| !pair.is_empty())
         .map(|pair| {
             let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
-            (decode_form_value(name), decode_form_value(value))
+            (decode_query_component(name), value)
         })
 }
 
@@ -163,9 +171,11 @@ fn escaped_octet(octets: &[u8], index: usize) -> Option<u8> {
     u8::try_from(octet).ok()
 }
 
+/// One name or value of a query pair, decoded as [`query_pairs`] decodes it:
 /// `+` to a space, then percent-decoding; borrowed when neither changed
 /// anything.
-fn decode_form_value(raw: &str) -> std::borrow::Cow<'_, [u8]> {
+#[must_use]
+pub fn decode_query_component(raw: &str) -> std::borrow::Cow<'_, [u8]> {
     if raw.contains('+') {
         std::borrow::Cow::Owned(
             percent_encoding::percent_decode_str(&raw.replace('+', " ")).collect(),

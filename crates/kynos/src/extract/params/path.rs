@@ -1,6 +1,6 @@
 //! Variables captured from the path template.
 
-use std::{borrow::Cow, ops::Range, str::Utf8Error};
+use std::{borrow::Cow, str::Utf8Error};
 
 use crate::{
     error::rejection::PathRejection,
@@ -26,49 +26,97 @@ pub struct Path<T>(pub T);
 
 /// Where in the request path a matched route found each of its variables.
 ///
-/// Read by [`Path`] and [`captured`](crate::unchecked::captured). Ranges into
-/// the request path, so a match allocates nothing per variable.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct PathCaptures(Vec<(&'static str, Range<usize>)>);
+/// Read by [`Path`] and [`captured`](crate::unchecked::captured). One span into
+/// the request path per variable the template declares, in its order, so a
+/// match copies no value. A route of up to [`INLINE`] variables on a path of
+/// at most `u16::MAX` octets holds its spans in place and allocates nothing;
+/// any other allocates once, for all of them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PathCaptures {
+    names: &'static [&'static str],
+    spans: Spans,
+}
+
+/// Each variable's `[start, end)` octet offsets into the request path, narrow
+/// so that a record stays small enough to move without a copy loop.
+///
+/// A variable the match did not capture holds a start past its end, which no
+/// path slices.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Spans {
+    Short([[u16; 2]; INLINE]),
+    Long(Box<[[u32; 2]]>),
+}
 
 impl PathCaptures {
-    /// Records what a match captured out of `path`.
+    /// Records what a match captured out of `path` for each of `names`, which
+    /// `captured` looks up.
     ///
     /// # Panics
     ///
     /// Panics if a value is not a subslice of `path`.
     pub(crate) fn new<'a>(
         path: &str,
-        captures: impl IntoIterator<Item = (&'static str, &'a str)>,
+        names: &'static [&'static str],
+        mut captured: impl FnMut(&str) -> Option<&'a str>,
     ) -> Self {
         let base = path.as_ptr() as usize;
-        Self(
-            captures
-                .into_iter()
-                .map(|(name, value)| {
-                    let start = value.as_ptr() as usize;
-                    assert!(
-                        start >= base && start + value.len() <= base + path.len(),
-                        "a path capture must borrow the path it was matched against"
-                    );
-                    let start = start - base;
-                    (name, start..start + value.len())
-                })
-                .collect(),
-        )
+        let mut span = |name: &str| {
+            let value = captured(name)?;
+            let start = value.as_ptr() as usize;
+            assert!(
+                start >= base && start + value.len() <= base + path.len(),
+                "a path capture must borrow the path it was matched against"
+            );
+            let start = start - base;
+            Some([start, start + value.len()])
+        };
+
+        let spans = if names.len() <= INLINE && u16::try_from(path.len()).is_ok() {
+            let mut spans = [[u16::MAX, 0]; INLINE];
+            for (slot, name) in spans.iter_mut().zip(names) {
+                if let Some(narrowed) = span(name).and_then(narrow) {
+                    *slot = narrowed;
+                }
+            }
+            Spans::Short(spans)
+        } else {
+            // A path past `u32::MAX` octets captures nothing readable.
+            Spans::Long(
+                names
+                    .iter()
+                    .map(|name| span(name).and_then(narrow).unwrap_or([u32::MAX, 0]))
+                    .collect(),
+            )
+        };
+        Self { names, spans }
     }
 
     /// The value captured for `name`, borrowed back out of `path`.
     ///
-    /// `None` when the range does not fit, as for a path rewritten after
+    /// `None` when the span does not fit, as for a path rewritten after
     /// matching.
     pub(crate) fn get<'p>(&self, path: &'p str, name: &str) -> Option<&'p str> {
-        self.0
-            .iter()
-            .find(|(captured, _)| *captured == name)
-            .and_then(|(_, range)| path.get(range.clone()))
+        let index = self.names.iter().position(|captured| *captured == name)?;
+        let [start, end] = match &self.spans {
+            Spans::Short(spans) => spans.get(index)?.map(usize::from),
+            Spans::Long(spans) => narrow(*spans.get(index)?)?,
+        };
+        path.get(start..end)
     }
 }
+
+/// `span` in another integer width, or `None` where either end does not fit.
+fn narrow<F, N: TryFrom<F>>([start, end]: [F; 2]) -> Option<[N; 2]> {
+    Some([N::try_from(start).ok()?, N::try_from(end).ok()?])
+}
+
+/// How many variables a match records in place, and a group decodes on the
+/// stack, before either takes the heap.
+///
+/// One past `matchit`'s own inline capacity of three, so the shortest route
+/// that spills here already paid one allocation for its variables there.
+const INLINE: usize = 4;
 
 /// Percent-decodes one captured value, through the one module allowed
 /// `percent-encoding`.
@@ -170,27 +218,51 @@ impl<C: Sync, T: DecodePath + Send> FromRequestParts<C> for Path<T> {
             .get::<crate::router::dispatch::Routed>()
             .and_then(|routed| routed.captures.as_ref());
 
-        let mut decoded: Vec<(&'static str, Cow<'_, str>)> = Vec::with_capacity(T::NAMES.len());
-        for name in T::NAMES {
-            let raw = captures
-                .and_then(|captures| captures.get(path, name))
-                .ok_or_else(|| PathRejection::Invalid {
-                    name: (*name).to_owned(),
-                    detail: "the matched route captured no value for this variable".to_owned(),
-                })?;
-            let value = decode_capture(raw).map_err(|error| PathRejection::Invalid {
-                name: (*name).to_owned(),
-                detail: format!("the percent-decoded value is not valid UTF-8: {error}"),
-            })?;
-            decoded.push((*name, value));
+        let names = T::NAMES;
+        if names.len() <= INLINE {
+            let mut decoded: [Cow<'_, str>; INLINE] = Default::default();
+            let mut values = [("", ""); INLINE];
+            let values = decode_captures(names, captures, path, &mut decoded, &mut values)?;
+            T::decode(values).map(Path)
+        } else {
+            let mut decoded = vec![Cow::Borrowed(""); names.len()];
+            let mut values = vec![("", ""); names.len()];
+            let values = decode_captures(names, captures, path, &mut decoded, &mut values)?;
+            T::decode(values).map(Path)
         }
-
-        let values: Vec<(&str, &str)> = decoded
-            .iter()
-            .map(|(name, value)| (*name, value.as_ref()))
-            .collect();
-        T::decode(&values).map(Path)
     }
+}
+
+/// Decodes the value `captures` holds for each of `names` into `decoded`,
+/// then pairs each name with its value in `values`, which it returns.
+///
+/// The caller provides both, so a group of up to [`INLINE`] variables keeps
+/// them on its stack.
+fn decode_captures<'v, 'p: 'v>(
+    names: &'static [&'static str],
+    captures: Option<&PathCaptures>,
+    path: &'p str,
+    decoded: &'v mut [Cow<'p, str>],
+    values: &'v mut [(&'v str, &'v str)],
+) -> Result<&'v [(&'v str, &'v str)], PathRejection> {
+    for (name, slot) in names.iter().zip(decoded.iter_mut()) {
+        let raw = captures
+            .and_then(|captures| captures.get(path, name))
+            .ok_or_else(|| PathRejection::Invalid {
+                name: (*name).to_owned(),
+                detail: "the matched route captured no value for this variable".to_owned(),
+            })?;
+        *slot = decode_capture(raw).map_err(|error| PathRejection::Invalid {
+            name: (*name).to_owned(),
+            detail: format!("the percent-decoded value is not valid UTF-8: {error}"),
+        })?;
+    }
+
+    let decoded = &*decoded;
+    for (pair, (name, value)) in values.iter_mut().zip(names.iter().zip(decoded)) {
+        *pair = (name, value.as_ref());
+    }
+    Ok(&values[..names.len()])
 }
 
 impl<T: PathParams> Describe for Path<T> {

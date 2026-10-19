@@ -337,7 +337,8 @@ pub(crate) fn query_encode_body(params: &[Param<'_>]) -> TokenStream2 {
 }
 
 /// A form-encoder for one query string component, escaping everything outside
-/// RFC 3986's unreserved set so a value round-trips through [`query_pairs`].
+/// RFC 3986's unreserved set so a value round-trips through the decoder
+/// `query_params::query_slots` writes.
 fn query_encoder() -> TokenStream2 {
     quote! {
         fn encode(raw: &str) -> ::std::string::String {
@@ -360,18 +361,5 @@ fn query_encoder() -> TokenStream2 {
             }
             encoded
         }
-    }
-}
-
-/// The reverse: the pairs a raw query string carries, each half decoded to
-/// octets, so a name is compared as octets.
-///
-/// Decoded by `kynos::__private::uri::query_pairs`, shared with query API keys.
-pub(crate) fn query_pairs() -> TokenStream2 {
-    quote! {
-        let pairs: ::std::vec::Vec<(
-            ::std::borrow::Cow<'_, [u8]>,
-            ::std::borrow::Cow<'_, [u8]>,
-        )> = ::kynos::__private::uri::query_pairs(query).collect();
     }
 }
