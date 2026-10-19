@@ -208,6 +208,50 @@ mod a_file_part_describes_itself {
     }
 }
 
+/// A `String` field taking over its part's octets must not take over the rest
+/// of the buffer they were sliced from: a short field would keep the whole
+/// request body alive for as long as the value lives.
+#[cfg(feature = "multipart")]
+mod a_text_part_holds_only_its_own_octets {
+    use bytes::Bytes;
+
+    use crate::extract::body::multipart::{FromPart, Part};
+
+    fn part(bytes: Bytes) -> Part {
+        Part {
+            name: "a".to_owned(),
+            file_name: None,
+            content_type: None,
+            bytes,
+        }
+    }
+
+    /// The last reference to a larger buffer, as a decoded part is once the
+    /// body around it is dropped.
+    #[test]
+    fn a_sole_slice_of_a_larger_buffer_is_released() {
+        let mut buffer = Vec::with_capacity(4096);
+        buffer.extend_from_slice(b"--x\r\nhi");
+        let body = Bytes::from(buffer);
+        let octets = body.slice(5..);
+        drop(body);
+
+        let text = String::from_part(part(octets)).expect("UTF-8");
+        assert_eq!(text, "hi");
+        assert_eq!(text.capacity(), text.len());
+    }
+
+    /// Octets something else still holds are copied at their length.
+    #[test]
+    fn a_shared_slice_is_copied_at_its_length() {
+        let body = Bytes::from(b"--x\r\nhi".to_vec());
+        let text = String::from_part(part(body.slice(5..))).expect("UTF-8");
+        assert_eq!(text, "hi");
+        assert_eq!(text.capacity(), text.len());
+        assert_eq!(&body[..], b"--x\r\nhi");
+    }
+}
+
 /// The `boundary` is read by the same rule that accepted the media type:
 /// RFC 9110 section 5.6.6 allows optional whitespace on both sides of each
 /// `;`, so a `Content-Type` spelled with it decodes the parts rather than being
