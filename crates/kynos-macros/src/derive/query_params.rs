@@ -2,14 +2,11 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{DeriveInput, parse_macro_input};
+use syn::{DeriveInput, Ident, parse_macro_input};
 
 use crate::derive::{
     common::{NameCase, named_fields, reject_duplicate_names, wire_names},
-    params::{
-        Param, check_field, construct, decode_field, parameters_body, query_encode_body,
-        query_slot, query_slots,
-    },
+    params::{Param, check_field, construct, decode_field, parameters_body, query_encode_body},
 };
 
 pub(crate) fn expand(item: TokenStream) -> TokenStream {
@@ -100,4 +97,50 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
             }
         }
     })
+}
+
+/// One pass over the pairs a raw query string carries, binding each declared
+/// parameter's [`query_slot`] to the octets of the first pair that names it.
+///
+/// A name is compared as octets once decoded, and only a declared parameter's
+/// value is decoded at all, so a pair no field reads costs its name's decoding
+/// alone and nothing is collected. Split by `kynos::__private::uri::query_names`,
+/// which shares its decoding with query API keys.
+fn query_slots(params: &[Param<'_>]) -> proc_macro2::TokenStream {
+    if params.is_empty() {
+        return quote!(let _ = query;);
+    }
+
+    let slots: Vec<Ident> = (0..params.len()).map(query_slot).collect();
+    let arms = params.iter().zip(&slots).map(|(param, slot)| {
+        let wire = proc_macro2::Literal::byte_string(param.name().as_bytes());
+        quote! {
+            #wire => {
+                if #slot.is_none() {
+                    #slot = ::core::option::Option::Some(
+                        ::kynos::__private::uri::decode_query_component(value),
+                    );
+                }
+            }
+        }
+    });
+
+    quote! {
+        #(
+            let mut #slots: ::core::option::Option<::std::borrow::Cow<'_, [u8]>> =
+                ::core::option::Option::None;
+        )*
+        for (name, value) in ::kynos::__private::uri::query_names(query) {
+            match &*name {
+                #(#arms)*
+                _ => {}
+            }
+        }
+    }
+}
+
+/// The local [`query_slots`] binds the `index`th declared parameter's octets
+/// to.
+fn query_slot(index: usize) -> Ident {
+    quote::format_ident!("__kynos_query_{index}")
 }

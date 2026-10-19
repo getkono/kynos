@@ -337,7 +337,8 @@ pub(crate) fn query_encode_body(params: &[Param<'_>]) -> TokenStream2 {
 }
 
 /// A form-encoder for one query string component, escaping everything outside
-/// RFC 3986's unreserved set so a value round-trips through [`query_slots`].
+/// RFC 3986's unreserved set so a value round-trips through the decoder
+/// `query_params::query_slots` writes.
 fn query_encoder() -> TokenStream2 {
     quote! {
         fn encode(raw: &str) -> ::std::string::String {
@@ -361,51 +362,4 @@ fn query_encoder() -> TokenStream2 {
             encoded
         }
     }
-}
-
-/// The reverse: one pass over the pairs a raw query string carries, binding
-/// each declared parameter's [`query_slot`] to the octets of the first pair
-/// that names it.
-///
-/// A name is compared as octets once decoded, and only a declared parameter's
-/// value is decoded at all, so a pair no field reads costs its name's decoding
-/// alone and nothing is collected. Split by `kynos::__private::uri::query_names`,
-/// which shares its decoding with query API keys.
-pub(crate) fn query_slots(params: &[Param<'_>]) -> TokenStream2 {
-    if params.is_empty() {
-        return quote!(let _ = query;);
-    }
-
-    let slots: Vec<Ident> = (0..params.len()).map(query_slot).collect();
-    let arms = params.iter().zip(&slots).map(|(param, slot)| {
-        let wire = proc_macro2::Literal::byte_string(param.name().as_bytes());
-        quote! {
-            #wire => {
-                if #slot.is_none() {
-                    #slot = ::core::option::Option::Some(
-                        ::kynos::__private::uri::decode_query_component(value),
-                    );
-                }
-            }
-        }
-    });
-
-    quote! {
-        #(
-            let mut #slots: ::core::option::Option<::std::borrow::Cow<'_, [u8]>> =
-                ::core::option::Option::None;
-        )*
-        for (name, value) in ::kynos::__private::uri::query_names(query) {
-            match &*name {
-                #(#arms)*
-                _ => {}
-            }
-        }
-    }
-}
-
-/// The local [`query_slots`] binds the `index`th declared parameter's octets
-/// to.
-pub(crate) fn query_slot(index: usize) -> Ident {
-    quote::format_ident!("__kynos_query_{index}")
 }
