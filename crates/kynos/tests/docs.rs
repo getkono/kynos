@@ -8,7 +8,12 @@
 
 #![cfg(all(feature = "docs", feature = "macros", feature = "json"))]
 
-use kynos::{Router, error::RouterError, http::StatusCode, openapi::Info, router::docs::Docs};
+use kynos::{
+    Router,
+    http::StatusCode,
+    openapi::Info,
+    router::{docs::Docs, error::RouterError},
+};
 
 #[path = "support/mod.rs"]
 mod support;

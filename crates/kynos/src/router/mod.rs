@@ -3,11 +3,13 @@
 //! [`Router`] is the root and lives here. [`endpoint`] holds one declared
 //! operation and the builder a route attribute expands into, [`group`] a set of
 //! operations sharing a prefix, [`operation`] the description being assembled,
-//! [`policy`] the application-wide fallbacks, and [`service`] the built result.
+//! [`policy`] the application-wide fallbacks, [`service`] the built result, and
+//! [`error`] what a router reports wrong with itself.
 
 mod describe;
 mod install;
 
+use error::RouterError;
 use install::{catches, error_at, path_location, unroutable};
 
 #[cfg(feature = "assets")]
@@ -15,6 +17,7 @@ pub mod assets;
 #[cfg(feature = "docs")]
 pub mod docs;
 pub mod endpoint;
+pub mod error;
 pub mod group;
 pub mod operation;
 pub mod policy;
@@ -32,7 +35,7 @@ use kynos_openapi::{
 };
 
 use crate::{
-    error::{Error, Result, RouterError},
+    error::{Error, Result},
     middleware::{
         Interceptor, Observer,
         catch_panic::{Catch, PanicPolicy, Propagate},

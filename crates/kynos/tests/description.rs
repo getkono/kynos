@@ -51,7 +51,7 @@ use std::collections::BTreeSet;
 
 use kynos::{
     ApiError, PathParams, Router, Schema,
-    error::{RouterError, rejection::RangeRejection},
+    error::rejection::RangeRejection,
     extract::{body::binary::Binary, params::path::Path},
     http::media::OctetStream,
     middleware::limits::{body_size::BodySize, timeout::Timeout},
@@ -64,7 +64,7 @@ use kynos::{
         },
         status::NoContent,
     },
-    router::{endpoint::builder::EndpointBuilder, group::Group},
+    router::{endpoint::builder::EndpointBuilder, error::RouterError, group::Group},
 };
 
 #[kynos::get("/alpha")]

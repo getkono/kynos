@@ -16,12 +16,11 @@
 
 use kynos::{
     Error, Router,
-    error::RouterError,
     extract::params::path::Path,
     handler::Handler,
     openapi::{Method as OpenApiMethod, PathTemplate, SpecError, Violation},
     response::status::NoContent,
-    router::{endpoint::builder::EndpointBuilder, group::Group},
+    router::{endpoint::builder::EndpointBuilder, error::RouterError, group::Group},
 };
 
 /// What `/files/{path}` captures.

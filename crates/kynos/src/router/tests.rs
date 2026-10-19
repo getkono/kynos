@@ -19,10 +19,10 @@ use kynos_openapi::{Method, PathTemplate};
 
 use super::{Router, endpoint::builder::EndpointBuilder, operation::Route};
 use crate::{
-    error::RouterError,
     http::{Request, Response, body::Body},
     middleware::Observer,
     response::status::NoContent,
+    router::error::RouterError,
 };
 
 async fn handled() -> NoContent {
@@ -364,4 +364,108 @@ fn a_reference_publishes_its_operation_ids_under_its_prefix() {
     twice(Docs::scalar().operation_id_prefix("v2_docs"))
         .openapi()
         .expect("two references under two prefixes");
+}
+
+/// One case per variant of [`RouterError`], what a router's violation says is
+/// wrong.
+mod router_errors {
+    use std::collections::BTreeSet;
+
+    use kynos_openapi::{Method, SpecError};
+
+    use super::RouterError;
+
+    /// Every variant, named. An exhaustive match, so a variant added to
+    /// [`RouterError`] stops this file compiling until it is given a case.
+    fn variant_name(error: &RouterError) -> &'static str {
+        match error {
+            RouterError::Spec(_) => "Spec",
+            RouterError::DuplicateOperation { .. } => "DuplicateOperation",
+            RouterError::ShortCircuitMismatch { .. } => "ShortCircuitMismatch",
+            RouterError::RouteConflict { .. } => "RouteConflict",
+            RouterError::InvalidRoutePattern { .. } => "InvalidRoutePattern",
+            RouterError::NestedRouterPolicy { .. } => "NestedRouterPolicy",
+        }
+    }
+
+    /// One constructed value per variant, with the whole of what it must say.
+    ///
+    /// `Spec` is transparent: a document's violation reads the same whether a
+    /// validator or a router reports it.
+    fn ledger() -> Vec<(RouterError, &'static str)> {
+        vec![
+            (
+                SpecError::NoResponses.into(),
+                "an operation must declare at least one response",
+            ),
+            (
+                RouterError::DuplicateOperation {
+                    method: Method::Get,
+                    path: "/users".to_owned(),
+                },
+                "operation `GET /users` is described more than once; a path item holds one \
+                 operation per method",
+            ),
+            (
+                RouterError::ShortCircuitMismatch {
+                    name: "app::Limited".to_owned(),
+                    declared: vec![429],
+                    described: vec![429, 503],
+                },
+                "`app::Limited` declares statuses [429] as a short circuit but describes \
+                 [429, 503]",
+            ),
+            (
+                RouterError::RouteConflict {
+                    pattern: "/v{x}".to_owned(),
+                    existing: "/{x}.txt".to_owned(),
+                },
+                "`/v{x}` conflicts with `/{x}.txt` in the router's match table",
+            ),
+            (
+                RouterError::InvalidRoutePattern {
+                    pattern: "/{*path}/raw".to_owned(),
+                },
+                "`/{*path}/raw` is not a pattern the router's match table accepts",
+            ),
+            (
+                RouterError::NestedRouterPolicy {
+                    policy: "trusted_proxies",
+                },
+                "a nested or merged router sets `trusted_proxies`, which only the root router's \
+                 applies; set it on the root router instead",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_variant_says_what_failed() {
+        for (error, expected) in ledger() {
+            let name = variant_name(&error);
+
+            assert_eq!(error.to_string(), expected, "{name}");
+        }
+    }
+
+    /// The ledger against the variants, transcribed, for the reason
+    /// [`Error`](crate::Error)'s own ledger gives.
+    #[test]
+    fn every_variant_has_a_case() {
+        let covered: BTreeSet<&str> = ledger()
+            .iter()
+            .map(|(error, _)| variant_name(error))
+            .collect();
+        let declared: BTreeSet<&str> = [
+            "Spec",
+            "DuplicateOperation",
+            "ShortCircuitMismatch",
+            "RouteConflict",
+            "InvalidRoutePattern",
+            "NestedRouterPolicy",
+        ]
+        .into_iter()
+        .collect();
+
+        assert_eq!(covered, declared);
+    }
 }

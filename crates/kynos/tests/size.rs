@@ -22,7 +22,7 @@ use std::{convert::Infallible, error::Error as StdError, mem::size_of_val};
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Empty, Full};
-use kynos::{Error, error::RouterError, openapi::Violation};
+use kynos::{Error, openapi::Violation, router::error::RouterError};
 
 /// What the erased error type is, spelled the way `body.rs` spells it, so the
 /// witnesses below measure the type the library actually erases rather than a

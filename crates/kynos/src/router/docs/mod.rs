@@ -61,12 +61,10 @@ use std::{
 use bytes::Bytes;
 use kynos_openapi::{PathTemplate, validate::violation::Violation};
 
-use crate::{
+use crate::router::{
+    docs::endpoint::{DocsDescription, DocsPage},
+    endpoint::{DynEndpoint, operation_id},
     error::RouterError,
-    router::{
-        docs::endpoint::{DocsDescription, DocsPage},
-        endpoint::{DynEndpoint, operation_id},
-    },
 };
 
 /// An API reference, ready to mount.

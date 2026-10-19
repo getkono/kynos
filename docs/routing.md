@@ -191,12 +191,12 @@ differ only in variable name, a security requirement naming a scheme nobody
 declared. `build` runs the same structural checks, so an API that cannot be
 described correctly fails at startup rather than at documentation time.
 
-What each violation says is wrong is a `kynos::error::RouterError`. A rule the
-document breaks arrives as `RouterError::Spec`, wrapping the `SpecError` a
-standalone `kynos-openapi` validator would report; the other variants are what
-no document can hold — a match-table conflict, an operation mounted twice, a
-short circuit disagreeing with its responses, a policy set on an absorbed
-router. `kynos-openapi` stays the document's vocabulary alone.
+What each violation says is wrong is a `kynos::router::error::RouterError`. A
+rule the document breaks arrives as `RouterError::Spec`, wrapping the
+`SpecError` a standalone `kynos-openapi` validator would report; the other
+variants are what no document can hold — a match-table conflict, an operation
+mounted twice, a short circuit disagreeing with its responses, a policy set on
+an absorbed router. `kynos-openapi` stays the document's vocabulary alone.
 
 ### One router value, described and built
 

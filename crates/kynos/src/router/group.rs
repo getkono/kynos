@@ -5,7 +5,6 @@ use std::{marker::PhantomData, sync::Arc};
 use kynos_openapi::Violation;
 
 use crate::{
-    error::RouterError,
     middleware::{
         Interceptor,
         catch_panic::{Catch, PanicPolicy, Propagate},
@@ -13,6 +12,7 @@ use crate::{
         stack::{CompatibleStack, CompatibleWith, Cons, Flatten},
     },
     response::short_circuit_mismatch,
+    router::error::RouterError,
     router::{
         ShortCircuitCheck,
         endpoint::{DynEndpoint, set::IntoEndpoints},
