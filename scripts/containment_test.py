@@ -1758,9 +1758,11 @@ class Main(unittest.TestCase):
         # `sources` rather than `files` -- one word -- puts eleven offender
         # lines over this repository's own tree. Nine of them are the `tokio`
         # allowance scan's, over the `tests.rs` siblings that word restores to
-        # the corpus, and two are the `hyper`/`hyper-util` and `rustls`
-        # confinements'; the dependency-graph scan is two of the three
-        # failures rather than all of them.
+        # the corpus, and two are the `rustls` confinement's and that of
+        # `hyper` and `hyper-util`, then one row; the dependency-graph scan is
+        # two of the three failures rather than all of them. The `hyper` and
+        # `hyper-util` rows are separate now, and over today's tree each
+        # reports `server/tests.rs` on its own.
         #
         # Two other cases go red on it now, and did not when this was written:
         # `test_a_crate_name_matches_as_a_word_and_not_as_a_substring` and
@@ -1911,10 +1913,10 @@ class Main(unittest.TestCase):
         # second detector for the over-reporting class
         # `test_the_unmodified_tree_reports_nothing` above was written for,
         # and reds on mutations that have nothing to do with `Corpus.naming`'s word boundaries.
-        # Measured on six: `Corpus.naming` reading `sources` for `files` or
+        # Measured on seven: `Corpus.naming` reading `sources` for `files` or
         # losing its word boundaries, the re-export scan's `lib.rs` exemption
-        # disabled, either the `tower` or the `hyper`/`hyper-util` confinement
-        # emptied, and `permitted`'s `server/` branch deleted. Every one reds
+        # disabled, any one of the `tower`, `hyper` and `hyper-util`
+        # confinements emptied, and `permitted`'s `server/` branch deleted. Every one reds
         # this case, the other detector and the intact-tree case together, so
         # a red here can misname its cause -- read the intact-tree case's
         # verdict first. That cost is the one the intact-tree case states and
@@ -2719,10 +2721,10 @@ class Main(unittest.TestCase):
         # second detector for the over-reporting class
         # `test_the_unmodified_tree_reports_nothing` above was written for,
         # and reds on mutations that have nothing to do with the `lib.rs` exemption.
-        # Measured on six: `Corpus.naming` reading `sources` for `files` or
+        # Measured on seven: `Corpus.naming` reading `sources` for `files` or
         # losing its word boundaries, the re-export scan's `lib.rs` exemption
-        # disabled, either the `tower` or the `hyper`/`hyper-util` confinement
-        # emptied, and `permitted`'s `server/` branch deleted. Every one reds
+        # disabled, any one of the `tower`, `hyper` and `hyper-util`
+        # confinements emptied, and `permitted`'s `server/` branch deleted. Every one reds
         # this case, the other detector and the intact-tree case together, so
         # a red here can misname its cause -- read the intact-tree case's
         # verdict first. That cost is the one the intact-tree case states and
