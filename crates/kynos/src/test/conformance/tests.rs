@@ -546,33 +546,12 @@ fn only_a_json_based_body_is_validated_against_its_schema() {
 /// so a reworded one is a changed contract.
 #[test]
 fn every_reason_is_reported_in_its_own_sentence() {
-    use kynos_openapi::{Header, Ref, RefOr, Response, Responses, Schema};
+    use kynos_openapi::{Ref, RefOr, Responses};
 
     let mut unresolved = Responses::new();
     unresolved
         .responses
         .insert("200".to_owned(), RefOr::Ref(Ref::response("Missing")));
-
-    // One required header inline, one behind a component, one optional.
-    let mut headed = Response::new("the thing");
-    let mut required = Header::new(Schema::default());
-    required.required = Some(true);
-    headed
-        .headers
-        .insert("X-Inline".to_owned(), RefOr::Item(required.clone()));
-    headed.headers.insert(
-        "X-Shared".to_owned(),
-        RefOr::Ref(Ref::new("#/components/headers/Shared")),
-    );
-    headed.headers.insert(
-        "X-Optional".to_owned(),
-        RefOr::Item(Header::new(Schema::default())),
-    );
-    let mut headers = document_declaring(Responses::new().with(200, headed));
-    headers
-        .components
-        .headers
-        .insert("Shared".to_owned(), RefOr::Item(required));
 
     let posted = crate::test::Observed {
         method: crate::http::Method::POST,
@@ -623,15 +602,6 @@ fn every_reason_is_reported_in_its_own_sentence() {
             vec!["the `200` response resolves to no component".to_owned()],
         ),
         (
-            "a missing required header, inline and by `$ref`",
-            headers,
-            observed(200, None, ""),
-            vec![
-                "the declared required header `X-Inline` was not sent".to_owned(),
-                "the declared required header `X-Shared` was not sent".to_owned(),
-            ],
-        ),
-        (
             "no `Content-Type`",
             document_declaring(json_ok()),
             observed(200, None, "{}"),
@@ -661,6 +631,42 @@ fn every_reason_is_reported_in_its_own_sentence() {
     for (case, document, record, expected) in cases {
         assert_eq!(conformance(&document, &record), expected, "{case}");
     }
+}
+
+/// A required header the response did not send is reported by name, whether
+/// it is declared inline or behind a `#/components/headers` `$ref`; an
+/// optional one is not.
+#[test]
+fn a_missing_required_header_is_reported_inline_and_by_reference() {
+    use kynos_openapi::{Header, Ref, RefOr, Response, Responses, Schema};
+
+    let mut headed = Response::new("the thing");
+    let mut required = Header::new(Schema::default());
+    required.required = Some(true);
+    headed
+        .headers
+        .insert("X-Inline".to_owned(), RefOr::Item(required.clone()));
+    headed.headers.insert(
+        "X-Shared".to_owned(),
+        RefOr::Ref(Ref::new("#/components/headers/Shared")),
+    );
+    headed.headers.insert(
+        "X-Optional".to_owned(),
+        RefOr::Item(Header::new(Schema::default())),
+    );
+    let mut document = document_declaring(Responses::new().with(200, headed));
+    document
+        .components
+        .headers
+        .insert("Shared".to_owned(), RefOr::Item(required));
+
+    assert_eq!(
+        conformance(&document, &observed(200, None, "")),
+        [
+            "the declared required header `X-Inline` was not sent",
+            "the declared required header `X-Shared` was not sent",
+        ]
+    );
 }
 
 /// A declared schema the validator cannot compile is reported as the
