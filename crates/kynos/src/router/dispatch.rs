@@ -601,15 +601,13 @@ pub(crate) fn method_refusal(allow: Option<&HeaderValue>, policy: &FallbackPolic
 /// send it. A known non-zero length becomes `Content-Length` (section 8.6); a
 /// zero is never stated, since an empty body is no evidence of an empty GET.
 fn without_content(response: Response) -> Response {
-    use http_body::Body as _;
-
-    let (mut parts, body) = response.into_parts();
+    let (mut parts, mut body) = response.into_parts();
 
     let bodiless = parts.status.is_informational()
         || parts.status == StatusCode::NO_CONTENT
         || parts.status == StatusCode::NOT_MODIFIED;
     if !bodiless && !parts.headers.contains_key(header::CONTENT_LENGTH) {
-        if let Some(length) = body.size_hint().exact().filter(|&length| length != 0) {
+        if let Some(length) = body.exact_length().filter(|&length| length != 0) {
             parts
                 .headers
                 .insert(header::CONTENT_LENGTH, HeaderValue::from(length));
