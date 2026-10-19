@@ -544,6 +544,56 @@ mod security_headers {
             );
         }
     }
+
+    /// A request a trusted hop says arrived over HTTPS is answered with the
+    /// configured policy — one field, replacing whatever the handler set —
+    /// and one the hop says arrived over HTTP gets none.
+    #[tokio::test]
+    async fn hsts_reaches_a_request_a_trusted_hop_says_was_secure() {
+        use kynos::http::forwarded::{ProxyHeader, TrustedProxies};
+
+        let policies = [
+            (
+                StrictTransportSecurity::max_age(Duration::from_secs(31_536_000)),
+                "max-age=31536000",
+            ),
+            (
+                StrictTransportSecurity::max_age(Duration::from_secs(600)).include_subdomains(),
+                "max-age=600; includeSubDomains",
+            ),
+        ];
+
+        for (policy, sent) in policies {
+            let service = Router::<()>::new()
+                .mount(kynos::routes![plain, pinned])
+                .trusted_proxies(TrustedProxies::hops(ProxyHeader::Forwarded, 1))
+                .intercept(SecurityHeaders::new().strict_transport_security(policy))
+                .build(())
+                .expect("a describable router");
+
+            for path in ["/plain", "/pinned"] {
+                let secure = get(&service, path)
+                    .header("forwarded", "for=203.0.113.7;proto=https")
+                    .call()
+                    .await;
+                let plain = get(&service, path)
+                    .header("forwarded", "for=203.0.113.7;proto=http")
+                    .call()
+                    .await;
+
+                assert_eq!(
+                    secure.fields(header::STRICT_TRANSPORT_SECURITY.as_str()),
+                    [sent],
+                    "{path}"
+                );
+                assert_eq!(
+                    plain.fields(header::STRICT_TRANSPORT_SECURITY.as_str()),
+                    Vec::<String>::new(),
+                    "{path}"
+                );
+            }
+        }
+    }
 }
 
 /// Compression must not re-encode anything a byte range is calculated against.
