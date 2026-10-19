@@ -10,17 +10,13 @@ use std::{fmt, io, marker::PhantomData};
 
 use async_compression::tokio::bufread::{BrotliDecoder, GzipDecoder, ZstdDecoder};
 use bytes::{Bytes, BytesMut};
-use http_body_util::BodyExt;
 use kynos_openapi::model::schema::types::SchemaType;
 use tokio::io::{AsyncRead, ReadBuf};
 
 use crate::{
     error::problem::{ProblemType, refusal_problem, refusal_response},
-    extract::body::limit::BodyLimit,
-    http::{
-        self,
-        body::{Body, BoxError},
-    },
+    extract::body::limit::{BodyLimit, Capped, collect_capped},
+    http::{self, body::Body},
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
     schema::registry::Registry,
@@ -597,17 +593,17 @@ where
         parts.extensions.insert(BodyLimit(self.limit));
 
         // Read even when uncoded: the limit applies either way.
-        let arrived = match collect_capped(body, self.limit)
-            .await
-            .map_err(Undecodable::of)?
-        {
-            Collected::Whole(bytes) => bytes,
+        let arrived = match collect_capped(body, self.limit).await {
+            Capped::Whole(bytes) => bytes,
+            Capped::Exceeded => {
+                return Err(Undecodable::of(Reason::TooLarge { limit: self.limit }));
+            }
             // Handed on as it failed, so the extractor refuses it as usual
             // rather than blaming the coding for a transport failure. A coded
             // body goes on as only its failure and without its coding: its
             // octets are not the media type's, and a coding left declared would
             // be refused as one nothing decoded.
-            Collected::FailedPartWay { arrived, error } => {
+            Capped::FailedPartWay { arrived, error } => {
                 let arrived = if codings.is_empty() {
                     arrived
                 } else {
@@ -643,52 +639,6 @@ where
 
         Ok(next.run(request).await)
     }
-}
-
-/// What reading a request body within the limit produced.
-enum Collected {
-    /// Every byte the body carried.
-    Whole(Bytes),
-    /// What arrived before the read failed, and that failure.
-    FailedPartWay {
-        /// The octets read before the failure.
-        arrived: Bytes,
-        /// The failure itself.
-        error: BoxError,
-    },
-}
-
-/// Reads `body` while the running total stays within `limit`.
-///
-/// A failed read comes back as it failed, for the extractor beneath to refuse;
-/// swallowing it would hand on a truncated payload.
-async fn collect_capped(mut body: Body, limit: u64) -> Result<Collected, Reason> {
-    let mut collected = BytesMut::new();
-
-    while let Some(frame) = body.frame().await {
-        let frame = match frame {
-            Ok(frame) => frame,
-            Err(error) => {
-                return Ok(Collected::FailedPartWay {
-                    arrived: collected.freeze(),
-                    error,
-                });
-            }
-        };
-        let Ok(data) = frame.into_data() else {
-            continue;
-        };
-
-        let so_far = u64::try_from(collected.len()).unwrap_or(u64::MAX);
-        let arriving = u64::try_from(data.len()).unwrap_or(u64::MAX);
-        if so_far.saturating_add(arriving) > limit {
-            return Err(Reason::TooLarge { limit });
-        }
-
-        collected.extend_from_slice(&data);
-    }
-
-    Ok(Collected::Whole(collected.freeze()))
 }
 
 #[cfg(test)]
