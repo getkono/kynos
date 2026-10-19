@@ -152,7 +152,7 @@ impl Preflight {
         *response.status_mut() = StatusCode::NO_CONTENT;
 
         // On every answer: a cached refusal must not be reused either.
-        crate::middleware::vary_on(response.headers_mut(), PREFLIGHT_VARIES);
+        crate::http::vary_on(response.headers_mut(), PREFLIGHT_VARIES);
 
         // Refused by absent headers, not an undeclared 403.
         let Some(scope) = self.scope_for(requested_method) else {
