@@ -4006,9 +4006,9 @@ fn declared_variants() -> BTreeSet<&'static str> {
     for line in include_str!("violation.rs").lines() {
         if line.starts_with("    #[error") {
             attributed = true;
-        } else if attributed
-            && let Some(variant) = line.strip_prefix("    ")
-            && variant.starts_with(|c: char| c.is_ascii_uppercase())
+        } else if let Some(variant) = line
+            .strip_prefix("    ")
+            .filter(|variant| attributed && variant.starts_with(|c: char| c.is_ascii_uppercase()))
         {
             let end = variant
                 .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')

@@ -179,11 +179,12 @@ pub(super) fn reject_catch_all(input: &DeriveInput) -> syn::Result<()> {
         return Ok(());
     };
 
-    if serde_flag(&input.attrs, &["field_identifier"])
-        && let Some(last) = data.variants.last()
-        && (matches!(&last.fields, Fields::Unnamed(fields) if fields.unnamed.len() == 1)
-            || serde_flag(&last.attrs, &["other"]))
-    {
+    let catch_all = data.variants.last().filter(|last| {
+        serde_flag(&input.attrs, &["field_identifier"])
+            && (matches!(&last.fields, Fields::Unnamed(fields) if fields.unnamed.len() == 1)
+                || serde_flag(&last.attrs, &["other"]))
+    });
+    if let Some(last) = catch_all {
         return Err(syn::Error::new(
             last.ident.span(),
             format!(
