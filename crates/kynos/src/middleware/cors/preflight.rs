@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use kynos_openapi::Method;
 
-use super::CorsConfig;
+use super::{CorsConfig, join_names};
 use crate::{
     http::{self, HeaderValue, Request, Response, StatusCode, header},
     router::policy::FallbackPolicy,
@@ -166,13 +166,10 @@ impl Preflight {
 
         let fields = response.headers_mut();
 
-        // `*` only where credentials are off; the pair is refused at build.
-        let allowed = if config.any.origin && !config.credentials {
-            HeaderValue::from_static("*")
-        } else {
-            origin.clone()
-        };
-        fields.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, allowed);
+        fields.insert(
+            header::ACCESS_CONTROL_ALLOW_ORIGIN,
+            config.allow_origin_value(origin),
+        );
 
         if config.credentials {
             fields.insert(
@@ -206,17 +203,7 @@ impl Preflight {
 
 /// `Access-Control-Allow-Methods`, as one field value.
 fn advertised_methods(methods: &[Method]) -> Option<HeaderValue> {
-    if methods.is_empty() {
-        return None;
-    }
-
-    let joined = methods
-        .iter()
-        .map(|method| method.as_wire_str())
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    HeaderValue::from_str(&joined).ok()
+    join_names(methods.iter().map(|method| method.as_wire_str()))
 }
 
 /// `Access-Control-Allow-Headers`, as one field value.
@@ -233,18 +220,7 @@ fn advertised_headers(config: &CorsConfig, request: &http::HeaderMap) -> Option<
         return Some(HeaderValue::from_static("*, authorization"));
     }
 
-    if config.headers.is_empty() {
-        return None;
-    }
-
-    let joined = config
-        .headers
-        .iter()
-        .map(std::borrow::Cow::as_ref)
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    HeaderValue::from_str(&joined).ok()
+    join_names(config.headers.iter().map(std::borrow::Cow::as_ref))
 }
 
 /// A cache lifetime as the whole seconds `Access-Control-Max-Age` carries.
