@@ -1042,9 +1042,11 @@ async fn a_derived_tag_is_the_same_on_a_hit_as_on_a_miss() {
         .build(())
         .expect("a describable router");
 
+    let before = CALLS.load(Ordering::SeqCst);
     let first = get(&service, "/reports").call().await;
     let second = get(&service, "/reports").call().await;
 
+    assert_eq!(calls_during(before), 1, "the second request was not a hit");
     let tag = first.field(header::ETAG.as_str()).expect("a derived tag");
     assert_eq!(second.field(header::ETAG.as_str()).as_deref(), Some(&*tag));
 }
