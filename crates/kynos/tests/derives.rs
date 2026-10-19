@@ -1514,6 +1514,24 @@ fn a_query_value_that_is_not_utf8_is_refused_naming_its_parameter() {
     }
 }
 
+/// A group declaring no parameter.
+#[derive(Schema, QueryParams)]
+struct Unparameterised {}
+
+/// A group declaring no parameter reads no pair, so any query, even one
+/// whose octets are not UTF-8, decodes to it.
+#[test]
+fn a_group_without_parameters_decodes_from_any_query() {
+    use kynos::extract::params::query::DecodeQuery;
+
+    for query in [None, Some(""), Some("name=x&%FF=%FE"), Some("a&b=&=c")] {
+        assert!(
+            <Unparameterised as DecodeQuery>::decode(query).is_ok(),
+            "{query:?}"
+        );
+    }
+}
+
 // --- A derived query parameter keeps its field's bounds ---------------------
 //
 // A recorded runtime exception for the reason the UTF-8 one is: a field's
