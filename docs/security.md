@@ -79,10 +79,13 @@ replaces it, typically to name another `realm`:
 
 `ApiKey` and `MutualTLS` are unregistered `auth-scheme` tokens (RFC 9110
 section 11.1) spelling the OpenAPI `type`, with no parameters: they satisfy the
-MUST and tell a client which of the operation's described schemes refused it,
-while where the key travels stays the description's to say, not a second copy
-of it in a header. A client answers them by presenting the credential where
-the scheme describes, not in `Authorization`.
+MUST and name the scheme's kind, while where the key travels stays the
+description's to say, not a second copy of it in a header. The challenge is the
+scheme type's, not the refusal's: two `api_key` schemes both send `ApiKey`, and
+a combination sends its first in tuple order whichever scheme refused, so
+`AnyOf<(MutualTls, Bearer)>` answers a refused bearer token with `MutualTLS`.
+A client answers them by presenting the credential where the operation's
+description says, not in `Authorization`.
 
 `Basic<T, P, R>` names its realm as a type, `R: Realm`, `ApiRealm` unless
 named. A realm is fixed per scheme, so it composes into the challenge at compile
