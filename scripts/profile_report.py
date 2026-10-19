@@ -766,7 +766,12 @@ def main(
     return MEASURED
 
 
-if __name__ == "__main__":
+def cli(argv):
+    """The command line over `argv`, returning the exit code `main` decides.
+
+    Every runner is looked up on this module when called, so a test replaces
+    `run_benchmarks`, `measure` and `main` to count runs and read `earlier`.
+    """
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument(
         "--run", action="store_true", help="run the benchmark before reading its output"
@@ -778,7 +783,7 @@ if __name__ == "__main__":
         metavar="N",
         help="with --run, run it N times and fail when an exact group's counts differ",
     )
-    arguments = parser.parse_args()
+    arguments = parser.parse_args(argv)
     if arguments.repeat < 1 or (arguments.repeat > 1 and not arguments.run):
         parser.error("--repeat takes a count of at least 1, and only with --run")
     earlier = []
@@ -794,19 +799,21 @@ if __name__ == "__main__":
         bases = read_catalog(catalog())
     except (Unreadable, subprocess.CalledProcessError, OSError, KeyError, ValueError) as error:
         print(f"profile: the benchmark could not be run: {error}", file=sys.stderr)
-        sys.exit(NOTHING)
+        return NOTHING
     try:
         host = describe_host()
     except (subprocess.CalledProcessError, OSError) as error:
         print(f"profile: the host could not be described: {error}", file=sys.stderr)
-        sys.exit(NOTHING)
-    sys.exit(
-        main(
-            directory=directory,
-            host=host,
-            earlier=earlier,
-            bases=bases,
-            attribution_path=target / ATTRIBUTION,
-            annotate=callgrind_annotate,
-        )
+        return NOTHING
+    return main(
+        directory=directory,
+        host=host,
+        earlier=earlier,
+        bases=bases,
+        attribution_path=target / ATTRIBUTION,
+        annotate=callgrind_annotate,
     )
+
+
+if __name__ == "__main__":
+    sys.exit(cli(sys.argv[1:]))
