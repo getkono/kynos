@@ -220,7 +220,7 @@ by naming the row X displaces rather than by arguing that X is good.
 | Scalar formats, dates and times | `chrono`, `jiff` | [`schema/impls/temporal/`](../crates/kynos/src/schema/impls/temporal/) | built |
 | Scalar formats, decimals | `rust_decimal`, `bigdecimal` | [`schema/impls/decimal/`](../crates/kynos/src/schema/impls/decimal/) | built |
 | Compression | `async-compression` | [`middleware/compression/`](../crates/kynos/src/middleware/compression/), [`middleware/decompression/`](../crates/kynos/src/middleware/decompression/) | built |
-| tower interop, outward | `tower-service` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |
+| tower interop, outward | `tower-service` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs), [`unchecked/route.rs`](../crates/kynos/src/unchecked/route.rs) | built |
 | tower interop, inward | `tower-layer` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs), [`unchecked/route.rs`](../crates/kynos/src/unchecked/route.rs) | built |
 | Document ordering | `indexmap` | [`kynos-openapi`](../crates/kynos-openapi/src/lib.rs) | built |
 | YAML emission | `serde_norway` | [`kynos-openapi/emit/`](../crates/kynos-openapi/src/emit/), behind the owned `YamlError` | built |
