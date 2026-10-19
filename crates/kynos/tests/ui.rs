@@ -209,7 +209,8 @@ fn guided_traits_in_source(directory: &Path, found: &mut BTreeMap<String, String
 }
 
 /// The value of the string literal whose opening quote precedes `text`, with
-/// its escapes and line continuations resolved as rustc resolves them.
+/// its escapes and line continuations resolved as rustc resolves them, or
+/// `None` where it is unclosed or holds an escape rustc refuses.
 fn string_literal(text: &str) -> Option<String> {
     let mut value = String::new();
     let mut characters = text.chars().peekable();
@@ -219,18 +220,26 @@ fn string_literal(text: &str) -> Option<String> {
             '\\' => match characters.next()? {
                 '\n' => while characters.next_if(|next| next.is_whitespace()).is_some() {},
                 'n' => value.push('\n'),
+                'r' => value.push('\r'),
                 't' => value.push('\t'),
                 '0' => value.push('\0'),
+                'x' => {
+                    let digits: String = characters.by_ref().take(2).collect();
+                    let code = u8::from_str_radix(&digits, 16).ok().filter(u8::is_ascii)?;
+                    value.push(char::from(code));
+                }
                 'u' => {
                     let digits: String = characters
                         .by_ref()
                         .skip(1)
                         .take_while(|next| *next != '}')
+                        .filter(|next| *next != '_')
                         .collect();
                     let code = u32::from_str_radix(&digits, 16).ok()?;
                     value.push(char::from_u32(code)?);
                 }
-                escaped => value.push(escaped),
+                escaped @ ('\\' | '\'' | '"') => value.push(escaped),
+                _ => return None,
             },
             character => value.push(character),
         }
