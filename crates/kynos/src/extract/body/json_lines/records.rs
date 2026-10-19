@@ -63,7 +63,7 @@ enum State {
 ///
 /// | The record | Answer | Afterwards |
 /// | --- | --- | --- |
-/// | is not well-formed JSON | 400 | the stream ends — after a framing failure the record boundaries are no longer trustworthy |
+/// | is not well-formed JSON | 400 | the stream ends — a policy, not a necessity: the separator still marks where the next record starts. For NDJSON the reason is that a body breaking its media type is rejected rather than salvaged; `json-seq` departs from its RFC here, as below |
 /// | is JSON that does not fit `T` | 422 at JSON Pointer `/{index}` | the stream continues — the boundaries held, so a bulk ingest can report every bad record at once |
 /// | breaks a bound `T`'s schema declares | 422 at each offending member, under `/{index}` | the stream continues, for the same reason |
 /// | did not arrive, because the transport failed | 400 | the stream ends |
@@ -72,6 +72,16 @@ enum State {
 ///
 /// The pointer is the record's index in the body, as OpenAPI 3.2 reads a
 /// sequential media type as an array: `/3` names the fourth record.
+///
+/// For `application/json-seq`, ending the stream at a malformed record is a
+/// deliberate departure from RFC 7464. Its §2.1 says a parser "SHOULD
+/// nonetheless continue parsing the remainder of the sequence", and §2.3
+/// expects malformed elements, such as a log record truncated by a crash, and
+/// has the parser skip to the next record separator. The same §2.1 lets the
+/// application "choose to terminate parsing of a sequence", and this reader
+/// makes that choice for the handler, so both framings answer a malformed
+/// record the same way. A producer that may truncate records loses every
+/// record after the first one it truncates.
 ///
 /// [`BodyRejection`] is not `Serialize`, so `JsonLines<Records<T>>` is not
 /// [`IntoResponse`](crate::response::IntoResponse): a request stream cannot be
@@ -289,6 +299,11 @@ impl<T: serde::de::DeserializeOwned + Schema> Records<T> {
                     failures: BTreeMap::from([(format!("/{index}"), error.to_string())]),
                 }
             } else {
+                // Fail-fast by policy: the separator framed this record, so
+                // the next boundary is known. For NDJSON, a body that is not
+                // JSON where it claims to be is rejected rather than
+                // salvaged; for json-seq this departs from RFC 7464 §2.1,
+                // which says to keep reading (see the type's docs).
                 self.state = State::Fused;
                 BodyRejection::Syntax {
                     detail: format!("record {index}: {error}"),
