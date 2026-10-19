@@ -8,7 +8,7 @@
 mod describe;
 mod install;
 
-use install::{catches, error_at, pointer_token, unroutable};
+use install::{catches, error_at, path_location, unroutable};
 
 #[cfg(feature = "assets")]
 pub mod assets;
@@ -234,6 +234,35 @@ impl<C, P, I, S> Router<C, P, I, S> {
         }
     }
 
+    /// `path` under `prefix`, or `None` once the violation refusing it is
+    /// recorded: a prefixed template that does not parse, or one the match
+    /// table cannot route.
+    fn prefixed(
+        &mut self,
+        path: &kynos_openapi::PathTemplate,
+        prefix: &str,
+    ) -> Option<kynos_openapi::PathTemplate> {
+        let prefixed = match path.with_prefix(prefix) {
+            Ok(prefixed) => prefixed,
+            Err(reason) => {
+                let template = path.as_str().to_owned();
+                self.violations.push(error_at(
+                    path_location(&template),
+                    SpecError::InvalidPathTemplate { template, reason },
+                ));
+                return None;
+            }
+        };
+
+        if let Some(error) = unroutable(&prefixed) {
+            self.violations
+                .push(error_at(path_location(prefixed.as_str()), error));
+            return None;
+        }
+
+        Some(prefixed)
+    }
+
     /// Takes in a set of endpoints under `prefix`, recording what the enclosing
     /// scope contributes to each.
     fn absorb(
@@ -247,25 +276,9 @@ impl<C, P, I, S> Router<C, P, I, S> {
         C: 'static,
     {
         for endpoint in endpoints {
-            let path = match endpoint.path().with_prefix(prefix) {
-                Ok(path) => path,
-                Err(reason) => {
-                    let template = endpoint.path().as_str().to_owned();
-                    self.violations.push(error_at(
-                        format!("#/paths/{}", pointer_token(&template)),
-                        SpecError::InvalidPathTemplate { template, reason },
-                    ));
-                    continue;
-                }
-            };
-
-            if let Some(error) = unroutable(&path) {
-                self.violations.push(error_at(
-                    format!("#/paths/{}", pointer_token(path.as_str())),
-                    error,
-                ));
+            let Some(path) = self.prefixed(endpoint.path(), prefix) else {
                 continue;
-            }
+            };
 
             self.mounted.push(Mounted {
                 endpoint,
@@ -291,25 +304,10 @@ impl<C, P, I, S> Router<C, P, I, S> {
         C: 'static,
     {
         for mut mounted in other.mounted {
-            match mounted.path.with_prefix(prefix) {
-                Ok(path) => mounted.path = path,
-                Err(reason) => {
-                    let template = mounted.path.as_str().to_owned();
-                    self.violations.push(error_at(
-                        format!("#/paths/{}", pointer_token(&template)),
-                        SpecError::InvalidPathTemplate { template, reason },
-                    ));
-                    continue;
-                }
-            }
-
-            if let Some(error) = unroutable(&mounted.path) {
-                self.violations.push(error_at(
-                    format!("#/paths/{}", pointer_token(mounted.path.as_str())),
-                    error,
-                ));
+            let Some(path) = self.prefixed(&mounted.path, prefix) else {
                 continue;
-            }
+            };
+            mounted.path = path;
 
             // The absorbed router's interceptors and tags covered only these
             // operations, so each carries them.

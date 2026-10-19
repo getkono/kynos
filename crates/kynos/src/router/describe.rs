@@ -9,7 +9,7 @@ use std::collections::HashSet;
 
 use super::install::{
     catches, cors_conflict, error_at, highest_version, install_preflight, invalid,
-    lowest_expressing, placeholder_info, pointer_token, unique_tags,
+    lowest_expressing, path_entry, path_location, placeholder_info, unique_tags,
 };
 use super::{
     Arc, DeclaredTag, Dispatch, Document, EndpointTerminal, Error, HashMap, OperationCx,
@@ -110,29 +110,21 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
         for mounted in self.mounted {
             let key = mounted.path.as_str().to_owned();
-            let index = if let Some(index) = index_of.get(&key) {
-                *index
-            } else {
-                let index = paths.len();
-                // `TrialTable` already reported any refusal, failing the build.
-                matcher
-                    .insert(key.clone(), index)
-                    .map_err(|error| invalid(match_table_refusal(&key, error)))?;
-                paths.push(PathEntry {
-                    template: key.clone(),
-                    matched: crate::extract::connection::MatchedPath(dispatch::intern(&key)),
-                    variables: mounted
+            // `TrialTable` already reported any refusal, failing the build.
+            let index = path_entry(
+                &key,
+                || {
+                    mounted
                         .path
                         .variables()
                         .iter()
                         .map(|name| dispatch::intern(name))
-                        .collect(),
-                    allow: dispatch::allow_header(&[]),
-                    operations: Vec::new(),
-                });
-                index_of.insert(key.clone(), index);
-                index
-            };
+                        .collect()
+                },
+                &mut matcher,
+                &mut paths,
+                &mut index_of,
+            )?;
 
             let method = mounted.endpoint.method();
             let described = document
@@ -242,10 +234,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         let mut table = TrialTable::default();
         for mounted in &self.mounted {
             if let Some(error) = table.insert_template(&mounted.path) {
-                violations.push(error_at(
-                    format!("#/paths/{}", pointer_token(mounted.path.as_str())),
-                    error,
-                ));
+                violations.push(error_at(path_location(mounted.path.as_str()), error));
             }
         }
 
@@ -287,8 +276,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 // unchecked pattern alone has no `paths` key.
                 let location = if described {
                     format!(
-                        "#/paths/{}/{}",
-                        pointer_token(&route.pattern),
+                        "{}/{}",
+                        path_location(&route.pattern),
                         method.as_wire_str().to_lowercase()
                     )
                 } else {
@@ -363,7 +352,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         let mut paths = Paths::new();
         for mounted in &self.mounted {
             let key = mounted.path.as_str().to_owned();
-            let location = format!("#/paths/{}", pointer_token(&key));
+            let location = path_location(&key);
             let method = mounted.endpoint.method();
 
             let mut cx = OperationCx::new(&mut registry);

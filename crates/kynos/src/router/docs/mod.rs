@@ -59,10 +59,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use kynos_openapi::{
-    PathTemplate,
-    validate::violation::{Severity, SpecError, Violation},
-};
+use kynos_openapi::{PathTemplate, validate::violation::Violation};
 
 use crate::router::{
     docs::endpoint::{DocsDescription, DocsPage},
@@ -313,21 +310,10 @@ impl<M> Docs<M> {
 /// Parses a mount-site path literal, recording a malformed one as a violation
 /// (as `Group::new` does) so `Router::validate` reports it.
 fn template(path: &str, violations: &mut Vec<Violation>) -> PathTemplate {
-    match PathTemplate::parse(path) {
-        Ok(template) => template,
-        Err(reason) => {
-            violations.push(Violation {
-                location: "#/paths".to_owned(),
-                severity: Severity::Error,
-                error: SpecError::InvalidPathTemplate {
-                    template: path.to_owned(),
-                    reason,
-                },
-            });
-            // A placeholder; the violation fails the build.
-            PathTemplate::parse("/").expect("a root path is always a legal template")
-        }
-    }
+    super::install::parse_or_record(path, violations).unwrap_or_else(|| {
+        // A placeholder; the violation fails the build.
+        PathTemplate::parse("/").expect("a root path is always a legal template")
+    })
 }
 
 /// Which half of one reference a mounted entry is.
