@@ -14,13 +14,14 @@ use kynos_openapi::{
 };
 
 use crate::{
-    http::{HeaderValue, Response, body::Body, header},
+    http::{
+        HeaderValue, Response,
+        body::{Body, BoxError},
+        header,
+    },
     response::{IntoResponse, Responses},
     schema::{Schema, registry::Registry},
 };
-
-/// The error any body reports, whatever the stream's own error type was.
-type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
 /// A Server-Sent Events response.
 ///
