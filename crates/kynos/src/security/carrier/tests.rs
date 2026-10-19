@@ -3,8 +3,22 @@ use std::net::{Ipv4Addr, SocketAddr};
 use bytes::Bytes;
 
 use super::{KeyLocation, api_key, basic, bearer, http_scheme, peer_certificates};
+use crate::error::rejection::AuthRejection;
 use crate::extract::connection::{Connection, TlsIdentity};
 use crate::http::{HeaderName, HeaderValue, Parts, Request, header::AUTHORIZATION};
+
+/// Asserts a reader refused `case` with the 401 every reader answers: one whose
+/// challenge is left for the guard to fill in, never a 403.
+#[track_caller]
+pub(super) fn assert_refused<T>(read: Result<Option<T>, AuthRejection>, case: &str) {
+    assert!(
+        matches!(
+            read.err(),
+            Some(AuthRejection::Unauthenticated { challenge: None })
+        ),
+        "{case} must be refused with an unchallenged 401"
+    );
+}
 
 /// A request head carrying `value` as its `Authorization`.
 fn authorized(value: &str) -> Parts {
@@ -63,14 +77,18 @@ fn no_authorization_field_is_absence_rather_than_failure() {
 /// presented something nobody checked.
 #[test]
 fn a_credential_for_another_scheme_is_refused_rather_than_ignored() {
-    assert!(bearer(&authorized("Basic dXNlcjpwYXNz")).is_err());
-    assert!(basic(&authorized("Bearer abc")).is_err());
+    assert_refused(bearer(&authorized("Basic dXNlcjpwYXNz")), "Basic to bearer");
+    assert_refused(basic(&authorized("Bearer abc")), "Bearer to basic");
+    assert_refused(
+        http_scheme(&authorized("Bearer abc"), "negotiate"),
+        "Bearer to negotiate",
+    );
 }
 
 #[test]
 fn a_bearer_scheme_with_no_token_is_not_a_credential() {
-    assert!(bearer(&authorized("Bearer ")).is_err());
-    assert!(bearer(&authorized("Bearer")).is_err(), "a scheme alone");
+    assert_refused(bearer(&authorized("Bearer ")), "a scheme and a space");
+    assert_refused(bearer(&authorized("Bearer")), "a scheme alone");
 }
 
 // --- Basic, RFC 7617 -------------------------------------------------------
@@ -99,25 +117,44 @@ fn an_empty_password_is_a_password() {
     assert_eq!(credentials.into_parts(), ("user".to_owned(), String::new()));
 }
 
-/// One case per way `basic` refuses what is not a basic credential.
+/// One case per way `basic` refuses what is not a basic credential, counted
+/// against its refusals; the field-level ones are `parse`'s to count.
 #[test]
 fn every_malformed_basic_credential_is_refused() {
+    const SOURCE: &str = include_str!("mod.rs");
+
     let cases = [
+        ("a different scheme", "Bearer abc"),
         ("base64 that does not decode", "Basic !!!!"),
         // `/w==` is the byte 0xff, which is not UTF-8.
         ("bytes that are not UTF-8", "Basic /w=="),
         // `dXNlcm5hbWU=` is `username`, with no colon.
         ("no colon at all", "Basic dXNlcm5hbWU="),
-        // Empty credentials decode to an empty user-pass, which has no colon.
-        ("a scheme alone", "Basic"),
     ];
 
     for (description, field) in cases {
-        assert!(
-            basic(&authorized(field)).is_err(),
-            "{description}: {field:?}"
+        assert_refused(
+            basic(&authorized(field)),
+            &format!("{description}: {field:?}"),
         );
     }
+
+    // Empty credentials decode to an empty user-pass, which has no colon.
+    assert_refused(basic(&authorized("Basic")), "a scheme alone");
+
+    let start = SOURCE.find("pub fn basic(").expect("`basic` is defined");
+    let end = SOURCE
+        .find("pub fn http_scheme(")
+        .expect("`http_scheme` follows it");
+    let refusals = SOURCE[start..end]
+        .matches("AuthRejection::unauthenticated")
+        .count();
+    assert_eq!(
+        refusals,
+        cases.len(),
+        "`basic` refuses {refusals} way(s) and {} have a case",
+        cases.len()
+    );
 }
 
 // --- An arbitrary HTTP scheme ---------------------------------------------
@@ -167,9 +204,56 @@ fn a_header_api_key_is_read_from_the_field_the_scheme_named() {
 fn a_header_api_key_named_authorization_is_refused_in_every_build() {
     for name in ["Authorization", "authorization", "AUTHORIZATION"] {
         for head in [authorized("Bearer k-123"), bare()] {
+            assert_refused(
+                api_key(&head, KeyLocation::Header, name),
+                &format!("{name} as an API key field"),
+            );
+        }
+    }
+}
+
+/// A header key that was sent and is not visible ASCII is present and
+/// malformed, not absent.
+#[test]
+fn a_header_api_key_that_is_not_ascii_is_refused() {
+    let mut request = Request::new(crate::http::body::Body::empty());
+    request.headers_mut().insert(
+        HeaderName::from_static("x-api-key"),
+        HeaderValue::from_bytes(b"k-\xff").expect("obs-text is a legal value"),
+    );
+    let head = request.into_parts().0;
+
+    assert_refused(
+        api_key(&head, KeyLocation::Header, "x-api-key"),
+        "an obs-text header key",
+    );
+}
+
+/// A key whose header field or cookie the request does not carry is absent,
+/// which `MaybeAuth` reads as anonymity.
+#[test]
+fn a_header_or_cookie_api_key_the_request_does_not_carry_is_absent() {
+    let mut request = Request::new(crate::http::body::Body::empty());
+    request.headers_mut().insert(
+        HeaderName::from_static("x-other"),
+        HeaderValue::from_static("k-123"),
+    );
+    request.headers_mut().insert(
+        crate::http::header::COOKIE,
+        HeaderValue::from_static("other=s-42"),
+    );
+    let head = request.into_parts().0;
+
+    for (location, name) in [
+        (KeyLocation::Header, "x-api-key"),
+        (KeyLocation::Cookie, "session"),
+    ] {
+        for head in [&head, &bare()] {
             assert!(
-                api_key(&head, KeyLocation::Header, name).is_err(),
-                "{name} must never be read as an API key field"
+                api_key(head, location, name)
+                    .expect("absence is not a failure")
+                    .is_none(),
+                "{location:?}"
             );
         }
     }
@@ -225,9 +309,9 @@ fn a_query_api_key_is_the_first_pair_named_the_key() {
     assert_eq!(key.as_str(), "", "a pair with no `=` has an empty value");
 
     let head = targeting("/reports?api_key=%FF&api_key=second");
-    assert!(
-        api_key(&head, KeyLocation::Query, "api_key").is_err(),
-        "a first value that is not UTF-8 is present and malformed"
+    assert_refused(
+        api_key(&head, KeyLocation::Query, "api_key"),
+        "a first value that is not UTF-8",
     );
 }
 
@@ -285,9 +369,9 @@ fn a_cookie_api_key_that_is_not_ascii_is_refused() {
             .iter()
             .map(|field| field.escape_ascii().to_string())
             .collect();
-        assert!(
-            api_key(&with_cookies(fields), KeyLocation::Cookie, "session").is_err(),
-            "{shown:?}"
+        assert_refused(
+            api_key(&with_cookies(fields), KeyLocation::Cookie, "session"),
+            &format!("{shown:?}"),
         );
     }
 }
@@ -304,30 +388,24 @@ fn an_unreadable_cookie_of_another_name_does_not_hide_the_key() {
     assert_eq!(key.as_str(), "s-42");
 }
 
-/// Every location an API key may travel in, and the case that covers it.
+/// Every location an API key may travel in, read through the case that covers
+/// it.
 ///
 /// The mapping is an exhaustive match rather than a count of source text, so a
 /// fourth location stops this file compiling until it is witnessed — which is
 /// the stronger of the two guards, and the one `wire_tag` in
-/// `kynos-openapi`'s security tests already uses.
+/// `kynos-openapi`'s security tests already uses. Each arm runs its case, so a
+/// witness is a read of that location rather than a name.
 #[test]
 fn every_key_location_has_a_case() {
-    let all = [KeyLocation::Header, KeyLocation::Query, KeyLocation::Cookie];
-
-    for location in all {
-        let covered_by = match location {
-            KeyLocation::Header => "a_header_api_key_is_read_from_the_field_the_scheme_named",
-            KeyLocation::Query => "a_query_api_key_is_percent_decoded",
-            KeyLocation::Cookie => "a_cookie_api_key_reads_the_same_jar_a_parameter_does",
+    for location in [KeyLocation::Header, KeyLocation::Query, KeyLocation::Cookie] {
+        let case: fn() = match location {
+            KeyLocation::Header => a_header_api_key_is_read_from_the_field_the_scheme_named,
+            KeyLocation::Query => a_query_api_key_is_percent_decoded,
+            KeyLocation::Cookie => a_cookie_api_key_reads_the_same_jar_a_parameter_does,
         };
-        assert!(!covered_by.is_empty(), "{location:?} names no case");
+        case();
     }
-
-    assert_eq!(
-        all.len(),
-        3,
-        "the specification permits an API key in a header, a query parameter or a cookie"
-    );
 }
 
 #[test]

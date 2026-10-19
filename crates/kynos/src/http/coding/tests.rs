@@ -41,6 +41,16 @@ fn a_weight_that_is_not_a_qvalue_is_a_refusal() {
     assert_eq!(quality("gzip;q=0.5", "gzip"), Some(500));
 }
 
+/// The weight parameter's name is case-insensitive (RFC 9110 section 12.4.2),
+/// for a coding's weight and for identity's alike.
+#[test]
+fn an_uppercase_weight_name_is_read() {
+    assert_eq!(quality("gzip;Q=0.5", "gzip"), Some(500));
+    assert_eq!(quality("gzip; Q=0", "gzip"), Some(0));
+    assert_eq!(identity_quality("identity;Q=0"), 0);
+    assert_eq!(identity_quality("*;Q=0"), 0);
+}
+
 #[test]
 fn a_wildcard_answers_for_anything_not_named() {
     assert_eq!(quality("*;q=0.3", "br"), Some(300));

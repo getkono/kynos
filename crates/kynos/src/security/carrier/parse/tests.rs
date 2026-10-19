@@ -1,5 +1,6 @@
 use super::{authorization, scheme_is};
 use crate::http::{HeaderValue, Request, header::AUTHORIZATION};
+use crate::security::carrier::tests::assert_refused;
 
 /// A request head carrying each of `fields` as an `Authorization`.
 fn parts(fields: &[&str]) -> crate::http::Parts {
@@ -81,10 +82,7 @@ fn every_refusal_has_a_case() {
             parts(fields)
         };
 
-        assert!(
-            authorization(&head).is_err(),
-            "{description} must not read as a credential"
-        );
+        assert_refused(authorization(&head), description);
     }
 
     let refusals = SOURCE.matches(NEEDLE).count();

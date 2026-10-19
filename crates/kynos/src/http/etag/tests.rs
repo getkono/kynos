@@ -184,6 +184,25 @@ fn if_match_any_holds_whatever_the_representation_is_tagged() {
     }
 }
 
+/// A field line that is not visible ASCII names nothing, under either
+/// comparison, even where it also lists the current tag in plain ASCII.
+///
+/// Preconditions are read as visible ASCII, and `obs-text` makes the whole
+/// line unreadable rather than just the member holding it.
+#[test]
+fn a_field_that_is_not_visible_ascii_names_nothing() {
+    let field = HeaderValue::from_bytes(b"\"r3\", \"\xe9\"").expect("obs-text is a legal value");
+
+    assert!(!matches(&field, r#""r3""#));
+    assert!(!matches(&field, r#"W/"r3""#));
+    assert!(!matches_strongly(&field, Some(r#""r3""#)));
+
+    // The same list without the unreadable member names the tag.
+    let readable = HeaderValue::from_static(r#""r3", "e""#);
+    assert!(matches(&readable, r#""r3""#));
+    assert!(matches_strongly(&readable, Some(r#""r3""#)));
+}
+
 /// `If-Match` is one list across its field lines: a tag on the second line
 /// holds, two lines naming neither the current tag fail, and an absent field
 /// is told apart from a failed one without the tag being asked for.

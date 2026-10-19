@@ -140,6 +140,43 @@ async fn a_capture_is_decoded_the_way_a_described_one_is() {
     );
 }
 
+/// `captured` answers `None` for a name the pattern does not declare, and for
+/// a capture that does not decode to UTF-8, while the route still serves.
+#[tokio::test]
+async fn a_capture_the_pattern_does_not_declare_or_that_is_not_utf8_is_none() {
+    async fn echo_both(request: Request) -> Response {
+        let read = |name| {
+            kynos::unchecked::captured(&request, name)
+                .map_or_else(|| "absent".to_owned(), std::borrow::Cow::into_owned)
+        };
+        let both = format!("{} {}", read("path"), read("other"));
+
+        Response::new(Body::from_bytes(bytes::Bytes::from(both)))
+    }
+
+    let service = Router::<()>::new()
+        .route_unchecked([Method::GET], "/static/{*path}", echo_both)
+        .build(())
+        .expect("a buildable router");
+
+    assert_eq!(
+        get(&service, "/static/app.css").call().await.text(),
+        "app.css absent"
+    );
+    assert_eq!(
+        get(&service, "/static/%FF").call().await.text(),
+        "absent absent"
+    );
+}
+
+/// A request that never passed a router carries no captures to read.
+#[test]
+fn a_request_the_router_never_saw_has_no_capture() {
+    let request = Request::new(Body::empty());
+
+    assert_eq!(kynos::unchecked::captured(&request, "path"), None);
+}
+
 // --- That the router's own machinery still runs ---------------------------
 
 /// Router-scoped interceptors run over an unchecked route.

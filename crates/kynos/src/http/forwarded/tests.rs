@@ -145,6 +145,60 @@ fn a_sender_outside_the_trusted_networks_is_not_believed() {
     assert_eq!(resolved.client(), Some(ip("192.0.2.5")));
 }
 
+/// A hop count composes with named addresses and networks: past the counted
+/// hops, an element is still believed where its immediate sender is named.
+///
+/// The peer here is named by neither, so only the hop count believes the
+/// rightmost element; each further element needs a named sender.
+#[test]
+fn a_hop_count_composes_with_named_addresses_and_networks() {
+    let trusted = TrustedProxies::hops(ProxyHeader::Forwarded, 1)
+        .and_addresses([ip("192.0.2.1")])
+        .and_networks([net("10.0.0.0/8")]);
+
+    for (field, client) in [
+        // The counted hop alone; its `for=` names nobody trusted.
+        ("for=203.0.113.7, for=198.51.100.1", "198.51.100.1"),
+        // The counted hop names a trusted address, which is believed in turn.
+        ("for=203.0.113.7, for=192.0.2.1", "203.0.113.7"),
+        // Or a member of a trusted network.
+        ("for=203.0.113.7, for=10.1.2.3", "203.0.113.7"),
+        // A chain of named senders, stopping at the first one not named.
+        (
+            "for=203.0.113.6, for=203.0.113.7, for=10.1.2.3, for=192.0.2.1",
+            "203.0.113.7",
+        ),
+    ] {
+        let headers = map(&[("forwarded", field)]);
+
+        let resolved = Forwarded::resolve(&headers, Some(peer("198.51.100.200")), &trusted);
+
+        assert_eq!(resolved.client(), Some(ip(client)), "{field}");
+    }
+}
+
+/// A parameter name is case-insensitive (RFC 7239 section 4), and the scheme
+/// is reported lowercased.
+#[test]
+fn a_parameter_name_is_read_case_insensitively() {
+    for field in [
+        "FOR=203.0.113.7;PROTO=HTTPS",
+        "For=203.0.113.7;Proto=https",
+        "for=203.0.113.7;pRoTo=Https",
+    ] {
+        let headers = map(&[("forwarded", field)]);
+
+        let resolved = Forwarded::resolve(
+            &headers,
+            Some(peer("10.0.0.1")),
+            &TrustedProxies::hops(ProxyHeader::Forwarded, 1),
+        );
+
+        assert_eq!(resolved.client(), Some(ip("203.0.113.7")), "{field}");
+        assert_eq!(resolved.proto(), Some("https"), "{field}");
+    }
+}
+
 /// Behind a proxy that writes `Forwarded`, the client's own `X-Forwarded-*`
 /// names nobody, and neither does it where the proxy wrote no `Forwarded`.
 ///
