@@ -218,7 +218,7 @@ stream counts 41, and a chunked body one block more than a `content-length`
 one.
 
 **The zero does not hold.** A static match allocates five times, of the seven
-the attribution below decided on, a capture five as well and a miss six, each stable to the allocation across a
+the attribution below decided on, a capture and a miss five as well, each stable to the allocation across a
 ten-thousand-request replay, so these are properties of the path rather than
 noisy readings.
 
