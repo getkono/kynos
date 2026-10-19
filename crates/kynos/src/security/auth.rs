@@ -531,6 +531,7 @@ fn declare(
 }
 
 /// The challenges a guard's refusals carry, as [`declare`] declares them.
+#[derive(Clone, Copy)]
 struct Challenges {
     /// The 401's: [`SecurityScheme::challenge`].
     unauthenticated: Option<&'static str>,
