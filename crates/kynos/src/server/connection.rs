@@ -23,11 +23,11 @@ use tokio::{
 use crate::{
     extract::connection::Connection,
     http::body::BoxError,
-    middleware::limits::request_body,
     router::service::Service,
     server::{
         TransportConfig,
         lifecycle::{Lifecycle, wait_until_stopping},
+        request_body,
     },
 };
 

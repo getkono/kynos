@@ -19,9 +19,10 @@ use std::collections::BTreeSet;
 use kynos_openapi::{
     Callback, ComponentName, Components, Contact, Discriminator, Document, Encoding, EncodingStyle,
     Example, Extensions, ExternalDocumentation, Header, HeaderStyle, Info, License, Link, Map,
-    MediaType, Method, OAuthFlow, OAuthFlows, Operation, Parameter, ParameterIn, PathItem,
-    PathTemplate, Paths, Ref, RefOr, RequestBody, Response, Responses, Schema, SchemaObject,
-    SecurityRequirement, SecurityScheme, Server, ServerVariable, SpecVersion, Style, Tag, Xml,
+    MediaType, Method, OAuthFlow, OAuthFlows, Operation, Parameter, ParameterIn, ParameterShape,
+    PathItem, PathTemplate, Paths, Ref, RefOr, RequestBody, Response, Responses, Schema,
+    SchemaObject, SecurityRequirement, SecurityScheme, Server, ServerVariable, SpecVersion, Style,
+    Tag, Xml,
     model::schema::types::{SchemaType, TypeSet},
 };
 use serde::Serialize;
@@ -191,6 +192,26 @@ fn parameter_cases() -> Vec<Case> {
                 "schema": { "type": "string" }
             }),
         ),
+        // The two hand-renamed flags, set without passing through a parse, and
+        // `required` absent where no constructor states it.
+        case(
+            "Parameter",
+            &{
+                let mut parameter = Parameter::query("q", schema());
+                parameter.allow_empty_value = Some(true);
+                if let ParameterShape::Schema { allow_reserved, .. } = parameter.shape_mut() {
+                    *allow_reserved = Some(true);
+                }
+                parameter
+            },
+            json!({
+                "name": "q",
+                "in": "query",
+                "allowEmptyValue": true,
+                "allowReserved": true,
+                "schema": { "type": "string" }
+            }),
+        ),
         case("ParameterIn", &ParameterIn::Query, json!("query")),
         case("Style", &Style::DeepObject, json!("deepObject")),
         case("HeaderStyle", &HeaderStyle::Simple, json!("simple")),
@@ -349,12 +370,31 @@ fn security_cases() -> Vec<Case> {
             &SecurityRequirement::scoped("OAuth", ["read:orders"]),
             json!({ "OAuth": ["read:orders"] }),
         ),
+        // A scheme's `description`, and 3.2's `oauth2MetadataUrl`.
+        case(
+            "SecurityScheme",
+            &SecurityScheme::mutual_tls().with_description("Partner access"),
+            json!({ "type": "mutualTLS", "description": "Partner access" }),
+        ),
+        #[cfg(feature = "openapi32")]
+        case(
+            "SecurityScheme",
+            &SecurityScheme::oauth2(OAuthFlows::default())
+                .with_oauth2_metadata_url("https://example.com/meta"),
+            json!({
+                "type": "oauth2",
+                "flows": {},
+                "oauth2MetadataUrl": "https://example.com/meta"
+            }),
+        ),
         case(
             "OAuthFlow",
             &OAuthFlow::new([("read:orders".to_owned(), "Read orders".to_owned())])
-                .with_token_url("https://example.com/token"),
+                .with_token_url("https://example.com/token")
+                .with_refresh_url("https://example.com/refresh"),
             json!({
                 "tokenUrl": "https://example.com/token",
+                "refreshUrl": "https://example.com/refresh",
                 "scopes": { "read:orders": "Read orders" }
             }),
         ),

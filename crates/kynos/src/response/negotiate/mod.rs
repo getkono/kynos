@@ -279,7 +279,7 @@ const VARIES: &[&str] = &["accept"];
 impl<T: representation::Representations> IntoResponse for Negotiated<T> {
     fn into_response(self) -> Response {
         let mut response = self.response;
-        crate::middleware::vary_on(response.headers_mut(), VARIES);
+        crate::http::vary_on(response.headers_mut(), VARIES);
         response
     }
 }

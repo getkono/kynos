@@ -1,11 +1,4 @@
-use super::{Both, Cons, Flatten, header_name_eq, header_names_disjoint, statuses_disjoint};
-
-#[test]
-fn header_names_compare_without_regard_to_case() {
-    assert!(header_name_eq("X-Request-Id", "x-request-id"));
-    assert!(!header_name_eq("x-request-id", "x-request-ids"));
-    assert!(!header_name_eq("x-a", "x-b"));
-}
+use super::{Both, Cons, Flatten, header_names_disjoint, statuses_disjoint};
 
 #[test]
 fn a_shared_header_is_not_disjoint() {

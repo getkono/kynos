@@ -719,6 +719,33 @@ fn the_order_a_client_lists_its_ranges_in_is_a_preference() {
     assert_eq!(chosen("en, fr-CA", &["en", "fr"]), Some("en"));
 }
 
+/// Client order ranks above match kind.
+///
+/// `de-AT` merely extends the first range and `en` is an exact match for the
+/// second, yet the client who listed `de` first is served German: the match
+/// kind separates tags ranked through the same range, never two ranges the
+/// client ranked.
+#[test]
+fn a_filtering_first_choice_beats_an_exact_second_one() {
+    assert_eq!(chosen("de, en", &["en", "de-AT"]), Some("de-AT"));
+}
+
+/// A tag ranks at the order of its most specific matching range, not its
+/// earliest.
+///
+/// `de` is a Lookup match for `de-AT`, but its exact match on the second range
+/// is more specific, so it ranks second and `de-AT-1996`, reached through the
+/// first range, is served. Without that second range `de` ranks first, and
+/// Lookup beats Filtering.
+#[test]
+fn a_tag_ranks_through_its_most_specific_range() {
+    assert_eq!(
+        chosen("de-AT, de", &["de", "de-AT-1996"]),
+        Some("de-AT-1996")
+    );
+    assert_eq!(chosen("de-AT", &["de", "de-AT-1996"]), Some("de"));
+}
+
 /// A weight still outranks the order, because section 12.4.2 is normative
 /// about what a weight means and the order is a convention on top of it.
 #[test]

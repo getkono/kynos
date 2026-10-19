@@ -15,8 +15,10 @@
 //! # How this module is laid out
 //!
 //! [`address`] holds the listener, the private `accept` module the accept loop,
-//! the private `connection` module socket read and write, and [`shutdown`] the
-//! signal; timers live with the work they bound. [`protocol`], [`tcp`] and
+//! the private `connection` module socket read and write, the private
+//! `request_body` module the idle timeout every request body is read under,
+//! and [`shutdown`] the signal; timers live with the work they bound.
+//! [`protocol`], [`tcp`] and
 //! [`tls`] are configuration; the private `lifecycle` module is the state every
 //! part observes.
 
@@ -24,6 +26,7 @@ mod accept;
 mod connection;
 mod describe;
 mod lifecycle;
+mod request_body;
 
 pub mod address;
 pub mod error;
@@ -45,9 +48,6 @@ use tokio::{
 
 use crate::{
     error::Result,
-    middleware::limits::request_body::{
-        DEFAULT_REQUEST_BODY_IDLE_TIMEOUT, validate_request_body_idle_timeout,
-    },
     router::service::Service,
     server::{
         accept::accept_loop,
@@ -55,6 +55,7 @@ use crate::{
         error::ServerError,
         lifecycle::{Drain, Lifecycle},
         protocol::validate_protocol_config,
+        request_body::{DEFAULT_REQUEST_BODY_IDLE_TIMEOUT, validate_request_body_idle_timeout},
         shutdown::{ForceFuture, Shutdown, ShutdownFuture},
         tcp::{SocketOptions, TcpKeepAlive, validate_tcp_keepalive},
     },

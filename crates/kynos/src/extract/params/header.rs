@@ -212,7 +212,7 @@ pub(crate) fn write<G: EncodeHeaders>(
         debug_assert!(
             G::NAMES
                 .iter()
-                .any(|declared| crate::middleware::stack::header_name_eq(declared, name.as_str())),
+                .any(|declared| crate::http::header_name_eq(declared, name.as_str())),
             "`{}` encodes `{}`, which its `NAMES` does not declare",
             std::any::type_name::<G>(),
             name.as_str(),
@@ -226,7 +226,7 @@ pub(crate) fn write<G: EncodeHeaders>(
     }
 
     // `VARIES` names are not in `NAMES`, so they skip the check above.
-    crate::middleware::vary_on(fields, G::VARIES);
+    crate::http::vary_on(fields, G::VARIES);
     Ok(())
 }
 

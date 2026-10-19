@@ -7,13 +7,14 @@ use std::{
 
 use crate::{
     extract::body::json_lines::{LINES_MEDIA_TYPE, SEQUENCE_MEDIA_TYPE, records::RECORD_SEPARATOR},
-    http::{HeaderValue, Response, body::Body, header},
+    http::{
+        HeaderValue, Response,
+        body::{Body, BoxError},
+        header,
+    },
     response::{IntoResponse, Responses},
     schema::{Schema, registry::Registry},
 };
-
-/// The error any body reports, whatever the stream's own error type was.
-type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
 /// Nothing in front of an NDJSON record.
 const NO_PREFIX: &[u8] = b"";

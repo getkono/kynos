@@ -9,46 +9,21 @@
 use std::{fmt, io, marker::PhantomData};
 
 use async_compression::tokio::bufread::{BrotliDecoder, GzipDecoder, ZstdDecoder};
-use bytes::{Bytes, BytesMut};
-use http_body_util::BodyExt;
+use bytes::Bytes;
 use kynos_openapi::model::schema::types::SchemaType;
-use tokio::io::{AsyncRead, ReadBuf};
+use tokio::io::AsyncRead;
 
 use crate::{
     error::problem::{ProblemType, refusal_problem, refusal_response},
-    extract::body::limit::BodyLimit,
-    http::{
-        self,
-        body::{Body, BoxError},
+    extract::body::limit::{BodyLimit, Capped, collect_capped},
+    http::{self, body::Body},
+    middleware::{
+        Continued, Interceptor, Next,
+        compression::{Coding, DrainError, drain},
     },
-    middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
     schema::registry::Registry,
 };
-
-/// A content coding this crate can decode.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Coding {
-    Zstd,
-    Brotli,
-    Gzip,
-}
-
-impl Coding {
-    /// The coding `token` names, case-insensitively (RFC 9110 section 8.4.1),
-    /// accepting the `x-gzip` alias (section 8.4.1.3).
-    fn from_token(token: &str) -> Option<Self> {
-        if token.eq_ignore_ascii_case("zstd") {
-            Some(Self::Zstd)
-        } else if token.eq_ignore_ascii_case("br") {
-            Some(Self::Brotli)
-        } else if token.eq_ignore_ascii_case("gzip") || token.eq_ignore_ascii_case("x-gzip") {
-            Some(Self::Gzip)
-        } else {
-            None
-        }
-    }
-}
 
 /// What this server decodes, most preferred first: the `Accept-Encoding` a 415
 /// for an unsupported coding ought to carry (RFC 9110 section 15.5.16).
@@ -243,33 +218,14 @@ fn accepted_encoding_header() -> kynos_openapi::Header {
         .with_description("The content codings this server decodes")
 }
 
-/// Reads `source` to its end, refusing to produce more than `limit` bytes.
-///
-/// Checked per chunk, so a bomb is refused while still small.
-async fn drain_capped<R: AsyncRead + Unpin>(mut source: R, limit: u64) -> Result<Bytes, Reason> {
-    let mut decoded = BytesMut::new();
-    let mut chunk = [0_u8; 8 * 1024];
-
-    loop {
-        let read = std::future::poll_fn(|context| {
-            let mut buffer = ReadBuf::new(&mut chunk);
-            std::task::ready!(std::pin::Pin::new(&mut source).poll_read(context, &mut buffer))?;
-            std::task::Poll::Ready(io::Result::Ok(buffer.filled().len()))
-        })
+/// Reads `decoder` to its end, producing no more than `limit` bytes.
+async fn drain_capped<R: AsyncRead + Unpin>(decoder: R, limit: u64) -> Result<Bytes, Reason> {
+    drain(decoder, Some(limit))
         .await
-        .map_err(|_| Reason::Malformed)?;
-
-        if read == 0 {
-            return Ok(decoded.freeze());
-        }
-
-        let so_far = u64::try_from(decoded.len()).unwrap_or(u64::MAX);
-        if so_far.saturating_add(u64::try_from(read).unwrap_or(u64::MAX)) > limit {
-            return Err(Reason::TooLarge { limit });
-        }
-
-        decoded.extend_from_slice(&chunk[..read]);
-    }
+        .map_err(|error| match error {
+            DrainError::Read(_) => Reason::Malformed,
+            DrainError::PastCap => Reason::TooLarge { limit },
+        })
 }
 
 /// Removes `coding` from `bytes`, producing no more than `limit` bytes.
@@ -597,17 +553,17 @@ where
         parts.extensions.insert(BodyLimit(self.limit));
 
         // Read even when uncoded: the limit applies either way.
-        let arrived = match collect_capped(body, self.limit)
-            .await
-            .map_err(Undecodable::of)?
-        {
-            Collected::Whole(bytes) => bytes,
+        let arrived = match collect_capped(body, self.limit).await {
+            Capped::Whole(bytes) => bytes,
+            Capped::Exceeded => {
+                return Err(Undecodable::of(Reason::TooLarge { limit: self.limit }));
+            }
             // Handed on as it failed, so the extractor refuses it as usual
             // rather than blaming the coding for a transport failure. A coded
             // body goes on as only its failure and without its coding: its
             // octets are not the media type's, and a coding left declared would
             // be refused as one nothing decoded.
-            Collected::FailedPartWay { arrived, error } => {
+            Capped::FailedPartWay { arrived, error } => {
                 let arrived = if codings.is_empty() {
                     arrived
                 } else {
@@ -643,52 +599,6 @@ where
 
         Ok(next.run(request).await)
     }
-}
-
-/// What reading a request body within the limit produced.
-enum Collected {
-    /// Every byte the body carried.
-    Whole(Bytes),
-    /// What arrived before the read failed, and that failure.
-    FailedPartWay {
-        /// The octets read before the failure.
-        arrived: Bytes,
-        /// The failure itself.
-        error: BoxError,
-    },
-}
-
-/// Reads `body` while the running total stays within `limit`.
-///
-/// A failed read comes back as it failed, for the extractor beneath to refuse;
-/// swallowing it would hand on a truncated payload.
-async fn collect_capped(mut body: Body, limit: u64) -> Result<Collected, Reason> {
-    let mut collected = BytesMut::new();
-
-    while let Some(frame) = body.frame().await {
-        let frame = match frame {
-            Ok(frame) => frame,
-            Err(error) => {
-                return Ok(Collected::FailedPartWay {
-                    arrived: collected.freeze(),
-                    error,
-                });
-            }
-        };
-        let Ok(data) = frame.into_data() else {
-            continue;
-        };
-
-        let so_far = u64::try_from(collected.len()).unwrap_or(u64::MAX);
-        let arriving = u64::try_from(data.len()).unwrap_or(u64::MAX);
-        if so_far.saturating_add(arriving) > limit {
-            return Err(Reason::TooLarge { limit });
-        }
-
-        collected.extend_from_slice(&data);
-    }
-
-    Ok(Collected::Whole(collected.freeze()))
 }
 
 #[cfg(test)]

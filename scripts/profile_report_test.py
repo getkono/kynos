@@ -15,8 +15,9 @@ different Callgrind configuration would add, a `positions:` column and a
 `jump=` line, are spliced in by the tests that need them.
 
 What runs around Valgrind without needing it is tested with `cargo bench`
-replaced: the ambient `RUSTFLAGS` refusal, the stale-output removal, and the
-host key a report compares across hosts.
+replaced: the ambient `RUSTFLAGS` refusal, the stale-output removal, the
+host key a report compares across hosts, and `cli`'s `--repeat`, which runs
+the benchmark N times and hands `main` every run but the last.
 
 What a run is read *for* is tested over fixture outputs shaped after real ones:
 each row's difference from its base, a count that moves between `--repeat`
@@ -685,6 +686,111 @@ class Repeat(unittest.TestCase):
         ]
         code, written = main.run_main([7, 11, 6, 11, 15], "overwrite", earlier=earlier)
         self.assertEqual((code, written), (report.MEASURED, recorded))
+
+
+class Cli(unittest.TestCase):
+    """`cli`'s `--repeat` orchestration, with every runner replaced.
+
+    `measure` returns the run's ordinal, so `earlier` shows which runs were
+    read and in what order: every run but the last, which `main` reads itself.
+    """
+
+    def cli(self, argv, run=None, outcome=report.MEASURED):
+        """`cli(argv)`'s exit code, the runners it called, and `main`'s arguments."""
+        target = Path("/work/target")
+        runs = []
+        calls = mock.Mock()
+        calls.target_directory.return_value = target
+        calls.run_benchmarks.side_effect = run or (lambda _: runs.append(len(runs) + 1))
+        calls.measure.side_effect = lambda _: runs[-1]
+        calls.catalog.return_value = "layers-8\tlayers-0\trequest\nlayers-0\t\trequest\n"
+        calls.describe_host.return_value = "test host"
+        calls.main.return_value = outcome
+        with contextlib.ExitStack() as stack:
+            for name in (
+                "target_directory",
+                "refuse_foreign_build",
+                "run_benchmarks",
+                "measure",
+                "catalog",
+                "describe_host",
+                "main",
+            ):
+                stack.enter_context(mock.patch.object(report, name, getattr(calls, name)))
+            stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+            code = report.cli(argv)
+        return code, calls
+
+    def test_each_repeat_runs_the_benchmark_and_main_reads_the_last(self):
+        code, calls = self.cli(["--run", "--repeat", "3"])
+        self.assertEqual(code, report.MEASURED)
+        self.assertEqual(calls.run_benchmarks.call_args_list, [mock.call(Path("/work/target"))] * 3)
+        self.assertEqual(
+            calls.measure.call_args_list,
+            [mock.call(Path("/work/target/gungraun/kynos-profile"))] * 2,
+        )
+        self.assertEqual(calls.main.call_args.kwargs["earlier"], [1, 2])
+
+    def test_one_run_leaves_main_nothing_earlier_to_compare(self):
+        _, calls = self.cli(["--run"])
+        self.assertEqual(calls.run_benchmarks.call_count, 1)
+        self.assertEqual(calls.measure.call_count, 0)
+        self.assertEqual(calls.main.call_args.kwargs["earlier"], [])
+
+    def test_main_is_handed_the_run_s_paths_host_catalog_and_annotator(self):
+        _, calls = self.cli(["--run"])
+        self.assertEqual(
+            calls.main.call_args,
+            mock.call(
+                directory=Path("/work/target/gungraun/kynos-profile"),
+                host="test host",
+                earlier=[],
+                bases={"layers-8": "layers-0", "layers-0": None},
+                attribution_path=Path("/work/target") / report.ATTRIBUTION,
+                annotate=report.callgrind_annotate,
+            ),
+        )
+
+    def test_without_run_nothing_is_built_and_the_last_output_is_read(self):
+        code, calls = self.cli([])
+        self.assertEqual(code, report.MEASURED)
+        self.assertEqual(calls.refuse_foreign_build.call_count, 0)
+        self.assertEqual(calls.run_benchmarks.call_count, 0)
+        self.assertEqual(calls.main.call_args.kwargs["earlier"], [])
+
+    def test_a_foreign_build_is_refused_before_anything_runs(self):
+        calls = mock.Mock()
+        with mock.patch.object(
+            report, "refuse_foreign_build", side_effect=report.Unreadable("foreign")
+        ), mock.patch.object(report, "run_benchmarks", calls), mock.patch.object(
+            report, "target_directory", return_value=Path("/work/target")
+        ), contextlib.redirect_stderr(io.StringIO()) as said:
+            code = report.cli(["--run", "--repeat", "2"])
+        self.assertEqual(code, report.NOTHING)
+        self.assertEqual(calls.call_count, 0)
+        self.assertIn("the benchmark could not be run: foreign", said.getvalue())
+
+    def test_a_run_that_fails_stops_the_repeats_with_nothing_measured(self):
+        def run(_):
+            raise OSError("no valgrind")
+
+        code, calls = self.cli(["--run", "--repeat", "3"], run=run)
+        self.assertEqual(code, report.NOTHING)
+        self.assertEqual(calls.run_benchmarks.call_count, 1)
+        self.assertEqual(calls.main.call_count, 0)
+
+    def test_main_s_outcome_is_the_exit_code(self):
+        code, _ = self.cli(["--run", "--repeat", "2"], outcome=report.INEXACT)
+        self.assertEqual(code, report.INEXACT)
+
+    def test_a_repeat_without_run_or_below_one_is_a_usage_error(self):
+        for argv in (["--repeat", "2"], ["--run", "--repeat", "0"]):
+            with self.subTest(argv=argv):
+                with contextlib.redirect_stderr(io.StringIO()) as said:
+                    with self.assertRaises(SystemExit) as stopped:
+                        report.cli(argv)
+                self.assertEqual(stopped.exception.code, 2)
+                self.assertIn("--repeat takes a count of at least 1", said.getvalue())
 
 
 #: Shaped after `callgrind_annotate --inclusive=yes --show=Ir` over a real

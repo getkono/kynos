@@ -400,7 +400,7 @@ fn primary_key(namespace: &'static str, request: &http::Request, route: &str) ->
         namespace,
         method: kynos_openapi::Method::from_wire_str(request.method().as_str())
             .unwrap_or(kynos_openapi::Method::Get),
-        authority: crate::middleware::csrf::own_authority(
+        authority: crate::http::own_authority(
             request.headers(),
             request
                 .uri()

@@ -18,8 +18,5 @@ pub mod body_timeout;
 pub mod concurrency;
 pub mod timeout;
 
-#[cfg(feature = "server")]
-pub(crate) mod request_body;
-
 #[cfg(test)]
 mod tests;

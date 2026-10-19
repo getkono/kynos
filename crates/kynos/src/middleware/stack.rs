@@ -17,7 +17,8 @@
 use std::marker::PhantomData;
 
 use crate::{
-    extract::params::header::HeaderParams, middleware::Interceptor, response::ShortCircuit,
+    extract::params::header::HeaderParams, http::header_name_eq, middleware::Interceptor,
+    response::ShortCircuit,
 };
 
 /// One interceptor in front of the rest.
@@ -33,28 +34,6 @@ pub struct Cons<H, T>(PhantomData<fn() -> (H, T)>);
 /// stack, never against the other, since no request reaches both.
 #[derive(Debug)]
 pub struct Both<L, R>(PhantomData<fn() -> (L, R)>);
-
-/// Whether two ASCII strings match, ignoring case.
-///
-/// Header names are case-insensitive per RFC 9110 section 5.1.
-#[must_use]
-pub(crate) const fn header_name_eq(left: &str, right: &str) -> bool {
-    let (left, right) = (left.as_bytes(), right.as_bytes());
-
-    if left.len() != right.len() {
-        return false;
-    }
-
-    let mut index = 0;
-    while index < left.len() {
-        if !left[index].eq_ignore_ascii_case(&right[index]) {
-            return false;
-        }
-        index += 1;
-    }
-
-    true
-}
 
 /// Whether two header-name lists share nothing.
 #[must_use]

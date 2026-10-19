@@ -128,7 +128,10 @@ impl<C> TestClient<C> {
 
     /// Begins a `QUERY` request.
     ///
-    /// The method `#[kynos::query]` registers.
+    /// The method `#[kynos::query]` registers. Behind `openapi32`, the only
+    /// build that can route `QUERY`; [`method`](Self::method) still sends it
+    /// in any build.
+    #[cfg(feature = "openapi32")]
     #[must_use]
     pub fn query(&self, path: &str) -> TestRequest<'_, C> {
         self.request(
