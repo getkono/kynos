@@ -102,6 +102,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         || default_challenge(kind),
         |value| quote!(::core::option::Option::Some(#value)),
     );
+    let insufficient_scope = default_insufficient_scope_challenge(kind);
 
     let carrier = (args.carrier != Some(Carrier::Manual)).then(|| {
         let (mut presented, mut read) = carrier_of(&args.nested, kind);
@@ -146,6 +147,10 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
 
             fn challenge() -> ::core::option::Option<&'static str> {
                 #challenge
+            }
+
+            fn insufficient_scope_challenge() -> ::core::option::Option<&'static str> {
+                #insufficient_scope
             }
         }
 
@@ -350,6 +355,21 @@ fn default_challenge(kind: &Ident) -> proc_macro2::TokenStream {
         "bearer" | "oauth2" | "openid_connect" => quote!(::core::option::Option::Some("Bearer")),
         "basic" => quote! {
             <::kynos::security::schemes::Basic as ::kynos::security::SecurityScheme>::challenge()
+        },
+        _ => quote!(::core::option::Option::None),
+    }
+}
+
+/// The challenge a kind sends on a 403 refusing a scope.
+///
+/// `bearer`, `oauth2` and `openid_connect` answer what
+/// `kynos::security::schemes::Bearer` does, `Bearer error="insufficient_scope"`
+/// (RFC 6750 section 3.1), so the two cannot drift. The other kinds have no
+/// registered error to send. `challenge = "..."` replaces only the 401's.
+fn default_insufficient_scope_challenge(kind: &Ident) -> proc_macro2::TokenStream {
+    match kind.to_string().as_str() {
+        "bearer" | "oauth2" | "openid_connect" => quote! {
+            <::kynos::security::schemes::Bearer as ::kynos::security::SecurityScheme>::insufficient_scope_challenge()
         },
         _ => quote!(::core::option::Option::None),
     }

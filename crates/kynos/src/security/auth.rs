@@ -99,7 +99,11 @@ impl<S: Requirement> Describe for Auth<S> {
     /// names no scope set; [`Scoped`] is the guard that does.
     fn describe(operation: &mut OperationCx<'_>) {
         let security = S::declare(operation);
-        declare(operation, S::challenge(), security, None);
+        let challenges = Challenges {
+            unauthenticated: S::challenge(),
+            insufficient_scope: S::insufficient_scope_challenge(),
+        };
+        declare(operation, challenges, security, None);
     }
 }
 
@@ -200,7 +204,11 @@ impl<S: Requirement> Describe for MaybeAuth<S> {
     fn describe(operation: &mut OperationCx<'_>) {
         let mut security = vec![SecurityRequirement::anonymous()];
         security.extend(S::declare(operation));
-        declare(operation, S::challenge(), security, None);
+        let challenges = Challenges {
+            unauthenticated: S::challenge(),
+            insufficient_scope: S::insufficient_scope_challenge(),
+        };
+        declare(operation, challenges, security, None);
     }
 }
 
@@ -417,7 +425,12 @@ impl<S: SecurityScheme, R: Scopes<Scope = S::Scope>> Describe for Scoped<S, R> {
             }
         }
         let security = vec![require::<S>(operation, scopes)];
-        declare(operation, S::challenge(), security, R::FORBIDDEN_TYPE);
+        // `Scoped` always authorizes, so its scheme may always refuse a scope.
+        let challenges = Challenges {
+            unauthenticated: <S as SecurityScheme>::challenge(),
+            insufficient_scope: <S as SecurityScheme>::insufficient_scope_challenge(),
+        };
+        declare(operation, challenges, security, R::FORBIDDEN_TYPE);
     }
 }
 
@@ -482,7 +495,7 @@ where
 /// scope set, and `None` where it named only a scheme.
 fn declare(
     operation: &mut OperationCx<'_>,
-    challenge: Option<&'static str>,
+    challenges: Challenges,
     security: Vec<SecurityRequirement>,
     forbidden_type: Option<&'static str>,
 ) {
@@ -492,22 +505,59 @@ fn declare(
     operation.add_responses(&responses);
 
     // RFC 9110 section 11.6.1: a 401 MUST carry a challenge; only a scheme that
-    // has one declares it. The `HeaderValue` test matches `AuthRejection`'s, so
-    // an invalid challenge is absent from both the response and the description.
-    if let Some(challenge) = challenge.filter(|value| HeaderValue::from_str(value).is_ok()) {
-        operation.add_response_header(
-            StatusPattern::Code(StatusCode::UNAUTHORIZED.as_u16()),
-            "WWW-Authenticate",
-            &Header::new(Schema::of_type(SchemaType::String))
-                .required(true)
-                .with_description(
-                    "The challenge the client must answer, per RFC 9110 section 11.6.1.",
-                )
-                .with_example(challenge),
-        );
-    }
+    // has one declares it.
+    declare_challenge(
+        operation,
+        StatusCode::UNAUTHORIZED,
+        challenges.unauthenticated,
+        Header::new(Schema::of_type(SchemaType::String))
+            .required(true)
+            .with_description("The challenge the client must answer, per RFC 9110 section 11.6.1."),
+    );
+
+    // RFC 6750 section 3.1: a bearer token lacking a scope is answered with
+    // `insufficient_scope`. Not required: a 403 `authenticate` answers declines
+    // the credential rather than a scope, and sends none.
+    declare_challenge(
+        operation,
+        StatusCode::FORBIDDEN,
+        challenges.insufficient_scope,
+        Header::new(Schema::of_type(SchemaType::String)).with_description(
+            "Sent when the credential lacks a required scope, per RFC 6750 section 3.1.",
+        ),
+    );
 
     operation.set_security(security);
+}
+
+/// The challenges a guard's refusals carry, as [`declare`] declares them.
+#[derive(Clone, Copy)]
+struct Challenges {
+    /// The 401's: [`SecurityScheme::challenge`].
+    unauthenticated: Option<&'static str>,
+    /// A scope-refusing 403's:
+    /// [`SecurityScheme::insufficient_scope_challenge`], where the guard
+    /// authorizes a scope at all.
+    insufficient_scope: Option<&'static str>,
+}
+
+/// Declares `challenge` as the `WWW-Authenticate` that `status` carries.
+///
+/// The `HeaderValue` test matches `AuthRejection`'s, so an invalid challenge is
+/// absent from both the response and the description.
+fn declare_challenge(
+    operation: &mut OperationCx<'_>,
+    status: StatusCode,
+    challenge: Option<&'static str>,
+    header: Header,
+) {
+    if let Some(challenge) = challenge.filter(|value| HeaderValue::from_str(value).is_ok()) {
+        operation.add_response_header(
+            StatusPattern::Code(status.as_u16()),
+            "WWW-Authenticate",
+            &header.with_example(challenge),
+        );
+    }
 }
 
 #[cfg(test)]

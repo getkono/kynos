@@ -519,6 +519,19 @@ pub enum AuthRejection {
         /// Set it with [`AuthRejection::forbidden_as`] and leave it unset with
         /// [`AuthRejection::forbidden`].
         type_uri: Option<&'static str>,
+
+        /// The `WWW-Authenticate` challenge this 403 sends, if it refused a
+        /// scope and the scheme has a challenge for that.
+        ///
+        /// An [`Authenticator`](crate::security::Authenticator) leaves this
+        /// `None`, as both constructors do, and a guard replaces it: a refusal
+        /// from [`Authenticator::authorize`](crate::security::Authenticator::authorize)
+        /// carries
+        /// [`SecurityScheme::insufficient_scope_challenge`](crate::security::SecurityScheme::insufficient_scope_challenge),
+        /// and one from
+        /// [`Authenticator::authenticate`](crate::security::Authenticator::authenticate)
+        /// carries none, so the wire and the description carry the same string.
+        challenge: Option<&'static str>,
     },
 }
 
@@ -539,7 +552,10 @@ impl AuthRejection {
     /// the refusal has no name of its own.
     #[must_use]
     pub const fn forbidden() -> Self {
-        Self::Forbidden { type_uri: None }
+        Self::Forbidden {
+            type_uri: None,
+            challenge: None,
+        }
     }
 
     /// A 403 carrying the problem type the authorizer chose for it.
@@ -574,6 +590,7 @@ impl AuthRejection {
     pub const fn forbidden_as(type_uri: &'static str) -> Self {
         Self::Forbidden {
             type_uri: Some(type_uri),
+            challenge: None,
         }
     }
 
@@ -588,14 +605,19 @@ impl AuthRejection {
 
     /// The `WWW-Authenticate` challenge this rejection sends, if any.
     ///
-    /// Always `None` for a 403: RFC 9110 section 15.5.2 asks for a challenge on
-    /// a 401, and repeating an already-valid credential would not change the
-    /// answer.
+    /// A 401's is the scheme's
+    /// [`challenge`](crate::security::SecurityScheme::challenge), which RFC
+    /// 9110 section 11.6.1 requires. A 403's is `None` unless it refused a
+    /// scope under a scheme with an
+    /// [`insufficient_scope_challenge`](crate::security::SecurityScheme::insufficient_scope_challenge):
+    /// RFC 6750 section 3 asks a bearer token's resource server for one when
+    /// the token does not enable access, and section 3.1 names
+    /// `insufficient_scope` for exactly this 403. Any other 403 sends none,
+    /// since repeating an already-valid credential would not change the answer.
     #[must_use]
     pub fn challenge(&self) -> Option<&'static str> {
         match self {
-            Self::Unauthenticated { challenge } => *challenge,
-            Self::Forbidden { .. } => None,
+            Self::Unauthenticated { challenge } | Self::Forbidden { challenge, .. } => *challenge,
         }
     }
 
@@ -611,6 +633,22 @@ impl AuthRejection {
             forbidden @ Self::Forbidden { .. } => forbidden,
         }
     }
+
+    /// Sets the challenge a 403 carries, leaving a 401 alone.
+    ///
+    /// [`with_challenge`](Self::with_challenge)'s counterpart for a scope
+    /// refusal. Replaces any challenge already set, so a guard's 403 carries
+    /// exactly the one it declares, or none.
+    #[must_use]
+    pub(crate) fn with_scope_challenge(self, challenge: Option<&'static str>) -> Self {
+        match self {
+            Self::Forbidden { type_uri, .. } => Self::Forbidden {
+                type_uri,
+                challenge,
+            },
+            unauthenticated @ Self::Unauthenticated { .. } => unauthenticated,
+        }
+    }
 }
 
 impl IntoProblem for AuthRejection {
@@ -623,8 +661,9 @@ impl IntoProblem for AuthRejection {
             // The title is the reason phrase `Problem::new` would give.
             Self::Forbidden {
                 type_uri: Some(type_uri),
+                ..
             } => Problem::of_type(status, type_uri, "Forbidden"),
-            Self::Forbidden { type_uri: None } | Self::Unauthenticated { .. } => {
+            Self::Forbidden { type_uri: None, .. } | Self::Unauthenticated { .. } => {
                 Problem::new(status)
             }
         }
@@ -637,7 +676,8 @@ impl IntoProblem for AuthRejection {
 }
 
 /// Adds the `WWW-Authenticate` field RFC 9110 section 15.5.2 requires on a
-/// 401, from the challenge the rejection carries.
+/// 401, and RFC 6750 section 3.1 asks of a bearer token's scope refusal, from
+/// the challenge the rejection carries.
 impl IntoResponse for AuthRejection {
     fn into_response(self) -> crate::http::Response {
         let challenge = self.challenge();
