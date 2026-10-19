@@ -8,7 +8,7 @@ use kynos_openapi::model::body::mime_names;
 use crate::{
     error::problem::Problem,
     http::{HeaderValue, Response, StatusCode, body::Body, header},
-    response::IntoResponse,
+    response::{IntoResponse, codec::json_bytes},
 };
 
 /// The status a variant declared, which the derive checked is one.
@@ -31,13 +31,13 @@ pub fn empty(status: u16) -> Response {
 /// documented RFC 9457 500 rather than a truncated success.
 #[must_use]
 pub fn json<T: serde::Serialize>(status: u16, body: &T) -> Response {
-    let Ok(bytes) = serde_json::to_vec(body) else {
+    let Ok(bytes) = json_bytes(body) else {
         return Problem::new(StatusCode::INTERNAL_SERVER_ERROR)
             .with_detail("the response body could not be serialized")
             .into_response();
     };
 
-    let mut response = Response::new(Body::from_bytes(bytes::Bytes::from(bytes)));
+    let mut response = Response::new(Body::from_bytes(bytes));
     *response.status_mut() = status_code(status);
     response.headers_mut().insert(
         header::CONTENT_TYPE,
