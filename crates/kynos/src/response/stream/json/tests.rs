@@ -19,9 +19,11 @@ use crate::{
         body::json_lines::{JsonLines, JsonSeq, records::Records},
     },
     http::{Request, Response, header},
-    response::IntoResponse,
+    response::{IntoResponse, stream::RecordBuffer},
     schema::{Schema, registry::Registry},
 };
+
+use super::encode;
 
 #[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct Reading {
@@ -156,6 +158,54 @@ async fn a_record_that_fails_to_serialize_ends_the_body_in_error() {
 
     assert_eq!(frames, [&b"{\"at\":1}\n"[..]]);
     assert_eq!(ended, Err("this item cannot be written".to_owned()));
+}
+
+/// Records written one after another into one buffer are each whole and each
+/// only themselves: a record refused halfway leaves nothing for the next one to
+/// inherit, and a record longer than a block is written whole rather than cut
+/// at the block's end.
+#[test]
+fn each_record_of_a_stream_is_written_whole_and_alone() {
+    #[derive(serde::Serialize)]
+    struct Partial {
+        at: u32,
+        bad: Unserializable,
+    }
+
+    let mut records = RecordBuffer::new();
+    let (prefix, suffix) = (super::SEQUENCE_PREFIX, super::NEWLINE);
+
+    let first = encode(&mut records, &Reading { at: 1 }, prefix, suffix).expect("a record");
+    // `{"at":1,"bad":` is written before the failing field is reached.
+    let refused = encode(
+        &mut records,
+        &Partial {
+            at: 2,
+            bad: Unserializable,
+        },
+        prefix,
+        suffix,
+    );
+    let second = encode(&mut records, &Reading { at: 3 }, prefix, suffix).expect("a record");
+    let long = "x".repeat(3 * super::super::BLOCK);
+    let third = encode(&mut records, &long, prefix, suffix).expect("a record");
+    let fourth = encode(&mut records, &Reading { at: 4 }, prefix, suffix).expect("a record");
+
+    assert_eq!(
+        refused.map_err(|error| error.to_string()),
+        Err("this item cannot be written".to_owned())
+    );
+    assert_eq!(&first[..], b"\x1e{\"at\":1}\n");
+    assert_eq!(&second[..], b"\x1e{\"at\":3}\n");
+    assert_eq!(
+        third.len(),
+        long.len() + 4,
+        "RS, two quotes and LF around it"
+    );
+    assert_eq!(&third[..2], b"\x1e\"");
+    assert_eq!(&third[third.len() - 2..], b"\"\n");
+    assert!(third[2..third.len() - 2].iter().all(|&byte| byte == b'x'));
+    assert_eq!(&fourth[..], b"\x1e{\"at\":4}\n");
 }
 
 /// The two halves of the codec agree: a response body read back through the

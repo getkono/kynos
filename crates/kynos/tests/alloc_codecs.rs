@@ -1299,18 +1299,19 @@ mod stream {
     /// Read as every table here is: each ceiling set to zero, the target run,
     /// the count the failure reported transcribed.
     ///
-    /// **Every serialized record costs four or five allocations of its own.**
-    /// Each is grown from empty in a buffer of its own — the JSON value, and
-    /// for an event the record it is copied into — and then boxed to become a
-    /// frame. The binary stream's chunks are frames already, so it costs
-    /// nothing.
+    /// **A stream of small records costs what one record does.** Records are
+    /// written into one 4 KiB block in turn and each split off as a frame, so
+    /// the block and the handle its frames share are the whole of a JSON
+    /// stream's bill. An event stream adds the buffer its data is serialized
+    /// into before framing, grown once and reused. The binary stream's chunks
+    /// are frames already, so it costs nothing.
     const RECORDED: [(&str, usize, usize); 6] = [
         ("/binary", MANY, 0),
-        ("/ndjson/one", 1, 4),
-        ("/ndjson/many", MANY, 64),
-        ("/json-seq/many", MANY, 80),
+        ("/ndjson/one", 1, 2),
+        ("/ndjson/many", MANY, 2),
+        ("/json-seq/many", MANY, 2),
         ("/sse/one", 1, 5),
-        ("/sse/many", MANY, 80),
+        ("/sse/many", MANY, 5),
     ];
 
     /// The record: what each stream costs to drain today.
@@ -1333,6 +1334,29 @@ mod stream {
             "{over:?}; the ceiling is `RECORDED` in this file, and lowering one \
              is what a cheaper stream looks like"
         );
+    }
+
+    /// The relation the table exists to hold: a serialized record does not
+    /// cost an allocation of its own.
+    ///
+    /// Strictly fewer allocations than records added, rather than none, so a
+    /// block size that changes how many records share one leaves it standing.
+    #[test]
+    fn a_record_does_not_cost_an_allocation_of_its_own() {
+        let service = service();
+
+        for (one, many) in [("/ndjson/one", "/ndjson/many"), ("/sse/one", "/sse/many")] {
+            let first = drained(&service, one, 1);
+            let all = drained(&service, many, MANY);
+
+            assert!(
+                all >= first && all - first < MANY - 1,
+                "GET {many} allocated {all} for {MANY} records where GET {one} \
+                 allocated {first} for one; the {} records between them cost \
+                 an allocation apiece or more",
+                MANY - 1
+            );
+        }
     }
 
     /// The leak check: a stream's state is per response, so the next response

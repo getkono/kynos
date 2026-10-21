@@ -12,7 +12,7 @@ use crate::{
         body::{Body, BoxError},
         header,
     },
-    response::{IntoResponse, Responses},
+    response::{IntoResponse, Responses, stream::RecordBuffer},
     schema::{Schema, registry::Registry},
 };
 
@@ -107,6 +107,7 @@ struct Framed<S> {
     items: Pin<Box<S>>,
     prefix: &'static [u8],
     suffix: &'static [u8],
+    records: RecordBuffer,
 }
 
 impl<S> Framed<S> {
@@ -115,6 +116,7 @@ impl<S> Framed<S> {
             items: Box::pin(items),
             prefix,
             suffix,
+            records: RecordBuffer::new(),
         }
     }
 }
@@ -131,24 +133,51 @@ where
         let (prefix, suffix) = (framed.prefix, framed.suffix);
 
         match framed.items.as_mut().poll_next(context) {
-            Poll::Ready(Some(item)) => Poll::Ready(Some(encode(&item, prefix, suffix))),
+            Poll::Ready(Some(item)) => {
+                Poll::Ready(Some(encode(&mut framed.records, &item, prefix, suffix)))
+            }
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
         }
     }
 }
 
-/// Serializes one item into its framed record.
+/// Serializes one item into its framed record, in `records`' block.
 fn encode<T: serde::Serialize>(
+    records: &mut RecordBuffer,
     item: &T,
     prefix: &[u8],
     suffix: &[u8],
 ) -> Result<bytes::Bytes, BoxError> {
-    let mut record = Vec::from(prefix);
-    serde_json::to_writer(&mut record, item)?;
-    record.extend_from_slice(suffix);
+    records.record(|record| {
+        record.extend_from_slice(prefix);
+        serde_json::to_writer(Appending(record), item)?;
+        record.extend_from_slice(suffix);
+        Ok(())
+    })
+}
 
-    Ok(bytes::Bytes::from(record))
+/// A block written as a `Vec<u8>` is: every write appends whole.
+///
+/// Rather than `BufMut::writer`, whose `write` may stop short, so that each of
+/// the many small `write_all`s `serde_json` makes is one append rather than a
+/// loop around one.
+struct Appending<'a>(&'a mut bytes::BytesMut);
+
+impl std::io::Write for Appending<'_> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        self.0.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]

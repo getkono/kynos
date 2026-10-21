@@ -19,7 +19,7 @@ use crate::{
         body::{Body, BoxError},
         header,
     },
-    response::{IntoResponse, Responses},
+    response::{IntoResponse, Responses, stream::RecordBuffer},
     schema::{Schema, registry::Registry},
 };
 
@@ -205,6 +205,10 @@ impl<T> Event<T> {
 struct Records<S> {
     events: Pin<Box<S>>,
     keep_alive: Option<Heartbeat>,
+    buffer: RecordBuffer,
+    /// Each event's data as JSON, before [`field`] frames it; kept so that
+    /// it grows once per stream rather than once per event.
+    data: Vec<u8>,
 }
 
 /// The timer that keeps an idle stream from being reaped.
@@ -242,10 +246,10 @@ impl Heartbeat {
 /// A comment record ended by a blank line; an empty comment gives the bare `: `
 /// heartbeat every SSE client ignores.
 fn heartbeat_record(comment: &str) -> bytes::Bytes {
-    let mut record = String::new();
-    field(&mut record, "", comment);
-    record.push('\n');
-    bytes::Bytes::from(record)
+    let mut record = bytes::BytesMut::new();
+    field(&mut record, "", comment.as_bytes());
+    record.extend_from_slice(b"\n");
+    record.freeze()
 }
 
 impl<S, T, E> futures_core::Stream for Records<S>
@@ -265,7 +269,10 @@ where
                 if let Some(keep_alive) = records.keep_alive.as_mut() {
                     keep_alive.restart();
                 }
-                return Poll::Ready(Some(encode(&event)));
+                let data = &mut records.data;
+                return Poll::Ready(Some(
+                    records.buffer.record(|record| encode(record, data, &event)),
+                ));
             }
             Poll::Ready(Some(Err(error))) => return Poll::Ready(Some(Err(error.into()))),
             Poll::Ready(None) => return Poll::Ready(None),
@@ -287,27 +294,36 @@ where
     }
 }
 
-/// Writes one event as a `text/event-stream` record, its data as JSON.
-fn encode<T: serde::Serialize>(event: &Event<T>) -> Result<bytes::Bytes, BoxError> {
-    let data = serde_json::to_string(&event.data)?;
+/// Writes one event into `record` as a `text/event-stream` record, its data
+/// serialized as JSON through `data` first.
+///
+/// The data is framed by [`field`] like every other value rather than written
+/// straight into `record`: compact JSON escapes every line break it writes, but
+/// a `serde_json` built with `raw_value` copies a raw value through verbatim.
+fn encode<T: serde::Serialize>(
+    record: &mut bytes::BytesMut,
+    data: &mut Vec<u8>,
+    event: &Event<T>,
+) -> Result<(), BoxError> {
+    data.clear();
+    serde_json::to_writer(&mut *data, &event.data)?;
 
-    let mut record = String::new();
     if let Some(comment) = &event.comment {
-        field(&mut record, "", comment);
+        field(record, "", comment.as_bytes());
     }
     if let Some(name) = &event.event {
-        field(&mut record, "event", name);
+        field(record, "event", name.as_bytes());
     }
     if let Some(id) = &event.id {
-        field(&mut record, "id", id);
+        field(record, "id", id.as_bytes());
     }
     if let Some(retry) = event.retry {
-        field(&mut record, "retry", &milliseconds(retry).to_string());
+        field(record, "retry", milliseconds(retry).to_string().as_bytes());
     }
-    field(&mut record, "data", &data);
-    record.push('\n');
+    field(record, "data", data);
+    record.extend_from_slice(b"\n");
 
-    Ok(bytes::Bytes::from(record))
+    Ok(())
 }
 
 /// A reconnect delay as the whole milliseconds `retry` carries.
@@ -329,20 +345,23 @@ fn milliseconds(retry: std::time::Duration) -> u128 {
 /// as the format's own `end-of-line` does, so no break in `value` reaches
 /// the wire to start a field a client would read on its own. An empty
 /// `name` writes the comment form, `: text`.
-fn field(record: &mut String, name: &str, value: &str) {
-    let mut push = |line: &str| {
-        record.push_str(name);
-        record.push_str(": ");
-        record.push_str(line);
-        record.push('\n');
+///
+/// Bytes rather than a `str`, so serialized JSON is framed without being
+/// re-validated: CR and LF are ASCII, and never part of a longer UTF-8 sequence.
+fn field(record: &mut bytes::BytesMut, name: &str, value: &[u8]) {
+    let mut push = |line: &[u8]| {
+        record.extend_from_slice(name.as_bytes());
+        record.extend_from_slice(b": ");
+        record.extend_from_slice(line);
+        record.extend_from_slice(b"\n");
     };
 
     let mut rest = value;
-    while let Some(end) = rest.find(['\r', '\n']) {
+    while let Some(end) = rest.iter().position(|&byte| byte == b'\r' || byte == b'\n') {
         push(&rest[..end]);
         // A CRLF is one break; a CR anywhere else, the last in the value
         // included, is a break of its own.
-        let width = if rest[end..].starts_with("\r\n") {
+        let width = if rest[end..].starts_with(b"\r\n") {
             2
         } else {
             1
@@ -362,6 +381,8 @@ where
         let records = Records {
             events: Box::pin(self.events),
             keep_alive: self.keep_alive.as_ref().map(Heartbeat::new),
+            buffer: RecordBuffer::new(),
+            data: Vec::new(),
         };
 
         let mut response = Response::new(Body::from_stream(records));
