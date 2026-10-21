@@ -50,10 +50,10 @@ type Fields = Vec<(kynos::http::HeaderName, kynos::http::HeaderValue)>;
 // --- A store, which is the half Kynos does not ship ----------------------
 
 #[derive(Clone, Debug, Default)]
-struct Stored(Arc<Mutex<HashMap<PrimaryKey, Vec<StoredResponse>>>>);
+struct Stored(Arc<Mutex<HashMap<PrimaryKey<'static>, Vec<StoredResponse>>>>);
 
 impl<C: Sync> CacheStore<C> for Stored {
-    async fn get(&self, key: &PrimaryKey, _: &C) -> Vec<StoredResponse> {
+    async fn get(&self, key: &PrimaryKey<'_>, _: &C) -> Vec<StoredResponse> {
         self.0
             .lock()
             .expect("no test panics while holding this")
@@ -63,14 +63,14 @@ impl<C: Sync> CacheStore<C> for Stored {
     }
 
     /// Replaces the variant `response` supersedes, and appends otherwise.
-    async fn put(&self, key: PrimaryKey, response: StoredResponse, _: &C) {
+    async fn put(&self, key: PrimaryKey<'static>, response: StoredResponse, _: &C) {
         let mut stored = self.0.lock().expect("no test panics while holding this");
         let variants = stored.entry(key).or_default();
         variants.retain(|variant| !variant.same_variant(&response));
         variants.push(response);
     }
 
-    async fn invalidate(&self, key: &PrimaryKey, _: &C) {
+    async fn invalidate(&self, key: &PrimaryKey<'static>, _: &C) {
         self.0
             .lock()
             .expect("no test panics while holding this")

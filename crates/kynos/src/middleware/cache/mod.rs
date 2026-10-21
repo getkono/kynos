@@ -23,7 +23,7 @@ pub mod store;
 
 mod freshness;
 
-use std::{convert::Infallible, marker::PhantomData, time::Duration};
+use std::{borrow::Cow, convert::Infallible, marker::PhantomData, time::Duration};
 
 use kynos_openapi::model::schema::types::SchemaType;
 
@@ -40,6 +40,12 @@ const DEFAULT_MAX_BODY_BYTES: u64 = 1024 * 1024;
 
 mod sealed {
     pub trait Sealed {}
+
+    /// Writes a cache's group onto a response's fields directly, skipping the
+    /// list [`EncodeHeaders::encode`](super::EncodeHeaders::encode) builds.
+    pub trait Written {
+        fn write(self, fields: &mut super::HeaderMap);
+    }
 }
 
 /// Whether a cache derives an entity tag for a response that carries none.
@@ -49,13 +55,13 @@ mod sealed {
 /// every covered operation declares.
 pub trait CacheTagging: sealed::Sealed + Send + Sync + 'static {
     /// The group a served response carries.
-    type Headers: EncodeHeaders;
+    type Headers: EncodeHeaders + sealed::Written;
 
     /// Whether a tag is derived.
     const DERIVES: bool;
 
     /// Builds the group.
-    fn headers(age: Duration, etag: Option<String>) -> Self::Headers;
+    fn headers(age: Duration, etag: Option<HeaderValue>) -> Self::Headers;
 }
 
 /// A cache that leaves validators to whatever produced the response.
@@ -77,7 +83,31 @@ impl sealed::Sealed for Tagged {}
 #[derive(Clone, Debug, Default)]
 pub struct CacheHeaders<const TAGGED: bool = false> {
     age: Duration,
-    etag: Option<String>,
+    etag: Option<HeaderValue>,
+}
+
+impl<const TAGGED: bool> CacheHeaders<TAGGED> {
+    /// Every field the group sends, in the order it sends them.
+    fn into_fields(self) -> impl Iterator<Item = (http::HeaderName, HeaderValue)> {
+        // Both values come from the stored response, the derived tag or a
+        // count of seconds, so neither is ever refused. A zero age, which a
+        // miss always carries, is a static value rather than a new one.
+        let age = match self.age.as_secs() {
+            0 => HeaderValue::from_static("0"),
+            seconds => HeaderValue::from(seconds),
+        };
+        let etag = self.etag.filter(|_| TAGGED);
+
+        std::iter::once((header::AGE, age)).chain(etag.map(|etag| (header::ETAG, etag)))
+    }
+}
+
+impl<const TAGGED: bool> sealed::Written for CacheHeaders<TAGGED> {
+    fn write(self, fields: &mut HeaderMap) {
+        for (name, value) in self.into_fields() {
+            fields.insert(name, value);
+        }
+    }
 }
 
 impl<const TAGGED: bool> HeaderParams for CacheHeaders<TAGGED> {
@@ -103,25 +133,10 @@ impl<const TAGGED: bool> HeaderParams for CacheHeaders<TAGGED> {
 }
 
 impl<const TAGGED: bool> EncodeHeaders for CacheHeaders<TAGGED> {
-    // Both values come from the stored response or the derived tag, so
-    // neither is ever refused.
+    // A cache writes its group with `sealed::Written`; this is the same
+    // fields, for any other writer.
     fn encode(&self) -> Result<Vec<(http::HeaderName, HeaderValue)>, UnencodableHeader> {
-        let mut fields = Vec::with_capacity(2);
-
-        if let Ok(value) = HeaderValue::from_str(&self.age.as_secs().to_string()) {
-            fields.push((header::AGE, value));
-        }
-        if TAGGED {
-            if let Some(value) = self
-                .etag
-                .as_deref()
-                .and_then(|etag| HeaderValue::from_str(etag).ok())
-            {
-                fields.push((header::ETAG, value));
-            }
-        }
-
-        Ok(fields)
+        Ok(self.clone().into_fields().collect())
     }
 }
 
@@ -129,7 +144,7 @@ impl CacheTagging for Plain {
     type Headers = CacheHeaders<false>;
     const DERIVES: bool = false;
 
-    fn headers(age: Duration, etag: Option<String>) -> Self::Headers {
+    fn headers(age: Duration, etag: Option<HeaderValue>) -> Self::Headers {
         let _ = etag;
         CacheHeaders { age, etag: None }
     }
@@ -139,7 +154,7 @@ impl CacheTagging for Tagged {
     type Headers = CacheHeaders<true>;
     const DERIVES: bool = true;
 
-    fn headers(age: Duration, etag: Option<String>) -> Self::Headers {
+    fn headers(age: Duration, etag: Option<HeaderValue>) -> Self::Headers {
         CacheHeaders { age, etag }
     }
 }
@@ -170,9 +185,9 @@ impl CacheTagging for Tagged {
 /// };
 /// # struct MyStore;
 /// # impl CacheStore<()> for MyStore {
-/// #     async fn get(&self, _: &PrimaryKey, _: &()) -> Vec<StoredResponse> { Vec::new() }
-/// #     async fn put(&self, _: PrimaryKey, _: StoredResponse, _: &()) {}
-/// #     async fn invalidate(&self, _: &PrimaryKey, _: &()) {}
+/// #     async fn get(&self, _: &PrimaryKey<'_>, _: &()) -> Vec<StoredResponse> { Vec::new() }
+/// #     async fn put(&self, _: PrimaryKey<'static>, _: StoredResponse, _: &()) {}
+/// #     async fn invalidate(&self, _: &PrimaryKey<'static>, _: &()) {}
 /// # }
 ///
 /// let cache = Cache::new(MyStore).namespace("v1").deriving_etags();
@@ -277,62 +292,64 @@ where
             // A method OpenAPI has no field for is never routed, so a routed
             // request always names one.
             let (Some(route), Some(keyed)) = (
-                next.route(),
+                next.route().map(|route| route.path()),
                 kynos_openapi::Method::from_wire_str(request.method().as_str()),
             ) else {
                 return Ok(next.run(request).await.unrouted());
             };
 
-            let key = primary_key(self.namespace, keyed, &request, route.path());
             // A request no router dispatched carries no record and is read as
             // guarded: refusing a store is the safe error.
             let secured = request
                 .extensions()
                 .get::<crate::router::dispatch::Routed>()
                 .is_none_or(|routed| routed.secured);
-
-            let request_headers = request.headers().clone();
+            let requested = freshness::Requested::of(request.headers());
             let method = request.method().clone();
+            let storing = freshness::storable_method(&method) && !requested.forbids_storing();
 
-            // A hit is served before the operation's guard runs, so for a guarded
-            // operation only a response that said it may be shared is a hit.
-            let stored = if freshness::forbids_reuse(&request_headers) {
-                None
-            } else {
-                self.store
-                    .get(&key, context)
-                    .await
-                    .into_iter()
-                    .filter(|stored| stored.selected_by(&request_headers))
-                    .filter(|stored| !secured || freshness::servable_when_secured(stored.headers()))
-                    .find(StoredResponse::is_fresh)
+            // What outlives the request: the key, owned, where a store or an
+            // invalidation may name it, and the request's fields where a store
+            // may select by them. Which fields that is, the response's `Vary`
+            // says, and it has not been written yet. Scoped, so the future does
+            // not also keep the borrowed key beside the owned one.
+            let (key, selecting) = {
+                // Borrows the request: a lookup allocates no key.
+                let key = primary_key(self.namespace, keyed, &request, route);
+
+                // A hit is served before the operation's guard runs, so for a
+                // guarded operation only a response that said it may be shared
+                // is a hit.
+                if !requested.forbids_reuse() {
+                    let stored = self
+                        .store
+                        .get(&key, context)
+                        .await
+                        .into_iter()
+                        .filter(|stored| stored.selected_by(request.headers()))
+                        .filter(|stored| {
+                            !secured || freshness::servable_when_secured(stored.headers())
+                        })
+                        .find(StoredResponse::is_fresh);
+                    if let Some(stored) = stored {
+                        return Ok(served::<D>(&stored));
+                    }
+                }
+
+                (
+                    (storing || !method.is_safe()).then(|| key.into_owned()),
+                    storing.then(|| request.headers().clone()),
+                )
             };
-            if let Some(stored) = stored {
-                let age = stored.age();
-                let etag = stored
-                    .headers()
-                    .get(header::ETAG)
-                    .and_then(|value| value.to_str().ok())
-                    .map(ToOwned::to_owned)
-                    .or_else(|| D::DERIVES.then(|| derived_etag(stored.body())));
-
-                let mut response =
-                    http::Response::new(crate::http::body::Body::from_bytes(stored.body().clone()));
-                *response.status_mut() = stored.status();
-                *response.headers_mut() = stored.headers().clone();
-
-                // A `Continued::new` outside `Next::run` (the other is `RequestId`'s
-                // refused group): sound, because a hit replays a response this
-                // operation itself produced.
-                return Ok(Continued::new(response).with_headers(D::headers(age, etag)));
-            }
 
             let mut continued = next.run(request).await;
 
             // RFC 9111 section 4.4 invalidates the target URI on a non-error status
             // to an unsafe (or unknown) method; the URI's stored entries are its
             // `GET` and `HEAD` keys, not the key this request's method would build.
-            if !method.is_safe() && is_non_error(continued.status()) {
+            if let Some(key) = key.as_ref().filter(|_| !method.is_safe())
+                && is_non_error(continued.status())
+            {
                 for stored in [kynos_openapi::Method::Get, kynos_openapi::Method::Head] {
                     self.store
                         .invalidate(
@@ -346,15 +363,20 @@ where
                 }
             }
 
+            // Read in place rather than bound anew, which would keep a second
+            // copy of each in the future.
+            let Some(selecting) = selecting.as_ref() else {
+                return Ok(added::<D>(continued, Duration::ZERO, None));
+            };
             let Ok(freshness) = freshness::storable(
                 &method,
                 continued.status(),
-                &request_headers,
+                requested,
                 continued.headers(),
                 secured,
                 self.default_freshness,
             ) else {
-                return Ok(continued.with_headers(D::headers(Duration::ZERO, None)));
+                return Ok(added::<D>(continued, Duration::ZERO, None));
             };
 
             // A body not buffered is forwarded as it arrived, and one whose read
@@ -363,55 +385,91 @@ where
                 Ok(bytes) => bytes,
                 Err(unbuffered) => {
                     continued.set_body(unbuffered);
-                    return Ok(continued.with_headers(D::headers(Duration::ZERO, None)));
+                    return Ok(added::<D>(continued, Duration::ZERO, None));
                 }
             };
 
             let mut headers = continued.headers().clone();
             freshness::strip(&mut headers);
 
-            let etag = headers
-                .get(header::ETAG)
-                .and_then(|value| value.to_str().ok())
-                .map(ToOwned::to_owned)
-                .or_else(|| D::DERIVES.then(|| derived_etag(&bytes)));
+            let etag = tag::<D>(&headers, &bytes);
 
             if refuses_cross_origin(&headers) {
                 continued.set_body(crate::http::body::Body::from_bytes(bytes));
-                return Ok(continued.with_headers(D::headers(Duration::ZERO, etag)));
+                return Ok(added::<D>(continued, Duration::ZERO, etag));
             }
 
             let vary = freshness::vary(&headers);
+            let stored = StoredResponse::new(
+                continued.status(),
+                headers,
+                bytes.clone(),
+                vary,
+                selecting,
+                freshness,
+            );
 
-            self.store
-                .put(
-                    key,
-                    StoredResponse::new(
-                        continued.status(),
-                        headers,
-                        bytes.clone(),
-                        vary,
-                        &request_headers,
-                        freshness,
-                    ),
-                    context,
-                )
-                .await;
+            // Always present beside `selecting`.
+            if let Some(key) = key {
+                self.store.put(key, stored, context).await;
+            }
 
             continued.set_body(crate::http::body::Body::from_bytes(bytes));
-            Ok(continued.with_headers(D::headers(Duration::ZERO, etag)))
+            Ok(added::<D>(continued, Duration::ZERO, etag))
         }
     }
 }
 
+/// `continued` with the group a cache under `D` adds, written onto it
+/// directly.
+fn added<D: CacheTagging>(
+    continued: Continued,
+    age: Duration,
+    etag: Option<HeaderValue>,
+) -> Continued<D::Headers> {
+    continued.with_written::<D::Headers>(|fields| {
+        sealed::Written::write(D::headers(age, etag), fields);
+    })
+}
+
+/// A hit, replayed with the group a cache adds.
+fn served<D: CacheTagging>(stored: &StoredResponse) -> Continued<D::Headers> {
+    let etag = tag::<D>(stored.headers(), stored.body());
+
+    let mut response =
+        http::Response::new(crate::http::body::Body::from_bytes(stored.body().clone()));
+    *response.status_mut() = stored.status();
+    *response.headers_mut() = stored.headers().clone();
+
+    // A `Continued::new` outside `Next::run` (the other is `RequestId`'s
+    // refused group): sound, because a hit replays a response this operation
+    // itself produced.
+    added::<D>(Continued::new(response), stored.age(), etag)
+}
+
+/// The entity tag a cache under `D` sends beside `headers` and `body`: the one
+/// they carry, else a derived one. `None` where `D` sends none.
+fn tag<D: CacheTagging>(headers: &HeaderMap, body: &bytes::Bytes) -> Option<HeaderValue> {
+    if !D::DERIVES {
+        return None;
+    }
+
+    // A tag that is not visible ASCII is replaced, as one that is absent is.
+    let carried = headers
+        .get(header::ETAG)
+        .filter(|value| value.to_str().is_ok())
+        .cloned();
+    carried.or_else(|| HeaderValue::try_from(derived_etag(body)).ok())
+}
+
 /// What `request`, sent with `method`, is filed under, for the operation whose
 /// `paths` key is `route`.
-fn primary_key(
+fn primary_key<'a>(
     namespace: &'static str,
     method: kynos_openapi::Method,
-    request: &http::Request,
-    route: &str,
-) -> PrimaryKey {
+    request: &'a http::Request,
+    route: &'a str,
+) -> PrimaryKey<'a> {
     PrimaryKey {
         namespace,
         method,
@@ -422,11 +480,13 @@ fn primary_key(
                 .authority()
                 .map(::http::uri::Authority::as_str),
         ),
-        route: route.to_owned(),
-        target: request
-            .uri()
-            .path_and_query()
-            .map_or_else(|| request.uri().path().to_owned(), ToString::to_string),
+        route: Cow::Borrowed(route),
+        target: Cow::Borrowed(
+            request
+                .uri()
+                .path_and_query()
+                .map_or_else(|| request.uri().path(), ::http::uri::PathAndQuery::as_str),
+        ),
     }
 }
 
