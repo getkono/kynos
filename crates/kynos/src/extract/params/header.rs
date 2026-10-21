@@ -206,7 +206,17 @@ pub(crate) fn write<G: EncodeHeaders>(
     fields: &mut crate::http::HeaderMap,
     group: &G,
 ) -> Result<(), UnencodableHeader> {
-    for (name, value) in group.encode()? {
+    write_encoded::<G>(fields, group.encode()?);
+    Ok(())
+}
+
+/// Writes what group `G` already [`encode`](EncodeHeaders::encode)d onto
+/// `fields`, as [`write`] does, for a writer that encoded it once to use twice.
+pub(crate) fn write_encoded<G: EncodeHeaders>(
+    fields: &mut crate::http::HeaderMap,
+    encoded: Vec<(HeaderName, HeaderValue)>,
+) {
+    for (name, value) in encoded {
         // Encoded fields must be a subset of `NAMES`, which the conflict check
         // compares. Debug-only: the response path does not panic.
         debug_assert!(
@@ -227,7 +237,6 @@ pub(crate) fn write<G: EncodeHeaders>(
 
     // `VARIES` names are not in `NAMES`, so they skip the check above.
     crate::http::vary_on(fields, G::VARIES);
-    Ok(())
 }
 
 /// Writes `group` onto `response`, or replaces `response` with [`refused`]

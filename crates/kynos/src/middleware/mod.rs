@@ -242,6 +242,21 @@ impl Continued<()> {
             _headers: std::marker::PhantomData,
         }
     }
+
+    /// Attaches group `G` from the fields it already encoded, as
+    /// [`with_headers`](Continued::with_headers) does, for an interceptor that
+    /// set the same fields on the request.
+    pub(crate) fn with_encoded<G: EncodeHeaders>(
+        mut self,
+        encoded: Vec<(crate::http::HeaderName, crate::http::HeaderValue)>,
+    ) -> Continued<G> {
+        crate::extract::params::header::write_encoded::<G>(self.response.headers_mut(), encoded);
+
+        Continued {
+            response: self.response,
+            _headers: std::marker::PhantomData,
+        }
+    }
 }
 
 // Construction, not a bound, keeps `H` a header group.
