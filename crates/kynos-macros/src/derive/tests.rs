@@ -5351,6 +5351,22 @@ mod security_scheme {
                 ),
                 "contains ' '",
             ),
+            case(
+                "an http scheme that never says which scheme it is",
+                quote::quote!(
+                    #[security(http)]
+                    struct Negotiate;
+                ),
+                "must say which authentication scheme it is",
+            ),
+            case(
+                "an http scheme named outside the token grammar",
+                quote::quote!(
+                    #[security(http(scheme = "Digest realm"))]
+                    struct Digest;
+                ),
+                "an RFC 9110 auth-scheme is a token",
+            ),
         ]
     }
 
@@ -5950,6 +5966,30 @@ mod security_scheme {
                 struct ApiKey;
             );
             assert_eq!(expand_inner(&input).is_err(), token_only, "{location}");
+        }
+    }
+
+    /// An `http` kind's `scheme` is both the Security Scheme Object's REQUIRED
+    /// `scheme` and the 401's challenge (RFC 9110 §11.6.1), so an empty
+    /// options list and an empty string are refused like a missing one.
+    #[test]
+    fn an_http_scheme_without_a_token_is_refused() {
+        let refused: [syn::DeriveInput; 3] = [
+            syn::parse_quote!(
+                #[security(http())]
+                struct Listed;
+            ),
+            syn::parse_quote!(
+                #[security(http(format = "opaque"))]
+                struct Formatted;
+            ),
+            syn::parse_quote!(
+                #[security(http(scheme = ""))]
+                struct Empty;
+            ),
+        ];
+        for input in refused {
+            assert!(expand_inner(&input).is_err(), "{} expands", input.ident);
         }
     }
 
