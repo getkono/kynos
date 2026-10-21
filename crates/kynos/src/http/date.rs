@@ -99,8 +99,9 @@ fn rfc850(value: &str) -> Option<u64> {
     let rest = rest.strip_prefix('-')?;
     let (year, rest) = (rest.get(..2)?, rest.get(2..)?);
 
-    // Section 5.6.7's two-digit year rule, anchored on a fixed pivot rather
-    // than today's clock so parsing is deterministic.
+    // A fixed pivot, deliberately not section 5.6.7's rule: that one reads a
+    // year more than 50 years ahead of today's clock as the past, and a parser
+    // must not depend on when it runs (docs/standards.md#deviations-argued).
     let year = digits(year, 2)?;
     let year = if year >= 70 { 1900 + year } else { 2000 + year };
 

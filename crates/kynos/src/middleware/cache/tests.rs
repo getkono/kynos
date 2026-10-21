@@ -626,13 +626,15 @@ fn the_key_names_the_authority_the_request_carried() {
         request
     };
 
+    let get = kynos_openapi::Method::Get;
     assert_eq!(
-        primary_key("", &request("/reports?page=2", None), "/reports").authority,
+        primary_key("", get, &request("/reports?page=2", None), "/reports").authority,
         None
     );
     assert_eq!(
         primary_key(
             "",
+            get,
             &request("http://B.example.com/reports", Some("A.example.com")),
             "/reports"
         )

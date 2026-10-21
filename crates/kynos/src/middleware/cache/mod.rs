@@ -274,11 +274,16 @@ where
 
         async move {
             // A key names an operation, and a fallback has none to store under.
-            let Some(route) = next.route() else {
+            // A method OpenAPI has no field for is never routed, so a routed
+            // request always names one.
+            let (Some(route), Some(keyed)) = (
+                next.route(),
+                kynos_openapi::Method::from_wire_str(request.method().as_str()),
+            ) else {
                 return Ok(next.run(request).await.unrouted());
             };
 
-            let key = primary_key(self.namespace, &request, route.path());
+            let key = primary_key(self.namespace, keyed, &request, route.path());
             // A request no router dispatched carries no record and is read as
             // guarded: refusing a store is the safe error.
             let secured = request
@@ -399,13 +404,17 @@ where
     }
 }
 
-/// What `request` is filed under, for the operation whose `paths` key is
-/// `route`.
-fn primary_key(namespace: &'static str, request: &http::Request, route: &str) -> PrimaryKey {
+/// What `request`, sent with `method`, is filed under, for the operation whose
+/// `paths` key is `route`.
+fn primary_key(
+    namespace: &'static str,
+    method: kynos_openapi::Method,
+    request: &http::Request,
+    route: &str,
+) -> PrimaryKey {
     PrimaryKey {
         namespace,
-        method: kynos_openapi::Method::from_wire_str(request.method().as_str())
-            .unwrap_or(kynos_openapi::Method::Get),
+        method,
         authority: crate::http::own_authority(
             request.headers(),
             request
