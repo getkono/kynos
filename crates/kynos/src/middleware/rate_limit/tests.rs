@@ -164,7 +164,7 @@ fn rendered<G: EncodeHeaders>(group: &G) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The draft's structured fields, rendered per RFC 8941.
+/// The draft's structured fields, rendered per RFC 9651.
 #[test]
 fn the_standard_fields_render_every_quota() {
     let fields = RateLimitFields {
@@ -315,7 +315,7 @@ fn a_policy_name_carrying_a_quote_is_escaped() {
     assert_eq!(
         rendered(&fields)[0].1,
         r#""a\"b\\c";r=0;t=0"#,
-        "RFC 8941 section 3.3.3 escapes both"
+        "RFC 9651 section 3.3.3 escapes both"
     );
 }
 

@@ -8,19 +8,18 @@
 //!
 //! A derive is a type-level surface, so what a derived decoder does is not
 //! checked here, with recorded exceptions, which no other target exercises:
-//! the query decoder's refusal of a declared value that is not UTF-8 or that
-//! breaks a bound, and its decoding of `+` as a space and of an escaped `+` as
-//! a `+`; the cookie
-//! decoder's refusal of a declared cookie that is not ASCII; the header
+//! the path, query, header and cookie decoders' refusal of a value that breaks
+//! a bound; the query decoder's refusal of a declared value that is not UTF-8,
+//! and its decoding of `+` as a space and of an escaped `+` as a `+`; the
+//! cookie decoder's refusal of a declared cookie that is not ASCII; the header
 //! decoder's refusal of a missing required header or a value that is not
 //! ASCII, its reading of an absent optional header as `None`, the value a
 //! fixed header is written, compared and described as, and the 500 a value
-//! that is no field value is refused with; the text a
-//! derived `ParamValue` reads and writes; and the response a derived `Reply` or
-//! `ApiError` writes. Their tests call the
-//! derived code directly, with no server. What *is* checked
-//! beyond compiling is the description a derive emits, and what the default
-//! `QueryParams::parameters` makes of a derived schema.
+//! that is no field value is refused with; the text a derived `ParamValue`
+//! reads and writes; and the response a derived `Reply` or `ApiError` writes.
+//! Their tests call the derived code directly, with no server. What *is*
+//! checked beyond compiling is the description a derive emits, and what the
+//! default `QueryParams::parameters` makes of a derived schema.
 
 #![cfg(feature = "macros")]
 #![allow(dead_code)]

@@ -1060,11 +1060,12 @@ fn a_route_attribute_tag_raises_no_undocumented_tag_violation() {
     assert!(undocumented.is_empty(), "{undocumented:?}");
 }
 
-/// The endpoint scope owes the same two things, and today pays only one.
+/// The endpoint scope owes the same two things: the operation names the tag,
+/// and the document `tags` declares it with its description.
 ///
-/// `EndpointBuilder::tag` pushes a name and nothing else, so a router that
-/// never repeats the tag itself emits an operation grouped under a heading the
-/// document does not declare.
+/// `EndpointBuilder::tag` registers the tag's metadata as well as its name, so
+/// a router that never repeats the tag itself still declares the heading it
+/// groups the operation under.
 #[test]
 fn an_endpoint_builder_tag_documents_itself_in_the_document_tags() {
     let endpoint = EndpointBuilder::new(

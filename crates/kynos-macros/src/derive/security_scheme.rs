@@ -9,7 +9,7 @@
 //!
 //! kind   := bearer | bearer(format = "JWT")
 //!         | basic
-//!         | http(scheme = "<RFC 7235 token>" [, format = "..."])
+//!         | http(scheme = "<RFC 9110 auth-scheme token>" [, format = "..."])
 //!         | api_key(in = "header" | "query" | "cookie", name = "<field>")
 //!         | mutual_tls
 //!         | openid_connect(url = "<discovery URL>")

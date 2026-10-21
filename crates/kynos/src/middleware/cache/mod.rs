@@ -261,135 +261,141 @@ where
     type Adds = D::Headers;
     type Short = Infallible;
 
-    async fn intercept(
+    // A block rather than an `async fn`, whose body rebinds each argument and
+    // so keeps the request twice across the store's lookup.
+    fn intercept(
         &self,
         request: http::Request,
-        (): (),
+        reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> Result<Continued<D::Headers>, Infallible> {
-        // A key names an operation, and a fallback has none to store under.
-        let Some(route) = next.route() else {
-            return Ok(next.run(request).await.unrouted());
-        };
+    ) -> impl Future<Output = Result<Continued<D::Headers>, Infallible>> + Send {
+        let () = reads;
 
-        let key = primary_key(self.namespace, &request, route.path());
-        // A request no router dispatched carries no record and is read as
-        // guarded: refusing a store is the safe error.
-        let secured = request
-            .extensions()
-            .get::<crate::router::dispatch::Routed>()
-            .is_none_or(|routed| routed.secured);
+        async move {
+            // A key names an operation, and a fallback has none to store under.
+            let Some(route) = next.route() else {
+                return Ok(next.run(request).await.unrouted());
+            };
 
-        let request_headers = request.headers().clone();
-        let method = request.method().clone();
+            let key = primary_key(self.namespace, &request, route.path());
+            // A request no router dispatched carries no record and is read as
+            // guarded: refusing a store is the safe error.
+            let secured = request
+                .extensions()
+                .get::<crate::router::dispatch::Routed>()
+                .is_none_or(|routed| routed.secured);
 
-        // A hit is served before the operation's guard runs, so for a guarded
-        // operation only a response that said it may be shared is a hit.
-        let stored = if freshness::forbids_reuse(&request_headers) {
-            None
-        } else {
-            self.store
-                .get(&key, context)
-                .await
-                .into_iter()
-                .filter(|stored| stored.selected_by(&request_headers))
-                .filter(|stored| !secured || freshness::servable_when_secured(stored.headers()))
-                .find(StoredResponse::is_fresh)
-        };
-        if let Some(stored) = stored {
-            let age = stored.age();
-            let etag = stored
-                .headers()
+            let request_headers = request.headers().clone();
+            let method = request.method().clone();
+
+            // A hit is served before the operation's guard runs, so for a guarded
+            // operation only a response that said it may be shared is a hit.
+            let stored = if freshness::forbids_reuse(&request_headers) {
+                None
+            } else {
+                self.store
+                    .get(&key, context)
+                    .await
+                    .into_iter()
+                    .filter(|stored| stored.selected_by(&request_headers))
+                    .filter(|stored| !secured || freshness::servable_when_secured(stored.headers()))
+                    .find(StoredResponse::is_fresh)
+            };
+            if let Some(stored) = stored {
+                let age = stored.age();
+                let etag = stored
+                    .headers()
+                    .get(header::ETAG)
+                    .and_then(|value| value.to_str().ok())
+                    .map(ToOwned::to_owned)
+                    .or_else(|| D::DERIVES.then(|| derived_etag(stored.body())));
+
+                let mut response =
+                    http::Response::new(crate::http::body::Body::from_bytes(stored.body().clone()));
+                *response.status_mut() = stored.status();
+                *response.headers_mut() = stored.headers().clone();
+
+                // A `Continued::new` outside `Next::run` (the other is `RequestId`'s
+                // refused group): sound, because a hit replays a response this
+                // operation itself produced.
+                return Ok(Continued::new(response).with_headers(D::headers(age, etag)));
+            }
+
+            let mut continued = next.run(request).await;
+
+            // RFC 9111 section 4.4 invalidates the target URI on a non-error status
+            // to an unsafe (or unknown) method; the URI's stored entries are its
+            // `GET` and `HEAD` keys, not the key this request's method would build.
+            if !method.is_safe() && is_non_error(continued.status()) {
+                for stored in [kynos_openapi::Method::Get, kynos_openapi::Method::Head] {
+                    self.store
+                        .invalidate(
+                            &PrimaryKey {
+                                method: stored,
+                                ..key.clone()
+                            },
+                            context,
+                        )
+                        .await;
+                }
+            }
+
+            let Ok(freshness) = freshness::storable(
+                &method,
+                continued.status(),
+                &request_headers,
+                continued.headers(),
+                secured,
+                self.default_freshness,
+            ) else {
+                return Ok(continued.with_headers(D::headers(Duration::ZERO, None)));
+            };
+
+            // A body not buffered is forwarded as it arrived, and one whose read
+            // failed is forwarded failing.
+            let bytes = match bounded(continued.take_body(), self.max_body_bytes).await {
+                Ok(bytes) => bytes,
+                Err(unbuffered) => {
+                    continued.set_body(unbuffered);
+                    return Ok(continued.with_headers(D::headers(Duration::ZERO, None)));
+                }
+            };
+
+            let mut headers = continued.headers().clone();
+            freshness::strip(&mut headers);
+
+            let etag = headers
                 .get(header::ETAG)
                 .and_then(|value| value.to_str().ok())
                 .map(ToOwned::to_owned)
-                .or_else(|| D::DERIVES.then(|| derived_etag(stored.body())));
+                .or_else(|| D::DERIVES.then(|| derived_etag(&bytes)));
 
-            let mut response =
-                http::Response::new(crate::http::body::Body::from_bytes(stored.body().clone()));
-            *response.status_mut() = stored.status();
-            *response.headers_mut() = stored.headers().clone();
-
-            // A `Continued::new` outside `Next::run` (the other is `RequestId`'s
-            // refused group): sound, because a hit replays a response this
-            // operation itself produced.
-            return Ok(Continued::new(response).with_headers(D::headers(age, etag)));
-        }
-
-        let mut continued = next.run(request).await;
-
-        // RFC 9111 section 4.4 invalidates the target URI on a non-error status
-        // to an unsafe (or unknown) method; the URI's stored entries are its
-        // `GET` and `HEAD` keys, not the key this request's method would build.
-        if !method.is_safe() && is_non_error(continued.status()) {
-            for stored in [kynos_openapi::Method::Get, kynos_openapi::Method::Head] {
-                self.store
-                    .invalidate(
-                        &PrimaryKey {
-                            method: stored,
-                            ..key.clone()
-                        },
-                        context,
-                    )
-                    .await;
+            if refuses_cross_origin(&headers) {
+                continued.set_body(crate::http::body::Body::from_bytes(bytes));
+                return Ok(continued.with_headers(D::headers(Duration::ZERO, etag)));
             }
-        }
 
-        let Ok(freshness) = freshness::storable(
-            &method,
-            continued.status(),
-            &request_headers,
-            continued.headers(),
-            secured,
-            self.default_freshness,
-        ) else {
-            return Ok(continued.with_headers(D::headers(Duration::ZERO, None)));
-        };
+            let vary = freshness::vary(&headers);
 
-        // A body not buffered is forwarded as it arrived, and one whose read
-        // failed is forwarded failing.
-        let bytes = match bounded(continued.take_body(), self.max_body_bytes).await {
-            Ok(bytes) => bytes,
-            Err(unbuffered) => {
-                continued.set_body(unbuffered);
-                return Ok(continued.with_headers(D::headers(Duration::ZERO, None)));
-            }
-        };
+            self.store
+                .put(
+                    key,
+                    StoredResponse::new(
+                        continued.status(),
+                        headers,
+                        bytes.clone(),
+                        vary,
+                        &request_headers,
+                        freshness,
+                    ),
+                    context,
+                )
+                .await;
 
-        let mut headers = continued.headers().clone();
-        freshness::strip(&mut headers);
-
-        let etag = headers
-            .get(header::ETAG)
-            .and_then(|value| value.to_str().ok())
-            .map(ToOwned::to_owned)
-            .or_else(|| D::DERIVES.then(|| derived_etag(&bytes)));
-
-        if refuses_cross_origin(&headers) {
             continued.set_body(crate::http::body::Body::from_bytes(bytes));
-            return Ok(continued.with_headers(D::headers(Duration::ZERO, etag)));
+            Ok(continued.with_headers(D::headers(Duration::ZERO, etag)))
         }
-
-        let vary = freshness::vary(&headers);
-
-        self.store
-            .put(
-                key,
-                StoredResponse::new(
-                    continued.status(),
-                    headers,
-                    bytes.clone(),
-                    vary,
-                    &request_headers,
-                    freshness,
-                ),
-                context,
-            )
-            .await;
-
-        continued.set_body(crate::http::body::Body::from_bytes(bytes));
-        Ok(continued.with_headers(D::headers(Duration::ZERO, etag)))
     }
 }
 
