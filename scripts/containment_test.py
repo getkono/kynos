@@ -2042,6 +2042,28 @@ class Main(unittest.TestCase):
         self.assertEqual(len(reported), 1)
         self.assertIn("crates/kynos/src/response/stream/sse.rs: tokio::spawn", reported[0])
 
+    def test_a_directory_site_written_without_its_slash_still_holds_its_names(self):
+        # The *Site* rule reads `middleware/limits` as the directory, so the
+        # *Names* rule must too: read as one exact file, the row would let
+        # every file under it name any tokio item.
+        broken = self.rewriting(
+            gate.ARCHITECTURE,
+            "| `middleware/limits/` |",
+            "| `middleware/limits` |",
+        )
+        corpus = self.appending(
+            "crates/kynos/src/middleware/limits/concurrency.rs",
+            "\npub fn probe() {\n    tokio::spawn(async {});\n}\n",
+        )
+        status, failures = self.report(architecture=broken, corpus=corpus)
+        self.assertEqual(status, 1)
+        self.assertEqual(self.naming(failures, "named outside `server/`"), [])
+        reported = self.naming(failures, "Names cell does not")
+        self.assertEqual(len(reported), 1)
+        self.assertIn(
+            "crates/kynos/src/middleware/limits/concurrency.rs: tokio::spawn", reported[0]
+        )
+
     def test_an_unreadable_names_cell_is_reported(self):
         # A cell the rule cannot read enforces nothing, so it fails rather
         # than admitting every tokio item at its site.

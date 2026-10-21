@@ -315,7 +315,18 @@ def permitted(path, allowed):
     """
     if path.startswith(HOME_SITE):
         return True
-    return any(path == site or path.startswith(site.rstrip("/") + "/") for site in allowed)
+    return allowed_at(path, allowed)
+
+
+def allowed_at(path, sites):
+    """Whether `path` is one of an allowance row's `sites`, or under one.
+
+    A site is a file or a directory, with or without a trailing `/`, matched as
+    a path segment prefix, so `runtime` holds `runtime/spawn.rs` but not
+    `runtimefoo.rs`. The *Site* and *Names* rules both match through this, so
+    no file a row lets name tokio escapes the items that row names.
+    """
+    return any(path == site or path.startswith(site.rstrip("/") + "/") for site in sites)
 
 
 #: The runtime's own module: its row's *Names* cell is prose, and not enforced.
@@ -1315,7 +1326,7 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
         unlisted = []
         texts = dict(corpus.files)
         for path in sorted(corpus.naming("tokio")):
-            covering = [names for sites, names in named_rows if listed(path, sites)]
+            covering = [names for sites, names in named_rows if allowed_at(path, sites)]
             if not covering:
                 continue
             unlisted += [
