@@ -59,7 +59,8 @@ impl Asset {
     ///
     /// [`InvalidAsset::Path`] unless `path` is relative, `/`-separated, and
     /// holds only segments a client can send and a path template carries
-    /// literally: none empty, none `.` or `..` whether written out or as
+    /// literally: none empty but the last, so a trailing `/` is accepted, none
+    /// `.` or `..` whether written out or as
     /// `%2e` (a client removes those before sending, RFC 3986 section 5.2.4),
     /// and no `{`, which would make it a
     /// variable matching paths that are not this file.
