@@ -9,7 +9,7 @@ fn each_format_accepts_the_levels_it_defines_and_no_others() {
     for level in 0..=9 {
         assert!(
             GzipLevel::new(level).is_some(),
-            "gzip refused level {level}, which DEFLATE defines"
+            "gzip refused level {level}, which zlib defines"
         );
     }
     assert_eq!(GzipLevel::new(10), None);
@@ -17,7 +17,7 @@ fn each_format_accepts_the_levels_it_defines_and_no_others() {
     for level in 0..=11 {
         assert!(
             BrotliLevel::new(level).is_some(),
-            "brotli refused quality {level}, which RFC 7932 defines"
+            "brotli refused quality {level}, which the reference encoder defines"
         );
     }
     assert_eq!(BrotliLevel::new(12), None);
@@ -73,7 +73,7 @@ fn the_default_is_the_documented_one() {
 #[test]
 fn both_constructors_encode_at_gzip_6_brotli_4_and_zstd_3() {
     let documented = Levels {
-        gzip: GzipLevel::new(6).expect("a DEFLATE level"),
+        gzip: GzipLevel::new(6).expect("a zlib level"),
         brotli: BrotliLevel::new(4).expect("a brotli quality"),
         zstd: ZstdLevel::new(3).expect("a zstd level"),
     };

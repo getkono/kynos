@@ -35,8 +35,9 @@
 //!
 //! Order is not part of the type: [`CompatibleWith`](stack::CompatibleWith)
 //! checks only that two interceptors do not add one header or answer with one
-//! status. `docs/middleware.md` lists the arrangements that are wrong, such as
-//! `Conditional` outside `Cache`.
+//! status. `docs/middleware.md`'s ordering section names the places order
+//! matters, such as `Conditional` outside `Cache` and `Cache` outside `Cors`
+//! and `Compression`.
 
 pub mod catch_panic;
 pub mod contribution;
