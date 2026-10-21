@@ -44,9 +44,9 @@ satisfying it means authenticating *and* holding them: see
   request.
 - **A combination's 401 carries the first challenge among its schemes.**
   RFC 9110 section 11.6.1's `WWW-Authenticate = #challenge` admits a list and
-  requires a 401 to carry at least one, but `Requirement::challenge` returns a
-  single `&'static str`, fixed by the type rather than composed per request, so
-  one is what is sent. Every built-in scheme has one, so tuple
+  requires a 401 to carry at least one, but `Requirement::challenge` returns at
+  most one fixed `&'static str`, set by the type rather than composed per
+  request, so one is what is sent. Every built-in scheme has one, so tuple
   order picks it: `AnyOf<(MutualTls, Bearer)>` challenges `MutualTLS`, and
   listing `Bearer` first advertises `Bearer`.
 - **A combinator takes schemes, from two to four**, never another combinator,
