@@ -134,8 +134,11 @@ every client without being told, so `ContentEncoding` sets `DESCRIBED` to
 `false`, and so does `Cors` unless `document_response_headers` asks otherwise;
 both stay out of the emitted document. This does not weaken anything: a second
 interceptor touching one of those names still fails to compile. `Vary` is the
-exception in the other direction — no group names it, so it is neither described
-nor a conflict, and each group's `VARIES` is merged into the one field instead.
+exception in the other direction — no interceptor group names it, so it is
+neither described nor a conflict, and each group's `VARIES` is merged into the
+one field instead. A static asset endpoint is not an interceptor: its response
+group names `Vary`, which it sets only for files with stored codings, and
+describes it.
 The two questions are "can this collide" and "does a consumer need to hear about
 it", and only the first is about correctness.
 
