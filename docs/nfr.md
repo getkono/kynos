@@ -609,8 +609,16 @@ is what it resolves, and the parsing beneath them is private.
 
 Splitting a module that declares *one* type and a pile of `impl` blocks costs
 nothing, because the type stays declared where it was and an inherent `impl` may
-sit in any module of the crate. That is why `router/`, `emit/downgrade/` and
-`derive/schema/` were split and the rest were not.
+sit in any module of the crate. That is why `router/`, `emit/downgrade/`,
+`derive/schema/` and `unchecked/` were split: `unchecked.rs` keeps its types and
+the `tower` bridge, and the `impl` blocks registering a waiver sit in a private
+`unchecked/route.rs`. Its other child, `unchecked/describe.rs`, left for a
+different reason: `docs/testing.md`'s off-path table allows a `Document` per
+file, and `unchecked.rs` serves requests. `derive/api_error/` and
+`derive/security_scheme/` were split because each held two concerns, a derive's
+attribute grammar and the code that expands it, and since nothing in
+`kynos-macros` is public but the derives, the split cost no path. The rest were
+not.
 
 `middleware/limits/` was split at the path cost, because it was never one
 family: four interceptors sharing no type, each with its own response and its
@@ -688,7 +696,7 @@ longer one. What pushed it over was `Examples::as_inline` and
 splitting the builder from what it builds would turn `server::Server` into
 `server::builder::Server`. What pushed it over was one more setter,
 `request_body_idle_timeout`, whose documentation is the part a caller reads
-before choosing `None`; the timer itself lives in `middleware/limits/`.
+before choosing `None`; the timer itself lives in `server/request_body.rs`.
 
 `server/connection.rs` is private, so a split would cost no path, and it is
 still one concern: handing hyper one accepted socket and deciding when to stop.
@@ -792,7 +800,7 @@ member's name, and one ending in `/` is a tree.
 | compatibility | `socket2` is named only in `server/tcp.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `h2` and `httparse` are never named | `mise run containment:check` | `enforced` |
 | compatibility | `tower`, `tower-layer` and `tower-service` are named only in `unchecked.rs` and under `unchecked/` | `mise run containment:check` | `enforced` |
-| compatibility | `http-body` and `http-body-util` are named only in `http/body.rs`, `http/body/watched.rs`, `middleware/cache/mod.rs`, `response/range/source.rs`, `router/dispatch.rs`, `server/request_body.rs` and `test/mod.rs`, and under `extract/body/`, `middleware/compression/`, `middleware/decompression/` and `middleware/limits/` | `mise run containment:check` | `enforced` |
+| compatibility | `http-body` and `http-body-util` are named only in `http/body.rs`, `http/body/watched.rs`, `middleware/cache/mod.rs`, `response/range/source.rs`, `server/request_body.rs` and `test/mod.rs`, and under `extract/body/`, `middleware/compression/` and `middleware/limits/` | `mise run containment:check` | `enforced` |
 | compatibility | `async-compression` is named only under `middleware/compression/` and `middleware/decompression/` | `mise run containment:check` | `enforced` |
 | compatibility | `serde_html_form` is named only in `extract/body/form.rs`, `response/codec/form.rs` and `test/mod.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `tracing` is named only under `server/` and in `middleware/trace.rs` | `mise run containment:check` | `enforced` |
