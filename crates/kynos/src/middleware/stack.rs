@@ -11,8 +11,10 @@
 //! # What counts as a collision
 //!
 //! Two interceptors covering one operation collide when they both add the same
-//! response header, or both answer with the same status. Reading the same
-//! request header is *not* a collision.
+//! response header, or both short-circuit with the same status. Reading the
+//! same request header is *not* a collision, and neither is the 400 a fallible
+//! [`Interceptor::Reads`] answers when its headers fail to decode: that status
+//! is never compared, since it is the one a handler's own extractors share.
 
 use std::marker::PhantomData;
 

@@ -754,10 +754,11 @@ async fn exercise_the_operations(client: &TestClient<App>) {
         .await
         .assert_status(StatusCode::OK);
 
-    // Both arms of the negotiation, because the declared `Content-Language`
-    // enumerates two tags and `assert_conformance` checks the value against
-    // that schema. The second is the fallback: a language nobody offers is a
-    // 200 rather than a 406, so the document had better not say otherwise.
+    // Both arms of the negotiation, so `assert_conformance` sees each one's
+    // status and body against the declaration. It checks only that a required
+    // header was sent, not `Content-Language`'s value against the two tags its
+    // schema enumerates. The second is the fallback: a language nobody offers
+    // is a 200 rather than a 406, so the document had better not say otherwise.
     client
         .get("/greeting")
         .header("accept-language", "fr-CA")
