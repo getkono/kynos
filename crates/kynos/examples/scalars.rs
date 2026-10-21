@@ -82,7 +82,7 @@ struct Booking {
     /// not rivals.
     exchange_rate: bigdecimal::BigDecimal,
 
-    /// `integer` / `uint8`, with `minimum: 0`.
+    /// `integer` / `uint8`, with `minimum: 0` and `maximum: 255`.
     ///
     /// The OAI Format Registry names every width in both signednesses, so a
     /// `u8` is a `uint8` rather than an `int32` wide enough to hold one. A
