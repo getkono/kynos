@@ -455,8 +455,10 @@ surface: generics that exist for performance stay private. RPITIT would not
 unify the elided form with `async fn` in an implementation either, so the
 ergonomic cost was not even buying compilation.
 
-The price is one allocation per authenticated request, against a verifier that
-is about to check a signature or read a session store.
+The price is a few allocations per authenticated request — one for a bearer
+token, two for a generic HTTP scheme's name and credentials, three for Basic's
+decoded text, user-id and password — against a verifier that is about to check a
+signature or read a session store.
 
 ### Why base64 is not a dependency
 
