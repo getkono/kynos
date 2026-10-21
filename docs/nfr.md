@@ -265,7 +265,8 @@ This is the future `Service::call` boxes, not the 280-byte one it returns and
 its state discriminant and padding making up the rest, and
 the 248-byte `Request` appears in it five times over: once as the closure's
 capture, once as `serve`'s and once as its local, once as `run`'s, and again
-inside `Next::run`. A moved-from capture keeps its slot in every state of a
+inside `Next::run`, which has since stopped keeping one
+([Middleware](#middleware)). A moved-from capture keeps its slot in every state of a
 coroutine, so none of them overlap. `run` also reserves 728 bytes for the
 panic-recovery future whether or not the operation catches panics. Returning
 `serve`'s future from the closure instead of awaiting it inside another would
@@ -465,6 +466,28 @@ figures are the measurement rather than the target, per
 same wherever it sits — is what survives a change to either. This row is where
 the status of the split's counted half is read, rather than from the split
 paragraph in [Status](#status).
+
+**What that box holds is the interceptor's own future, and nothing else.**
+The erasure decodes `Reads` and calls `intercept` before boxing, and
+`Next::run` hands the request to the next layer when it is called rather than
+when it is polled, so neither keeps a copy of the request beside the
+interceptor's. A forwarding `async fn` interceptor boxes 376 bytes where it once
+boxed 1,056, four requests and more. The built-ins that read the request before
+the chain runs read it before building their future, which then holds what they
+read and the rest of the chain: `SetCookies` boxes 80 bytes, `SecurityHeaders`
+96, `Cors` 144, `RequestId` 208, `Compression` 376 and `Cache` 1,056, against
+1,328 to 9,912 before. `Compression` boxes an encode apart, so an encoded
+response pays one block more for gzip and zstd and a declined one carries no
+encoder state; brotli's encode was boxed already. The dispatch future
+`Service::call` boxes narrows by the same mechanism, from 2,296 bytes to 1,944.
+Every width here is a Linux test build's at rustc 1.97.1;
+[`middleware/tests.rs`](../crates/kynos/src/middleware/tests.rs) holds the
+forwarding one and the four that only read the request as relations to the
+width of a `Request`, and `Compression`'s under 1 KiB. `Cache`'s, which keeps
+the request across its store's lookup, is held by no test. The
+cost of eagerness is that what `intercept` does before returning its future now
+runs when the layer outside it calls `Next::run`; recovery still covers it,
+which [`tests/panics.rs`](../crates/kynos/tests/panics.rs) holds.
 
 ## Runtime
 
