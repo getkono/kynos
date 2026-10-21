@@ -85,7 +85,7 @@ pub(crate) fn timeout() -> Box<dyn Served> {
     built(router().intercept(Timeout::new(Duration::from_secs(30))))
 }
 
-/// The table behind an idle bound on the request body no profiled request
+/// The table behind an idle bound on the response body no profiled response
 /// reaches.
 pub(crate) fn body_timeout() -> Box<dyn Served> {
     built(router().intercept(BodyTimeout::idle(Duration::from_secs(15))))
