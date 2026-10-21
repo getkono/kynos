@@ -67,7 +67,8 @@
 //! Server-Sent Events, item streams such as JSON Lines, and whole-query-string
 //! parameters, none of which OpenAPI 3.1 can describe. A streamed binary body
 //! needs no flag, since 3.1 describes it as it does a buffered one. Enabling it is additive: the model
-//! types it extends are [`non_exhaustive`](openapi::SpecVersion). The
+//! enums it extends are [`non_exhaustive`](openapi::SpecVersion), and the
+//! structs it extends are not, so a literal or pattern of one ends in `..`. The
 //! default-on `json` feature adds
 //! application JSON request and response codecs; it does not control OpenAPI
 //! document serialization or the framework's problem-details responses.
