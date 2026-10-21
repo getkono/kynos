@@ -491,8 +491,9 @@ const ENDPOINT_FUTURE_BYTES: usize = 536;
 /// handler's future it awaits in place.
 ///
 /// Two rather than one because a handler's future holds the request it
-/// extracts from, and the endpoint's `async` block keeps the one it handed
-/// over — a moved-from capture keeps its slot in every state of a coroutine.
+/// extracts from, and `Endpoint::call`, an `async fn`, keeps its own `request`
+/// argument after handing it over — a moved-from argument keeps its slot in
+/// every state of a coroutine.
 /// Measured on the public trait over the endpoint `ping` mounts, which is the
 /// future `DynEndpoint` boxes.
 #[test]
