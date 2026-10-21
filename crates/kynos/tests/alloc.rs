@@ -314,18 +314,13 @@ const PER_LAYER: usize = 1;
 /// rebuilt and the handle it called through, and hyper holds that inside
 /// per-connection state of its own. Neither is measured here.
 ///
-/// Read at both feature sets this target is built at, by setting the ceiling
-/// to zero and taking the width out of the failure: 280 bytes at baseline
-/// (`cargo nextest run -p kynos --test alloc`) and 280 with `--all-features`.
-/// Only `<=` is asserted per build, so this is where the two readings are
-/// recorded — an equality would fail on the first build whose feature set
-/// makes the future narrower, which is not a regression.
-///
-/// Both readings are Linux's. The width is the compiler's layout of a state
-/// machine over platform types, so macOS reads its own: 288 bytes with
-/// `--all-features` on the CI `macos-latest` runner, where 280 failed. Windows
-/// reads within 280 on its runner.
-const DISPATCH_FUTURE_BYTES: usize = if cfg!(target_os = "macos") { 288 } else { 280 };
+/// Sixteen bytes, at both feature sets this target is built at: the future is
+/// the box the service puts every request in, so this is a pointer to it and
+/// its vtable on every 64-bit target. It was 280, an `async fn` holding the
+/// request beside that box — and a guard on the pointer saw nothing while the
+/// boxed future behind it grew from 1904 bytes to 2544. What the box holds is
+/// guarded where the crate can name it, `router/dispatch/tests.rs`.
+const DISPATCH_FUTURE_BYTES: usize = 16;
 
 /// The record, for the middleware half: what one request costs at each depth a
 /// stack is mounted at, over interceptors that allocate nothing of their own.
@@ -443,20 +438,18 @@ const FALLBACK_ENTRY: usize = 4;
 /// [`Service::call`] returns, and that a chain in front of it adds nothing to
 /// that width.
 ///
-/// [`Service::call`] is an `async fn` over an erased dispatcher, so the stack
-/// is gone from the type before any caller sees a future: all three depths
-/// produce one future type, which is the only reason the array below compiles.
-/// **That compile is the whole of the depth-invariance assertion**, so nothing
-/// below re-states it as an equality that could not fail.
+/// [`Service::call`] hands back the future of an erased dispatcher, so the
+/// stack is gone from the type before any caller sees a future: all three
+/// depths produce one future type, which is the only reason the array below
+/// compiles. **That compile is the whole of the depth-invariance assertion**,
+/// so nothing below re-states it as an equality that could not fail.
 ///
 /// The ceiling is the half that can fail, and it is a ratchet rather than a
 /// target: a future that widened would cost every in-flight request on the
-/// server, which no allocation count above can see. 280 bytes at every depth,
-/// and 280 at each of the two feature sets this target is built at on Linux
-/// (288 on macOS) — see
-/// [`DISPATCH_FUTURE_BYTES`] for the readings and for what the number does not
-/// cover. That is also the figure the request for this guard named, but it is
-/// recorded here because it was measured — a number carried over unmeasured
+/// server, which no allocation count above can see. 16 bytes at every depth
+/// and at each of the two feature sets this target is built at — see
+/// [`DISPATCH_FUTURE_BYTES`] for why, and for what the number does not cover.
+/// It is recorded because it was measured — a number carried over unmeasured
 /// would have pinned whatever it was guessed at, and been indistinguishable
 /// from this one when it was wrong.
 #[test]
@@ -481,6 +474,55 @@ fn a_chain_does_not_widen_the_dispatch_future() {
          {DISPATCH_FUTURE_BYTES}; every request in flight carries one, so \
          raising this ceiling is a change to docs/nfr.md"
     );
+}
+
+/// How wide the future an endpoint boxes for every matched request is allowed
+/// to be, for a handler that takes nothing: 536 bytes on Linux at both feature
+/// sets this target is built at, read as [`DISPATCH_FUTURE_BYTES`] is. It was
+/// 808, when an `async fn` around the handler's future kept the request a
+/// third time.
+///
+/// Linux's alone, as a ceiling; [`an_endpoint_future_holds_two_requests`]
+/// holds the relation everywhere.
+const ENDPOINT_FUTURE_BYTES: usize = 536;
+
+/// The future [`Endpoint::call`](kynos::router::endpoint::Endpoint::call)
+/// returns holds two requests and no third: its own, and the one inside the
+/// handler's future it awaits in place.
+///
+/// Two rather than one because a handler's future holds the request it
+/// extracts from, and `Endpoint::call`, an `async fn`, keeps its own `request`
+/// argument after handing it over — a moved-from argument keeps its slot in
+/// every state of a coroutine.
+/// Measured on the public trait over the endpoint `ping` mounts, which is the
+/// future `DynEndpoint` boxes.
+#[test]
+fn an_endpoint_future_holds_two_requests() {
+    use kynos::router::endpoint::{Endpoint, builder::EndpointBuilder};
+
+    let endpoint = EndpointBuilder::<(), _, _>::new(
+        kynos::openapi::Method::Get,
+        kynos::openapi::PathTemplate::parse("/ping").expect("a usable path template"),
+        ping,
+    );
+    let future = Endpoint::call(&endpoint, request(Method::GET, STACKED, None, b""), &());
+    let width = size_of_val(&future);
+    let request = size_of::<Request>();
+
+    assert!(
+        width < 3 * request,
+        "the endpoint future is {width} bytes, room for three {request}-byte \
+         requests; something between the box and the handler keeps a copy of \
+         its own"
+    );
+    if cfg!(target_os = "linux") {
+        assert!(
+            width <= ENDPOINT_FUTURE_BYTES,
+            "the endpoint future is {width} bytes against a recorded \
+             {ENDPOINT_FUTURE_BYTES}; every matched request carries one, so \
+             raising this ceiling is a change to docs/nfr.md"
+        );
+    }
 }
 
 /// The instrument's own invariant, and the one every number below rests on: a

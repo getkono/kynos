@@ -23,8 +23,10 @@ use crate::{
 ///
 /// Each poll of the boxed future is wrapped in
 /// [`catch_unwind`](std::panic::catch_unwind); one that unwound is never
-/// polled again.
-pub(crate) async fn recover<F>(future: F) -> Result<Response, Box<dyn Any + Send>>
+/// polled again. Boxed on the call rather than on the first poll, so the
+/// future this returns is a pointer wide and an enclosing future that awaits
+/// it reserves no room for `future` itself.
+pub(crate) fn recover<F>(future: F) -> impl Future<Output = Result<Response, Box<dyn Any + Send>>>
 where
     F: Future<Output = Response>,
 {
@@ -37,7 +39,6 @@ where
             Err(payload) => Poll::Ready(Err(payload)),
         }
     })
-    .await
 }
 
 /// The response a recovered panic becomes; it never exposes the payload.

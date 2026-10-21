@@ -240,8 +240,8 @@ decision.** DHAT over `alloc_counter_agreement.static_match`, the same request
 | 264 B | the handler's future, boxed again by the endpoint's terminal | **removed**: with no interceptors of its own an endpoint awaits the handler in place, inside the box its own future already has |
 | 16 B, 48 B → 88 B | `MatchedPath` and `Forwarded`, each its own extension | **merged**: the router inserts one record holding the matched path, the captures and the resolved origin, read back through `MatchedPath`, `Path`, `Forwarded` (an argument, or `Forwarded::of` from a `&Request`) and `ByClientAddress`; a capture's own insert goes the same way |
 | 32 B, 148 B | the extension map's box and its table, on first insert | **kept**: any extension costs them, and a request from the server already pays both for its `Connection` |
-| 1928 B → 1904 B | the dispatch future, boxed by `Service::call` | **kept, and characterized below** |
-| 920 B → 912 B | the endpoint's future, boxed by `DynEndpoint` | **kept**: it is the erasure every operation in one table needs |
+| 1928 B → 1904 B → 432 B | the dispatch future, boxed by `Service::call` | **kept, and narrowed below** |
+| 920 B → 912 B → 536 B | the endpoint's future, boxed by `DynEndpoint` | **kept**: it is the erasure every operation in one table needs; narrowed below |
 
 **The origin is still resolved eagerly, and that is a decision.** Resolving it
 on first read instead would spare a request nothing reads it on, but it would
@@ -257,21 +257,48 @@ Program instructions for a static match fell from 1776 to 1561 against
 `master`'s own profile at the same host and toolchain, and by about 200 in
 every scenario that reaches a handler.
 
-**What the boxed dispatch future holds is mostly one request, several times.**
-This is the future `Service::call` boxes, not the 280-byte one it returns and
-[`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) guards.
-`-Zprint-type-sizes` puts its 1904 bytes at the `serve` future's 1640 plus the
-256 the service closure's `async move` block keeps for its own captures, with
-its state discriminant and padding making up the rest, and
-the 248-byte `Request` appears in it five times over: once as the closure's
-capture, once as `serve`'s and once as its local, once as `run`'s, and again
-inside `Next::run`, which has since stopped keeping one
-([Middleware](#middleware)). A moved-from capture keeps its slot in every state of a
-coroutine, so none of them overlap. `run` also reserves 728 bytes for the
-panic-recovery future whether or not the operation catches panics. Returning
-`serve`'s future from the closure instead of awaiting it inside another would
-drop the box to 1640 bytes and its `memcpy` with it; that is the next cut, and
-it is left for a change of its own so that its count is reviewed on its own.
+**The boxed dispatch future holds one request.** It is the future
+`Service::call` boxes, and it once held the 248-byte `Request` five times over:
+as the service closure's capture, as `serve`'s argument and its local, as
+`run`'s, and inside `Next::run`. A moved-from capture keeps its slot in every
+state of a coroutine, so none of them overlapped. It then grew from 1904 bytes
+to 2544 in the profile's build without any test noticing: running the root
+router's interceptors around every fallback (#559) made the fallback an
+`async fn` awaited from `serve`, with a copy of the request and a whole chain
+of its own, and that state became the widest the future kept. The guard in
+[`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) measured the future
+`Service::call` returned, an `async fn` holding the request beside a pointer
+to the box, which stayed 280 bytes throughout.
+
+`serve` now routes before its future exists, and that future awaits each chain
+in place rather than through another `async fn`; the chain, an unchecked
+layer's continuation and panic recovery are started on the call, and recovery
+boxes what it guards then, so a future that awaits it reserves a pointer. The
+closure returns `serve`'s future rather than awaiting it, and `Service::call`
+returns the box itself, so the request is routed, and every observer told,
+when it is called rather than when it is first polled. The box holds 432
+bytes, from 2208 in a Linux test build at rustc 1.97.1 at both feature sets,
+and the future a caller holds is the box's 16-byte pointer.
+[`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs)
+holds the box to under two requests everywhere and to its 432 on Linux, where
+only the crate can name it.
+
+**The endpoint's future holds two.** An endpoint awaits its handler, through
+its own interceptors or recovery where it has them, in one `async fn` rather
+than through an `async` block inside it, and the builder itself is its chain's
+terminal, so nothing the chain borrows is built per request. A handler taking
+nothing boxes 536 bytes, from 808, and one taking a JSON body 1528, from 1800.
+The two requests left are the endpoint's own argument and the handler's, and
+what a body extractor keeps beside them is the handler's to shed;
+[`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) holds the endpoint's future
+to under three requests everywhere and to its 536 on Linux.
+
+**The record of the matched route is kept as one insert.** `http::Extensions`
+boxes every value it holds and offers no way to reserve or reuse its table, so
+the record costs its own block, and the map's box and table on a request that
+carries no extension yet. A request from the server already carries
+`Connection`, so there only the record's block is the router's. Avoiding it
+means resolving on first read, which the decision on the origin above refuses.
 
 **A path's first 405 allocates once more than its later ones, and that is
 `bytes`, not Kynos.** The `Allow` value is built once per path at
@@ -394,7 +421,7 @@ belongs with [`security.md`](security.md) rather than here.
 | correctness | Two interceptors covering one operation never write one response header when either writes it from a short circuit | — | `by-design`, and recorded in [`middleware.md`](middleware.md#what-the-framework-computes-and-what-it-does-not): a `Short` response's headers are in no `const`, so `Retry-After` written from a 429 is compared against nothing. A `HEADERS` const on `ShortCircuit` is what would close it, and on a `ShortCircuit` written by hand beside its own `IntoResponse` it would be a declaration beside the behaviour — the `contribution` method the design refuses. Unreachable with what Kynos ships: only one short circuit answers a request |
 | correctness | Contribution composition is order-sensitive and deterministic | Permuted stacks produce differing, stable documents | `planned` for the *document*; the composition **check** is no longer order-sensitive, which is the order-insensitivity row above |
 | reliability | `Opaque` propagates to every affected operation and omits none | Unit test over a synthetic router tree | `planned` |
-| performance | Added allocations = 1 per layer, held as an equality, and the dispatch future ≤ 280 bytes at any depth (288 on macOS) | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), counting one request through a no-op interceptor stack at depth 0/4/8 and reporting the marginal cost of a layer, plus a `size_of` ratchet on the future a driver holds | `enforced` |
+| performance | Added allocations = 1 per layer, held as an equality, and the dispatch future ≤ 16 bytes at any depth | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), counting one request through a no-op interceptor stack at depth 0/4/8 and reporting the marginal cost of a layer, plus a `size_of` ratchet on the future a driver holds | `enforced` |
 | performance | Per-layer added p99 ≤ TBD | `criterion` at stack depth 0/4/8 with a regression gate | `kynos-bench` |
 | performance | Compression's added allocations never fall as the body grows, and grow by no more than the 8 KiB reads the encoder's drain adds between one non-empty body size and the next; encoding a body the encoder engages on costs strictly more than declining to, with the empty body the baseline of that relation rather than a rung of the first; and what declining costs is a recorded constant rather than a held one | [`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs), over gzip, brotli and zstd at 0/1 KiB/16 KiB/256 KiB, engaged and not by `Accept-Encoding` on one mounted service | `enforced` |
 | correctness | A stored response is never served to a request its stored `Vary` does not select | [`middleware/cache/tests.rs`](../crates/kynos/src/middleware/cache/tests.rs) over the selection rules, plus [`tests/cache.rs`](../crates/kynos/tests/cache.rs) over a live sequence | `enforced` |
@@ -456,9 +483,9 @@ guarantee. It has already earned its keep twice — see
 
 **A layer costs one heap allocation and no future width.** A static match costs
 five allocations with no stack in front of it, nine behind four layers and
-thirteen behind eight; the future a driver holds is 280 bytes at every one of
-those depths, and at both feature sets that target is built at, on Linux;
-macOS lays the same future out in 288. The one
+thirteen behind eight; the future a driver holds is the 16-byte pointer to the
+box `Service::call` puts every request in, at every one of those depths and at
+both feature sets that target is built at. The one
 allocation is the object-safe form of `Interceptor` boxing the future it
 returns, which is the price of a heterogeneous chain fitting in one slice. Both
 figures are the measurement rather than the target, per
@@ -479,7 +506,8 @@ read and the rest of the chain: `SetCookies` boxes 80 bytes, `SecurityHeaders`
 1,328 to 9,912 before. `Compression` boxes an encode apart, so an encoded
 response pays one block more for gzip and zstd and a declined one carries no
 encoder state; brotli's encode was boxed already. The dispatch future
-`Service::call` boxes narrows by the same mechanism, from 2,296 bytes to 1,944.
+`Service::call` boxes narrowed by the same mechanism, from 2,296 bytes to
+1,944, and has narrowed further since ([Routing](#routing)).
 Every width here is a Linux test build's at rustc 1.97.1;
 [`middleware/tests.rs`](../crates/kynos/src/middleware/tests.rs) holds the
 forwarding one and the four that only read the request as relations to the
