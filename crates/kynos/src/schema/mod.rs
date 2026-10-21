@@ -48,10 +48,12 @@
 //!
 //! Each `format` above is either defined by OpenAPI itself or registered in the
 //! OAI Format Registry, where support is optional. A tool that does not
-//! recognise a format falls back to the `type` alone, and where a width format
-//! implies bounds — `uint32`, say — the bounds are emitted beside it as
-//! keywords, so that tool still receives them. These tables are the mapping; `docs/schema.md` records where
-//! each format comes from and why each row reads as it does.
+//! recognise a format falls back to the `type` alone. For `int8`–`int32` and
+//! `uint8`–`uint32` the implied bounds are emitted beside the format as
+//! keywords, so that tool still receives them; `int64` carries none and
+//! `uint64` only `minimum: 0`, as the table states. These tables are the
+//! mapping; `docs/schema.md` records where each format comes from and why each
+//! row reads as it does.
 //!
 //! # Behind a feature flag
 //!
