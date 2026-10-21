@@ -809,8 +809,8 @@ of it has to wait. The
 qualifier is the condition
 [`dispatch.rs`](../crates/kynos/src/router/dispatch.rs)'s `finish` branches on
 — a router with an observer erases the response body a second time through a
-`Watched` that is not zero-sized and boxes the disconnect report beside it, for
-two more. No gated test counts that figure, since `Body::from_incoming` is
+`Watched` that is not zero-sized and holds the disconnect report inline, for
+one more. No gated test counts that figure, since `Body::from_incoming` is
 `pub(crate)`; the `connection_*` groups of [`nfr.md`](nfr.md)'s profile row
 count it to the duplex, as a trend.
 [`alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) counts both constructors

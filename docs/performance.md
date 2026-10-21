@@ -50,7 +50,7 @@ What each kind of measurement proves that no other kind does.
 
 | Kind | Lives in | Runs under | Proves | Status |
 | --- | --- | --- | --- | --- |
-| Allocation count | its own integration target | `cargo nextest`, over `alloc_counter` | that a path allocates a bounded number of times | in use, at four targets: [`kynos/tests/alloc.rs`](../crates/kynos/tests/alloc.rs) for the routing path, for what an unchecked layer adds, and for why a response's header map is grown rather than presized, [`kynos/tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) for body erasure, [`kynos/tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) for what a payload codec adds, and [`kynos-openapi/tests/alloc.rs`](../crates/kynos-openapi/tests/alloc.rs) for what producing a description costs at 10, 100 and 1000 operations. Several rather than one because an integration binary cannot be depended on, so a second crate that counts cannot reach the first one's harness |
+| Allocation count | its own integration target | `cargo nextest`, over `alloc_counter` | that a path allocates a bounded number of times | in use, at four targets: [`kynos/tests/alloc.rs`](../crates/kynos/tests/alloc.rs) for the routing path, for what an unchecked layer and an observer add, and for why a response's header map is grown rather than presized, [`kynos/tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) for body erasure, [`kynos/tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) for what a payload codec adds, and [`kynos-openapi/tests/alloc.rs`](../crates/kynos-openapi/tests/alloc.rs) for what producing a description costs at 10, 100 and 1000 operations. Several rather than one because an integration binary cannot be depended on, so a second crate that counts cannot reach the first one's harness |
 | Size guard | [`tests/size.rs`](../crates/kynos/tests/size.rs), or a sibling `tests.rs`, or beside the count that shares its fixture | `cargo nextest` | that a type or a future did not grow | in use for types, and for the futures every request carries: the one `Service::call` returns and an endpoint's at [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), and the one that call boxes at [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs), since only the crate can name it. A guard outside a box sees only the pointer to it |
 | Off-path proof | a sibling `tests.rs`, and a table [`containment:check`](../scripts/containment.py) reads | `python3 scripts/containment.py`, `cargo nextest` | that a feature is unreachable from the request path | in use, for the off-path flags and for the document, the registry, the validators and `jsonschema`: a table in [`testing.md`](testing.md#the-off-path-proof) held by `mise run containment:check`, plus the field witness in [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs); `describe` is the one off-path shape no row holds, and the emitters are held by the `yaml` flag's row rather than by one of their own |
 | Codegen delta | a feature sweep | `cargo llvm-lines` | what a feature costs in monomorphized IR | in use, via `mise run cost:features` over [`cost/fixture.rs`](../crates/kynos/cost/fixture.rs); reports a trend once master settles, refuses a release whose numbers are not the recorded ones, and sets no ceiling, and sees the generics that fixture instantiates rather than the whole surface — so a feature that grows the dependency graph can shrink this number by sharing instantiations out of upstream rlibs, and a negative row is a relocation rather than a saving |
@@ -283,6 +283,13 @@ service's future is put in, plus whatever its own `Clone` allocates, since
 `tower` drives a service through `&mut self` and the router holds one.
 [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) records one and two identity
 layers at three and four blocks over the static match.
+
+**An observer costs one block per request, however many are mounted.** The
+response body is erased once more into a body that reports a peer leaving
+mid-response, and that box holds the report inline rather than beside it. A
+router with no observer adds nothing and reads no clock.
+[`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) records one observer at one
+block over the static match.
 
 ## The feature grading
 

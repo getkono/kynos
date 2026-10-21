@@ -125,6 +125,9 @@ impl Body {
     /// Reports how this body ends, exactly once.
     ///
     /// From whichever comes first: the poll that exhausts the body, or its drop.
+    ///
+    /// One allocation: the box that erases the watching body, which holds
+    /// `report` inline.
     pub(crate) fn watching<F>(self, report: F) -> Self
     where
         F: FnOnce(Delivery) + Send + 'static,
@@ -138,7 +141,7 @@ impl Body {
             inner: Mutex::new(
                 watched::Watched {
                     inner,
-                    report: Some(Box::new(report)),
+                    report: Some(report),
                 }
                 .boxed_unsync(),
             ),
