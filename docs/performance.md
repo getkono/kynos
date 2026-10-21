@@ -249,6 +249,15 @@ region alone. Records are written in turn into one shared block and split off
 as frames, so the relation held there is that a record costs no allocation of
 its own: sixteen small records cost what one does.
 
+**A response's header map is grown, not presized, because sizing saves no
+block.** `http` allocates a map's index table and its entries apart, so the
+first field a codec writes costs two blocks (656 bytes) whatever capacity the
+map was built with. Sizing trades bytes alone: the next step down from the
+default's six fields holds three in 328 bytes, and a compressed response carries four, so it would
+grow and pay two blocks more. `sizing_a_header_map_saves_no_block` in
+[`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) holds the premise, and turns
+red when an `http` release makes presizing worth reopening.
+
 ## The feature grading
 
 Every flag `crates/kynos` declares appears in exactly one column below. The
