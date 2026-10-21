@@ -1103,6 +1103,282 @@ mod protobuf {
     }
 }
 
+/// What the streamed responses cost to produce: JSON Lines, JSON text
+/// sequences and Server-Sent Events, against a binary stream of the same
+/// length.
+///
+/// **What is counted is the body, not the call.** A streaming response commits
+/// its status before a record is serialized, so the handler's call costs what
+/// any response does, and every record is written while the body is drained.
+/// The call is driven by [`counting::counted`], outside the region; the region
+/// is the drain alone, every frame pushed into a buffer reserved before it
+/// opens and dropped after it closes.
+///
+/// **The axis is the record count.** A record framed into memory of its own
+/// costs at least one allocation, so a stream of them grows by one per record
+/// at least; one written into the room its predecessor left costs none. The
+/// relation below holds the streams to the second.
+#[cfg(all(feature = "json", feature = "openapi32"))]
+mod stream {
+    use std::{
+        convert::Infallible,
+        pin::{Pin, pin},
+        task::{Context, Poll, Waker},
+    };
+
+    use alloc_counter::count_alloc;
+    use http_body_util::BodyExt;
+    use kynos::{
+        extract::body::json_lines::{JsonLines, JsonSeq},
+        http::{Method, StatusCode, media::OctetStream},
+        prelude::*,
+        response::stream::{
+            binary::BinaryStream,
+            sse::{Event, Sse},
+        },
+        router::service::Service,
+    };
+
+    use crate::counting::{self, request};
+
+    /// One record's payload, all-integer for `json`'s reason above.
+    #[derive(Schema, serde::Serialize)]
+    struct Reading {
+        id: u64,
+        value: u64,
+    }
+
+    /// A stream yielding `count` items made by `item`, each ready on the poll
+    /// that asks for it, so the drain needs no runtime.
+    struct Items<T> {
+        count: usize,
+        item: fn() -> T,
+    }
+
+    impl<T> futures_core::Stream for Items<T> {
+        type Item = T;
+
+        fn poll_next(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<T>> {
+            if self.count == 0 {
+                return Poll::Ready(None);
+            }
+            self.count -= 1;
+            Poll::Ready(Some((self.item)()))
+        }
+    }
+
+    fn reading() -> Reading {
+        Reading { id: 7, value: 11 }
+    }
+
+    #[expect(clippy::unnecessary_wraps, reason = "the item an event stream takes")]
+    fn event() -> Result<Event<Reading>, Infallible> {
+        Ok(Event::new(reading()))
+    }
+
+    #[expect(clippy::unnecessary_wraps, reason = "the item a binary stream takes")]
+    fn chunk() -> Result<bytes::Bytes, Infallible> {
+        Ok(bytes::Bytes::from_static(br#"{"id":7,"value":11}"#))
+    }
+
+    /// The most records any operation here streams.
+    const MANY: usize = 16;
+
+    #[kynos::get("/binary")]
+    async fn binary() -> BinaryStream<Items<Result<bytes::Bytes, Infallible>>, OctetStream> {
+        BinaryStream::new(Items {
+            count: MANY,
+            item: chunk,
+        })
+    }
+
+    #[kynos::get("/ndjson/one")]
+    async fn ndjson_one() -> JsonLines<Items<Reading>> {
+        JsonLines {
+            items: Items {
+                count: 1,
+                item: reading,
+            },
+        }
+    }
+
+    #[kynos::get("/ndjson/many")]
+    async fn ndjson_many() -> JsonLines<Items<Reading>> {
+        JsonLines {
+            items: Items {
+                count: MANY,
+                item: reading,
+            },
+        }
+    }
+
+    #[kynos::get("/json-seq/many")]
+    async fn json_seq_many() -> JsonSeq<Items<Reading>> {
+        JsonSeq {
+            items: Items {
+                count: MANY,
+                item: reading,
+            },
+        }
+    }
+
+    #[kynos::get("/sse/one")]
+    async fn sse_one() -> Sse<Items<Result<Event<Reading>, Infallible>>> {
+        Sse::new(Items {
+            count: 1,
+            item: event,
+        })
+    }
+
+    #[kynos::get("/sse/many")]
+    async fn sse_many() -> Sse<Items<Result<Event<Reading>, Infallible>>> {
+        Sse::new(Items {
+            count: MANY,
+            item: event,
+        })
+    }
+
+    fn service() -> Service<()> {
+        Router::<()>::new()
+            .mount(kynos::routes![
+                binary,
+                ndjson_one,
+                ndjson_many,
+                json_seq_many,
+                sse_one,
+                sse_many
+            ])
+            .build(())
+            .expect("a describable router")
+    }
+
+    /// What draining `target`'s body costs, having checked that it yielded
+    /// `records` frames and ended cleanly.
+    ///
+    /// The frame count is asserted for the reason the status is in
+    /// [`counting::counted`]: a body that ended early is a cheaper reading of a
+    /// shorter stream.
+    fn drained(service: &Service<()>, target: &str, records: usize) -> usize {
+        let (_, response) = counting::counted(
+            service,
+            request(Method::GET, target, None, b""),
+            StatusCode::OK,
+        );
+        let mut body = response.into_body();
+        let mut frames = Vec::with_capacity(MANY + 1);
+        let mut context = Context::from_waker(Waker::noop());
+
+        let ((allocations, reallocations, _), ended) = count_alloc(|| {
+            loop {
+                match pin!(body.frame()).poll(&mut context) {
+                    Poll::Ready(Some(Ok(frame))) => frames.push(frame),
+                    Poll::Ready(None) => break true,
+                    Poll::Ready(Some(Err(_))) | Poll::Pending => break false,
+                }
+            }
+        });
+
+        assert!(
+            ended,
+            "GET {target} did not drain to its end on ready items; the count \
+             above is of part of a stream"
+        );
+        assert_eq!(
+            frames.len(),
+            records,
+            "GET {target} yielded {} frames rather than one per record",
+            frames.len()
+        );
+        drop(frames);
+        allocations + reallocations
+    }
+
+    /// What draining each operation's body costs today, by target and record
+    /// count.
+    ///
+    /// Read as every table here is: each ceiling set to zero, the target run,
+    /// the count the failure reported transcribed.
+    ///
+    /// **A stream of small records costs what one record does.** Records are
+    /// written into one 4 KiB block in turn and each split off as a frame, so
+    /// the block and the handle its frames share are the whole of a JSON
+    /// stream's bill. An event stream adds the buffer its data is serialized
+    /// into before framing, grown once and reused. The binary stream's chunks
+    /// are frames already, so it costs nothing.
+    const RECORDED: [(&str, usize, usize); 6] = [
+        ("/binary", MANY, 0),
+        ("/ndjson/one", 1, 2),
+        ("/ndjson/many", MANY, 2),
+        ("/json-seq/many", MANY, 2),
+        ("/sse/one", 1, 5),
+        ("/sse/many", MANY, 5),
+    ];
+
+    /// The record: what each stream costs to drain today.
+    #[test]
+    fn the_streams_cost_what_is_recorded() {
+        let service = service();
+        let mut over = Vec::new();
+
+        for (target, records, ceiling) in RECORDED {
+            let counted = drained(&service, target, records);
+            if counted > ceiling {
+                over.push(format!(
+                    "GET {target} allocated {counted}, recorded {ceiling}"
+                ));
+            }
+        }
+
+        assert!(
+            over.is_empty(),
+            "{over:?}; the ceiling is `RECORDED` in this file, and lowering one \
+             is what a cheaper stream looks like"
+        );
+    }
+
+    /// The relation the table exists to hold: a serialized record does not
+    /// cost an allocation of its own.
+    ///
+    /// Strictly fewer allocations than records added, rather than none, so a
+    /// block size that changes how many records share one leaves it standing.
+    #[test]
+    fn a_record_does_not_cost_an_allocation_of_its_own() {
+        let service = service();
+
+        for (one, many) in [("/ndjson/one", "/ndjson/many"), ("/sse/one", "/sse/many")] {
+            let first = drained(&service, one, 1);
+            let all = drained(&service, many, MANY);
+
+            assert!(
+                all >= first && all - first < MANY - 1,
+                "GET {many} allocated {all} for {MANY} records where GET {one} \
+                 allocated {first} for one; the {} records between them cost \
+                 an allocation apiece or more",
+                MANY - 1
+            );
+        }
+    }
+
+    /// The leak check: a stream's state is per response, so the next response
+    /// costs what the first did.
+    #[test]
+    fn a_replayed_stream_costs_what_the_first_one_did() {
+        let service = service();
+
+        for (target, records, _) in RECORDED {
+            let first = drained(&service, target, records);
+            for _ in 0..100 {
+                assert_eq!(
+                    drained(&service, target, records),
+                    first,
+                    "GET {target} allocated {first} on one response and \
+                     differently on a later one"
+                );
+            }
+        }
+    }
+}
+
 /// How `Compression`'s cost grows with the body it holds.
 ///
 /// The one module here that is not a body codec. It is measured under the same

@@ -241,6 +241,14 @@ Kynos's is [`Part`](../crates/kynos/src/extract/body/multipart.rs)'s owned
 currency — a name and a media type each way, and a `String` field's copy out
 of the shared body — and one buffer for the whole response.
 
+**A streamed response is counted on its drain.** Its status is committed before
+a record is written, so what JSON Lines, JSON text sequences and Server-Sent
+Events cost is spent while the body is polled, and
+[`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) counts that
+region alone. Records are written in turn into one shared block and split off
+as frames, so the relation held there is that a record costs no allocation of
+its own: sixteen small records cost what one does.
+
 ## The feature grading
 
 Every flag `crates/kynos` declares appears in exactly one column below. The
