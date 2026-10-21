@@ -376,10 +376,10 @@ fn limited(prepared: Prepared) -> Answered {
 }
 
 // `INTERCEPTORS`' `request-id-random` alone: `Random` keys its hash afresh in
-// each process, and `format!` pads a half with fewer than sixteen significant
-// digits one character at a time, so an identifier whose high half begins
-// with a zero digit, one in sixteen, grows its buffer through one allocation
-// more; `requests.tsv` marks this group `trend` rather than the whole table's.
+// each process, and although it executes and allocates the same whatever its
+// key, glibc's `malloc` serves its block along a longer path in some
+// processes, so its instruction count moves while its heap does not;
+// `requests.tsv` marks this group `trend` rather than the whole table's.
 #[library_benchmark(setup = prepared, teardown = checked, config = heap())]
 #[bench::request_id_random("request-id-random")]
 fn random_id(prepared: Prepared) -> Answered {

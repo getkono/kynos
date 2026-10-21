@@ -1,4 +1,44 @@
-use super::{Random, RequestIdSource};
+use std::sync::atomic::AtomicU64;
+
+use super::{Counter, Digits, Random, RequestIdSource};
+
+/// A counter identifier is its count in decimal, with no leading zero, at
+/// both ends of the range and where a digit carries.
+#[test]
+fn a_counter_identifier_is_its_count_in_decimal() {
+    for n in [0, 9, 10, 1_000, u64::MAX] {
+        let source = Counter {
+            next: AtomicU64::new(n),
+        };
+
+        assert_eq!(source.next_id(), n.to_string().as_str());
+    }
+}
+
+/// The identifier is the two halves in order, each zero-padded to sixteen
+/// digits.
+#[test]
+fn a_random_identifier_writes_its_halves_in_order() {
+    let source = Random::new();
+    let [high, low] = source.halves(0);
+
+    assert_eq!(source.next_id(), format!("{high:016x}{low:016x}").as_str());
+}
+
+/// A value shorter than its width is zero-padded to it, so a random
+/// identifier whose high half starts with a zero keeps all 32 digits.
+#[test]
+fn digits_pad_a_short_value_to_its_width() {
+    assert_eq!(
+        Digits::<32>::value::<16>(1, 32),
+        "00000000000000000000000000000001"
+    );
+    assert_eq!(
+        Digits::<32>::value::<16>(u128::from(u64::MAX), 32),
+        "0000000000000000ffffffffffffffff"
+    );
+    assert_eq!(Digits::<32>::value::<16>(0, 32), "0".repeat(32).as_str());
+}
 
 /// An identifier is 128 bits written as 32 lowercase hex digits, leading
 /// zeros included, so every identifier has the same length.

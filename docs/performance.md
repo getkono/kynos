@@ -412,9 +412,11 @@ clock, so its count moves by a few instructions with the time it ran at.
 decodes in an `IndexMap` under `std`'s `RandomState`, so how far each field's
 lookup probes moves its count by a few instructions with the process's key,
 and its heap not at all. `request_id_random`, `INTERCEPTORS`'
-`request-id-random` row: `Random` keys its hash per process, and an
-identifier whose high half begins with a zero digit is zero-padded one
-character at a time, which costs one allocation more. The runtime row and
+`request-id-random` row: `Random` keys its hash per process, and while
+`Random` itself executes the same instructions and allocates the same block
+whatever its key, glibc's `malloc` takes a path a few hundred instructions
+longer in some processes than in others, so its count moves and its heap does
+not. The runtime row and
 `connection_h1` measured exact, the latter because its setup serves the
 warming connection at the start of a wall-clock second: hyper renders `Date`
 again, allocating, on the first response of each second, and a region a
