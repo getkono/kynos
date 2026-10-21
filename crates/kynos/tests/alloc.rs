@@ -477,52 +477,94 @@ fn a_chain_does_not_widen_the_dispatch_future() {
 }
 
 /// How wide the future an endpoint boxes for every matched request is allowed
-/// to be, for a handler that takes nothing: 536 bytes on Linux at both feature
+/// to be, for a handler that takes nothing: 320 bytes on Linux at both feature
 /// sets this target is built at, read as [`DISPATCH_FUTURE_BYTES`] is. It was
-/// 808, when an `async fn` around the handler's future kept the request a
-/// third time.
+/// 536, when `Endpoint::call` and the handler each kept a request of their
+/// own, and 808 before that, when an `async fn` around the handler's future
+/// kept a third.
 ///
-/// Linux's alone, as a ceiling; [`an_endpoint_future_holds_two_requests`]
+/// Linux's alone, as a ceiling; [`an_endpoint_future_holds_one_request`]
 /// holds the relation everywhere.
-const ENDPOINT_FUTURE_BYTES: usize = 536;
+const ENDPOINT_FUTURE_BYTES: usize = 320;
 
-/// The future [`Endpoint::call`](kynos::router::endpoint::Endpoint::call)
-/// returns holds two requests and no third: its own, and the one inside the
-/// handler's future it awaits in place.
-///
-/// Two rather than one because a handler's future holds the request it
-/// extracts from, and `Endpoint::call`, an `async fn`, keeps its own `request`
-/// argument after handing it over — a moved-from argument keeps its slot in
-/// every state of a coroutine.
-/// Measured on the public trait over the endpoint `ping` mounts, which is the
-/// future `DynEndpoint` boxes.
-#[test]
-fn an_endpoint_future_holds_two_requests() {
+/// The same, for a handler whose last argument consumes a JSON body: 632 bytes
+/// on Linux, from 1528 when each `async fn` from the endpoint down to the
+/// codec's read kept a request of its own. What it holds past
+/// [`ENDPOINT_FUTURE_BYTES`] is the read itself: the collector buffering the
+/// body, with its frame queue and trailer map.
+#[cfg(feature = "json")]
+const BODY_ENDPOINT_FUTURE_BYTES: usize = 632;
+
+/// The width of the future
+/// [`Endpoint::call`](kynos::router::endpoint::Endpoint::call) returns for an
+/// endpoint over `handler`, which is the future `DynEndpoint` boxes.
+fn endpoint_future_width<H, A>(handler: H) -> usize
+where
+    H: kynos::handler::Handler<(), A>,
+    A: 'static,
+{
     use kynos::router::endpoint::{Endpoint, builder::EndpointBuilder};
 
     let endpoint = EndpointBuilder::<(), _, _>::new(
         kynos::openapi::Method::Get,
         kynos::openapi::PathTemplate::parse("/ping").expect("a usable path template"),
-        ping,
+        handler,
     );
     let future = Endpoint::call(&endpoint, request(Method::GET, STACKED, None, b""), &());
-    let width = size_of_val(&future);
-    let request = size_of::<Request>();
+    size_of_val(&future)
+}
 
+/// Asserts an endpoint future of `width` bytes is narrower than `under`
+/// requests, and, on Linux, no wider than its recorded `ceiling`.
+fn assert_endpoint_future(width: usize, under: usize, ceiling: usize) {
+    let request = size_of::<Request>();
     assert!(
-        width < 3 * request,
-        "the endpoint future is {width} bytes, room for three {request}-byte \
+        width < under * request,
+        "the endpoint future is {width} bytes, room for {under} {request}-byte \
          requests; something between the box and the handler keeps a copy of \
          its own"
     );
     if cfg!(target_os = "linux") {
         assert!(
-            width <= ENDPOINT_FUTURE_BYTES,
+            width <= ceiling,
             "the endpoint future is {width} bytes against a recorded \
-             {ENDPOINT_FUTURE_BYTES}; every matched request carries one, so \
-             raising this ceiling is a change to docs/nfr.md"
+             {ceiling}; every matched request carries one, so raising this \
+             ceiling is a change to docs/nfr.md"
         );
     }
+}
+
+/// The future an endpoint boxes holds one request and no second: the endpoint
+/// splits the request before its future exists and lends the head to the
+/// handler, which lends it on to each extractor.
+///
+/// A request taken by value anywhere between the box and the handler would be
+/// a second, since a moved-from argument keeps its slot in every state of a
+/// coroutine. Measured on the public trait over the endpoint `ping` mounts.
+#[test]
+fn an_endpoint_future_holds_one_request() {
+    assert_endpoint_future(endpoint_future_width(ping), 2, ENDPOINT_FUTURE_BYTES);
+}
+
+/// Where the last argument consumes a body, the extractor is lent the head
+/// the endpoint owns and handed the body alone, rather than a request rebuilt
+/// for it, so the future holds one request beside the read.
+///
+/// The read is just over one request wide (see
+/// [`BODY_ENDPOINT_FUTURE_BYTES`]), so the relation is under three: one
+/// request kept whole anywhere on the way to the codec would cross it, as the
+/// first of the copies this future once held did.
+#[cfg(feature = "json")]
+#[test]
+fn a_body_extractor_s_endpoint_future_holds_one_request() {
+    async fn echo(
+        kynos::extract::body::json::Json(body): kynos::extract::body::json::Json<String>,
+    ) -> NoContent {
+        drop(body);
+        NoContent
+    }
+
+    assert_endpoint_future(endpoint_future_width(echo), 3, BODY_ENDPOINT_FUTURE_BYTES);
 }
 
 /// The instrument's own invariant, and the one every number below rests on: a

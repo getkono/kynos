@@ -6,7 +6,7 @@ use kynos_openapi::{Method, PathTemplate};
 
 use crate::{
     handler::Handler,
-    http::{Request, Response},
+    http::{Parts, Request, Response, body::Body},
     middleware::{
         Continued, Interceptor, MiddlewareError, Next,
         catch_panic::{Catch, PanicPolicy, Propagate},
@@ -288,24 +288,32 @@ where
         }
     }
 
-    // Awaits each branch in place: every matched request carries this future
-    // in a box, and an `async` block or `async fn` between it and the handler
-    // would keep another copy of the request.
-    async fn call(&self, request: Request, context: &C) -> Response {
-        if install::catches::<P>() {
-            // Boxed by `recover`, so it costs this future a pointer.
-            return match dispatch::recovery::recover(self.serve(request, context)).await {
-                Ok(response) => response,
-                Err(payload) => dispatch::recovery::recovered_response(payload),
-            };
-        }
+    // Splits the request before the future exists and awaits each branch in
+    // place: every matched request carries this future in a box, and the head
+    // it owns is the only copy, which the handler borrows. A request argument,
+    // or an `async fn` between the box and the handler, would keep another.
+    fn call(&self, request: Request, context: &C) -> impl Future<Output = Response> + Send {
+        let (mut parts, body) = request.into_parts();
+        async move {
+            if install::catches::<P>() {
+                // Boxed by `recover`, so it costs this future a pointer.
+                return match dispatch::recovery::recover(self.serve(parts, body, context)).await {
+                    Ok(response) => response,
+                    Err(payload) => dispatch::recovery::recovered_response(payload),
+                };
+            }
 
-        // Without interceptors, no chain and no second box.
-        if self.interceptors.is_empty() {
-            return Handler::call(self.handler.clone(), request, context).await;
-        }
+            // Without interceptors, no chain and no second box. `serve`'s
+            // branches, inlined: awaiting `serve` would move the head into a
+            // future of its own, beside the slot this one keeps for it.
+            if self.interceptors.is_empty() {
+                return Handler::call(self.handler.clone(), &mut parts, body, context).await;
+            }
 
-        self.chain(request, context).await.into_response()
+            self.chain(Request::from_parts(parts, body), context)
+                .await
+                .into_response()
+        }
     }
 
     fn __unhonourable_interceptor(&self) -> Option<MiddlewareError> {
@@ -324,12 +332,14 @@ where
     P: PanicPolicy,
 {
     /// Runs the handler, through this operation's own interceptors where it
-    /// has any; what recovery wraps.
-    async fn serve(&self, request: Request, context: &C) -> Response {
+    /// has any; what recovery wraps, and so the owner of the head it lends.
+    async fn serve(&self, mut parts: Parts, body: Body, context: &C) -> Response {
         if self.interceptors.is_empty() {
-            Handler::call(self.handler.clone(), request, context).await
+            Handler::call(self.handler.clone(), &mut parts, body, context).await
         } else {
-            self.chain(request, context).await.into_response()
+            self.chain(Request::from_parts(parts, body), context)
+                .await
+                .into_response()
         }
     }
 
@@ -363,6 +373,10 @@ where
         request: Request,
         context: &'a C,
     ) -> Pin<Box<dyn Future<Output = Response> + Send + 'a>> {
-        Box::pin(Handler::call(self.handler.clone(), request, context))
+        // The box owns the head the handler borrows.
+        let (mut parts, body) = request.into_parts();
+        Box::pin(
+            async move { Handler::call(self.handler.clone(), &mut parts, body, context).await },
+        )
     }
 }

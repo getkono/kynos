@@ -9,7 +9,7 @@ use std::future::Future;
 use crate::{
     extract::{FromRequest, FromRequestParts, describe::Describe},
     handler::{Guarded, Handler, ViaParts, ViaRequest},
-    http::{Request, Response},
+    http::{Parts, Response, body::Body},
     response::{IntoResponse, Responses},
     router::operation::OperationCx,
     security::Guard,
@@ -18,7 +18,7 @@ use crate::{
 /// Runs the guard, short-circuiting into its rejection's response.
 macro_rules! guard {
     ($ty:ident, $parts:expr, $context:expr) => {
-        match <$ty as Guard<C>>::guard(&$parts, $context).await {
+        match <$ty as Guard<C>>::guard($parts, $context).await {
             Ok(value) => value,
             Err(rejection) => return rejection.into_response(),
         }
@@ -38,7 +38,7 @@ macro_rules! describe_guard {
 /// Runs one head extractor, short-circuiting into its rejection's response.
 macro_rules! extract_parts {
     ($ty:ident, $parts:expr, $context:expr) => {
-        match <$ty as FromRequestParts<C>>::from_request_parts(&mut $parts, $context).await {
+        match <$ty as FromRequestParts<C>>::from_request_parts($parts, $context).await {
             Ok(value) => value,
             Err(rejection) => return rejection.into_response(),
         }
@@ -49,7 +49,7 @@ macro_rules! extract_parts {
 /// into its rejection's response.
 macro_rules! extract_body {
     ($ty:ident, $parts:expr, $body:expr, $context:expr) => {
-        match <$ty as FromRequest<C>>::from_request(&mut $parts, $body, $context).await {
+        match <$ty as FromRequest<C>>::from_request($parts, $body, $context).await {
             Ok(value) => value,
             Err(rejection) => return rejection.into_response(),
         }
@@ -82,9 +82,8 @@ macro_rules! impl_handler {
             $( $head: FromRequestParts<C> + Describe, )*
             $last: FromRequest<C> + Describe,
         {
-            #[allow(non_snake_case, unused_mut, unused_variables)]
-            async fn call(self, request: Request, context: &C) -> Response {
-                let (mut parts, body) = request.into_parts();
+            #[allow(non_snake_case, unused_variables)]
+            async fn call(self, parts: &mut Parts, body: Body, context: &C) -> Response {
                 $( let $head = extract_parts!($head, parts, context); )*
                 let $last = extract_body!($last, parts, body, context);
                 self($($head,)* $last).await.into_response()
@@ -114,9 +113,8 @@ macro_rules! impl_handler {
             $( $head: FromRequestParts<C> + Describe, )*
             $last: FromRequestParts<C> + Describe,
         {
-            #[allow(non_snake_case, unused_mut, unused_variables)]
-            async fn call(self, request: Request, context: &C) -> Response {
-                let (mut parts, _body) = request.into_parts();
+            #[allow(non_snake_case, unused_variables)]
+            async fn call(self, parts: &mut Parts, _body: Body, context: &C) -> Response {
                 $( let $head = extract_parts!($head, parts, context); )*
                 let $last = extract_parts!($last, parts, context);
                 self($($head,)* $last).await.into_response()
@@ -142,9 +140,8 @@ macro_rules! impl_handler {
             $( $head: FromRequestParts<C> + Describe, )*
             $last: FromRequest<C> + Describe,
         {
-            #[allow(non_snake_case, unused_mut, unused_variables)]
-            async fn call(self, request: Request, context: &C) -> Response {
-                let (mut parts, body) = request.into_parts();
+            #[allow(non_snake_case, unused_variables)]
+            async fn call(self, parts: &mut Parts, body: Body, context: &C) -> Response {
                 let G = guard!(G, parts, context);
                 $( let $head = extract_parts!($head, parts, context); )*
                 let $last = extract_body!($last, parts, body, context);
@@ -177,9 +174,8 @@ macro_rules! impl_handler {
             $( $head: FromRequestParts<C> + Describe, )*
             $last: FromRequestParts<C> + Describe,
         {
-            #[allow(non_snake_case, unused_mut, unused_variables)]
-            async fn call(self, request: Request, context: &C) -> Response {
-                let (mut parts, _body) = request.into_parts();
+            #[allow(non_snake_case, unused_variables)]
+            async fn call(self, parts: &mut Parts, _body: Body, context: &C) -> Response {
                 let G = guard!(G, parts, context);
                 $( let $head = extract_parts!($head, parts, context); )*
                 let $last = extract_parts!($last, parts, context);
@@ -206,8 +202,8 @@ where
     Res: IntoResponse + Responses,
     C: Send + Sync + 'static,
 {
-    async fn call(self, request: Request, context: &C) -> Response {
-        let _ = (request, context);
+    async fn call(self, parts: &mut Parts, body: Body, context: &C) -> Response {
+        let _ = (parts, body, context);
         self().await.into_response()
     }
 
@@ -228,8 +224,7 @@ where
     G: Guard<C>,
 {
     #[allow(non_snake_case)]
-    async fn call(self, request: Request, context: &C) -> Response {
-        let (parts, _body) = request.into_parts();
+    async fn call(self, parts: &mut Parts, _body: Body, context: &C) -> Response {
         let G = guard!(G, parts, context);
         self(G).await.into_response()
     }
