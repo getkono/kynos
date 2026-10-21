@@ -249,14 +249,21 @@ fn checked<T: crate::schema::Schema>(
 /// body::<OneOf<Binary<Pdf>, Binary<Png>>>();
 /// ```
 ///
-/// Nor are two streamed JSON bodies, whose media type is the same:
-///
-/// ```compile_fail
-/// use kynos::extract::body::{OneOf, json_lines::{JsonLines, records::Records}};
-///
-/// fn body<T: kynos::extract::FromRequest<()>>() {}
-/// body::<OneOf<JsonLines<Records<u64>>, JsonLines<Records<String>>>>();
-/// ```
+// Gated with `json_lines` itself: without it the example fails to compile for
+// want of the module, and a `compile_fail` example passes for any reason.
+#[cfg_attr(
+    all(feature = "json", feature = "openapi32"),
+    doc = r"
+Nor are two streamed JSON bodies, whose media type is the same:
+
+```compile_fail
+use kynos::extract::body::{OneOf, json_lines::{JsonLines, records::Records}};
+
+fn body<T: kynos::extract::FromRequest<()>>() {}
+body::<OneOf<JsonLines<Records<u64>>, JsonLines<Records<String>>>>();
+```
+"
+)]
 ///
 /// Nor is a [`Binary`](binary::Binary) whose marker names a codec's own media
 /// type; [`Alternative::DISTINCT`] says how that pair is refused.
