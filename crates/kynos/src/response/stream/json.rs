@@ -29,10 +29,6 @@ const SEQUENCE_PREFIX: &[u8] = &[RECORD_SEPARATOR];
 use crate::extract::body::json_lines::{JsonLines, JsonSeq};
 
 /// Streams each item as one JSON value followed by a newline.
-///
-/// The response is committed before every item is available. If serializing a
-/// later item fails, the stream terminates; it cannot replace the already-sent
-/// status with a problem response.
 impl<S> IntoResponse for JsonLines<S>
 where
     S: futures_core::Stream + Send + 'static,
@@ -68,10 +64,6 @@ where
 }
 
 /// Streams each item as an RFC 7464 JSON text sequence record.
-///
-/// The response is committed before every item is available. If serializing a
-/// later item fails, the stream terminates; it cannot replace the already-sent
-/// status with a problem response.
 impl<S> IntoResponse for JsonSeq<S>
 where
     S: futures_core::Stream + Send + 'static,
@@ -139,7 +131,6 @@ where
         let (prefix, suffix) = (framed.prefix, framed.suffix);
 
         match framed.items.as_mut().poll_next(context) {
-            // The status is already sent, so a failure can only end the body.
             Poll::Ready(Some(item)) => Poll::Ready(Some(encode(&item, prefix, suffix))),
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,

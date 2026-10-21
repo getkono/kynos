@@ -10,9 +10,7 @@ use crate::{
 ///
 /// Described exactly as [`Binary<M>`](crate::extract::body::binary::Binary):
 /// the chunks are one binary representation, not a sequence of items, so the
-/// description is the same under OpenAPI 3.1 and 3.2. Stream failures
-/// terminate the body because the successful status has already been
-/// committed.
+/// description is the same under OpenAPI 3.1 and 3.2.
 ///
 /// ```no_run
 /// use kynos::{http::media::OctetStream, response::stream::binary::BinaryStream};

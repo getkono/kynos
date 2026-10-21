@@ -17,9 +17,8 @@ use crate::{
 
 /// The client's accepted response representations.
 ///
-/// This extractor contributes no `Accept` parameter because OpenAPI ignores
-/// such parameters. It contributes the 406 rejection and the representation
-/// tuple contributes the operation's response `content` map.
+/// This extractor contributes the 406 rejection; the representation tuple
+/// contributes the operation's response `content` map.
 ///
 /// ```no_run
 /// use kynos::{

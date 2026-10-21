@@ -25,12 +25,7 @@ use crate::{
 
 /// A Server-Sent Events response.
 ///
-/// Requires `openapi32`: OpenAPI 3.1 can describe an event stream only as an
-/// opaque string, while 3.2's `itemSchema` describes each event.
-///
 /// ```no_run
-/// # #[cfg(feature = "openapi32")]
-/// # {
 /// use std::time::Duration;
 /// use kynos::response::stream::sse::{KeepAlive, Sse};
 ///
@@ -41,7 +36,6 @@ use crate::{
 ///             .comment("still connected"),
 ///     )
 /// }
-/// # }
 /// ```
 ///
 /// # Disconnect and backpressure
@@ -62,7 +56,8 @@ use crate::{
 /// here buffers on the stream's behalf.
 ///
 /// [`tests/sse.rs`](https://github.com/getkono/kynos/blob/master/crates/kynos/tests/sse.rs)
-/// holds both as assertions over a real socket.
+/// asserts the disconnect over a real socket; backpressure has no test of its
+/// own.
 #[derive(Debug)]
 pub struct Sse<S> {
     /// The stream of events.
