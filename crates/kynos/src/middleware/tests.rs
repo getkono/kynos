@@ -673,7 +673,7 @@ mod box_width {
     #[test]
     fn a_built_in_reading_the_request_before_the_chain_boxes_none_of_it() {
         let request = size_of::<Request>();
-        let mut widths = vec![
+        let widths = [
             (
                 "RequestId",
                 boxed(&crate::middleware::request_id::RequestId::new()),
@@ -688,15 +688,17 @@ mod box_width {
             ),
         ];
         #[cfg(feature = "cookie")]
-        widths.push((
+        let set_cookies = Some((
             "SetCookies",
             boxed(&crate::middleware::cookies::SetCookies::new(Vec::<
                 crate::response::cookie::Cookie,
             >::new(
             ))),
         ));
+        #[cfg(not(feature = "cookie"))]
+        let set_cookies = None;
 
-        for (name, width) in widths {
+        for (name, width) in widths.into_iter().chain(set_cookies) {
             assert!(
                 width < request,
                 "{name} boxes {width} bytes, more than the {request}-byte \
