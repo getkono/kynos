@@ -206,6 +206,163 @@ class Literals(unittest.TestCase):
         for literals in (True, False):
             self.assertIn("Reader", gate.strip(source, literals=literals))
 
+    def test_a_block_comment_keeps_the_tokens_either_side_apart(self):
+        # rustc reads a comment as whitespace, so `use/**/tokio::spawn;`
+        # imports tokio. Dropped with nothing in its place it read as
+        # `usetokio`, which no word-bounded crate name matches.
+        source = "use/**/tokio::spawn;\n"
+        for literals in (True, False):
+            self.assertRegex(gate.strip(source, literals=literals), r"\buse\s+tokio\b")
+
+    def test_a_path_valued_literal_is_code_in_both_corpora(self):
+        # `with = "…"` names a module serde calls into, so a crate written
+        # there is a crate this file couples to, and blanking it as prose
+        # hid it from every rule over identifiers.
+        source = '#[serde(with = "tokio::time")]\nstruct Probe;\n'
+        for literals in (True, False):
+            self.assertIn("tokio::time", gate.strip(source, literals=literals))
+
+    def test_a_literal_that_is_prose_is_still_dropped(self):
+        # The control: only the path-valued keys survive.
+        source = '#[serde(rename = "tokio")]\nstruct Probe;\n'
+        self.assertNotIn("tokio", gate.strip(source, literals=True))
+
+
+class UseTrees(unittest.TestCase):
+    """What `use_paths` expands a use tree to, and what `runtime_paths` reads
+    as rooted at the `tokio` crate.
+
+    The parent re-export scan and the allowance table's *Names* rule both read
+    a use tree through `use_paths`; a group it drops is a re-export or a tokio
+    item neither rule sees.
+    """
+
+    def test_a_nested_group_expands_to_every_leaf(self):
+        self.assertEqual(
+            gate.use_paths("tokio::{time::{sleep, Instant}, io::AsyncRead}"),
+            ["tokio::time::sleep", "tokio::time::Instant", "tokio::io::AsyncRead"],
+        )
+
+    def test_a_group_with_no_head_yields_each_member_s_own_head(self):
+        self.assertEqual(gate.use_paths("{crate::a::B, self::c}"), ["crate::a::B", "self::c"])
+
+    def test_self_in_a_group_names_the_module_and_an_alias_is_dropped(self):
+        self.assertEqual(
+            gate.use_paths("tokio::io::{self, AsyncRead as Read}"),
+            ["tokio::io", "tokio::io::AsyncRead"],
+        )
+
+    def test_a_glob_is_kept_as_a_glob(self):
+        self.assertEqual(gate.use_paths("::tokio::io::*"), ["tokio::io::*"])
+
+    def test_another_crate_s_tokio_module_is_not_the_runtime(self):
+        # `async_compression::tokio` is a module of that crate, written both
+        # in a use group and inline; neither is a path into tokio.
+        source = (
+            "use async_compression::{tokio::bufread::GzipEncoder, zstd::CParameter};\n"
+            "type E = async_compression::tokio::write::GzipEncoder<Vec<u8>>;\n"
+        )
+        self.assertEqual(gate.runtime_paths(source), [])
+
+    def test_inline_and_imported_paths_are_both_read(self):
+        source = (
+            "use tokio::io::{AsyncRead, ReadBuf};\n"
+            "fn f() { tokio::time::Instant::now(); tokio :: spawn(async {}); }\n"
+        )
+        self.assertEqual(
+            gate.runtime_paths(source),
+            [
+                "tokio::io::AsyncRead",
+                "tokio::io::ReadBuf",
+                "tokio::spawn",
+                "tokio::time::Instant::now",
+            ],
+        )
+
+    def test_a_names_cell_is_read_as_use_trees_rooted_at_tokio(self):
+        self.assertEqual(
+            gate.runtime_names("`tokio::time::{Instant, Sleep}`, `tokio::sync::Mutex`"),
+            ["tokio::time::Instant", "tokio::time::Sleep", "tokio::sync::Mutex"],
+        )
+
+    def test_a_names_cell_of_prose_or_another_crate_is_refused(self):
+        for cell in (
+            "the five coupling points",
+            "`tokio::io::AsyncRead` and friends",
+            "`hyper::rt::Sleep`",
+        ):
+            self.assertIsNone(gate.runtime_names(cell), cell)
+
+    def test_an_associated_item_of_a_listed_name_is_admitted(self):
+        names = ["tokio::time::Instant"]
+        self.assertTrue(gate.admits(names, "tokio::time::Instant::now"))
+        self.assertFalse(gate.admits(names, "tokio::time::InstantOther"))
+        self.assertFalse(gate.admits(names, "tokio::time"))
+
+
+class OwnedType(unittest.TestCase):
+    """What an `owned T` spelling counts as a site, and what it does not.
+
+    Every mint of a type writes it by value somewhere, whichever constructor
+    it goes through; a borrow or an import does not mint one.
+    """
+
+    def setUp(self):
+        self.owned = gate.Owned("Registry")
+
+    def test_a_mint_through_default_is_a_site(self):
+        self.assertTrue(self.owned.search("let r: Registry = Default::default();\n"))
+
+    def test_a_field_a_derived_default_fills_is_a_site(self):
+        self.assertTrue(
+            self.owned.search("#[derive(Default)]\nstruct Held {\n    r: crate::schema::Registry,\n}\n")
+        )
+
+    def test_a_borrow_is_not_a_site(self):
+        for source in (
+            "fn schema(registry: &mut Registry) {}\n",
+            "fn schema<'a>(registry: &'a mut crate::schema::registry::Registry) {}\n",
+            "fn read(registry: &Registry) {}\n",
+        ):
+            self.assertFalse(self.owned.search(source), source)
+
+    def test_an_import_is_not_a_site(self):
+        self.assertFalse(
+            self.owned.search("use crate::schema::{Schema, registry::Registry};\n")
+        )
+
+    def test_a_cell_reads_owned_as_this_matcher(self):
+        (spelling, pattern, is_gate), = gate.token("`owned Registry`")
+        self.assertEqual((spelling, is_gate), ("owned Registry", False))
+        self.assertIsInstance(pattern, gate.Owned)
+
+
+class ManifestReads(unittest.TestCase):
+    """The paths a source walks from `CARGO_MANIFEST_DIR`, as the package-escape
+    rule resolves them."""
+
+    ROOT = 'Path::new(env!("CARGO_MANIFEST_DIR"))'
+
+    def test_a_join_chained_on_the_root_is_read(self):
+        self.assertEqual(gate.manifest_reads(f'{self.ROOT}.join("a").join("b")'), ["a/b"])
+
+    def test_a_concatenated_literal_is_read(self):
+        self.assertEqual(
+            gate.manifest_reads('concat!(env!("CARGO_MANIFEST_DIR"), "/../x")'), ["../x"]
+        )
+
+    def test_a_parent_is_a_climb(self):
+        self.assertEqual(
+            gate.manifest_reads(f'{self.ROOT}.parent().unwrap().join("x")'), ["../x"]
+        )
+
+    def test_a_climb_split_across_a_binding_is_still_read(self):
+        source = f'let root = {self.ROOT};\nlet up = root.join("..");\nup.join("x");\n'
+        self.assertIn("../x", gate.manifest_reads(source))
+
+    def test_an_absolute_join_replaces_the_root(self):
+        self.assertEqual(gate.manifest_reads(f'{self.ROOT}.join("/etc")'), ["/etc"])
+
 
 class Section(unittest.TestCase):
     """The slice of a document a rule reads, and a marker that is no longer in it.
@@ -697,6 +854,25 @@ class GatePolarity(unittest.TestCase):
         ):
             self.assertFalse(self.matcher('`feature = "uuid"`').search(source))
             self.assertFalse(self.matcher('`feature = "uuid"`').named(source))
+
+    def test_a_cfg_macro_through_std_or_core_is_a_gate(self):
+        # The prelude's `cfg!` is `core::cfg!`, re-exported by `std`, so both
+        # paths resolve to the macro the bare name does -- unlike the
+        # `other::cfg!` above, which this scan cannot resolve.
+        for source in (
+            'let d = std::cfg!(feature = "uuid");\n',
+            'let d = core::cfg!(feature = "uuid");\n',
+            'let d = ::std::cfg!(feature = "uuid");\n',
+        ):
+            self.assertTrue(self.matcher('`feature = "uuid"`').search(source), source)
+            self.assertTrue(self.matcher('`feature = "uuid"`').named(source), source)
+
+    def test_a_target_feature_is_not_a_cargo_feature(self):
+        # `target_feature = "x"` is a CPU feature, a different predicate whose
+        # name merely ends in `feature`.
+        source = '#[cfg(target_feature = "uuid")]\nfn f() {}\n'
+        self.assertFalse(self.matcher('`feature = "uuid"`').search(source))
+        self.assertFalse(self.matcher('`feature = "uuid"`').named(source))
 
     def test_an_attribute_written_with_escaped_quotes_is_not_a_gate(self):
         # Named for what it holds: the flag pattern wants an unescaped quote
@@ -1851,6 +2027,57 @@ class Main(unittest.TestCase):
             self.naming(failures, "named outside `server/`")[0],
         )
 
+    def test_a_tokio_item_a_listed_site_s_row_does_not_name_is_reported(self):
+        # The *Names* cell, enforced: `sse.rs` is a listed site, and its row
+        # names three `tokio::time` items. Any other tokio item there is a
+        # coupling the table does not state, which passed while only the
+        # *Site* column was read.
+        corpus = self.appending(
+            "crates/kynos/src/response/stream/sse.rs",
+            "\npub fn probe() {\n    tokio::spawn(async {});\n}\n",
+        )
+        status, failures = self.report(corpus=corpus)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "Names cell does not")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/response/stream/sse.rs: tokio::spawn", reported[0])
+
+    def test_a_directory_site_written_without_its_slash_still_holds_its_names(self):
+        # The *Site* rule reads `middleware/limits` as the directory, so the
+        # *Names* rule must too: read as one exact file, the row would let
+        # every file under it name any tokio item.
+        broken = self.rewriting(
+            gate.ARCHITECTURE,
+            "| `middleware/limits/` |",
+            "| `middleware/limits` |",
+        )
+        corpus = self.appending(
+            "crates/kynos/src/middleware/limits/concurrency.rs",
+            "\npub fn probe() {\n    tokio::spawn(async {});\n}\n",
+        )
+        status, failures = self.report(architecture=broken, corpus=corpus)
+        self.assertEqual(status, 1)
+        self.assertEqual(self.naming(failures, "named outside `server/`"), [])
+        reported = self.naming(failures, "Names cell does not")
+        self.assertEqual(len(reported), 1)
+        self.assertIn(
+            "crates/kynos/src/middleware/limits/concurrency.rs: tokio::spawn", reported[0]
+        )
+
+    def test_an_unreadable_names_cell_is_reported(self):
+        # A cell the rule cannot read enforces nothing, so it fails rather
+        # than admitting every tokio item at its site.
+        broken = self.rewriting(
+            gate.ARCHITECTURE,
+            "| `response/stream/sse.rs` | `tokio::time::{Instant, Sleep, sleep}` |",
+            "| `response/stream/sse.rs` | the keep-alive timer |",
+        )
+        status, failures = self.report(architecture=broken)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "cannot read as backticked `tokio::` use trees")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/response/stream/sse.rs", reported[0])
+
     def test_a_crate_named_outside_the_tree_its_row_allows_is_reported(self):
         # The dependency-graph stray scan, over a corpus: its rules are read
         # out of `nfr.md`'s Dependencies table, and the cases after the ones
@@ -2454,6 +2681,21 @@ class Main(unittest.TestCase):
         self.assertTrue(offenders)
         self.assertNotIn(gate.OFF_PATH_SCOPE + site, offenders)
 
+    def test_a_registry_minted_without_naming_a_constructor_is_reported(self):
+        # The registry row by the type: `Default::default()` into a field a
+        # derived `Default` fills mints one and spells neither `new` nor
+        # `default` on `Registry`, which is what the row used to name.
+        corpus = self.appending(
+            "crates/kynos/src/unchecked.rs",
+            "\n#[derive(Default)]\npub struct Probe {\n"
+            "    registry: crate::schema::registry::Registry,\n}\n",
+        )
+        status, failures = self.report(corpus=corpus)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "the schema registry is off the request path")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/unchecked.rs", reported[0])
+
     def test_a_document_beside_the_code_that_serves_a_request_is_reported(self):
         # The offender scan over the three files #131 split. Each served a
         # request and was a site the document row allowed, so a new `Document`
@@ -2663,6 +2905,36 @@ class Main(unittest.TestCase):
         self.assertEqual(len(reported), 1)
         self.assertIn("crates/kynos/src/lib.rs reads '../../../README.md'", reported[0])
 
+    def test_every_way_out_of_a_package_is_reported(self):
+        # The four shapes the rule read none of: `include!` beside its
+        # `_str`/`_bytes` siblings, a module's `#[path]`, a manifest root
+        # bound by a `let` and joined later, and a `parent()` climbing off
+        # the root. None of the four targets exists: the rule reads where a
+        # path resolves, not whether anything is there.
+        escapes = (
+            '\nconst _: () = include!("../../../probe_include.rs");\n'
+            '#[path = "../../../probe_path.rs"]\nmod probe_path;\n'
+            "fn probe() {\n"
+            '    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));\n'
+            '    let _ = root.join("../../probe_bound");\n'
+            '    let _ = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))'
+            '.parent().unwrap().join("probe_parent");\n'
+            "}\n"
+        )
+        with self.reading("crates/kynos/src/lib.rs", lambda text: text + escapes):
+            status, failures = self.report()
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "resolves outside crates/kynos")
+        for literal in (
+            "../../../probe_include.rs",
+            "../../../probe_path.rs",
+            "../../probe_bound",
+            "../probe_parent",
+        ):
+            self.assertEqual(
+                len([line for line in reported if f"reads {literal!r}" in line]), 1, literal
+            )
+
     def test_a_pub_use_of_a_module_the_same_file_declares_is_reported(self):
         # The parent re-export scan. `http/body.rs` is not `lib.rs`, which is
         # the one file the rule exempts, and the module is declared in the same
@@ -2701,6 +2973,20 @@ class Main(unittest.TestCase):
             self.assertIn(
                 f"crates/kynos/src/http/body.rs: pub use {head}::...", reported[0]
             )
+
+    def test_a_pub_use_of_a_brace_group_is_read_by_its_members_heads(self):
+        # `pub use {crate::a::B};` opens on a brace, so a pattern reading the
+        # first identifier after `use` found no head at all and the second
+        # path went unreported.
+        corpus = self.appending(
+            "crates/kynos/src/http/body.rs",
+            "\npub use {crate::http::Body as A};\n",
+        )
+        status, failures = self.report(corpus=corpus)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "re-publishes one of our own items")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/http/body.rs: pub use crate::...", reported[0])
 
     def test_a_pub_use_in_lib_rs_is_exempt(self):
         # The one exemption the scan makes, and the sibling of the presence
@@ -2758,6 +3044,19 @@ class Main(unittest.TestCase):
         corpus = self.appending(
             "crates/kynos/src/unchecked.rs",
             "\npub fn probe() -> u8 {\n    unimplemented!()\n}\n",
+        )
+        status, failures = self.report(corpus=corpus)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "stands in for a body")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/unchecked.rs", reported[0])
+
+    def test_a_placeholder_spaced_from_its_bang_is_reported(self):
+        # `todo !()` is the same macro call to rustc; a pattern that wants
+        # the `!` against the name lets it through.
+        corpus = self.appending(
+            "crates/kynos/src/unchecked.rs",
+            "\npub fn probe() -> u8 {\n    todo !()\n}\n",
         )
         status, failures = self.report(corpus=corpus)
         self.assertEqual(status, 1)

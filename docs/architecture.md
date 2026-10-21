@@ -55,7 +55,7 @@ is checkable, so the sites are enumerated:
 | Site | Names | Why it is not in `server/` |
 | --- | --- | --- |
 | `server/` | the five coupling points, the request-body idle timer, and the listener, shutdown and lifecycle plumbing around them | — |
-| `middleware/limits/` | `tokio::{time::timeout, time::Instant, time::Sleep, time::sleep, sync::Semaphore}` | the timer wraps the chain's future, which does not exist until after routing; the permit bounds requests already in it; the body timer outlives both, because a streamed body is still being produced after the chain has returned |
+| `middleware/limits/` | `tokio::{time::timeout, time::Instant, time::Sleep, time::sleep, sync::Semaphore, sync::OwnedSemaphorePermit}` | the timer wraps the chain's future, which does not exist until after routing; the permit bounds requests already in it; the body timer outlives both, because a streamed body is still being produced after the chain has returned |
 | `middleware/compression/` | `tokio::io::{AsyncRead, AsyncWrite, ReadBuf}` | `async-compression`'s encoders are written against tokio's I/O traits; no byte here crosses a socket |
 | `middleware/decompression/` | `tokio::io::AsyncRead` | the same trait for the same reason, in the other direction: a client-compressed request body is decoded before an extractor sees it, which is as far from a socket as the encoders are |
 | `response/stream/sse.rs` | `tokio::time::{Instant, Sleep, sleep}` | a keep-alive is a property of one body, and the connection driver cannot know a body is an event stream |
@@ -64,7 +64,10 @@ is checkable, so the sites are enumerated:
 **Six rows, and the count is the check.** [`nfr.md`](nfr.md#runtime) states the
 containment requirement against this table rather than against `server/` alone,
 so a seventh site is a failing build rather than a silently broken sentence.
-`mise run containment:check` is where that count runs. It and [the
+`mise run containment:check` is where that count runs, and where each row but
+`server/`'s is held to its *Names* cell: those cells are backticked
+`tokio::` use trees, and a tokio item a site writes that its row does not list
+fails the build as a new site does. It and [the
 graph](#the-graph) govern the published crates: an unpublished member —
 [`kynos-profile`](../crates/kynos-profile/) — drives a runtime and drains
 bodies as an application does, and neither reads it.

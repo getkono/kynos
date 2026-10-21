@@ -805,12 +805,14 @@ fn a_numeric_keyword_read_from_yaml_refuses_what_serde_json_number_cannot_hold()
 ///
 /// `references/3.1.2.md` says "This object MAY be extended with Specification
 /// Extensions" of the Paths Object (`:790`), the Callback Object (`:2154`), the
-/// Discriminator Object (`:3337`) and the XML Object (`:3499`). Four objects
-/// modelled it and four did not, and the two failure modes differ:
-/// `Xml` and `Discriminator` have no catch-all, so serde drops an `x-` member
-/// on the floor; `Paths` and `Callback` are `#[serde(transparent)]` over a bare
-/// map, so an `x-` member whose value is not an object of the map's type makes
-/// a **legal document fail to parse at all**.
+/// Discriminator Object (`:3337`) and the XML Object (`:3499`). None of the
+/// four modelled it once, and each now carries an `extensions` map -- `Xml` and
+/// `Discriminator` flatten theirs. The two failure modes this holds closed
+/// differ. Without that map `Xml` and
+/// `Discriminator` drop an `x-` member on the floor, and `Paths` and
+/// `Callback`, as a bare map under `#[serde(transparent)]`, make a legal
+/// document whose `x-` member is not an object of the map's type **fail to
+/// parse at all**.
 ///
 /// The values here are deliberately not objects. An object-valued extension on
 /// `Paths` happens to parse — as an empty `PathItem` — which is the shape that

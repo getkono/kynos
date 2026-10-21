@@ -2,7 +2,8 @@
 
 Reads the allowance tables in `docs/` rather than restating them. Source is
 matched with comments, string literals and `#[cfg(test)]` modules (inline and
-sibling files) removed; feature-gate rules use a second corpus that keeps
+sibling files) removed, keeping only the literals that spell a path, such as
+`#[serde(with = "…")]`; feature-gate rules use a second corpus that keeps
 literals, since a `#[cfg(feature = "x")]` flag name is a string.
 """
 
@@ -37,6 +38,14 @@ NUMBERS = {
 
 CHAR_LITERAL = re.compile(r"'(\\.|[^\\'])'")
 TEST_MODULE = re.compile(r"#\[cfg\(test\)\]\s*mod\s+\w+\s*")
+# An attribute argument whose string is a Rust path or type rather than prose:
+# serde's function, conversion and bound keys. Read up to the literal it opens.
+PATH_VALUED = re.compile(
+    r"[(,]\s*(?:with|serialize_with|deserialize_with|skip_serializing_if|default"
+    r"|getter|remote|from|try_from|into|bound|crate)\s*=\s*\Z"
+)
+# How far back from a literal `PATH_VALUED` is looked for.
+PATH_KEY_REACH = 64
 
 
 def blank(text):
@@ -98,9 +107,13 @@ def strip(source, literals=True):
 
     A scanner rather than regexes, since comments, strings and nested block
     comments interleave. `literals=False` keeps literals: the corpus a
-    `#[cfg(feature = "x")]` gate is read against.
+    `#[cfg(feature = "x")]` gate is read against. A block comment leaves one
+    space, as the compiler reads it, so `use/**/tokio` stays two tokens. A
+    `PATH_VALUED` literal is code spelt as a string and survives in both.
     """
-    masked, kept, i, n = [], [], 0, len(source)
+    # `masked` blanks every literal, for the brace counter; `named` keeps the
+    # path-valued ones, and is what `literals=True` returns.
+    masked, named, kept, i, n = [], [], [], 0, len(source)
     while i < n:
         pair = source[i : i + 2]
         if pair == "//":
@@ -119,18 +132,22 @@ def strip(source, literals=True):
                         break
                 else:
                     i += 1
+            for text in (masked, named, kept):
+                text.append(" ")
         elif (end := literal_end(source, i)) is not None:
             literal = source[i:end]
             masked.append(blank(literal))
+            path = PATH_VALUED.search(source[max(0, i - PATH_KEY_REACH) : i])
+            named.append(literal if path else blank(literal))
             kept.append(literal)
             i = end
         else:
-            masked.append(source[i])
-            kept.append(source[i])
+            for text in (masked, named, kept):
+                text.append(source[i])
             i += 1
-    masked, kept = "".join(masked), "".join(kept)
+    masked, named, kept = "".join(masked), "".join(named), "".join(kept)
 
-    text = kept if not literals else masked
+    text = kept if not literals else named
     for start, end in reversed(test_module_spans(masked)):
         text = text[:start] + text[end:]
     return text
@@ -296,9 +313,68 @@ def permitted(path, allowed):
 
     Skip the rule rather than pass an empty `allowed` when its table is gone.
     """
-    if path.startswith("crates/kynos/src/server/"):
+    if path.startswith(HOME_SITE):
         return True
-    return any(path == site or path.startswith(site.rstrip("/") + "/") for site in allowed)
+    return allowed_at(path, allowed)
+
+
+def allowed_at(path, sites):
+    """Whether `path` is one of an allowance row's `sites`, or under one.
+
+    A site is a file or a directory, with or without a trailing `/`, matched as
+    a path segment prefix, so `runtime` holds `runtime/spawn.rs` but not
+    `runtimefoo.rs`. The *Site* and *Names* rules both match through this, so
+    no file a row lets name tokio escapes the items that row names.
+    """
+    return any(path == site or path.startswith(site.rstrip("/") + "/") for site in sites)
+
+
+#: The runtime's own module: its row's *Names* cell is prose, and not enforced.
+HOME_SITE = "crates/kynos/src/server/"
+# A `use` statement, through to its `;`.
+USE_STATEMENT = re.compile(r"\buse\s+[^;]*;")
+# A path rooted at the `tokio` crate: not a segment of another path, such as
+# `async_compression::tokio`, and not a field or method.
+RUNTIME_PATH = re.compile(r"(?<![\w:.$])(?:::\s*)?tokio\b(?:\s*::\s*\w+)*")
+
+
+def runtime_names(cell):
+    """The tokio items one *Names* cell lists, as `::` paths, or `None`.
+
+    Each backticked entry is a use tree rooted at `tokio`; `None` when an entry
+    is not, when anything but commas sits outside the backticks, or when the
+    cell lists nothing.
+    """
+    entries = backticked(cell)
+    if not entries:
+        return None
+    names = [path for entry in entries for path in use_paths(entry)]
+    if not names or not all(name.startswith("tokio::") for name in names):
+        return None
+    return names
+
+
+def runtime_paths(text):
+    """Every path rooted at the `tokio` crate that `text` writes, as `::` paths.
+
+    `use` trees are expanded first, and their text set aside so a group's
+    `{tokio::…}` member is read once; a path written inline is read through
+    its last segment, which for an associated item is past the type.
+    """
+    paths = [
+        path
+        for statement in USE_STATEMENT.findall(text)
+        for path in use_paths(statement[len("use") : -1])
+        if path.split("::")[0] == "tokio"
+    ]
+    inline = USE_STATEMENT.sub(lambda found: blank(found.group(0)), text)
+    paths += [re.sub(r"\s", "", found.group(0)).lstrip(":") for found in RUNTIME_PATH.finditer(inline)]
+    return sorted(set(paths))
+
+
+def admits(names, item):
+    """Whether `item` is one of `names`, or an associated item of one."""
+    return any(item == name or item.startswith(name + "::") for name in names)
 
 
 # --- The dependency graph ---------------------------------------------------
@@ -440,10 +516,12 @@ NAMED_BY = re.compile(r"`?(\w+(?:\s*::\s*\w+)*)`?")
 GATE = re.compile(r'`?feature\s*=\s*"([\w-]+)"`?')
 NEGATED_GATE = re.compile(r'`?not\(\s*feature\s*=\s*"([\w-]+)"\s*\)`?')
 # Where a `cfg` predicate starts: `#[cfg(`, `#![cfg(`, `cfg_attr` likewise, or
-# a bare `cfg!` under any of its three delimiters (attributes accept only `(`).
-# The lookbehind refuses `mycfg!`, `path::cfg!` and `$cfg!`, which text cannot
-# resolve to the real macro.
-PREDICATE = re.compile(r"#!?\[\s*(cfg_attr|cfg)\s*\(|(?<![\w:$])cfg!\s*([({\[])")
+# a `cfg!` under any of its three delimiters (attributes accept only `(`), bare
+# or through `std::`/`core::`. The lookbehind refuses `mycfg!`, any other
+# `path::cfg!` and `$cfg!`, which text cannot resolve to the real macro.
+PREDICATE = re.compile(
+    r"#!?\[\s*(cfg_attr|cfg)\s*\(|(?<![\w:$])(?:(?:::\s*)?(?:std|core)\s*::\s*)?cfg\s*!\s*([({\[])"
+)
 #: What closes a predicate's outermost delimiter; nested groups always use `(`.
 CLOSING = {"(": ")", "{": "}", "[": "]"}
 # A `not(` group, which inverts the polarity of everything inside it.
@@ -462,7 +540,8 @@ class Gate:
     def __init__(self, flag, negated):
         self.flag = flag
         self.negated = negated
-        self.pattern = re.compile(r'feature\s*=\s*"' + re.escape(flag) + r'"')
+        # The lookbehind refuses `target_feature`, a different predicate.
+        self.pattern = re.compile(r'(?<!\w)feature\s*=\s*"' + re.escape(flag) + r'"')
 
     def search(self, text):
         """Whether any predicate in `text` names this flag at this polarity."""
@@ -535,8 +614,43 @@ class Name:
         return self.search(text)
 
 
+class Owned:
+    """One type, matched wherever it is named other than behind a reference.
+
+    `Name`'s other counterpart: `&T`, `&mut T` and `&'a mut T` borrow a value
+    minted elsewhere, and a `use` only brings the name into scope, so neither
+    counts. Every other mention -- a path through the type, a field, binding,
+    parameter or return of it, a generic argument -- holds or makes one by
+    value, which is what a `Default::default()` or a derived `Default` needs
+    to have been written beside.
+    """
+
+    # The path segments before the type, then what precedes the path.
+    PREFIX = re.compile(r"(?:(?:::\s*)?\w+\s*::\s*)*(?:::\s*)?\Z")
+    BORROWED = re.compile(r"&\s*(?:'\w+\s*)?(?:mut\s+)?\Z")
+
+    def __init__(self, type_name):
+        self.pattern = re.compile(r"\b" + re.escape(type_name) + r"\b")
+
+    def search(self, text):
+        """Whether `text` names this type by value anywhere."""
+        text = USE_STATEMENT.sub(lambda found: blank(found.group(0)), text)
+        for found in self.pattern.finditer(text):
+            before = text[: found.start()]
+            path = self.PREFIX.search(before[-256:])
+            if not self.BORROWED.search(before[: len(before) - len(path.group(0))]):
+                return True
+        return False
+
+    def named(self, text):
+        """The same question: a borrow is no more a site at either polarity."""
+        return self.search(text)
+
+
 BACKTICKED = re.compile(r"`([^`]+)`")
 RESIDUE = re.compile(r"[\s,]*")
+# An *owned* spelling: the type, wherever it is not behind a reference.
+OWNED = re.compile(r"owned\s+(\w+)")
 
 
 def backticked(cell):
@@ -561,8 +675,8 @@ def token(cell):
 
     A cell is a comma-separated list of backticked entries, each of which may
     brace-expand (`Registry::{new,default}`). An identifier or `::` path (each
-    `::` tolerating whitespace) gets a `Name`; a gate or negated gate gets a
-    `Gate`. `gate` is true when the spelling must be matched over the
+    `::` tolerating whitespace) gets a `Name`; `owned T` gets an `Owned`; a
+    gate or negated gate gets a `Gate`. `gate` is true when the spelling must be matched over the
     literal-keeping corpus. One matcher per spelling, so each is held to
     naming a file on its own.
     """
@@ -578,6 +692,9 @@ def token(cell):
                 continue
             if named := NEGATED_GATE.fullmatch(spelling):
                 spellings.append((spelling, Gate(named.group(1), negated=True), True))
+                continue
+            if named := OWNED.fullmatch(spelling):
+                spellings.append((spelling, Owned(named.group(1)), False))
                 continue
             readable = NAMED_BY.fullmatch(spelling)
             if readable is None:
@@ -771,12 +888,62 @@ def taxonomy_failures(text):
 # --- Nothing a package compiles reaches outside the package ------------------
 # `cargo package` carries only the package directory, so a path literal climbing
 # out of it breaks the archive. Read raw from disk, over every `.rs` file.
-# Relative to the reading file.
-INCLUDED = re.compile(r'include_(?:bytes|str)!\s*\(\s*"([^"]*)"')
-# Relative to the package; only literals attached directly to the macro.
-CONCATENATED = re.compile(r'CARGO_MANIFEST_DIR"\s*\)\s*,\s*"([^"]*)"')
-JOINED = re.compile(r'CARGO_MANIFEST_DIR"\s*\)\s*\)?((?:\s*\.join\(\s*"[^"]*"\s*\))+)')
-JOIN = re.compile(r'\.join\(\s*"([^"]*)"\s*\)')
+# Relative to the reading file: the three `include` macros, and a module's
+# `#[path]`.
+INCLUDED = re.compile(
+    r'include(?:_bytes|_str)?\s*!\s*\(\s*"([^"]*)"|#\[\s*path\s*=\s*"([^"]*)"\s*\]'
+)
+# Relative to the package: `env!("CARGO_MANIFEST_DIR")`, alone or as the head of
+# a `concat!`, closing whatever `Path::new(` wraps it.
+MANIFEST_DIR = r'env\s*!\s*\(\s*"CARGO_MANIFEST_DIR"\s*\)'
+MANIFEST_ROOT = re.compile(
+    r'(?:concat\s*!\s*\(\s*' + MANIFEST_DIR + r'\s*,\s*"(?P<concat>[^"]*)"\s*\)|'
+    + MANIFEST_DIR + r")(?:\s*\))*"
+)
+# What a path is walked through: `.join("…")`, `.parent()`, and the
+# `.unwrap()`/`.expect(…)` a `parent()` is opened with.
+STEPS = re.compile(
+    r'(?:\s*\.\s*(?:join\(\s*"[^"]*"\s*\)|parent\(\s*\)|unwrap\(\s*\)|expect\([^)]*\)))*'
+)
+STEP = re.compile(r'\.\s*(?:join\(\s*"([^"]*)"\s*\)|(parent)\(\s*\))')
+# A `let` the walked path is bound by, read back from where the path starts.
+BOUND = re.compile(
+    r"\blet\s+(?:mut\s+)?(\w+)\s*(?::[^=;]*)?=\s*(?:&\s*)?(?:[\w:]+\s*\(\s*)?\Z"
+)
+
+
+def manifest_reads(text):
+    """Every path `text` walks from its package's `CARGO_MANIFEST_DIR`.
+
+    Each is relative to the package, `..` standing for a `parent()`. A `let`
+    binding one carries it on: a name bound to one is a root in its own right
+    from there on, as far as `.join` and `.parent()` walk it, so a climb split
+    across a binding is still the climb it is.
+    """
+    bound, reads, i = {}, [], 0
+    while True:
+        found = MANIFEST_ROOT.search(text, i)
+        name = (
+            re.compile(r"(?<![\w.:])(" + "|".join(map(re.escape, bound)) + r")\b").search(text, i)
+            if bound
+            else None
+        )
+        if found is None and name is None:
+            return reads
+        if found is None or (name is not None and name.start() < found.start()):
+            start, base, end = name.start(), bound[name.group(1)], name.end()
+        else:
+            concat = (found["concat"] or "").lstrip("/")
+            start, base, end = found.start(), [concat] if concat else [], found.end()
+        steps = STEPS.match(text, end)
+        walked = list(base)
+        for joined, parent in STEP.findall(steps.group(0)):
+            # `join` with an absolute path replaces what it was joined to.
+            walked = [joined] if joined.startswith("/") else walked + [".." if parent else joined]
+        reads.append("/".join(walked) or ".")
+        if binding := BOUND.search(text[max(0, start - 200) : start]):
+            bound[binding.group(1)] = walked
+        i = max(steps.end(), end, start + 1)
 # The manifest's `exclude`: files that never reach an archive are exempt.
 EXCLUDED = re.compile(r"^exclude\s*=\s*\[([^\]]*)\]", re.M)
 
@@ -800,11 +967,47 @@ def published(package):
 # `crate`, `self`, `super` or a module the file declares. Foreign re-exports and
 # `pub(crate) use` are allowed.
 DECLARED_MODULE = re.compile(r"\bmod\s+(\w+)\s*[;{]")
-REEXPORT = re.compile(r"^[ \t]*pub\s+use\s+(\w+)", re.MULTILINE)
+# The whole use tree, so a brace group's heads are read as well as a bare one.
+REEXPORT = re.compile(r"^[ \t]*pub\s+use\s+([^;]*);", re.MULTILINE)
+USE_TOKEN = re.compile(r"\w+|::|[{},*]")
+
+
+def use_paths(tree):
+    """Every path a `use` tree imports, with `::` joining its segments.
+
+    `a::{b, c::{self, d as e}}` -> `a::b`, `a::c`, `a::c::d`; a glob ends in
+    `*`, an alias is dropped and a leading `::` is not kept.
+    """
+
+    def group(tokens, i, prefix):
+        paths = []
+        while i < len(tokens) and tokens[i] != "}":
+            found, i = branch(tokens, i, prefix)
+            paths += found
+            if i < len(tokens) and tokens[i] == ",":
+                i += 1
+        return paths, i + 1
+
+    def branch(tokens, i, prefix):
+        path = list(prefix)
+        while i < len(tokens) and tokens[i] not in (",", "}"):
+            token = tokens[i]
+            if token == "{":
+                return group(tokens, i + 1, path)
+            if token == "as":
+                i += 2
+                break
+            if token == "*" or (token != "::" and not (token == "self" and path)):
+                path.append(token)
+            i += 1
+        return (["::".join(path)] if path else []), i
+
+    return group(USE_TOKEN.findall(tree), 0, [])[0]
+
 
 # --- Placeholder bodies -----------------------------------------------------
 # No `todo!` or `unimplemented!` outside doc examples, which `strip()` removes.
-PLACEHOLDER = re.compile(r"\b(todo|unimplemented)!")
+PLACEHOLDER = re.compile(r"\b(todo|unimplemented)\s*!")
 
 # --- The dev build profile ---------------------------------------------------
 # `.cargo/config.toml` holds the dev-profile keys behind `nfr.md`'s Workspace
@@ -1083,11 +1286,28 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
             "caused it"
         ),
     )
+    # `(sites, names)` per row whose *Names* cell this rule enforces.
+    named_rows = []
     if table is not None:
         for line in table.split("\n")[2:]:
             if not line.startswith("|"):
                 break
-            rows.append(re.findall(r"`([^`]+)`", line.split("|")[1]))
+            cells = line.split("|")
+            row = re.findall(r"`([^`]+)`", cells[1])
+            rows.append(row)
+            sites = {f"crates/kynos/src/{site.lstrip('/')}" for entry in row for site in expand(entry)}
+            if sites == {HOME_SITE}:
+                continue
+            names = runtime_names(cells[2])
+            if names is None:
+                failures.append(
+                    f"architecture.md's allowance table lets {', '.join(sorted(sites))} "
+                    f"name {cells[2].strip()}, which this rule cannot read as "
+                    "backticked `tokio::` use trees. The row allows every tokio item "
+                    "until it can, so its sites go unchecked meanwhile"
+                )
+                continue
+            named_rows.append((sites, names))
 
         stated = claimed(architecture, ROW_COUNT_CLAIM, failures)
         if stated is not None and stated != len(rows):
@@ -1101,6 +1321,25 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
             failures.append(
                 "`tokio` is named outside `server/` at a site the allowance table does "
                 "not list:\n    " + "\n    ".join(offenders)
+            )
+
+        unlisted = []
+        texts = dict(corpus.files)
+        for path in sorted(corpus.naming("tokio")):
+            covering = [names for sites, names in named_rows if allowed_at(path, sites)]
+            if not covering:
+                continue
+            unlisted += [
+                f"{path}: {item}"
+                for item in runtime_paths(texts[path])
+                if not any(admits(names, item) for names in covering)
+            ]
+        if unlisted:
+            failures.append(
+                "a site the allowance table lists names a tokio item its row's Names "
+                "cell does not. The cell is the claim of what the site couples to the "
+                "runtime, so either it grows with the argument for the item, or the "
+                "site stops naming it:\n    " + "\n    ".join(unlisted)
             )
 
     # --- The dependency graph ------------------------------------------------
@@ -1377,12 +1616,12 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
             continue
         for source in published(package):
             text = source.read_text()
-            reached = (
-                [(source.parent, literal) for literal in INCLUDED.findall(text)]
-                + [(package, literal.lstrip("/")) for literal in CONCATENATED.findall(text)]
-                + [(package, "/".join(JOIN.findall(chain))) for chain in JOINED.findall(text)]
-            )
-            for base, literal in reached:
+            reached = [
+                (source.parent, included or attributed)
+                for included, attributed in INCLUDED.findall(text)
+            ] + [(package, walked) for walked in manifest_reads(text)]
+            # A bound root is read once per use; each climb is reported once.
+            for base, literal in sorted(set(reached)):
                 if Path(os.path.normpath(base / literal)).is_relative_to(package):
                     continue
                 failures.append(
@@ -1400,11 +1639,12 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
         if path.endswith("/lib.rs"):
             continue
         own = set(DECLARED_MODULE.findall(text)) | {"crate", "self", "super"}
-        reexports += [
-            f"{path}: pub use {head}::..."
-            for head in REEXPORT.findall(text)
-            if head in own
-        ]
+        heads = {
+            imported.split("::")[0]
+            for tree in REEXPORT.findall(text)
+            for imported in use_paths(tree)
+        }
+        reexports += [f"{path}: pub use {head}::..." for head in sorted(heads & own)]
 
     if reexports:
         failures.append(
