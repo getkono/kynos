@@ -34,7 +34,7 @@ use crate::{
         body::alternative::Alternative,
         describe::{Describe, RequestContent},
     },
-    http::{HeaderMap, Request, header},
+    http::{HeaderMap, Parts, body::Body, header},
     router::operation::OperationCx,
     schema::registry::Registry,
 };
@@ -165,15 +165,15 @@ fn refuse_undecoded(headers: &HeaderMap) -> Result<(), BodyRejection> {
 ///
 /// The first half of every buffering codec; no byte is read before the content
 /// type and coding are enforced.
-async fn read_body(request: Request, media_type: &str) -> Result<Bytes, BodyRejection> {
-    if !offers(request.headers(), media_type) {
-        return Err(unsupported_media_type(request.headers()));
+async fn read_body(parts: &Parts, body: Body, media_type: &str) -> Result<Bytes, BodyRejection> {
+    if !offers(&parts.headers, media_type) {
+        return Err(unsupported_media_type(&parts.headers));
     }
-    refuse_undecoded(request.headers())?;
+    refuse_undecoded(&parts.headers)?;
 
-    let limit = limit::of(&request);
-    limit::refuse_declared(request.headers(), limit)?;
-    limit::read(request.into_body(), limit).await
+    let limit = limit::of(parts);
+    limit::refuse_declared(&parts.headers, limit)?;
+    limit::read(body, limit).await
 }
 
 /// Holds a decoded body, or the record of one sitting at `at`, to the bounds
@@ -307,16 +307,20 @@ where
 {
     type Rejection = BodyRejection;
 
-    async fn from_request(request: Request, context: &C) -> Result<Self, Self::Rejection> {
+    async fn from_request(
+        parts: &mut Parts,
+        body: Body,
+        context: &C,
+    ) -> Result<Self, Self::Rejection> {
         let () = <L as Alternative<R>>::DISTINCT;
         // Chosen from the head, so a malformed body fails as its own
         // representation rather than falling through.
-        if offers_any(request.headers(), &L::media_types()) {
-            L::from_request(request, context).await.map(Self::Left)
-        } else if offers_any(request.headers(), &R::media_types()) {
-            R::from_request(request, context).await.map(Self::Right)
+        if offers_any(&parts.headers, &L::media_types()) {
+            L::from_request(parts, body, context).await.map(Self::Left)
+        } else if offers_any(&parts.headers, &R::media_types()) {
+            R::from_request(parts, body, context).await.map(Self::Right)
         } else {
-            Err(unsupported_media_type(request.headers()))
+            Err(unsupported_media_type(&parts.headers))
         }
     }
 }

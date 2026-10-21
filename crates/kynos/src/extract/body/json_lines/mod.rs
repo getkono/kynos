@@ -18,7 +18,7 @@ use crate::{
         body::json_lines::records::{Framing, Records},
         describe::{Describe, RequestContent},
     },
-    http::Request,
+    http::{Parts, body::Body},
     router::operation::OperationCx,
     schema::{Schema, registry::Registry},
 };
@@ -116,8 +116,12 @@ pub struct JsonSeq<S> {
 impl<C: Sync, T: serde::de::DeserializeOwned + Schema> FromRequest<C> for JsonLines<Records<T>> {
     type Rejection = BodyRejection;
 
-    async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
-        Records::new(request, LINES_MEDIA_TYPE, Framing::Lines).map(|items| Self { items })
+    async fn from_request(
+        parts: &mut Parts,
+        body: Body,
+        _context: &C,
+    ) -> Result<Self, Self::Rejection> {
+        Records::new(parts, body, LINES_MEDIA_TYPE, Framing::Lines).map(|items| Self { items })
     }
 }
 
@@ -145,8 +149,13 @@ impl<T: Schema> RequestContent for JsonLines<Records<T>> {
 impl<C: Sync, T: serde::de::DeserializeOwned + Schema> FromRequest<C> for JsonSeq<Records<T>> {
     type Rejection = BodyRejection;
 
-    async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
-        Records::new(request, SEQUENCE_MEDIA_TYPE, Framing::Sequence).map(|items| Self { items })
+    async fn from_request(
+        parts: &mut Parts,
+        body: Body,
+        _context: &C,
+    ) -> Result<Self, Self::Rejection> {
+        Records::new(parts, body, SEQUENCE_MEDIA_TYPE, Framing::Sequence)
+            .map(|items| Self { items })
     }
 }
 

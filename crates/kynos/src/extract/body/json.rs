@@ -10,7 +10,7 @@ use crate::{
         FromRequest,
         describe::{Describe, RequestContent},
     },
-    http::Request,
+    http::{Parts, body::Body},
     router::operation::OperationCx,
     schema::{Schema, constraints::Pointer, registry::Registry},
 };
@@ -47,8 +47,12 @@ pub(super) const MEDIA_TYPE: &str = mime_names::APPLICATION_JSON;
 impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send> FromRequest<C> for Json<T> {
     type Rejection = BodyRejection;
 
-    async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
-        let bytes = super::read_body(request, MEDIA_TYPE).await?;
+    async fn from_request(
+        parts: &mut Parts,
+        body: Body,
+        _context: &C,
+    ) -> Result<Self, Self::Rejection> {
+        let bytes = super::read_body(parts, body, MEDIA_TYPE).await?;
         let value = serde_json::from_slice(&bytes).map_err(rejection)?;
         super::checked(value, Pointer::root()).map(Self)
     }

@@ -36,7 +36,8 @@ pub type Request = http::Request<Body>;
 /// The head of an incoming request: everything but the body.
 ///
 /// This is what a [`FromRequestParts`](crate::extract::FromRequestParts)
-/// implementation sees.
+/// implementation sees, and what a
+/// [`FromRequest`](crate::extract::FromRequest) one reads beside the body.
 pub type Parts = http::request::Parts;
 
 /// An outgoing response.

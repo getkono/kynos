@@ -162,21 +162,23 @@ async fn a_record_that_fails_to_serialize_ends_the_body_in_error() {
 /// extractor yields the items that were written, for both framings.
 #[tokio::test]
 async fn what_json_lines_writes_the_json_lines_extractor_reads_back() {
-    let carrying = |response: Response| -> Request {
+    let carrying = |response: Response| {
         let content_type = response.headers()[header::CONTENT_TYPE].clone();
-        http::Request::builder()
+        let request: Request = http::Request::builder()
             .method("POST")
             .uri("/")
             .header(header::CONTENT_TYPE, content_type)
             .body(response.into_body())
-            .expect("a well-formed request")
+            .expect("a well-formed request");
+        request.into_parts()
     };
 
     let lines = JsonLines {
         items: items(readings()),
     }
     .into_response();
-    let read: Vec<Reading> = JsonLines::<Records<Reading>>::from_request(carrying(lines), &())
+    let (mut parts, body) = carrying(lines);
+    let read: Vec<Reading> = JsonLines::<Records<Reading>>::from_request(&mut parts, body, &())
         .await
         .expect("the response's own media type")
         .items
@@ -189,7 +191,8 @@ async fn what_json_lines_writes_the_json_lines_extractor_reads_back() {
         items: items(readings()),
     }
     .into_response();
-    let read: Vec<Reading> = JsonSeq::<Records<Reading>>::from_request(carrying(sequence), &())
+    let (mut parts, body) = carrying(sequence);
+    let read: Vec<Reading> = JsonSeq::<Records<Reading>>::from_request(&mut parts, body, &())
         .await
         .expect("the response's own media type")
         .items

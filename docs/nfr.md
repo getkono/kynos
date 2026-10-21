@@ -241,7 +241,7 @@ decision.** DHAT over `alloc_counter_agreement.static_match`, the same request
 | 16 B, 48 B → 88 B | `MatchedPath` and `Forwarded`, each its own extension | **merged**: the router inserts one record holding the matched path, the captures and the resolved origin, read back through `MatchedPath`, `Path`, `Forwarded` (an argument, or `Forwarded::of` from a `&Request`) and `ByClientAddress`; a capture's own insert goes the same way |
 | 32 B, 148 B | the extension map's box and its table, on first insert | **kept**: any extension costs them, and a request from the server already pays both for its `Connection` |
 | 1928 B → 1904 B → 432 B | the dispatch future, boxed by `Service::call` | **kept, and narrowed below** |
-| 920 B → 912 B → 536 B | the endpoint's future, boxed by `DynEndpoint` | **kept**: it is the erasure every operation in one table needs; narrowed below |
+| 920 B → 912 B → 536 B → 320 B | the endpoint's future, boxed by `DynEndpoint` | **kept**: it is the erasure every operation in one table needs; narrowed below |
 
 **The origin is still resolved eagerly, and that is a decision.** Resolving it
 on first read instead would spare a request nothing reads it on, but it would
@@ -283,15 +283,24 @@ and the future a caller holds is the box's 16-byte pointer.
 holds the box to under two requests everywhere and to its 432 on Linux, where
 only the crate can name it.
 
-**The endpoint's future holds two.** An endpoint awaits its handler, through
-its own interceptors or recovery where it has them, in one `async fn` rather
-than through an `async` block inside it, and the builder itself is its chain's
-terminal, so nothing the chain borrows is built per request. A handler taking
-nothing boxes 536 bytes, from 808, and one taking a JSON body 1528, from 1800.
-The two requests left are the endpoint's own argument and the handler's, and
-what a body extractor keeps beside them is the handler's to shed;
-[`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) holds the endpoint's future
-to under three requests everywhere and to its 536 on Linux.
+**The endpoint's future holds one.** An endpoint splits the request before
+its future exists, so that future owns the head and is the only one holding
+it. It awaits its handler, through its own interceptors or recovery where it
+has them, in place, and the builder itself is its chain's terminal, so nothing
+the chain borrows is built per request. `Handler::call` is lent the head and
+handed the body, and lends the head on to each extractor; a body extractor's
+`FromRequest::from_request` takes the same pair rather than a request rebuilt
+for it. A handler taking nothing boxes 320 bytes, from 536 when
+`Endpoint::call` and the handler each kept a request of their own, and 808
+before that; one taking a JSON body boxes 632, from 1528 and 1800, and what it
+holds past the head is the codec's read: the collector buffering the body,
+with its frame queue and trailer map.
+[`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) holds the first to under
+two requests everywhere and to its 320 on Linux, and the second to under
+three, the read being just over one request wide, and to its 632. An endpoint
+with interceptors of its own still keeps the head beside the request it
+rebuilds for its chain, since `Next::run` takes a whole request; nothing
+guards that width.
 
 **The record of the matched route is kept as one insert.** `http::Extensions`
 boxes every value it holds and offers no way to reserve or reuse its table, so

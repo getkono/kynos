@@ -14,7 +14,7 @@ use crate::{
         FromRequest,
         describe::{Describe, RequestContent},
     },
-    http::{HeaderMap, Request, header},
+    http::{HeaderMap, Parts, body::Body, header},
     router::operation::OperationCx,
     schema::{Schema, constraints::Pointer, registry::Registry},
 };
@@ -259,21 +259,23 @@ async fn octets(mut field: multer::Field<'_>) -> Result<Bytes, multer::Error> {
 impl<C: Sync, T: FromMultipart + Schema + Send> FromRequest<C> for MultipartForm<T> {
     type Rejection = BodyRejection;
 
-    async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
-        let boundary = boundary(request.headers())?;
-        super::refuse_undecoded(request.headers())?;
+    // `head`, since `parts` names the form's parts below.
+    async fn from_request(
+        head: &mut Parts,
+        body: Body,
+        _context: &C,
+    ) -> Result<Self, Self::Rejection> {
+        let boundary = boundary(&head.headers)?;
+        super::refuse_undecoded(&head.headers)?;
 
         // Every part is held until `T` is built, so the limit bounds the whole
         // stream.
-        let limit = super::limit::of(&request);
-        super::limit::refuse_declared(request.headers(), limit)?;
+        let limit = super::limit::of(head);
+        super::limit::refuse_declared(&head.headers, limit)?;
         let constraints =
             multer::Constraints::new().size_limit(multer::SizeLimit::new().whole_stream(limit));
-        let mut fields = multer::Multipart::with_constraints(
-            request.into_body().into_data_stream(),
-            boundary,
-            constraints,
-        );
+        let mut fields =
+            multer::Multipart::with_constraints(body.into_data_stream(), boundary, constraints);
 
         let mut parts = Vec::new();
         while let Some(field) = fields.next_field().await.map_err(|e| malformed_body(&e))? {

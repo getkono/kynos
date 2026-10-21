@@ -134,9 +134,10 @@ where
     ///     http::{Request, media},
     /// };
     ///
-    /// let request = Request::new(kynos::http::body::Body::empty());
+    /// let (mut parts, body) = Request::new(kynos::http::body::Body::empty()).into_parts();
     /// let extract = <OneOf<Json<u64>, Binary<media::Json>> as FromRequest<()>>::from_request(
-    ///     request,
+    ///     &mut parts,
+    ///     body,
     ///     &(),
     /// );
     /// let _ = pin!(extract).poll(&mut Context::from_waker(Waker::noop()));

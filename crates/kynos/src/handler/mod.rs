@@ -3,7 +3,7 @@
 use std::future::Future;
 
 use crate::{
-    http::{Request, Response},
+    http::{Parts, Response, body::Body},
     router::operation::OperationCx,
 };
 
@@ -63,10 +63,19 @@ pub enum Guarded {}
             borrow, a lock guard — may be held across an `.await`"
 )]
 pub trait Handler<C, A>: Clone + Send + Sync + 'static {
-    /// Runs the handler: extracts every argument, then invokes it.
+    /// Runs the handler: extracts every argument from the head it is lent and
+    /// the body it is handed, then invokes it.
     ///
-    /// The context is borrowed for the life of the request, never cloned.
-    fn call(self, request: Request, context: &C) -> impl Future<Output = Response> + Send;
+    /// The head is lent rather than handed over inside a request so that the
+    /// future owning it, the endpoint's, holds the only copy: one passed by
+    /// value would keep its slot in every state of this future. The context is
+    /// borrowed for the life of the request, never cloned.
+    fn call(
+        self,
+        parts: &mut Parts,
+        body: Body,
+        context: &C,
+    ) -> impl Future<Output = Response> + Send;
 
     /// Describes the handler's inputs and outputs into the operation.
     ///
