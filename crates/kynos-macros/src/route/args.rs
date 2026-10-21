@@ -43,7 +43,7 @@ impl RouteArgs {
             }
 
             match &item {
-                // The bare path literal, which must come first.
+                // A bare flag; `catch_panics` is the only one.
                 Meta::Path(bare) => {
                     if bare.is_ident("catch_panics") {
                         catch_panics = true;

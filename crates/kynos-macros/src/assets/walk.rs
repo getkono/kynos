@@ -304,8 +304,9 @@ fn fnv1a(bytes: &[u8]) -> u64 {
         (hash ^ u64::from(*byte)).wrapping_mul(PRIME)
     });
 
-    // Two files differing only in trailing zero bytes hash alike under FNV-1a
-    // alone, which a build output can produce.
+    // One more round, over the length rather than a byte. FNV-1a already
+    // separates trailing zero bytes, since each one multiplies by the prime;
+    // folding the length in keeps every entity tag this macro has emitted.
     (hashed ^ (bytes.len() as u64)).wrapping_mul(PRIME)
 }
 
