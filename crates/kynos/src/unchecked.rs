@@ -278,10 +278,11 @@ fn advance(mut request: Request) -> BoxResponse {
         return layer.run(request);
     }
 
-    match request.extensions_mut().remove::<Continuation>() {
-        Some(last) => last.table.resume(last.path, last.position, request),
-        None => lost_continuation(),
-    }
+    let last = request
+        .extensions_mut()
+        .remove::<Continuation>()
+        .expect("the continuation `get_mut` just found is still in this request");
+    last.table.resume(last.path, last.position, request)
 }
 
 /// The 500 a layer that discarded the request gets in place of a response.
