@@ -1,5 +1,5 @@
 //! The `#[security(...)]` grammar: the options, each kind's nested options,
-//! and the checks an API key needs where its spans are.
+//! and the checks an API key and an `http` scheme need where their spans are.
 
 use kynos_openapi::model::parameter::header::is_ignored_header_parameter;
 use syn::{DeriveInput, Expr, Ident, LitStr, Token, Type, spanned::Spanned};
@@ -155,7 +155,8 @@ fn is_kind(name: &str) -> bool {
 }
 
 /// Reads the options nested inside one kind, and checks the ones that are
-/// checkable; `api_key` is checked in full here, where the spans are.
+/// checkable; `api_key` and `http` are checked in full here, where the spans
+/// are.
 fn check_kind(
     kind: &Ident,
     meta: &syn::meta::ParseNestedMeta<'_>,
@@ -212,6 +213,10 @@ fn check_kind(
         return check_oauth2(kind, nested);
     }
 
+    if kind == "http" {
+        return check_http(kind, nested);
+    }
+
     if kind != "api_key" {
         return Ok(());
     }
@@ -263,4 +268,19 @@ fn check_kind(
     }
 
     Ok(())
+}
+
+/// An `http` kind's `scheme` is the Security Scheme Object's REQUIRED field
+/// and the 401's challenge, so it must be an RFC 9110 `auth-scheme` token.
+fn check_http(kind: &Ident, nested: &Nested) -> syn::Result<()> {
+    let Some(scheme) = &nested.scheme else {
+        return Err(syn::Error::new(
+            kind.span(),
+            "an `http` scheme must say which authentication scheme it is: `scheme = \"Digest\"`",
+        ));
+    };
+    match non_token_message(&scheme.value(), "scheme", "an RFC 9110 auth-scheme") {
+        Some(message) => Err(syn::Error::new(scheme.span(), message)),
+        None => Ok(()),
+    }
 }

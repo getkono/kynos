@@ -1,0 +1,17 @@
+error: an `http` scheme must say which authentication scheme it is: `scheme = "Digest"`
+ --> tests/ui/macros/security_scheme_http_without_a_token_scheme.rs:8:12
+  |
+8 | #[security(http)]
+  |            ^^^^
+
+error: the scheme `Digest realm` contains ' ', and an RFC 9110 auth-scheme is a token: letters, digits and !#$%&'*+-.^_`|~
+  --> tests/ui/macros/security_scheme_http_without_a_token_scheme.rs:12:26
+   |
+12 | #[security(http(scheme = "Digest realm"))]
+   |                          ^^^^^^^^^^^^^^
+
+error: the scheme name is empty, and an RFC 9110 auth-scheme is a token: letters, digits and !#$%&'*+-.^_`|~
+  --> tests/ui/macros/security_scheme_http_without_a_token_scheme.rs:16:26
+   |
+16 | #[security(http(scheme = ""))]
+   |                          ^^
