@@ -93,10 +93,11 @@ impl<S: Requirement> Auth<S> {
 }
 
 impl<S: Requirement> Describe for Auth<S> {
-    /// Declares `about:blank` for its 403, and cannot declare anything else.
+    /// Declares its 403 as the shared, un-narrowed `Problem` component, since
+    /// the authorizer may refuse with any problem type.
     ///
-    /// The type on a named 403 is [`Scopes::FORBIDDEN_TYPE`], and this argument
-    /// names no scope set; [`Scoped`] is the guard that does.
+    /// The type on a narrowed 403 is [`Scopes::FORBIDDEN_TYPE`], and this
+    /// argument names no scope set; [`Scoped`] is the guard that does.
     fn describe(operation: &mut OperationCx<'_>) {
         let security = S::declare(operation);
         let challenges = Challenges {
@@ -199,8 +200,8 @@ impl<S: Requirement> MaybeAuth<S> {
 }
 
 impl<S: Requirement> Describe for MaybeAuth<S> {
-    /// Declares `about:blank` for its 403: naming no scope set, it has no
-    /// [`Scopes::FORBIDDEN_TYPE`] to declare.
+    /// Declares its 403 as the shared, un-narrowed `Problem` component: naming
+    /// no scope set, it has no [`Scopes::FORBIDDEN_TYPE`] to narrow it to.
     fn describe(operation: &mut OperationCx<'_>) {
         let mut security = vec![SecurityRequirement::anonymous()];
         security.extend(S::declare(operation));
