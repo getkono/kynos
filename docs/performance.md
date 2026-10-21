@@ -258,6 +258,17 @@ grow and pay two blocks more. `sizing_a_header_map_saves_no_block` in
 [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) holds the premise, and turns
 red when an `http` release makes presizing worth reopening.
 
+**A cache hit allocates no block of the cache's own beyond its future.** The
+lookup borrows its `PrimaryKey` from the request, and `Age` — a static `0` when
+no whole second has passed — is written straight onto the response, so what
+`interceptors.cache_hit` allocates past the boxed future is the replayed
+response itself. A miss whose response may be stored pays for storing it: an
+owned key, the stored response's `Arc` and its copy of the response's fields,
+and a copy of the request's header map. That copy is the whole map rather than
+the fields `Vary` names, because `Vary` is a response field and is written
+after the request has been handed on; a request that cannot be stored, or that
+hits, copies none of it.
+
 ## The feature grading
 
 Every flag `crates/kynos` declares appears in exactly one column below. The
