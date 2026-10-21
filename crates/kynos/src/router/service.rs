@@ -20,6 +20,11 @@ trait ErasedService: Send + Sync {
         &self,
         request: crate::http::Request,
     ) -> Pin<Box<dyn Future<Output = crate::http::Response> + Send + '_>>;
+
+    /// How wide the future [`call`](Self::call) boxes is, which no caller can
+    /// read off the box it gets back.
+    #[cfg(test)]
+    fn boxed_width(&self) -> usize;
 }
 
 impl<C> std::fmt::Debug for Service<C> {
@@ -98,8 +103,22 @@ impl<C> Service<C> {
     ///
     /// Exposed so that a Kynos service can be driven directly — by a test, or
     /// by an embedding that owns its own accept loop.
-    pub async fn call(&self, request: crate::http::Request) -> crate::http::Response {
-        self.handler.call(request).await
+    ///
+    /// Routes the request on the call, before the future is first polled,
+    /// telling every observer about it there; the future does the rest. That
+    /// leaves it holding only what is left to wait on, which every request in
+    /// flight carries.
+    pub fn call(
+        &self,
+        request: crate::http::Request,
+    ) -> impl Future<Output = crate::http::Response> + Send + '_ {
+        self.handler.call(request)
+    }
+
+    /// How wide the future [`call`](Self::call) boxes for every request is.
+    #[cfg(test)]
+    pub(crate) fn boxed_width(&self) -> usize {
+        self.handler.boxed_width()
     }
 
     /// Wraps an erased dispatcher and the description it implements.
@@ -123,6 +142,11 @@ impl<C> Service<C> {
                 request: crate::http::Request,
             ) -> Pin<Box<dyn Future<Output = crate::http::Response> + Send + '_>> {
                 Box::pin((self.0)(request))
+            }
+
+            #[cfg(test)]
+            fn boxed_width(&self) -> usize {
+                size_of::<Fut>()
             }
         }
 

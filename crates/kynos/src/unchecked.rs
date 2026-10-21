@@ -252,13 +252,16 @@ impl<C> Default for Unchecked<C> {
 }
 
 /// Runs one operation's layers, outermost first, and then the operation.
-pub(crate) async fn through_layers<C>(
+///
+/// Called rather than awaited in place, so the dispatch future awaiting the
+/// box this returns holds no second copy of the request.
+pub(crate) fn through_layers<C>(
     layers: &[Arc<dyn ErasedLayer>],
     dispatch: Arc<Dispatch<C>>,
     path: usize,
     position: usize,
     request: Request,
-) -> Response
+) -> BoxResponse
 where
     C: Send + Sync + 'static,
 {
@@ -268,7 +271,7 @@ where
         next = Continuation::through(Arc::clone(layer), next);
     }
 
-    next.call(request).await
+    next.call(request)
 }
 
 /// The 500 a layer that discarded the request gets in place of a response.

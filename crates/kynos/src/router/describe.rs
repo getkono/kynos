@@ -227,9 +227,10 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             implemented,
         });
 
+        // `serve`'s own future, not one awaiting it: a wrapper would box a
+        // second copy of the request beside the first.
         let service = Service::new(document, move |request| {
-            let dispatch = Arc::clone(&dispatch);
-            async move { dispatch.serve(request).await }
+            Arc::clone(&dispatch).serve(request)
         });
         #[cfg(feature = "docs")]
         let service = service.with_published(published);

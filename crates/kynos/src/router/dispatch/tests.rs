@@ -219,3 +219,61 @@ fn a_head_keeps_the_length_the_response_states() {
         Some(&::http::HeaderValue::from_static("11"))
     );
 }
+
+// --- How wide the future every request is boxed in is --------------------
+
+/// How wide the future [`Service::call`](crate::router::service::Service::call)
+/// boxes for every request is allowed to be: 432 bytes on Linux, read at
+/// baseline features and with `--all-features` alike by setting the ceiling to
+/// zero and taking the width out of the failure.
+///
+/// Guarded here rather than in `tests/alloc.rs`, whose guard sits outside the
+/// box: the future a caller holds is the box's pointer, so it stayed the same
+/// width while what it points at grew from 1904 bytes to 2544, and nothing
+/// failed. Only the crate can name the boxed type, and this is the guard on it.
+///
+/// Linux's alone, as a ceiling, since the width is the compiler's layout over
+/// platform types; the relation below holds everywhere.
+const BOXED_DISPATCH_FUTURE_BYTES: usize = 432;
+
+/// The design property under the ceiling, and the one that survives a change
+/// to it: the boxed future holds one request.
+///
+/// Each `async fn` between the box and the chain once kept a copy of its own,
+/// five in all, and none overlapped, since a moved-from argument keeps its slot
+/// in every state of a coroutine. Routing now happens before the future
+/// exists, and the future awaits each chain in place.
+#[test]
+fn the_boxed_dispatch_future_holds_one_request() {
+    async fn ping() -> crate::response::status::NoContent {
+        crate::response::status::NoContent
+    }
+
+    let service = crate::Router::<()>::new()
+        .mount(
+            crate::router::endpoint::builder::EndpointBuilder::<(), _, _>::new(
+                kynos_openapi::Method::Get,
+                kynos_openapi::PathTemplate::parse("/ping").expect("a usable path template"),
+                ping,
+            ),
+        )
+        .build(())
+        .expect("a describable router");
+    let width = service.boxed_width();
+    let request = size_of::<crate::http::Request>();
+
+    assert!(
+        width < 2 * request,
+        "the boxed dispatch future is {width} bytes, room for two {request}-byte \
+         requests; something between the box and the chain keeps a copy of its \
+         own"
+    );
+    if cfg!(target_os = "linux") {
+        assert!(
+            width <= BOXED_DISPATCH_FUTURE_BYTES,
+            "the boxed dispatch future is {width} bytes against a recorded \
+             {BOXED_DISPATCH_FUTURE_BYTES}; every request in flight carries one, \
+             so raising this ceiling is a change to docs/nfr.md"
+        );
+    }
+}
