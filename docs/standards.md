@@ -72,10 +72,13 @@ out here that there is none, rather than concluding the citation was forgotten.
 | `emit/downgrade` | the 3.1/3.2 delta itself: what 3.2 adds is what 3.1 cannot be handed | same |
 | the meta-schemas | the OAI's own JSON Schema description of a document | [`oas-3.1-schema-2022-10-07.json`](../references/oas-3.1-schema-2022-10-07.json), [`oas-3.2-schema-2025-09-17.json`](../references/oas-3.2-schema-2025-09-17.json) |
 
-Two departures, both argued in the code that makes them:
+Four departures, each argued in the code that makes it or, for the path
+template, here:
 
 | Deviation | Why |
 | --- | --- |
+| A path template is held to 3.2's Path Templating grammar under 3.1 too: a repeated variable is refused, and a literal holds only `pchar` | 3.2's Path Templating, under the Paths Object, states both — "Each template expression MUST NOT appear more than once in a single path template", and `path-literal = 1*pchar` — where 3.1 states neither. `PathTemplate::parse` takes no version, so one grammar serves both, and the stricter one costs a 3.1 document nothing it could use: a repeated variable could not name a second parameter, since a parameter is unique by name and location, and a literal outside `pchar` is not one a request path can hold |
+| An operation declaring no response is refused | Both versions require a Responses Object to hold at least one response code but let an Operation omit `responses`, and the model writes an empty one as omitted. An operation describing nothing it returns tells a client nothing it can act on. `validate/violation.rs` carries the argument |
 | `encoding` ⊕ `prefixEncoding`/`itemEncoding` is a validation rule, not a sum type | Every other stated exclusion in the model is a type. These two fields are 3.2-only, so a sum type would give one field a different shape in a 3.1 build than a 3.2 one — and a type that changes with a feature is the non-additivity `openapi32` exists to avoid. `validate/rules/content.rs` carries the argument |
 | A requirement's name may be a URI under 3.2 but a bare undeclared name is still refused | 3.2 §4.8.30 admits both spellings. A single-segment relative reference is a legal URI, so reading one as a URI would accept every misspelling; 3.2 also says such a reference is spelled `./foo`. `validate/rules/operations.rs` carries the argument |
 
