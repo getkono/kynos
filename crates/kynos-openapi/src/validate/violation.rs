@@ -223,6 +223,14 @@ pub enum SpecError {
     },
 
     /// An operation declared no responses.
+    ///
+    /// A policy beyond the specification, not a rule it states. A Responses
+    /// Object must hold at least one response code, but an Operation Object
+    /// may omit `responses` altogether, and the model cannot tell an omitted
+    /// one from an empty one: an empty
+    /// [`Responses`](crate::model::response::Responses) is omitted when
+    /// written. Kynos refuses both, because an operation describing nothing it
+    /// returns tells a client nothing it can act on.
     #[error("an operation must declare at least one response")]
     NoResponses,
 
