@@ -274,8 +274,8 @@ flag to the files that write its gate and, usually, call its crate, and
 the two documents cannot drift apart in the direction that loses a proof.
 [`cost/binary.tsv`](../crates/kynos/cost/binary.tsv) records a `.text` delta
 for each off-path flag that compiles alone, `openapi31` and the four `time`
-and `decimal` backends among them. `time` and `decimal` have no row of their own because neither
-compiles alone, which `features:check` already probes.
+and `decimal` backends among them. `time` and `decimal` have no row of their
+own because neither compiles alone, which `features:check` already probes.
 
 **The table is counted against the manifest.**
 [`containment:check`](../scripts/containment.py) reads the rows above and
