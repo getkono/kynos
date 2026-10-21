@@ -16,7 +16,8 @@
 //!
 //! # Optional features
 //!
-//! - `yaml`: `Document::to_yaml`, beside the JSON emission every build has.
+//! - `yaml`: the `emit::yaml` module, holding `Document::to_yaml` beside the
+//!   JSON emission every build has.
 //! - `http`: conversions between `Method` and `http::Method`.
 //! - `pattern`: the `pattern` module, translating an ECMA-262 `pattern` into
 //!   the `regex` crate's dialect.
