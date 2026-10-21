@@ -15,7 +15,7 @@ cannot describe.
 | --- | --- | --- |
 | `Short` | the responses it can answer with alone | `Err(Short)` is the only way to answer without the handler |
 | `Adds` | the response headers it attaches | `Continued<Adds>` is the return type, so it must attach them — and `with_headers` is on `Continued<()>` alone, so it attaches nothing else |
-| `Reads` | the request headers it consumes, and the 400 a failed decode answers with unless `DecodeHeaders::FALLIBLE` is `false` | it is handed that group, and nothing else |
+| `Reads` | the request headers it consumes, and the 400 a failed decode answers with unless `DecodeHeaders::FALLIBLE` is `false` | it is handed that group decoded beside the whole `Request`, so `Reads` is the typed, described subset of what it reads rather than a limit on it |
 
 **One group, once.** `with_headers` writes its group and then relabels the
 `Continued`, so a second call could relabel back to the declared type with the
@@ -129,12 +129,15 @@ Every header an interceptor sets is *declared*, so the conflict check sees it.
 Whether it is *described* is a separate question, answered by
 `HeaderParams::DESCRIBED`.
 
-`Vary`, `Content-Encoding` and the CORS set are defined by HTTP itself and
-handled by every client without being told, so their groups set `DESCRIBED` to
-`false` and stay out of the emitted document. This does not weaken anything: a
-second interceptor touching one of those names still fails to compile. The two
-questions are "can this collide" and "does a consumer need to hear about it",
-and only the first is about correctness.
+`Content-Encoding` and the CORS set are defined by HTTP itself and handled by
+every client without being told, so `ContentEncoding` sets `DESCRIBED` to
+`false`, and so does `Cors` unless `document_response_headers` asks otherwise;
+both stay out of the emitted document. This does not weaken anything: a second
+interceptor touching one of those names still fails to compile. `Vary` is the
+exception in the other direction — no group names it, so it is neither described
+nor a conflict, and each group's `VARIES` is merged into the one field instead.
+The two questions are "can this collide" and "does a consumer need to hear about
+it", and only the first is about correctness.
 
 **Where a described header lands.** An interceptor's `Adds` group is filed
 against the *successful* responses the operation already declares, one entry
@@ -183,7 +186,9 @@ longer exists. The same section is blunt about it: "a sender MUST NOT forward a
 message with a Content-Length header field value that is known to be incorrect."
 
 `content-length` is therefore in `ContentEncoding::NAMES`, and the group states
-the encoded length whenever it states a coding. Restated rather than removed:
+the encoded length whenever it states a coding on a buffered body; a streamed
+one states none, for the reason *a body still being produced* gives below.
+Restated rather than removed:
 removing it would leave hyper to derive one from the body's size hint, which is
 right only while the body is buffered, and stating it is right whatever the body
 becomes.
@@ -242,31 +247,31 @@ row that meets the rule saves over 1680 octets under every coding.
 
 The compression sweep in [`kynos-profile`](../crates/kynos-profile/) serves one
 JSON document at five sizes under each coding, and `mise run profile:requests`
-counts each encode against the same request declined. The octet columns
-reproduce from the sweep on any host. The instruction and heap columns are the
-`compression` rows of [`requests.tsv`](../crates/kynos-profile/requests.tsv),
-[CI's run of record](performance.md#the-taxonomy) at rustc 1.97.1, less the
-`identity` row of the same size, with instructions split as the report splits
-them — the program object exactly, and glibc as that run reported, since its
-count moves between runs:
+counts each encode against the same request declined. The octets below
+reproduce from the sweep on any host. What each encode costs in instructions and
+heap is the `compression` rows of
+[`requests.tsv`](../crates/kynos-profile/requests.tsv),
+[CI's run of record](performance.md#the-taxonomy), read against the `identity`
+row of the same size; it moves with every re-record, so it is linked rather than
+restated here:
 
-| Body (identity) | Coding | Encoded | Saved | Instructions added, program | Instructions added, glibc | Heap added |
-| ---: | --- | ---: | ---: | ---: | ---: | ---: |
-| 83 | gzip | 97 | −14 | 42695 | ~378000 | 320 KB |
-| 83 | br | 73 | 10 | 92009 | ~69000 | 567 KB |
-| 83 | zstd | 83 | 0 | 27887 | ~803000 | 3.66 MB |
-| 988 | gzip | 227 | 761 | 112150 | ~378000 | 320 KB |
-| 988 | br | 201 | 787 | 206687 | ~84000 | 581 KB |
-| 988 | zstd | 215 | 773 | 51478 | ~803000 | 3.66 MB |
-| 1954 | gzip | 268 | 1686 | 155451 | ~378000 | 320 KB |
-| 1954 | br | 227 | 1727 | 239111 | ~231000 | 595 KB |
-| 1954 | zstd | 262 | 1692 | 57365 | ~803000 | 3.66 MB |
-| 4110 | gzip | 365 | 3745 | 252637 | ~378000 | 320 KB |
-| 4110 | br | 287 | 3823 | 320261 | ~263000 | 628 KB |
-| 4110 | zstd | 375 | 3735 | 71881 | ~804000 | 3.66 MB |
-| 59395 | gzip | 2789 | 56606 | 2967290 | ~568000 | 323 KB |
-| 59395 | br | 1343 | 58052 | 2283646 | ~1315000 | 1.46 MB |
-| 59395 | zstd | 1409 | 57986 | 379965 | ~1019000 | 3.67 MB |
+| Body (identity) | Coding | Encoded | Saved |
+| ---: | --- | ---: | ---: |
+| 83 | gzip | 97 | −14 |
+| 83 | br | 73 | 10 |
+| 83 | zstd | 83 | 0 |
+| 988 | gzip | 227 | 761 |
+| 988 | br | 201 | 787 |
+| 988 | zstd | 215 | 773 |
+| 1954 | gzip | 268 | 1686 |
+| 1954 | br | 227 | 1727 |
+| 1954 | zstd | 262 | 1692 |
+| 4110 | gzip | 365 | 3745 |
+| 4110 | br | 287 | 3823 |
+| 4110 | zstd | 375 | 3735 |
+| 59395 | gzip | 2789 | 56606 |
+| 59395 | br | 1343 | 58052 |
+| 59395 | zstd | 1409 | 57986 |
 
 The 1954-octet row is the smallest at which every coding saves a segment; the
 988-octet row is smaller than a segment to begin with. By interpolation each
@@ -281,24 +286,22 @@ fails nothing.
 shrinks by more than 85%; API JSON commonly shrinks by 70–85%, so the default
 encodes some bodies from 2 KiB that save a little under a segment, and a body
 that compresses worse should raise `min_size`. The small rows are the case for a
-threshold at all: an 83-octet body costs gzip about 420 000 instructions in all
-— twenty times what the whole request costs unencoded — to come out fourteen
-octets larger. What an octet saved is worth is still a deployment's call, and
-`min_size` is where it makes it.
+threshold at all: an 83-octet body costs gzip many times what the whole request
+costs unencoded, to come out fourteen octets larger. What an octet saved is
+worth is still a deployment's call, and `min_size` is where it makes it.
 
 **Encoding stays on the worker serving the request, and that is a decision.**
-The sweep counts what an encode costs; whether a 60 KB gzip encode at three
-million instructions holds up the other tasks queued on that worker is a
-latency question, and latencies are [`kynos-bench`](performance.md#the-boundary)'s
+The sweep counts what an encode costs; whether a 60 KB gzip encode holds up the
+other tasks queued on that worker is a latency question, and latencies are [`kynos-bench`](performance.md#the-boundary)'s
 to measure. Until it says otherwise nothing moves to a blocking thread, which
 would add a hand-off to every encode to spare the few large ones.
 The levels are the knob that bounds an encode's cost today.
 
 **An encoder's fixed cost is mostly the memory it sets up, and zstd's is the
-largest.** Each encode allocates its context afresh — 3.66 MB for zstd, about
-320 KB for gzip, 567 KB and up for brotli — and most of the glibc column is that
-memory being prepared. So at the small end zstd is the most expensive coding in
-total, about 830 000 instructions whatever the body, and brotli the cheapest;
+largest.** Each encode allocates its context afresh — megabytes for zstd,
+hundreds of kilobytes for gzip and brotli — and most of what glibc executes for
+an encode is that memory being prepared. So at the small end zstd is the most
+expensive coding in total, whatever the body, and brotli the cheapest;
 only at the large end, where the fixed cost is amortised, does zstd's program
 work — the smallest per octet saved — make it the cheapest. On a service
 answering many concurrent compressed requests zstd's context is also resident
@@ -492,10 +495,10 @@ names `Retry-After` would overwrite the one `RateLimit`'s 429 wrote, and the two
 compile. It is unreachable with anything Kynos ships — `Concurrency` and
 `RateLimit` both write `Retry-After` from their own short circuits, and only one
 short circuit answers a request — and it stays a gap on purpose. Closing it
-needs a `HEADERS` const on `ShortCircuit`, which `#[derive(ApiError)]` could not
-derive from an `IntoResponse` body: it would be a declaration written beside the
-behaviour rather than being it, which is the `contribution` method this document
-refuses.
+needs a `HEADERS` const on `ShortCircuit`, and a `ShortCircuit` may be written by
+hand beside its own `IntoResponse` — `Timeout::answer_with` takes one — where
+that const would be a declaration written beside the behaviour rather than being
+it, which is the `contribution` method this document refuses.
 
 ### Replacing the algorithm, and why no bucket ships
 
@@ -938,9 +941,10 @@ own included, and what a preflight on the covered paths should answer.
 What stops this becoming a capability:
 
 - The match is a closed list of two concrete types. `CorsDocumentation` is
-  sealed, so there cannot be a third, and
+  sealed, so there cannot be a third outside this crate. Inside it, nothing yet
+  fails when one is added without a probe arm:
   `every_cors_documentation_state_is_one_of_the_two_the_router_recognises`
-  fails if one is added without teaching the probe about it.
+  pins the two states it transcribes, and cannot see `cors_config`'s arms.
 - A third-party interceptor is never asked. `ErasedInterceptor::as_any` is
   `pub(crate)`, and there is no trait method an outside implementation could
   supply to be read this way.
@@ -984,7 +988,7 @@ is a cookie the service believes it set and the client silently discarded:
 `SameSite=None` implies `Secure`, `__Secure-` implies `Secure`, and `__Host-`
 implies both `Secure` and `Path=/`.
 
-**`Expires` is deliberately absent.** RFC 6265bis §4.1.2.1 gives `Max-Age`
+**`Expires` is deliberately absent.** RFC 6265bis §4.1.2.2 gives `Max-Age`
 precedence wherever both appear, so a cookie carrying both is one attribute
 stating the lifetime and one being ignored. `Max-Age` is also a duration, which
 is what a server actually knows; `Expires` is an absolute HTTP-date, so
@@ -1032,10 +1036,12 @@ and the two compile beside each other.
 The overlap is about *description* rather than compilation: a CSRF 403 and an
 `Auth` 403 on one operation are one entry, since a description files one
 response per status. `Responses::union_from` joins the two descriptions rather
-than keeping whichever landed first — but neither 403 narrows its `type`, so the
-schema stays the shared component and a client cannot tell the two refusals
-apart from the declaration alone. Understating a description that way is the
-failure mode this project accepts elsewhere for the same reason.
+than keeping whichever landed first — but neither 403 narrows its `type` unless
+told to: `Csrf::problem_type` names one for `CrossSite`, `Scopes::FORBIDDEN_TYPE`
+names one for a `Scoped` guard, and a bare `Auth` names none. Left at the
+default, the schema stays the shared component and a client cannot tell the two
+refusals apart from the declaration alone. Understating a description that way
+is the failure mode this project accepts elsewhere for the same reason.
 
 The crypto objection above is real for *token-based* CSRF: a synchroniser token needs randomness, an HMAC and
 somewhere to keep the token, which is a session. [`Csrf`](../crates/kynos/src/middleware/csrf.rs)
@@ -1238,23 +1244,17 @@ mark.
 
 RFC 9111 section 4.4 requires a cache to invalidate the target URI on a
 non-error status to an unsafe method, and a non-error status is a 2xx or a 3xx.
-So a `POST`, `PUT`, `PATCH`, `DELETE` or an extension method the `http` crate
-does not recognise drops what was stored for that target, and a 4xx or 5xx
-answer to the same request drops nothing — a refused write changed nothing worth
-paying a handler call to rediscover.
+So a `POST`, `PUT`, `PATCH` or `DELETE` drops what was stored for that target,
+and a 4xx or 5xx answer to the same request drops nothing — a refused write
+changed nothing worth paying a handler call to rediscover.
 
-Two details are decisions rather than mechanics.
+One detail is a decision rather than mechanics.
 
 **Both stored methods are dropped, not the one that arrived.** The requirement
 invalidates a *URI*; `PrimaryKey` carries the method; and only `GET` and `HEAD`
 are ever stored. So the key a `POST` would build names nothing at all, and
 dropping that key would satisfy a reading of the rule while leaving in place the
 exact copy the client is about to read back.
-
-**An unknown method counts as unsafe.** Section 4.4 says "including methods
-whose safety is unknown", and `Method::is_safe` is false for an extension method
-the crate does not know — so the two agree without a table of method names to
-keep in step.
 
 The `Location` and `Content-Location` invalidations in the same section are a
 MAY and are absent. Honouring them means comparing origins, since the section
@@ -1361,11 +1361,13 @@ hundred operations it never touches.
 
 ## Tower interop
 
-Interoperability is asymmetric, and deliberately so:
+Interoperability costs a declaration or a waiver in either direction:
 
-- **Outward is free.** A Kynos application mounts into an outer `tower` stack
-  without declaring anything. Whatever wraps the service is outside the document
-  and always was — `Service::into_tower_unchecked` already exists for this.
+- **Outward is a waiver too.** A Kynos application mounts into an outer `tower`
+  stack only through `Service::into_tower_unchecked`, behind the `unchecked`
+  feature. Whatever wraps the service is outside the document, so converting
+  flags every operation `Opaque` (`UntypedLayer`) rather than letting the
+  document claim what a layer it cannot see may change.
 - **Inward requires a declaration.** A `tower` layer placed *inside* the stack
   must either be expressed as an `Interceptor` with a contribution, or be taken
   under a waiver that marks its subtree `Opaque`.
