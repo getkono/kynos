@@ -3,7 +3,11 @@
 //! Both box their future; staying `pub(crate)` keeps the box out of user
 //! signatures.
 
-use std::{future::Future, pin::Pin};
+use std::{
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use kynos_openapi::{RefOr, StatusPattern};
 
@@ -22,12 +26,17 @@ pub(crate) trait ErasedInterceptor<C>: Send + Sync + 'static {
     /// the same for every operation it covers.
     fn describe(&self, operation: &mut OperationCx<'_>);
 
+    /// Hands `request` to this interceptor, boxing the future it returns and
+    /// nothing else.
+    ///
+    /// Decodes [`Interceptor::Reads`] at the call rather than in the box, so
+    /// the box does not also keep the arguments that future already holds.
     fn intercept<'a>(
         &'a self,
         request: Request,
         context: &'a C,
         next: Next<'a, C>,
-    ) -> Pin<Box<dyn Future<Output = Response> + Send + 'a>>;
+    ) -> Intercepted<'a>;
 
     /// This interceptor as a concrete value.
     ///
@@ -36,6 +45,32 @@ pub(crate) trait ErasedInterceptor<C>: Send + Sync + 'static {
     /// `docs/middleware.md`, "The one interceptor the router recognises by
     /// identity".
     fn as_any(&self) -> &dyn std::any::Any;
+}
+
+/// An interceptor's own future, boxed as it is and polled for the response it
+/// settles to.
+///
+/// Erased as [`Settle`] rather than as `Future<Output = Response>`: the latter
+/// needs a wrapper mapping the outcome, and an `async` block awaiting a future
+/// it captured keeps that future twice.
+pub(crate) type Intercepted<'a> = Pin<Box<dyn Settle + Send + 'a>>;
+
+/// A future whose outcome becomes a response once it is ready.
+pub(crate) trait Settle {
+    fn poll_settle(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Response>;
+}
+
+impl<F, A, S> Settle for F
+where
+    F: Future<Output = Result<Continued<A>, S>>,
+    S: IntoResponse,
+{
+    fn poll_settle(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Response> {
+        self.poll(context).map(|outcome| match outcome {
+            Ok(continued) => Continued::into_response(continued),
+            Err(short) => IntoResponse::into_response(short),
+        })
+    }
 }
 
 impl<C, I> ErasedInterceptor<C> for I
@@ -77,25 +112,20 @@ where
         request: Request,
         context: &'a C,
         next: Next<'a, C>,
-    ) -> Pin<Box<dyn Future<Output = Response> + Send + 'a>> {
-        Box::pin(async move {
-            let reads = match <I::Reads as DecodeHeaders>::decode(request.headers()) {
-                Ok(reads) => reads,
-                Err(rejection) => {
-                    debug_assert!(
-                        <I::Reads as DecodeHeaders>::FALLIBLE,
-                        "`{}` sets `FALLIBLE = false` and rejected a request",
-                        std::any::type_name::<I::Reads>(),
-                    );
-                    return rejection.into_response();
-                }
-            };
-
-            match Interceptor::intercept(self, request, reads, context, next).await {
-                Ok(continued) => Continued::into_response(continued),
-                Err(short) => IntoResponse::into_response(short),
+    ) -> Intercepted<'a> {
+        let reads = match <I::Reads as DecodeHeaders>::decode(request.headers()) {
+            Ok(reads) => reads,
+            Err(rejection) => {
+                debug_assert!(
+                    <I::Reads as DecodeHeaders>::FALLIBLE,
+                    "`{}` sets `FALLIBLE = false` and rejected a request",
+                    std::any::type_name::<I::Reads>(),
+                );
+                return Box::pin(std::future::ready(Err::<Continued, _>(rejection)));
             }
-        })
+        };
+
+        Box::pin(Interceptor::intercept(self, request, reads, context, next))
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
