@@ -263,8 +263,10 @@ beyond its future.** The lookup borrows its `PrimaryKey` from the request, and
 `Age` — a static `0` when no whole second has passed — is written straight onto
 the response, so what `interceptors.cache_hit` allocates past the boxed future
 is the replayed response itself. Under `deriving_etags()`, a hit on a stored
-response that carries no `ETag` derives the tag again, and formatting it
-allocates one block more. A miss whose response may be stored pays for storing it: an
+response that carries no `ETag` derives the tag again, at four blocks or more:
+`format!` starts the string too small and grows it twice for the 18-byte tag
+(three times when the digest has leading zeros), and `HeaderValue` boxes a
+shared handle to the string because its length is short of its capacity. A miss whose response may be stored pays for storing it: an
 owned key, the stored response's `Arc` and its copy of the response's fields,
 and a copy of the request's header map. That copy is the whole map rather than
 the fields `Vary` names, because `Vary` is a response field and is written
