@@ -666,9 +666,9 @@ fn every_unconstructible_short_circuit_declares_no_status() {
 /// Every short circuit Kynos ships, named against the set the sweep drives.
 ///
 /// The same argument as the two sets above, one trait further out: without it a
-/// ninth short circuit is a type the sweep silently does not reach. The walk is
-/// over the whole crate rather than `src/middleware/`, because `Infallible`'s
-/// implementation is in `src/response/mod.rs`.
+/// short circuit beyond the ten listed is a type the sweep silently does not
+/// reach. The walk is over the whole crate rather than `src/middleware/`,
+/// because `Infallible`'s implementation is in `src/response/mod.rs`.
 #[test]
 fn every_short_circuit_kynos_ships_is_accounted_for() {
     let declared = impls_of("ShortCircuit");
@@ -921,7 +921,7 @@ async fn every_case() -> Vec<Case> {
 }
 
 /// The names the sweep must drive, derived from `SHORT_CIRCUITS` rather than
-/// transcribed a second time — so a ninth implementation fails both tests.
+/// transcribed a second time — so an eleventh implementation fails both tests.
 ///
 /// A `cfg` per element rather than a second list, so the set stays derived at
 /// every feature combination.

@@ -1105,7 +1105,7 @@ async fn an_idle_body_timeout_leaves_a_steady_stream_alone() {
 }
 
 /// The difference between the two constructors. `steady` runs about 50 ms and
-/// survives `idle(30ms)` above, because no single gap reaches 30 ms. A deadline
+/// survives `idle(100ms)` above, because no single gap reaches 100 ms. A deadline
 /// does not care how steadily it arrives.
 #[cfg(feature = "openapi32")]
 #[tokio::test]
@@ -1195,12 +1195,7 @@ async fn a_body_timeout_keeps_the_length_and_the_end_its_body_declares() {
     assert!(body("/prompt").await.is_end_stream());
 }
 
-/// A keep-alive is a real frame, so it restarts an idle clock exactly as an
-/// event does.
-///
-/// Asserted as "still running when the window closed": the outer timeout
-/// elapsing is the evidence, because a body that had tripped its idle limit
-/// would have returned an error long before.
+/// An event stream with nothing to say until long after any window below.
 #[cfg(all(feature = "openapi32", feature = "json"))]
 struct Silent {
     timer: std::pin::Pin<Box<tokio::time::Sleep>>,
@@ -1232,13 +1227,20 @@ async fn heartbeat() -> kynos::response::stream::sse::Sse<Silent> {
     .keep_alive(kynos::response::stream::sse::KeepAlive::new().interval(Duration::from_millis(5)))
 }
 
+/// A keep-alive is a real frame, so it restarts an idle clock exactly as an
+/// event does.
+///
+/// Asserted as "still running when the window closed": the outer timeout
+/// elapsing is the evidence, because a body that had tripped its idle limit
+/// would have returned an error long before.
 #[cfg(all(feature = "openapi32", feature = "json"))]
 #[tokio::test]
 async fn a_keep_alive_frame_resets_an_idle_body_timeout() {
+    let idle = Duration::from_millis(100);
     let service = Router::<()>::new()
         .mount(kynos::routes![heartbeat])
         .intercept(kynos::middleware::limits::body_timeout::BodyTimeout::idle(
-            Duration::from_millis(100),
+            idle,
         ))
         .build(())
         .expect("a describable router");
@@ -1251,7 +1253,7 @@ async fn a_keep_alive_frame_resets_an_idle_body_timeout() {
 
     assert!(
         outcome.is_err(),
-        "an event stream sending keep-alives every 5 ms tripped a 30 ms idle \
+        "an event stream sending keep-alives every 5 ms tripped a {idle:?} idle \
          limit: {outcome:?}"
     );
 }
