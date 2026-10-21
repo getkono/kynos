@@ -1,5 +1,8 @@
 //! What one request costs: what the routing path allocates, what a chain in
-//! front of it adds, and how wide the future dispatch returns is.
+//! front of it adds, and how wide the future dispatch returns is — and, as a
+//! characterization of the `http` dependency rather than of Kynos, that
+//! presizing a response's header map saves no block, which is why responses
+//! grow theirs.
 //!
 //! The allocation-count kind in
 //! [`performance.md`](../../../docs/performance.md#the-taxonomy), and one of
@@ -52,7 +55,7 @@ use alloc_counter::count_alloc;
 use kynos::{
     Router,
     extract::params::path::Path,
-    http::{Method, Request, StatusCode},
+    http::{HeaderMap, HeaderValue, Method, Request, StatusCode, header},
     middleware::{Continued, Interceptor, Next},
     prelude::*,
     response::status::NoContent,
@@ -860,4 +863,48 @@ fn replayed(service: &Service<()>, target: &str, expected: StatusCode, described
         moved.len(),
         moved.first()
     );
+}
+
+/// Why no response presizes its header map: a sized map costs the blocks a
+/// grown one does.
+///
+/// `http`'s map keeps its index table and its entries apart, so the first
+/// `Content-Type` a codec writes costs two blocks however the map was built.
+/// That is two of the five `/nope` records in [`SHAPES`], and two of every
+/// codec's encoding row. Sizing could only trade bytes: below six fields the
+/// next step down holds three, and a compressed response already carries
+/// four, so it would grow and pay two blocks more
+/// ([`performance.md`](../../../docs/performance.md#the-allocation)).
+///
+/// A dependency's behaviour rather than Kynos's, held so that an `http` whose
+/// small map fits one block turns this red, which is when presizing becomes
+/// worth reopening.
+#[test]
+fn sizing_a_header_map_saves_no_block() {
+    fn first_field(build: impl FnOnce() -> HeaderMap) -> usize {
+        let ((allocations, reallocations, _), fields) = count_alloc(|| {
+            let mut fields = build();
+            fields.insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("text/plain; charset=utf-8"),
+            );
+            fields
+        });
+
+        drop(fields);
+        allocations + reallocations
+    }
+
+    let grown = first_field(HeaderMap::new);
+    assert_eq!(grown, 2, "a header map's first field cost {grown} blocks");
+
+    for capacity in 1..=6 {
+        let counted = first_field(|| HeaderMap::with_capacity(capacity));
+        assert_eq!(
+            counted, grown,
+            "a header map sized for {capacity} field(s) cost {counted} blocks \
+             for its first, where one grown from empty cost {grown}; presizing \
+             a response's map now saves a block, which is the case for doing it"
+        );
+    }
 }
