@@ -3,7 +3,7 @@
 //! The figure every buffering codec reads under, shared by all of them.
 
 use bytes::{Bytes, BytesMut};
-use http_body_util::{BodyExt, Collected, LengthLimitError, Limited};
+use http_body_util::BodyExt;
 
 use crate::{
     error::rejection::BodyRejection,
@@ -136,18 +136,43 @@ pub(crate) async fn collect_capped(mut body: Body, limit: u64) -> Capped {
 
 /// Reads `body` whole, refusing it on the frame that passes `limit`. A
 /// transport failure part-way through is a 400.
-pub(crate) async fn read(body: Body, limit: u64) -> Result<Bytes, BodyRejection> {
-    Limited::new(body, usize::try_from(limit).unwrap_or(usize::MAX))
-        .collect()
-        .await
-        .map(Collected::to_bytes)
-        .map_err(|error| {
-            if error.is::<LengthLimitError>() {
-                BodyRejection::TooLarge { limit }
-            } else {
-                BodyRejection::Syntax {
-                    detail: error.to_string(),
-                }
+///
+/// A body arriving as one data frame comes back as that frame's `Bytes`,
+/// neither copied nor queued; only a second non-empty frame starts a buffer
+/// joining them. Frames that are not data, and empty ones, are skipped.
+pub(crate) async fn read(mut body: Body, limit: u64) -> Result<Bytes, BodyRejection> {
+    let mut first = Bytes::new();
+    let mut joined: Option<BytesMut> = None;
+    let mut so_far = 0_u64;
+
+    while let Some(frame) = body.frame().await {
+        let frame = frame.map_err(|error| BodyRejection::Syntax {
+            detail: error.to_string(),
+        })?;
+        let Ok(data) = frame.into_data() else {
+            continue;
+        };
+        if data.is_empty() {
+            continue;
+        }
+
+        so_far = so_far.saturating_add(u64::try_from(data.len()).unwrap_or(u64::MAX));
+        if so_far > limit {
+            return Err(BodyRejection::TooLarge { limit });
+        }
+
+        match &mut joined {
+            Some(buffer) => buffer.extend_from_slice(&data),
+            None if first.is_empty() => first = data,
+            None => {
+                let first = std::mem::take(&mut first);
+                let mut buffer = BytesMut::with_capacity(first.len() + data.len());
+                buffer.extend_from_slice(&first);
+                buffer.extend_from_slice(&data);
+                joined = Some(buffer);
             }
-        })
+        }
+    }
+
+    Ok(joined.map_or(first, BytesMut::freeze))
 }

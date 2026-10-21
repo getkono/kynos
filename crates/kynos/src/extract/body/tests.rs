@@ -1271,3 +1271,138 @@ mod an_optional_body_without_a_content_type {
         );
     }
 }
+
+/// `limit::read`, the read under every buffering codec: a lone data frame is
+/// handed over as it arrived, several are joined, and the limit holds over
+/// their running total either way.
+mod a_body_is_read_whole_under_its_limit {
+    use std::{
+        collections::VecDeque,
+        pin::Pin,
+        task::{Context, Poll},
+    };
+
+    use bytes::Bytes;
+    use http_body::Frame;
+
+    use crate::{
+        error::rejection::BodyRejection,
+        extract::body::limit,
+        http::{
+            HeaderMap,
+            body::{Body, BoxError},
+        },
+    };
+
+    /// Frames yielded in turn, as a transport delivers them.
+    struct Frames(VecDeque<Result<Frame<Bytes>, BoxError>>);
+
+    impl http_body::Body for Frames {
+        type Data = Bytes;
+        type Error = BoxError;
+
+        fn poll_frame(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+        ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
+            Poll::Ready(self.get_mut().0.pop_front())
+        }
+    }
+
+    /// A data frame that arrived, as an item of a sequence that may also fail.
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "the item type of a frame sequence that may also fail"
+    )]
+    fn data(octets: &'static [u8]) -> Result<Frame<Bytes>, BoxError> {
+        Ok(Frame::data(Bytes::from_static(octets)))
+    }
+
+    fn body(frames: impl IntoIterator<Item = Result<Frame<Bytes>, BoxError>>) -> Body {
+        Body::from_body(Frames(frames.into_iter().collect()))
+    }
+
+    /// The one-frame body is the frame itself, same octets at the same
+    /// address: neither copied nor queued behind a collector.
+    #[tokio::test]
+    async fn a_lone_frame_is_handed_over_uncopied() {
+        let frame = Bytes::from_static(b"one frame");
+        let address = frame.as_ptr();
+
+        let read = limit::read(Body::from_bytes(frame), 64)
+            .await
+            .expect("within the limit");
+
+        assert_eq!(read, b"one frame".as_slice());
+        assert_eq!(read.as_ptr(), address, "the frame was copied");
+    }
+
+    /// Empty data frames and trailers around a lone data frame leave it a
+    /// lone frame, so it is still handed over uncopied.
+    #[tokio::test]
+    async fn empty_frames_and_trailers_do_not_join_a_lone_frame() {
+        static OCTETS: &[u8] = b"payload";
+        let read = limit::read(
+            body([
+                data(b""),
+                data(OCTETS),
+                data(b""),
+                Ok(Frame::trailers(HeaderMap::new())),
+            ]),
+            64,
+        )
+        .await
+        .expect("within the limit");
+
+        assert_eq!(read, OCTETS);
+        assert_eq!(read.as_ptr(), OCTETS.as_ptr(), "the frame was copied");
+    }
+
+    /// Several data frames come back joined, in arrival order.
+    #[tokio::test]
+    async fn several_frames_are_joined_in_order() {
+        let read = limit::read(body([data(b"ab"), data(b"cd"), data(b"e")]), 64)
+            .await
+            .expect("within the limit");
+
+        assert_eq!(read, b"abcde".as_slice());
+    }
+
+    /// The limit is on the running total, inclusive: frames summing to it are
+    /// read, and one octet more is the 413, whichever frame carries it.
+    #[tokio::test]
+    async fn the_limit_holds_over_the_running_total() {
+        let at = limit::read(body([data(b"abc"), data(b"de")]), 5).await;
+        assert_eq!(at.expect("exactly at the limit"), b"abcde".as_slice());
+
+        let past = limit::read(body([data(b"abc"), data(b"def")]), 5)
+            .await
+            .expect_err("one octet past the limit");
+        assert!(
+            matches!(past, BodyRejection::TooLarge { limit: 5 }),
+            "{past:?}"
+        );
+
+        let lone = limit::read(body([data(b"abcdef")]), 5)
+            .await
+            .expect_err("a lone frame past the limit");
+        assert!(
+            matches!(lone, BodyRejection::TooLarge { limit: 5 }),
+            "{lone:?}"
+        );
+    }
+
+    /// A transport failure after a frame arrived is the 400 quoting it, never
+    /// the octets that arrived passed off as the whole body.
+    #[tokio::test]
+    async fn a_failure_part_way_is_400() {
+        let rejection = limit::read(body([data(b"ab"), Err("reset".into())]), 64)
+            .await
+            .expect_err("an unfinished body");
+
+        assert!(
+            matches!(&rejection, BodyRejection::Syntax { detail } if detail == "reset"),
+            "{rejection:?}"
+        );
+    }
+}
