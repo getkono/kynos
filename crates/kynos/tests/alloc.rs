@@ -476,6 +476,54 @@ fn a_chain_does_not_widen_the_dispatch_future() {
     );
 }
 
+/// How wide the future an endpoint boxes for every matched request is allowed
+/// to be, for a handler that takes nothing: 536 bytes on Linux at both feature
+/// sets this target is built at, read as [`DISPATCH_FUTURE_BYTES`] is. It was
+/// 808, when an `async fn` around the handler's future kept the request a
+/// third time.
+///
+/// Linux's alone, as a ceiling; [`an_endpoint_future_holds_two_requests`]
+/// holds the relation everywhere.
+const ENDPOINT_FUTURE_BYTES: usize = 536;
+
+/// The future [`Endpoint::call`](kynos::router::endpoint::Endpoint::call)
+/// returns holds two requests and no third: its own, and the one inside the
+/// handler's future it awaits in place.
+///
+/// Two rather than one because a handler's future holds the request it
+/// extracts from, and the endpoint's `async` block keeps the one it handed
+/// over — a moved-from capture keeps its slot in every state of a coroutine.
+/// Measured on the public trait over the endpoint `ping` mounts, which is the
+/// future `DynEndpoint` boxes.
+#[test]
+fn an_endpoint_future_holds_two_requests() {
+    use kynos::router::endpoint::{Endpoint, builder::EndpointBuilder};
+
+    let endpoint = EndpointBuilder::<(), _, _>::new(
+        kynos::openapi::Method::Get,
+        kynos::openapi::PathTemplate::parse("/ping").expect("a usable path template"),
+        ping,
+    );
+    let future = Endpoint::call(&endpoint, request(Method::GET, STACKED, None, b""), &());
+    let width = size_of_val(&future);
+    let request = size_of::<Request>();
+
+    assert!(
+        width < 3 * request,
+        "the endpoint future is {width} bytes, room for three {request}-byte \
+         requests; something between the box and the handler keeps a copy of \
+         its own"
+    );
+    if cfg!(target_os = "linux") {
+        assert!(
+            width <= ENDPOINT_FUTURE_BYTES,
+            "the endpoint future is {width} bytes against a recorded \
+             {ENDPOINT_FUTURE_BYTES}; every matched request carries one, so \
+             raising this ceiling is a change to docs/nfr.md"
+        );
+    }
+}
+
 /// The instrument's own invariant, and the one every number below rests on: a
 /// count is what *this* thread allocated, and nothing else.
 ///

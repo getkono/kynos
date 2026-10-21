@@ -8,7 +8,7 @@ use crate::{
     handler::Handler,
     http::{Request, Response},
     middleware::{
-        Interceptor, MiddlewareError, Next,
+        Continued, Interceptor, MiddlewareError, Next,
         catch_panic::{Catch, PanicPolicy, Propagate},
         erased::{ErasedInterceptor, ErasedTerminal},
         stack::{CompatibleWith, Cons},
@@ -288,35 +288,24 @@ where
         }
     }
 
+    // Awaits each branch in place: every matched request carries this future
+    // in a box, and an `async` block or `async fn` between it and the handler
+    // would keep another copy of the request.
     async fn call(&self, request: Request, context: &C) -> Response {
-        // Without interceptors, no chain and no second box.
-        let served = async {
-            if self.interceptors.is_empty() {
-                Handler::call(self.handler.clone(), request, context).await
-            } else {
-                let terminal = HandlerTerminal::<C, H, A> {
-                    handler: self.handler.clone(),
-                    _private: PhantomData,
-                };
-                // The key routing matched, prefixes included; this endpoint's
-                // own template only when driven without a router.
-                let path = dispatch::mounted_path(&request).unwrap_or(self.path.as_str());
-                let route = Route::new(path, self.operation_id.unwrap_or_default(), self.method);
-                Next::new(&self.interceptors, &terminal, context, Some(route))
-                    .run(request)
-                    .await
-                    .into_response()
-            }
-        };
-
         if install::catches::<P>() {
-            match dispatch::recovery::recover(served).await {
+            // Boxed by `recover`, so it costs this future a pointer.
+            return match dispatch::recovery::recover(self.serve(request, context)).await {
                 Ok(response) => response,
                 Err(payload) => dispatch::recovery::recovered_response(payload),
-            }
-        } else {
-            served.await
+            };
         }
+
+        // Without interceptors, no chain and no second box.
+        if self.interceptors.is_empty() {
+            return Handler::call(self.handler.clone(), request, context).await;
+        }
+
+        self.chain(request, context).await.into_response()
     }
 
     fn __unhonourable_interceptor(&self) -> Option<MiddlewareError> {
@@ -326,17 +315,48 @@ where
     }
 }
 
-/// The handler, as the end of this endpoint's own interceptor chain.
-struct HandlerTerminal<C, H, A> {
-    handler: H,
-    _private: PhantomData<fn() -> (C, A)>,
+impl<C, H, A, P, I: 'static> EndpointBuilder<C, H, A, P, I>
+where
+    C: Send + Sync + 'static,
+    H: Handler<C, A>,
+    // Only `'static`, as above.
+    A: 'static,
+    P: PanicPolicy,
+{
+    /// Runs the handler, through this operation's own interceptors where it
+    /// has any; what recovery wraps.
+    async fn serve(&self, request: Request, context: &C) -> Response {
+        if self.interceptors.is_empty() {
+            Handler::call(self.handler.clone(), request, context).await
+        } else {
+            self.chain(request, context).await.into_response()
+        }
+    }
+
+    /// Starts this operation's own interceptors around the handler, which is
+    /// this builder itself as the chain's terminal.
+    fn chain<'a>(
+        &'a self,
+        request: Request,
+        context: &'a C,
+    ) -> impl Future<Output = Continued<()>> + Send + 'a {
+        // The key routing matched, prefixes included; this endpoint's own
+        // template only when driven without a router.
+        let path = dispatch::mounted_path(&request).unwrap_or(self.path.as_str());
+        let route = Route::new(path, self.operation_id.unwrap_or_default(), self.method);
+        Next::new(&self.interceptors, self, context, Some(route)).run(request)
+    }
 }
 
-impl<C, H, A> ErasedTerminal<C> for HandlerTerminal<C, H, A>
+/// The handler, as the end of this endpoint's own interceptor chain: the
+/// builder rather than a terminal built per request, so nothing the chain
+/// borrows lives in the future driving it.
+impl<C, H, A, P, I: 'static> ErasedTerminal<C> for EndpointBuilder<C, H, A, P, I>
 where
     C: Send + Sync + 'static,
     H: Handler<C, A>,
     A: 'static,
+    P: PanicPolicy,
 {
     fn call<'a>(
         &'a self,
