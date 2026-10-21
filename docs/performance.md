@@ -241,6 +241,15 @@ Kynos's is [`Part`](../crates/kynos/src/extract/body/multipart.rs)'s owned
 currency — a name and a media type each way, and a `String` field's copy out
 of the shared body — and one buffer for the whole response.
 
+**Reading a body whole costs no block when it arrives as one frame.** A
+buffering codec is handed that frame's `Bytes` as the transport delivered it —
+always so in process, and usually over HTTP/1.1 with a `Content-Length` — and
+only a second non-empty frame starts a buffer joining them, under the same
+limit. So the transport floor in
+[`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) costs what the
+bodyless one does, and a codec that deserializes out of the borrowed octets,
+as JSON and protobuf do an all-integer payload, costs nothing over either.
+
 **A streamed response is counted on its drain.** Its status is committed before
 a record is written, so what JSON Lines, JSON text sequences and Server-Sent
 Events cost is spent while the body is polled, and
