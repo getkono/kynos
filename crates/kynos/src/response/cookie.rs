@@ -6,7 +6,11 @@
 //!
 //! # What is here and what is not
 //!
-//! A [`Cookie`] and a way to send it. Not a signed jar, not an encrypted one,
+//! A [`Cookie`]; it is sent by
+//! [`SetCookies`](crate::middleware::cookies::SetCookies) on every response an
+//! operation produces, or as a
+//! [`SetCookieHeaders`](crate::middleware::cookies::SetCookieHeaders) response
+//! header group on one. Not a signed jar, not an encrypted one,
 //! and not a session store: a cookie carrying a credential is a
 //! [`SecurityScheme`](crate::security::SecurityScheme), and sessions belong to
 //! a layer above Kynos.
@@ -169,8 +173,11 @@ impl Cookie {
     ///
     /// `None` where the name or the value is outside RFC 6265 section 4.1.1's
     /// grammar (the grammar defines no escaping, so nothing is escaped), where
-    /// they exceed 4096 octets together, where an attribute is unrepresentable,
-    /// or where a `__Host-` cookie names a `Domain` or a `Path` other than `/`.
+    /// the value is wrapped in `"`, which the grammar admits but this refuses
+    /// deliberately, since the reading half unwraps the quotes and the value
+    /// would not read back as written, where the name and the value exceed 4096
+    /// octets together, where an attribute is unrepresentable, or where a
+    /// `__Host-` cookie names a `Domain` or a `Path` other than `/`.
     #[must_use]
     pub fn encode(&self) -> Option<HeaderValue> {
         if !crate::http::is_token(&self.name) || !is_cookie_value(&self.value) {

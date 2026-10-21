@@ -4,6 +4,10 @@
 //! whole representation, exactly as a buffered one, which OpenAPI 3.1 already
 //! can. `sse` and JSON Lines require `openapi32`, since only 3.2's
 //! `itemSchema` describes each item of a sequential media type.
+//!
+//! Each of these commits its status before the stream ends, so a failure
+//! partway through terminates the body; it cannot replace the status already
+//! sent with a problem response.
 
 pub mod binary;
 #[cfg(feature = "openapi32")]

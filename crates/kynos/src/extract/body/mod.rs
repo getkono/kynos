@@ -1,7 +1,8 @@
 //! Inputs that consume the request body, each describing itself as an OpenAPI
 //! Request Body Object.
 //!
-//! One module per codec, each gated on its feature. [`OneOf`] and `Option<T>`
+//! One module per codec: [`text`] and [`binary`] in every build, the rest each
+//! gated on its feature. [`OneOf`] and `Option<T>`
 //! combine them; [`limit`] bounds how much of a body a buffering codec holds.
 
 pub mod alternative;
@@ -258,18 +259,7 @@ fn checked<T: crate::schema::Schema>(
 /// ```
 ///
 /// Nor is a [`Binary`](binary::Binary) whose marker names a codec's own media
-/// type, here JSON beside [`Json`](json::Json). Only a marker's value can tell
-/// it apart, so the pair is refused once the build instantiates it rather than
-/// when it typechecks:
-///
-/// ```compile_fail
-/// use kynos::{
-///     extract::{body::{OneOf, binary::Binary, json::Json}, describe::RequestContent},
-///     http::media,
-/// };
-///
-/// OneOf::<Json<u64>, Binary<media::Json>>::media_types();
-/// ```
+/// type; [`Alternative::DISTINCT`] says how that pair is refused.
 ///
 /// A nested `OneOf` offers more than two bodies, each distinct from every
 /// other:
@@ -285,25 +275,14 @@ fn checked<T: crate::schema::Schema>(
 /// assert_eq!(body.content.len(), 3);
 /// ```
 ///
-/// so a body repeating one of the nested sides is refused, by type
+/// so a body repeating one of the nested sides is refused, by type, or by a
+/// marker's value as a flat pair is:
 ///
 /// ```compile_fail
 /// use kynos::extract::body::{OneOf, json::Json, text::Text};
 ///
 /// fn body<T: kynos::extract::FromRequest<()>>() {}
 /// body::<OneOf<OneOf<Text, Json<u64>>, Json<String>>>();
-/// ```
-///
-/// or by a marker's value:
-///
-/// ```compile_fail
-/// use kynos::{
-///     extract::{body::{OneOf, binary::Binary, json::Json, text::Text}, describe::RequestContent},
-///     http::media,
-///     schema::registry::Registry,
-/// };
-///
-/// OneOf::<OneOf<Text, Json<u64>>, Binary<media::Json>>::request_body(&mut Registry::new());
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OneOf<L, R> {

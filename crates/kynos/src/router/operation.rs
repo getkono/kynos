@@ -6,8 +6,7 @@ use crate::{http::StatusCode, schema::registry::Registry};
 
 /// The operation a request matched.
 ///
-/// Handed to an interceptor while the router is built, and to an interceptor or
-/// observer while a request is served, so that a metric label, a log field or a
+/// Handed to an interceptor or observer while a request is served, so that a metric label, a log field or a
 /// rate-limit bucket can be keyed by the operation rather than by the raw path,
 /// with bounded cardinality. [`path`](Route::path) is the `paths` key itself.
 ///

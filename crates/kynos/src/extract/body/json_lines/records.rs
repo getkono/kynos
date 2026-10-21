@@ -96,11 +96,9 @@ enum State {
 ///
 /// # What a chunked body costs
 ///
-/// A request declaring a `Content-Length` passes
-/// [`BodySize`](crate::middleware::limits::body_size::BodySize) untouched and
-/// streams. A chunked request is materialised whole by that limit before the
-/// handler is entered, so records still arrive one at a time but nothing is
-/// saved.
+/// Under a covering `BodySize`, its whole buffer:
+/// [`BodySize`](crate::middleware::limits::body_size::BodySize#what-it-costs-a-streaming-read)
+/// says when.
 ///
 /// # What one record may cost
 ///

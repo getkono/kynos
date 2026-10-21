@@ -137,8 +137,9 @@ impl<C, P, I, S> Group<C, P, I, S> {
 impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
     /// Converts panics from covered operations into documented 500 responses.
     ///
-    /// The policy is carried in the group's type and resolved while its
-    /// endpoints are mounted. No recovery branch is installed when this method
+    /// The policy is carried in the group's type and resolved when the group is
+    /// added to a router by [`Router::group`](crate::router::Router::group).
+    /// No recovery branch is installed when this method
     /// is not called.
     ///
     /// # Compile-time requirement

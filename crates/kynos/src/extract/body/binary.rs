@@ -14,8 +14,8 @@ use crate::{
 /// A body of raw bytes with a declared media type.
 ///
 /// `M` names the media type, so the description states what the bytes are
-/// rather than shrugging. Binary content is described with
-/// `contentMediaType`/`contentEncoding`, never the OpenAPI 3.0 `format: binary`.
+/// rather than shrugging. The schema is the empty one, since the media type key
+/// already states what the bytes are; never the OpenAPI 3.0 `format: binary`.
 ///
 /// A request matches `M` by type and subtype. It need not repeat a parameter
 /// the marker declares, but may not contradict one: a marker declaring

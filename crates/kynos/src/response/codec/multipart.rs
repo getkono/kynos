@@ -1,8 +1,8 @@
 //! Writing `multipart/form-data` as a response.
 //!
-//! The declared field names, per-part media types and encodings are preserved
-//! in both directions, so a `MultipartForm<T>` returned from a handler
-//! describes the same parts it would accept.
+//! A `MultipartForm<T>` returned from a handler is described by the same
+//! schema of `T` it is read under, so it describes the same parts it would
+//! accept.
 //!
 //! The body is rendered to RFC 7578 over RFC 2046. Writing uses
 //! [`IntoMultipart`] rather than `Serialize`, under which a [`FilePart`]'s

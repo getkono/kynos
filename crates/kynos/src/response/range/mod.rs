@@ -27,8 +27,7 @@
 //! A `range-set` of up to eight specs parses, and the first satisfiable spec is
 //! served; section 14.2 does not require sending every requested range.
 //! Several parts at once is `multipart/byteranges`, reached by returning
-//! [`parts`]' `RangedParts<T>` (requires `openapi32`, since 3.1 cannot describe
-//! a request-determined number of parts).
+//! [`parts`]' `RangedParts<T>`, which requires `openapi32`.
 
 pub mod headers;
 #[cfg(feature = "openapi32")]

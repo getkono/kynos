@@ -21,9 +21,12 @@ use crate::{
 
 /// A declared API operation.
 ///
-/// Produced by the route attribute macros, which expand a handler function into
-/// a zero-sized type implementing this trait. The type shadows the function
-/// name, so `routes![get_user]` refers to the operation rather than the `fn`.
+/// Implemented by [`EndpointBuilder`](builder::EndpointBuilder), which is also
+/// what a route attribute's operation becomes: the attribute emits a braced
+/// zero-sized type implementing [`EndpointMeta`](meta::EndpointMeta) under the
+/// handler's name, which occupies only the type namespace and so does not
+/// shadow the function, and `routes![get_user]` builds an `EndpointBuilder`
+/// from the two.
 ///
 /// Prefer the attribute over the builder: it takes the doc comment as the
 /// operation's summary and description, and checks the path template against

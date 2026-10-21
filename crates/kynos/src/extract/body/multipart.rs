@@ -21,13 +21,14 @@ use crate::{
 
 /// A `multipart/form-data` request body with declared fields.
 ///
-/// `T` derives `Schema`, and each field becomes a part with its own `Encoding`.
-/// A request is held to the bounds `T`'s fields declare once its parts are
+/// `T` derives `Schema` and `MultipartForm`, and each field becomes a part. No
+/// Encoding Object is emitted: the default OpenAPI derives for each part from
+/// the field's schema is the one Kynos would write. A request is held to the bounds `T`'s fields declare once its parts are
 /// read, and a part that breaks one is a 422 keyed by the field's JSON Pointer,
 /// as a [`Json`](super::json::Json) member is; which bounds are enforced is
 /// [`constraints`](crate::schema::constraints)' to say.
-/// The same wrapper may be returned as a response, preserving the declared
-/// field names, per-part media types, and encodings in both directions.
+/// The same wrapper may be returned as a response, described with the same
+/// field names and schema in both directions.
 /// There is no dynamic-field iterator: a handler that accepts arbitrary part
 /// names cannot describe them. For a variable number of uploads, declare one
 /// field of type `Vec<FilePart>`, marked `#[serde(default)]`: an empty list is

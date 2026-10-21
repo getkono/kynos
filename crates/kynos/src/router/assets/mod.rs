@@ -18,7 +18,7 @@
 //! # What is described
 //!
 //! An embedded file is one `paths` key: a 200 with its media type, a 304, a
-//! 206, a 416, and the `ETag`, `Cache-Control`, `Accept-Ranges` and
+//! 206, a 412, a 416, and the `ETag`, `Cache-Control`, `Accept-Ranges` and
 //! `Content-Range` each of those carries. There is no `Last-Modified` and no
 //! `If-Modified-Since`: the strong entity tag is the validator.
 //!
