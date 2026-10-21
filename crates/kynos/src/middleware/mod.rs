@@ -257,6 +257,28 @@ impl Continued<()> {
             _headers: std::marker::PhantomData,
         }
     }
+
+    /// Attaches group `G` by having `write` insert its fields onto the
+    /// response, for a group that cannot refuse and so needs no
+    /// [`encode`](EncodeHeaders::encode)d list between the two.
+    ///
+    /// `write` must insert only fields `G::NAMES` declares; `VARIES` is merged
+    /// here, as [`with_headers`](Continued::with_headers) merges it.
+    // Gated on its one caller's feature, which an item of a shared type
+    // cannot take from a module line.
+    #[cfg(feature = "cache")]
+    pub(crate) fn with_written<G: EncodeHeaders>(
+        mut self,
+        write: impl FnOnce(&mut crate::http::HeaderMap),
+    ) -> Continued<G> {
+        write(self.response.headers_mut());
+        crate::http::vary_on(self.response.headers_mut(), G::VARIES);
+
+        Continued {
+            response: self.response,
+            _headers: std::marker::PhantomData,
+        }
+    }
 }
 
 // Construction, not a bound, keeps `H` a header group.

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use super::{
-    freshness::{self, CACHEABLE, HOP_BY_HOP, Unstorable},
+    freshness::{self, CACHEABLE, HOP_BY_HOP, Requested, Unstorable},
     is_non_error, primary_key, refuses_cross_origin,
 };
 use crate::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
@@ -23,7 +23,7 @@ fn storable(request: &[(&str, &str)], response: &[(&str, &str)]) -> Result<Durat
     freshness::storable(
         &Method::GET,
         StatusCode::OK,
-        &map(request),
+        Requested::of(&map(request)),
         &map(response),
         false,
         None,
@@ -38,7 +38,7 @@ fn storable_when_secured(
     freshness::storable(
         &Method::GET,
         StatusCode::OK,
-        &map(request),
+        Requested::of(&map(request)),
         &map(response),
         true,
         None,
@@ -66,7 +66,7 @@ fn every_refusal_has_a_case() {
             freshness::storable(
                 &Method::POST,
                 StatusCode::OK,
-                &HeaderMap::new(),
+                Requested::default(),
                 &map(&[("cache-control", "max-age=60")]),
                 false,
                 None,
@@ -77,7 +77,7 @@ fn every_refusal_has_a_case() {
             freshness::storable(
                 &Method::GET,
                 StatusCode::INTERNAL_SERVER_ERROR,
-                &HeaderMap::new(),
+                Requested::default(),
                 &map(&[("cache-control", "max-age=60")]),
                 false,
                 None,
@@ -190,7 +190,7 @@ fn a_wildcard_on_any_vary_line_is_refused() {
         freshness::storable(
             &Method::GET,
             StatusCode::OK,
-            &HeaderMap::new(),
+            Requested::default(),
             &response,
             false,
             None,
@@ -296,7 +296,7 @@ fn a_response_that_said_nothing_is_not_reused_unless_a_default_was_set() {
         freshness::storable(
             &Method::GET,
             StatusCode::OK,
-            &HeaderMap::new(),
+            Requested::default(),
             &HeaderMap::new(),
             false,
             Some(Duration::from_secs(30)),
@@ -310,7 +310,7 @@ fn storable_by_default(response: &[(&str, &str)]) -> Result<Duration, Unstorable
     freshness::storable(
         &Method::GET,
         StatusCode::OK,
-        &HeaderMap::new(),
+        Requested::default(),
         &map(response),
         false,
         Some(Duration::from_secs(30)),
@@ -598,7 +598,29 @@ fn only_a_request_saying_no_cache_forbids_reuse() {
         (&[("pragma", "no-cache")][..], false),
     ] {
         assert_eq!(
-            freshness::forbids_reuse(&map(fields)),
+            Requested::of(&map(fields)).forbids_reuse(),
+            forbids,
+            "{fields:?}"
+        );
+    }
+}
+
+/// Only the request directive section 5.2.1.5 names forbids storing, which is
+/// what decides whether a miss keeps the request's fields at all.
+///
+/// The control is the negative half, as for reuse: `no-cache` limits reuse,
+/// not storage.
+#[test]
+fn only_a_request_saying_no_store_forbids_storing() {
+    for (fields, forbids) in [
+        (&[][..], false),
+        (&[("cache-control", "no-store")][..], true),
+        (&[("cache-control", "max-age=60, No-Store")][..], true),
+        (&[("cache-control", "no-cache")][..], false),
+        (&[("cache-control", "no-store-please")][..], false),
+    ] {
+        assert_eq!(
+            Requested::of(&map(fields)).forbids_storing(),
             forbids,
             "{fields:?}"
         );
@@ -642,6 +664,83 @@ fn the_key_names_the_authority_the_request_carried() {
         .as_deref(),
         Some("b.example.com")
     );
+}
+
+/// A lookup borrows every part of its key from the request, an authority
+/// already lowercase included, and the key a store is handed to keep names the
+/// same resource: equal, hashed alike, and found by the borrowed one in a map
+/// keyed by owned ones.
+#[test]
+fn a_lookup_key_borrows_and_names_what_its_owned_form_names() {
+    use std::borrow::Cow;
+
+    let mut request = crate::http::Request::new(crate::http::body::Body::empty());
+    *request.uri_mut() = "/reports/7?page=2".parse().expect("a usable target");
+    request
+        .headers_mut()
+        .insert(header::HOST, HeaderValue::from_static("api.example.com"));
+
+    let borrowed = primary_key("v1", kynos_openapi::Method::Get, &request, "/reports/{id}");
+    assert!(matches!(
+        borrowed.authority,
+        Some(Cow::Borrowed("api.example.com"))
+    ));
+    assert!(matches!(borrowed.route, Cow::Borrowed("/reports/{id}")));
+    assert!(matches!(
+        borrowed.target,
+        Cow::Borrowed("/reports/7?page=2")
+    ));
+
+    let owned = borrowed.clone().into_owned();
+    assert_eq!(owned, borrowed);
+
+    let mut held: std::collections::HashSet<super::store::PrimaryKey<'static>> =
+        std::collections::HashSet::new();
+    held.insert(owned);
+    assert!(held.contains(&borrowed));
+}
+
+/// What a cache writes onto a response directly is what its group encodes, for
+/// either group, a zero age and a later one, and with and without a tag; and a
+/// tag reaches the response only under the group that declares `ETag`.
+#[test]
+fn a_cache_writes_the_fields_its_group_encodes() {
+    use super::{CacheTagging, Plain, Tagged, sealed::Written};
+    use crate::extract::params::header::EncodeHeaders;
+
+    fn agrees<D: CacheTagging>(age: Duration, etag: Option<HeaderValue>) -> HeaderMap {
+        let encoded = D::headers(age, etag.clone())
+            .encode()
+            .expect("never refused");
+        let mut written = HeaderMap::new();
+        D::headers(age, etag).write(&mut written);
+
+        let mut expected = HeaderMap::new();
+        for (name, value) in encoded {
+            expected.insert(name, value);
+        }
+        assert_eq!(written, expected, "{age:?}");
+        written
+    }
+
+    let tag = HeaderValue::from_static("\"abc\"");
+    for age in [Duration::ZERO, Duration::from_millis(1_500)] {
+        let plain = agrees::<Plain>(age, Some(tag.clone()));
+        assert_eq!(
+            plain.get(header::AGE),
+            Some(&HeaderValue::from(age.as_secs()))
+        );
+        assert_eq!(plain.get(header::ETAG), None);
+
+        let tagged = agrees::<Tagged>(age, Some(tag.clone()));
+        assert_eq!(
+            tagged.get(header::AGE),
+            Some(&HeaderValue::from(age.as_secs()))
+        );
+        assert_eq!(tagged.get(header::ETAG), Some(&tag));
+
+        assert_eq!(agrees::<Tagged>(age, None).get(header::ETAG), None);
+    }
 }
 
 /// A variant is selected by every line of a field it varied on, not the first.

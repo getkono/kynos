@@ -38,7 +38,7 @@ connection_h1.echo_cl	50606	65	41482
 connection_h1.plaintext	14063	28	36521
 connection_h1.second	11541	11	1801
 connection_h2.plaintext	38928	41	37265
-connection_h2.second	31930	14	2613
+connection_h2.second	31929	14	2613
 extract.auth_401	4723	12	2127
 extract.auth_apikey	2816	10	2010
 extract.auth_basic	4010	12	2088
@@ -50,11 +50,11 @@ extract.one_of	36285	44	6026
 extract.query_unused_8	7947	9	1838
 extract.querystring	5827	12	1897
 extract.text_body	4146	10	2193
-form_echo.form_echo	137596	68	14550
+form_echo.form_echo	137600	68	14550
 interceptors.body_size	4126	14	2914
 interceptors.body_timeout	4798	14	2386
-interceptors.cache_hit	4623	15	2548
-interceptors.cache_miss	9232	23	3626
+interceptors.cache_hit	4211	10	2356
+interceptors.cache_miss	8981	20	3456
 interceptors.compression_default	7048	12	2506
 interceptors.concurrency	3900	12	2754
 interceptors.cors_preflight	4575	12	1757
