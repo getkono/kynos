@@ -30,8 +30,10 @@
 //! [`params`] holds inputs read from the request head, one module per
 //! parameter location. [`body`] holds inputs that consume the body, one module
 //! per codec, typed by the media type markers in
-//! [`http::media`](crate::http::media). [`connection`] holds the two inputs
-//! that describe the connection rather than the contract, and [`link`] the
+//! [`http::media`](crate::http::media). [`connection`] holds the inputs that
+//! describe the connection rather than the contract — the matched path, the
+//! peer address and the connection itself, with the TLS identity it carries —
+//! and [`link`] the
 //! input that resolves another operation's URI against the built router.
 
 pub mod body;
