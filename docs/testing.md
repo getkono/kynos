@@ -464,7 +464,7 @@ halve.
 | Element | Named by | Named only in | Why a request cannot reach it |
 | --- | --- | --- | --- |
 | the emitted document | `Document` | `router/describe.rs`, `router/docs/render.rs`, `router/install.rs`, `router/mod.rs`, `router/service.rs`, `server/describe.rs`, `server/tls/document.rs`, `test/conformance.rs`, `test/mod.rs`, `unchecked/describe.rs` | every site builds it, annotates it, hands it back to the application, or takes it from a test to assert against. `docs::render::render` serializes it while the router is built, and `Published::publish` again after each `openapi_mut` edit, so the endpoint serving a description holds finished bytes rather than a `Document`. Two sites also serve a request, so for them the reason is an argument the rule does not check: `router/describe.rs` builds the per-request closure where the document is in scope and moves only the dispatch table into it, and `router/service.rs`'s `Service` owns the document, hands it to the application only through `Service::openapi`, and edits it only through `openapi_mut` -- at bind and at the tower conversion, both of which take the service by value, so no request is in flight |
-| the schema registry | `Registry::{new,default}` | `router/describe.rs` | the one registry a build mints is consumed by `describe`, which has finished before a service exists to accept a request |
+| the schema registry | `owned Registry` | `router/describe.rs`, `schema/registry.rs` | the one registry a build mints is consumed by `describe`, which has finished before a service exists to accept a request. `schema/registry.rs` defines the type and its two constructors, `new` and the derived `Default`, and holds no registry of its own |
 | the document validators | `Validator` | `router/describe.rs` | a description is validated where it is built. The build either fails or drops the validator, and nothing on the request path holds one to run |
 | the JSON Schema interpreter | `jsonschema` | `test/conformance.rs` | it is behind `test-util` and exists to check an observed response against the description. The request parser is the other projection of the same declaration and interprets no schema |
 | the `openapi31` feature | `not(feature = "openapi31")` | `lib.rs`, `crates/kynos-openapi/src/lib.rs` | nothing is conditional on it. Both sites are the `#[cfg(not(feature = "openapi31"))] compile_error!` that refuses a build without it, and the 3.1 object model it names is compiled unconditionally. What that model does is held by the document, registry and validator rows above, and a request reaches none of the three |
@@ -487,25 +487,33 @@ this:
   names, so a row reaching into another crate says where, and a site naming a
   crate that does not exist fails the row.
 - A *Named by* cell is a comma-separated list of backticked spellings: an
-  identifier or path, brace-expanding like the sites (`Registry::{new,default}`
-  holds both ways to mint one), or a `feature = "…"` gate, read as the `cfg`
-  predicate around it — `cfg!` included, since it compiles in every build and
+  identifier or path, brace-expanding like the sites; `owned T`, the type `T`
+  wherever it is named other than behind `&` or `&mut` or in a `use`; or a
+  `feature = "…"` gate, read as the `cfg` predicate around it — `cfg!`,
+  `std::cfg!` and `core::cfg!` included, since each compiles in every build and
   branches at run time.
 - A gate written `not(feature = "…")` holds only what the flag compiles by being
   off, which is the `openapi31` row's case. The offender scan is
   polarity-blind: a disallowed site naming the flag either way fails.
 - Spellings are matched over source with comments and inline `#[cfg(test)]`
   modules stripped — identifiers with string literals stripped too, gates with
-  them kept — so a mention no build compiles holds nothing.
+  them kept — so a mention no build compiles holds nothing. A literal that is a
+  path spelt as a string, such as `#[serde(with = "…")]`, is code and is kept
+  for identifiers as well.
 - Each spelling must name something in scope on its own, so a rename or a typo
   fails the build, and so does a cell the rule cannot read.
 - Name the shortest spelling unique in the workspace: an import removes a
   qualified path. Uniqueness is the writer's judgement, not the rule's.
 
-`Registry` — the type — is deliberately not a row. `Describe::request_body`
-takes `&mut Registry`, which puts the name in some eighty files by design, and a
-row admitting all of them would admit anything. The mint site is the stronger
-claim and the true one.
+The registry row is held by the type, owned. `Describe::request_body` takes
+`&mut Registry`, which puts the name in some eighty files by design, and a row
+admitting all of them would admit anything; a borrow holds a registry minted
+elsewhere, so it is not a site. Naming the constructors instead missed every
+mint that does not spell one — `Default::default()` into a `Registry` binding,
+or a derived `Default` on a struct holding one — and each of those writes the
+type by value somewhere. What no text rule sees is a mint the compiler infers
+into a borrow, `&mut Default::default()` passed where `&mut Registry` is taken;
+that is review's.
 
 The two rules above are the ones this instantiates. **The set is named where the
 set has names**: a failure reports which file names an off-path element, not

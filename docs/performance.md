@@ -192,7 +192,7 @@ convincingly — a replay that never exercised the feature also counts nothing.
 What settles it is reachability: the emitted `Document` is built once in
 `Router::build` and read back only through `Service::openapi`, so nothing in
 `Dispatch::serve` touches it. That is checked. `containment:check` holds four
-elements — the emitted `Document`, `Registry::{new,default}`,
+elements — the emitted `Document`, an owned `Registry`,
 `Validator` and `jsonschema` — to the sites
 [`testing.md`](testing.md#the-off-path-proof) allows them, and a witness in
 [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs) pins
