@@ -1363,7 +1363,7 @@ hundred operations it never touches.
 
 Interoperability costs a declaration or a waiver in either direction:
 
-- **Outward is a waiver too.** A Kynos application mounts into an outer `tower`
+- **Outward is a waiver.** A Kynos application mounts into an outer `tower`
   stack only through `Service::into_tower_unchecked`, behind the `unchecked`
   feature. Whatever wraps the service is outside the document, so converting
   flags every operation `Opaque` (`UntypedLayer`) rather than letting the
