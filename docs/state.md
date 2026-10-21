@@ -74,8 +74,8 @@ is a claim rather than an omission.
 
 ## Scope
 
-Every provider is a singleton for the life of the process. One context exists;
-`provide` hands out a value from it per request.
+One context exists per built service; `provide` runs once per injected argument
+per request, handing out a value from it.
 
 Per-request memoization — one transaction shared by two injected repositories —
 is deliberately absent rather than pending. The common case needs nothing from
