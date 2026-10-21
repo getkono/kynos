@@ -1,5 +1,8 @@
 //! What one request costs: what the routing path allocates, what a chain in
-//! front of it adds, and how wide the future dispatch returns is.
+//! front of it adds, and how wide the future dispatch returns is — and, as a
+//! characterization of the `http` dependency rather than of Kynos, that
+//! presizing a response's header map saves no block, which is why responses
+//! grow theirs.
 //!
 //! The allocation-count kind in
 //! [`performance.md`](../../../docs/performance.md#the-taxonomy), and one of
