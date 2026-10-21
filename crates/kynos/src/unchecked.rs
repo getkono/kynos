@@ -78,7 +78,8 @@ pub fn captured<'r>(request: &'r Request, name: &str) -> Option<std::borrow::Cow
 
 /// A boxed response future, sanctioned only here: a service composed of layers
 /// this crate cannot name has no other `Service::Future` shape.
-type BoxResponse = Pin<Box<dyn Future<Output = Response> + Send>>;
+/// `tower`'s output, so each future is handed on with no box to change it.
+pub(crate) type BoxResponse = Pin<Box<dyn Future<Output = Result<Response, Infallible>> + Send>>;
 
 /// A handler for a route Kynos does not describe.
 ///
@@ -109,36 +110,28 @@ where
     }
 }
 
-/// The rest of a request's path through Kynos, carried in its extensions.
-///
-/// The [`UncheckedInner`] a layer wraps is built before any request exists, so
-/// the continuation travels with the request and `UncheckedInner::call` takes
-/// it back out.
+/// The route table, as an unchecked layer re-enters it: not generic, so a
+/// [`Continuation`] is one type whichever router built it.
+pub(crate) trait Resume: Send + Sync + 'static {
+    /// The layers covering the operation at `path` and `position`, outermost
+    /// first.
+    fn layers(&self, path: usize, position: usize) -> &[Arc<dyn ErasedLayer>];
+
+    /// Runs the operation at `path` and `position`, its layers already passed.
+    fn resume(self: Arc<Self>, path: usize, position: usize, request: Request) -> BoxResponse;
+}
+
+/// Where a request is in its operation's layers, carried in its extensions
+/// because the [`UncheckedInner`] a layer wraps is built before any request.
+/// Inserted once per request and advanced in place, so a layer costs no insert
+/// of its own; removed before the operation, which never sees it.
 #[derive(Clone)]
-pub(crate) struct Continuation(Arc<dyn Fn(Request) -> BoxResponse + Send + Sync>);
-
-impl Continuation {
-    /// The continuation that runs one already-routed operation.
-    fn operation<C>(dispatch: Arc<Dispatch<C>>, path: usize, position: usize) -> Self
-    where
-        C: Send + Sync + 'static,
-    {
-        Self(Arc::new(move |request| {
-            Arc::clone(&dispatch).resume(path, position, request)
-        }))
-    }
-
-    /// The continuation that runs `layer`, and then `inner`.
-    fn through(layer: Arc<dyn ErasedLayer>, inner: Self) -> Self {
-        Self(Arc::new(move |mut request| {
-            request.extensions_mut().insert(inner.clone());
-            layer.run(request)
-        }))
-    }
-
-    fn call(&self, request: Request) -> BoxResponse {
-        (self.0)(request)
-    }
+pub(crate) struct Continuation {
+    table: Arc<dyn Resume>,
+    path: usize,
+    position: usize,
+    /// The layer run next, or the operation where it is past the last one.
+    next: usize,
 }
 
 /// A `tower` layer applied to [`UncheckedInner`], with its type erased. Nothing
@@ -167,15 +160,8 @@ where
         let mut service = self.0.clone();
 
         Box::pin(async move {
-            match std::future::poll_fn(|context| service.poll_ready(context)).await {
-                Ok(()) => {}
-                Err(never) => match never {},
-            }
-
-            match service.call(request).await {
-                Ok(response) => response,
-                Err(never) => match never {},
-            }
+            std::future::poll_fn(|context| service.poll_ready(context)).await?;
+            service.call(request).await
         })
     }
 }
@@ -256,27 +242,52 @@ impl<C> Default for Unchecked<C> {
 /// Called rather than awaited in place, so the dispatch future awaiting the
 /// box this returns holds no second copy of the request.
 pub(crate) fn through_layers<C>(
-    layers: &[Arc<dyn ErasedLayer>],
     dispatch: Arc<Dispatch<C>>,
     path: usize,
     position: usize,
-    request: Request,
+    mut request: Request,
 ) -> BoxResponse
 where
     C: Send + Sync + 'static,
 {
-    // Built inside out, so the outermost layer is called first.
-    let mut next = Continuation::operation(dispatch, path, position);
-    for layer in layers.iter().rev() {
-        next = Continuation::through(Arc::clone(layer), next);
+    request.extensions_mut().insert(Continuation {
+        table: dispatch,
+        path,
+        position,
+        next: 0,
+    });
+
+    advance(request)
+}
+
+/// Runs whatever the request's continuation names next: its next layer, or,
+/// past the last, the operation.
+fn advance(mut request: Request) -> BoxResponse {
+    // Absent only if a layer forwarded a request of its own making.
+    let Some(continuation) = request.extensions_mut().get_mut::<Continuation>() else {
+        return lost_continuation();
+    };
+
+    let layer = continuation
+        .table
+        .layers(continuation.path, continuation.position)
+        .get(continuation.next)
+        .cloned();
+    if let Some(layer) = layer {
+        continuation.next += 1;
+        return layer.run(request);
     }
 
-    next.call(request)
+    match request.extensions_mut().remove::<Continuation>() {
+        Some(last) => last.table.resume(last.path, last.position, request),
+        None => lost_continuation(),
+    }
 }
 
 /// The 500 a layer that discarded the request gets in place of a response.
-fn lost_continuation() -> Response {
-    Problem::new(StatusCode::INTERNAL_SERVER_ERROR).into_response()
+fn lost_continuation() -> BoxResponse {
+    let response = Problem::new(StatusCode::INTERNAL_SERVER_ERROR).into_response();
+    Box::pin(std::future::ready(Ok(response)))
 }
 
 /// The service an unchecked `tower` layer wraps. Opaque: a layer may compose
@@ -323,13 +334,8 @@ where
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, mut request: crate::http::Request) -> Self::Future {
-        // Absent only if the layer forwarded a request of its own making.
-        let Some(continuation) = request.extensions_mut().remove::<Continuation>() else {
-            return Box::pin(std::future::ready(Ok(lost_continuation())));
-        };
-
-        Box::pin(async move { Ok(continuation.call(request).await) })
+    fn call(&mut self, request: crate::http::Request) -> Self::Future {
+        advance(request)
     }
 }
 

@@ -302,14 +302,16 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
                 // interceptor runs.
                 #[cfg(feature = "unchecked")]
                 if !operation.unchecked_layers.is_empty() {
-                    break 'served crate::unchecked::through_layers(
-                        &operation.unchecked_layers,
+                    let layered = crate::unchecked::through_layers(
                         Arc::clone(&self),
                         at.path,
                         at.position,
                         request,
-                    )
-                    .await;
+                    );
+                    break 'served match layered.await {
+                        Ok(response) => response,
+                        Err(never) => match never {},
+                    };
                 }
 
                 self.run(operation, self.route_at(at), request).await
@@ -506,23 +508,6 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         }
     }
 
-    /// Re-enters the table at an operation an unchecked layer has called
-    /// through to, by index since a `tower` future cannot borrow the table.
-    #[cfg(feature = "unchecked")]
-    pub(crate) fn resume(
-        self: Arc<Self>,
-        path: usize,
-        position: usize,
-        request: Request,
-    ) -> Pin<Box<dyn Future<Output = Response> + Send>> {
-        Box::pin(async move {
-            let entry = &self.paths[path];
-            let operation = &entry.operations[position];
-            let route = Route::new(&entry.template, &operation.operation_id, operation.method);
-            self.run(operation, route, request).await
-        })
-    }
-
     /// Names the operation at `at`, borrowing the table's own strings.
     fn route_at(&self, at: Location) -> Route<'_> {
         let entry = &self.paths[at.path];
@@ -597,6 +582,28 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         let candidate = flip_trailing_slash(path)?;
 
         self.matcher.at(&candidate).is_ok().then_some(candidate)
+    }
+}
+
+/// Re-entered by index, since a `tower` future cannot borrow the table.
+#[cfg(feature = "unchecked")]
+impl<C: Send + Sync + 'static> crate::unchecked::Resume for Dispatch<C> {
+    fn layers(&self, path: usize, position: usize) -> &[Arc<dyn crate::unchecked::ErasedLayer>] {
+        &self.paths[path].operations[position].unchecked_layers
+    }
+
+    fn resume(
+        self: Arc<Self>,
+        path: usize,
+        position: usize,
+        request: Request,
+    ) -> crate::unchecked::BoxResponse {
+        Box::pin(async move {
+            let entry = &self.paths[path];
+            let operation = &entry.operations[position];
+            let route = Route::new(&entry.template, &operation.operation_id, operation.method);
+            Ok(self.run(operation, route, request).await)
+        })
     }
 }
 

@@ -437,6 +437,82 @@ fn a_layer_costs_the_same_wherever_it_sits() {
 /// dispatch answers before a chain exists.
 const FALLBACK_ENTRY: usize = 4;
 
+/// One unchecked `tower` layer that forwards and does nothing else, so what it
+/// costs is the escape hatch's own machinery.
+#[cfg(feature = "unchecked")]
+fn unchecked_1() -> Service<()> {
+    router()
+        .layer_unchecked(tower::layer::util::Identity::new())
+        .build(())
+        .expect("a describable router")
+}
+
+/// Two, so the second layer's cost is read apart from the first's.
+#[cfg(feature = "unchecked")]
+fn unchecked_2() -> Service<()> {
+    router()
+        .layer_unchecked(tower::layer::util::Identity::new())
+        .layer_unchecked(tower::layer::util::Identity::new())
+        .build(())
+        .expect("a describable router")
+}
+
+/// Every unchecked depth measured here, with what a request through it costs
+/// today, against the [`STACKED_ALONE`] five the static match costs without
+/// one.
+///
+/// Eight at depth one: the three past five are the continuation's one
+/// extension insert, the box the layer's erased service puts its future in,
+/// and the box the table is re-entered through past the last layer. It was
+/// eleven when each layer also allocated a closure and an insert of its own,
+/// the operation a closure, and the stand-in service a box around the future
+/// it handed on.
+#[cfg(feature = "unchecked")]
+const UNCHECKED: [Stack; 2] = [(1, unchecked_1, 8), (2, unchecked_2, 9)];
+
+/// What each unchecked layer past the first adds: the box its erased service's
+/// future is put in, and nothing else, because the continuation is advanced in
+/// place rather than inserted again.
+#[cfg(feature = "unchecked")]
+const UNCHECKED_PER_LAYER: usize = 1;
+
+/// The record for unchecked layers. Exact rather than a ceiling, so a
+/// per-request allocation added under them turns this red, and so does a
+/// saving left unrecorded.
+#[cfg(feature = "unchecked")]
+#[test]
+fn an_unchecked_layer_allocates_what_is_recorded_here() {
+    for (depth, build, recorded) in UNCHECKED {
+        let counted = counted(&build(), STACKED, STACKED_STATUS);
+        assert_eq!(
+            counted, recorded,
+            "a request through {depth} unchecked layer(s) allocated {counted} \
+             times against a recorded {recorded}"
+        );
+    }
+}
+
+/// The relation the record holds, and the one that survives a change to
+/// either row: a second unchecked layer costs its own future's box alone, with
+/// no insert or closure for the continuation it passes on.
+#[cfg(feature = "unchecked")]
+#[test]
+fn a_second_unchecked_layer_costs_only_its_own_future() {
+    let [(_, one, _), (_, two, _)] = UNCHECKED;
+    let (d1, d2) = (
+        counted(&one(), STACKED, STACKED_STATUS),
+        counted(&two(), STACKED, STACKED_STATUS),
+    );
+
+    assert_eq!(
+        d2,
+        d1 + UNCHECKED_PER_LAYER,
+        "a second unchecked layer added {} allocation(s) against a recorded \
+         {UNCHECKED_PER_LAYER} (d1 = {d1}, d2 = {d2})",
+        d2.saturating_sub(d1)
+    );
+}
+
 /// The other half of what a layer costs: the width of the future
 /// [`Service::call`] returns, and that a chain in front of it adds nothing to
 /// that width.
