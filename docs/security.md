@@ -75,7 +75,7 @@ replaces it, typically to name another `realm`:
 | `basic` | `Basic realm="api", charset="UTF-8"` | RFC 7617 section 2 requires `realm`; the same string `Basic` sends |
 | `api_key` | `ApiKey` | RFC 9110 section 15.5.2 requires a challenge on every 401, and no registered scheme names a key |
 | `mutual_tls` | `MutualTLS` | The same, for a certificate presented in the handshake; the same string `MutualTls` sends |
-| `http(scheme = ..)` | none | Its parameters are the application's to know |
+| `http(scheme = ..)` | the `scheme` token, e.g. `Digest` | The same MUST; a challenge may carry no parameters, and the ones its scheme needs are the application's to add |
 
 `ApiKey` and `MutualTLS` are unregistered `auth-scheme` tokens (RFC 9110
 section 11.1) spelling the OpenAPI `type`, with no parameters: they satisfy the
