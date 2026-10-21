@@ -471,19 +471,22 @@ impl<C: Sync + 'static, D: CorsDocumentation> Interceptor<C> for Cors<D> {
     /// answered by the router.
     type Short = Infallible;
 
-    async fn intercept(
+    // Reads the request before building the future, so the future holds the
+    // rest of the chain rather than the request.
+    fn intercept(
         &self,
         request: http::Request,
         reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> Result<Continued<D::Headers>, Infallible> {
+    ) -> impl Future<Output = Result<Continued<D::Headers>, Infallible>> + Send {
         let _ = (reads, context);
 
         // Not in `Reads`: the browser sets `Origin`, so no consumer can supply it.
         let headers = self.config.headers_for(request.headers());
+        let run = next.run(request);
 
-        Ok(next.run(request).await.with_headers(D::label(headers)))
+        async move { Ok(run.await.with_headers(D::label(headers))) }
     }
 }
 

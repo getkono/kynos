@@ -381,6 +381,52 @@ impl Interceptor<()> for Exploding {
     }
 }
 
+/// An interceptor that panics while it is handed the request, before it builds
+/// the future it returns.
+struct ExplodingEarly;
+
+impl Interceptor<()> for ExplodingEarly {
+    type Reads = ();
+    type Adds = ();
+    type Short = Infallible;
+
+    #[expect(unreachable_code, reason = "the panic is the point")]
+    fn intercept(
+        &self,
+        _: Request,
+        (): (),
+        (): &(),
+        _: Next<'_, ()>,
+    ) -> impl Future<Output = Result<Continued<()>, Infallible>> + Send {
+        panic!("the interceptor failed");
+        std::future::pending()
+    }
+}
+
+/// `Next::run` hands the request over when it is called rather than when it is
+/// polled, so an interceptor's work before its future exists runs early; the
+/// router's recovery still covers it, and the control still unwinds.
+#[test]
+fn a_router_recovers_a_panic_raised_before_an_interceptor_built_its_future() {
+    let recovering = Router::<()>::new()
+        .catch_panics()
+        .mount(kynos::routes![fine])
+        .intercept(ExplodingEarly)
+        .build(())
+        .expect("a describable router");
+    let propagating = Router::<()>::new()
+        .mount(kynos::routes![fine])
+        .intercept(ExplodingEarly)
+        .build(())
+        .expect("a describable router");
+
+    assert_eq!(
+        outcome(&recovering, "/fine"),
+        Ok(StatusCode::INTERNAL_SERVER_ERROR)
+    );
+    assert_eq!(outcome(&propagating, "/fine"), Err(()));
+}
+
 /// A router's interceptor also runs around a fallback, so the router's
 /// recovery covers it there: a 500 with recovery, reported with no route since
 /// no operation matched, and an unwind without it.

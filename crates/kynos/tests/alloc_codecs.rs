@@ -1117,9 +1117,9 @@ mod protobuf {
 /// 8 KiB at a time into a growing buffer. So the table below is codings by
 /// sizes, and the relations are about growth rather than about a floor.
 ///
-/// All three codings are measured rather than gzip alone: `encode` boxes
-/// brotli's future because its encoder state is kilobytes, so what is counted
-/// differs between them in exactly the way a single-coding table would hide.
+/// All three codings are measured rather than gzip alone: each encoder's state
+/// costs a different number of allocations, so what is counted differs between
+/// them in exactly the way a single-coding table would hide.
 #[cfg(feature = "compression")]
 mod compression {
     use std::sync::LazyLock;
@@ -1299,14 +1299,15 @@ mod compression {
     /// again at 256 KiB, which is the reason four sizes are measured rather
     /// than two.
     ///
-    /// **Brotli is roughly twice gzip and four times zstd.** Its encoder state
-    /// is kilobytes, which is why `encode` boxes its future at all; the same
-    /// fact shows up here as the allocations that state costs.
+    /// **Brotli costs the most, by its encoder's state.** One of each engaged
+    /// row's allocations is the box an encode is read in, which every coding
+    /// pays alike, so that the interceptor's own future stays small for a
+    /// response it declines; the rest is what each encoder allocates.
     const RECORDED: [(&str, [usize; 4]); 4] = [
         ("identity", [9, 9, 9, 9]),
-        ("gzip", [9, 22, 22, 26]),
+        ("gzip", [9, 23, 23, 27]),
         ("br", [9, 37, 37, 43]),
-        ("zstd", [9, 16, 16, 19]),
+        ("zstd", [9, 17, 17, 20]),
     ];
 
     /// The same operation at 16 KiB, asked for as `identity`, with no

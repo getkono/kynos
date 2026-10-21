@@ -366,8 +366,28 @@ impl<'a, C: Sync + 'static> Next<'a, C> {
     /// Runs the rest of the chain.
     ///
     /// The only source of a [`Continued`].
-    pub async fn run(self, request: Request) -> Continued<()> {
-        let response = match self.remaining.split_first() {
+    ///
+    /// `request` is handed to the next layer when this is called rather than
+    /// when the returned future is first polled, so that the future holds the
+    /// rest of the chain and no copy of the request. The next layer's own work
+    /// still waits for that poll; only its header extraction, and whatever its
+    /// `intercept` does before returning a future, runs at the call.
+    ///
+    /// That work therefore runs outside anything wrapped around the returned
+    /// future: `.instrument(span)` and a task-local's `scope` do not cover it,
+    /// so an inner `SetCookies` calls its `CookieSource` outside both. Enter the context
+    /// around the call as well, as in `span.in_scope(|| next.run(request))`,
+    /// or make the call inside an `async move` block that the wrapper takes,
+    /// which keeps the request in that block until it is first polled. A
+    /// timer such as `tokio::time::timeout` starts after that work, which,
+    /// being synchronous, it could never have interrupted.
+    pub fn run(self, request: Request) -> impl Future<Output = Continued<()>> + Send + 'a {
+        enum Rest<I, T> {
+            Interceptor(I),
+            Terminal(T),
+        }
+
+        let mut rest = match self.remaining.split_first() {
             Some((head, remaining)) => {
                 let next = Self {
                     remaining,
@@ -375,12 +395,19 @@ impl<'a, C: Sync + 'static> Next<'a, C> {
                     context: self.context,
                     route: self.route,
                 };
-                (**head).intercept(request, self.context, next).await
+                Rest::Interceptor((**head).intercept(request, self.context, next))
             }
-            None => self.terminal.call(request, self.context).await,
+            None => Rest::Terminal(self.terminal.call(request, self.context)),
         };
 
-        Continued::new(response)
+        // Both arms are boxed, so polling them in place needs no pinning here.
+        std::future::poll_fn(move |context| {
+            match &mut rest {
+                Rest::Interceptor(intercepted) => intercepted.as_mut().poll_settle(context),
+                Rest::Terminal(terminal) => terminal.as_mut().poll(context),
+            }
+            .map(Continued::new)
+        })
     }
 
     /// The operation this request matched.

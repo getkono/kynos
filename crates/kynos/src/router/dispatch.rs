@@ -369,10 +369,17 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         catch_panics: bool,
         request: Request,
     ) -> Response {
-        let served = Next::new(interceptors, terminal, &self.context, route).run(request);
+        // Started inside the block, so that recovery also covers what
+        // `Next::run` does before its future is first polled.
+        let served = async move {
+            Next::new(interceptors, terminal, &self.context, route)
+                .run(request)
+                .await
+                .into_response()
+        };
 
         let mut response = if catch_panics {
-            match recover(async move { served.await.into_response() }).await {
+            match recover(served).await {
                 Ok(response) => response,
                 Err(payload) => {
                     self.report_panic(payload.as_ref(), route);
@@ -380,7 +387,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
                 }
             }
         } else {
-            served.await.into_response()
+            served.await
         };
 
         // Taken whether or not anyone observes, so the marker never reaches the
