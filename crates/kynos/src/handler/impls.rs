@@ -45,6 +45,17 @@ macro_rules! extract_parts {
     };
 }
 
+/// Runs the body extractor over the head the others read, short-circuiting
+/// into its rejection's response.
+macro_rules! extract_body {
+    ($ty:ident, $parts:expr, $body:expr, $context:expr) => {
+        match <$ty as FromRequest<C>>::from_request(&mut $parts, $body, $context).await {
+            Ok(value) => value,
+            Err(rejection) => return rejection.into_response(),
+        }
+    };
+}
+
 /// Merges one head argument's description and its rejection's responses.
 macro_rules! describe_parts {
     ($ty:ident, $operation:expr) => {{
@@ -75,11 +86,7 @@ macro_rules! impl_handler {
             async fn call(self, request: Request, context: &C) -> Response {
                 let (mut parts, body) = request.into_parts();
                 $( let $head = extract_parts!($head, parts, context); )*
-                let request = Request::from_parts(parts, body);
-                let $last = match <$last as FromRequest<C>>::from_request(request, context).await {
-                    Ok(value) => value,
-                    Err(rejection) => return rejection.into_response(),
-                };
+                let $last = extract_body!($last, parts, body, context);
                 self($($head,)* $last).await.into_response()
             }
 
@@ -140,11 +147,7 @@ macro_rules! impl_handler {
                 let (mut parts, body) = request.into_parts();
                 let G = guard!(G, parts, context);
                 $( let $head = extract_parts!($head, parts, context); )*
-                let request = Request::from_parts(parts, body);
-                let $last = match <$last as FromRequest<C>>::from_request(request, context).await {
-                    Ok(value) => value,
-                    Err(rejection) => return rejection.into_response(),
-                };
+                let $last = extract_body!($last, parts, body, context);
                 self(G, $($head,)* $last).await.into_response()
             }
 

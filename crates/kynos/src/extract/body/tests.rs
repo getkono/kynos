@@ -1,10 +1,19 @@
 use kynos_openapi::Schema as OpenApiSchema;
 
 use crate::{
-    extract::{body::binary::Binary, describe::RequestContent},
-    http::media::{OctetStream, Png},
+    extract::{FromRequest, body::binary::Binary, describe::RequestContent},
+    http::{
+        Request,
+        media::{OctetStream, Png},
+    },
     schema::registry::Registry,
 };
+
+/// Extracts `T` from `request`, as a handler's last argument is.
+async fn extract<T: FromRequest<()>>(request: Request) -> Result<T, T::Rejection> {
+    let (mut parts, body) = request.into_parts();
+    T::from_request(&mut parts, body, &()).await
+}
 
 /// Raw binary is described by what is *left out*, which is easy to get wrong in
 /// the direction of saying too much.
@@ -260,10 +269,7 @@ mod a_text_part_holds_only_its_own_octets {
 mod a_multipart_boundary_is_read_past_optional_whitespace {
     use crate::{
         error::rejection::BodyRejection,
-        extract::{
-            FromRequest,
-            body::multipart::{FromMultipart, MultipartForm, Part},
-        },
+        extract::body::multipart::{FromMultipart, MultipartForm, Part},
         http::{HeaderValue, Request, StatusCode, body::Body, header},
         schema::{Schema, registry::Registry},
     };
@@ -298,7 +304,7 @@ mod a_multipart_boundary_is_read_past_optional_whitespace {
         request
             .headers_mut()
             .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
-        MultipartForm::<Parts>::from_request(request, &())
+        super::extract::<MultipartForm<Parts>>(request)
             .await
             .map(|MultipartForm(parts)| parts)
     }
@@ -379,7 +385,7 @@ mod a_multipart_boundary_is_read_past_optional_whitespace {
             HeaderValue::from_static("multipart/form-data; boundary=x"),
         );
 
-        let MultipartForm(parts) = MultipartForm::<Parts>::from_request(request, &())
+        let MultipartForm(parts) = super::extract::<MultipartForm<Parts>>(request)
             .await
             .expect("a well-formed body");
 
@@ -423,12 +429,9 @@ mod a_multipart_boundary_is_read_past_optional_whitespace {
 mod a_part_disposition_is_read_quote_aware {
     use crate::{
         error::rejection::BodyRejection,
-        extract::{
-            FromRequest,
-            body::multipart::{
-                FromMultipart, MultipartForm, Part,
-                disposition::{self, Disposition},
-            },
+        extract::body::multipart::{
+            FromMultipart, MultipartForm, Part,
+            disposition::{self, Disposition},
         },
         http::{HeaderValue, Request, StatusCode, body::Body, header},
         schema::{Schema, registry::Registry},
@@ -468,7 +471,7 @@ mod a_part_disposition_is_read_quote_aware {
             header::CONTENT_TYPE,
             HeaderValue::from_static("multipart/form-data; boundary=x"),
         );
-        MultipartForm::<Names>::from_request(request, &())
+        super::extract::<MultipartForm<Names>>(request)
             .await
             .map(|MultipartForm(names)| names)
     }
@@ -648,7 +651,7 @@ mod a_form_body_decodes_what_it_describes {
 
     use crate::{
         error::rejection::BodyRejection,
-        extract::{FromRequest, body::form::Form},
+        extract::body::form::Form,
         http::{HeaderValue, Request, StatusCode, body::Body, header},
         schema::{Schema, registry::Registry},
     };
@@ -675,7 +678,7 @@ mod a_form_body_decodes_what_it_describes {
             header::CONTENT_TYPE,
             HeaderValue::from_static("application/x-www-form-urlencoded"),
         );
-        Form::<T>::from_request(request, &())
+        super::extract::<Form<T>>(request)
             .await
             .map(|Form(value)| value)
     }
@@ -800,8 +803,8 @@ mod a_form_body_decodes_what_it_describes {
 #[tokio::test]
 async fn a_protobuf_body_decodes_to_the_message_it_encodes() {
     use crate::{
-        extract::{FromRequest, body::protobuf::Protobuf},
-        http::{HeaderValue, Request, body::Body, header},
+        extract::body::protobuf::Protobuf,
+        http::{HeaderValue, body::Body, header},
     };
 
     #[derive(Clone, PartialEq, prost::Message)]
@@ -825,7 +828,7 @@ async fn a_protobuf_body_decodes_to_the_message_it_encodes() {
         HeaderValue::from_static("application/protobuf"),
     );
 
-    let Protobuf(message) = Protobuf::<Tagged>::from_request(request, &())
+    let Protobuf(message) = extract::<Protobuf<Tagged>>(request)
         .await
         .expect("a well-formed message");
 
@@ -840,8 +843,8 @@ async fn a_protobuf_body_decodes_to_the_message_it_encodes() {
 async fn a_protobuf_body_that_does_not_decode_is_a_syntax_rejection() {
     use crate::{
         error::rejection::BodyRejection,
-        extract::{FromRequest, body::protobuf::Protobuf},
-        http::{HeaderValue, Request, StatusCode, body::Body, header},
+        extract::body::protobuf::Protobuf,
+        http::{HeaderValue, StatusCode, body::Body, header},
     };
 
     // Field 1, varint wire type, and then no varint: the buffer ends first.
@@ -851,7 +854,7 @@ async fn a_protobuf_body_that_does_not_decode_is_a_syntax_rejection() {
         HeaderValue::from_static("application/protobuf"),
     );
 
-    let rejection = Protobuf::<()>::from_request(request, &())
+    let rejection = extract::<Protobuf<()>>(request)
         .await
         .expect_err("a truncated message");
 
@@ -902,7 +905,7 @@ mod an_undecoded_content_coding_is_refused {
         codings: &[&'static [u8]],
         body: &'static [u8],
     ) -> Option<BodyRejection> {
-        T::from_request(coded(content_type, codings, body), &())
+        super::extract::<T>(coded(content_type, codings, body))
             .await
             .err()
     }
@@ -1086,7 +1089,7 @@ mod two_content_type_lines_are_refused {
     ) -> Option<BodyRejection> {
         let mut request = Request::new(Body::from_bytes(bytes::Bytes::new()));
         *request.headers_mut() = headers(lines);
-        T::from_request(request, &()).await.err()
+        super::extract::<T>(request).await.err()
     }
 
     /// The pairs refused: the same line twice, and two different types the
@@ -1201,7 +1204,7 @@ mod an_optional_body_without_a_content_type {
 
     use crate::{
         error::rejection::BodyRejection,
-        extract::{FromRequest, body::text::Text},
+        extract::body::text::Text,
         http::{Request, body::Body},
     };
 
@@ -1229,7 +1232,7 @@ mod an_optional_body_without_a_content_type {
     }
 
     async fn read(body: Body) -> Result<Option<Text>, BodyRejection> {
-        Option::<Text>::from_request(Request::new(body), &()).await
+        super::extract::<Option<Text>>(Request::new(body)).await
     }
 
     /// Empty DATA frames are zero-length content, absent as the empty

@@ -8,7 +8,7 @@ use crate::{
         FromRequest,
         describe::{Describe, RequestContent},
     },
-    http::Request,
+    http::{Parts, body::Body},
     router::operation::OperationCx,
     schema::registry::Registry,
 };
@@ -23,8 +23,12 @@ pub(super) const MEDIA_TYPE: &str = mime_names::TEXT_PLAIN;
 impl<C: Sync> FromRequest<C> for Text {
     type Rejection = BodyRejection;
 
-    async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
-        let bytes = super::read_body(request, MEDIA_TYPE).await?;
+    async fn from_request(
+        parts: &mut Parts,
+        body: Body,
+        _context: &C,
+    ) -> Result<Self, Self::Rejection> {
+        let bytes = super::read_body(parts, body, MEDIA_TYPE).await?;
 
         // Only UTF-8 is accepted, so other bytes are a 400.
         String::from_utf8(bytes.into())

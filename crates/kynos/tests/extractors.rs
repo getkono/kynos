@@ -51,7 +51,13 @@ async fn read<T: FromRequest<()>>(
     content_type: Option<&str>,
     body: &'static [u8],
 ) -> Result<T, T::Rejection> {
-    T::from_request(request(content_type, body), &()).await
+    extract(request(content_type, body)).await
+}
+
+/// Extracts `T` from `request`, as a handler's last argument is.
+async fn extract<T: FromRequest<()>>(request: Request) -> Result<T, T::Rejection> {
+    let (mut parts, body) = request.into_parts();
+    T::from_request(&mut parts, body, &()).await
 }
 
 /// The `post` operation the router describes at `path`.
@@ -698,8 +704,8 @@ mod multipart {
 
 mod optional {
     use super::{
-        BodyRejection, FromRequest, HeaderValue, Json, NoContent, Payload, Router, StatusCode,
-        Text, assert_unsupported, header, json, operation, read, request, request_body,
+        BodyRejection, HeaderValue, Json, NoContent, Payload, Router, StatusCode, Text,
+        assert_unsupported, extract, header, json, operation, read, request, request_body,
     };
 
     #[kynos::post("/maybe")]
@@ -725,9 +731,7 @@ mod optional {
             .headers_mut()
             .insert(header::CONTENT_LENGTH, HeaderValue::from_static("0"));
         assert_eq!(
-            Option::<Text>::from_request(empty, &())
-                .await
-                .expect("absent"),
+            extract::<Option<Text>>(empty).await.expect("absent"),
             None,
             "a zero `Content-Length`"
         );
@@ -764,7 +768,7 @@ mod optional {
             declared
                 .headers_mut()
                 .insert(header::CONTENT_LENGTH, HeaderValue::from_static(value));
-            assert_unsupported(Option::<Text>::from_request(declared, &()).await, None);
+            assert_unsupported(extract::<Option<Text>>(declared).await, None);
         }
 
         // A repeated field is content when any of its lines is not a zero.
@@ -774,7 +778,7 @@ mod optional {
                 .headers_mut()
                 .append(header::CONTENT_LENGTH, HeaderValue::from_static(value));
         }
-        assert_unsupported(Option::<Text>::from_request(repeated, &()).await, None);
+        assert_unsupported(extract::<Option<Text>>(repeated).await, None);
     }
 
     /// Emptiness is not absence: an empty text body is the empty string.

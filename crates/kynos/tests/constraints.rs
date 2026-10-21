@@ -38,6 +38,12 @@ fn emitted<T: SchemaTrait>() -> Value {
     root
 }
 
+/// Extracts `T` from `request`, as a handler's last argument is.
+async fn extract<T: FromRequest<()>>(request: Request) -> Result<T, T::Rejection> {
+    let (mut parts, body) = request.into_parts();
+    T::from_request(&mut parts, body, &()).await
+}
+
 /// What `Json<T>` makes of `document`: `None` where it is admitted, and the
 /// failures keyed by pointer where it is refused as not fitting its schema.
 async fn read<T>(document: &Value) -> Option<BTreeMap<String, String>>
@@ -51,7 +57,7 @@ where
         HeaderValue::from_static("application/json"),
     );
 
-    match Json::<T>::from_request(request, &()).await {
+    match extract::<Json<T>>(request).await {
         Ok(_) => None,
         Err(BodyRejection::Schema { failures }) => Some(failures),
         Err(other) => panic!("a well-formed document refused as something else: {other:?}"),
@@ -708,7 +714,7 @@ mod form {
     use kynos::{
         Schema,
         error::rejection::BodyRejection,
-        extract::{FromRequest, body::form::Form},
+        extract::body::form::Form,
         http::{HeaderValue, Request, body::Body, header},
     };
     use serde::Deserialize;
@@ -728,7 +734,7 @@ mod form {
             header::CONTENT_TYPE,
             HeaderValue::from_static("application/x-www-form-urlencoded"),
         );
-        Form::<Signup>::from_request(request, &())
+        super::extract::<Form<Signup>>(request)
             .await
             .map(|Form(signup)| signup)
     }
@@ -757,10 +763,7 @@ mod form {
 mod records {
     use kynos::{
         error::rejection::BodyRejection,
-        extract::{
-            FromRequest,
-            body::json_lines::{JsonLines, JsonSeq, records::Records},
-        },
+        extract::body::json_lines::{JsonLines, JsonSeq, records::Records},
         http::{HeaderValue, Request, body::Body, header},
     };
     use serde_json::{Value, json};
@@ -805,15 +808,13 @@ mod records {
         let validator = jsonschema::draft202012::new(&schema)
             .expect("an emitted schema compiles as draft 2020-12");
 
-        let JsonLines { items } = JsonLines::<Records<Line>>::from_request(
-            request("application/x-ndjson", documents),
-            &(),
-        )
-        .await
-        .expect("an NDJSON body is taken unread");
+        let JsonLines { items } =
+            super::extract::<JsonLines<Records<Line>>>(request("application/x-ndjson", documents))
+                .await
+                .expect("an NDJSON body is taken unread");
         let lines = outcomes(items).await;
         let JsonSeq { items } =
-            JsonSeq::<Records<Line>>::from_request(request("application/json-seq", documents), &())
+            super::extract::<JsonSeq<Records<Line>>>(request("application/json-seq", documents))
                 .await
                 .expect("a JSON text sequence is taken unread");
         let sequence = outcomes(items).await;
@@ -894,7 +895,7 @@ mod multipart {
     use kynos::{
         Schema,
         error::rejection::BodyRejection,
-        extract::{FromRequest, body::multipart::MultipartForm},
+        extract::body::multipart::MultipartForm,
         http::{HeaderValue, Request, body::Body, header},
     };
 
@@ -914,7 +915,7 @@ mod multipart {
             header::CONTENT_TYPE,
             HeaderValue::from_static("multipart/form-data; boundary=x"),
         );
-        MultipartForm::<Upload>::from_request(request, &())
+        super::extract::<MultipartForm<Upload>>(request)
             .await
             .map(|MultipartForm(upload)| upload)
     }
@@ -940,7 +941,7 @@ mod protobuf {
     use kynos::{
         Schema,
         error::rejection::BodyRejection,
-        extract::{FromRequest, body::protobuf::Protobuf},
+        extract::body::protobuf::Protobuf,
         http::{HeaderValue, Request, body::Body, header},
     };
     use prost::Message as _;
@@ -962,7 +963,7 @@ mod protobuf {
             header::CONTENT_TYPE,
             HeaderValue::from_static("application/protobuf"),
         );
-        Protobuf::<Batch>::from_request(request, &())
+        super::extract::<Protobuf<Batch>>(request)
             .await
             .map(|Protobuf(batch)| batch)
     }

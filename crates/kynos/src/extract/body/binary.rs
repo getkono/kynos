@@ -6,7 +6,7 @@ use crate::{
         FromRequest,
         describe::{Describe, RequestContent},
     },
-    http::{Request, media::MediaType},
+    http::{Parts, body::Body, media::MediaType},
     router::operation::OperationCx,
     schema::registry::Registry,
 };
@@ -59,8 +59,12 @@ impl<M> Binary<M> {
 impl<C: Sync, M: MediaType + Send> FromRequest<C> for Binary<M> {
     type Rejection = BodyRejection;
 
-    async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
-        super::read_body(request, M::MEDIA_TYPE)
+    async fn from_request(
+        parts: &mut Parts,
+        body: Body,
+        _context: &C,
+    ) -> Result<Self, Self::Rejection> {
+        super::read_body(parts, body, M::MEDIA_TYPE)
             .await
             .map(Self::new)
     }

@@ -159,18 +159,21 @@ pub fn json_records(
     request.extensions_mut().insert(BodyLimit(limit));
 
     type Items = Records<Unchecked<serde_json::Value>>;
+    let (mut parts, body) = request.into_parts();
     let mut records = if sequence {
         ready(<JsonSeq<Items> as FromRequest<()>>::from_request(
-            request,
+            &mut parts,
+            body,
             &(),
         ))
-        .map(|body| body.items)
+        .map(|decoded| decoded.items)
     } else {
         ready(<JsonLines<Items> as FromRequest<()>>::from_request(
-            request,
+            &mut parts,
+            body,
             &(),
         ))
-        .map(|body| body.items)
+        .map(|decoded| decoded.items)
     }
     .expect("a body of the codec's own media type");
 

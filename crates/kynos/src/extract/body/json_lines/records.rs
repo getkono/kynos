@@ -15,7 +15,7 @@ use http_body_util::{BodyDataStream, BodyExt};
 use crate::{
     error::rejection::BodyRejection,
     extract::body::json_lines::SEQUENCE_MEDIA_TYPE,
-    http::{Request, body::Body},
+    http::{Parts, body::Body},
     schema::{Schema, constraints::Pointer},
 };
 
@@ -139,20 +139,19 @@ impl<T> Records<T> {
     /// Enforces the content type and refuses an undecoded coding (the shared
     /// 415s), then takes the body unread.
     pub(super) fn new(
-        request: Request,
+        parts: &Parts,
+        body: Body,
         media_type: &str,
         framing: Framing,
     ) -> Result<Self, BodyRejection> {
-        if !crate::extract::body::offers(request.headers(), media_type) {
-            return Err(crate::extract::body::unsupported_media_type(
-                request.headers(),
-            ));
+        if !crate::extract::body::offers(&parts.headers, media_type) {
+            return Err(crate::extract::body::unsupported_media_type(&parts.headers));
         }
-        crate::extract::body::refuse_undecoded(request.headers())?;
+        crate::extract::body::refuse_undecoded(&parts.headers)?;
 
         Ok(Self {
-            limit: crate::extract::body::limit::of(&request),
-            body: request.into_body().into_data_stream(),
+            limit: crate::extract::body::limit::of(parts),
+            body: body.into_data_stream(),
             buffer: BytesMut::new(),
             scanned: 0,
             index: 0,

@@ -47,7 +47,7 @@ pub mod sse;
 
 use std::future::Future;
 
-use crate::http::{Parts, Request};
+use crate::http::{Parts, body::Body};
 
 /// A handler input built from the request head.
 ///
@@ -77,6 +77,12 @@ pub trait FromRequestParts<C>: Sized + Send {
 ///
 /// Only the last argument of a handler may implement this, so the body is
 /// taken once; [`FromRequestParts`] reads the head.
+///
+/// The head is lent rather than handed over inside a whole
+/// [`Request`](crate::http::Request): the endpoint's future already owns it,
+/// and a request passed by value would be a copy the extractor's future keeps
+/// for as long as it runs. A caller holding a whole request splits it with
+/// `into_parts`.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot be extracted from a request body",
     label = "not a body extractor",
@@ -87,9 +93,10 @@ pub trait FromRequest<C>: Sized + Send {
     /// description.
     type Rejection: crate::response::IntoResponse + crate::response::Responses;
 
-    /// Consumes the request, or explains why it could not.
+    /// Consumes the body, read against the head, or explains why it could not.
     fn from_request(
-        request: Request,
+        parts: &mut Parts,
+        body: Body,
         context: &C,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send;
 }

@@ -8,7 +8,7 @@ use http_body_util::{BodyExt, Collected, LengthLimitError, Limited};
 use crate::{
     error::rejection::BodyRejection,
     http::{
-        HeaderMap, Request,
+        HeaderMap, Parts,
         body::{Body, BoxError},
         header,
     },
@@ -57,10 +57,10 @@ pub const DEFAULT_LIMIT: u64 = 2 * 1024 * 1024;
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct BodyLimit(pub(crate) u64);
 
-/// The limit `request`'s body is read under.
-pub(crate) fn of(request: &Request) -> u64 {
-    request
-        .extensions()
+/// The limit the body of the request `parts` heads is read under.
+pub(crate) fn of(parts: &Parts) -> u64 {
+    parts
+        .extensions
         .get::<BodyLimit>()
         .map_or(DEFAULT_LIMIT, |limit| limit.0)
 }
