@@ -265,7 +265,8 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         self: Arc<Self>,
         mut request: Request,
     ) -> impl Future<Output = Response> + Send + 'static {
-        let started = Instant::now();
+        // Only an observer reads the clock.
+        let started = (!self.observers.is_empty()).then(Instant::now);
         // Whatever answers a HEAD sends no content.
         let head = request.method() == crate::http::Method::HEAD;
         let routed = self.route(&mut request);
@@ -521,11 +522,14 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
     /// With observers, the body is watched so a peer leaving mid-response is
     /// reported; without, nothing is added. A HEAD response sheds its content
     /// first, so an observer sees what the peer will.
+    ///
+    /// `started` is `None` exactly when no observer is mounted, since only an
+    /// observer reads it.
     fn finish(
         self: &Arc<Self>,
         response: Response,
         at: Option<Location>,
-        started: Instant,
+        started: Option<Instant>,
         head: bool,
     ) -> Response {
         let response = if head {
@@ -534,9 +538,9 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
             response
         };
 
-        if self.observers.is_empty() {
+        let Some(started) = started else {
             return response;
-        }
+        };
 
         let elapsed = started.elapsed();
         let route = at.map(|at| self.route_at(at));

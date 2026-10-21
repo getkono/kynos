@@ -50,16 +50,17 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
+use std::time::Duration;
 
 use alloc_counter::count_alloc;
 use kynos::{
     Router,
     extract::params::path::Path,
-    http::{HeaderMap, HeaderValue, Method, Request, StatusCode, header},
-    middleware::{Continued, Interceptor, Next},
+    http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode, header},
+    middleware::{Continued, Interceptor, Next, Observer},
     prelude::*,
     response::status::NoContent,
-    router::service::Service,
+    router::{operation::Route, service::Service},
 };
 
 /// The counter, the request builder and the driver, shared with
@@ -510,6 +511,45 @@ fn a_second_unchecked_layer_costs_only_its_own_future() {
         "a second unchecked layer added {} allocation(s) against a recorded \
          {UNCHECKED_PER_LAYER} (d1 = {d1}, d2 = {d2})",
         d2.saturating_sub(d1)
+    );
+}
+
+/// An observer that records nothing, so what one costs is the router's
+/// machinery for observing rather than the work an observer does.
+struct Unheard;
+
+impl Observer<()> for Unheard {
+    fn on_request(&self, request: &Request, route: Option<Route<'_>>, context: &()) {
+        let _ = (request, route, context);
+    }
+
+    fn on_response(&self, response: &Response, route: Option<Route<'_>>, elapsed: Duration) {
+        let _ = (response, route, elapsed);
+    }
+}
+
+/// What mounting an observer adds to a request, past the [`STACKED_ALONE`]
+/// five: the one box the response body is erased into again so a peer leaving
+/// mid-response is reported, which holds the disconnect report inline. It was
+/// two when that report was boxed beside it.
+const OBSERVED: usize = 1;
+
+/// The record for an observer. Exact rather than a ceiling, for the reason
+/// [`an_unchecked_layer_allocates_what_is_recorded_here`] gives.
+#[test]
+fn an_observer_allocates_what_is_recorded_here() {
+    let observed = router()
+        .observe(Unheard)
+        .build(())
+        .expect("a describable router");
+    let counted = counted(&observed, STACKED, STACKED_STATUS);
+
+    assert_eq!(
+        counted,
+        STACKED_ALONE + OBSERVED,
+        "a request under one observer allocated {counted} times against a \
+         recorded {}",
+        STACKED_ALONE + OBSERVED
     );
 }
 

@@ -14,14 +14,19 @@ use super::{BoxError, Delivery};
 
 /// A body that reports how it ended.
 ///
-/// The callback is boxed so the struct is [`Unpin`] and needs no projection.
-pub(super) struct Watched {
+/// The callback is held inline rather than boxed, so watching a body costs the
+/// one box that erases this struct and nothing beside it.
+pub(super) struct Watched<F: FnOnce(Delivery)> {
     pub(super) inner: UnsyncBoxBody<Bytes, BoxError>,
     /// `None` once the report has been made.
-    pub(super) report: Option<Box<dyn FnOnce(Delivery) + Send>>,
+    pub(super) report: Option<F>,
 }
 
-impl Watched {
+// Never structurally pinned: `report` is only ever moved out whole, and
+// `inner` is a box, so pinning a `Watched` pins nothing inside it.
+impl<F: FnOnce(Delivery)> Unpin for Watched<F> {}
+
+impl<F: FnOnce(Delivery)> Watched<F> {
     /// Reports `delivery`, unless something already reported.
     fn report(&mut self, delivery: Delivery) {
         if let Some(report) = self.report.take() {
@@ -30,7 +35,7 @@ impl Watched {
     }
 }
 
-impl HttpBody for Watched {
+impl<F: FnOnce(Delivery)> HttpBody for Watched<F> {
     type Data = Bytes;
     type Error = BoxError;
 
@@ -63,7 +68,7 @@ impl HttpBody for Watched {
     }
 }
 
-impl Drop for Watched {
+impl<F: FnOnce(Delivery)> Drop for Watched<F> {
     fn drop(&mut self) {
         // A body at its end was delivered even if never polled (an empty one).
         let delivery = if self.inner.is_end_stream() {
@@ -83,12 +88,12 @@ impl Drop for Watched {
 }
 
 /// Makes a [`Watched`] body's report when dropped, including by an unwind.
-struct Reporting {
-    report: Option<Box<dyn FnOnce(Delivery) + Send>>,
+struct Reporting<F: FnOnce(Delivery)> {
+    report: Option<F>,
     delivery: Delivery,
 }
 
-impl Drop for Reporting {
+impl<F: FnOnce(Delivery)> Drop for Reporting<F> {
     fn drop(&mut self) {
         if let Some(report) = self.report.take() {
             report(self.delivery);
