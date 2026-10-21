@@ -402,7 +402,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
     /// interceptors where it has any, and told to every observer either way.
     ///
     /// Without interceptors nothing is resolved or inserted, so a fallback
-    /// costs what it did before they could reach one.
+    /// costs only its answer and its observers.
     async fn fall_back(
         self: &Arc<Self>,
         unanswered: Unanswered,
@@ -672,8 +672,9 @@ pub(crate) fn implemented<C>(paths: &[PathEntry<C>]) -> Vec<Method> {
     methods
 }
 
-/// Interns a path variable name for the life of the process. Leaks once per
-/// name per build, a set bounded by the route table.
+/// Leaks a path or a path variable name for the life of the process. Leaks once
+/// per call: once for each path a build installs and once for each variable
+/// occurrence in it, so each build leaks an amount bounded by its route table.
 pub(crate) fn intern(name: &str) -> &'static str {
     Box::leak(name.to_owned().into_boxed_str())
 }

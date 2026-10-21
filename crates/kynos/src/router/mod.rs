@@ -3,8 +3,10 @@
 //! [`Router`] is the root and lives here. [`endpoint`] holds one declared
 //! operation and the builder a route attribute expands into, [`group`] a set of
 //! operations sharing a prefix, [`operation`] the description being assembled,
-//! [`policy`] the application-wide fallbacks, [`service`] the built result, and
-//! [`error`] what a router reports wrong with itself.
+//! [`policy`] the application-wide fallbacks, [`service`] the built result,
+//! [`error`] what a router reports wrong with itself, and, behind features of
+//! the same names, `assets` the files a router serves and `docs` the API
+//! reference page it publishes.
 
 mod describe;
 mod install;

@@ -6,9 +6,10 @@ use crate::{middleware::catch_panic::PanicPolicy, router::operation::DeclaredTag
 ///
 /// The attribute macros expand a handler into a zero-sized type implementing
 /// this, which is what `routes!` collects. Everything here is `const`, so the
-/// checks that depend on it — that path template variables match the handler's
-/// path parameters, that no `operationId` repeats — happen during compilation
-/// rather than at startup.
+/// check that path template variables match the handler's path parameters
+/// happens during compilation rather than at startup. A repeated
+/// `operationId` is not caught here: validating or building the router
+/// refuses it.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not an operation",
     label = "not an operation",
@@ -35,8 +36,8 @@ pub trait EndpointMeta {
 
     /// The operation identifier.
     ///
-    /// Defaults to the handler's module path and name, which is unique by
-    /// construction.
+    /// Defaults to the handler function's name; the attribute's `operation_id`
+    /// argument overrides it.
     const OPERATION_ID: &'static str;
 
     /// The first line of the handler's doc comment.
