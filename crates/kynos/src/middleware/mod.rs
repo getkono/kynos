@@ -372,6 +372,15 @@ impl<'a, C: Sync + 'static> Next<'a, C> {
     /// rest of the chain and no copy of the request. The next layer's own work
     /// still waits for that poll; only its header extraction, and whatever its
     /// `intercept` does before returning a future, runs at the call.
+    ///
+    /// That work therefore runs outside anything wrapped around the returned
+    /// future: `.instrument(span)` and a task-local's `scope` do not cover it,
+    /// so an inner `SetCookies` calls its `CookieSource` outside both. Enter the context
+    /// around the call as well, as in `span.in_scope(|| next.run(request))`,
+    /// or make the call inside an `async move` block that the wrapper takes,
+    /// which keeps the request in that block until it is first polled. A
+    /// timer such as `tokio::time::timeout` starts after that work, which,
+    /// being synchronous, it could never have interrupted.
     pub fn run(self, request: Request) -> impl Future<Output = Continued<()>> + Send + 'a {
         enum Rest<I, T> {
             Interceptor(I),
