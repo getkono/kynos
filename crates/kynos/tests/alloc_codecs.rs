@@ -300,10 +300,18 @@ mod harness {
     /// The relation the request-direction ceilings are there to hold, and the
     /// one that survives a change to any of them.
     ///
-    /// Both halves are needed. Costing more than the bodyless floor says the
-    /// operation read a body at all; costing at least what reading the same
-    /// octets undecoded costs says the codec ran on top of that read rather
-    /// than instead of it.
+    /// Both halves are needed. Reading the octets undecoded costs exactly what
+    /// reading no body costs, because a body arriving as one frame is handed to
+    /// the codec as that frame rather than collected into a buffer of its own;
+    /// and decoding costs at least that read, which says the codec ran on top
+    /// of the read rather than instead of it.
+    ///
+    /// The first half once read "decoding costs more than the bodyless
+    /// floor", which held only while collecting the body allocated. A codec
+    /// that deserializes out of the borrowed octets now costs the bodyless
+    /// floor exactly, so whether the body was read is the status's to show:
+    /// the decoding operation's handler, which answers it, runs only on a
+    /// decoded value.
     ///
     /// The three counts are handed back, in the order they were taken, so that
     /// a codec whose currency is owned values can assert the strict form of the
@@ -326,12 +334,12 @@ mod harness {
         let transport = counted(service, transport_request(), transport_status);
         let decoding = counted(service, decoding_request(), decoding_status);
 
-        assert!(
-            decoding > bodyless,
-            "{decoding_operation} allocated {decoding}, where the bodyless \
+        assert_eq!(
+            transport, bodyless,
+            "{transport_operation} allocated {transport}, where the bodyless \
              operation beside it ({bodyless_operation}) allocated {bodyless}; \
-             an operation that decodes a body should cost more than one that \
-             reads none"
+             a body arriving as one frame is handed over as that frame, so \
+             reading it should cost nothing over reading none"
         );
         assert!(
             decoding >= transport,
@@ -482,30 +490,32 @@ mod json {
     /// a change to both once that lands; lowering one is what a cheaper codec
     /// looks like.
     ///
-    /// **Decoding this body costs exactly what reading it undecoded costs**,
-    /// which is the reading the transport floor exists to make visible. `serde`
-    /// deserializes an all-integer struct straight out of the borrowed octets,
-    /// so what the operation pays over the bodyless floor is the collection of
-    /// the body rather than the codec — and a table with only the bodyless
-    /// floor in it would have reported that one allocation as JSON's price.
+    /// **Decoding this body costs exactly what reading it undecoded costs, and
+    /// that is what reading no body costs.** `serde` deserializes an
+    /// all-integer struct straight out of the borrowed octets, and a body
+    /// arriving as one frame reaches it as that frame, so the operation pays
+    /// nothing over the bodyless floor. Before the read handed a lone frame
+    /// over, it paid one allocation for the collector's frame queue — which a
+    /// table with only the bodyless floor in it would have reported as JSON's
+    /// price, and which the transport floor exists to tell apart.
     /// Writing is the expensive direction: `serde_json` builds the octets
     /// before a status is committed, on the stack, and they are then copied
     /// into one allocation of exactly their length that becomes the body.
     const RECORDED: Table = Table {
-        bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 7),
+        bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 5),
         transport_floor: (
             "POST /floor/bytes",
             transport_request,
             StatusCode::NO_CONTENT,
-            8,
+            5,
         ),
         responding_floor: (
             "GET /floor/out",
             responding_floor_request,
             StatusCode::NO_CONTENT,
-            7,
+            5,
         ),
-        decoding: ("POST /json", decode_request, StatusCode::NO_CONTENT, 8),
+        decoding: ("POST /json", decode_request, StatusCode::NO_CONTENT, 5),
         encoding: ("GET /json/out", encode_request, StatusCode::OK, 9),
     };
 
@@ -517,10 +527,10 @@ mod json {
 
     /// The relation the request-direction ceilings are there to hold.
     ///
-    /// The two halves the harness asserts are equal today — `serde`
-    /// deserializes an all-integer struct out of the borrowed octets and owns
-    /// nothing — so the transport half is the one that would catch a codec that
-    /// started skipping the read.
+    /// All three readings are equal today — `serde` deserializes an
+    /// all-integer struct out of the borrowed octets and owns nothing — so the
+    /// transport half is the one that would catch a codec that started
+    /// skipping the read.
     #[test]
     fn decoding_a_body_costs_more_than_reading_the_same_octets() {
         harness::decoding_costs_more_than_the_read(&service(), &RECORDED);
@@ -663,25 +673,27 @@ mod form {
     /// Read the way the JSON table was read: every ceiling set to zero, the
     /// target run, the counts the failure reported transcribed.
     ///
-    /// The request direction reads as JSON's does, and the responding one two
-    /// allocations above JSON's: the form encoder builds a `String` the
-    /// response body is then made from, where `serde_json` writes on the stack
-    /// and allocates only the body.
+    /// The request direction costs two allocations over the read, both
+    /// `serde_html_form`'s: `Form<T>` checks the octets are UTF-8 in place and
+    /// hands them to it borrowed. The responding direction is two allocations
+    /// above JSON's: the form encoder builds a `String` the response body is
+    /// then made from, where `serde_json` writes on the stack and allocates
+    /// only the body.
     const RECORDED: Table = Table {
-        bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 7),
+        bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 5),
         transport_floor: (
             "POST /floor/bytes",
             transport_request,
             StatusCode::NO_CONTENT,
-            8,
+            5,
         ),
         responding_floor: (
             "GET /floor/out",
             responding_floor_request,
             StatusCode::NO_CONTENT,
-            7,
+            5,
         ),
-        decoding: ("POST /form", decode_request, StatusCode::NO_CONTENT, 8),
+        decoding: ("POST /form", decode_request, StatusCode::NO_CONTENT, 7),
         encoding: ("GET /form/out", encode_request, StatusCode::OK, 11),
     };
 
@@ -866,7 +878,8 @@ mod multipart {
     ///
     /// **This is the expensive codec, by roughly an order of magnitude**, and
     /// on a body carrying one part of five octets. Where JSON and the form
-    /// codec deserialize out of the borrowed body and add nothing to the read,
+    /// codec deserialize out of the borrowed body and add at most two
+    /// allocations to the read,
     /// multipart walks the octets through a parser holding its own state,
     /// produces an owned `Part` per part — field name, optional file name,
     /// optional media type — and then converts each part into its declared
@@ -876,18 +889,18 @@ mod multipart {
     /// and media types, and one buffer the header blocks and the framing are
     /// written into, under a delimiter that allocates nothing.
     const RECORDED: Table = Table {
-        bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 7),
+        bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 5),
         transport_floor: (
             "POST /floor/bytes",
             transport_request,
             StatusCode::NO_CONTENT,
-            8,
+            5,
         ),
         responding_floor: (
             "GET /floor/out",
             responding_floor_request,
             StatusCode::NO_CONTENT,
-            7,
+            5,
         ),
         decoding: (
             "POST /multipart",
@@ -913,8 +926,8 @@ mod multipart {
     ///
     /// The strict form of that half is asserted here rather than in the
     /// harness, on the readings the harness took: it is true of this codec's
-    /// currency and of no other's, and the three that deserialize out of the
-    /// borrowed octets cost exactly the read.
+    /// currency and of no other's: JSON and protobuf deserialize out of the
+    /// borrowed octets and cost exactly the read.
     #[test]
     fn decoding_a_body_costs_more_than_reading_the_same_octets() {
         let (_, transport, decoding) =
@@ -1057,24 +1070,24 @@ mod protobuf {
     /// target run, the counts the failure reported transcribed.
     ///
     /// The cheapest of the four, in both directions. Decoding adds nothing over
-    /// the read, as JSON's and the form codec's do on an all-integer payload;
+    /// the read, as JSON's does on an all-integer payload;
     /// and encoding costs what JSON's does, because `prost` writes the message
     /// into one growable buffer and that buffer becomes the body.
     const RECORDED: Table = Table {
-        bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 7),
+        bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 5),
         transport_floor: (
             "POST /floor/bytes",
             transport_request,
             StatusCode::NO_CONTENT,
-            8,
+            5,
         ),
         responding_floor: (
             "GET /floor/out",
             responding_floor_request,
             StatusCode::NO_CONTENT,
-            7,
+            5,
         ),
-        decoding: ("POST /protobuf", decode_request, StatusCode::NO_CONTENT, 8),
+        decoding: ("POST /protobuf", decode_request, StatusCode::NO_CONTENT, 5),
         encoding: ("GET /protobuf/out", encode_request, StatusCode::OK, 9),
     };
 
