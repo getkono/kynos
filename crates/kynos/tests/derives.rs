@@ -349,8 +349,9 @@ fn an_http_scheme_supplies_its_challenge() {
 
 /// RFC 9110 section 15.5.2 requires a challenge on every 401, including one
 /// refusing a credential no registered scheme carries: an API key names the
-/// unregistered `ApiKey`, and a client certificate what `MutualTls` names.
-/// Only `http` has none, its parameters being the application's to know.
+/// unregistered `ApiKey`, and a client certificate what `MutualTls` names. An
+/// `http` scheme names its own `auth-scheme` token bare, its parameters being
+/// the application's to add through `challenge = "..."`.
 #[test]
 fn a_kind_outside_authorization_still_challenges() {
     assert_eq!(
@@ -361,7 +362,10 @@ fn a_kind_outside_authorization_still_challenges() {
         <PartnerCertificate as SecuritySchemeTrait>::challenge(),
         Some("MutualTLS")
     );
-    assert_eq!(<DigestLogin as SecuritySchemeTrait>::challenge(), None);
+    assert_eq!(
+        <DigestLogin as SecuritySchemeTrait>::challenge(),
+        Some("Digest")
+    );
 }
 
 /// A derived `basic` scheme challenges as `Basic` does, realm included, since
