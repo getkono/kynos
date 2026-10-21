@@ -395,7 +395,7 @@ async fn main() -> kynos::Result<()> {
         .intercept(
             Compression::new()
                 .min_size(1_024)
-                .gzip_level(GzipLevel::new(5).expect("DEFLATE defines level 5")),
+                .gzip_level(GzipLevel::new(5).expect("zlib defines level 5")),
         )
         // Limits, each contributing the response it can produce: 408, 413 and
         // 503 respectively. Nothing below lists those statuses, and every
