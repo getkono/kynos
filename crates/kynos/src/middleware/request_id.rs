@@ -305,13 +305,15 @@ where
     /// the 500 any refused group does, without running the chain.
     type Short = Infallible;
 
-    async fn intercept(
+    // Everything before the chain runs is done before the future is built, so
+    // the future holds the rest of the chain rather than the request.
+    fn intercept(
         &self,
         mut request: http::Request,
         reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> Result<Continued<H>, Infallible> {
+    ) -> impl Future<Output = Result<Continued<H>, Infallible>> + Send {
         let _ = (reads, context);
 
         // The first declared name wins: one identifier is carried under all.
@@ -333,15 +335,23 @@ where
         // `with_headers` answers with. The other `Continued::new` outside
         // `Next::run` besides a cache hit: sound, because `with_headers` would
         // replace whatever the chain returned with this same 500.
-        let Ok(fields) = headers.encode() else {
-            let refused = crate::extract::params::header::refused();
-            return Ok(Continued::new(refused).with_headers(headers));
+        let run = match headers.encode() {
+            Ok(fields) => {
+                for (name, value) in fields {
+                    request.headers_mut().insert(name, value);
+                }
+                Ok(next.run(request))
+            }
+            Err(_) => Err(Continued::new(crate::extract::params::header::refused())),
         };
-        for (name, value) in fields {
-            request.headers_mut().insert(name, value);
-        }
 
-        Ok(next.run(request).await.with_headers(headers))
+        async move {
+            let continued = match run {
+                Ok(run) => run.await,
+                Err(refused) => refused,
+            };
+            Ok(continued.with_headers(headers))
+        }
     }
 }
 

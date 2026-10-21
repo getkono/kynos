@@ -587,3 +587,136 @@ mod security_headers {
         );
     }
 }
+
+/// What the one box a layer costs per request holds.
+///
+/// Widths are read off the box itself, so they are the bytes allocated. Each
+/// bound is a relation to `size_of::<Request>()` rather than a recorded width,
+/// since both move with the platform and the toolchain together.
+mod box_width {
+    use std::{convert::Infallible, future::Future, pin::Pin};
+
+    use crate::{
+        http::{Request, Response, body::Body},
+        middleware::{
+            Continued, Interceptor, Next,
+            erased::{ErasedInterceptor, ErasedTerminal},
+        },
+    };
+
+    struct Empty;
+
+    impl ErasedTerminal<()> for Empty {
+        fn call<'a>(
+            &'a self,
+            request: Request,
+            context: &'a (),
+        ) -> Pin<Box<dyn Future<Output = Response> + Send + 'a>> {
+            let _ = (request, context);
+            Box::pin(async { Response::new(Body::empty()) })
+        }
+    }
+
+    /// An interceptor written the plain way, as an `async fn` forwarding the
+    /// request it was handed.
+    struct Forwarding;
+
+    impl Interceptor<()> for Forwarding {
+        type Reads = ();
+        type Adds = ();
+        type Short = Infallible;
+
+        async fn intercept(
+            &self,
+            request: Request,
+            reads: (),
+            context: &(),
+            next: Next<'_, ()>,
+        ) -> Result<Continued, Infallible> {
+            let _ = (reads, context);
+            Ok(next.run(request).await)
+        }
+    }
+
+    /// The width of the box `interceptor` costs a request.
+    fn boxed<I: Interceptor<()>>(interceptor: &I) -> usize {
+        let terminal = Empty;
+        let intercepted = ErasedInterceptor::<()>::intercept(
+            interceptor,
+            Request::new(Body::empty()),
+            &(),
+            Next::new(&[], &terminal, &(), None),
+        );
+
+        size_of_val(&*intercepted)
+    }
+
+    /// An `async fn` keeps the request it was handed for as long as it runs,
+    /// and the box holds that and the rest of the chain: neither the erasure
+    /// nor `Next::run` keeps another copy. Once read as four requests and more.
+    #[test]
+    fn a_layer_boxes_no_copy_of_the_request_beyond_its_interceptors_own() {
+        let request = size_of::<Request>();
+        let width = boxed(&Forwarding);
+
+        assert!(
+            width < 2 * request,
+            "a forwarding interceptor boxes {width} bytes, a {request}-byte \
+             request twice over; the erasure or `Next::run` is holding a copy \
+             of the request beside the interceptor's own"
+        );
+    }
+
+    /// The built-ins that only read the request before the chain runs do it
+    /// before building their future, which then holds what they read and the
+    /// rest of the chain, and no request at all.
+    #[test]
+    fn a_built_in_reading_the_request_before_the_chain_boxes_none_of_it() {
+        let request = size_of::<Request>();
+        let mut widths = vec![
+            (
+                "RequestId",
+                boxed(&crate::middleware::request_id::RequestId::new()),
+            ),
+            (
+                "SecurityHeaders",
+                boxed(&crate::middleware::security_headers::SecurityHeaders::new()),
+            ),
+            (
+                "Cors",
+                boxed(&crate::middleware::cors::Cors::new().allow_origins(["https://a.example"])),
+            ),
+        ];
+        #[cfg(feature = "cookie")]
+        widths.push((
+            "SetCookies",
+            boxed(&crate::middleware::cookies::SetCookies::new(Vec::<
+                crate::response::cookie::Cookie,
+            >::new(
+            ))),
+        ));
+
+        for (name, width) in widths {
+            assert!(
+                width < request,
+                "{name} boxes {width} bytes, more than the {request}-byte \
+                 request it should have finished reading before the chain ran"
+            );
+        }
+    }
+
+    /// The encoder and the drain's buffer come to kilobytes, and are boxed
+    /// apart, by an encode alone; a response `Compression` declines costs it
+    /// the layer's box and nothing more.
+    #[cfg(feature = "compression")]
+    #[test]
+    fn compression_boxes_under_a_kibibyte_unless_it_encodes() {
+        let width = boxed(&crate::middleware::compression::Compression::new());
+
+        assert!(
+            width < 1024,
+            "Compression boxes {width} bytes on every request, encoded or not; \
+             an encoder's state is inline in the layer's future again"
+        );
+    }
+}
