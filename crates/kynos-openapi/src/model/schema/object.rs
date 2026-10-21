@@ -26,8 +26,11 @@ pub struct SchemaObject {
     // --- Core ------------------------------------------------------------
     /// The dialect this schema resource is written in.
     ///
-    /// Permitted only on a schema resource root. When absent, the document's
-    /// [`json_schema_dialect`](crate::Document::json_schema_dialect) applies.
+    /// Permitted only on a schema resource root, where it overrides any
+    /// default. When absent, the dialect is the `$schema` of the resource
+    /// root enclosing this schema, if one sets it; otherwise the document's
+    /// [`json_schema_dialect`](crate::Document::json_schema_dialect), and
+    /// failing that the OAS dialect.
     #[serde(rename = "$schema", default, skip_serializing_if = "Option::is_none")]
     pub schema_dialect: Option<String>,
 
