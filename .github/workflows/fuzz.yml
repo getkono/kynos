@@ -52,7 +52,7 @@ jobs:
           - range
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Set up
         uses: ./.github/actions/setup
       - name: Search for a failing input

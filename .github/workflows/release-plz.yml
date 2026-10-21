@@ -35,7 +35,7 @@ jobs:
     steps:
       - &checkout
         name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # Release-plz reads every tag and every commit since the last one.
           fetch-depth: 0
@@ -49,7 +49,7 @@ jobs:
       - name: Run release-plz
         # Pinned to a commit: this step publishes, so a repointed tag would be
         # an unreviewed change. Dependabot keeps the pin current.
-        uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
+        uses: release-plz/action@8921286633dfa0c4020f7f30bd1c14fe19cbb10e # v0.5.142
         with:
           command: release
         env:
@@ -74,7 +74,7 @@ jobs:
       - *checkout
       - *setup
       - name: Run release-plz
-        uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
+        uses: release-plz/action@8921286633dfa0c4020f7f30bd1c14fe19cbb10e # v0.5.142
         with:
           command: release-pr
         env:

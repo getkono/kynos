@@ -77,7 +77,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Set up
         uses: ./.github/actions/setup
         with:
@@ -106,7 +106,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Set up
         uses: ./.github/actions/setup
         with:
@@ -141,7 +141,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       # `rust-cache` keys on the OS and the host triple itself.
       - name: Set up
         uses: ./.github/actions/setup
@@ -157,7 +157,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Set up
         uses: ./.github/actions/setup
         with:
@@ -175,7 +175,7 @@ jobs:
     # marks the check run red.
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Set up
         uses: ./.github/actions/setup
         with:
@@ -223,7 +223,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       # No cache: `cargo package` builds pristine extractions under
       # `target/package/`, which `rust-cache` neither keys nor prunes.
       - name: Set up
@@ -241,7 +241,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       # No `cargo-cache-key`: the targets build under `fuzz/target/`.
       - name: Set up
         uses: ./.github/actions/setup
@@ -259,7 +259,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # The report reads the baselines the last `kynos-v*` tag shipped.
           fetch-depth: 0
@@ -282,7 +282,7 @@ jobs:
         run: cat cost-report.md >> "$GITHUB_STEP_SUMMARY"
       - name: Upload cost report
         if: ${{ !cancelled() && hashFiles('cost-report.md') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cost-report
           path: |
@@ -298,7 +298,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Set up
         uses: ./.github/actions/setup
       # Pinned to `profile:valgrind`'s version: the CPU features Valgrind
@@ -320,7 +320,7 @@ jobs:
       # `profile-requests.tsv` over `requests.tsv`.
       - name: Upload profile
         if: ${{ !cancelled() && hashFiles('profile-report.md') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: profile
           path: |
