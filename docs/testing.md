@@ -290,14 +290,14 @@ Three obligations hold whatever the kind.
 `--all-features`.** [`mise run test`](../mise.toml) passes `--all-features` and
 `features:check` passes `--no-dev-deps`, so
 [`mise run test:baseline`](../mise.toml) is the only task that builds a test
-target under `openapi31` alone — against every `openapi32` `#[cfg]` site in
-`kynos-openapi/src`. A feature gate no test build exercises is a gate whose
-off-state is unknown, and a suite that merely happens to pass at baseline holds
-by luck rather than by check.
+target with optional features off: it builds each crate's default set, in which
+`openapi32` and every flag outside the defaults are off — so against every
+`openapi32` `#[cfg]` site in `kynos-openapi/src`. A feature gate no test build
+exercises is a gate whose off-state is unknown, and a suite that merely happens
+to pass at baseline holds by luck rather than by check.
 
-That leaves three shapes a test target is built at — every feature on, the
-default set, and `openapi31` alone — and a target gated on one optional feature
-apiece is at none of them.
+That leaves two shapes a test target is built at — every feature on, and the
+default set — and a target gated on one optional feature apiece is at neither.
 [`alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) is that target: five
 modules, one codec each, over a shared harness gated on their disjunction, and
 [`cost/codec.rs`](../crates/kynos/cost/codec.rs), the fixture
