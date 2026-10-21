@@ -97,7 +97,7 @@ pub enum Error {
     /// The description could not be emitted as YAML.
     #[cfg(feature = "yaml")]
     #[error(transparent)]
-    Yaml(#[from] kynos_openapi::emit::YamlError),
+    Yaml(#[from] kynos_openapi::emit::yaml::YamlError),
 
     /// The server configuration or transport failed.
     #[cfg(feature = "server")]

@@ -172,7 +172,7 @@ mod variants {
         };
         #[cfg(feature = "yaml")]
         let yaml = || {
-            <kynos_openapi::emit::YamlError as serde::ser::Error>::custom(
+            <kynos_openapi::emit::yaml::YamlError as serde::ser::Error>::custom(
                 "a number with no YAML representation",
             )
         };

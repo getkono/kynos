@@ -16,7 +16,8 @@ build.
 
 Three further features are off by default:
 
-- `yaml`: `Document::to_yaml`, beside the JSON emission every build has.
+- `yaml`: the `emit::yaml` module, holding `Document::to_yaml` beside the
+  JSON emission every build has.
 - `http`: conversions between `Method` and `http::Method`.
 - `pattern`: an ECMA-262 `pattern` translated into the `regex` crate's dialect.
 

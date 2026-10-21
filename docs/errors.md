@@ -423,7 +423,7 @@ holding it would cost the derives the property tests rely on.
 Where a cause is kept but its type should not escape, it is boxed:
 `TlsError` holds `Box<dyn Error + Send + Sync>` so a rustls failure stays
 walkable without rustls's semantic version becoming Kynos's, or its name
-appearing outside `server/tls/`. `kynos_openapi::emit::YamlError` holds the
+appearing outside `server/tls/`. `kynos_openapi::emit::yaml::YamlError` holds the
 YAML library's error privately for the same reason: that library is pre-1.0,
 and naming its error in `to_yaml` or `Error::Yaml` would make each of its
 releases a breaking release of both crates.

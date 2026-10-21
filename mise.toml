@@ -94,7 +94,7 @@ env = { CARGO_INCREMENTAL = "0" }
 run = '''
 cargo nextest run -p kynos-openapi \
   --features yaml,serde_json/arbitrary_precision --no-tests=fail \
-  -E 'not (test(=emit::tests::an_extension_repeating_a_model_field_leaves_the_field_in_place) | (binary(properties) & test(=yaml_emission_is_what_serde_norway_writes_for_the_model)))'
+  -E 'not (test(=emit::yaml::tests::an_extension_repeating_a_model_field_leaves_the_field_in_place) | (binary(properties) & test(=yaml_emission_is_what_serde_norway_writes_for_the_model)))'
 '''
 
 [tasks."features:check"]
