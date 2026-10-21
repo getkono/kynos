@@ -79,8 +79,10 @@ pub struct Header {
 /// How a header's value is described.
 ///
 /// [`ParameterShape`](crate::model::parameter::ParameterShape) without
-/// `allowReserved`, which 3.1 forbids on a Header Object. 3.2 permits it, and
-/// this type does not hold it, so a 3.2 header loses it on a round trip.
+/// `allowReserved`, which neither version gives a Header Object: 3.1 applies it
+/// to `query` alone, and 3.2's Header Object table has no such field. A parsed
+/// header carrying one keeps it among its [`extensions`](Header::extensions),
+/// which write it back unchanged.
 #[derive(Clone, Debug, PartialEq)]
 pub enum HeaderShape {
     /// A schema, plus how its value is serialized.
