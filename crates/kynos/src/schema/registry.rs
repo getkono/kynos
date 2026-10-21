@@ -64,8 +64,9 @@ impl Registry {
     /// Returns a schema for `T`, registering it if it is named and new.
     ///
     /// A named type is registered under [`Schema::name`] and the caller gets a
-    /// `$ref`; an anonymous one is inlined. Registration precedes the descent
-    /// into `T`'s own fields, so a self-referential type produces a `$ref`.
+    /// `$ref`; an anonymous one is inlined. The name is reserved before the
+    /// descent into `T`'s own fields and registered once it finishes, so a
+    /// self-referential type reaching its reservation produces a `$ref`.
     ///
     /// A name claimed by two structurally different types is recorded rather
     /// than returned; the router reports what accumulated when it is built.
