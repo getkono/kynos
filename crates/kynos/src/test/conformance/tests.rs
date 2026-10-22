@@ -141,6 +141,24 @@ fn every_template_in_the_sweep_is_one_the_model_parses() {
     }
 }
 
+/// A segment only opening or only closing with an expression, such as the
+/// router's `/files/{path}.txt` or `/files/v{name}`, carries a literal too,
+/// so it is not a whole-segment variable standing for any segment. The sweep
+/// above builds only whole-segment variables and cannot tell the two apart.
+#[test]
+fn a_segment_mixing_an_expression_and_a_literal_is_not_a_whole_segment_variable() {
+    for template in ["/files/{path}.txt", "/files/v{name}"] {
+        assert!(
+            PathTemplate::parse(template).is_ok(),
+            "`{template}` is a path template"
+        );
+        assert!(
+            !template_matches(template, "/files/x"),
+            "`{template}` against `/files/x`"
+        );
+    }
+}
+
 fn document(templates: &[&str]) -> Document {
     let mut document = Document::new(
         kynos_openapi::SpecVersion::V3_1,

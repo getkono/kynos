@@ -222,3 +222,29 @@ fn typeless_bytes_are_written_as_an_octet_stream_part() {
         }
     );
 }
+
+/// A file field is written under the name it is carried by, with the file
+/// name, media type and bytes it was read with, so a `FilePart` echoed back
+/// reaches the client as the part it arrived as.
+#[test]
+fn a_file_part_keeps_its_file_name_media_type_and_bytes() {
+    use super::IntoPart;
+    use crate::extract::body::multipart::FilePart;
+
+    let bytes = bytes::Bytes::from_static(&[0x89, b'P', b'N', b'G']);
+    let file = FilePart {
+        file_name: Some("portrait.png".to_owned()),
+        content_type: Some("image/png".to_owned()),
+        bytes: bytes.clone(),
+    };
+
+    assert_eq!(
+        file.into_part("avatar"),
+        Part {
+            name: "avatar".to_owned(),
+            file_name: Some("portrait.png".to_owned()),
+            content_type: Some("image/png".to_owned()),
+            bytes,
+        }
+    );
+}
