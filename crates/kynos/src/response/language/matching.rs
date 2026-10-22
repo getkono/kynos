@@ -59,9 +59,11 @@ pub(super) fn classify(range: &str, tag: &str) -> Option<(MatchKind, usize)> {
             let subtags: Vec<&str> = range.split('-').collect();
             let mut length = subtags.len();
 
+            // `dropped` is at least 1: a tag has a subtag, so `length` is 2 or
+            // more while the loop runs.
             while length > tag_length {
                 let dropped = length - 1;
-                length = if dropped > 0 && subtags[dropped - 1].len() == 1 {
+                length = if subtags[dropped - 1].len() == 1 {
                     dropped - 1
                 } else {
                     dropped

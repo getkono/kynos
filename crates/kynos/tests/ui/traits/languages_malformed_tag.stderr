@@ -6,11 +6,11 @@ error[E0080]: evaluation panicked: an offered language is not a well-formed RFC 
   |
  ::: src/response/language/offer.rs
   |
-  | /             assert!(
-  | |                 LanguageTag::is_well_formed(L::TAGS[index]),
-  | |                 "an offered language is not a well-formed RFC 5646 tag"
-  | |             );
-  | |_____________- in this macro invocation
+  | /         assert!(
+  | |             every_tag_is_well_formed(L::TAGS),
+  | |             "an offered language is not a well-formed RFC 5646 tag"
+  | |         );
+  | |_________- in this macro invocation
 
 note: erroneous constant encountered
  --> src/response/language/mod.rs
