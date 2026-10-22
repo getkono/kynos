@@ -2,7 +2,7 @@
 //!
 //! A [`LanguageTag`] is well-formed (RFC 5646 section 2.1), never checked
 //! against the registry: `zz-Qaaa-QM` is accepted though it names nothing. See
-//! [`architecture.md`](../../../../../docs/architecture.md) on why Kynos ships
+//! [`architecture.md`](https://github.com/getkono/kynos/blob/master/docs/architecture.md) on why Kynos ships
 //! no language-tag database.
 
 pub(super) mod grammar;

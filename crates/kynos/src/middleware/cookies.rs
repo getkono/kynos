@@ -136,21 +136,21 @@ where
     type Adds = SetCookieHeaders;
     type Short = Infallible;
 
-    async fn intercept(
+    // Reads the request before building the future, so the future holds the
+    // rest of the chain rather than the request.
+    fn intercept(
         &self,
         request: http::Request,
         reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> Result<Continued<SetCookieHeaders>, Infallible> {
+    ) -> impl Future<Output = Result<Continued<SetCookieHeaders>, Infallible>> + Send {
         let () = reads;
 
         // Before the chain runs, since the chain consumes the request.
         let cookies = self.source.cookies(&request, context);
+        let run = next.run(request);
 
-        Ok(next
-            .run(request)
-            .await
-            .with_headers(SetCookieHeaders { cookies }))
+        async move { Ok(run.await.with_headers(SetCookieHeaders { cookies })) }
     }
 }

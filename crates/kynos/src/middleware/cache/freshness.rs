@@ -55,6 +55,62 @@ pub(super) enum Unstorable {
     // No `Body` variant: `bounded` caps a body before `storable` is asked.
 }
 
+/// What the rules read from a request's own fields, taken before the request is
+/// handed on so that its map is not kept across the handler.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct Requested {
+    /// It said `no-cache`.
+    no_cache: bool,
+    /// It said `no-store`.
+    no_store: bool,
+    /// It carried `Authorization`.
+    authorized: bool,
+}
+
+impl Requested {
+    /// Reads `request`'s `Cache-Control` once, and whether it carries
+    /// `Authorization`.
+    pub(super) fn of(request: &HeaderMap) -> Self {
+        let mut requested = Self {
+            authorized: request.contains_key(header::AUTHORIZATION),
+            ..Self::default()
+        };
+        for directive in directives(request) {
+            match directive.as_str() {
+                "no-cache" => requested.no_cache = true,
+                "no-store" => requested.no_store = true,
+                _ => {}
+            }
+        }
+        requested
+    }
+
+    /// Whether the request forbids answering it from the store.
+    ///
+    /// RFC 9111 section 5.2.1.4 `no-cache`, since this cache does not
+    /// validate. `Pragma` is not read (section 5.4 deprecates it).
+    pub(super) fn forbids_reuse(self) -> bool {
+        self.no_cache
+    }
+
+    /// Whether the request forbids storing its response (RFC 9111 section
+    /// 5.2.1.5 `no-store`).
+    pub(super) fn forbids_storing(self) -> bool {
+        self.no_store
+    }
+}
+
+/// Whether a response to `method` may be stored at all.
+///
+/// RFC 9111 section 3 permits caching `POST` only with `Content-Location`;
+/// not supported.
+pub(super) fn storable_method(method: &crate::http::Method) -> bool {
+    matches!(
+        method,
+        &crate::http::Method::GET | &crate::http::Method::HEAD
+    )
+}
+
 /// Whether a response may be stored, and for how long.
 ///
 /// `secured` is whether the operation declares a security requirement, as
@@ -62,17 +118,12 @@ pub(super) enum Unstorable {
 pub(super) fn storable(
     method: &crate::http::Method,
     status: StatusCode,
-    request: &HeaderMap,
+    request: Requested,
     response: &HeaderMap,
     secured: bool,
     default_freshness: Option<Duration>,
 ) -> Result<Duration, Unstorable> {
-    // RFC 9111 section 3 permits caching `POST` only with `Content-Location`;
-    // not supported.
-    if !matches!(
-        method,
-        &crate::http::Method::GET | &crate::http::Method::HEAD
-    ) {
+    if !storable_method(method) {
         return Err(Unstorable::Method);
     }
 
@@ -80,8 +131,7 @@ pub(super) fn storable(
         return Err(Unstorable::Status);
     }
 
-    let request_control = directives(request);
-    if request_control.iter().any(|value| value == "no-store") {
+    if request.no_store {
         return Err(Unstorable::RequestNoStore);
     }
 
@@ -114,7 +164,7 @@ pub(super) fn storable(
     // RFC 9111 section 3.5: a response to an authenticated request is shared
     // only where it says so. Other credentials are seen only through the
     // declared requirement, which counts even where it admits anonymous access.
-    if (secured || request.contains_key(header::AUTHORIZATION)) && !shared(&response_control) {
+    if (secured || request.authorized) && !shared(&response_control) {
         return Err(Unstorable::Authorized);
     }
 
@@ -137,14 +187,6 @@ fn shared(control: &[String]) -> bool {
     control
         .iter()
         .any(|value| value == "public" || value.starts_with("s-maxage="))
-}
-
-/// Whether the request forbids answering it from the store.
-///
-/// RFC 9111 section 5.2.1.4 `no-cache`, since this cache does not validate.
-/// `Pragma` is not read (section 5.4 deprecates it).
-pub(super) fn forbids_reuse(request: &HeaderMap) -> bool {
-    directives(request).iter().any(|value| value == "no-cache")
 }
 
 /// The lifetime RFC 9111 section 1.2.2 has a cache read a `delta-seconds` too

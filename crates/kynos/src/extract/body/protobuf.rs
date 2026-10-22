@@ -6,7 +6,7 @@ use crate::{
         FromRequest,
         describe::{Describe, RequestContent},
     },
-    http::Request,
+    http::{Parts, body::Body},
     router::operation::OperationCx,
     schema::{Schema, constraints::Pointer, registry::Registry},
 };
@@ -44,8 +44,12 @@ pub(crate) const MEDIA_TYPE: &str = "application/protobuf";
 impl<C: Sync, T: prost::Message + Default + Schema + Send> FromRequest<C> for Protobuf<T> {
     type Rejection = BodyRejection;
 
-    async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
-        let bytes = super::read_body(request, MEDIA_TYPE).await?;
+    async fn from_request(
+        parts: &mut Parts,
+        body: Body,
+        _context: &C,
+    ) -> Result<Self, Self::Rejection> {
+        let bytes = super::read_body(parts, body, MEDIA_TYPE).await?;
 
         // Bytes protobuf cannot decode are a 400; a decoded message that
         // breaks a bound is a 422.

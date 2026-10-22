@@ -1,7 +1,8 @@
 //! Inputs that consume the request body, each describing itself as an OpenAPI
 //! Request Body Object.
 //!
-//! One module per codec, each gated on its feature. [`OneOf`] and `Option<T>`
+//! One module per codec: [`text`] and [`binary`] in every build, the rest each
+//! gated on its feature. [`OneOf`] and `Option<T>`
 //! combine them; [`limit`] bounds how much of a body a buffering codec holds.
 
 pub mod alternative;
@@ -33,7 +34,7 @@ use crate::{
         body::alternative::Alternative,
         describe::{Describe, RequestContent},
     },
-    http::{HeaderMap, Request, header},
+    http::{HeaderMap, Parts, body::Body, header},
     router::operation::OperationCx,
     schema::registry::Registry,
 };
@@ -164,15 +165,15 @@ fn refuse_undecoded(headers: &HeaderMap) -> Result<(), BodyRejection> {
 ///
 /// The first half of every buffering codec; no byte is read before the content
 /// type and coding are enforced.
-async fn read_body(request: Request, media_type: &str) -> Result<Bytes, BodyRejection> {
-    if !offers(request.headers(), media_type) {
-        return Err(unsupported_media_type(request.headers()));
+async fn read_body(parts: &Parts, body: Body, media_type: &str) -> Result<Bytes, BodyRejection> {
+    if !offers(&parts.headers, media_type) {
+        return Err(unsupported_media_type(&parts.headers));
     }
-    refuse_undecoded(request.headers())?;
+    refuse_undecoded(&parts.headers)?;
 
-    let limit = limit::of(&request);
-    limit::refuse_declared(request.headers(), limit)?;
-    limit::read(request.into_body(), limit).await
+    let limit = limit::of(parts);
+    limit::refuse_declared(&parts.headers, limit)?;
+    limit::read(body, limit).await
 }
 
 /// Holds a decoded body, or the record of one sitting at `at`, to the bounds
@@ -248,28 +249,24 @@ fn checked<T: crate::schema::Schema>(
 /// body::<OneOf<Binary<Pdf>, Binary<Png>>>();
 /// ```
 ///
-/// Nor are two streamed JSON bodies, whose media type is the same:
-///
-/// ```compile_fail
-/// use kynos::extract::body::{OneOf, json_lines::{JsonLines, records::Records}};
-///
-/// fn body<T: kynos::extract::FromRequest<()>>() {}
-/// body::<OneOf<JsonLines<Records<u64>>, JsonLines<Records<String>>>>();
-/// ```
+// Gated with `json_lines` itself: without it the example fails to compile for
+// want of the module, and a `compile_fail` example passes for any reason.
+#[cfg_attr(
+    all(feature = "json", feature = "openapi32"),
+    doc = r"
+Nor are two streamed JSON bodies, whose media type is the same:
+
+```compile_fail
+use kynos::extract::body::{OneOf, json_lines::{JsonLines, records::Records}};
+
+fn body<T: kynos::extract::FromRequest<()>>() {}
+body::<OneOf<JsonLines<Records<u64>>, JsonLines<Records<String>>>>();
+```
+"
+)]
 ///
 /// Nor is a [`Binary`](binary::Binary) whose marker names a codec's own media
-/// type, here JSON beside [`Json`](json::Json). Only a marker's value can tell
-/// it apart, so the pair is refused once the build instantiates it rather than
-/// when it typechecks:
-///
-/// ```compile_fail
-/// use kynos::{
-///     extract::{body::{OneOf, binary::Binary, json::Json}, describe::RequestContent},
-///     http::media,
-/// };
-///
-/// OneOf::<Json<u64>, Binary<media::Json>>::media_types();
-/// ```
+/// type; [`Alternative::DISTINCT`] says how that pair is refused.
 ///
 /// A nested `OneOf` offers more than two bodies, each distinct from every
 /// other:
@@ -285,25 +282,14 @@ fn checked<T: crate::schema::Schema>(
 /// assert_eq!(body.content.len(), 3);
 /// ```
 ///
-/// so a body repeating one of the nested sides is refused, by type
+/// so a body repeating one of the nested sides is refused, by type, or by a
+/// marker's value as a flat pair is:
 ///
 /// ```compile_fail
 /// use kynos::extract::body::{OneOf, json::Json, text::Text};
 ///
 /// fn body<T: kynos::extract::FromRequest<()>>() {}
 /// body::<OneOf<OneOf<Text, Json<u64>>, Json<String>>>();
-/// ```
-///
-/// or by a marker's value:
-///
-/// ```compile_fail
-/// use kynos::{
-///     extract::{body::{OneOf, binary::Binary, json::Json, text::Text}, describe::RequestContent},
-///     http::media,
-///     schema::registry::Registry,
-/// };
-///
-/// OneOf::<OneOf<Text, Json<u64>>, Binary<media::Json>>::request_body(&mut Registry::new());
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OneOf<L, R> {
@@ -321,16 +307,20 @@ where
 {
     type Rejection = BodyRejection;
 
-    async fn from_request(request: Request, context: &C) -> Result<Self, Self::Rejection> {
+    async fn from_request(
+        parts: &mut Parts,
+        body: Body,
+        context: &C,
+    ) -> Result<Self, Self::Rejection> {
         let () = <L as Alternative<R>>::DISTINCT;
         // Chosen from the head, so a malformed body fails as its own
         // representation rather than falling through.
-        if offers_any(request.headers(), &L::media_types()) {
-            L::from_request(request, context).await.map(Self::Left)
-        } else if offers_any(request.headers(), &R::media_types()) {
-            R::from_request(request, context).await.map(Self::Right)
+        if offers_any(&parts.headers, &L::media_types()) {
+            L::from_request(parts, body, context).await.map(Self::Left)
+        } else if offers_any(&parts.headers, &R::media_types()) {
+            R::from_request(parts, body, context).await.map(Self::Right)
         } else {
-            Err(unsupported_media_type(request.headers()))
+            Err(unsupported_media_type(&parts.headers))
         }
     }
 }

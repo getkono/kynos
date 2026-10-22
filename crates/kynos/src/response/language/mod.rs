@@ -9,7 +9,7 @@
 //! [`negotiate`](crate::response::negotiate): a response can use both.
 //!
 //! Kynos negotiates; it does not translate, and it ships no catalogue — see
-//! [`architecture.md`](../../../../docs/architecture.md)'s third invariant.
+//! [`architecture.md`](https://github.com/getkono/kynos/blob/master/docs/architecture.md)'s third invariant.
 
 pub mod headers;
 mod matching;

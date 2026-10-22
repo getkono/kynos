@@ -4,8 +4,9 @@
 //! keyword [`Constraints::apply`] writes into the description. The other is
 //! the check `#[derive(Schema)]` generates as
 //! [`Schema::check_constraints`](crate::schema::Schema::check_constraints),
-//! which a body extractor runs on the value it deserialized and refuses with a
-//! 422 naming each member that broke its bound. The check is generated code
+//! which an extractor runs on the value it decoded, naming each member that
+//! broke its bound: a body extractor refuses with a 422, and `QueryString` and
+//! the parameter derives with a 400. The check is generated code
 //! over the typed value, and a value inside every bound costs no allocation
 //! once each `pattern` it meets has compiled and warmed its engine's cache.
 //!

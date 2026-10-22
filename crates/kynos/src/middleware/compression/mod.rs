@@ -312,21 +312,23 @@ pub(crate) async fn drain<R: AsyncRead + Unpin>(
 }
 
 /// Applies `coding` to `bytes` at the level `levels` sets for it.
+///
+/// Each drain is boxed: its 8 KiB buffer and the encoder's state come to
+/// kilobytes, and inline they would widen the interceptor's future, which is
+/// held for the whole exchange, on every response it declines too.
 async fn encode(coding: Coding, bytes: Bytes, levels: Levels) -> io::Result<Bytes> {
     let encoded = match coding {
         Coding::Zstd => {
-            drain(
+            Box::pin(drain(
                 ZstdEncoder::with_quality_and_params(
                     io::Cursor::new(bytes),
                     Level::Precise(levels.zstd.get()),
                     zstd_window(levels.zstd).as_slice(),
                 ),
                 None,
-            )
+            ))
             .await
         }
-        // Boxed because brotli's encoder state is measured in kilobytes, and an
-        // interceptor's future is held for the whole exchange.
         Coding::Brotli => {
             Box::pin(drain(
                 BrotliEncoder::with_quality(
@@ -338,13 +340,13 @@ async fn encode(coding: Coding, bytes: Bytes, levels: Levels) -> io::Result<Byte
             .await
         }
         Coding::Gzip => {
-            drain(
+            Box::pin(drain(
                 GzipEncoder::with_quality(
                     io::Cursor::new(bytes),
                     Level::Precise(as_level(levels.gzip.get())),
                 ),
                 None,
-            )
+            ))
             .await
         }
     };
@@ -637,24 +639,39 @@ where
     /// a required encoding none of them can apply.
     type Short = NotAcceptable<T>;
 
-    async fn intercept(
+    // Negotiates before building the future, so the future holds the rest of
+    // the chain rather than the request.
+    fn intercept(
         &self,
         request: http::Request,
         reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> Result<Continued<ContentEncoding>, NotAcceptable<T>> {
+    ) -> impl Future<Output = Result<Continued<ContentEncoding>, NotAcceptable<T>>> + Send {
         let _ = (reads, context);
 
         let negotiated = negotiate(request.headers());
 
         // Refused before the chain runs: nothing it produced could be sent.
-        if negotiated == Negotiated::Nothing {
-            return Err(NotAcceptable::new());
+        let run = (negotiated != Negotiated::Nothing).then(|| next.run(request));
+
+        async move {
+            let Some(run) = run else {
+                return Err(NotAcceptable::new());
+            };
+
+            self.settle(run.await, negotiated).await
         }
+    }
+}
 
-        let mut continued = next.run(request).await;
-
+impl<T: ProblemType> Compression<T> {
+    /// Decides whether to encode what the chain produced, and encodes it.
+    async fn settle(
+        &self,
+        mut continued: Continued,
+        negotiated: Negotiated,
+    ) -> Result<Continued<ContentEncoding>, NotAcceptable<T>> {
         // Leave alone a response already encoded, or one a byte range is or may be
         // calculated against: ranges and strong validators name the identity octets
         // (RFC 9110 sections 14.1.2, 8.8.1), so re-encoding would make them lie.

@@ -6,7 +6,7 @@ use crate::{
         FromRequest,
         describe::{Describe, RequestContent},
     },
-    http::{Request, media::MediaType},
+    http::{Parts, body::Body, media::MediaType},
     router::operation::OperationCx,
     schema::registry::Registry,
 };
@@ -14,8 +14,8 @@ use crate::{
 /// A body of raw bytes with a declared media type.
 ///
 /// `M` names the media type, so the description states what the bytes are
-/// rather than shrugging. Binary content is described with
-/// `contentMediaType`/`contentEncoding`, never the OpenAPI 3.0 `format: binary`.
+/// rather than shrugging. The schema is the empty one, since the media type key
+/// already states what the bytes are; never the OpenAPI 3.0 `format: binary`.
 ///
 /// A request matches `M` by type and subtype. It need not repeat a parameter
 /// the marker declares, but may not contradict one: a marker declaring
@@ -59,8 +59,12 @@ impl<M> Binary<M> {
 impl<C: Sync, M: MediaType + Send> FromRequest<C> for Binary<M> {
     type Rejection = BodyRejection;
 
-    async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
-        super::read_body(request, M::MEDIA_TYPE)
+    async fn from_request(
+        parts: &mut Parts,
+        body: Body,
+        _context: &C,
+    ) -> Result<Self, Self::Rejection> {
+        super::read_body(parts, body, M::MEDIA_TYPE)
             .await
             .map(Self::new)
     }

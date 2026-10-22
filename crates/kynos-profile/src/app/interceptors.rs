@@ -85,7 +85,7 @@ pub(crate) fn timeout() -> Box<dyn Served> {
     built(router().intercept(Timeout::new(Duration::from_secs(30))))
 }
 
-/// The table behind an idle bound on the request body no profiled request
+/// The table behind an idle bound on the response body no profiled response
 /// reaches.
 pub(crate) fn body_timeout() -> Box<dyn Served> {
     built(router().intercept(BodyTimeout::idle(Duration::from_secs(15))))
@@ -154,17 +154,17 @@ pub(crate) fn rate_limit() -> Box<dyn Served> {
 /// offered for storing as a first one would be.
 struct Responses {
     retain: bool,
-    held: Arc<Mutex<HashMap<PrimaryKey, Vec<StoredResponse>>>>,
+    held: Arc<Mutex<HashMap<PrimaryKey<'static>, Vec<StoredResponse>>>>,
 }
 
 impl CacheStore<App> for Responses {
-    async fn get(&self, key: &PrimaryKey, context: &App) -> Vec<StoredResponse> {
+    async fn get(&self, key: &PrimaryKey<'_>, context: &App) -> Vec<StoredResponse> {
         let _ = context;
         let held = self.held.lock().expect("an unpoisoned store");
         held.get(key).cloned().unwrap_or_default()
     }
 
-    async fn put(&self, key: PrimaryKey, response: StoredResponse, context: &App) {
+    async fn put(&self, key: PrimaryKey<'static>, response: StoredResponse, context: &App) {
         let _ = context;
         if self.retain {
             let mut held = self.held.lock().expect("an unpoisoned store");
@@ -174,7 +174,7 @@ impl CacheStore<App> for Responses {
         }
     }
 
-    async fn invalidate(&self, key: &PrimaryKey, context: &App) {
+    async fn invalidate(&self, key: &PrimaryKey<'static>, context: &App) {
         let _ = context;
         self.held.lock().expect("an unpoisoned store").remove(key);
     }

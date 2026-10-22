@@ -42,9 +42,11 @@ satisfying it means authenticating *and* holding them: see
 - **`AllOf` reads every credential before verifying any.** None presented is
   absence; some but not all is a 401, because a partial set is not an anonymous
   request.
-- **A combination's 401 carries the first challenge among its schemes.** A
-  field value is one string, and RFC 9110 section 11.6.1 asks for at least one
-  challenge the client can answer. Every built-in scheme has one, so tuple
+- **A combination's 401 carries the first challenge among its schemes.**
+  RFC 9110 section 11.6.1's `WWW-Authenticate = #challenge` admits a list and
+  requires a 401 to carry at least one, but `Requirement::challenge` returns at
+  most one fixed `&'static str`, set by the type rather than composed per
+  request, so one is what is sent. Every built-in scheme has one, so tuple
   order picks it: `AnyOf<(MutualTls, Bearer)>` challenges `MutualTLS`, and
   listing `Bearer` first advertises `Bearer`.
 - **A combinator takes schemes, from two to four**, never another combinator,
@@ -75,7 +77,7 @@ replaces it, typically to name another `realm`:
 | `basic` | `Basic realm="api", charset="UTF-8"` | RFC 7617 section 2 requires `realm`; the same string `Basic` sends |
 | `api_key` | `ApiKey` | RFC 9110 section 15.5.2 requires a challenge on every 401, and no registered scheme names a key |
 | `mutual_tls` | `MutualTLS` | The same, for a certificate presented in the handshake; the same string `MutualTls` sends |
-| `http(scheme = ..)` | none | Its parameters are the application's to know |
+| `http(scheme = ..)` | the `scheme` token, e.g. `Digest` | The same MUST; a challenge may carry no parameters, and the ones its scheme needs are the application's to add. A missing or non-token `scheme` does not compile, since it would send no challenge |
 
 `ApiKey` and `MutualTLS` are unregistered `auth-scheme` tokens (RFC 9110
 section 11.1) spelling the OpenAPI `type`, with no parameters: they satisfy the
@@ -455,8 +457,10 @@ surface: generics that exist for performance stay private. RPITIT would not
 unify the elided form with `async fn` in an implementation either, so the
 ergonomic cost was not even buying compilation.
 
-The price is one allocation per authenticated request, against a verifier that
-is about to check a signature or read a session store.
+The price is a few allocations per authenticated request — one for a bearer
+token, two for a generic HTTP scheme's name and credentials, three for Basic's
+decoded text, user-id and password — against a verifier that is about to check a
+signature or read a session store.
 
 ### Why base64 is not a dependency
 

@@ -300,10 +300,18 @@ mod harness {
     /// The relation the request-direction ceilings are there to hold, and the
     /// one that survives a change to any of them.
     ///
-    /// Both halves are needed. Costing more than the bodyless floor says the
-    /// operation read a body at all; costing at least what reading the same
-    /// octets undecoded costs says the codec ran on top of that read rather
-    /// than instead of it.
+    /// Both halves are needed. Reading the octets undecoded costs exactly what
+    /// reading no body costs, because a body arriving as one frame is handed to
+    /// the codec as that frame rather than collected into a buffer of its own;
+    /// and decoding costs at least that read, which says the codec ran on top
+    /// of the read rather than instead of it.
+    ///
+    /// The first half once read "decoding costs more than the bodyless
+    /// floor", which held only while collecting the body allocated. A codec
+    /// that deserializes out of the borrowed octets now costs the bodyless
+    /// floor exactly, so whether the body was read is the status's to show:
+    /// the decoding operation's handler, which answers it, runs only on a
+    /// decoded value.
     ///
     /// The three counts are handed back, in the order they were taken, so that
     /// a codec whose currency is owned values can assert the strict form of the
@@ -326,12 +334,12 @@ mod harness {
         let transport = counted(service, transport_request(), transport_status);
         let decoding = counted(service, decoding_request(), decoding_status);
 
-        assert!(
-            decoding > bodyless,
-            "{decoding_operation} allocated {decoding}, where the bodyless \
+        assert_eq!(
+            transport, bodyless,
+            "{transport_operation} allocated {transport}, where the bodyless \
              operation beside it ({bodyless_operation}) allocated {bodyless}; \
-             an operation that decodes a body should cost more than one that \
-             reads none"
+             a body arriving as one frame is handed over as that frame, so \
+             reading it should cost nothing over reading none"
         );
         assert!(
             decoding >= transport,
@@ -482,30 +490,32 @@ mod json {
     /// a change to both once that lands; lowering one is what a cheaper codec
     /// looks like.
     ///
-    /// **Decoding this body costs exactly what reading it undecoded costs**,
-    /// which is the reading the transport floor exists to make visible. `serde`
-    /// deserializes an all-integer struct straight out of the borrowed octets,
-    /// so what the operation pays over the bodyless floor is the collection of
-    /// the body rather than the codec — and a table with only the bodyless
-    /// floor in it would have reported that one allocation as JSON's price.
+    /// **Decoding this body costs exactly what reading it undecoded costs, and
+    /// that is what reading no body costs.** `serde` deserializes an
+    /// all-integer struct straight out of the borrowed octets, and a body
+    /// arriving as one frame reaches it as that frame, so the operation pays
+    /// nothing over the bodyless floor. Before the read handed a lone frame
+    /// over, it paid one allocation for the collector's frame queue — which a
+    /// table with only the bodyless floor in it would have reported as JSON's
+    /// price, and which the transport floor exists to tell apart.
     /// Writing is the expensive direction: `serde_json` builds the octets
     /// before a status is committed, on the stack, and they are then copied
     /// into one allocation of exactly their length that becomes the body.
     const RECORDED: Table = Table {
-        bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 7),
+        bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 5),
         transport_floor: (
             "POST /floor/bytes",
             transport_request,
             StatusCode::NO_CONTENT,
-            8,
+            5,
         ),
         responding_floor: (
             "GET /floor/out",
             responding_floor_request,
             StatusCode::NO_CONTENT,
-            7,
+            5,
         ),
-        decoding: ("POST /json", decode_request, StatusCode::NO_CONTENT, 8),
+        decoding: ("POST /json", decode_request, StatusCode::NO_CONTENT, 5),
         encoding: ("GET /json/out", encode_request, StatusCode::OK, 9),
     };
 
@@ -517,10 +527,10 @@ mod json {
 
     /// The relation the request-direction ceilings are there to hold.
     ///
-    /// The two halves the harness asserts are equal today — `serde`
-    /// deserializes an all-integer struct out of the borrowed octets and owns
-    /// nothing — so the transport half is the one that would catch a codec that
-    /// started skipping the read.
+    /// All three readings are equal today — `serde` deserializes an
+    /// all-integer struct out of the borrowed octets and owns nothing — so the
+    /// transport half is the one that would catch a codec that started
+    /// skipping the read.
     #[test]
     fn decoding_a_body_costs_more_than_reading_the_same_octets() {
         harness::decoding_costs_more_than_the_read(&service(), &RECORDED);
@@ -663,25 +673,27 @@ mod form {
     /// Read the way the JSON table was read: every ceiling set to zero, the
     /// target run, the counts the failure reported transcribed.
     ///
-    /// The request direction reads as JSON's does, and the responding one two
-    /// allocations above JSON's: the form encoder builds a `String` the
-    /// response body is then made from, where `serde_json` writes on the stack
-    /// and allocates only the body.
+    /// The request direction costs two allocations over the read, both
+    /// `serde_html_form`'s: `Form<T>` checks the octets are UTF-8 in place and
+    /// hands them to it borrowed. The responding direction is two allocations
+    /// above JSON's: the form encoder builds a `String` the response body is
+    /// then made from, where `serde_json` writes on the stack and allocates
+    /// only the body.
     const RECORDED: Table = Table {
-        bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 7),
+        bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 5),
         transport_floor: (
             "POST /floor/bytes",
             transport_request,
             StatusCode::NO_CONTENT,
-            8,
+            5,
         ),
         responding_floor: (
             "GET /floor/out",
             responding_floor_request,
             StatusCode::NO_CONTENT,
-            7,
+            5,
         ),
-        decoding: ("POST /form", decode_request, StatusCode::NO_CONTENT, 8),
+        decoding: ("POST /form", decode_request, StatusCode::NO_CONTENT, 7),
         encoding: ("GET /form/out", encode_request, StatusCode::OK, 11),
     };
 
@@ -866,7 +878,8 @@ mod multipart {
     ///
     /// **This is the expensive codec, by roughly an order of magnitude**, and
     /// on a body carrying one part of five octets. Where JSON and the form
-    /// codec deserialize out of the borrowed body and add nothing to the read,
+    /// codec deserialize out of the borrowed body and add at most two
+    /// allocations to the read,
     /// multipart walks the octets through a parser holding its own state,
     /// produces an owned `Part` per part — field name, optional file name,
     /// optional media type — and then converts each part into its declared
@@ -876,18 +889,18 @@ mod multipart {
     /// and media types, and one buffer the header blocks and the framing are
     /// written into, under a delimiter that allocates nothing.
     const RECORDED: Table = Table {
-        bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 7),
+        bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 5),
         transport_floor: (
             "POST /floor/bytes",
             transport_request,
             StatusCode::NO_CONTENT,
-            8,
+            5,
         ),
         responding_floor: (
             "GET /floor/out",
             responding_floor_request,
             StatusCode::NO_CONTENT,
-            7,
+            5,
         ),
         decoding: (
             "POST /multipart",
@@ -913,8 +926,8 @@ mod multipart {
     ///
     /// The strict form of that half is asserted here rather than in the
     /// harness, on the readings the harness took: it is true of this codec's
-    /// currency and of no other's, and the three that deserialize out of the
-    /// borrowed octets cost exactly the read.
+    /// currency and of no other's: JSON and protobuf deserialize out of the
+    /// borrowed octets and cost exactly the read.
     #[test]
     fn decoding_a_body_costs_more_than_reading_the_same_octets() {
         let (_, transport, decoding) =
@@ -1057,24 +1070,24 @@ mod protobuf {
     /// target run, the counts the failure reported transcribed.
     ///
     /// The cheapest of the four, in both directions. Decoding adds nothing over
-    /// the read, as JSON's and the form codec's do on an all-integer payload;
+    /// the read, as JSON's does on an all-integer payload;
     /// and encoding costs what JSON's does, because `prost` writes the message
     /// into one growable buffer and that buffer becomes the body.
     const RECORDED: Table = Table {
-        bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 7),
+        bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 5),
         transport_floor: (
             "POST /floor/bytes",
             transport_request,
             StatusCode::NO_CONTENT,
-            8,
+            5,
         ),
         responding_floor: (
             "GET /floor/out",
             responding_floor_request,
             StatusCode::NO_CONTENT,
-            7,
+            5,
         ),
-        decoding: ("POST /protobuf", decode_request, StatusCode::NO_CONTENT, 8),
+        decoding: ("POST /protobuf", decode_request, StatusCode::NO_CONTENT, 5),
         encoding: ("GET /protobuf/out", encode_request, StatusCode::OK, 9),
     };
 
@@ -1103,6 +1116,282 @@ mod protobuf {
     }
 }
 
+/// What the streamed responses cost to produce: JSON Lines, JSON text
+/// sequences and Server-Sent Events, against a binary stream of the same
+/// length.
+///
+/// **What is counted is the body, not the call.** A streaming response commits
+/// its status before a record is serialized, so the handler's call costs what
+/// any response does, and every record is written while the body is drained.
+/// The call is driven by [`counting::counted`], outside the region; the region
+/// is the drain alone, every frame pushed into a buffer reserved before it
+/// opens and dropped after it closes.
+///
+/// **The axis is the record count.** A record framed into memory of its own
+/// costs at least one allocation, so a stream of them grows by one per record
+/// at least; one written into the room its predecessor left costs none. The
+/// relation below holds the streams to the second.
+#[cfg(all(feature = "json", feature = "openapi32"))]
+mod stream {
+    use std::{
+        convert::Infallible,
+        pin::{Pin, pin},
+        task::{Context, Poll, Waker},
+    };
+
+    use alloc_counter::count_alloc;
+    use http_body_util::BodyExt;
+    use kynos::{
+        extract::body::json_lines::{JsonLines, JsonSeq},
+        http::{Method, StatusCode, media::OctetStream},
+        prelude::*,
+        response::stream::{
+            binary::BinaryStream,
+            sse::{Event, Sse},
+        },
+        router::service::Service,
+    };
+
+    use crate::counting::{self, request};
+
+    /// One record's payload, all-integer for `json`'s reason above.
+    #[derive(Schema, serde::Serialize)]
+    struct Reading {
+        id: u64,
+        value: u64,
+    }
+
+    /// A stream yielding `count` items made by `item`, each ready on the poll
+    /// that asks for it, so the drain needs no runtime.
+    struct Items<T> {
+        count: usize,
+        item: fn() -> T,
+    }
+
+    impl<T> futures_core::Stream for Items<T> {
+        type Item = T;
+
+        fn poll_next(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<T>> {
+            if self.count == 0 {
+                return Poll::Ready(None);
+            }
+            self.count -= 1;
+            Poll::Ready(Some((self.item)()))
+        }
+    }
+
+    fn reading() -> Reading {
+        Reading { id: 7, value: 11 }
+    }
+
+    #[expect(clippy::unnecessary_wraps, reason = "the item an event stream takes")]
+    fn event() -> Result<Event<Reading>, Infallible> {
+        Ok(Event::new(reading()))
+    }
+
+    #[expect(clippy::unnecessary_wraps, reason = "the item a binary stream takes")]
+    fn chunk() -> Result<bytes::Bytes, Infallible> {
+        Ok(bytes::Bytes::from_static(br#"{"id":7,"value":11}"#))
+    }
+
+    /// The most records any operation here streams.
+    const MANY: usize = 16;
+
+    #[kynos::get("/binary")]
+    async fn binary() -> BinaryStream<Items<Result<bytes::Bytes, Infallible>>, OctetStream> {
+        BinaryStream::new(Items {
+            count: MANY,
+            item: chunk,
+        })
+    }
+
+    #[kynos::get("/ndjson/one")]
+    async fn ndjson_one() -> JsonLines<Items<Reading>> {
+        JsonLines {
+            items: Items {
+                count: 1,
+                item: reading,
+            },
+        }
+    }
+
+    #[kynos::get("/ndjson/many")]
+    async fn ndjson_many() -> JsonLines<Items<Reading>> {
+        JsonLines {
+            items: Items {
+                count: MANY,
+                item: reading,
+            },
+        }
+    }
+
+    #[kynos::get("/json-seq/many")]
+    async fn json_seq_many() -> JsonSeq<Items<Reading>> {
+        JsonSeq {
+            items: Items {
+                count: MANY,
+                item: reading,
+            },
+        }
+    }
+
+    #[kynos::get("/sse/one")]
+    async fn sse_one() -> Sse<Items<Result<Event<Reading>, Infallible>>> {
+        Sse::new(Items {
+            count: 1,
+            item: event,
+        })
+    }
+
+    #[kynos::get("/sse/many")]
+    async fn sse_many() -> Sse<Items<Result<Event<Reading>, Infallible>>> {
+        Sse::new(Items {
+            count: MANY,
+            item: event,
+        })
+    }
+
+    fn service() -> Service<()> {
+        Router::<()>::new()
+            .mount(kynos::routes![
+                binary,
+                ndjson_one,
+                ndjson_many,
+                json_seq_many,
+                sse_one,
+                sse_many
+            ])
+            .build(())
+            .expect("a describable router")
+    }
+
+    /// What draining `target`'s body costs, having checked that it yielded
+    /// `records` frames and ended cleanly.
+    ///
+    /// The frame count is asserted for the reason the status is in
+    /// [`counting::counted`]: a body that ended early is a cheaper reading of a
+    /// shorter stream.
+    fn drained(service: &Service<()>, target: &str, records: usize) -> usize {
+        let (_, response) = counting::counted(
+            service,
+            request(Method::GET, target, None, b""),
+            StatusCode::OK,
+        );
+        let mut body = response.into_body();
+        let mut frames = Vec::with_capacity(MANY + 1);
+        let mut context = Context::from_waker(Waker::noop());
+
+        let ((allocations, reallocations, _), ended) = count_alloc(|| {
+            loop {
+                match pin!(body.frame()).poll(&mut context) {
+                    Poll::Ready(Some(Ok(frame))) => frames.push(frame),
+                    Poll::Ready(None) => break true,
+                    Poll::Ready(Some(Err(_))) | Poll::Pending => break false,
+                }
+            }
+        });
+
+        assert!(
+            ended,
+            "GET {target} did not drain to its end on ready items; the count \
+             above is of part of a stream"
+        );
+        assert_eq!(
+            frames.len(),
+            records,
+            "GET {target} yielded {} frames rather than one per record",
+            frames.len()
+        );
+        drop(frames);
+        allocations + reallocations
+    }
+
+    /// What draining each operation's body costs today, by target and record
+    /// count.
+    ///
+    /// Read as every table here is: each ceiling set to zero, the target run,
+    /// the count the failure reported transcribed.
+    ///
+    /// **A stream of small records costs what one record does.** Records are
+    /// written into one 4 KiB block in turn and each split off as a frame, so
+    /// the block and the handle its frames share are the whole of a JSON
+    /// stream's bill. An event stream adds the buffer its data is serialized
+    /// into before framing, grown once and reused. The binary stream's chunks
+    /// are frames already, so it costs nothing.
+    const RECORDED: [(&str, usize, usize); 6] = [
+        ("/binary", MANY, 0),
+        ("/ndjson/one", 1, 2),
+        ("/ndjson/many", MANY, 2),
+        ("/json-seq/many", MANY, 2),
+        ("/sse/one", 1, 5),
+        ("/sse/many", MANY, 5),
+    ];
+
+    /// The record: what each stream costs to drain today.
+    #[test]
+    fn the_streams_cost_what_is_recorded() {
+        let service = service();
+        let mut over = Vec::new();
+
+        for (target, records, ceiling) in RECORDED {
+            let counted = drained(&service, target, records);
+            if counted > ceiling {
+                over.push(format!(
+                    "GET {target} allocated {counted}, recorded {ceiling}"
+                ));
+            }
+        }
+
+        assert!(
+            over.is_empty(),
+            "{over:?}; the ceiling is `RECORDED` in this file, and lowering one \
+             is what a cheaper stream looks like"
+        );
+    }
+
+    /// The relation the table exists to hold: a serialized record does not
+    /// cost an allocation of its own.
+    ///
+    /// Strictly fewer allocations than records added, rather than none, so a
+    /// block size that changes how many records share one leaves it standing.
+    #[test]
+    fn a_record_does_not_cost_an_allocation_of_its_own() {
+        let service = service();
+
+        for (one, many) in [("/ndjson/one", "/ndjson/many"), ("/sse/one", "/sse/many")] {
+            let first = drained(&service, one, 1);
+            let all = drained(&service, many, MANY);
+
+            assert!(
+                all >= first && all - first < MANY - 1,
+                "GET {many} allocated {all} for {MANY} records where GET {one} \
+                 allocated {first} for one; the {} records between them cost \
+                 an allocation apiece or more",
+                MANY - 1
+            );
+        }
+    }
+
+    /// The leak check: a stream's state is per response, so the next response
+    /// costs what the first did.
+    #[test]
+    fn a_replayed_stream_costs_what_the_first_one_did() {
+        let service = service();
+
+        for (target, records, _) in RECORDED {
+            let first = drained(&service, target, records);
+            for _ in 0..100 {
+                assert_eq!(
+                    drained(&service, target, records),
+                    first,
+                    "GET {target} allocated {first} on one response and \
+                     differently on a later one"
+                );
+            }
+        }
+    }
+}
+
 /// How `Compression`'s cost grows with the body it holds.
 ///
 /// The one module here that is not a body codec. It is measured under the same
@@ -1117,9 +1406,9 @@ mod protobuf {
 /// 8 KiB at a time into a growing buffer. So the table below is codings by
 /// sizes, and the relations are about growth rather than about a floor.
 ///
-/// All three codings are measured rather than gzip alone: `encode` boxes
-/// brotli's future because its encoder state is kilobytes, so what is counted
-/// differs between them in exactly the way a single-coding table would hide.
+/// All three codings are measured rather than gzip alone: each encoder's state
+/// costs a different number of allocations, so what is counted differs between
+/// them in exactly the way a single-coding table would hide.
 #[cfg(feature = "compression")]
 mod compression {
     use std::sync::LazyLock;
@@ -1299,14 +1588,15 @@ mod compression {
     /// again at 256 KiB, which is the reason four sizes are measured rather
     /// than two.
     ///
-    /// **Brotli is roughly twice gzip and four times zstd.** Its encoder state
-    /// is kilobytes, which is why `encode` boxes its future at all; the same
-    /// fact shows up here as the allocations that state costs.
+    /// **Brotli costs the most, by its encoder's state.** One of each engaged
+    /// row's allocations is the box an encode is read in, which every coding
+    /// pays alike, so that the interceptor's own future stays small for a
+    /// response it declines; the rest is what each encoder allocates.
     const RECORDED: [(&str, [usize; 4]); 4] = [
         ("identity", [9, 9, 9, 9]),
-        ("gzip", [9, 22, 22, 26]),
+        ("gzip", [9, 23, 23, 27]),
         ("br", [9, 37, 37, 43]),
-        ("zstd", [9, 16, 16, 19]),
+        ("zstd", [9, 17, 17, 20]),
     ];
 
     /// The same operation at 16 KiB, asked for as `identity`, with no

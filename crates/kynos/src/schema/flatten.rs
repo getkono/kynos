@@ -23,9 +23,12 @@ use crate::schema::Schema;
 /// Derived beside [`Schema`] for the shapes whose description is an object
 /// naming its members: a struct with named fields, and an enum whose every
 /// `oneOf` branch is such an object. Not for a container carrying
-/// `#[schema(open)]` or `#[serde(transparent)]`, an externally tagged enum, whose
-/// branches admit only their variant key, or an internally tagged enum with a
-/// newtype variant.
+/// `#[schema(open)]` or `#[serde(transparent)]`, a container
+/// `#[serde(deny_unknown_fields)]` closes (bar an internally tagged enum of unit
+/// variants alone), a shape with a field serde writes and never reads
+/// (`skip_deserializing` alone), an externally tagged enum, whose branches
+/// admit only their variant key, or an internally tagged enum with a newtype
+/// variant.
 /// Implemented for [`Problem`](crate::Problem), whose schema names the
 /// registered members and admits every other one. Unsealed, so a hand-written
 /// [`Schema`] that does the same can say so.

@@ -77,8 +77,9 @@ fn shutdown_trigger() -> Shutdown {
         // The default, and what a container wants: `SIGINT` and `SIGTERM` on
         // Unix, and the console events Windows sends instead. Installing these
         // replaces their default process behaviour for the rest of the process
-        // lifetime, which is why Kynos keeps the listeners alive through the
-        // drain — a second signal has to reach something to force the stop.
+        // lifetime, which is why Kynos keeps the signal handlers installed
+        // through the drain — a second signal has to reach something to force
+        // the stop.
         _ => Shutdown::signals(),
     }
 }

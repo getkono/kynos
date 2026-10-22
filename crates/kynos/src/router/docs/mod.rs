@@ -147,8 +147,10 @@ impl Docs {
     /// Two tokens are substituted, here as in the built-in pages:
     ///
     /// * `{{description_url}}` becomes a JSON string holding the URL the
-    ///   description is served at, quotes included, and belongs where a script
-    ///   expects a string expression;
+    ///   description is served at, quotes included, and belongs either where a
+    ///   script expects a string expression or as an unquoted attribute value
+    ///   (`href={{description_url}}`), where the JSON quotes are the
+    ///   attribute's;
     /// * `{{title}}` becomes the document's title as HTML text, and belongs in
     ///   element content.
     ///

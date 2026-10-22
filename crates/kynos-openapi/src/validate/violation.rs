@@ -100,8 +100,10 @@ pub enum SpecError {
 
     /// A `paths` key is not a legal path template.
     ///
-    /// Reachable only for a description read from somewhere else: a template
-    /// Kynos constructs is checked when it is parsed.
+    /// Reached by a description read from somewhere else, and by a builder
+    /// reporting a template it could not make: Kynos's router raises it for a
+    /// mount-site path, group prefix or docs path that does not parse, and for
+    /// a route a prefix makes illegal.
     ///
     /// `reason` is the parse failure itself, so a caller can match on it; it is
     /// interpolated rather than a `#[source]`, keeping the message self-contained.
@@ -221,6 +223,14 @@ pub enum SpecError {
     },
 
     /// An operation declared no responses.
+    ///
+    /// A policy beyond the specification, not a rule it states. A Responses
+    /// Object must hold at least one response code, but an Operation Object
+    /// may omit `responses` altogether, and the model cannot tell an omitted
+    /// one from an empty one: an empty
+    /// [`Responses`](crate::model::response::Responses) is omitted when
+    /// written. Kynos refuses both, because an operation describing nothing it
+    /// returns tells a client nothing it can act on.
     #[error("an operation must declare at least one response")]
     NoResponses,
 

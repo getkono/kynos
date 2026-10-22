@@ -35,8 +35,9 @@
 //!
 //! Order is not part of the type: [`CompatibleWith`](stack::CompatibleWith)
 //! checks only that two interceptors do not add one header or answer with one
-//! status. `docs/middleware.md` lists the arrangements that are wrong, such as
-//! `Conditional` outside `Cache`.
+//! status. `docs/middleware.md`'s ordering section names the places order
+//! matters, such as `Conditional` outside `Cache` and `Cache` outside `Cors`
+//! and `Compression`.
 
 pub mod catch_panic;
 pub mod contribution;
@@ -241,6 +242,43 @@ impl Continued<()> {
             _headers: std::marker::PhantomData,
         }
     }
+
+    /// Attaches group `G` from the fields it already encoded, as
+    /// [`with_headers`](Continued::with_headers) does, for an interceptor that
+    /// set the same fields on the request.
+    pub(crate) fn with_encoded<G: EncodeHeaders>(
+        mut self,
+        encoded: Vec<(crate::http::HeaderName, crate::http::HeaderValue)>,
+    ) -> Continued<G> {
+        crate::extract::params::header::write_encoded::<G>(self.response.headers_mut(), encoded);
+
+        Continued {
+            response: self.response,
+            _headers: std::marker::PhantomData,
+        }
+    }
+
+    /// Attaches group `G` by having `write` insert its fields onto the
+    /// response, for a group that cannot refuse and so needs no
+    /// [`encode`](EncodeHeaders::encode)d list between the two.
+    ///
+    /// `write` must insert only fields `G::NAMES` declares; `VARIES` is merged
+    /// here, as [`with_headers`](Continued::with_headers) merges it.
+    // Gated on its one caller's feature, which an item of a shared type
+    // cannot take from a module line.
+    #[cfg(feature = "cache")]
+    pub(crate) fn with_written<G: EncodeHeaders>(
+        mut self,
+        write: impl FnOnce(&mut crate::http::HeaderMap),
+    ) -> Continued<G> {
+        write(self.response.headers_mut());
+        crate::http::vary_on(self.response.headers_mut(), G::VARIES);
+
+        Continued {
+            response: self.response,
+            _headers: std::marker::PhantomData,
+        }
+    }
 }
 
 // Construction, not a bound, keeps `H` a header group.
@@ -366,8 +404,28 @@ impl<'a, C: Sync + 'static> Next<'a, C> {
     /// Runs the rest of the chain.
     ///
     /// The only source of a [`Continued`].
-    pub async fn run(self, request: Request) -> Continued<()> {
-        let response = match self.remaining.split_first() {
+    ///
+    /// `request` is handed to the next layer when this is called rather than
+    /// when the returned future is first polled, so that the future holds the
+    /// rest of the chain and no copy of the request. The next layer's own work
+    /// still waits for that poll; only its header extraction, and whatever its
+    /// `intercept` does before returning a future, runs at the call.
+    ///
+    /// That work therefore runs outside anything wrapped around the returned
+    /// future: `.instrument(span)` and a task-local's `scope` do not cover it,
+    /// so an inner `SetCookies` calls its `CookieSource` outside both. Enter the context
+    /// around the call as well, as in `span.in_scope(|| next.run(request))`,
+    /// or make the call inside an `async move` block that the wrapper takes,
+    /// which keeps the request in that block until it is first polled. A
+    /// timer such as `tokio::time::timeout` starts after that work, which,
+    /// being synchronous, it could never have interrupted.
+    pub fn run(self, request: Request) -> impl Future<Output = Continued<()>> + Send + 'a {
+        enum Rest<I, T> {
+            Interceptor(I),
+            Terminal(T),
+        }
+
+        let mut rest = match self.remaining.split_first() {
             Some((head, remaining)) => {
                 let next = Self {
                     remaining,
@@ -375,12 +433,19 @@ impl<'a, C: Sync + 'static> Next<'a, C> {
                     context: self.context,
                     route: self.route,
                 };
-                (**head).intercept(request, self.context, next).await
+                Rest::Interceptor((**head).intercept(request, self.context, next))
             }
-            None => self.terminal.call(request, self.context).await,
+            None => Rest::Terminal(self.terminal.call(request, self.context)),
         };
 
-        Continued::new(response)
+        // Both arms are boxed, so polling them in place needs no pinning here.
+        std::future::poll_fn(move |context| {
+            match &mut rest {
+                Rest::Interceptor(intercepted) => intercepted.as_mut().poll_settle(context),
+                Rest::Terminal(terminal) => terminal.as_mut().poll(context),
+            }
+            .map(Continued::new)
+        })
     }
 
     /// The operation this request matched.

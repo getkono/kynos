@@ -188,9 +188,10 @@ async fn stream_export() -> BinaryStream<Chunks, Csv> {
 /// Searches readings with a whole-query-string filter.
 ///
 /// `#[kynos::query]` declares the HTTP `QUERY` method, which OpenAPI 3.2 added
-/// a Path Item field for — a search with a body, so a long filter is not a URL
-/// of unbounded length. It pairs naturally with a media-typed query string, but
-/// the two are independent.
+/// a Path Item field for. `QUERY` exists so a search can carry its filter in a
+/// body rather than a URL of unbounded length; this one carries none, and
+/// reads its filter from a media-typed query string instead, to show the two
+/// are independent.
 #[kynos::query("/readings")]
 async fn search(filter: QueryString<ReadingFilter, FilterJson>) -> JsonLines<Countdown> {
     let ReadingFilter { limit } = filter.into_inner();
@@ -228,8 +229,10 @@ async fn recording(
 /// The reading half of what `/readings.jsonl` writes, and the request body
 /// never exists in memory as a whole. A record that is not JSON ends the
 /// stream with a 400; one that is JSON and does not fit `Reading` is a 422
-/// naming which record it was, and the record after it still arrives. Both
-/// statuses are already on the operation, because they are the ones
+/// naming which record it was. The stream would yield the record after a 422,
+/// but this handler returns at the first failure with `?`, so it never reads
+/// on; a bulk ingest reporting every bad record would collect them instead.
+/// Both statuses are already on the operation, because they are the ones
 /// `BodyRejection` declares.
 #[kynos::post("/readings")]
 async fn ingest(

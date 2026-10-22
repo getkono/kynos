@@ -1,9 +1,12 @@
 //! Wiring request tracing to a subscriber that actually prints it.
 //!
-//! Run it without the default HTTP/2 and JSON integrations, and pick a filter:
+//! Run it without the default HTTP/2 and JSON integrations, and pick a filter.
+//! The `slo` directive is what lets the observer below be heard: its events
+//! carry that target, which neither `kynos` nor `tracing` (this example's own
+//! crate) matches.
 //!
 //! ```text
-//! RUST_LOG=kynos=debug,tracing=info cargo run -p kynos --example tracing \
+//! RUST_LOG=kynos=debug,tracing=info,slo=debug cargo run -p kynos --example tracing \
 //!   --no-default-features --features openapi31,macros,server,http1,trace
 //! ```
 //!

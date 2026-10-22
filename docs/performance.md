@@ -50,8 +50,8 @@ What each kind of measurement proves that no other kind does.
 
 | Kind | Lives in | Runs under | Proves | Status |
 | --- | --- | --- | --- | --- |
-| Allocation count | its own integration target | `cargo nextest`, over `alloc_counter` | that a path allocates a bounded number of times | in use, at four targets: [`kynos/tests/alloc.rs`](../crates/kynos/tests/alloc.rs) for the routing path, [`kynos/tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) for body erasure, [`kynos/tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) for what a payload codec adds, and [`kynos-openapi/tests/alloc.rs`](../crates/kynos-openapi/tests/alloc.rs) for what producing a description costs at 10, 100 and 1000 operations. Several rather than one because an integration binary cannot be depended on, so a second crate that counts cannot reach the first one's harness |
-| Size guard | [`tests/size.rs`](../crates/kynos/tests/size.rs), or a sibling `tests.rs`, or beside the count that shares its fixture | `cargo nextest` | that a type or a future did not grow | in use for types, and for the dispatch future at [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) — which is the one future guarded, not every future |
+| Allocation count | its own integration target | `cargo nextest`, over `alloc_counter` | that a path allocates a bounded number of times | in use, at four targets: [`kynos/tests/alloc.rs`](../crates/kynos/tests/alloc.rs) for the routing path, for what an unchecked layer and an observer add, and for why a response's header map is grown rather than presized, [`kynos/tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) for body erasure, [`kynos/tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) for what a payload codec adds, and [`kynos-openapi/tests/alloc.rs`](../crates/kynos-openapi/tests/alloc.rs) for what producing a description costs at 10, 100 and 1000 operations. Several rather than one because an integration binary cannot be depended on, so a second crate that counts cannot reach the first one's harness |
+| Size guard | [`tests/size.rs`](../crates/kynos/tests/size.rs), or a sibling `tests.rs`, or beside the count that shares its fixture | `cargo nextest` | that a type or a future did not grow | in use for types, and for the futures every request carries: the one `Service::call` returns and an endpoint's at [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), and the one that call boxes at [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs), since only the crate can name it. A guard outside a box sees only the pointer to it |
 | Off-path proof | a sibling `tests.rs`, and a table [`containment:check`](../scripts/containment.py) reads | `python3 scripts/containment.py`, `cargo nextest` | that a feature is unreachable from the request path | in use, for the off-path flags and for the document, the registry, the validators and `jsonschema`: a table in [`testing.md`](testing.md#the-off-path-proof) held by `mise run containment:check`, plus the field witness in [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs); `describe` is the one off-path shape no row holds, and the emitters are held by the `yaml` flag's row rather than by one of their own |
 | Codegen delta | a feature sweep | `cargo llvm-lines` | what a feature costs in monomorphized IR | in use, via `mise run cost:features` over [`cost/fixture.rs`](../crates/kynos/cost/fixture.rs); reports a trend once master settles, refuses a release whose numbers are not the recorded ones, and sets no ceiling, and sees the generics that fixture instantiates rather than the whole surface — so a feature that grows the dependency graph can shrink this number by sharing instantiations out of upstream rlibs, and a negative row is a relocation rather than a saving |
 | Binary delta | a feature sweep | `.text` of a fixed fixture | what a feature costs a linked artifact | in use, over [`cost/binary.tsv`](../crates/kynos/cost/binary.tsv); reports a trend once master settles, refuses a release whose numbers are not the recorded ones, and sets no ceiling. The fixture uses none of these features, so a zero row says the linker stripped — or the collector never instantiated — what nothing called, rather than that the feature is free to a program that uses it. A second sweep answers the question that fixture structurally cannot, over [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv): what mounting a codec costs, weighed on a fixture that mounts one |
@@ -192,7 +192,7 @@ convincingly — a replay that never exercised the feature also counts nothing.
 What settles it is reachability: the emitted `Document` is built once in
 `Router::build` and read back only through `Service::openapi`, so nothing in
 `Dispatch::serve` touches it. That is checked. `containment:check` holds four
-elements — the emitted `Document`, `Registry::{new,default}`,
+elements — the emitted `Document`, an owned `Registry`,
 `Validator` and `jsonschema` — to the sites
 [`testing.md`](testing.md#the-off-path-proof) allows them, and a witness in
 [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs) pins
@@ -241,6 +241,65 @@ Kynos's is [`Part`](../crates/kynos/src/extract/body/multipart.rs)'s owned
 currency — a name and a media type each way, and a `String` field's copy out
 of the shared body — and one buffer for the whole response.
 
+**Reading a body whole costs no block when it arrives as one frame.** A
+buffering codec is handed that frame's `Bytes` as the transport delivered it —
+always so in process, and usually over HTTP/1.1 with a `Content-Length` — and
+only a second non-empty frame starts a buffer joining them, under the same
+limit. So the transport floor in
+[`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) costs what the
+bodyless one does, and a codec that deserializes out of the borrowed octets,
+as JSON and protobuf do an all-integer payload, costs nothing over either.
+
+**A streamed response is counted on its drain.** Its status is committed before
+a record is written, so what JSON Lines, JSON text sequences and Server-Sent
+Events cost is spent while the body is polled, and
+[`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) counts that
+region alone. Records are written in turn into one shared block and split off
+as frames, so the relation held there is that a record costs no allocation of
+its own: sixteen small records cost what one does.
+
+**A response's header map is grown, not presized, because sizing saves no
+block.** `http` allocates a map's index table and its entries apart, so the
+first field a codec writes costs two blocks (656 bytes) whatever capacity the
+map was built with. Sizing trades bytes alone: the next step down from the
+default's six fields holds three in 328 bytes, and a compressed response carries four, so it would
+grow and pay two blocks more. `sizing_a_header_map_saves_no_block` in
+[`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) holds the premise, and turns
+red when an `http` release makes presizing worth reopening.
+
+**A cache that does not derive tags allocates no block of its own on a hit
+beyond its future.** The lookup borrows its `PrimaryKey` from the request, and
+`Age` — a static `0` when no whole second has passed — is written straight onto
+the response, so what `interceptors.cache_hit` allocates past the boxed future
+is the replayed response itself. Under `deriving_etags()`, a hit on a stored
+response that carries no `ETag` derives the tag again, at four blocks or more:
+`format!` starts the string too small and grows it twice for the 18-byte tag
+(three times when the digest has four or more leading zero hex digits), and
+`HeaderValue` boxes a shared handle to the string because its length is short
+of its capacity. A miss whose response may be stored pays for storing it: an
+owned key, the stored response's `Arc` and its copy of the response's fields,
+and a copy of the request's header map. That copy is the whole map rather than
+the fields `Vary` names, because `Vary` is a response field and is written
+after the request has been handed on; a request that cannot be stored, or that
+hits, copies none of it.
+
+**An unchecked layer costs one block per request, past an entry paid once.**
+A `layer_unchecked` layer's service is built when it is mounted. Per request,
+what carries the request back into the route table past the last layer is one
+extension, inserted once and advanced in place by each layer, and the table is
+re-entered through one boxed future. Each layer adds the box its erased
+service's future is put in, plus whatever its own `Clone` allocates, since
+`tower` drives a service through `&mut self` and the router holds one.
+[`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) records one and two identity
+layers at three and four blocks over the static match.
+
+**An observer costs one block per request, however many are mounted.** The
+response body is erased once more into a body that reports a peer leaving
+mid-response, and that box holds the report inline rather than beside it. A
+router with no observer adds nothing and reads no clock.
+[`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) records one observer at one
+block over the static match.
+
 ## The feature grading
 
 Every flag `crates/kynos` declares appears in exactly one column below. The
@@ -273,10 +332,9 @@ flag to the files that write its gate and, usually, call its crate, and
 `containment:check` fails a flag graded off-path here with no row there — so
 the two documents cannot drift apart in the direction that loses a proof.
 [`cost/binary.tsv`](../crates/kynos/cost/binary.tsv) records a `.text` delta
-for each off-path flag that compiles alone: `yaml` at +6192 bytes, `test-util`
-at −2464, `uuid` at −32, and `openapi31` with the four `time` and `decimal`
-backends at 0. `time` and `decimal` have no row of their own because neither
-compiles alone, which `features:check` already probes.
+for each off-path flag that compiles alone, `openapi31` and the four `time`
+and `decimal` backends among them. `time` and `decimal` have no row of their
+own because neither compiles alone, which `features:check` already probes.
 
 **The table is counted against the manifest.**
 [`containment:check`](../scripts/containment.py) reads the rows above and
@@ -366,7 +424,10 @@ for the reason the section above gives.
 it differs from in exactly one variable — a layer, a coding, a method — and
 `profile-report.md` gives the difference as that variable's marginal cost. A
 row changing two variables at once has no base, since its difference would
-attribute both to neither.
+attribute both to neither — save the one composite, `stack-typical`, which
+names `json-small-runtime` as its base while adding a whole typical stack and
+the request fields it acts on, so its difference is that stack's cost
+together rather than any one layer's.
 
 **The region drains the body.** Both drivers poll the response body to its
 end inside the measured region, so a streamed body's production is counted
@@ -396,9 +457,11 @@ clock, so its count moves by a few instructions with the time it ran at.
 decodes in an `IndexMap` under `std`'s `RandomState`, so how far each field's
 lookup probes moves its count by a few instructions with the process's key,
 and its heap not at all. `request_id_random`, `INTERCEPTORS`'
-`request-id-random` row: `Random` keys its hash per process, and an
-identifier whose high half begins with a zero digit is zero-padded one
-character at a time, which costs one allocation more. The runtime row and
+`request-id-random` row: `Random` keys its hash per process, and while
+`Random` itself executes the same instructions and allocates the same block
+whatever its key, glibc's `malloc` takes a path a few hundred instructions
+longer in some processes than in others, so its count moves and its heap does
+not. The runtime row and
 `connection_h1` measured exact, the latter because its setup serves the
 warming connection at the start of a wall-clock second: hyper renders `Date`
 again, allocating, on the first response of each second, and a region a

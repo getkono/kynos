@@ -181,17 +181,17 @@ impl AssetEndpoint {
             (
                 200,
                 "Vary",
-                "Names Accept-Encoding, since this file has more than one stored coding",
+                "Names Accept-Encoding, since this file has a stored content coding",
             ),
             (
                 206,
                 "Vary",
-                "Names Accept-Encoding, since this file has more than one stored coding",
+                "Names Accept-Encoding, since this file has a stored content coding",
             ),
             (
                 304,
                 "Vary",
-                "Names Accept-Encoding, since this file has more than one stored coding",
+                "Names Accept-Encoding, since this file has a stored content coding",
             ),
         ] {
             if name == "Cache-Control" && self.cache_control.is_none() {

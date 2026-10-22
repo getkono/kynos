@@ -926,7 +926,7 @@ pub fn derive_tag(item: TokenStream) -> TokenStream {
 ///
 /// ```ignore
 /// #[derive(SecurityScheme)]
-/// #[security(http, scheme = "bearer", bearer_format = "JWT")]
+/// #[security(bearer(format = "JWT"))]
 /// struct Bearer;
 /// ```
 #[proc_macro_derive(SecurityScheme, attributes(security))]

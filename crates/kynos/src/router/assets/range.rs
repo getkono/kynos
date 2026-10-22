@@ -100,7 +100,7 @@ pub(super) fn unsatisfiable(rejection: RangeRejection) -> Response {
     rejection.into_response()
 }
 
-/// Declares the two statuses, two parameters and one field a ranged file adds.
+/// Declares the two statuses, two parameters and two fields a ranged file adds.
 ///
 /// Called with the 200 and the 304 already declared; fields are attached to
 /// the 200 and 206 only.

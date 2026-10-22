@@ -1,6 +1,12 @@
 use std::time::Duration;
 
-use super::{Event, encode, heartbeat_record};
+use super::{Event, heartbeat_record};
+use crate::{http::body::BoxError, response::stream::RecordBuffer};
+
+/// One event, written as the first record of a stream of its own.
+fn encode<T: serde::Serialize>(event: &Event<T>) -> Result<bytes::Bytes, BoxError> {
+    RecordBuffer::new().record(|record| super::encode(record, &mut Vec::new(), event))
+}
 
 /// Re-parses a record into its `(field, value)` pairs, using a reader
 /// transcribed from the `text/event-stream` grammar rather than from
@@ -271,6 +277,49 @@ fn an_unserializable_event_is_refused_rather_than_half_written() {
     data.insert(vec![1_u8], "value");
 
     assert!(encode(&Event::new(data)).is_err());
+}
+
+/// The events of one stream share a block and a data buffer, so each record
+/// has to be its own fields and nothing an earlier one wrote: not its data,
+/// not the fields it carried, and not the half of the data a refused event
+/// serialized before it failed.
+#[test]
+fn each_event_of_a_stream_is_written_as_its_own_record() {
+    use std::collections::HashMap;
+
+    let mut records = RecordBuffer::new();
+    let mut data = Vec::new();
+    let mut write = |event: &Event<serde_json::Value>| {
+        records.record(|record| super::encode(record, &mut data, event))
+    };
+
+    let first = write(
+        &Event::new(serde_json::json!([1, 2, 3]))
+            .id("1")
+            .comment("hello"),
+    )
+    .expect("an encodable event");
+    let second = write(&Event::new(serde_json::json!(4))).expect("an encodable event");
+
+    // Its data is half serialized when the map key is refused.
+    let mut unwritable = HashMap::new();
+    unwritable.insert(vec![1_u8], "value");
+    let refused = records.record(|record| {
+        super::encode(
+            record,
+            &mut data,
+            &Event::new(("partial", unwritable)).event("broken"),
+        )
+    });
+    assert!(refused.is_err());
+
+    let third = records
+        .record(|record| super::encode(record, &mut data, &Event::new(5_u8)))
+        .expect("an encodable event");
+
+    assert_eq!(&first[..], b": hello\nid: 1\ndata: [1,2,3]\n\n");
+    assert_eq!(&second[..], b"data: 4\n\n");
+    assert_eq!(&third[..], b"data: 5\n\n");
 }
 
 /// A zero interval re-arms the keep-alive timer at the instant it fired, so an

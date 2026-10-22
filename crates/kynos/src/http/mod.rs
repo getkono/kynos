@@ -36,7 +36,8 @@ pub type Request = http::Request<Body>;
 /// The head of an incoming request: everything but the body.
 ///
 /// This is what a [`FromRequestParts`](crate::extract::FromRequestParts)
-/// implementation sees.
+/// implementation sees, and what a
+/// [`FromRequest`](crate::extract::FromRequest) one reads beside the body.
 pub type Parts = http::request::Parts;
 
 /// An outgoing response.
@@ -79,15 +80,27 @@ pub(crate) const fn header_name_eq(left: &str, right: &str) -> bool {
 /// map. The target wins where both are present: RFC 9112 section 3.2.2 says an
 /// absolute-form target means the server "MUST ignore the received Host header
 /// field".
-pub(crate) fn own_authority(headers: &HeaderMap, authority: Option<&str>) -> Option<String> {
+///
+/// Lowercased, and borrowed where it already was.
+pub(crate) fn own_authority<'a>(
+    headers: &'a HeaderMap,
+    authority: Option<&'a str>,
+) -> Option<std::borrow::Cow<'a, str>> {
     authority
         .or_else(|| {
             headers
                 .get(header::HOST)
                 .and_then(|value| value.to_str().ok())
         })
-        .map(|host| host.trim().to_ascii_lowercase())
+        .map(str::trim)
         .filter(|host| !host.is_empty())
+        .map(|host| {
+            if host.bytes().any(|byte| byte.is_ascii_uppercase()) {
+                std::borrow::Cow::Owned(host.to_ascii_lowercase())
+            } else {
+                std::borrow::Cow::Borrowed(host)
+            }
+        })
 }
 
 /// Merges `names` into whatever `Vary` a response already carries.

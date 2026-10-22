@@ -23,9 +23,10 @@
 //! [`status`] holds the responses whose status their type fixes, [`headers`]
 //! the header wrapper, [`disposition`] the header group that says whether a
 //! representation is saved or shown, [`negotiate`] content negotiation,
-//! [`range`] the one part of a representation a request asked for, [`codec`]
-//! the responding half of each body codec, and [`stream`] the responses
-//! delivered as a sequence.
+//! [`language`] language negotiation, [`range`] the one part of a
+//! representation a request asked for, [`codec`] the responding half of each
+//! body codec, [`stream`] the responses delivered as a sequence, and `cookie`
+//! (behind the `cookie` feature) the cookies a response sets.
 
 use core::convert::Infallible;
 

@@ -10,13 +10,15 @@ description.
 `openapi31` is the baseline and is enabled by default. `openapi32` adds the
 fields introduced by OpenAPI 3.2.0 as a strict superset. Those fields are
 `#[cfg]`-gated rather than runtime-optional, so a build without `openapi32`
-cannot construct a document it would be unable to emit; the model types they
-extend are `#[non_exhaustive]`, so a downstream `match` compiles under either
-build.
+cannot construct a document it would be unable to emit. The enums they extend,
+and the variants they add a field to, are `#[non_exhaustive]`, so a downstream
+`match` compiles under either build; the structs they extend are not, so a
+struct literal or pattern compiles under both only when it ends in `..`.
 
 Three further features are off by default:
 
-- `yaml`: `Document::to_yaml`, beside the JSON emission every build has.
+- `yaml`: the `emit::yaml` module, holding `Document::to_yaml` beside the
+  JSON emission every build has.
 - `http`: conversions between `Method` and `http::Method`.
 - `pattern`: an ECMA-262 `pattern` translated into the `regex` crate's dialect.
 

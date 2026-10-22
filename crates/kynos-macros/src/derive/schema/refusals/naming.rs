@@ -133,18 +133,19 @@ pub(super) fn reject_split_rename(input: &DeriveInput) -> syn::Result<()> {
     ))
 }
 
-/// A split case rule whose sides differ, one side left out included, where it
-/// names a member serde both writes and reads: a container
-/// `rename_all(serialize = ..., deserialize = ...)`, or, for a struct variant
-/// serde writes whose two sides differ once each side its own `rename_all`
-/// leaves takes the enum's `rename_all_fields`, as serde fills it, that
-/// `rename_all_fields(...)` where the variant leaves it a side, else the
+/// A split case rule whose sides differ, one side left out included: a
+/// container `rename_all(serialize = ..., deserialize = ...)`, or, for a struct
+/// variant serde writes whose two sides differ once each side its own
+/// `rename_all` leaves takes the enum's `rename_all_fields`, as serde fills it,
+/// that `rename_all_fields(...)` where the variant leaves it a side, else the
 /// variant's own `rename_all(...)`.
 ///
-/// Such a rule gives a member two wire names. A rule naming no field serde both
-/// writes and reads is not refused: a variant serde only reads, or one whose
-/// sides resolve to one style, or the container rule of an identifier enum,
-/// which serde never writes and [`Container`] reads by its deserialize side.
+/// Such a rule gives a member two wire names. A container rule is refused
+/// whichever members it reaches, save on an identifier enum, which serde never
+/// writes and [`Container`] reads by its deserialize side. A field rule is
+/// refused only where it reaches a struct variant serde writes: one reaching
+/// only variants serde skips or only reads, unit or tuple variants, or sides
+/// that resolve to one style is not refused.
 /// Runs before any other check that reads a [`Container`].
 pub(super) fn reject_split_rename_all(input: &DeriveInput) -> syn::Result<()> {
     let identifier = Container::read(input).visitor == Visitor::Identifier;

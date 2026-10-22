@@ -58,7 +58,7 @@ use serde::{Deserialize, Serialize};
 /// seam asks for: Kynos selects among them, so a store never has to know what
 /// `Vary` means.
 struct MokaCache {
-    stored: moka::future::Cache<PrimaryKey, Vec<StoredResponse>>,
+    stored: moka::future::Cache<PrimaryKey<'static>, Vec<StoredResponse>>,
 }
 
 impl MokaCache {
@@ -77,11 +77,16 @@ impl MokaCache {
 }
 
 impl<C: Sync> CacheStore<C> for MokaCache {
-    async fn get(&self, key: &PrimaryKey, _: &C) -> Vec<StoredResponse> {
-        self.stored.get(key).await.unwrap_or_default()
+    async fn get(&self, key: &PrimaryKey<'_>, _: &C) -> Vec<StoredResponse> {
+        // `moka` is invariant in its key, so the borrowed key is copied to be
+        // looked up; a `HashMap` behind a lock reads it as it stands.
+        self.stored
+            .get(&key.clone().into_owned())
+            .await
+            .unwrap_or_default()
     }
 
-    async fn put(&self, key: PrimaryKey, response: StoredResponse, _: &C) {
+    async fn put(&self, key: PrimaryKey<'static>, response: StoredResponse, _: &C) {
         // Replace the variant this one supersedes, and append otherwise. A
         // store that only appended would grow one entry per request; one that
         // replaced by `vary()` would keep one negotiation of each resource.
@@ -91,7 +96,7 @@ impl<C: Sync> CacheStore<C> for MokaCache {
         self.stored.insert(key, variants).await;
     }
 
-    async fn invalidate(&self, key: &PrimaryKey, _: &C) {
+    async fn invalidate(&self, key: &PrimaryKey<'static>, _: &C) {
         self.stored.invalidate(key).await;
     }
 }

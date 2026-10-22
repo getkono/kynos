@@ -230,9 +230,9 @@ async fn post_ingest(Json(ingest): Json<Ingest>) -> NoContent {
 async fn main() -> kynos::Result<()> {
     let router = Router::<()>::new().mount(kynos::routes![get_catalogue, post_ingest]);
 
-    // `validate` reports the `Unchecked` field as a warning. Uncommenting
-    // `deny_unchecked_schemas` above would make it a build error instead, and
-    // `post_ingest` would have to describe its payload or go.
+    // `validate` reports the `Unchecked` field as a warning. Chaining
+    // `.deny_unchecked_schemas()` onto the router would make it a build error
+    // instead, and `post_ingest` would have to describe its payload or go.
     for violation in router.validate()? {
         println!("{violation}");
     }

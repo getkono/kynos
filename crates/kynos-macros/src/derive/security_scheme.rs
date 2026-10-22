@@ -9,7 +9,7 @@
 //!
 //! kind   := bearer | bearer(format = "JWT")
 //!         | basic
-//!         | http(scheme = "<RFC 7235 token>" [, format = "..."])
+//!         | http(scheme = "<RFC 9110 auth-scheme token>" [, format = "..."])
 //!         | api_key(in = "header" | "query" | "cookie", name = "<field>")
 //!         | mutual_tls
 //!         | openid_connect(url = "<discovery URL>")
@@ -99,7 +99,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let credential: Type = args.credential.unwrap_or_else(|| parse_quote!(String));
 
     let challenge = args.challenge.map_or_else(
-        || default_challenge(kind),
+        || default_challenge(kind, &args.nested),
         |value| quote!(::core::option::Option::Some(#value)),
     );
     let insufficient_scope = default_insufficient_scope_challenge(kind);
@@ -351,11 +351,20 @@ fn of_kind(args: &SchemeArgs, kind: &Ident) -> proc_macro2::TokenStream {
 /// cannot drift; `challenge = "..."` names another realm. RFC 9110 section
 /// 15.5.2 requires a challenge on every 401, so `api_key` answers `ApiKey` and
 /// `mutual_tls` what `kynos::security::schemes::MutualTls` does, each an
-/// unregistered `auth-scheme` token naming the OpenAPI type. `http` has no
-/// default: its scheme's parameters are the application's to know.
-fn default_challenge(kind: &Ident) -> proc_macro2::TokenStream {
+/// unregistered `auth-scheme` token naming the OpenAPI type. `http` answers
+/// its own `scheme` token bare, since a challenge may carry no parameters; the
+/// ones its scheme needs, such as Digest's `realm` and `nonce`, are the
+/// application's to add through `challenge = "..."`.
+fn default_challenge(kind: &Ident, nested: &Nested) -> proc_macro2::TokenStream {
     match kind.to_string().as_str() {
         "bearer" | "oauth2" | "openid_connect" => quote!(::core::option::Option::Some("Bearer")),
+        "http" => {
+            let scheme = nested
+                .scheme
+                .as_ref()
+                .map_or_else(String::new, LitStr::value);
+            quote!(::core::option::Option::Some(#scheme))
+        }
         "basic" => quote! {
             <::kynos::security::schemes::Basic as ::kynos::security::SecurityScheme>::challenge()
         },

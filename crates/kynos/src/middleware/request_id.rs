@@ -38,7 +38,41 @@ impl RequestIdSource for Counter {
         // Only uniqueness matters; nothing is ordered against this.
         let id = self.next.fetch_add(1, Ordering::Relaxed);
 
-        http::HeaderValue::from(id)
+        Digits::<20>::value::<10>(id.into(), 1)
+    }
+}
+
+/// An identifier's digits, held inline so the value carrying them is one
+/// allocation every clone shares: `http`'s own constructors allocate twice,
+/// or once and again on the first clone, and [`RequestId`] clones the value
+/// it sets on the request onto the response.
+struct Digits<const N: usize> {
+    buf: [u8; N],
+    start: usize,
+}
+
+impl<const N: usize> AsRef<[u8]> for Digits<N> {
+    fn as_ref(&self) -> &[u8] {
+        &self.buf[self.start..]
+    }
+}
+
+impl<const N: usize> Digits<N> {
+    /// `n` in `RADIX`, zero-padded to `width` digits.
+    fn value<const RADIX: u128>(mut n: u128, width: usize) -> http::HeaderValue {
+        let mut digits = Self {
+            buf: [0; N],
+            start: N,
+        };
+        while digits.start > N - width || n > 0 {
+            digits.start -= 1;
+            digits.buf[digits.start] =
+                b"0123456789abcdef"[usize::try_from(n % RADIX).expect("a digit")];
+            n /= RADIX;
+        }
+
+        http::HeaderValue::from_maybe_shared(bytes::Bytes::from_owner(digits))
+            .expect("digits are a field value")
     }
 }
 
@@ -87,8 +121,7 @@ impl RequestIdSource for Random {
         let n = self.next.fetch_add(1, Ordering::Relaxed);
         let [high, low] = self.halves(n);
 
-        http::HeaderValue::from_str(&format!("{high:016x}{low:016x}"))
-            .expect("hex digits are a field value")
+        Digits::<32>::value::<16>(u128::from(high) << 64 | u128::from(low), 32)
     }
 }
 
@@ -305,13 +338,15 @@ where
     /// the 500 any refused group does, without running the chain.
     type Short = Infallible;
 
-    async fn intercept(
+    // Everything before the chain runs is done before the future is built, so
+    // the future holds the rest of the chain rather than the request.
+    fn intercept(
         &self,
         mut request: http::Request,
         reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> Result<Continued<H>, Infallible> {
+    ) -> impl Future<Output = Result<Continued<H>, Infallible>> + Send {
         let _ = (reads, context);
 
         // The first declared name wins: one identifier is carried under all.
@@ -333,15 +368,27 @@ where
         // `with_headers` answers with. The other `Continued::new` outside
         // `Next::run` besides a cache hit: sound, because `with_headers` would
         // replace whatever the chain returned with this same 500.
-        let Ok(fields) = headers.encode() else {
-            let refused = crate::extract::params::header::refused();
-            return Ok(Continued::new(refused).with_headers(headers));
+        //
+        // Encoded once: the response is written from the same fields, whose
+        // values the request holds clones of.
+        let run = match headers.encode() {
+            Ok(fields) => {
+                for (name, value) in &fields {
+                    request.headers_mut().insert(name.clone(), value.clone());
+                }
+                Ok((next.run(request), fields))
+            }
+            Err(_) => Err(headers),
         };
-        for (name, value) in fields {
-            request.headers_mut().insert(name, value);
-        }
 
-        Ok(next.run(request).await.with_headers(headers))
+        async move {
+            Ok(match run {
+                Ok((run, fields)) => run.await.with_encoded::<H>(fields),
+                Err(headers) => {
+                    Continued::new(crate::extract::params::header::refused()).with_headers(headers)
+                }
+            })
+        }
     }
 }
 

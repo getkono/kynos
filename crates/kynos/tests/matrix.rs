@@ -1,8 +1,11 @@
 //! The whole owned-layer matrix, checked against the description it emits.
 //!
-//! This is the only assertion in the workspace that fails when the **document**
-//! is wrong rather than when the code is. Everything else tests the framework's
-//! types; this tests the framework's claim.
+//! This is one of the few assertions in the workspace that fail when the
+//! **document** is wrong rather than when the code is — `conformance.rs` checks
+//! one service's observed responses against its description, and `flatten.rs`
+//! validates serialized values against their emitted schemas. Most tests check
+//! the framework's types; this checks the framework's claim across every owned
+//! layer.
 //!
 //! Two assertions, opposite in direction and both needed:
 //!
@@ -754,10 +757,11 @@ async fn exercise_the_operations(client: &TestClient<App>) {
         .await
         .assert_status(StatusCode::OK);
 
-    // Both arms of the negotiation, because the declared `Content-Language`
-    // enumerates two tags and `assert_conformance` checks the value against
-    // that schema. The second is the fallback: a language nobody offers is a
-    // 200 rather than a 406, so the document had better not say otherwise.
+    // Both arms of the negotiation, so `assert_conformance` sees each one's
+    // status and body against the declaration. It checks only that a required
+    // header was sent, not `Content-Language`'s value against the two tags its
+    // schema enumerates. The second is the fallback: a language nobody offers
+    // is a 200 rather than a 406, so the document had better not say otherwise.
     client
         .get("/greeting")
         .header("accept-language", "fr-CA")

@@ -312,13 +312,15 @@ where
     /// Always continues: the fields go on whatever the chain returns.
     type Short = Infallible;
 
-    async fn intercept(
+    // Reads the request before building the future, so the future holds the
+    // rest of the chain rather than the request.
+    fn intercept(
         &self,
         request: http::Request,
         reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> Result<Continued<Self::Adds>, Infallible> {
+    ) -> impl Future<Output = Result<Continued<Self::Adds>, Infallible>> + Send {
         let _ = (reads, context);
 
         let transport = self.transport.clone().filter(|_| {
@@ -329,17 +331,18 @@ where
         });
 
         let withheld = HSTS && transport.is_none();
-        let mut continued = next
-            .run(request)
-            .await
-            .with_headers(SecurityFields { transport });
+        let run = next.run(request);
 
-        // A policy the chain set is replaced like every other field, and
-        // where none may be sent, replaced by nothing.
-        if withheld {
-            continued.remove_declared::<Self::Adds>(&header::STRICT_TRANSPORT_SECURITY);
+        async move {
+            let mut continued = run.await.with_headers(SecurityFields { transport });
+
+            // A policy the chain set is replaced like every other field, and
+            // where none may be sent, replaced by nothing.
+            if withheld {
+                continued.remove_declared::<Self::Adds>(&header::STRICT_TRANSPORT_SECURITY);
+            }
+
+            Ok(continued)
         }
-
-        Ok(continued)
     }
 }

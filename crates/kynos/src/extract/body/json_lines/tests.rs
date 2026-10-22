@@ -100,10 +100,16 @@ fn one_frame(bytes: &[u8]) -> Vec<Frame> {
     vec![Ok(Bytes::copy_from_slice(bytes))]
 }
 
+/// Extracts `T` from `request`, as a handler's last argument is.
+async fn extract<T: FromRequest<()>>(request: Request) -> Result<T, T::Rejection> {
+    let (mut parts, body) = request.into_parts();
+    T::from_request(&mut parts, body, &()).await
+}
+
 /// Extracts a newline-delimited body, which only the content type can
 /// refuse.
 async fn ndjson(frames: Vec<Frame>) -> Records<Reading> {
-    JsonLines::<Records<Reading>>::from_request(request(Some(NDJSON), frames, false), &())
+    extract::<JsonLines<Records<Reading>>>(request(Some(NDJSON), frames, false))
         .await
         .expect("`application/x-ndjson` is the media type this body extracts")
         .items
@@ -111,7 +117,7 @@ async fn ndjson(frames: Vec<Frame>) -> Records<Reading> {
 
 /// Extracts an RFC 7464 sequence body.
 async fn json_seq(frames: Vec<Frame>) -> Records<Reading> {
-    JsonSeq::<Records<Reading>>::from_request(request(Some(JSON_SEQ), frames, false), &())
+    extract::<JsonSeq<Records<Reading>>>(request(Some(JSON_SEQ), frames, false))
         .await
         .expect("`application/json-seq` is the media type this body extracts")
         .items
@@ -323,14 +329,11 @@ async fn a_sequence_not_opening_with_a_separator_is_a_bad_request() {
 /// lines deliver all three, because there the delimiter trails.
 #[tokio::test]
 async fn a_sequence_holds_its_last_record_until_the_body_ends() {
-    let mut sequence = JsonSeq::<Records<Reading>>::from_request(
-        request(
-            Some(JSON_SEQ),
-            one_frame(b"\x1e{\"at\":1}\n\x1e{\"at\":2}\n"),
-            true,
-        ),
-        &(),
-    )
+    let mut sequence = extract::<JsonSeq<Records<Reading>>>(request(
+        Some(JSON_SEQ),
+        one_frame(b"\x1e{\"at\":1}\n\x1e{\"at\":2}\n"),
+        true,
+    ))
     .await
     .expect("the sequence media type")
     .items;
@@ -349,10 +352,11 @@ async fn a_sequence_holds_its_last_record_until_the_body_ends() {
         "the second record is only known complete once a separator or the body's end follows"
     );
 
-    let mut lines = JsonLines::<Records<Reading>>::from_request(
-        request(Some(NDJSON), one_frame(b"{\"at\":1}\n{\"at\":2}\n"), true),
-        &(),
-    )
+    let mut lines = extract::<JsonLines<Records<Reading>>>(request(
+        Some(NDJSON),
+        one_frame(b"{\"at\":1}\n{\"at\":2}\n"),
+        true,
+    ))
     .await
     .expect("the lines media type")
     .items;
@@ -402,7 +406,7 @@ async fn a_record_past_the_limit_ends_the_stream() {
         false,
     );
     request.extensions_mut().insert(BodyLimit(8));
-    let mut records = JsonLines::<Records<Reading>>::from_request(request, &())
+    let mut records = extract::<JsonLines<Records<Reading>>>(request)
         .await
         .expect("the media type is the one this body extracts")
         .items;
@@ -429,7 +433,7 @@ async fn a_record_past_the_limit_ends_the_stream() {
 async fn a_record_past_the_limit_is_refused_before_it_ends() {
     let mut request = request(Some(NDJSON), one_frame(b"{\"at\":12345"), true);
     request.extensions_mut().insert(BodyLimit(8));
-    let mut records = JsonLines::<Records<Reading>>::from_request(request, &())
+    let mut records = extract::<JsonLines<Records<Reading>>>(request)
         .await
         .expect("the media type is the one this body extracts")
         .items;
@@ -589,10 +593,11 @@ async fn a_body_of_another_media_type_is_refused() {
     ];
 
     for content_type in lines_refusals {
-        let rejection = JsonLines::<Records<Reading>>::from_request(
-            request(content_type, one_frame(b"{\"at\":1}\n"), false),
-            &(),
-        )
+        let rejection = extract::<JsonLines<Records<Reading>>>(request(
+            content_type,
+            one_frame(b"{\"at\":1}\n"),
+            false,
+        ))
         .await
         .err()
         .unwrap_or_else(|| panic!("{content_type:?} is not `application/x-ndjson`"));
@@ -613,10 +618,11 @@ async fn a_body_of_another_media_type_is_refused() {
     ];
 
     for content_type in sequence_refusals {
-        let rejection = JsonSeq::<Records<Reading>>::from_request(
-            request(content_type, one_frame(b"\x1e{\"at\":1}\n"), false),
-            &(),
-        )
+        let rejection = extract::<JsonSeq<Records<Reading>>>(request(
+            content_type,
+            one_frame(b"\x1e{\"at\":1}\n"),
+            false,
+        ))
         .await
         .err()
         .unwrap_or_else(|| panic!("{content_type:?} is not `application/json-seq`"));
@@ -633,14 +639,11 @@ async fn a_body_of_another_media_type_is_refused() {
 /// already assumes.
 #[tokio::test]
 async fn a_utf_8_charset_is_accepted() {
-    let records = JsonLines::<Records<Reading>>::from_request(
-        request(
-            Some("application/x-ndjson; charset=utf-8"),
-            one_frame(b"{\"at\":1}\n"),
-            false,
-        ),
-        &(),
-    )
+    let records = extract::<JsonLines<Records<Reading>>>(request(
+        Some("application/x-ndjson; charset=utf-8"),
+        one_frame(b"{\"at\":1}\n"),
+        false,
+    ))
     .await
     .expect("`charset=utf-8` names the encoding this decoder reads")
     .items;

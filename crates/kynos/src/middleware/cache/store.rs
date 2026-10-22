@@ -1,6 +1,6 @@
 //! What a cache stores, and where.
 
-use std::{sync::Arc, time::Duration};
+use std::{borrow::Cow, sync::Arc, time::Duration};
 
 use kynos_openapi::Method;
 
@@ -11,8 +11,17 @@ use crate::http::{HeaderMap, HeaderValue, StatusCode};
 /// Names the resource, not a variant: [`CacheStore::get`] returns every variant
 /// filed under one of these, and Kynos selects among them (RFC 9111 section
 /// 4.1).
+///
+/// The key [`CacheStore::get`] is handed borrows its text from the request, so
+/// a hit allocates no key; the keys [`CacheStore::put`] and
+/// [`CacheStore::invalidate`] are handed own theirs. Two keys naming the same
+/// resource are equal, and hash alike, whichever of the two they are. A map
+/// read through a shared reference and covariant in its key, such as a
+/// `HashMap<PrimaryKey<'static>, _>` or a `BTreeMap` behind a lock, is read
+/// with the borrowed key as it stands; any other is read with a copy from
+/// [`into_owned`](Self::into_owned).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct PrimaryKey {
+pub struct PrimaryKey<'a> {
     /// The application's namespace, set with
     /// [`Cache::namespace`](super::Cache::namespace).
     pub namespace: &'static str,
@@ -25,11 +34,27 @@ pub struct PrimaryKey {
     ///
     /// The scheme is not part of the key: behind a terminating proxy a service
     /// cannot see the one the client used.
-    pub authority: Option<String>,
+    pub authority: Option<Cow<'a, str>>,
     /// The `paths` key, not the request path.
-    pub route: String,
+    pub route: Cow<'a, str>,
     /// The request target, path and query, exactly as it arrived.
-    pub target: String,
+    pub target: Cow<'a, str>,
+}
+
+impl PrimaryKey<'_> {
+    /// The same key, owning its text.
+    #[must_use]
+    pub fn into_owned(self) -> PrimaryKey<'static> {
+        PrimaryKey {
+            namespace: self.namespace,
+            method: self.method,
+            authority: self
+                .authority
+                .map(|authority| Cow::Owned(authority.into_owned())),
+            route: Cow::Owned(self.route.into_owned()),
+            target: Cow::Owned(self.target.into_owned()),
+        }
+    }
 }
 
 /// A response held by a store.
@@ -186,18 +211,19 @@ pub trait CacheStore<C>: Send + Sync + 'static {
     /// Every stored variant of `key`.
     fn get(
         &self,
-        key: &PrimaryKey,
+        key: &PrimaryKey<'_>,
         context: &C,
     ) -> impl Future<Output = Vec<StoredResponse>> + Send;
 
     /// Stores `response` under `key`.
     fn put(
         &self,
-        key: PrimaryKey,
+        key: PrimaryKey<'static>,
         response: StoredResponse,
         context: &C,
     ) -> impl Future<Output = ()> + Send;
 
     /// Drops every stored variant of `key`.
-    fn invalidate(&self, key: &PrimaryKey, context: &C) -> impl Future<Output = ()> + Send;
+    fn invalidate(&self, key: &PrimaryKey<'static>, context: &C)
+    -> impl Future<Output = ()> + Send;
 }

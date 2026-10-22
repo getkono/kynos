@@ -208,8 +208,13 @@ impl<C: Sync + 'static> Interceptor<C> for Telemetry {
         // guard would keep the span entered on the thread while this task is
         // parked, so whatever runs there next is recorded inside it.
         // `instrument` enters it for each poll and exits before the poll
-        // returns.
-        let continued = next.run(request).instrument(span.clone()).await;
+        // returns. `in_scope` covers what `next.run` does at the call, before
+        // its future is first polled: an inner interceptor's header decoding
+        // and whatever it does before returning its future.
+        let continued = span
+            .in_scope(|| next.run(request))
+            .instrument(span.clone())
+            .await;
 
         span.record(
             semconv::HTTP_RESPONSE_STATUS_CODE,

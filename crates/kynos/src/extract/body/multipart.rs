@@ -14,20 +14,21 @@ use crate::{
         FromRequest,
         describe::{Describe, RequestContent},
     },
-    http::{HeaderMap, Request, header},
+    http::{HeaderMap, Parts, body::Body, header},
     router::operation::OperationCx,
     schema::{Schema, constraints::Pointer, registry::Registry},
 };
 
 /// A `multipart/form-data` request body with declared fields.
 ///
-/// `T` derives `Schema`, and each field becomes a part with its own `Encoding`.
-/// A request is held to the bounds `T`'s fields declare once its parts are
+/// `T` derives `Schema` and `MultipartForm`, and each field becomes a part. No
+/// Encoding Object is emitted: the default OpenAPI derives for each part from
+/// the field's schema is the one Kynos would write. A request is held to the bounds `T`'s fields declare once its parts are
 /// read, and a part that breaks one is a 422 keyed by the field's JSON Pointer,
 /// as a [`Json`](super::json::Json) member is; which bounds are enforced is
 /// [`constraints`](crate::schema::constraints)' to say.
-/// The same wrapper may be returned as a response, preserving the declared
-/// field names, per-part media types, and encodings in both directions.
+/// The same wrapper may be returned as a response, described with the same
+/// field names and schema in both directions.
 /// There is no dynamic-field iterator: a handler that accepts arbitrary part
 /// names cannot describe them. For a variable number of uploads, declare one
 /// field of type `Vec<FilePart>`, marked `#[serde(default)]`: an empty list is
@@ -258,21 +259,23 @@ async fn octets(mut field: multer::Field<'_>) -> Result<Bytes, multer::Error> {
 impl<C: Sync, T: FromMultipart + Schema + Send> FromRequest<C> for MultipartForm<T> {
     type Rejection = BodyRejection;
 
-    async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
-        let boundary = boundary(request.headers())?;
-        super::refuse_undecoded(request.headers())?;
+    // `head`, since `parts` names the form's parts below.
+    async fn from_request(
+        head: &mut Parts,
+        body: Body,
+        _context: &C,
+    ) -> Result<Self, Self::Rejection> {
+        let boundary = boundary(&head.headers)?;
+        super::refuse_undecoded(&head.headers)?;
 
         // Every part is held until `T` is built, so the limit bounds the whole
         // stream.
-        let limit = super::limit::of(&request);
-        super::limit::refuse_declared(request.headers(), limit)?;
+        let limit = super::limit::of(head);
+        super::limit::refuse_declared(&head.headers, limit)?;
         let constraints =
             multer::Constraints::new().size_limit(multer::SizeLimit::new().whole_stream(limit));
-        let mut fields = multer::Multipart::with_constraints(
-            request.into_body().into_data_stream(),
-            boundary,
-            constraints,
-        );
+        let mut fields =
+            multer::Multipart::with_constraints(body.into_data_stream(), boundary, constraints);
 
         let mut parts = Vec::new();
         while let Some(field) = fields.next_field().await.map_err(|e| malformed_body(&e))? {

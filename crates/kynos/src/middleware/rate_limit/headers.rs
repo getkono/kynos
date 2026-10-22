@@ -225,7 +225,7 @@ fn render_policies(policies: &[QuotaPolicy]) -> Option<http::HeaderValue> {
 /// Renders `name` as a structured-field String, or `None` where it cannot be
 /// one.
 ///
-/// RFC 8941 section 3.3.3: a `sf-string` is printable ASCII, and `\` and `"`
+/// RFC 9651 section 3.3.3: a `sf-string` is printable ASCII, and `\` and `"`
 /// are escaped. An unrenderable name drops only its own member, not the field.
 fn sf_string(name: &str) -> Option<String> {
     if !name.bytes().all(|byte| (0x20..0x7f).contains(&byte)) {

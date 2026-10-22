@@ -8,7 +8,7 @@ use crate::{
         FromRequest,
         describe::{Describe, RequestContent},
     },
-    http::{Request, header},
+    http::{Parts, body::Body, header},
     router::operation::OperationCx,
 };
 
@@ -21,8 +21,8 @@ use crate::{
 /// that are all empty carry none, as a body a buffering interceptor rebuilt
 /// whole does not. Reads up to the first octet only, which nothing reads
 /// after: the body is no representation `T` is handed.
-async fn carries_content(request: Request) -> Result<bool, BodyRejection> {
-    let declared = request.headers().get_all(header::CONTENT_LENGTH);
+async fn carries_content(parts: &Parts, mut body: Body) -> Result<bool, BodyRejection> {
+    let declared = parts.headers.get_all(header::CONTENT_LENGTH);
     if declared.iter().any(|value| {
         value
             .to_str()
@@ -33,7 +33,6 @@ async fn carries_content(request: Request) -> Result<bool, BodyRejection> {
         return Ok(true);
     }
 
-    let mut body = request.into_body();
     while let Some(frame) = body.frame().await {
         let frame = frame.map_err(|error| BodyRejection::Syntax {
             detail: error.to_string(),
@@ -66,11 +65,15 @@ where
 {
     type Rejection = T::Rejection;
 
-    async fn from_request(request: Request, context: &C) -> Result<Self, Self::Rejection> {
-        if request.headers().contains_key(header::CONTENT_TYPE) {
-            return T::from_request(request, context).await.map(Some);
+    async fn from_request(
+        parts: &mut Parts,
+        body: Body,
+        context: &C,
+    ) -> Result<Self, Self::Rejection> {
+        if parts.headers.contains_key(header::CONTENT_TYPE) {
+            return T::from_request(parts, body, context).await.map(Some);
         }
-        if carries_content(request).await? {
+        if carries_content(parts, body).await? {
             Err(BodyRejection::UnsupportedMediaType { received: None }.into())
         } else {
             Ok(None)

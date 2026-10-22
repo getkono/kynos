@@ -47,10 +47,13 @@
 //! | `Ipv4Addr`, `Ipv6Addr`, `IpAddr` | `string`/`ipv4`, `string`/`ipv6`, `anyOf` the two |
 //!
 //! Each `format` above is either defined by OpenAPI itself or registered in the
-//! OAI Format Registry, where support is optional — so every constraint a format
-//! implies is also emitted as a keyword, and a tool that ignores the format
-//! loses nothing. These tables are the mapping; `docs/schema.md` records where
-//! each format comes from and why each row reads as it does.
+//! OAI Format Registry, where support is optional. A tool that does not
+//! recognise a format falls back to the `type` alone. For `int8`–`int32` and
+//! `uint8`–`uint32` the implied bounds are emitted beside the format as
+//! keywords, so that tool still receives them; `int64` carries none and
+//! `uint64` only `minimum: 0`, as the table states. These tables are the
+//! mapping; `docs/schema.md` records where each format comes from and why each
+//! row reads as it does.
 //!
 //! # Behind a feature flag
 //!
@@ -165,9 +168,10 @@ pub trait Schema {
     ///
     /// The runtime half of the `#[schema(...)]` constraints a derived field
     /// carries: `#[derive(Schema)]` generates it to check each field against
-    /// its own bounds and to descend into each field's value, and a body
-    /// extractor runs it on the value it deserialized, refusing with a 422 when
-    /// anything was reported. [`constraints`] says which bounds are enforced.
+    /// its own bounds and to descend into each field's value. An extractor runs
+    /// it on the value it decoded and refuses when anything was reported: a body
+    /// extractor with a 422, and `QueryString` and the parameter derives with a
+    /// 400. [`constraints`] says which bounds are enforced.
     ///
     /// The default reports nothing, which is right for a type with no bounds
     /// and no members. A container implements it to descend into its members;

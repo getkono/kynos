@@ -6,9 +6,9 @@ use kynos_openapi::{Method, PathTemplate};
 
 use crate::{
     handler::Handler,
-    http::{Request, Response},
+    http::{Parts, Request, Response, body::Body},
     middleware::{
-        Interceptor, MiddlewareError, Next,
+        Continued, Interceptor, MiddlewareError, Next,
         catch_panic::{Catch, PanicPolicy, Propagate},
         erased::{ErasedInterceptor, ErasedTerminal},
         stack::{CompatibleWith, Cons},
@@ -288,34 +288,31 @@ where
         }
     }
 
-    async fn call(&self, request: Request, context: &C) -> Response {
-        // Without interceptors, no chain and no second box.
-        let served = async {
-            if self.interceptors.is_empty() {
-                Handler::call(self.handler.clone(), request, context).await
-            } else {
-                let terminal = HandlerTerminal::<C, H, A> {
-                    handler: self.handler.clone(),
-                    _private: PhantomData,
+    // Splits the request before the future exists and awaits each branch in
+    // place: every matched request carries this future in a box, and the head
+    // it owns is the only copy, which the handler borrows. A request argument,
+    // or an `async fn` between the box and the handler, would keep another.
+    fn call(&self, request: Request, context: &C) -> impl Future<Output = Response> + Send {
+        let (mut parts, body) = request.into_parts();
+        async move {
+            if install::catches::<P>() {
+                // Boxed by `recover`, so it costs this future a pointer.
+                return match dispatch::recovery::recover(self.serve(parts, body, context)).await {
+                    Ok(response) => response,
+                    Err(payload) => dispatch::recovery::recovered_response(payload),
                 };
-                // The key routing matched, prefixes included; this endpoint's
-                // own template only when driven without a router.
-                let path = dispatch::mounted_path(&request).unwrap_or(self.path.as_str());
-                let route = Route::new(path, self.operation_id.unwrap_or_default(), self.method);
-                Next::new(&self.interceptors, &terminal, context, Some(route))
-                    .run(request)
-                    .await
-                    .into_response()
             }
-        };
 
-        if install::catches::<P>() {
-            match dispatch::recovery::recover(served).await {
-                Ok(response) => response,
-                Err(payload) => dispatch::recovery::recovered_response(payload),
+            // Without interceptors, no chain and no second box. `serve`'s
+            // branches, inlined: awaiting `serve` would move the head into a
+            // future of its own, beside the slot this one keeps for it.
+            if self.interceptors.is_empty() {
+                return Handler::call(self.handler.clone(), &mut parts, body, context).await;
             }
-        } else {
-            served.await
+
+            self.chain(Request::from_parts(parts, body), context)
+                .await
+                .into_response()
         }
     }
 
@@ -326,23 +323,60 @@ where
     }
 }
 
-/// The handler, as the end of this endpoint's own interceptor chain.
-struct HandlerTerminal<C, H, A> {
-    handler: H,
-    _private: PhantomData<fn() -> (C, A)>,
+impl<C, H, A, P, I: 'static> EndpointBuilder<C, H, A, P, I>
+where
+    C: Send + Sync + 'static,
+    H: Handler<C, A>,
+    // Only `'static`, as above.
+    A: 'static,
+    P: PanicPolicy,
+{
+    /// Runs the handler, through this operation's own interceptors where it
+    /// has any; what recovery wraps, and so the owner of the head it lends.
+    async fn serve(&self, mut parts: Parts, body: Body, context: &C) -> Response {
+        if self.interceptors.is_empty() {
+            Handler::call(self.handler.clone(), &mut parts, body, context).await
+        } else {
+            self.chain(Request::from_parts(parts, body), context)
+                .await
+                .into_response()
+        }
+    }
+
+    /// Starts this operation's own interceptors around the handler, which is
+    /// this builder itself as the chain's terminal.
+    fn chain<'a>(
+        &'a self,
+        request: Request,
+        context: &'a C,
+    ) -> impl Future<Output = Continued<()>> + Send + 'a {
+        // The key routing matched, prefixes included; this endpoint's own
+        // template only when driven without a router.
+        let path = dispatch::mounted_path(&request).unwrap_or(self.path.as_str());
+        let route = Route::new(path, self.operation_id.unwrap_or_default(), self.method);
+        Next::new(&self.interceptors, self, context, Some(route)).run(request)
+    }
 }
 
-impl<C, H, A> ErasedTerminal<C> for HandlerTerminal<C, H, A>
+/// The handler, as the end of this endpoint's own interceptor chain: the
+/// builder rather than a terminal built per request, so nothing the chain
+/// borrows lives in the future driving it.
+impl<C, H, A, P, I: 'static> ErasedTerminal<C> for EndpointBuilder<C, H, A, P, I>
 where
     C: Send + Sync + 'static,
     H: Handler<C, A>,
     A: 'static,
+    P: PanicPolicy,
 {
     fn call<'a>(
         &'a self,
         request: Request,
         context: &'a C,
     ) -> Pin<Box<dyn Future<Output = Response> + Send + 'a>> {
-        Box::pin(Handler::call(self.handler.clone(), request, context))
+        // The box owns the head the handler borrows.
+        let (mut parts, body) = request.into_parts();
+        Box::pin(
+            async move { Handler::call(self.handler.clone(), &mut parts, body, context).await },
+        )
     }
 }

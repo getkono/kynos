@@ -5,7 +5,8 @@
 //! `upgrade_unchecked`, and `src/unchecked.rs` has no `#[cfg(test)]` module.
 //! Nothing asserted that a catch-all serves a request, that interceptors run
 //! over one, or that `x-kynos-opaque-routes` reaches a router-produced
-//! document. Static assets are about to rest on all three.
+//! document. `Router::assets_directory` rests on the catch-all and the opaque
+//! route record.
 
 #![cfg(all(feature = "unchecked", feature = "macros", feature = "json"))]
 
@@ -94,11 +95,10 @@ async fn a_catch_all_matches_neither_its_own_prefix_nor_a_bare_trailing_slash() 
 /// every described one", and this is the half that was not: `install_unchecked`
 /// recorded no variables, so `Dispatch`'s capture branch was unreachable and
 /// `PathCaptures` was never inserted. A handler had to re-derive the file path
-/// from `request.uri().path()` by hand — including the percent-decoding and the
-/// `..` rejection `extract/params/path.rs` already implements and keeps private
-/// behind `PathCaptures`.
+/// from `request.uri().path()` by hand, percent-decoding included.
 ///
-/// That is a path-traversal footgun in the feature most likely to meet one.
+/// `captured` percent-decodes and nothing more: it rejects no `..` segment, so
+/// a handler resolving the capture against a directory still owns traversal.
 #[tokio::test]
 async fn a_catch_all_hands_its_handler_what_it_captured() {
     async fn echo_capture(request: Request) -> Response {

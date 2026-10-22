@@ -1,5 +1,8 @@
 //! What one request costs: what the routing path allocates, what a chain in
-//! front of it adds, and how wide the future dispatch returns is.
+//! front of it adds, and how wide the future dispatch returns is — and, as a
+//! characterization of the `http` dependency rather than of Kynos, that
+//! presizing a response's header map saves no block, which is why responses
+//! grow theirs.
 //!
 //! The allocation-count kind in
 //! [`performance.md`](../../../docs/performance.md#the-taxonomy), and one of
@@ -47,16 +50,17 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
+use std::time::Duration;
 
 use alloc_counter::count_alloc;
 use kynos::{
     Router,
     extract::params::path::Path,
-    http::{Method, Request, StatusCode},
-    middleware::{Continued, Interceptor, Next},
+    http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode, header},
+    middleware::{Continued, Interceptor, Next, Observer},
     prelude::*,
     response::status::NoContent,
-    router::service::Service,
+    router::{operation::Route, service::Service},
 };
 
 /// The counter, the request builder and the driver, shared with
@@ -314,18 +318,13 @@ const PER_LAYER: usize = 1;
 /// rebuilt and the handle it called through, and hyper holds that inside
 /// per-connection state of its own. Neither is measured here.
 ///
-/// Read at both feature sets this target is built at, by setting the ceiling
-/// to zero and taking the width out of the failure: 280 bytes at baseline
-/// (`cargo nextest run -p kynos --test alloc`) and 280 with `--all-features`.
-/// Only `<=` is asserted per build, so this is where the two readings are
-/// recorded — an equality would fail on the first build whose feature set
-/// makes the future narrower, which is not a regression.
-///
-/// Both readings are Linux's. The width is the compiler's layout of a state
-/// machine over platform types, so macOS reads its own: 288 bytes with
-/// `--all-features` on the CI `macos-latest` runner, where 280 failed. Windows
-/// reads within 280 on its runner.
-const DISPATCH_FUTURE_BYTES: usize = if cfg!(target_os = "macos") { 288 } else { 280 };
+/// Sixteen bytes, at both feature sets this target is built at: the future is
+/// the box the service puts every request in, so this is a pointer to it and
+/// its vtable on every 64-bit target. It was 280, an `async fn` holding the
+/// request beside that box — and a guard on the pointer saw nothing while the
+/// boxed future behind it grew from 1904 bytes to 2544. What the box holds is
+/// guarded where the crate can name it, `router/dispatch/tests.rs`.
+const DISPATCH_FUTURE_BYTES: usize = 16;
 
 /// The record, for the middleware half: what one request costs at each depth a
 /// stack is mounted at, over interceptors that allocate nothing of their own.
@@ -439,24 +438,137 @@ fn a_layer_costs_the_same_wherever_it_sits() {
 /// dispatch answers before a chain exists.
 const FALLBACK_ENTRY: usize = 4;
 
+/// One unchecked `tower` layer that forwards and does nothing else, so what it
+/// costs is the escape hatch's own machinery.
+#[cfg(feature = "unchecked")]
+fn unchecked_1() -> Service<()> {
+    router()
+        .layer_unchecked(tower::layer::util::Identity::new())
+        .build(())
+        .expect("a describable router")
+}
+
+/// Two, so the second layer's cost is read apart from the first's.
+#[cfg(feature = "unchecked")]
+fn unchecked_2() -> Service<()> {
+    router()
+        .layer_unchecked(tower::layer::util::Identity::new())
+        .layer_unchecked(tower::layer::util::Identity::new())
+        .build(())
+        .expect("a describable router")
+}
+
+/// Every unchecked depth measured here, with what a request through it costs
+/// today, against the [`STACKED_ALONE`] five the static match costs without
+/// one.
+///
+/// Eight at depth one: the three past five are the continuation's one
+/// extension insert, the box the layer's erased service puts its future in,
+/// and the box the table is re-entered through past the last layer. It was
+/// eleven when each layer also allocated a closure and an insert of its own,
+/// the operation a closure, and the stand-in service a box around the future
+/// it handed on.
+#[cfg(feature = "unchecked")]
+const UNCHECKED: [Stack; 2] = [(1, unchecked_1, 8), (2, unchecked_2, 9)];
+
+/// What each unchecked layer past the first adds: the box its erased service's
+/// future is put in, and nothing else, because the continuation is advanced in
+/// place rather than inserted again.
+#[cfg(feature = "unchecked")]
+const UNCHECKED_PER_LAYER: usize = 1;
+
+/// The record for unchecked layers. Exact rather than a ceiling, so a
+/// per-request allocation added under them turns this red, and so does a
+/// saving left unrecorded.
+#[cfg(feature = "unchecked")]
+#[test]
+fn an_unchecked_layer_allocates_what_is_recorded_here() {
+    for (depth, build, recorded) in UNCHECKED {
+        let counted = counted(&build(), STACKED, STACKED_STATUS);
+        assert_eq!(
+            counted, recorded,
+            "a request through {depth} unchecked layer(s) allocated {counted} \
+             times against a recorded {recorded}"
+        );
+    }
+}
+
+/// The relation the record holds, and the one that survives a change to
+/// either row: a second unchecked layer costs its own future's box alone, with
+/// no insert or closure for the continuation it passes on.
+#[cfg(feature = "unchecked")]
+#[test]
+fn a_second_unchecked_layer_costs_only_its_own_future() {
+    let [(_, one, _), (_, two, _)] = UNCHECKED;
+    let (d1, d2) = (
+        counted(&one(), STACKED, STACKED_STATUS),
+        counted(&two(), STACKED, STACKED_STATUS),
+    );
+
+    assert_eq!(
+        d2,
+        d1 + UNCHECKED_PER_LAYER,
+        "a second unchecked layer added {} allocation(s) against a recorded \
+         {UNCHECKED_PER_LAYER} (d1 = {d1}, d2 = {d2})",
+        d2.saturating_sub(d1)
+    );
+}
+
+/// An observer that records nothing, so what one costs is the router's
+/// machinery for observing rather than the work an observer does.
+struct Unheard;
+
+impl Observer<()> for Unheard {
+    fn on_request(&self, request: &Request, route: Option<Route<'_>>, context: &()) {
+        let _ = (request, route, context);
+    }
+
+    fn on_response(&self, response: &Response, route: Option<Route<'_>>, elapsed: Duration) {
+        let _ = (response, route, elapsed);
+    }
+}
+
+/// What mounting an observer adds to a request, past the [`STACKED_ALONE`]
+/// five: the one box the response body is erased into again so a peer leaving
+/// mid-response is reported, which holds the disconnect report inline. It was
+/// two when that report was boxed beside it.
+const OBSERVED: usize = 1;
+
+/// The record for an observer. Exact rather than a ceiling, for the reason
+/// [`an_unchecked_layer_allocates_what_is_recorded_here`] gives.
+#[test]
+fn an_observer_allocates_what_is_recorded_here() {
+    let observed = router()
+        .observe(Unheard)
+        .build(())
+        .expect("a describable router");
+    let counted = counted(&observed, STACKED, STACKED_STATUS);
+
+    assert_eq!(
+        counted,
+        STACKED_ALONE + OBSERVED,
+        "a request under one observer allocated {counted} times against a \
+         recorded {}",
+        STACKED_ALONE + OBSERVED
+    );
+}
+
 /// The other half of what a layer costs: the width of the future
 /// [`Service::call`] returns, and that a chain in front of it adds nothing to
 /// that width.
 ///
-/// [`Service::call`] is an `async fn` over an erased dispatcher, so the stack
-/// is gone from the type before any caller sees a future: all three depths
-/// produce one future type, which is the only reason the array below compiles.
-/// **That compile is the whole of the depth-invariance assertion**, so nothing
-/// below re-states it as an equality that could not fail.
+/// [`Service::call`] hands back the future of an erased dispatcher, so the
+/// stack is gone from the type before any caller sees a future: all three
+/// depths produce one future type, which is the only reason the array below
+/// compiles. **That compile is the whole of the depth-invariance assertion**,
+/// so nothing below re-states it as an equality that could not fail.
 ///
 /// The ceiling is the half that can fail, and it is a ratchet rather than a
 /// target: a future that widened would cost every in-flight request on the
-/// server, which no allocation count above can see. 280 bytes at every depth,
-/// and 280 at each of the two feature sets this target is built at on Linux
-/// (288 on macOS) — see
-/// [`DISPATCH_FUTURE_BYTES`] for the readings and for what the number does not
-/// cover. That is also the figure the request for this guard named, but it is
-/// recorded here because it was measured — a number carried over unmeasured
+/// server, which no allocation count above can see. 16 bytes at every depth
+/// and at each of the two feature sets this target is built at — see
+/// [`DISPATCH_FUTURE_BYTES`] for why, and for what the number does not cover.
+/// It is recorded because it was measured — a number carried over unmeasured
 /// would have pinned whatever it was guessed at, and been indistinguishable
 /// from this one when it was wrong.
 #[test]
@@ -481,6 +593,98 @@ fn a_chain_does_not_widen_the_dispatch_future() {
          {DISPATCH_FUTURE_BYTES}; every request in flight carries one, so \
          raising this ceiling is a change to docs/nfr.md"
     );
+}
+
+/// How wide the future an endpoint boxes for every matched request is allowed
+/// to be, for a handler that takes nothing: 320 bytes on Linux at both feature
+/// sets this target is built at, read as [`DISPATCH_FUTURE_BYTES`] is. It was
+/// 536, when `Endpoint::call` and the handler each kept a request of their
+/// own, and 808 before that, when an `async fn` around the handler's future
+/// kept a third.
+///
+/// Linux's alone, as a ceiling; [`an_endpoint_future_holds_one_request`]
+/// holds the relation everywhere.
+const ENDPOINT_FUTURE_BYTES: usize = 320;
+
+/// The same, for a handler whose last argument consumes a JSON body: 576 bytes
+/// on Linux, from 632 while the read collected through `http-body-util`'s
+/// collector, with its frame queue and trailer map, and 1528 before that, when
+/// each `async fn` from the endpoint down to the codec's read kept a request of
+/// its own. What it holds past [`ENDPOINT_FUTURE_BYTES`] is the read itself:
+/// the body, its first frame, and the buffer later frames are joined into.
+#[cfg(feature = "json")]
+const BODY_ENDPOINT_FUTURE_BYTES: usize = 576;
+
+/// The width of the future
+/// [`Endpoint::call`](kynos::router::endpoint::Endpoint::call) returns for an
+/// endpoint over `handler`, which is the future `DynEndpoint` boxes.
+fn endpoint_future_width<H, A>(handler: H) -> usize
+where
+    H: kynos::handler::Handler<(), A>,
+    A: 'static,
+{
+    use kynos::router::endpoint::{Endpoint, builder::EndpointBuilder};
+
+    let endpoint = EndpointBuilder::<(), _, _>::new(
+        kynos::openapi::Method::Get,
+        kynos::openapi::PathTemplate::parse("/ping").expect("a usable path template"),
+        handler,
+    );
+    let future = Endpoint::call(&endpoint, request(Method::GET, STACKED, None, b""), &());
+    size_of_val(&future)
+}
+
+/// Asserts an endpoint future of `width` bytes is narrower than `under`
+/// requests, and, on Linux, no wider than its recorded `ceiling`.
+fn assert_endpoint_future(width: usize, under: usize, ceiling: usize) {
+    let request = size_of::<Request>();
+    assert!(
+        width < under * request,
+        "the endpoint future is {width} bytes, room for {under} {request}-byte \
+         requests; something between the box and the handler keeps a copy of \
+         its own"
+    );
+    if cfg!(target_os = "linux") {
+        assert!(
+            width <= ceiling,
+            "the endpoint future is {width} bytes against a recorded \
+             {ceiling}; every matched request carries one, so raising this \
+             ceiling is a change to docs/nfr.md"
+        );
+    }
+}
+
+/// The future an endpoint boxes holds one request and no second: the endpoint
+/// splits the request before its future exists and lends the head to the
+/// handler, which lends it on to each extractor.
+///
+/// A request taken by value anywhere between the box and the handler would be
+/// a second, since a moved-from argument keeps its slot in every state of a
+/// coroutine. Measured on the public trait over the endpoint `ping` mounts.
+#[test]
+fn an_endpoint_future_holds_one_request() {
+    assert_endpoint_future(endpoint_future_width(ping), 2, ENDPOINT_FUTURE_BYTES);
+}
+
+/// Where the last argument consumes a body, the extractor is lent the head
+/// the endpoint owns and handed the body alone, rather than a request rebuilt
+/// for it, so the future holds one request beside the read.
+///
+/// The read is just over one request wide (see
+/// [`BODY_ENDPOINT_FUTURE_BYTES`]), so the relation is under three: one
+/// request kept whole anywhere on the way to the codec would cross it, as the
+/// first of the copies this future once held did.
+#[cfg(feature = "json")]
+#[test]
+fn a_body_extractor_s_endpoint_future_holds_one_request() {
+    async fn echo(
+        kynos::extract::body::json::Json(body): kynos::extract::body::json::Json<String>,
+    ) -> NoContent {
+        drop(body);
+        NoContent
+    }
+
+    assert_endpoint_future(endpoint_future_width(echo), 3, BODY_ENDPOINT_FUTURE_BYTES);
 }
 
 /// The instrument's own invariant, and the one every number below rests on: a
@@ -776,4 +980,48 @@ fn replayed(service: &Service<()>, target: &str, expected: StatusCode, described
         moved.len(),
         moved.first()
     );
+}
+
+/// Why no response presizes its header map: a sized map costs the blocks a
+/// grown one does.
+///
+/// `http`'s map keeps its index table and its entries apart, so the first
+/// `Content-Type` a codec writes costs two blocks however the map was built.
+/// That is two of the five `/nope` records in [`SHAPES`], and two of every
+/// codec's encoding row. Sizing could only trade bytes: below six fields the
+/// next step down holds three, and a compressed response already carries
+/// four, so it would grow and pay two blocks more
+/// ([`performance.md`](../../../docs/performance.md#the-allocation)).
+///
+/// A dependency's behaviour rather than Kynos's, held so that an `http` whose
+/// small map fits one block turns this red, which is when presizing becomes
+/// worth reopening.
+#[test]
+fn sizing_a_header_map_saves_no_block() {
+    fn first_field(build: impl FnOnce() -> HeaderMap) -> usize {
+        let ((allocations, reallocations, _), fields) = count_alloc(|| {
+            let mut fields = build();
+            fields.insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("text/plain; charset=utf-8"),
+            );
+            fields
+        });
+
+        drop(fields);
+        allocations + reallocations
+    }
+
+    let grown = first_field(HeaderMap::new);
+    assert_eq!(grown, 2, "a header map's first field cost {grown} blocks");
+
+    for capacity in 1..=6 {
+        let counted = first_field(|| HeaderMap::with_capacity(capacity));
+        assert_eq!(
+            counted, grown,
+            "a header map sized for {capacity} field(s) cost {counted} blocks \
+             for its first, where one grown from empty cost {grown}; presizing \
+             a response's map now saves a block, which is the case for doing it"
+        );
+    }
 }

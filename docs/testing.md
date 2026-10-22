@@ -59,7 +59,7 @@ constructor's number and a codec's cannot share a file with the routing path's.
 | [`reporting.rs`](../crates/kynos/tests/reporting.rs) | every public error type `kynos`'s own source declares — the build and startup failures an application reports from `main`, the rejections, and the refusals a constructor or reader returns — is `Error + Send + Sync + 'static`, and "every" is counted against that source: a sweep reads each `thiserror::Error` derive and `impl std::error::Error for` out of `crates/kynos/src/` and compares the types it finds with the ones witnessed and the private ones no caller can hold, so an error type added without a witness fails the build. The `kynos-openapi` error types re-exported as `kynos::openapi` are outside the sweep, which counts only `kynos`'s own declarations |
 | [`typed_uri.rs`](../crates/kynos/tests/typed_uri.rs) | a route attribute's `relative_uri` percent-encodes its parameters, refusing — by panic — an empty value and one that renders its segment as `.` or `..`, alone or with the template's literal affixes, `%2E` included, while rendering dots that make no dot segment; and that the hand-written fixture it encodes with describes what it encodes — a `Schema` body nothing executes cannot disagree with the `encode` beside it; and that a `Link` renders the same parameters under every prefix its target was mounted beneath, from a scope that is not the target's, while a router linking to an operation it does not mount, or through a prefix variable, refuses to build |
 | [`size.rs`](../crates/kynos/tests/size.rs) | a build failure does not inline a `Violation`, a `Result` costs no more than it, and which of the three bodies Kynos erases are zero-sized — the reasons `alloc_body.rs`'s counts read the way they do, filed here because a `size_of` needs no allocator |
-| [`alloc.rs`](../crates/kynos/tests/alloc.rs) | what the routing path allocates per route shape, that a replayed request costs what the first one did, and what one interceptor adds to a request, at stack depth 0/4/8, with the width of the future dispatch returns guarded beside it. It owns a `#[global_allocator]`, which is why it is a target of its own rather than a sibling `tests.rs`: installed in the library's unit-test binary the counter would reach every unit test in it. Its counting harness is [`tests/support/counting.rs`](../crates/kynos/tests/support/counting.rs), included by `#[path]` so a second counting target can own its own allocator without a second copy of the rationale. It also carries the two assertions that hold the *instrument* rather than the router, once for both counted targets — that a count is the measuring thread's alone, and that a driver which stopped counting reallocations, or fresh allocations, goes red |
+| [`alloc.rs`](../crates/kynos/tests/alloc.rs) | what the routing path allocates per route shape, that a replayed request costs what the first one did, and what one interceptor adds to a request, at stack depth 0/4/8, with the width of the future dispatch returns guarded beside it, and one characterization of a dependency rather than of Kynos: that `http`'s header map costs the same two blocks presized as grown, the premise for responses growing theirs. It owns a `#[global_allocator]`, which is why it is a target of its own rather than a sibling `tests.rs`: installed in the library's unit-test binary the counter would reach every unit test in it. Its counting harness is [`tests/support/counting.rs`](../crates/kynos/tests/support/counting.rs), included by `#[path]` so a second counting target can own its own allocator without a second copy of the rationale. It also carries the two assertions that hold the *instrument* rather than the router, once for both counted targets — that a count is the measuring thread's alone, and that a driver which stopped counting reallocations, or fresh allocations, goes red |
 | [`alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) | what erasing a body through `UnsyncBoxBody` costs: nothing for an empty body, which erases a zero-sized type, and one allocation for any body that does not. A second `#[global_allocator]` target, for the reason the first one is one; the zero-sized facts behind both numbers are size guards and live in `size.rs` |
 | [`alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) | what each opt-in payload codec adds to an operation that mounts it, against the same service's bodyless and transport floors — and how compression's cost grows with the body it holds. A further `#[global_allocator]` target rather than a second module of `alloc.rs`, because a `#[global_allocator]` is per process and each integration target is one process, installing the same counter `alloc.rs` does by including [`tests/support/counting.rs`](../crates/kynos/tests/support/counting.rs), so one driver decides what both files' numbers mean. It deliberately does not restate `work_on_another_thread_is_not_counted` |
 | [`conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs) | that the committed corpus is what this build emits, and that it still carries the 3.2 constructs it exists to pin — asserted against the committed *text*, since what a downstream repository reads is the file |
@@ -290,14 +290,14 @@ Three obligations hold whatever the kind.
 `--all-features`.** [`mise run test`](../mise.toml) passes `--all-features` and
 `features:check` passes `--no-dev-deps`, so
 [`mise run test:baseline`](../mise.toml) is the only task that builds a test
-target under `openapi31` alone — against every `openapi32` `#[cfg]` site in
-`kynos-openapi/src`. A feature gate no test build exercises is a gate whose
-off-state is unknown, and a suite that merely happens to pass at baseline holds
-by luck rather than by check.
+target with optional features off: it builds each crate's default set, in which
+`openapi32` and every flag outside the defaults are off — so against every
+`openapi32` `#[cfg]` site in `kynos-openapi/src`. A feature gate no test build
+exercises is a gate whose off-state is unknown, and a suite that merely happens
+to pass at baseline holds by luck rather than by check.
 
-That leaves three shapes a test target is built at — every feature on, the
-default set, and `openapi31` alone — and a target gated on one optional feature
-apiece is at none of them.
+That leaves two shapes a test target is built at — every feature on, and the
+default set — and a target gated on one optional feature apiece is at neither.
 [`alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) is that target: five
 modules, one codec each, over a shared harness gated on their disjunction, and
 [`cost/codec.rs`](../crates/kynos/cost/codec.rs), the fixture
@@ -464,11 +464,11 @@ halve.
 | Element | Named by | Named only in | Why a request cannot reach it |
 | --- | --- | --- | --- |
 | the emitted document | `Document` | `router/describe.rs`, `router/docs/render.rs`, `router/install.rs`, `router/mod.rs`, `router/service.rs`, `server/describe.rs`, `server/tls/document.rs`, `test/conformance.rs`, `test/mod.rs`, `unchecked/describe.rs` | every site builds it, annotates it, hands it back to the application, or takes it from a test to assert against. `docs::render::render` serializes it while the router is built, and `Published::publish` again after each `openapi_mut` edit, so the endpoint serving a description holds finished bytes rather than a `Document`. Two sites also serve a request, so for them the reason is an argument the rule does not check: `router/describe.rs` builds the per-request closure where the document is in scope and moves only the dispatch table into it, and `router/service.rs`'s `Service` owns the document, hands it to the application only through `Service::openapi`, and edits it only through `openapi_mut` -- at bind and at the tower conversion, both of which take the service by value, so no request is in flight |
-| the schema registry | `Registry::{new,default}` | `router/describe.rs` | the one registry a build mints is consumed by `describe`, which has finished before a service exists to accept a request |
+| the schema registry | `owned Registry` | `router/describe.rs`, `schema/registry.rs` | the one registry a build mints is consumed by `describe`, which has finished before a service exists to accept a request. `schema/registry.rs` defines the type and its two constructors, `new` and the derived `Default`, and holds no registry of its own |
 | the document validators | `Validator` | `router/describe.rs` | a description is validated where it is built. The build either fails or drops the validator, and nothing on the request path holds one to run |
 | the JSON Schema interpreter | `jsonschema` | `test/conformance.rs` | it is behind `test-util` and exists to check an observed response against the description. The request parser is the other projection of the same declaration and interprets no schema |
 | the `openapi31` feature | `not(feature = "openapi31")` | `lib.rs`, `crates/kynos-openapi/src/lib.rs` | nothing is conditional on it. Both sites are the `#[cfg(not(feature = "openapi31"))] compile_error!` that refuses a build without it, and the 3.1 object model it names is compiled unconditionally. What that model does is held by the document, registry and validator rows above, and a request reaches none of the three |
-| the `yaml` feature | `serde_norway`, `YamlError`, `feature = "yaml"` | `crates/kynos-openapi/src/emit/mod.rs`, `error/mod.rs` | `Document::to_yaml` is a method on the emitted document, reached only through `Service::openapi` after the build has finished. `Error::Yaml` carries the `YamlError` that emitter produced, and no framework site makes one otherwise |
+| the `yaml` feature | `serde_norway`, `YamlError`, `feature = "yaml"` | `crates/kynos-openapi/src/emit/{mod,yaml}.rs`, `error/mod.rs` | `Document::to_yaml` is a method on the emitted document, reached only through `Service::openapi` after the build has finished. `Error::Yaml` carries the `YamlError` that emitter produced, and no framework site makes one otherwise |
 | the `test-util` feature | `feature = "test-util"` | `lib.rs` | one gate, on `pub mod test`. What it compiles is the conformance harness, whose interpreter is the `jsonschema` row above |
 | the `uuid` feature | `uuid`, `feature = "uuid"` | `schema/impls/{mod,identifier}.rs` | its whole contribution is `impl Schema for Uuid`, whose `Schema::schema` takes the `&mut Registry` that only `describe` mints, and `impl ParamValue for Uuid`, a marker with no items |
 | the `time` feature | `feature = "time"` | `lib.rs`, `schema/impls/mod.rs` | it carries no types: enabled without a backend it is a `compile_error!`, which `features:check` probes. The two sites are the gate that says so and the module it would open; the cost is its backends' rows |
@@ -487,25 +487,33 @@ this:
   names, so a row reaching into another crate says where, and a site naming a
   crate that does not exist fails the row.
 - A *Named by* cell is a comma-separated list of backticked spellings: an
-  identifier or path, brace-expanding like the sites (`Registry::{new,default}`
-  holds both ways to mint one), or a `feature = "…"` gate, read as the `cfg`
-  predicate around it — `cfg!` included, since it compiles in every build and
+  identifier or path, brace-expanding like the sites; `owned T`, the type `T`
+  wherever it is named other than behind `&` or `&mut` or in a `use`; or a
+  `feature = "…"` gate, read as the `cfg` predicate around it — `cfg!`,
+  `std::cfg!` and `core::cfg!` included, since each compiles in every build and
   branches at run time.
 - A gate written `not(feature = "…")` holds only what the flag compiles by being
   off, which is the `openapi31` row's case. The offender scan is
   polarity-blind: a disallowed site naming the flag either way fails.
 - Spellings are matched over source with comments and inline `#[cfg(test)]`
   modules stripped — identifiers with string literals stripped too, gates with
-  them kept — so a mention no build compiles holds nothing.
+  them kept — so a mention no build compiles holds nothing. A literal that is a
+  path spelt as a string, such as `#[serde(with = "…")]`, is code and is kept
+  for identifiers as well.
 - Each spelling must name something in scope on its own, so a rename or a typo
   fails the build, and so does a cell the rule cannot read.
 - Name the shortest spelling unique in the workspace: an import removes a
   qualified path. Uniqueness is the writer's judgement, not the rule's.
 
-`Registry` — the type — is deliberately not a row. `Describe::request_body`
-takes `&mut Registry`, which puts the name in some eighty files by design, and a
-row admitting all of them would admit anything. The mint site is the stronger
-claim and the true one.
+The registry row is held by the type, owned. `Describe::request_body` takes
+`&mut Registry`, which puts the name in some eighty files by design, and a row
+admitting all of them would admit anything; a borrow holds a registry minted
+elsewhere, so it is not a site. Naming the constructors instead missed every
+mint that does not spell one — `Default::default()` into a `Registry` binding,
+or a derived `Default` on a struct holding one — and each of those writes the
+type by value somewhere. What no text rule sees is a mint the compiler infers
+into a borrow, `&mut Default::default()` passed where `&mut Registry` is taken;
+that is review's.
 
 The two rules above are the ones this instantiates. **The set is named where the
 set has names**: a failure reports which file names an off-path element, not

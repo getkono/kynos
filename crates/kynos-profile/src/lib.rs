@@ -24,8 +24,9 @@
 //! table with one thing changed; `src/app/mod.rs` says why.
 //! Where the element is an interceptor, the request carries what that
 //! interceptor acts on — an `Origin` for CORS, an `Accept-Encoding` for
-//! compression — since a row that never reaches its interceptor's work would
-//! count the interceptor declining rather than the interceptor.
+//! compression, an unsafe method with `Sec-Fetch-Site` for CSRF — since a row
+//! that never reaches its interceptor's work would count the interceptor
+//! declining rather than the interceptor.
 //!
 //! `CALIBRATION` is five more, and they are the shapes and stacks
 //! [`tests/alloc.rs`](../../kynos/tests/alloc.rs) already counts with
@@ -741,10 +742,13 @@ pub(crate) const INTERCEPTORS: &[Scenario] = &[
     row!(
         "csrf",
         interceptors::csrf,
-        || get("/json/small"),
+        || with(
+            post("/echo", echo_body()),
+            &[("sec-fetch-site", "same-origin")]
+        ),
         OK,
         Poll,
-        Some("json-small")
+        Some("echo-post")
     ),
     row!(
         "request-id-counter",

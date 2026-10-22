@@ -1,10 +1,19 @@
 use kynos_openapi::Schema as OpenApiSchema;
 
 use crate::{
-    extract::{body::binary::Binary, describe::RequestContent},
-    http::media::{OctetStream, Png},
+    extract::{FromRequest, body::binary::Binary, describe::RequestContent},
+    http::{
+        Request,
+        media::{OctetStream, Png},
+    },
     schema::registry::Registry,
 };
+
+/// Extracts `T` from `request`, as a handler's last argument is.
+async fn extract<T: FromRequest<()>>(request: Request) -> Result<T, T::Rejection> {
+    let (mut parts, body) = request.into_parts();
+    T::from_request(&mut parts, body, &()).await
+}
 
 /// Raw binary is described by what is *left out*, which is easy to get wrong in
 /// the direction of saying too much.
@@ -260,10 +269,7 @@ mod a_text_part_holds_only_its_own_octets {
 mod a_multipart_boundary_is_read_past_optional_whitespace {
     use crate::{
         error::rejection::BodyRejection,
-        extract::{
-            FromRequest,
-            body::multipart::{FromMultipart, MultipartForm, Part},
-        },
+        extract::body::multipart::{FromMultipart, MultipartForm, Part},
         http::{HeaderValue, Request, StatusCode, body::Body, header},
         schema::{Schema, registry::Registry},
     };
@@ -298,7 +304,7 @@ mod a_multipart_boundary_is_read_past_optional_whitespace {
         request
             .headers_mut()
             .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
-        MultipartForm::<Parts>::from_request(request, &())
+        super::extract::<MultipartForm<Parts>>(request)
             .await
             .map(|MultipartForm(parts)| parts)
     }
@@ -379,7 +385,7 @@ mod a_multipart_boundary_is_read_past_optional_whitespace {
             HeaderValue::from_static("multipart/form-data; boundary=x"),
         );
 
-        let MultipartForm(parts) = MultipartForm::<Parts>::from_request(request, &())
+        let MultipartForm(parts) = super::extract::<MultipartForm<Parts>>(request)
             .await
             .expect("a well-formed body");
 
@@ -423,12 +429,9 @@ mod a_multipart_boundary_is_read_past_optional_whitespace {
 mod a_part_disposition_is_read_quote_aware {
     use crate::{
         error::rejection::BodyRejection,
-        extract::{
-            FromRequest,
-            body::multipart::{
-                FromMultipart, MultipartForm, Part,
-                disposition::{self, Disposition},
-            },
+        extract::body::multipart::{
+            FromMultipart, MultipartForm, Part,
+            disposition::{self, Disposition},
         },
         http::{HeaderValue, Request, StatusCode, body::Body, header},
         schema::{Schema, registry::Registry},
@@ -468,7 +471,7 @@ mod a_part_disposition_is_read_quote_aware {
             header::CONTENT_TYPE,
             HeaderValue::from_static("multipart/form-data; boundary=x"),
         );
-        MultipartForm::<Names>::from_request(request, &())
+        super::extract::<MultipartForm<Names>>(request)
             .await
             .map(|MultipartForm(names)| names)
     }
@@ -648,7 +651,7 @@ mod a_form_body_decodes_what_it_describes {
 
     use crate::{
         error::rejection::BodyRejection,
-        extract::{FromRequest, body::form::Form},
+        extract::body::form::Form,
         http::{HeaderValue, Request, StatusCode, body::Body, header},
         schema::{Schema, registry::Registry},
     };
@@ -675,7 +678,7 @@ mod a_form_body_decodes_what_it_describes {
             header::CONTENT_TYPE,
             HeaderValue::from_static("application/x-www-form-urlencoded"),
         );
-        Form::<T>::from_request(request, &())
+        super::extract::<Form<T>>(request)
             .await
             .map(|Form(value)| value)
     }
@@ -800,8 +803,8 @@ mod a_form_body_decodes_what_it_describes {
 #[tokio::test]
 async fn a_protobuf_body_decodes_to_the_message_it_encodes() {
     use crate::{
-        extract::{FromRequest, body::protobuf::Protobuf},
-        http::{HeaderValue, Request, body::Body, header},
+        extract::body::protobuf::Protobuf,
+        http::{HeaderValue, body::Body, header},
     };
 
     #[derive(Clone, PartialEq, prost::Message)]
@@ -825,7 +828,7 @@ async fn a_protobuf_body_decodes_to_the_message_it_encodes() {
         HeaderValue::from_static("application/protobuf"),
     );
 
-    let Protobuf(message) = Protobuf::<Tagged>::from_request(request, &())
+    let Protobuf(message) = extract::<Protobuf<Tagged>>(request)
         .await
         .expect("a well-formed message");
 
@@ -840,8 +843,8 @@ async fn a_protobuf_body_decodes_to_the_message_it_encodes() {
 async fn a_protobuf_body_that_does_not_decode_is_a_syntax_rejection() {
     use crate::{
         error::rejection::BodyRejection,
-        extract::{FromRequest, body::protobuf::Protobuf},
-        http::{HeaderValue, Request, StatusCode, body::Body, header},
+        extract::body::protobuf::Protobuf,
+        http::{HeaderValue, StatusCode, body::Body, header},
     };
 
     // Field 1, varint wire type, and then no varint: the buffer ends first.
@@ -851,7 +854,7 @@ async fn a_protobuf_body_that_does_not_decode_is_a_syntax_rejection() {
         HeaderValue::from_static("application/protobuf"),
     );
 
-    let rejection = Protobuf::<()>::from_request(request, &())
+    let rejection = extract::<Protobuf<()>>(request)
         .await
         .expect_err("a truncated message");
 
@@ -902,7 +905,7 @@ mod an_undecoded_content_coding_is_refused {
         codings: &[&'static [u8]],
         body: &'static [u8],
     ) -> Option<BodyRejection> {
-        T::from_request(coded(content_type, codings, body), &())
+        super::extract::<T>(coded(content_type, codings, body))
             .await
             .err()
     }
@@ -1086,7 +1089,7 @@ mod two_content_type_lines_are_refused {
     ) -> Option<BodyRejection> {
         let mut request = Request::new(Body::from_bytes(bytes::Bytes::new()));
         *request.headers_mut() = headers(lines);
-        T::from_request(request, &()).await.err()
+        super::extract::<T>(request).await.err()
     }
 
     /// The pairs refused: the same line twice, and two different types the
@@ -1201,7 +1204,7 @@ mod an_optional_body_without_a_content_type {
 
     use crate::{
         error::rejection::BodyRejection,
-        extract::{FromRequest, body::text::Text},
+        extract::body::text::Text,
         http::{Request, body::Body},
     };
 
@@ -1229,7 +1232,7 @@ mod an_optional_body_without_a_content_type {
     }
 
     async fn read(body: Body) -> Result<Option<Text>, BodyRejection> {
-        Option::<Text>::from_request(Request::new(body), &()).await
+        super::extract::<Option<Text>>(Request::new(body)).await
     }
 
     /// Empty DATA frames are zero-length content, absent as the empty
@@ -1264,6 +1267,141 @@ mod an_optional_body_without_a_content_type {
             .expect_err("an unfinished body");
         assert!(
             matches!(rejection, BodyRejection::Syntax { .. }),
+            "{rejection:?}"
+        );
+    }
+}
+
+/// `limit::read`, the read under every buffering codec: a lone data frame is
+/// handed over as it arrived, several are joined, and the limit holds over
+/// their running total either way.
+mod a_body_is_read_whole_under_its_limit {
+    use std::{
+        collections::VecDeque,
+        pin::Pin,
+        task::{Context, Poll},
+    };
+
+    use bytes::Bytes;
+    use http_body::Frame;
+
+    use crate::{
+        error::rejection::BodyRejection,
+        extract::body::limit,
+        http::{
+            HeaderMap,
+            body::{Body, BoxError},
+        },
+    };
+
+    /// Frames yielded in turn, as a transport delivers them.
+    struct Frames(VecDeque<Result<Frame<Bytes>, BoxError>>);
+
+    impl http_body::Body for Frames {
+        type Data = Bytes;
+        type Error = BoxError;
+
+        fn poll_frame(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+        ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
+            Poll::Ready(self.get_mut().0.pop_front())
+        }
+    }
+
+    /// A data frame that arrived, as an item of a sequence that may also fail.
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "the item type of a frame sequence that may also fail"
+    )]
+    fn data(octets: &'static [u8]) -> Result<Frame<Bytes>, BoxError> {
+        Ok(Frame::data(Bytes::from_static(octets)))
+    }
+
+    fn body(frames: impl IntoIterator<Item = Result<Frame<Bytes>, BoxError>>) -> Body {
+        Body::from_body(Frames(frames.into_iter().collect()))
+    }
+
+    /// The one-frame body is the frame itself, same octets at the same
+    /// address: neither copied nor queued behind a collector.
+    #[tokio::test]
+    async fn a_lone_frame_is_handed_over_uncopied() {
+        let frame = Bytes::from_static(b"one frame");
+        let address = frame.as_ptr();
+
+        let read = limit::read(Body::from_bytes(frame), 64)
+            .await
+            .expect("within the limit");
+
+        assert_eq!(read, b"one frame".as_slice());
+        assert_eq!(read.as_ptr(), address, "the frame was copied");
+    }
+
+    /// Empty data frames and trailers around a lone data frame leave it a
+    /// lone frame, so it is still handed over uncopied.
+    #[tokio::test]
+    async fn empty_frames_and_trailers_do_not_join_a_lone_frame() {
+        static OCTETS: &[u8] = b"payload";
+        let read = limit::read(
+            body([
+                data(b""),
+                data(OCTETS),
+                data(b""),
+                Ok(Frame::trailers(HeaderMap::new())),
+            ]),
+            64,
+        )
+        .await
+        .expect("within the limit");
+
+        assert_eq!(read, OCTETS);
+        assert_eq!(read.as_ptr(), OCTETS.as_ptr(), "the frame was copied");
+    }
+
+    /// Several data frames come back joined, in arrival order.
+    #[tokio::test]
+    async fn several_frames_are_joined_in_order() {
+        let read = limit::read(body([data(b"ab"), data(b"cd"), data(b"e")]), 64)
+            .await
+            .expect("within the limit");
+
+        assert_eq!(read, b"abcde".as_slice());
+    }
+
+    /// The limit is on the running total, inclusive: frames summing to it are
+    /// read, and one octet more is the 413, whichever frame carries it.
+    #[tokio::test]
+    async fn the_limit_holds_over_the_running_total() {
+        let at = limit::read(body([data(b"abc"), data(b"de")]), 5).await;
+        assert_eq!(at.expect("exactly at the limit"), b"abcde".as_slice());
+
+        let past = limit::read(body([data(b"abc"), data(b"def")]), 5)
+            .await
+            .expect_err("one octet past the limit");
+        assert!(
+            matches!(past, BodyRejection::TooLarge { limit: 5 }),
+            "{past:?}"
+        );
+
+        let lone = limit::read(body([data(b"abcdef")]), 5)
+            .await
+            .expect_err("a lone frame past the limit");
+        assert!(
+            matches!(lone, BodyRejection::TooLarge { limit: 5 }),
+            "{lone:?}"
+        );
+    }
+
+    /// A transport failure after a frame arrived is the 400 quoting it, never
+    /// the octets that arrived passed off as the whole body.
+    #[tokio::test]
+    async fn a_failure_part_way_is_400() {
+        let rejection = limit::read(body([data(b"ab"), Err("reset".into())]), 64)
+            .await
+            .expect_err("an unfinished body");
+
+        assert!(
+            matches!(&rejection, BodyRejection::Syntax { detail } if detail == "reset"),
             "{rejection:?}"
         );
     }

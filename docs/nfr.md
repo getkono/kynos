@@ -240,8 +240,8 @@ decision.** DHAT over `alloc_counter_agreement.static_match`, the same request
 | 264 B | the handler's future, boxed again by the endpoint's terminal | **removed**: with no interceptors of its own an endpoint awaits the handler in place, inside the box its own future already has |
 | 16 B, 48 B → 88 B | `MatchedPath` and `Forwarded`, each its own extension | **merged**: the router inserts one record holding the matched path, the captures and the resolved origin, read back through `MatchedPath`, `Path`, `Forwarded` (an argument, or `Forwarded::of` from a `&Request`) and `ByClientAddress`; a capture's own insert goes the same way |
 | 32 B, 148 B | the extension map's box and its table, on first insert | **kept**: any extension costs them, and a request from the server already pays both for its `Connection` |
-| 1928 B → 1904 B | the dispatch future, boxed by `Service::call` | **kept, and characterized below** |
-| 920 B → 912 B | the endpoint's future, boxed by `DynEndpoint` | **kept**: it is the erasure every operation in one table needs |
+| 1928 B → 1904 B → 432 B | the dispatch future, boxed by `Service::call` | **kept, and narrowed below** |
+| 920 B → 912 B → 536 B → 320 B | the endpoint's future, boxed by `DynEndpoint` | **kept**: it is the erasure every operation in one table needs; narrowed below |
 
 **The origin is still resolved eagerly, and that is a decision.** Resolving it
 on first read instead would spare a request nothing reads it on, but it would
@@ -257,20 +257,57 @@ Program instructions for a static match fell from 1776 to 1561 against
 `master`'s own profile at the same host and toolchain, and by about 200 in
 every scenario that reaches a handler.
 
-**What the boxed dispatch future holds is mostly one request, several times.**
-This is the future `Service::call` boxes, not the 280-byte one it returns and
-[`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) guards.
-`-Zprint-type-sizes` puts its 1904 bytes at the `serve` future's 1640 plus the
-256 the service closure's `async move` block keeps for its own captures, with
-its state discriminant and padding making up the rest, and
-the 248-byte `Request` appears in it five times over: once as the closure's
-capture, once as `serve`'s and once as its local, once as `run`'s, and again
-inside `Next::run`. A moved-from capture keeps its slot in every state of a
-coroutine, so none of them overlap. `run` also reserves 728 bytes for the
-panic-recovery future whether or not the operation catches panics. Returning
-`serve`'s future from the closure instead of awaiting it inside another would
-drop the box to 1640 bytes and its `memcpy` with it; that is the next cut, and
-it is left for a change of its own so that its count is reviewed on its own.
+**The boxed dispatch future holds one request.** It is the future
+`Service::call` boxes, and it once held the 248-byte `Request` five times over:
+as the service closure's capture, as `serve`'s argument and its local, as
+`run`'s, and inside `Next::run`. A moved-from capture keeps its slot in every
+state of a coroutine, so none of them overlapped. It then grew from 1904 bytes
+to 2544 in the profile's build without any test noticing: running the root
+router's interceptors around every fallback (#559) made the fallback an
+`async fn` awaited from `serve`, with a copy of the request and a whole chain
+of its own, and that state became the widest the future kept. The guard in
+[`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) measured the future
+`Service::call` returned, an `async fn` holding the request beside a pointer
+to the box, which stayed 280 bytes throughout.
+
+`serve` now routes before its future exists, and that future awaits each chain
+in place rather than through another `async fn`; the chain, an unchecked
+layer's continuation and panic recovery are started on the call, and recovery
+boxes what it guards then, so a future that awaits it reserves a pointer. The
+closure returns `serve`'s future rather than awaiting it, and `Service::call`
+returns the box itself, so the request is routed, and every observer told,
+when it is called rather than when it is first polled. The box holds 432
+bytes, from 2208 in a Linux test build at rustc 1.97.1 at both feature sets,
+and the future a caller holds is the box's 16-byte pointer.
+[`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs)
+holds the box to under two requests everywhere and to its 432 on Linux, where
+only the crate can name it.
+
+**The endpoint's future holds one.** An endpoint splits the request before
+its future exists, so that future owns the head and is the only one holding
+it. It awaits its handler, through its own interceptors or recovery where it
+has them, in place, and the builder itself is its chain's terminal, so nothing
+the chain borrows is built per request. `Handler::call` is lent the head and
+handed the body, and lends the head on to each extractor; a body extractor's
+`FromRequest::from_request` takes the same pair rather than a request rebuilt
+for it. A handler taking nothing boxes 320 bytes, from 536 when
+`Endpoint::call` and the handler each kept a request of their own, and 808
+before that; one taking a JSON body boxes 632, from 1528 and 1800, and what it
+holds past the head is the codec's read: the collector buffering the body,
+with its frame queue and trailer map.
+[`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) holds the first to under
+two requests everywhere and to its 320 on Linux, and the second to under
+three, the read being just over one request wide, and to its 632. An endpoint
+with interceptors of its own still keeps the head beside the request it
+rebuilds for its chain, since `Next::run` takes a whole request; nothing
+guards that width.
+
+**The record of the matched route is kept as one insert.** `http::Extensions`
+boxes every value it holds and offers no way to reserve or reuse its table, so
+the record costs its own block, and the map's box and table on a request that
+carries no extension yet. A request from the server already carries
+`Connection`, so there only the record's block is the router's. Avoiding it
+means resolving on first read, which the decision on the origin above refuses.
 
 **A path's first 405 allocates once more than its later ones, and that is
 `bytes`, not Kynos.** The `Allow` value is built once per path at
@@ -387,13 +424,13 @@ belongs with [`security.md`](security.md) rather than here.
 | correctness | Emitted document ⊇ observable responses | [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) checking live responses against the generated document across the owned-layer matrix, in both directions | `partial`: statuses and bodies are held both ways, but a header is checked only as declared-required ⊆ sent, so a response header the document never declares is not reported ([`TestClient::assert_conformance`](../crates/kynos/src/test/mod.rs)) |
 | correctness | A short circuit's description declares the body it sends, and declares none only where it sends none | `every_short_circuit_declares_the_content_it_sends` in [`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs) driving every constructible implementation against `every_short_circuit_kynos_ships_is_accounted_for`'s set, plus the declaration-of-none check in [`test/conformance.rs`](../crates/kynos/src/test/conformance.rs) that [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) runs over a live exchange | `enforced` |
 | correctness | Two interceptors covering one operation never add one response header or answer with one status | `CompatibleWith` forced at every mount site, with a `trybuild` case per scope in [`tests/ui/antipattern/`](../crates/kynos/tests/ui/antipattern/) and a pass control for each | `enforced` for what the two sides declare; the two rows below are where a declaration is missing |
-| correctness | The check does not depend on the order the scopes were written in | The five `*_collide` cases mount a scope *before* the interceptor that conflicts with it, which is the order that used to compile | `enforced`; this row is why the one above is not a restatement |
+| correctness | The check does not depend on the order the scopes were written in | `endpoint_interceptor_then_router_interceptor_collide`, `group_interceptor_then_router_interceptor_collide` and `group_mount_then_group_intercept_collide` mount a scope *before* the interceptor that conflicts with it, which is the order that used to compile | `enforced`; this row is why the one above is not a restatement |
 | correctness | An interceptor attaches exactly the header group it declared, and that group writes only the names it declared | `with_headers` on `Continued<()>` alone, pinned by `interceptor_attaches_an_undeclared_header`; the encode-subset `debug_assert` in the one writer, pinned by `a_group_encoding_an_undeclared_field_is_refused` | `enforced` in debug; the assert is compiled out of release |
 | correctness | An endpoint-scoped interceptor reaching a router through an `Endpoints` collection is checked | — | `absent`, and recorded in [`middleware.md`](middleware.md#what-the-compile-time-check-still-cannot-see): a collection erases what its members carry, and a build-time backstop would need a declaration method on the public `Endpoint` trait — the `contribution` method the design refuses. Use `routes!`. |
-| correctness | Two interceptors covering one operation never write one response header when either writes it from a short circuit | — | `by-design`, and recorded in [`middleware.md`](middleware.md#what-the-framework-computes-and-what-it-does-not): a `Short` response's headers are in no `const`, so `Retry-After` written from a 429 is compared against nothing. A `HEADERS` const on `ShortCircuit` is what would close it, and `#[derive(ApiError)]` could not derive one from an `IntoResponse` body — the `contribution` method the design refuses. Unreachable with what Kynos ships: only one short circuit answers a request |
+| correctness | Two interceptors covering one operation never write one response header when either writes it from a short circuit | — | `by-design`, and recorded in [`middleware.md`](middleware.md#what-the-framework-computes-and-what-it-does-not): a `Short` response's headers are in no `const`, so `Retry-After` written from a 429 is compared against nothing. A `HEADERS` const on `ShortCircuit` is what would close it, and on a `ShortCircuit` written by hand beside its own `IntoResponse` it would be a declaration beside the behaviour — the `contribution` method the design refuses. Unreachable with what Kynos ships: only one short circuit answers a request |
 | correctness | Contribution composition is order-sensitive and deterministic | Permuted stacks produce differing, stable documents | `planned` for the *document*; the composition **check** is no longer order-sensitive, which is the order-insensitivity row above |
 | reliability | `Opaque` propagates to every affected operation and omits none | Unit test over a synthetic router tree | `planned` |
-| performance | Added allocations = 1 per layer, held as an equality, and the dispatch future ≤ 280 bytes at any depth (288 on macOS) | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), counting one request through a no-op interceptor stack at depth 0/4/8 and reporting the marginal cost of a layer, plus a `size_of` ratchet on the future a driver holds | `enforced` |
+| performance | Added allocations = 1 per layer, held as an equality, and the dispatch future ≤ 16 bytes at any depth | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), counting one request through a no-op interceptor stack at depth 0/4/8 and reporting the marginal cost of a layer, plus a `size_of` ratchet on the future a driver holds | `enforced` |
 | performance | Per-layer added p99 ≤ TBD | `criterion` at stack depth 0/4/8 with a regression gate | `kynos-bench` |
 | performance | Compression's added allocations never fall as the body grows, and grow by no more than the 8 KiB reads the encoder's drain adds between one non-empty body size and the next; encoding a body the encoder engages on costs strictly more than declining to, with the empty body the baseline of that relation rather than a rung of the first; and what declining costs is a recorded constant rather than a held one | [`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs), over gzip, brotli and zstd at 0/1 KiB/16 KiB/256 KiB, engaged and not by `Accept-Encoding` on one mounted service | `enforced` |
 | correctness | A stored response is never served to a request its stored `Vary` does not select | [`middleware/cache/tests.rs`](../crates/kynos/src/middleware/cache/tests.rs) over the selection rules, plus [`tests/cache.rs`](../crates/kynos/tests/cache.rs) over a live sequence | `enforced` |
@@ -401,7 +438,7 @@ belongs with [`security.md`](security.md) rather than here.
 | correctness | A timeout answers a status the specification defines for an origin server | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) over a live handler past its budget, and [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) against the emitted document | `enforced` |
 | reliability | A streamed response body is bounded in time, both between frames and in total | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) over a stalled stream, a steady one as the control, and a deadline ending a stream that is still producing | `enforced` |
 | correctness | A Server-Sent Events keep-alive restarts an idle body timer rather than being invisible to it | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) over an event stream whose only frames are keep-alives | `enforced` |
-| security | A credential-bearing header is recorded as present and never by value | [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) sweeping the whole `REDACTED` list, with a control asserting an ordinary header still records its value | `enforced` |
+| security | A credential-bearing header is recorded as present and never by value | [`middleware/trace/tests.rs`](../crates/kynos/src/middleware/trace/tests.rs)'s `every_redacted_header_is_recorded_without_its_value` sweeping the whole `REDACTED` list, with a control asserting an ordinary header still records its value | `enforced` |
 | security | A `__Host-` or `__Secure-` cookie carries what its prefix promises, or does not render | [`response/cookie/tests.rs`](../crates/kynos/src/response/cookie/tests.rs) over both prefixes, the wrong case, and each refusal with a control | `enforced` |
 | correctness | A preflight permitting any header still names `authorization`, which no wildcard covers | [`cors/preflight/tests.rs`](../crates/kynos/src/middleware/cors/preflight/tests.rs) over the credentialed and uncredentialed answers | `enforced` |
 | correctness | A 304 is minted only from a 200, never from another 2xx | [`tests/cache.rs`](../crates/kynos/tests/cache.rs) over a 204 carrying a matching validator | `enforced` |
@@ -410,14 +447,14 @@ belongs with [`security.md`](security.md) rather than here.
 | security | A forwarding field is believed only where the application named the hop that wrote it | [`http/forwarded/tests.rs`](../crates/kynos/src/http/forwarded/tests.rs) over the hop, address and network policies including a forged chain, plus [`tests/rate_limit.rs`](../crates/kynos/tests/rate_limit.rs) asserting an unconfigured service ignores a claimed address | `enforced` |
 | security | An unsafe request a browser says came from another site is refused | [`csrf/tests.rs`](../crates/kynos/src/middleware/csrf/tests.rs) over every rule in order, including a trusted `Origin` admitted over `Sec-Fetch-Site: cross-site`, plus a live exchange in [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) | `enforced` |
 | correctness | Content-coding negotiation follows section 12.5.3, including the wildcard form of an identity refusal | [`middleware/compression/`](../crates/kynos/src/middleware/compression/) over a table of every rule the section states | `enforced` |
-| security | A response setting a cookie is never stored | `every_refusal_has_a_case` over the whole `Unstorable` set, counted against its variants | `enforced` |
+| security | A response setting a cookie is never stored | [`middleware/cache/tests.rs`](../crates/kynos/src/middleware/cache/tests.rs)'s `every_refusal_has_a_case` over the whole `Unstorable` set, counted against its variants | `enforced` |
 | correctness | A negotiated language is one the operation declares, and is stated on every response that negotiated one | [`response/language/tests.rs`](../crates/kynos/src/response/language/tests.rs) sweeping every range-and-tag pair over a closed alphabet against both RFC 4647 schemes transcribed independently, plus [`tests/description.rs`](../crates/kynos/tests/description.rs) for which statuses carry the field and [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) driving both arms against a live exchange | `enforced` |
 | correctness | A language tag is well-formed, and is not checked for existence | [`response/language/tests.rs`](../crates/kynos/src/response/language/tests.rs)'s `a_tag_naming_no_real_language_is_still_well_formed` | `by-design`, and argued in [`architecture.md`](architecture.md): the IANA Language Subtag Registry is a database only sampling can verify, and serving `zz-Qaaa-QM` the default costs a client what a request for `ja` already costs it |
 | dx | An offer discovered at run time can state its language, but cannot enumerate it | [`tests/description.rs`](../crates/kynos/tests/description.rs)'s `a_catalogue_no_const_can_name_still_declares_the_field_without_its_offer` | `partial`; `Languages::TAGS` is a `const` because `Describe` and `Responses` take no `self`, so a catalogue loaded from disk describes `Content-Language` as an unconstrained string. Closing this needs a second, weaker path in `Localized`, which would leave a reader unable to tell from a signature which one an operation used |
-| correctness | Both ways a header group reaches the wire write the same fields | [`response/headers.rs`](../crates/kynos/src/response/headers.rs) asserting the two paths *agree*, rather than asserting each | `enforced` |
+| correctness | Both ways a header group reaches the wire write the same fields | [`response/headers/tests.rs`](../crates/kynos/src/response/headers/tests.rs)'s `a_group_writes_the_same_fields_whichever_path_it_reaches_the_wire_by` asserting the two paths *agree*, rather than asserting each | `enforced` |
 | correctness | A re-encoded response states the length it actually sends | [`tests/middleware.rs`](../crates/kynos/tests/middleware.rs) over a handler that set its own length, comparing the stated value against the bytes received | `enforced` |
 | correctness | A response carrying a strong validator is never content-coded | [`tests/middleware.rs`](../crates/kynos/tests/middleware.rs)'s `partial` module, with the weakly tagged control differing in exactly the `W/` prefix | `enforced` |
-| correctness | An encoded stream decodes to exactly what the handler produced | [`compression/streaming.rs`](../crates/kynos/src/middleware/compression/streaming.rs) round-tripping a multi-frame body through both latency modes, and asserting the two modes differ in frame count and in size | `enforced` |
+| correctness | An encoded stream decodes to exactly what the handler produced | [`compression/streaming/tests.rs`](../crates/kynos/src/middleware/compression/streaming/tests.rs)'s `a_streamed_body_decodes_to_exactly_what_the_handler_produced` round-tripping a multi-frame body through both latency modes, and `interactive_sends_the_frames_as_they_arrive_and_throughput_does_not` and `interactive_costs_ratio` asserting the two modes differ in frame count and in size | `enforced` |
 | correctness | A stored content coding carries a validator of its own, and a range is calculated over the octets that were sent | [`tests/assets.rs`](../crates/kynos/tests/assets.rs) over a fixture holding real `.br`, `.gz` and `.zst` siblings: two representations get two tags, a resume across them is refused, and a 304 answers per representation | `enforced` |
 | correctness | A ranged representation is never held whole: a source is asked for a span and returns that span | [`response/range/source/tests.rs`](../crates/kynos/src/response/range/source/tests.rs), over a fake that records the widest span anything asked for | `enforced` |
 | correctness | A ranged delivery answers 200, 206, 304, 412 and 416 where RFC 9110 sections 13 and 14 say each belongs, and evaluates the conditions in section 13.2.2's order before the range | [`tests/ranged.rs`](../crates/kynos/tests/ranged.rs) over a source that is not a filesystem | `enforced` |
@@ -455,9 +492,9 @@ guarantee. It has already earned its keep twice — see
 
 **A layer costs one heap allocation and no future width.** A static match costs
 five allocations with no stack in front of it, nine behind four layers and
-thirteen behind eight; the future a driver holds is 280 bytes at every one of
-those depths, and at both feature sets that target is built at, on Linux;
-macOS lays the same future out in 288. The one
+thirteen behind eight; the future a driver holds is the 16-byte pointer to the
+box `Service::call` puts every request in, at every one of those depths and at
+both feature sets that target is built at. The one
 allocation is the object-safe form of `Interceptor` boxing the future it
 returns, which is the price of a heterogeneous chain fitting in one slice. Both
 figures are the measurement rather than the target, per
@@ -465,6 +502,29 @@ figures are the measurement rather than the target, per
 same wherever it sits — is what survives a change to either. This row is where
 the status of the split's counted half is read, rather than from the split
 paragraph in [Status](#status).
+
+**What that box holds is the interceptor's own future, and nothing else.**
+The erasure decodes `Reads` and calls `intercept` before boxing, and
+`Next::run` hands the request to the next layer when it is called rather than
+when it is polled, so neither keeps a copy of the request beside the
+interceptor's. A forwarding `async fn` interceptor boxes 376 bytes where it once
+boxed 1,056, four requests and more. The built-ins that read the request before
+the chain runs read it before building their future, which then holds what they
+read and the rest of the chain: `SetCookies` boxes 80 bytes, `SecurityHeaders`
+96, `Cors` 144, `RequestId` 208, `Compression` 376 and `Cache` 1,056, against
+1,328 to 9,912 before. `Compression` boxes an encode apart, so an encoded
+response pays one block more for gzip and zstd and a declined one carries no
+encoder state; brotli's encode was boxed already. The dispatch future
+`Service::call` boxes narrowed by the same mechanism, from 2,296 bytes to
+1,944, and has narrowed further since ([Routing](#routing)).
+Every width here is a Linux test build's at rustc 1.97.1;
+[`middleware/tests.rs`](../crates/kynos/src/middleware/tests.rs) holds the
+forwarding one and the four that only read the request as relations to the
+width of a `Request`, and `Compression`'s under 1 KiB. `Cache`'s, which keeps
+the request across its store's lookup, is held by no test. The
+cost of eagerness is that what `intercept` does before returning its future now
+runs when the layer outside it calls `Next::run`; recovery still covers it,
+which [`tests/panics.rs`](../crates/kynos/tests/panics.rs) holds.
 
 ## Runtime
 
@@ -558,8 +618,16 @@ is what it resolves, and the parsing beneath them is private.
 
 Splitting a module that declares *one* type and a pile of `impl` blocks costs
 nothing, because the type stays declared where it was and an inherent `impl` may
-sit in any module of the crate. That is why `router/`, `emit/downgrade/` and
-`derive/schema/` were split and the rest were not.
+sit in any module of the crate. That is why `router/`, `emit/downgrade/`,
+`derive/schema/` and `unchecked/` were split: `unchecked.rs` keeps its types and
+the `tower` bridge, and the `impl` blocks registering a waiver sit in a private
+`unchecked/route.rs`. Its other child, `unchecked/describe.rs`, left for a
+different reason: `docs/testing.md`'s off-path table allows a `Document` per
+file, and `unchecked.rs` serves requests. `derive/api_error/` and
+`derive/security_scheme/` were split because each held two concerns, a derive's
+attribute grammar and the code that expands it, and since nothing in
+`kynos-macros` is public but the derives, the split cost no path. The rest were
+not.
 
 `middleware/limits/` was split at the path cost, because it was never one
 family: four interceptors sharing no type, each with its own response and its
@@ -637,7 +705,7 @@ longer one. What pushed it over was `Examples::as_inline` and
 splitting the builder from what it builds would turn `server::Server` into
 `server::builder::Server`. What pushed it over was one more setter,
 `request_body_idle_timeout`, whose documentation is the part a caller reads
-before choosing `None`; the timer itself lives in `middleware/limits/`.
+before choosing `None`; the timer itself lives in `server/request_body.rs`.
 
 `server/connection.rs` is private, so a split would cost no path, and it is
 still one concern: handing hyper one accepted socket and deciding when to stop.
@@ -741,7 +809,7 @@ member's name, and one ending in `/` is a tree.
 | compatibility | `socket2` is named only in `server/tcp.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `h2` and `httparse` are never named | `mise run containment:check` | `enforced` |
 | compatibility | `tower`, `tower-layer` and `tower-service` are named only in `unchecked.rs` and under `unchecked/` | `mise run containment:check` | `enforced` |
-| compatibility | `http-body` and `http-body-util` are named only in `http/body.rs`, `http/body/watched.rs`, `middleware/cache/mod.rs`, `response/range/source.rs`, `router/dispatch.rs`, `server/request_body.rs` and `test/mod.rs`, and under `extract/body/`, `middleware/compression/`, `middleware/decompression/` and `middleware/limits/` | `mise run containment:check` | `enforced` |
+| compatibility | `http-body` and `http-body-util` are named only in `http/body.rs`, `http/body/watched.rs`, `middleware/cache/mod.rs`, `response/range/source.rs`, `server/request_body.rs` and `test/mod.rs`, and under `extract/body/`, `middleware/compression/` and `middleware/limits/` | `mise run containment:check` | `enforced` |
 | compatibility | `async-compression` is named only under `middleware/compression/` and `middleware/decompression/` | `mise run containment:check` | `enforced` |
 | compatibility | `serde_html_form` is named only in `extract/body/form.rs`, `response/codec/form.rs` and `test/mod.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `tracing` is named only under `server/` and in `middleware/trace.rs` | `mise run containment:check` | `enforced` |

@@ -87,7 +87,18 @@ where
     /// ```
     ///
     /// The refusal holds on each path that reaches the pair on its own:
-    /// describing the route,
+    /// listing its media types,
+    ///
+    /// ```compile_fail
+    /// use kynos::{
+    ///     extract::{body::{OneOf, binary::Binary, json::Json}, describe::RequestContent},
+    ///     http::media,
+    /// };
+    ///
+    /// OneOf::<Json<u64>, Binary<media::Json>>::media_types();
+    /// ```
+    ///
+    /// describing the route, the pair alone or one side nested in a `OneOf`,
     ///
     /// ```compile_fail
     /// use kynos::{
@@ -97,6 +108,16 @@ where
     /// };
     ///
     /// OneOf::<Json<u64>, Binary<media::Json>>::request_body(&mut Registry::new());
+    /// ```
+    ///
+    /// ```compile_fail
+    /// use kynos::{
+    ///     extract::{body::{OneOf, binary::Binary, json::Json, text::Text}, describe::RequestContent},
+    ///     http::media,
+    ///     schema::registry::Registry,
+    /// };
+    ///
+    /// OneOf::<OneOf<Text, Json<u64>>, Binary<media::Json>>::request_body(&mut Registry::new());
     /// ```
     ///
     /// and extracting the body:
@@ -113,9 +134,10 @@ where
     ///     http::{Request, media},
     /// };
     ///
-    /// let request = Request::new(kynos::http::body::Body::empty());
+    /// let (mut parts, body) = Request::new(kynos::http::body::Body::empty()).into_parts();
     /// let extract = <OneOf<Json<u64>, Binary<media::Json>> as FromRequest<()>>::from_request(
-    ///     request,
+    ///     &mut parts,
+    ///     body,
     ///     &(),
     /// );
     /// let _ = pin!(extract).poll(&mut Context::from_waker(Waker::noop()));

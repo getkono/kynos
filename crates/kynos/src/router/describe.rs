@@ -33,6 +33,13 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// # Errors
     ///
     /// Returns [`Error::Invalid`] if the router cannot be described at all.
+    ///
+    /// Before any of that, returns [`Error::Middleware`] for an interceptor
+    /// configured with a combination it cannot honour, [`Error::Link`] for a
+    /// `Link` to an operation no URI can be rendered for, and
+    /// [`Error::Schema`], [`Error::KeyPattern`] or [`Error::Contribution`] for a
+    /// component name, map key `pattern` or security scheme the registry
+    /// refuses.
     pub fn validate(&self) -> Result<Vec<Violation<RouterError>>>
     where
         C: 'static,
@@ -55,6 +62,13 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// violation, so a misleading description is never emitted. Also returns
     /// it, in every build, for a key without the `x-` prefix in any object's
     /// `extensions`, such as the `Info` given to [`info`](Router::info).
+    ///
+    /// Before any of that, returns [`Error::Middleware`] for an interceptor
+    /// configured with a combination it cannot honour, [`Error::Link`] for a
+    /// `Link` to an operation no URI can be rendered for, and
+    /// [`Error::Schema`], [`Error::KeyPattern`] or [`Error::Contribution`] for a
+    /// component name, map key `pattern` or security scheme the registry
+    /// refuses.
     pub fn openapi(&self) -> Result<Document>
     where
         C: 'static,
@@ -74,6 +88,13 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// Returns [`Error::Invalid`] on a validation error, or if the API uses a
     /// construct `version` cannot express — a Server-Sent Events response
     /// requested as 3.1, say.
+    ///
+    /// Before any of that, returns [`Error::Middleware`] for an interceptor
+    /// configured with a combination it cannot honour, [`Error::Link`] for a
+    /// `Link` to an operation no URI can be rendered for, and
+    /// [`Error::Schema`], [`Error::KeyPattern`] or [`Error::Contribution`] for a
+    /// component name, map key `pattern` or security scheme the registry
+    /// refuses.
     pub fn openapi_as(&self, version: SpecVersion) -> Result<Document>
     where
         C: 'static,
@@ -91,6 +112,13 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// # Errors
     ///
     /// Returns [`Error::Invalid`] with every violation found.
+    ///
+    /// Before any of that, returns [`Error::Middleware`] for an interceptor
+    /// configured with a combination it cannot honour, [`Error::Link`] for a
+    /// `Link` to an operation no URI can be rendered for, and
+    /// [`Error::Schema`], [`Error::KeyPattern`] or [`Error::Contribution`] for a
+    /// component name, map key `pattern` or security scheme the registry
+    /// refuses.
     pub fn build(self, context: C) -> Result<Service<C>>
     where
         C: Send + Sync + 'static,
@@ -199,9 +227,10 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             implemented,
         });
 
+        // `serve`'s own future, not one awaiting it: a wrapper would box a
+        // second copy of the request beside the first.
         let service = Service::new(document, move |request| {
-            let dispatch = Arc::clone(&dispatch);
-            async move { dispatch.serve(request).await }
+            Arc::clone(&dispatch).serve(request)
         });
         #[cfg(feature = "docs")]
         let service = service.with_published(published);
