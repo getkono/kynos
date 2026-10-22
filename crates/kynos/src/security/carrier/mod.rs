@@ -192,7 +192,7 @@ impl ApiKey {
 ///
 /// When an `Authorization` field is present and is not a bearer credential:
 /// two such fields, a value that is not visible ASCII, an empty scheme, a
-/// different scheme, or no token.
+/// different scheme, no token, or a token outside the `b64token` grammar.
 pub fn bearer(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
     let Some(authorization) = parse::authorization(parts)? else {
         return Ok(None);
@@ -204,11 +204,21 @@ pub fn bearer(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
         return Err(AuthRejection::unauthenticated());
     }
 
-    if authorization.credentials.is_empty() {
+    if !is_b64token(authorization.credentials) {
         return Err(AuthRejection::unauthenticated());
     }
 
     Ok(Some(BearerToken(authorization.credentials.to_owned())))
+}
+
+/// Whether `token` is an RFC 6750 section 2.1 `b64token`:
+/// `1*( ALPHA / DIGIT / "-" / "." / "_" / "~" / "+" / "/" ) *"="`.
+fn is_b64token(token: &str) -> bool {
+    let body = token.trim_end_matches('=');
+    !body.is_empty()
+        && body.bytes().all(|b| {
+            b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~' | b'+' | b'/')
+        })
 }
 
 /// Reads a user-id and password, per RFC 7617.
