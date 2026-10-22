@@ -247,6 +247,47 @@ async fn a_released_slot_is_available_to_the_next_request() {
     }
 }
 
+/// One with a body to send, so its response is in flight until that body is.
+#[kynos::get("/described")]
+async fn described() -> kynos::extract::body::text::Text {
+    kynos::extract::body::text::Text("the representation".to_owned())
+}
+
+/// A request is in flight until its response body has been sent, not only
+/// until its head is ready: a slot freed at the head would let a stream of
+/// long-lived bodies run uncapped.
+#[tokio::test]
+async fn a_slot_is_held_until_the_response_body_is_done() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![described, prompt])
+        .intercept(Concurrency::new(one()))
+        .build(())
+        .expect("a describable router");
+
+    let request = |path: &str| {
+        let mut request = kynos::http::Request::new(kynos::http::body::Body::empty());
+        *request.uri_mut() = path.parse().expect("a usable request target");
+        request
+    };
+
+    // The head is back and its body not yet read.
+    let sending = service.call(request("/described")).await;
+    assert_eq!(sending.status(), StatusCode::OK);
+
+    assert_eq!(
+        get(&service, "/prompt").call().await.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "the slot was released while the first response's body was still unsent"
+    );
+
+    // Dropping the body ends the response, and frees the slot.
+    drop(sending);
+    assert_eq!(
+        get(&service, "/prompt").call().await.status,
+        StatusCode::NO_CONTENT
+    );
+}
+
 /// A router's own limit covers its fallback too, so an oversized body to a
 /// path no operation declares is refused 413 before the 404 is reached; the
 /// same limit on a group covers only that group's operations, and the same
