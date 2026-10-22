@@ -182,6 +182,9 @@ pub trait RateLimitPolicy<C>: Send + Sync + 'static {
     /// The quota policies this limiter advertises, in report order.
     ///
     /// Borrowed, since they are configuration read once per response.
+    // The `Vec::leak(Vec::new())` mutant is this empty slice spelled another
+    // way, so no test can tell the two apart.
+    #[cfg_attr(test, mutants::skip)]
     fn advertised(&self) -> &[QuotaPolicy] {
         &[]
     }

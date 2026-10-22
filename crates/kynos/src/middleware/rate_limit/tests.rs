@@ -886,6 +886,57 @@ fn a_joined_key_is_exempt_when_either_half_is() {
     assert_eq!(partition_of(&And(exempt, b()), &[]), None);
 }
 
+/// A closure is a key: the partition it returns is the one counted against.
+#[test]
+fn a_closure_keys_by_the_partition_it_returns() {
+    let tenant = |_: &crate::http::Request,
+                  _: Route<'_>,
+                  (): &()|
+     -> Option<std::borrow::Cow<'static, str>> { Some("tenant:acme".into()) };
+
+    assert_eq!(partition_of(&tenant, &[]).as_deref(), Some("tenant:acme"));
+}
+
+/// The peer key names the connection's IP and not its port, so a client's
+/// every connection shares one bucket and another client's does not; a request
+/// that arrived on no socket counts against the shared `peer:none` bucket.
+#[test]
+fn the_peer_key_names_the_peer_ip() {
+    use crate::extract::connection::Connection;
+
+    let from = |peer: &str| {
+        let mut request = crate::http::Request::new(Body::empty());
+        request.extensions_mut().insert(Connection::from_peer(
+            peer.parse().expect("a socket address"),
+            "192.0.2.2:443".parse().expect("a socket address"),
+        ));
+        super::key::RateLimitKey::<()>::partition(
+            &super::key::ByPeerAddress,
+            &request,
+            Route::new("/counted", "counted", Method::Get),
+            &(),
+        )
+        .map(std::borrow::Cow::into_owned)
+    };
+
+    assert_eq!(
+        from("203.0.113.7:50000").as_deref(),
+        Some("peer:203.0.113.7")
+    );
+    assert_eq!(
+        from("203.0.113.7:50001").as_deref(),
+        Some("peer:203.0.113.7")
+    );
+    assert_eq!(
+        from("[2001:db8::1]:50000").as_deref(),
+        Some("peer:2001:db8::1")
+    );
+    assert_eq!(
+        partition_of(&super::key::ByPeerAddress, &[]).as_deref(),
+        Some("peer:none")
+    );
+}
+
 /// Each named constructor advertises the window its name says.
 #[test]
 fn each_named_quota_advertises_the_window_its_name_says() {
