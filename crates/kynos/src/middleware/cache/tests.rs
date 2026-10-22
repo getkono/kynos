@@ -826,3 +826,65 @@ fn a_variant_is_the_same_one_when_one_request_selects_both() {
     );
     assert!(stored(&["accept-language"], &[]).same_variant(&stored(&["accept-language"], &[])));
 }
+
+/// A stored response recorded at `at`, fresh for `freshness`, varying on
+/// `vary`.
+fn recorded(
+    at: std::time::SystemTime,
+    vary: &[&str],
+    freshness: Duration,
+) -> super::store::StoredResponse {
+    super::store::StoredResponse::recorded_at(
+        at,
+        StatusCode::OK,
+        HeaderMap::new(),
+        bytes::Bytes::new(),
+        vary.iter().map(|name| (*name).to_owned()).collect(),
+        &HeaderMap::new(),
+        freshness,
+    )
+}
+
+/// A store reads back the field names a response varied on, in the order it
+/// was given them, since `CacheStore::put` replaces by them.
+#[test]
+fn a_stored_response_reports_the_names_it_varied_on() {
+    let stored = recorded(
+        std::time::SystemTime::now(),
+        &["accept", "accept-language"],
+        Duration::from_secs(60),
+    );
+
+    assert_eq!(stored.vary(), ["accept", "accept-language"]);
+}
+
+/// RFC 9111 section 4.2 has a response fresh while `freshness_lifetime >
+/// current_age`, so it is stale from the instant its age reaches its lifetime,
+/// a second earlier being the control; its age is the time since it was
+/// recorded, and a clock stepped back before that is an age of zero.
+#[test]
+fn a_stored_response_is_stale_from_the_instant_its_age_reaches_its_lifetime() {
+    let at = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+    let lifetime = Duration::from_secs(60);
+    let stored = recorded(at, &[], lifetime);
+
+    assert_eq!(stored.age_at(at + lifetime), lifetime);
+    assert_eq!(stored.age_at(at - Duration::from_secs(1)), Duration::ZERO);
+    assert!(stored.is_fresh_at(at + lifetime - Duration::from_secs(1)));
+    assert!(!stored.is_fresh_at(at + lifetime));
+}
+
+/// The age a hit reports is measured from the clock: an hour after it was
+/// recorded, a response is at least an hour old and no longer fresh.
+#[test]
+fn a_stored_response_ages_from_when_it_was_recorded() {
+    let hour = Duration::from_secs(3_600);
+    let at = std::time::SystemTime::now()
+        .checked_sub(hour)
+        .expect("a clock an hour past its epoch");
+    let stored = recorded(at, &[], hour);
+
+    assert!(stored.age() >= hour, "{:?}", stored.age());
+    assert!(!stored.is_fresh());
+    assert!(recorded(std::time::SystemTime::now(), &[], hour).is_fresh());
+}

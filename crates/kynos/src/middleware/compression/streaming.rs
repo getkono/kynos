@@ -266,6 +266,9 @@ impl HttpBody for Streamed {
 
     /// Unknown until the encoding finishes, so the driver frames the response
     /// per RFC 9112 section 6.1 rather than with a `Content-Length`.
+    // The `Default::default()` mutant is this body spelled another way, so no
+    // test can tell the two apart.
+    #[cfg_attr(test, mutants::skip)]
     fn size_hint(&self) -> SizeHint {
         SizeHint::default()
     }
