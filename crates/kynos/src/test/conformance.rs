@@ -183,10 +183,12 @@ fn validate(document: &Document, schema: &kynos_openapi::Schema, instance: &Valu
 /// The `paths` key this request matched, or `None` when the description
 /// declares no path it could have reached.
 ///
-/// Between matching templates, a literal segment beats a variable at the first
-/// position where they differ, read left to right, as in the router's matcher;
-/// document order breaks a tie, which only templates the router would refuse
-/// as conflicting can reach.
+/// Between matching templates, the first position where their segments rank
+/// differently decides, read left to right, as in the router's matcher: a
+/// literal beats a segment mixing an expression with literal text, which beats
+/// a whole-segment variable, and between two mixed segments the longer literal
+/// text wins. Document order breaks a tie, which only templates the router
+/// would refuse as conflicting can reach.
 pub(super) fn matched_template<'d>(document: &'d Document, path: &str) -> Option<&'d str> {
     let path = path.split(['?', '#']).next().unwrap_or(path);
 
@@ -201,26 +203,41 @@ pub(super) fn matched_template<'d>(document: &'d Document, path: &str) -> Option
 }
 
 /// Whether `candidate` takes priority over `incumbent`, two templates matching
-/// the same path: the first segment where one is a literal and the other a
-/// variable goes to the literal.
+/// the same path: the first segment where the two rank differently goes to the
+/// higher.
 fn outranks(candidate: &str, incumbent: &str) -> bool {
     candidate
         .split('/')
         .zip(incumbent.split('/'))
-        .find_map(
-            |(candidate, incumbent)| match (is_variable(candidate), is_variable(incumbent)) {
-                (false, true) => Some(true),
-                (true, false) => Some(false),
-                _ => None,
-            },
-        )
-        .unwrap_or(false)
+        .map(|(candidate, incumbent)| rank(candidate).cmp(&rank(incumbent)))
+        .find(|ordering| ordering.is_ne())
+        .is_some_and(std::cmp::Ordering::is_gt)
+}
+
+/// How the router ranks a template segment against another in its position.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Rank {
+    /// A segment holding an expression, by the length of its literal text:
+    /// zero for a whole-segment variable, more for a mixed segment.
+    Variable(usize),
+    /// A segment holding no expression.
+    Literal,
+}
+
+/// The rank of one template segment.
+fn rank(segment: &str) -> Rank {
+    if segment.contains('{') {
+        // A literal run, then an expression name, alternately.
+        Rank::Variable(segment.split(['{', '}']).step_by(2).map(str::len).sum())
+    } else {
+        Rank::Literal
+    }
 }
 
 /// Whether a concrete path is an instance of a template.
 ///
 /// Segment by segment, since a [`PathTemplate`](kynos_openapi::PathTemplate)
-/// expression always spans a whole segment.
+/// expression never spans a `/`.
 fn template_matches(template: &str, path: &str) -> bool {
     let mut expected = template.split('/');
     let mut actual = path.split('/');
@@ -229,12 +246,7 @@ fn template_matches(template: &str, path: &str) -> bool {
         match (expected.next(), actual.next()) {
             (None, None) => return true,
             (Some(expected), Some(actual)) => {
-                if is_variable(expected) {
-                    // A variable matches a non-empty segment.
-                    if actual.is_empty() {
-                        return false;
-                    }
-                } else if expected != actual {
+                if !segment_matches(expected, actual) {
                     return false;
                 }
             }
@@ -243,9 +255,39 @@ fn template_matches(template: &str, path: &str) -> bool {
     }
 }
 
-/// Whether a template segment is a `{}` expression.
-fn is_variable(segment: &str) -> bool {
-    segment.starts_with('{') && segment.ends_with('}')
+/// Whether a concrete path segment is an instance of a template segment.
+///
+/// The literal text is matched exactly and each expression stands for a
+/// non-empty run of characters. The router serves at most one expression per
+/// segment; a crowded one gives each literal between two expressions the first
+/// place it fits, which leaves the most room for those after it.
+fn segment_matches(expected: &str, actual: &str) -> bool {
+    // A literal run, then an expression name, alternately.
+    let mut literals = expected.split(['{', '}']).step_by(2);
+    let first = literals.next().unwrap_or_default();
+    let Some(mut rest) = actual.strip_prefix(first) else {
+        return false;
+    };
+
+    let mut literals = literals.peekable();
+    while let Some(literal) = literals.next() {
+        // The expression before `literal` takes at least one character.
+        let mut characters = rest.chars();
+        if characters.next().is_none() {
+            return false;
+        }
+        let after = characters.as_str();
+
+        if literals.peek().is_none() {
+            return after.ends_with(literal);
+        }
+        let Some(at) = after.find(literal) else {
+            return false;
+        };
+        rest = &after[at + literal.len()..];
+    }
+
+    rest.is_empty()
 }
 
 /// The entry declared for a status, and the key that declared it.
