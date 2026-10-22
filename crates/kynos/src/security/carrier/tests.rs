@@ -229,6 +229,25 @@ fn a_header_api_key_that_is_not_ascii_is_refused() {
     );
 }
 
+/// A header key sent in two fields is refused, as two `Authorization` fields
+/// are: choosing either would let an appending proxy pick the credential.
+#[test]
+fn a_header_api_key_sent_twice_is_refused() {
+    let mut request = Request::new(crate::http::body::Body::empty());
+    for key in ["k-client", "k-proxy"] {
+        request.headers_mut().append(
+            HeaderName::from_static("x-api-key"),
+            HeaderValue::from_static(key),
+        );
+    }
+    let head = request.into_parts().0;
+
+    assert_refused(
+        api_key(&head, KeyLocation::Header, "x-api-key"),
+        "a header key sent in two fields",
+    );
+}
+
 /// A key whose header field or cookie the request does not carry is absent,
 /// which `MaybeAuth` reads as anonymity.
 #[test]
