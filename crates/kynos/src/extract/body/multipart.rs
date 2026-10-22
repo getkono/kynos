@@ -64,6 +64,9 @@ pub struct FilePart {
 /// The empty schema: raw binary sits outside JSON Schema's `type`, and the
 /// part's media type is the Encoding Object's to state. See `docs/schema.md`.
 impl Schema for FilePart {
+    // The empty Schema Object is `kynos_openapi::Schema`'s default, so the
+    // `Default::default()` mutant is this body and no test can tell them apart.
+    #[cfg_attr(test, mutants::skip)]
     fn schema(_registry: &mut Registry) -> kynos_openapi::Schema {
         kynos_openapi::Schema::Object(Box::default())
     }

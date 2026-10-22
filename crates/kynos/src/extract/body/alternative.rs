@@ -147,7 +147,7 @@ where
 
 /// Refuses, in the constant evaluation calling it, a marker offered a request
 /// `body` is offered too.
-const fn distinct(marker: &str, body: &str) {
+pub(crate) const fn distinct(marker: &str, body: &str) {
     assert!(
         !shares_requests(marker, body),
         "a `Binary` marker is offered requests the body beside it in `OneOf` is offered too"
