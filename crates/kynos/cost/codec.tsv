@@ -43,11 +43,11 @@
 #
 # toolchain: 1.97.1 (8bab26f4f 2026-07-14)
 # host: x86_64-unknown-linux-gnu
-# baseline: 1026092 bytes
+# baseline: 1054732 bytes
 feature	text	delta
-(no codec)	1026092	0
-compression	1978696	952604
-form	1075404	49312
-json	1083708	57616
-multipart	1130124	104032
-protobuf	1063804	37712
+(no codec)	1054732	0
+compression	2035688	980956
+form	1108412	53680
+json	1119292	64560
+multipart	1164988	110256
+protobuf	1098076	43344
