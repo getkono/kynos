@@ -303,12 +303,16 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
                 // interceptor runs.
                 #[cfg(feature = "unchecked")]
                 if !operation.unchecked_layers.is_empty() {
-                    let layered = crate::unchecked::through_layers(
-                        Arc::clone(&self),
-                        at.path,
-                        at.position,
-                        request,
-                    );
+                    let layered = if operation.catch_panics {
+                        Self::recovering_layers(Arc::clone(&self), at, request)
+                    } else {
+                        crate::unchecked::through_layers(
+                            Arc::clone(&self),
+                            at.path,
+                            at.position,
+                            request,
+                        )
+                    };
                     break 'served match layered.await {
                         Ok(response) => response,
                         Err(never) => match never {},
@@ -320,6 +324,35 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
 
             self.finish(response, routed.ok(), started, head)
         }
+    }
+
+    /// Runs the operation at `at` through its unchecked layers under recovery.
+    ///
+    /// A layer runs where an interceptor does, so the operation's recovery
+    /// covers it, its first `call` included: that is made inside the guarded
+    /// future. The same box type as the unguarded path, so `serve`'s future
+    /// awaits one shape whichever it took.
+    #[cfg(feature = "unchecked")]
+    fn recovering_layers(
+        dispatch: Arc<Self>,
+        at: Location,
+        request: Request,
+    ) -> crate::unchecked::BoxResponse {
+        Box::pin(async move {
+            let table = Arc::clone(&dispatch);
+            let recovered = recover(async move {
+                match crate::unchecked::through_layers(table, at.path, at.position, request).await {
+                    Ok(response) => response,
+                    Err(never) => match never {},
+                }
+            })
+            .await;
+
+            Ok(recovered.unwrap_or_else(|payload| {
+                dispatch.report_panic(payload.as_ref(), Some(dispatch.route_at(at)));
+                panic_response()
+            }))
+        })
     }
 
     /// Where the operation answering `request` sits, or why none does.
