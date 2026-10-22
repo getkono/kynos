@@ -151,6 +151,19 @@ fn a_weight_outside_the_range_cannot_outrank_one_inside_it() {
     );
 }
 
+/// Attaching an encoding policy changes nothing a description says: the
+/// wrapped response declares exactly what its body does.
+#[test]
+fn a_response_with_an_encoding_declares_what_its_body_declares() {
+    use crate::{extract::body::text::Text, response::Responses, schema::registry::Registry};
+
+    let wrapped =
+        <super::policy::WithEncoding<Text> as Responses>::responses(&mut Registry::default());
+
+    assert_eq!(wrapped, Text::responses(&mut Registry::default()));
+    assert!(wrapped.get(200).is_some(), "{wrapped:?}");
+}
+
 fn tagged(value: Option<&str>) -> HeaderMap {
     let mut headers = HeaderMap::new();
     if let Some(value) = value {
