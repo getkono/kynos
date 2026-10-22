@@ -64,6 +64,10 @@ impl<T: ProblemType> Responses for AtCapacity<T> {
 
 /// Caps concurrent in-flight requests.
 ///
+/// A request is in flight from the slot being taken until its response body
+/// has been sent or dropped, so a streamed body holds its slot for as long as
+/// it streams.
+///
 /// Contributes 503 and a `Retry-After` response header.
 ///
 /// Requests are shed rather than queued by default;
@@ -205,11 +209,16 @@ where
     ) -> Result<Continued<()>, AtCapacity<T>> {
         let _ = (reads, context);
 
-        let Some(_slot) = self.acquire().await else {
+        let Some(slot) = self.acquire().await else {
             return Err(AtCapacity::new(self.retry_after));
         };
 
-        Ok(next.run(request).await)
+        // The request is in flight until its body is sent, so the slot is
+        // released when the body ends or is dropped, not at the head.
+        let mut continued = next.run(request).await;
+        let body = continued.take_body().watching(move |_| drop(slot));
+        continued.set_body(body);
+        Ok(continued)
     }
 }
 
