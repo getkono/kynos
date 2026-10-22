@@ -127,6 +127,15 @@ fn a_marker_is_refused_wherever_a_request_reaches_both_sides() {
     }
 }
 
+/// The constant `OneOf` evaluates refuses a pair `shares_requests` finds
+/// sharing one. Its `compile_fail` doctests run outside nextest, so this calls
+/// the check at run time, where its refusal is a panic.
+#[test]
+#[should_panic(expected = "a `Binary` marker is offered requests the body beside it")]
+fn a_shared_marker_is_refused_by_the_constant_one_of_evaluates() {
+    crate::extract::body::alternative::distinct("text/plain; charset=iso-8859-1", "text/plain");
+}
+
 /// A parameter a marker declares is the value a request may carry for it, or
 /// none: `charset=utf-8`, which every codec otherwise accepts, does not reach
 /// a Latin-1 marker, and a charset's name is compared without regard to case
@@ -214,6 +223,104 @@ mod a_file_part_describes_itself {
     #[test]
     fn a_part_is_not_a_component() {
         assert!(FilePart::name().is_none());
+    }
+}
+
+/// A file field keeps everything its part carried but the name, which the
+/// declaring field records, and a `Bytes` field keeps the octets alone.
+#[cfg(feature = "multipart")]
+#[test]
+fn a_file_part_keeps_what_its_part_carried() {
+    use bytes::Bytes;
+
+    use crate::extract::body::multipart::{FilePart, FromPart, Part};
+
+    let part = Part {
+        name: "avatar".to_owned(),
+        file_name: Some("a.png".to_owned()),
+        content_type: Some("image/png".to_owned()),
+        bytes: Bytes::from_static(b"\x89PNG"),
+    };
+    let file = FilePart {
+        file_name: Some("a.png".to_owned()),
+        content_type: Some("image/png".to_owned()),
+        bytes: Bytes::from_static(b"\x89PNG"),
+    };
+
+    assert_eq!(FilePart::from(part.clone()), file);
+    assert_eq!(FilePart::from_part(part.clone()).expect("any part"), file);
+    assert_eq!(Bytes::from_part(part).expect("any part"), &b"\x89PNG"[..]);
+}
+
+/// Describing a body sets the operation's request body to the one its type
+/// states: keyed by the single media type it lists and reads, over the schema
+/// of what it decodes.
+mod a_body_describes_the_media_type_it_reads {
+    use kynos_openapi::{RefOr, Schema as OpenApiSchema};
+
+    use crate::{
+        extract::{
+            body::{binary::Binary, text::Text},
+            describe::{Describe, RequestContent},
+        },
+        http::media::Png,
+        router::operation::OperationCx,
+        schema::registry::Registry,
+    };
+
+    fn describes<T: Describe + RequestContent>(media_type: &str, schema: OpenApiSchema) {
+        assert_eq!(T::media_types(), [media_type]);
+
+        let mut registry = Registry::default();
+        let mut operation = OperationCx::new(&mut registry);
+        T::describe(&mut operation);
+        let Some(RefOr::Item(body)) = operation.finish().request_body else {
+            panic!("describing the body declares no request body");
+        };
+
+        assert_eq!(body, T::request_body(&mut Registry::default()));
+        assert_eq!(
+            body.content.keys().map(String::as_str).collect::<Vec<_>>(),
+            [media_type]
+        );
+        assert_eq!(body.content[media_type].schema, Some(schema));
+    }
+
+    #[test]
+    fn as_binary() {
+        describes::<Binary<Png>>("image/png", OpenApiSchema::Object(Box::default()));
+    }
+
+    #[test]
+    fn as_text() {
+        describes::<Text>("text/plain", Registry::default().resolve::<String>());
+    }
+
+    #[cfg(feature = "form")]
+    #[test]
+    fn as_a_form() {
+        describes::<crate::extract::body::form::Form<u32>>(
+            "application/x-www-form-urlencoded",
+            Registry::default().resolve::<u32>(),
+        );
+    }
+
+    #[cfg(feature = "multipart")]
+    #[test]
+    fn as_multipart() {
+        describes::<crate::extract::body::multipart::MultipartForm<u32>>(
+            "multipart/form-data",
+            Registry::default().resolve::<u32>(),
+        );
+    }
+
+    #[cfg(feature = "protobuf")]
+    #[test]
+    fn as_protobuf() {
+        describes::<crate::extract::body::protobuf::Protobuf<u32>>(
+            "application/protobuf",
+            Registry::default().resolve::<u32>(),
+        );
     }
 }
 
