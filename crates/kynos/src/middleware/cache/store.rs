@@ -1,6 +1,10 @@
 //! What a cache stores, and where.
 
-use std::{borrow::Cow, sync::Arc, time::Duration};
+use std::{
+    borrow::Cow,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use kynos_openapi::Method;
 
@@ -90,6 +94,27 @@ impl StoredResponse {
         request: &HeaderMap,
         freshness: Duration,
     ) -> Self {
+        Self::recorded_at(
+            SystemTime::now(),
+            status,
+            headers,
+            body,
+            vary,
+            request,
+            freshness,
+        )
+    }
+
+    /// [`new`](Self::new), recorded at `recorded_at` rather than now.
+    pub(super) fn recorded_at(
+        recorded_at: SystemTime,
+        status: StatusCode,
+        headers: HeaderMap,
+        body: bytes::Bytes,
+        vary: Vec<String>,
+        request: &HeaderMap,
+        freshness: Duration,
+    ) -> Self {
         let selecting = vary
             .iter()
             .map(|name| request.get_all(name.as_str()).iter().cloned().collect())
@@ -100,7 +125,7 @@ impl StoredResponse {
             body,
             vary,
             selecting,
-            recorded_at: std::time::SystemTime::now(),
+            recorded_at,
             freshness,
         }))
     }
@@ -132,13 +157,26 @@ impl StoredResponse {
     /// How long ago it was stored.
     #[must_use]
     pub fn age(&self) -> Duration {
-        self.0.recorded_at.elapsed().unwrap_or_default()
+        self.age_at(SystemTime::now())
+    }
+
+    /// Its age at `now`: zero where `now` precedes its recording, as it does
+    /// when the clock stepped back.
+    pub(super) fn age_at(&self, now: SystemTime) -> Duration {
+        now.duration_since(self.0.recorded_at).unwrap_or_default()
     }
 
     /// Whether it may still be reused without revalidation.
     #[must_use]
     pub fn is_fresh(&self) -> bool {
-        self.age() < self.0.freshness
+        self.is_fresh_at(SystemTime::now())
+    }
+
+    /// Whether it may still be reused at `now`: RFC 9111 section 4.2 has a
+    /// response fresh while its age is less than its lifetime, so it is stale
+    /// from the instant the two are equal.
+    pub(super) fn is_fresh_at(&self, now: SystemTime) -> bool {
+        self.age_at(now) < self.0.freshness
     }
 
     /// Whether this variant is the one `headers` selects.
