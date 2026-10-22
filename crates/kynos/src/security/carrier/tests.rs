@@ -91,6 +91,38 @@ fn a_bearer_scheme_with_no_token_is_not_a_credential() {
     assert_refused(bearer(&authorized("Bearer")), "a scheme alone");
 }
 
+/// RFC 6750 section 2.1: the token is a `b64token`, so a value outside that
+/// grammar is a malformed credential rather than one for the authenticator.
+#[test]
+fn a_bearer_token_outside_the_b64token_grammar_is_refused() {
+    for value in [
+        "Bearer a b",
+        "Bearer a,b",
+        "Bearer \"abc\"",
+        "Bearer =abc",
+        "Bearer ab=c",
+        "Bearer a\tb",
+    ] {
+        assert_refused(bearer(&authorized(value)), value);
+    }
+}
+
+/// Every `b64token` character, and trailing `=` padding, reaches the
+/// authenticator as sent.
+#[test]
+fn every_b64token_character_is_read() {
+    let token = "AZaz09-._~+/==";
+    let head = authorized(&format!("Bearer {token}"));
+
+    assert_eq!(
+        bearer(&head)
+            .expect("a credential")
+            .expect("present")
+            .as_str(),
+        token
+    );
+}
+
 // --- Basic, RFC 7617 -------------------------------------------------------
 
 #[test]
