@@ -1,16 +1,25 @@
+use std::collections::HashSet;
+
 use kynos_openapi::{Document, Operation, PathItem, PathTemplate};
 
 use super::{conformance, declared_response, matched_template, template_matches};
 
-/// The segments a template may be built from. The variable is a marker
+/// The segments a template may be built from: literals, a whole-segment
+/// variable, and a variable behind a literal prefix or before a literal
+/// suffix, the two mixed forms the router serves. The variable is a marker
 /// rather than a name: a template may not repeat one, so each is numbered
 /// by position before the template is used.
-const TEMPLATE_ALPHABET: [&str; 3] = ["a", "b", "{}"];
+const TEMPLATE_ALPHABET: [&str; 5] = ["a", "b", "{}", "v{}", "{}.txt"];
 /// The segments a concrete path may be built from. `""` is here because a
-/// double slash is a path a client can send and a variable must not accept.
-const PATH_ALPHABET: [&str; 4] = ["a", "b", "x", ""];
-/// What a variable stands for, which is every non-empty path segment.
-const SUBSTITUTIONS: [&str; 3] = ["a", "b", "x"];
+/// double slash is a path a client can send and a variable must not accept;
+/// `v` and `.txt` are a mixed segment's literal with nothing left for its
+/// variable, which it must not accept either.
+const PATH_ALPHABET: [&str; 9] = ["a", "b", "x", "", "v", "va", ".txt", "a.txt", "va.txt"];
+/// What a variable stands for: every non-empty path segment. A mixed
+/// segment's variable stands for part of one, and each part this alphabet
+/// can leave it (`a` of `va`, `va` of `va.txt`, `a.txt` of `va.txt`) is a
+/// segment here too, so the substitution is total over the paths swept.
+const SUBSTITUTIONS: [&str; 8] = ["a", "b", "x", "v", "va", ".txt", "a.txt", "va.txt"];
 
 /// Every sequence of `1..=3` segments over `alphabet`, as a rooted path.
 fn rooted(alphabet: &[&str]) -> Vec<String> {
@@ -45,9 +54,9 @@ fn named(template: &str) -> String {
     template
         .split('/')
         .map(|segment| {
-            if segment == "{}" {
+            if segment.contains("{}") {
                 next += 1;
-                format!("{{v{}}}", next - 1)
+                segment.replace("{}", &format!("{{v{}}}", next - 1))
             } else {
                 segment.to_owned()
             }
@@ -63,41 +72,37 @@ fn named(template: &str) -> String {
 /// both are right. An oracle that walked the segments the same way would
 /// agree with the matcher by construction, including wherever both were
 /// wrong.
-fn instances(template: &str) -> Vec<String> {
-    let mut expanded: Vec<Vec<&str>> = vec![Vec::new()];
+fn instances(template: &str) -> HashSet<String> {
+    let mut expanded = vec![String::new()];
 
     for segment in template.trim_start_matches('/').split('/') {
-        expanded = if segment.starts_with('{') && segment.ends_with('}') {
-            expanded
-                .into_iter()
-                .flat_map(|prefix| {
-                    SUBSTITUTIONS.iter().map(move |value| {
-                        let mut next = prefix.clone();
-                        next.push(value);
-                        next
-                    })
-                })
-                .collect()
-        } else {
-            expanded
-                .into_iter()
-                .map(|mut prefix| {
-                    prefix.push(segment);
-                    prefix
-                })
-                .collect()
+        // The sweep's segments hold at most one expression.
+        let substituted: Vec<String> = match segment.split_once('{') {
+            Some((before, rest)) => {
+                let (_, after) = rest.split_once('}').expect("a closed expression");
+                SUBSTITUTIONS
+                    .iter()
+                    .map(|value| format!("{before}{value}{after}"))
+                    .collect()
+            }
+            None => vec![segment.to_owned()],
         };
+        expanded = expanded
+            .iter()
+            .flat_map(|prefix| {
+                substituted
+                    .iter()
+                    .map(move |value| format!("{prefix}/{value}"))
+            })
+            .collect();
     }
 
-    expanded
-        .into_iter()
-        .map(|parts| format!("/{}", parts.join("/")))
-        .collect()
+    expanded.into_iter().collect()
 }
 
 /// A total sweep rather than a property.
 ///
-/// The input space is finite and small — 39 templates against 84 paths —
+/// The input space is finite and small — 155 templates against 819 paths —
 /// and `docs/testing.md` says a sweep is the stronger statement there,
 /// because it is total where a draw from the same space is a sample of it.
 /// It is also what keeps `proptest` out of `crates/kynos`'s
@@ -111,8 +116,8 @@ fn a_template_matches_exactly_the_paths_substituting_into_it_produces() {
         .collect();
     let paths = rooted(&PATH_ALPHABET);
 
-    assert_eq!(templates.len(), 39);
-    assert_eq!(paths.len(), 84);
+    assert_eq!(templates.len(), 155);
+    assert_eq!(paths.len(), 819);
 
     for template in &templates {
         let accepted = instances(template);
@@ -141,20 +146,24 @@ fn every_template_in_the_sweep_is_one_the_model_parses() {
     }
 }
 
-/// A segment only opening or only closing with an expression, such as the
-/// router's `/files/{path}.txt` or `/files/v{name}`, carries a literal too,
-/// so it is not a whole-segment variable standing for any segment. The sweep
-/// above builds only whole-segment variables and cannot tell the two apart.
+/// A segment holding two expressions, which the model accepts and the router
+/// refuses, gives each a non-empty run of its own, with the literal between
+/// them matched where it first fits.
 #[test]
-fn a_segment_mixing_an_expression_and_a_literal_is_not_a_whole_segment_variable() {
-    for template in ["/files/{path}.txt", "/files/v{name}"] {
+fn each_expression_in_a_crowded_segment_stands_for_a_non_empty_run() {
+    let template = "/files/{name}-{version}";
+    assert!(PathTemplate::parse(template).is_ok());
+
+    for path in ["/files/a-b", "/files/a-b-c", "/files/a--b"] {
         assert!(
-            PathTemplate::parse(template).is_ok(),
-            "`{template}` is a path template"
+            template_matches(template, path),
+            "`{template}` against `{path}`"
         );
+    }
+    for path in ["/files/ab", "/files/a-", "/files/-b", "/files/-", "/files/"] {
         assert!(
-            !template_matches(template, "/files/x"),
-            "`{template}` against `/files/x`"
+            !template_matches(template, path),
+            "`{template}` against `{path}`"
         );
     }
 }
@@ -187,6 +196,55 @@ fn a_literal_beats_a_variable_in_the_same_segment() {
         matched_template(&document, "/users/42"),
         Some("/users/{id}")
     );
+}
+
+/// The router ranks a segment mixing an expression with literal text between
+/// a literal and a whole-segment variable, and a longer literal part above a
+/// shorter one. Both document orders, so no case is a tie broken by position.
+#[test]
+fn a_mixed_segment_ranks_between_a_literal_and_a_variable() {
+    let cases = [
+        (
+            ["/files/{id}", "/files/{path}.txt"],
+            "/files/a.txt",
+            "/files/{path}.txt",
+        ),
+        (
+            ["/files/{id}", "/files/{path}.txt"],
+            "/files/a",
+            "/files/{id}",
+        ),
+        (
+            ["/files/{id}", "/files/v{name}"],
+            "/files/v1",
+            "/files/v{name}",
+        ),
+        (
+            ["/files/a.txt", "/files/{path}.txt"],
+            "/files/a.txt",
+            "/files/a.txt",
+        ),
+        (
+            ["/files/{a}.txt", "/files/{b}.tar.txt"],
+            "/files/x.tar.txt",
+            "/files/{b}.tar.txt",
+        ),
+        (
+            ["/files/v{a}", "/files/va{b}"],
+            "/files/vax",
+            "/files/va{b}",
+        ),
+    ];
+
+    for (templates, path, expected) in cases {
+        for templates in [templates, [templates[1], templates[0]]] {
+            assert_eq!(
+                matched_template(&document(&templates), path),
+                Some(expected),
+                "{templates:?} against `{path}`"
+            );
+        }
+    }
 }
 
 /// The router prefers a literal segment at the first position where two
