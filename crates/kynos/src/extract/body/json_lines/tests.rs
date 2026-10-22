@@ -717,6 +717,47 @@ fn a_streamed_body_describes_its_item_and_not_the_whole() {
     }
 }
 
+/// Each extractor documents the body it reads on the operation, keyed by
+/// exactly the one media type it says it accepts.
+///
+/// `RequestContent` pairs `media_types()` with `request_body()`, and the
+/// media types a body accepts must be the keys its described body is listed
+/// under: a type one names that the other does not leaves the document and
+/// the extractor disagreeing about what a client may send.
+#[test]
+fn a_streamed_body_is_described_under_the_one_media_type_it_accepts() {
+    fn described<T: Describe>() -> kynos_openapi::RequestBody {
+        let mut registry = Registry::default();
+        let mut operation = OperationCx::new(&mut registry);
+        T::describe(&mut operation);
+        let Some(RefOr::Item(body)) = operation.finish().request_body else {
+            panic!("a streamed body describes a request body");
+        };
+        body
+    }
+
+    for (expected, accepted, body) in [
+        (
+            NDJSON,
+            JsonLines::<Records<u64>>::media_types(),
+            described::<JsonLines<Records<u64>>>(),
+        ),
+        (
+            JSON_SEQ,
+            JsonSeq::<Records<u64>>::media_types(),
+            described::<JsonSeq<Records<u64>>>(),
+        ),
+    ] {
+        assert_eq!(accepted, [expected]);
+        assert_eq!(
+            body.content.keys().map(String::as_str).collect::<Vec<_>>(),
+            [expected],
+            "{expected} is the only media type the body is described under"
+        );
+        assert_eq!(body.required, Some(true));
+    }
+}
+
 /// `Option` makes the body optional and adds nothing else, exactly as it
 /// does for a whole-body codec.
 #[test]
