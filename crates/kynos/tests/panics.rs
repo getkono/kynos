@@ -503,6 +503,73 @@ fn a_panic_an_endpoint_recovered_beneath_an_unchecked_layer_is_reported_once() {
     assert_eq!(heard.paths(), ["/attributed"]);
 }
 
+/// A `tower` layer that panics instead of calling the service it wraps.
+#[cfg(feature = "unchecked")]
+#[derive(Clone, Copy, Debug)]
+struct Explode;
+
+#[cfg(feature = "unchecked")]
+impl<S> tower::Layer<S> for Explode {
+    type Service = Exploded;
+
+    fn layer(&self, _: S) -> Exploded {
+        Exploded
+    }
+}
+
+/// What [`Explode`] wraps a service in.
+#[cfg(feature = "unchecked")]
+#[derive(Clone, Copy, Debug)]
+struct Exploded;
+
+#[cfg(feature = "unchecked")]
+impl tower::Service<Request> for Exploded {
+    type Response = Response;
+    type Error = Infallible;
+    type Future = std::future::Ready<Result<Response, Infallible>>;
+
+    fn poll_ready(
+        &mut self,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Infallible>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, _: Request) -> Self::Future {
+        panic!("the layer failed");
+    }
+}
+
+/// An unchecked layer runs where an interceptor does, so recovery that covers
+/// an operation covers the layers wrapping it, and reports the panic once.
+#[cfg(feature = "unchecked")]
+#[test]
+fn a_panic_in_an_unchecked_layer_is_recovered_where_recovery_was_asked_for() {
+    let heard = Heard::default();
+    let guarded = Router::<()>::new()
+        .catch_panics()
+        .layer_unchecked(Explode)
+        .mount(kynos::routes![fine])
+        .observe(heard.clone())
+        .build(())
+        .expect("a describable router");
+
+    assert_eq!(
+        outcome(&guarded, "/fine"),
+        Ok(StatusCode::INTERNAL_SERVER_ERROR)
+    );
+    assert_eq!(heard.paths(), ["/fine"]);
+
+    // The control: without recovery the panic still reaches the caller.
+    let bare = Router::<()>::new()
+        .layer_unchecked(Explode)
+        .mount(kynos::routes![fine])
+        .build(())
+        .expect("a describable router");
+
+    assert_eq!(outcome(&bare, "/fine"), Err(()));
+}
+
 /// A recovered operation declares the 500 it can now produce.
 ///
 /// The whole design says a response a service can send is a response the

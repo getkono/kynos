@@ -882,6 +882,38 @@ async fn tagged_status(fields: &[(HeaderName, &str)]) -> StatusCode {
         .status()
 }
 
+/// Section 13.1.2: a false `If-None-Match` answers 304 only to GET and HEAD,
+/// and 412 to any other method, since a 304 would tell the client its unsafe
+/// request was a cache validation that succeeded.
+#[tokio::test]
+async fn a_false_if_none_match_on_an_unsafe_method_answers_412() {
+    for (method, expected) in [
+        (Method::GET, StatusCode::NOT_MODIFIED),
+        (Method::HEAD, StatusCode::NOT_MODIFIED),
+        (Method::POST, StatusCode::PRECONDITION_FAILED),
+        (Method::PUT, StatusCode::PRECONDITION_FAILED),
+        (Method::DELETE, StatusCode::PRECONDITION_FAILED),
+    ] {
+        for named in ["\"b\"", "*"] {
+            let mut fields = HeaderMap::new();
+            fields.insert(header::IF_NONE_MATCH, HeaderValue::from_static(named));
+            let conditions = Conditions {
+                method: method.clone(),
+                fields,
+            };
+
+            let status = Served::<_, OctetStream>::new(InMemory::new(Bytes::from_static(b"0123")))
+                .etag(crate::http::etag::ETag::strong("b"))
+                .deliver(&conditions)
+                .await
+                .expect("an in-memory source cannot fail")
+                .status();
+
+            assert_eq!(status, expected, "{method} with If-None-Match: {named}");
+        }
+    }
+}
+
 /// A `*` line beside a tag line matches by itself, so an untagged
 /// representation still answers 304 where the tag line alone would not.
 #[tokio::test]

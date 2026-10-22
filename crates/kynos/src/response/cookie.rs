@@ -157,6 +157,9 @@ impl Cookie {
     }
 
     /// Partitions the cookie by top-level site.
+    ///
+    /// Implies `Secure`, which is sent whether or not it was asked for: a user
+    /// agent ignores a partitioned cookie without it.
     #[must_use]
     pub fn partitioned(mut self) -> Self {
         self.partitioned = true;
@@ -227,10 +230,12 @@ impl Cookie {
             rendered.push_str("; Max-Age=");
             rendered.push_str(&crate::middleware::whole_seconds(age).to_string());
         }
-        // `SameSite=None` and both name prefixes are silently dropped without
-        // `Secure`, so it is added for them.
+        // `SameSite=None`, `Partitioned` (CHIPS, draft-cutler-httpbis-
+        // partitioned-cookies section 2.1) and both name prefixes are silently
+        // dropped without `Secure`, so it is added for them.
         if self.secure
             || self.same_site == Some(SameSite::None)
+            || self.partitioned
             || host_prefixed
             || self.name.starts_with(SECURE_PREFIX)
         {

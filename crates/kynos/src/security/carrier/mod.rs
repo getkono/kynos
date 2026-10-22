@@ -192,7 +192,7 @@ impl ApiKey {
 ///
 /// When an `Authorization` field is present and is not a bearer credential:
 /// two such fields, a value that is not visible ASCII, an empty scheme, a
-/// different scheme, or no token.
+/// different scheme, no token, or a token outside the `b64token` grammar.
 pub fn bearer(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
     let Some(authorization) = parse::authorization(parts)? else {
         return Ok(None);
@@ -204,11 +204,21 @@ pub fn bearer(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
         return Err(AuthRejection::unauthenticated());
     }
 
-    if authorization.credentials.is_empty() {
+    if !is_b64token(authorization.credentials) {
         return Err(AuthRejection::unauthenticated());
     }
 
     Ok(Some(BearerToken(authorization.credentials.to_owned())))
+}
+
+/// Whether `token` is an RFC 6750 section 2.1 `b64token`:
+/// `1*( ALPHA / DIGIT / "-" / "." / "_" / "~" / "+" / "/" ) *"="`.
+fn is_b64token(token: &str) -> bool {
+    let body = token.trim_end_matches('=');
+    !body.is_empty()
+        && body.bytes().all(|b| {
+            b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~' | b'+' | b'/')
+        })
 }
 
 /// Reads a user-id and password, per RFC 7617.
@@ -280,9 +290,9 @@ pub fn http_scheme(
 /// in any case, whether or not the request carries it: that field belongs to
 /// the HTTP authentication schemes above, so it is never an API key.
 ///
-/// When the key is present and cannot be read: a header field or the first
-/// cookie of that name whose value is not ASCII, or a first query pair of that
-/// name whose percent-decoded value is not UTF-8. A later pair or cookie never
+/// When the key is present and cannot be read: a header field sent twice, a
+/// header field or the first cookie of that name whose value is not ASCII, or
+/// a first query pair of that name whose percent-decoded value is not UTF-8. A later pair or cookie never
 /// stands in for the first.
 pub fn api_key(
     parts: &Parts,
@@ -297,9 +307,16 @@ pub fn api_key(
                 return Err(AuthRejection::unauthenticated());
             }
 
-            let Some(field) = parts.headers.get(name) else {
+            let mut fields = parts.headers.get_all(name).into_iter();
+            let Some(field) = fields.next() else {
                 return Ok(None);
             };
+            // A key is one value, so two fields are refused as two
+            // `Authorization` fields are: choosing either would let an
+            // appending proxy pick the credential.
+            if fields.next().is_some() {
+                return Err(AuthRejection::unauthenticated());
+            }
             let value = field
                 .to_str()
                 .map_err(|_| AuthRejection::unauthenticated())?;

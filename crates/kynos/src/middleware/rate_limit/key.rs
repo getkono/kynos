@@ -20,6 +20,9 @@ pub trait RateLimitKey<C>: Send + Sync + 'static {
 
 /// The peer address of the connection.
 ///
+/// An IPv4-mapped peer (`::ffff:203.0.113.7`), as a dual-stack listener
+/// reports an IPv4 client, is keyed by the IPv4 host it embeds.
+///
 /// A request that arrived on no socket — a `TestClient`, a directly driven
 /// `Service::call` — counts against one shared bucket rather than being
 /// exempted, so a limit is never silently absent.
@@ -41,7 +44,9 @@ impl<C> RateLimitKey<C> for ByPeerAddress {
                 .get::<crate::extract::connection::Connection>()
                 .map_or_else(
                     || "peer:none".to_owned(),
-                    |connection| format!("peer:{}", connection.peer_addr().ip()),
+                    // An IPv4 peer is one bucket on either listener, as
+                    // `Forwarded::client` names it.
+                    |connection| format!("peer:{}", connection.peer_addr().ip().to_canonical()),
                 ),
         ))
     }

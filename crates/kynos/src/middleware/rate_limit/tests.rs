@@ -867,6 +867,38 @@ fn a_header_key_puts_every_request_without_a_readable_value_in_one_bucket() {
     );
 }
 
+/// An IPv4 peer is one bucket whichever listener it reached: a dual-stack
+/// `[::]` listener reports it IPv4-mapped (RFC 4291 section 2.5.5.2), as
+/// `Forwarded::client` already reads it.
+#[test]
+fn a_peer_key_names_an_ipv4_mapped_peer_by_its_ipv4_host() {
+    use std::net::{Ipv4Addr, SocketAddr};
+
+    let local = SocketAddr::from((Ipv4Addr::LOCALHOST, 8080));
+    let partition = |peer: SocketAddr| {
+        let mut request = crate::http::Request::new(Body::empty());
+        request
+            .extensions_mut()
+            .insert(crate::extract::connection::Connection::from_peer(
+                peer, local,
+            ));
+        super::key::RateLimitKey::<()>::partition(
+            &super::key::ByPeerAddress,
+            &request,
+            Route::new("/counted", "counted", Method::Get),
+            &(),
+        )
+        .map(std::borrow::Cow::into_owned)
+    };
+
+    let host = Ipv4Addr::new(203, 0, 113, 7);
+    let mapped = SocketAddr::from((host.to_ipv6_mapped(), 50_000));
+    let plain = SocketAddr::from((host, 50_001));
+
+    assert_eq!(partition(mapped).as_deref(), Some("peer:203.0.113.7"));
+    assert_eq!(partition(plain).as_deref(), Some("peer:203.0.113.7"));
+}
+
 /// `And` joins two partitions, and either half exempting the request exempts
 /// it: a key with a missing part is not a key.
 #[test]

@@ -91,6 +91,38 @@ fn a_bearer_scheme_with_no_token_is_not_a_credential() {
     assert_refused(bearer(&authorized("Bearer")), "a scheme alone");
 }
 
+/// RFC 6750 section 2.1: the token is a `b64token`, so a value outside that
+/// grammar is a malformed credential rather than one for the authenticator.
+#[test]
+fn a_bearer_token_outside_the_b64token_grammar_is_refused() {
+    for value in [
+        "Bearer a b",
+        "Bearer a,b",
+        "Bearer \"abc\"",
+        "Bearer =abc",
+        "Bearer ab=c",
+        "Bearer a\tb",
+    ] {
+        assert_refused(bearer(&authorized(value)), value);
+    }
+}
+
+/// Every `b64token` character, and trailing `=` padding, reaches the
+/// authenticator as sent.
+#[test]
+fn every_b64token_character_is_read() {
+    let token = "AZaz09-._~+/==";
+    let head = authorized(&format!("Bearer {token}"));
+
+    assert_eq!(
+        bearer(&head)
+            .expect("a credential")
+            .expect("present")
+            .as_str(),
+        token
+    );
+}
+
 // --- Basic, RFC 7617 -------------------------------------------------------
 
 #[test]
@@ -226,6 +258,25 @@ fn a_header_api_key_that_is_not_ascii_is_refused() {
     assert_refused(
         api_key(&head, KeyLocation::Header, "x-api-key"),
         "an obs-text header key",
+    );
+}
+
+/// A header key sent in two fields is refused, as two `Authorization` fields
+/// are: choosing either would let an appending proxy pick the credential.
+#[test]
+fn a_header_api_key_sent_twice_is_refused() {
+    let mut request = Request::new(crate::http::body::Body::empty());
+    for key in ["k-client", "k-proxy"] {
+        request.headers_mut().append(
+            HeaderName::from_static("x-api-key"),
+            HeaderValue::from_static(key),
+        );
+    }
+    let head = request.into_parts().0;
+
+    assert_refused(
+        api_key(&head, KeyLocation::Header, "x-api-key"),
+        "a header key sent in two fields",
     );
 }
 

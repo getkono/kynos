@@ -165,6 +165,14 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
 
         // Steps 3 and 4: the cache validations.
         if self.unmodified(conditions, current) {
+            // Section 13.1.2: a false `If-None-Match` is a 304 for GET and
+            // HEAD alone, and a 412 for any other method. Only it can hold
+            // here for one, since the date applies to GET and HEAD alone.
+            if conditions.method != Method::GET && conditions.method != Method::HEAD {
+                let mut response = Response::new(crate::http::body::Body::empty());
+                *response.status_mut() = StatusCode::PRECONDITION_FAILED;
+                return Ok(Delivery::new(response));
+            }
             let response = self
                 .head(None, complete_length, tag)
                 .unwrap_or_else(crate::extract::params::header::refused);

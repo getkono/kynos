@@ -155,6 +155,17 @@ fn same_site_none_carries_secure_without_being_asked() {
     assert!(rendered.contains("; SameSite=None"), "{rendered}");
 }
 
+/// `Partitioned` implies `Secure` too: CHIPS (draft-cutler-httpbis-partitioned-
+/// cookies section 2.1) has a user agent ignore a partitioned cookie set
+/// without it, as silently as the pair above.
+#[test]
+fn a_partitioned_cookie_carries_secure_without_being_asked() {
+    let rendered = rendered(&Cookie::new("a", "1").partitioned()).expect("a legal cookie");
+
+    assert!(rendered.contains("; Secure"), "{rendered}");
+    assert!(rendered.contains("; Partitioned"), "{rendered}");
+}
+
 /// The other two values imply nothing.
 #[test]
 fn the_other_same_site_values_imply_no_attribute() {

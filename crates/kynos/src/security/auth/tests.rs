@@ -583,6 +583,54 @@ async fn all_of_authenticates_every_scheme_before_authorizing_any() {
     assert!(refusing.0.authorized().is_empty());
 }
 
+/// A scheme whose carrier is optional, as `carrier = optional` writes one:
+/// absence reaches the authenticator as `Some(None)`.
+struct OptionalBearer;
+
+impl SecurityScheme for OptionalBearer {
+    const NAME: &'static str = "OptionalBearer";
+    type Credential = String;
+    type Scope = Grant;
+
+    fn describe() -> kynos_openapi::SecurityScheme {
+        kynos_openapi::SecurityScheme::bearer(None)
+    }
+}
+
+impl Carries for OptionalBearer {
+    type Presented = Option<BearerToken>;
+
+    fn present(parts: &Parts) -> Result<Option<Option<BearerToken>>, AuthRejection> {
+        carrier::bearer(parts).map(Some)
+    }
+}
+
+impl Authenticates<OptionalBearer> for Recording {
+    type Authenticator = Recorder;
+
+    fn authenticator(&self) -> &Recorder {
+        &self.0
+    }
+}
+
+/// Under an optional carrier nothing reports absence, so an `AllOf` holding
+/// one treats a request presenting nothing as a partial set: `MaybeAuth`
+/// answers it 401 rather than as anonymous, as `docs/security.md` states.
+#[tokio::test]
+async fn maybe_auth_over_all_of_with_an_optional_carrier_refuses_a_bare_request() {
+    let admitting = Recording::admitting();
+    let guarded = <MaybeAuth<AllOf<(OptionalBearer, Bearer)>> as Guard<_>>::guard(
+        &Request::new(Body::empty()).into_parts().0,
+        &admitting,
+    )
+    .await;
+
+    assert_eq!(
+        guarded.err().map(|r| r.status()),
+        Some(StatusCode::UNAUTHORIZED)
+    );
+}
+
 /// An `AnyOf` alternative whose default scopes are refused is not satisfied,
 /// so the next alternative is tried rather than the refused one admitted.
 #[tokio::test]

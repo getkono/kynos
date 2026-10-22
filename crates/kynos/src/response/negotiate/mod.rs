@@ -62,16 +62,17 @@ impl<T> Accept<T> {
     ///
     /// An absent field is represented by `"*/*"`. Empty list elements are
     /// ignored (RFC 9110 section 5.6.1.2), so a field holding nothing else
-    /// accepts no representation. Invalid quality values are rejected as
-    /// malformed headers.
+    /// accepts no representation. A `,` or `;` inside a quoted parameter value
+    /// separates nothing (RFC 9110 section 5.6.6). Invalid quality values are
+    /// rejected as malformed headers.
     pub fn parse(value: &str) -> Result<Self, NegotiationRejection> {
         let mut preferences = Vec::new();
-        for (order, item) in value.split(',').enumerate() {
+        for (order, item) in unquoted_split(value, b',').enumerate() {
             let item = item.trim();
             if item.is_empty() {
                 continue;
             }
-            let mut segments = item.split(';');
+            let mut segments = unquoted_split(item, b';');
             let range = segments.next().unwrap_or_default().trim();
             let Some((type_, subtype)) = range.split_once('/') else {
                 return Err(invalid_accept());
@@ -181,6 +182,37 @@ impl<T> Accept<T> {
                 (quality != 0).then_some((quality, specificity, order))
             })
     }
+}
+
+/// `text`'s pieces between `delimiter`s outside any `quoted-string`, left to
+/// right: RFC 9110 section 5.6.6 lets a parameter value be one, and a `,` or
+/// `;` inside it separates nothing. A `\` inside quotes escapes the octet
+/// after it (section 5.6.4).
+fn unquoted_split(text: &str, delimiter: u8) -> impl Iterator<Item = &str> {
+    let mut rest = Some(text);
+    std::iter::from_fn(move || {
+        let piece = rest?;
+        let (mut quoted, mut escaped) = (false, false);
+        let at = piece.bytes().position(|byte| {
+            if escaped {
+                escaped = false;
+            } else if quoted && byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                quoted = !quoted;
+            } else if !quoted && byte == delimiter {
+                return true;
+            }
+            false
+        });
+        match at {
+            Some(at) => {
+                rest = Some(&piece[at + 1..]);
+                Some(&piece[..at])
+            }
+            None => rest.take(),
+        }
+    })
 }
 
 fn invalid_accept() -> NegotiationRejection {
