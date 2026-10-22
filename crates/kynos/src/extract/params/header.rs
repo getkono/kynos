@@ -253,22 +253,16 @@ pub(crate) fn write_or_refuse<G: EncodeHeaders>(response: &mut crate::http::Resp
 ///
 /// What an interceptor names when it reads no header, or adds none.
 impl HeaderParams for () {
+    // The provided `parameters` and `response_headers` describe these empty
+    // `NAMES` as nothing; an override would only return the same empty value.
     const NAMES: &'static [&'static str] = &[];
-
-    fn parameters(registry: &mut Registry) -> Vec<Parameter> {
-        let _ = registry;
-        Vec::new()
-    }
-
-    fn response_headers(registry: &mut Registry) -> Map<RefOr<Header>> {
-        let _ = registry;
-        Map::new()
-    }
 }
 
 impl DecodeHeaders for () {
     const FALLIBLE: bool = false;
 
+    // Equivalent: the one mutant returns `Ok(Default::default())`, which is `Ok(())`.
+    #[cfg_attr(test, mutants::skip)]
     fn decode(headers: &HeaderMap) -> Result<Self, HeaderRejection> {
         let _ = headers;
         Ok(())
@@ -276,6 +270,9 @@ impl DecodeHeaders for () {
 }
 
 impl EncodeHeaders for () {
+    // Equivalent: the surviving mutant returns `Ok(vec![])`, the same empty
+    // sequence; the other one does not compile.
+    #[cfg_attr(test, mutants::skip)]
     fn encode(&self) -> Result<Vec<(HeaderName, HeaderValue)>, UnencodableHeader> {
         Ok(Vec::new())
     }
