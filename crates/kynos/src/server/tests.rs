@@ -4803,6 +4803,18 @@ mod protocol_configuration {
         .expect("a read buffer of exactly the floor is one hyper accepts");
     }
 
+    /// The case table refuses a send buffer one past `u32::MAX`; this accepts
+    /// `u32::MAX` itself, the largest the protocol field carries, so the
+    /// refusal cannot creep down to include it.
+    #[test]
+    fn a_send_buffer_of_exactly_the_field_width_is_accepted() {
+        validate_protocol_config(
+            Http1Config::default(),
+            Http2Config::default().max_send_buffer_size(u32::MAX as usize),
+        )
+        .expect("a send buffer of exactly u32::MAX fits the field that carries it");
+    }
+
     /// RFC 9113 §6.9.1 caps a flow-control window at 2^31-1, and `h2` asserts
     /// it during the handshake, so a larger window panicked every HTTP/2
     /// connection instead of failing `prepare`. The case table refuses one
