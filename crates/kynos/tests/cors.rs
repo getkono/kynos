@@ -58,7 +58,7 @@ async fn send(
     (response.status(), response.headers().clone())
 }
 
-/// The field names a preflight carries, as a lowercase set.
+/// The value of the field `name`, where the response carries it.
 fn field(fields: &HeaderMap, name: header::HeaderName) -> Option<String> {
     fields
         .get(name)

@@ -424,7 +424,10 @@ for the reason the section above gives.
 it differs from in exactly one variable — a layer, a coding, a method — and
 `profile-report.md` gives the difference as that variable's marginal cost. A
 row changing two variables at once has no base, since its difference would
-attribute both to neither.
+attribute both to neither — save the one composite, `stack-typical`, which
+names `json-small-runtime` as its base while adding a whole typical stack and
+the request fields it acts on, so its difference is that stack's cost
+together rather than any one layer's.
 
 **The region drains the body.** Both drivers poll the response body to its
 end inside the measured region, so a streamed body's production is counted

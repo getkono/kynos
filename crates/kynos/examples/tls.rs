@@ -13,6 +13,13 @@
 //! disk, a secret manager or an ACME client; `from_pem` takes bytes and does
 //! not care where they came from.
 //!
+//! The server only completes a handshake with a client presenting a
+//! certificate its partner authority issued, so the example mints one, writes
+//! it and its key to the system's temporary directory, and prints the `curl`
+//! line that presents them. `--insecure` is there because the server's own
+//! certificate is self-signed; it relaxes what curl checks of the server, not
+//! what the server checks of curl.
+//!
 //! Worth noticing:
 //!
 //! * **rustls is the only TLS backend, and that is a decision rather than a
@@ -47,7 +54,7 @@
 //! port before any request is sent — `local_addrs` is meaningless before the
 //! bind and unavailable after `serve` takes ownership.
 
-use std::{net::Ipv4Addr, num::NonZeroUsize, time::Duration};
+use std::{fs, net::Ipv4Addr, num::NonZeroUsize, time::Duration};
 
 use kynos::{
     Router,
@@ -84,6 +91,47 @@ fn self_signed(names: &[&str]) -> Material {
     }
 }
 
+/// Mints a partner certificate authority and one client certificate it issues,
+/// returning the authority's certificate and the client's material.
+///
+/// The server trusts the authority, never the client certificate itself: a
+/// partner rotating its client certificate must not need a server redeploy.
+fn partner_authority() -> (String, Material) {
+    use rcgen::{
+        BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose,
+        IsCa, KeyPair, KeyUsagePurpose,
+    };
+
+    let mut authority = CertificateParams::new(Vec::new()).expect("no subject alternative names");
+    authority.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    authority.key_usages = vec![KeyUsagePurpose::KeyCertSign];
+    authority
+        .distinguished_name
+        .push(DnType::CommonName, "Partner CA");
+    let issuer = CertifiedIssuer::self_signed(authority, KeyPair::generate().expect("a key pair"))
+        .expect("a self-signed authority");
+
+    let mut client = CertificateParams::new(vec!["partner.example.test".to_owned()])
+        .expect("a usable subject alternative name");
+    client.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+    client.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+    client
+        .distinguished_name
+        .push(DnType::CommonName, "Partner client");
+    let key = KeyPair::generate().expect("a key pair");
+    let certificate = client
+        .signed_by(&key, &issuer)
+        .expect("a client certificate the authority issued");
+
+    (
+        issuer.pem(),
+        Material {
+            certificate: certificate.pem(),
+            key: key.serialize_pem(),
+        },
+    )
+}
+
 /// Assembles the TLS configuration.
 ///
 /// Its own function because the builder is a chain: every step takes `self` and
@@ -94,7 +142,7 @@ fn self_signed(names: &[&str]) -> Material {
 fn tls_config(
     default: &Material,
     tenant: &Material,
-    partners: &Material,
+    partner_authority: &str,
 ) -> Result<TlsConfig, TlsError> {
     TlsConfig::from_pem(default.certificate.as_bytes(), default.key.as_bytes())?
         // One listener, several names. The certificate carries the names it is
@@ -107,7 +155,7 @@ fn tls_config(
         // Mutual TLS. A connection presenting no certificate, or one this CA
         // did not issue, does not reach a handler at all.
         .require_client_certificate(ClientCertificateConfig::from_pem_roots(
-            partners.certificate.as_bytes(),
+            partner_authority.as_bytes(),
         )?)
         // Fallible: zero is rejected rather than read as "wait forever".
         .handshake_timeout(Duration::from_secs(5))
@@ -122,12 +170,19 @@ fn tls_config(
 async fn main() -> kynos::Result<()> {
     let default = self_signed(&["localhost"]);
     let tenant = self_signed(&["a.example.test", "b.example.test"]);
-    // In a real deployment this is the CA that issued the partner's client
-    // certificates, and it is emphatically not the same one that issued the
+    // In a real deployment the partner keeps its client key and sends only the
+    // CA's certificate, which is emphatically not the one that issued the
     // server's.
-    let partners = self_signed(&["partner-ca.example.test"]);
+    let (partner_ca, client) = partner_authority();
 
-    let tls = tls_config(&default, &tenant, &partners)?;
+    let tls = tls_config(&default, &tenant, &partner_ca)?;
+
+    // Only so a client can present it: a server never holds a client's key.
+    let directory = std::env::temp_dir();
+    let client_certificate = directory.join("kynos-tls-client.pem");
+    let client_key = directory.join("kynos-tls-client-key.pem");
+    fs::write(&client_certificate, &client.certificate).expect("a writable temporary directory");
+    fs::write(&client_key, &client.key).expect("a writable temporary directory");
 
     let server = Server::new(Router::<()>::new().build(())?)
         .bind((Ipv4Addr::UNSPECIFIED, 8443))
@@ -151,6 +206,14 @@ async fn main() -> kynos::Result<()> {
     for address in bound.local_addrs() {
         println!("listening on https://{address}");
     }
+    // No route is registered, so the handshake succeeding is the result, and
+    // the answer is the problem document a router with no `GET` operation
+    // sends. Drop `--cert` and `--key` and the handshake itself is refused.
+    println!(
+        "try: curl --insecure --cert {} --key {} https://localhost:8443/",
+        client_certificate.display(),
+        client_key.display(),
+    );
 
     bound.serve().await
 }

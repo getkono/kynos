@@ -53,10 +53,10 @@
 //!
 //! # Scope
 //!
-//! Every provider is a singleton for the life of the process: one context
-//! exists, and [`Provides::provide`] hands out a value from it per request.
-//! There is no per-request memoization; inject the pool and open the
-//! transaction where it is used.
+//! One context exists per built service, and [`Provides::provide`] runs once
+//! per injected argument per request, handing out a value from it. There is no
+//! per-request memoization; inject the pool and open the transaction where it
+//! is used.
 //!
 //! # A provider hands out a value rather than lending one
 //!

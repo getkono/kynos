@@ -71,11 +71,10 @@ use kynos::{
     error::rejection::AuthRejection,
     prelude::*,
     security::{
-        Authenticates, Authenticator, Scope, Unscoped,
+        Authenticates, Authenticator, Scope,
         auth::{Auth, MaybeAuth, Scoped, Scopes},
         carrier::{BearerToken, Carries, Credentials},
         requirement::{AllOf, AnyOf, Either2},
-        schemes::{Basic, MutualTls, Realm},
     },
     server::Server,
 };
@@ -147,16 +146,6 @@ struct SessionCookie;
 #[security(basic)]
 #[security(credential = Credentials, challenge = "Basic realm=\"admin\", charset=\"UTF-8\"")]
 struct AdminLogin;
-
-/// The realm `Basic` names on `/admin/session`, instead of its default `api`.
-///
-/// RFC 7617 requires a realm on every Basic challenge; a browser keys the
-/// credentials it remembers by it, so one realm per protection space.
-struct AdminRealm;
-
-impl Realm for AdminRealm {
-    const REALM: &'static str = "admin";
-}
 
 /// A client certificate, presented during the TLS handshake.
 ///
@@ -358,8 +347,8 @@ macro_rules! verifies {
 verifies!(
     ServiceKey,
     SessionCookie,
-    Basic<Credentials, Unscoped, AdminRealm>,
-    MutualTls,
+    AdminLogin,
+    PartnerCertificate,
     DelegatedAccess,
     Federated,
 );
@@ -376,8 +365,9 @@ async fn get_me(auth: Auth<AccessToken>) -> NoContent {
 
 /// Serves a feed, personalised when the caller identified themselves.
 ///
-/// `MaybeAuth` declares `security: [{}, {Bearer: []}]` — the empty requirement
-/// first, which is OpenAPI's spelling for "anonymous access is also permitted".
+/// `MaybeAuth` declares `security: [{}, {AccessToken: []}]` — the empty
+/// requirement first, which is OpenAPI's spelling for "anonymous access is also
+/// permitted".
 /// A reader learns that the credential is *honoured* rather than *demanded*,
 /// which no flag on a middleware can say.
 ///
@@ -408,14 +398,14 @@ async fn get_preferences(auth: Auth<SessionCookie>) -> NoContent {
 
 /// Signs an administrator in.
 #[kynos::post("/admin/session")]
-async fn admin_sign_in(auth: Auth<Basic<Credentials, Unscoped, AdminRealm>>) -> NoContent {
+async fn admin_sign_in(auth: Auth<AdminLogin>) -> NoContent {
     let _ = auth.into_inner();
     NoContent
 }
 
 /// Accepts a partner's mutually authenticated call.
 #[kynos::post("/partners/events")]
-async fn partner_event(auth: Auth<MutualTls>) -> NoContent {
+async fn partner_event(auth: Auth<PartnerCertificate>) -> NoContent {
     let _ = auth.into_inner();
     NoContent
 }
@@ -483,10 +473,11 @@ async fn exports(caller: Auth<AnyOf<(ServiceKey, AccessToken)>>) -> NoContent {
 
 /// Settles a partner's account, which needs both its certificate and a token.
 ///
-/// `AllOf` declares the single requirement `[{MutualTls: [], AccessToken: []}]`,
-/// which OpenAPI reads as "both" — exactly what the guard enforces.
+/// `AllOf` declares the single requirement
+/// `[{PartnerCertificate: [], AccessToken: []}]`, which OpenAPI reads as "both"
+/// — exactly what the guard enforces.
 #[kynos::post("/partners/settlements")]
-async fn settlement(caller: Auth<AllOf<(MutualTls, AccessToken)>>) -> NoContent {
+async fn settlement(caller: Auth<AllOf<(PartnerCertificate, AccessToken)>>) -> NoContent {
     let (certificate, claims) = caller.into_inner();
     let _ = (certificate, claims.subject);
     NoContent
@@ -494,25 +485,19 @@ async fn settlement(caller: Auth<AllOf<(MutualTls, AccessToken)>>) -> NoContent 
 
 #[tokio::main]
 async fn main() -> kynos::Result<()> {
-    let router = Router::<App>::new()
-        // A scheme reaches `components.securitySchemes` by being declared here,
-        // whether or not an operation names it — which is what lets a scheme be
-        // published before the operations that will require it exist.
-        .security_scheme::<AdminLogin>()
-        .security_scheme::<PartnerCertificate>()
-        .mount(kynos::routes![
-            get_me,
-            get_feed,
-            get_usage,
-            get_preferences,
-            admin_sign_in,
-            partner_event,
-            delegated_users,
-            federated_me,
-            reports,
-            exports,
-            settlement,
-        ]);
+    let router = Router::<App>::new().mount(kynos::routes![
+        get_me,
+        get_feed,
+        get_usage,
+        get_preferences,
+        admin_sign_in,
+        partner_event,
+        delegated_users,
+        federated_me,
+        reports,
+        exports,
+        settlement,
+    ]);
 
     let document = router.openapi()?;
     println!("{}", document.to_json()?);

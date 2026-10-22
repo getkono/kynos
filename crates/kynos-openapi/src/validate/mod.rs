@@ -1,9 +1,11 @@
 //! Structural validation of a [`Document`].
 //!
-//! Everything checked here is a rule the OpenAPI specification states but that
-//! the type system cannot enforce — uniqueness across a whole document,
-//! correspondence between a path template and its parameters, names that must
-//! resolve. Mutual exclusions between fields are spelled as types instead.
+//! Nearly everything checked here is a rule the OpenAPI specification states
+//! but that the type system cannot enforce — uniqueness across a whole
+//! document, correspondence between a path template and its parameters, names
+//! that must resolve. Mutual exclusions between fields are spelled as types
+//! instead. The exceptions are Kynos's own policies, stricter than the
+//! specification — [`SpecError::NoResponses`] is one, and says why.
 //!
 //! Kynos runs this when a router is built, so a misleading description fails
 //! at startup rather than being published.

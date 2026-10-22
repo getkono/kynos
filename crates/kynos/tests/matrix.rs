@@ -1,8 +1,11 @@
 //! The whole owned-layer matrix, checked against the description it emits.
 //!
-//! This is the only assertion in the workspace that fails when the **document**
-//! is wrong rather than when the code is. Everything else tests the framework's
-//! types; this tests the framework's claim.
+//! This is one of the few assertions in the workspace that fail when the
+//! **document** is wrong rather than when the code is — `conformance.rs` checks
+//! one service's observed responses against its description, and `flatten.rs`
+//! validates serialized values against their emitted schemas. Most tests check
+//! the framework's types; this checks the framework's claim across every owned
+//! layer.
 //!
 //! Two assertions, opposite in direction and both needed:
 //!

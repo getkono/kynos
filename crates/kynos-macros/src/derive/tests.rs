@@ -1125,10 +1125,10 @@ mod schema {
     }
 
     /// A field rule serde reads in split form is refused where its sides
-    /// differ, as a container `rename_all` is, where it names a field serde
-    /// both writes and reads: the enum's `rename_all_fields` over a struct
-    /// variant, and the own `rename_all` of a variant serde writes and reads.
-    /// Sides that agree are the one style.
+    /// differ, as a container `rename_all` is, where it reaches a struct
+    /// variant serde writes: the enum's `rename_all_fields` over such a
+    /// variant, and that variant's own `rename_all`. Sides that agree are the
+    /// one style.
     #[test]
     fn a_split_field_rule_whose_sides_differ_is_refused() {
         each_case_is_refused(
@@ -1190,8 +1190,8 @@ mod schema {
         }
     }
 
-    /// A split field rule is refused only where it names a field serde both
-    /// writes and reads: a variant's own rule on a variant serde skips both
+    /// A split field rule is refused only where it reaches a struct variant
+    /// serde writes: a variant's own rule on a variant serde skips both
     /// ways or only reads, or on a unit or tuple variant, which has no named
     /// field, and an enum's `rename_all_fields` that reaches no
     /// struct variant, one with no field or every one under its own rule, are
