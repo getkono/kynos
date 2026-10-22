@@ -158,6 +158,14 @@ fn a_tag_is_normalized_to_the_casing_the_specification_recommends() {
     // unchanged by a second pass.
     let again = LanguageTag::parse(tag.as_str()).expect("well-formed");
     assert_eq!(again, tag);
+
+    // `Display` writes the same normalized spelling, not the one written.
+    assert_eq!(
+        LanguageTag::parse("MN-cYRL-mn")
+            .expect("well-formed")
+            .to_string(),
+        "mn-Cyrl-MN"
+    );
 }
 
 #[test]
@@ -550,6 +558,22 @@ fn every_defect_a_range_can_carry_has_a_case() {
     assert_eq!(witnessed.len(), 4, "a refusal has no case above");
 }
 
+/// RFC 4647 section 2.1 allows eight characters per subtag, and no more.
+#[test]
+fn a_range_subtag_of_exactly_eight_characters_is_read() {
+    for entry in ["abcdefgh", "en-abcd1234"] {
+        assert!(Preference::parse(entry, 0).is_ok(), "{entry:?}");
+    }
+    assert_eq!(
+        Preference::parse("abcdefghi", 0),
+        Err(RangeDefect::PrimarySubtag)
+    );
+    assert_eq!(
+        Preference::parse("en-abcd12345", 0),
+        Err(RangeDefect::Subtag)
+    );
+}
+
 #[test]
 fn an_unreadable_range_is_dropped_and_the_rest_of_the_field_still_counts() {
     // A field the server can partly read is one it should partly honour. The
@@ -765,5 +789,42 @@ fn the_longer_of_two_truncating_ranges_is_the_more_specific_one() {
     assert_eq!(
         chosen("en-GB;q=0.2, en-US-x-y;q=0.9, fr;q=0.5", &["fr", "en"]),
         Some("en")
+    );
+}
+
+// -- describing the two fields ----------------------------------------------
+
+use crate::response::language::headers::{self, ContentLanguage};
+
+#[test]
+fn the_accept_language_description_names_the_offer_as_a_sentence() {
+    let description = |tags: &[&str]| {
+        headers::parameter(tags)
+            .description
+            .expect("a described field")
+    };
+
+    assert!(
+        description(&["en", "fr", "de"]).contains("answers in `en`, `fr` and `de`, and"),
+        "{}",
+        description(&["en", "fr", "de"])
+    );
+    assert!(description(&["en", "fr"]).contains("answers in `en` and `fr`, and"));
+    assert!(description(&["en"]).contains("answers in `en`, and"));
+    assert!(description(&[]).contains("answers in no language in particular, and"));
+}
+
+#[test]
+fn a_content_language_states_the_normalized_tag_it_was_built_from() {
+    let tag = LanguageTag::parse("EN-gb").expect("well-formed");
+    assert_eq!(ContentLanguage::new(&tag).tag(), "en-GB");
+}
+
+#[test]
+fn the_content_language_an_offer_declares_is_a_string_enumerating_the_offer() {
+    let header = serde_json::to_value(headers::header(&["en", "fr"])).expect("JSON");
+    assert_eq!(
+        header["content"]["text/plain"]["schema"],
+        serde_json::json!({ "type": "string", "enum": ["en", "fr"] })
     );
 }
