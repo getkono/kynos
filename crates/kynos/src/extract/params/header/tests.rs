@@ -1,7 +1,51 @@
 use kynos_openapi::{Example, MediaType, Parameter, ParameterIn, Ref, Schema};
 use serde_json::json;
 
-use super::header_from;
+use super::{HeaderParams, Headers, header_from};
+use crate::{
+    extract::describe::Describe, router::operation::OperationCx, schema::registry::Registry,
+};
+
+/// A group that is described, as every group is by default.
+struct Traced;
+
+impl HeaderParams for Traced {
+    const NAMES: &'static [&'static str] = &["x-trace"];
+}
+
+/// The same group, opted out of the description.
+struct Untraced;
+
+impl HeaderParams for Untraced {
+    const NAMES: &'static [&'static str] = &["x-trace"];
+    const DESCRIBED: bool = false;
+}
+
+/// The header parameter names `Headers<T>` adds to an operation.
+fn described<T: HeaderParams>() -> Vec<String> {
+    let mut registry = Registry::new();
+    let mut operation = OperationCx::new(&mut registry);
+    Headers::<T>::describe(&mut operation);
+
+    operation
+        .finish()
+        .parameters
+        .into_iter()
+        .map(|parameter| match parameter {
+            kynos_openapi::RefOr::Item(item) => item.name,
+            kynos_openapi::RefOr::Ref(reference) => {
+                panic!("an inline parameter, not {reference:?}")
+            }
+        })
+        .collect()
+}
+
+/// `DESCRIBED` decides whether a group's parameters reach the operation.
+#[test]
+fn only_a_described_group_adds_its_parameters() {
+    assert_eq!(described::<Traced>(), ["x-trace"]);
+    assert!(described::<Untraced>().is_empty());
+}
 
 /// The header as it is written into a response's `headers` map.
 fn written(parameter: &Parameter) -> serde_json::Value {
