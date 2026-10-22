@@ -720,9 +720,10 @@ fn a_streamed_body_describes_its_item_and_not_the_whole() {
 /// Each extractor documents the body it reads on the operation, keyed by
 /// exactly the one media type it says it accepts.
 ///
-/// `media_types()` is what `OneOf` dispatches on and lists in a 415, so a
-/// type it names that the described body does not, or the reverse, is a
-/// client sent somewhere the document never mentioned.
+/// `RequestContent` pairs `media_types()` with `request_body()`, and the
+/// media types a body accepts must be the keys its described body is listed
+/// under: a type one names that the other does not leaves the document and
+/// the extractor disagreeing about what a client may send.
 #[test]
 fn a_streamed_body_is_described_under_the_one_media_type_it_accepts() {
     fn described<T: Describe>() -> kynos_openapi::RequestBody {
