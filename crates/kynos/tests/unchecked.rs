@@ -501,6 +501,25 @@ fn a_router_layer_alone_marks_every_operation() {
     }
 }
 
+/// The gate reports a layer on the router and a layer on a group alike, and
+/// nothing for operations that no layer covers.
+#[test]
+fn the_gate_reports_a_layer_wherever_it_was_taken() {
+    for (on_router, on_group) in [(true, false), (false, true), (true, true)] {
+        let router = layered(on_router, on_group);
+        assert!(router.has_unchecked(), "{on_router} {on_group}");
+        assert_eq!(
+            router.unchecked_reasons(),
+            [OpaqueReason::UntypedLayer],
+            "{on_router} {on_group}"
+        );
+    }
+
+    let router = layered(false, false);
+    assert!(!router.has_unchecked());
+    assert!(router.unchecked_reasons().is_empty());
+}
+
 /// A `tower` layer that stamps every response it wraps, so a test sees where
 /// it ran.
 #[derive(Clone, Copy, Debug)]

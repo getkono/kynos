@@ -351,3 +351,6 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
         self
     }
 }
+
+#[cfg(test)]
+mod tests;
