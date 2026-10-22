@@ -347,8 +347,9 @@ where
             // RFC 9111 section 4.4 invalidates the target URI on a non-error status
             // to an unsafe (or unknown) method; the URI's stored entries are its
             // `GET` and `HEAD` keys, not the key this request's method would build.
-            if let Some(key) = key.as_ref().filter(|_| !method.is_safe())
-                && is_non_error(continued.status())
+            if let Some(key) = key
+                .as_ref()
+                .filter(|_| !method.is_safe() && is_non_error(continued.status()))
             {
                 for stored in [kynos_openapi::Method::Get, kynos_openapi::Method::Head] {
                     self.store
