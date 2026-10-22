@@ -66,6 +66,24 @@ fn an_offer_carrying_parameters_matches_its_type_and_subtype() {
     }
 }
 
+/// RFC 9110 section 5.6.6: a parameter value may be a `quoted-string`, so a
+/// `,` or `;` inside one separates neither list members nor parameters.
+#[test]
+fn a_quoted_parameter_value_may_hold_a_comma_or_a_semicolon() {
+    for value in [
+        "application/pdf;profile=\"a,b\";q=0.9, text/plain;q=0.1",
+        "application/pdf;profile=\"a;q=0\";q=0.9, text/plain;q=0.1",
+        "application/pdf;profile=\"a\\\",b\";q=0.9, text/plain;q=0.1",
+    ] {
+        let accepted = Accept::<(Text, Binary<Pdf>)>::parse(value)
+            .unwrap_or_else(|rejection| panic!("{value:?} was refused: {rejection:?}"))
+            .choose::<(Text, Binary<Pdf>)>()
+            .ok();
+
+        assert_eq!(accepted, Some(1), "{value:?} did not choose the PDF offer");
+    }
+}
+
 /// At equal quality the offer a more specific range matched wins, whichever
 /// was offered first, and between ranges equally specific the one the client
 /// listed first wins.
