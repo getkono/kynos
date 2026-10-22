@@ -59,13 +59,23 @@ impl<L: Languages> CheckedOffer for L {
             "an offer with no languages has no default to serve"
         );
 
-        let mut index = 0;
-        while index < L::TAGS.len() {
-            assert!(
-                LanguageTag::is_well_formed(L::TAGS[index]),
-                "an offered language is not a well-formed RFC 5646 tag"
-            );
-            index += 1;
-        }
+        assert!(
+            every_tag_is_well_formed(L::TAGS),
+            "an offered language is not a well-formed RFC 5646 tag"
+        );
     };
+}
+
+/// Whether each of `tags` is well-formed, answerable in a `const` context.
+///
+/// Separate from [`CheckedOffer::CHECK`] so a unit test reaches it at run time.
+pub(super) const fn every_tag_is_well_formed(tags: &[&str]) -> bool {
+    let mut index = 0;
+    while index < tags.len() {
+        if !LanguageTag::is_well_formed(tags[index]) {
+            return false;
+        }
+        index += 1;
+    }
+    true
 }

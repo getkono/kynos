@@ -598,6 +598,17 @@ impl Languages for Supported {
     const TAGS: &'static [&'static str] = &["en", "fr", "de"];
 }
 
+/// The run-time half of `languages_malformed_tag`, which mutants never run.
+#[test]
+fn an_offer_is_well_formed_only_when_every_tag_in_it_is() {
+    use crate::response::language::offer::every_tag_is_well_formed;
+
+    assert!(every_tag_is_well_formed(Supported::TAGS));
+    // The malformed tag is not first, so a check that stops early misses it.
+    assert!(!every_tag_is_well_formed(&["en", "fr", "en_GB"]));
+    assert!(!every_tag_is_well_formed(&["en_GB", "en"]));
+}
+
 #[test]
 fn an_offer_marker_deriving_nothing_leaves_both_types_clone_debug_and_eq() {
     // `Supported` derives nothing, as every example writes it: the marker sits
