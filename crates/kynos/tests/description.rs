@@ -1787,6 +1787,87 @@ fn a_named_forbidden_type_meets_a_handler_errors_403_as_a_choice_of_three() {
     );
 }
 
+// --- Scope in what an unreachable store publishes ---------------------------
+//
+// `AuthRejection::unavailable` answers 503 where a credential store cannot be
+// reached. The opt-in is the scheme's `MAY_BE_UNAVAILABLE`, which a document
+// assembled from types can read, so the 503 reaches exactly the operations
+// whose guard names an opted-in scheme, and a scheme that never opted in keeps
+// declaring 401 and 403 alone.
+
+/// A session cookie whose store can be down.
+#[derive(kynos::SecurityScheme)]
+#[security(api_key(in = "cookie", name = "session"), unavailable)]
+struct Session;
+
+/// A session store that is never reached: the assertions below read the
+/// document.
+struct Sessions;
+
+impl<C: Sync> kynos::security::Authenticator<Session, C> for Sessions {
+    async fn authenticate(
+        &self,
+        presented: kynos::security::carrier::ApiKey,
+        context: &C,
+    ) -> Result<String, kynos::error::rejection::AuthRejection> {
+        let _ = (presented, context);
+        Err(kynos::error::rejection::AuthRejection::unavailable::<Session>())
+    }
+
+    async fn authorize(
+        &self,
+        credential: &String,
+        scopes: &[kynos::security::Unscoped],
+        context: &C,
+    ) -> Result<(), kynos::error::rejection::AuthRejection> {
+        let _ = (credential, scopes, context);
+        Ok(())
+    }
+}
+
+impl kynos::security::Authenticates<Session> for Guarded {
+    type Authenticator = Sessions;
+
+    fn authenticator(&self) -> &Self::Authenticator {
+        &Sessions
+    }
+}
+
+#[kynos::get("/session")]
+async fn session(caller: kynos::security::auth::Auth<Session>) -> NoContent {
+    let _ = caller.into_inner();
+    NoContent
+}
+
+/// The 503 an opted-in scheme's guard declares is the `about:blank` problem
+/// `Problem::new` writes, with the `Retry-After` it may carry, and the guard
+/// beside it whose scheme never opted in declares none.
+#[test]
+fn only_a_scheme_that_may_be_unavailable_declares_a_503() {
+    let document = Router::<Guarded>::new()
+        .mount(kynos::routes![session, me])
+        .openapi()
+        .expect("a describable router");
+
+    let unavailable = declared_problem(&operation(&document, "/session"), "503");
+    assert_eq!(
+        published(&unavailable["content"]["application/problem+json"]["schema"]),
+        vec!["about:blank".to_owned()],
+        "{unavailable}"
+    );
+    assert_eq!(
+        unavailable["description"],
+        serde_json::json!("Service Unavailable")
+    );
+    let retry_after = &unavailable["headers"]["Retry-After"];
+    assert!(retry_after.is_object(), "{unavailable}");
+    assert_eq!(retry_after.get("required"), None, "{unavailable}");
+
+    let bearer = operation(&document, "/me");
+    assert!(!bearer.responses.responses.contains_key("503"));
+    assert!(bearer.responses.responses.contains_key("401"));
+}
+
 // --- What `deny_unchecked_schemas` reaches ----------------------------------
 //
 // The setting promotes a warning the validator raises, so it refuses exactly
