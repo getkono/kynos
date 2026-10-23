@@ -300,6 +300,14 @@ it is the kind of claim a client generator turns into dead retry logic.
 `BodyRejection` keeps 400 and 422 apart deliberately. A client can retry
 neither, but only one of them means its serializer is wrong.
 
+**A JSON struct body is read only from an object.** `serde`'s derive also reads
+a struct from an array of its members, and from `[]` where every member
+defaults, so a merge-patch body would answer `[]` as if it were `{}` although
+the schema says `type: object`. `Json<T>` and `JsonAs<M, T>` refuse a top-level
+array where `T` reads a struct, through `Option` and newtypes too, with a 422
+keyed at the root before any member is read. A member nested deeper is still
+`serde`'s to read.
+
 `RangeRejection` is the one raised by a *method* rather than by extraction.
 [`Range<T>`](../crates/kynos/src/response/range/mod.rs) is infallible — RFC 9110
 §14.2 answers every unusable `Range` field by ignoring it, so a bad field is a
