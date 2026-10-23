@@ -1,0 +1,38 @@
+error[E0080]: evaluation panicked: a `BodyCodec`'s media type is offered requests the body beside it in `OneOf` is offered too
+ --> src/extract/body/alternative/encoded.rs
+  |
+  |     const DISTINCT: () = distinct_codec(C::MEDIA_TYPE, json::MEDIA_TYPE);
+  |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `kynos::extract::body::alternative::encoded::<impl kynos::extract::body::alternative::Alternative<kynos::extract::body::codec::Encoded<OtherJson, u64>> for kynos::prelude::Json<u64>>::DISTINCT` failed inside this call
+  |
+note: inside `alternative::distinct_codec`
+ --> $RUST/core/src/panic.rs
+  |
+  |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |
+ ::: src/extract/body/alternative.rs
+  |
+  | /     assert!(
+  | |         !shares_requests(codec, body),
+  | |         "a `BodyCodec`'s media type is offered requests the body beside it in `OneOf` is offered \
+  | |          too"
+  | |     );
+  | |_____- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/extract/body/mod.rs
+  |
+  |         let () = <L as Alternative<R>>::DISTINCT;
+  |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn <OneOf<kynos::prelude::Json<u64>, kynos::extract::body::codec::Encoded<OtherJson, u64>> as RequestContent>::request_body`
+ --> src/extract/body/mod.rs
+  |
+  |         let body = <Self as RequestContent>::request_body(operation.registry());
+  |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/extract/body/mod.rs
+  |
+  |         let () = <L as Alternative<R>>::DISTINCT;
+  |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

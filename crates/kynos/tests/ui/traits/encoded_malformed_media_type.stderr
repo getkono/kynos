@@ -1,0 +1,33 @@
+error[E0080]: evaluation panicked: a `BodyCodec`'s `MEDIA_TYPE` is not a `type/subtype` of tokens in octets a header may hold, and a request names its body by one
+ --> $RUST/core/src/panic.rs
+  |
+  |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `kynos::extract::body::codec::Encoded::<Tally, u64>::WELL_FORMED` failed here
+  |
+ ::: src/extract/body/codec.rs
+  |
+  |       pub(crate) const WELL_FORMED: () = assert!(
+  |  ________________________________________-
+  | |         is_media_type(C::MEDIA_TYPE),
+  | |         "a `BodyCodec`'s `MEDIA_TYPE` is not a `type/subtype` of tokens in octets a header \
+  | |          may hold, and a request names its body by one"
+  | |     );
+  | |_____- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/extract/body/codec.rs
+  |
+  |         let () = Self::WELL_FORMED;
+  |                  ^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn <kynos::extract::body::codec::Encoded<Tally, u64> as RequestContent>::request_body`
+ --> src/extract/body/codec.rs
+  |
+  |         let body = <Self as RequestContent>::request_body(operation.registry());
+  |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/extract/body/codec.rs
+  |
+  |         let () = Self::WELL_FORMED;
+  |                  ^^^^^^^^^^^^^^^^^
