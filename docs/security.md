@@ -363,10 +363,11 @@ keeps declaring 401 and 403 alone.
   other way outside Kynos. The build checks that *some* scheme opted in, not
   that the operation is guarded by it, so two holes are left: an authenticator
   naming a scheme other than its own, and a handler or custom guard whose error
-  type is `AuthRejection` returning `unavailable::<S>()` on an operation no
-  guard over `S` covers. `AuthRejection`'s own `Responses` declares no 503,
-  since the bare type knows no scheme, and declaring one there would put a
-  503 on every operation that names it. The conformance harness, which checks
+  type is `AuthRejection` or `ScopedRejection<R>`, which wraps one through
+  `From`, returning `unavailable::<S>()` on an operation no guard over `S`
+  covers. Neither type's `Responses` declares a 503, since neither knows a
+  scheme, and declaring one there would put a 503 on every operation that
+  names it. The conformance harness, which checks
   each status against the description, is what finds either.
 
 ### What Kynos does not verify
