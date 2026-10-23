@@ -702,6 +702,113 @@ mod multipart {
     }
 }
 
+/// A struct body is read only from the JSON type its schema declares, though
+/// `serde` would also read one from an array of its members.
+mod a_json_struct_body {
+    use kynos::schema::{Schema as _, registry::Registry};
+
+    use super::{BodyRejection, Deserialize, Json, Schema, json, read};
+
+    /// A merge-patch shape: every member defaults, so `serde` reads `[]`.
+    #[derive(Debug, PartialEq, Schema, Deserialize)]
+    struct Patch {
+        #[serde(default)]
+        note: Option<String>,
+    }
+
+    /// A member with no default, which `serde` would read from `["x"]`.
+    #[derive(Debug, PartialEq, Schema, Deserialize)]
+    struct Note {
+        note: String,
+    }
+
+    /// The root-keyed 422 an array for `T` is refused with.
+    async fn refused<T: serde::de::DeserializeOwned + kynos::schema::Schema + Send>(
+        body: &'static [u8],
+    ) -> String {
+        let rejection = read::<Json<T>>(Some("application/json"), body)
+            .await
+            .err()
+            .unwrap_or_else(|| panic!("{:?} is not an object", String::from_utf8_lossy(body)));
+        let BodyRejection::Schema { failures } = rejection else {
+            panic!("expected a 422, got {rejection:?}");
+        };
+        assert_eq!(failures.keys().collect::<Vec<_>>(), [""], "{failures:?}");
+        failures[""].clone()
+    }
+
+    #[test]
+    fn the_schema_declares_an_object() {
+        let schema = serde_json::to_value(Patch::schema(&mut Registry::new())).expect("a schema");
+        assert_eq!(schema["type"], json!("object"));
+    }
+
+    #[tokio::test]
+    async fn an_array_is_refused_before_its_members_are_read() {
+        for body in [&b"[]"[..], b" \n[null]", b"[[]]"] {
+            let detail = refused::<Patch>(body).await;
+            assert!(detail.contains("expected a JSON object"), "{detail}");
+        }
+
+        // Refused for being an array, not for running out of members.
+        let detail = refused::<Note>(br#"["x"]"#).await;
+        assert!(detail.contains("expected a JSON object"), "{detail}");
+
+        // Nor does wrapping the struct move it off the top level.
+        for detail in [
+            refused::<Option<Patch>>(b"[]").await,
+            refused::<Wrapped>(b"[]").await,
+        ] {
+            assert!(detail.contains("expected a JSON object"), "{detail}");
+        }
+    }
+
+    /// A newtype is described, and read, as its member.
+    #[derive(Debug, PartialEq, Schema, Deserialize)]
+    struct Wrapped(Patch);
+
+    #[tokio::test]
+    async fn an_object_is_read() {
+        assert_eq!(
+            read::<Json<Patch>>(Some("application/json"), b" {}")
+                .await
+                .expect("an object")
+                .0,
+            Patch { note: None }
+        );
+        assert_eq!(
+            read::<Json<Note>>(Some("application/json"), br#"{"note":"x"}"#)
+                .await
+                .expect("an object")
+                .0,
+            Note {
+                note: "x".to_owned()
+            }
+        );
+        assert_eq!(
+            read::<Json<Option<Patch>>>(Some("application/json"), b"null")
+                .await
+                .expect("null is `None`")
+                .0,
+            None
+        );
+        assert_eq!(
+            read::<Json<Option<Patch>>>(Some("application/json"), b"{}")
+                .await
+                .expect("an object is `Some`")
+                .0,
+            Some(Patch { note: None })
+        );
+        assert_eq!(
+            read::<Json<Wrapped>>(Some("application/json"), b"{}")
+                .await
+                .expect("an object is its member")
+                .0,
+            Wrapped(Patch { note: None })
+        );
+    }
+}
+
 mod optional {
     use super::{
         BodyRejection, HeaderValue, Json, NoContent, Payload, Router, StatusCode, Text,
