@@ -2,11 +2,13 @@
 //! Request Body Object.
 //!
 //! One module per codec: [`text`], [`text_as`] and [`binary`] in every build,
-//! the rest each gated on its feature. [`OneOf`] and `Option<T>`
-//! combine them; [`limit`] bounds how much of a body a buffering codec holds.
+//! the rest each gated on its feature, and [`codec`] for a format the
+//! application implements itself. [`OneOf`] and `Option<T>` combine them;
+//! [`limit`] bounds how much of a body a buffering codec holds.
 
 pub mod alternative;
 pub mod binary;
+pub mod codec;
 pub mod limit;
 pub mod text;
 pub mod text_as;
@@ -181,12 +183,6 @@ async fn read_body(parts: &Parts, body: Body, media_type: &str) -> Result<Bytes,
 
 /// Holds a decoded body, or the record of one sitting at `at`, to the bounds
 /// its schema declares: a broken bound is a 422 keyed by where it broke.
-#[cfg(any(
-    feature = "json",
-    feature = "form",
-    feature = "multipart",
-    feature = "protobuf"
-))]
 fn checked<T: crate::schema::Schema>(
     value: T,
     at: crate::schema::constraints::Pointer<'_>,
