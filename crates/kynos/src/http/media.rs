@@ -23,6 +23,23 @@ pub trait MediaType {
     const MEDIA_TYPE: &'static str;
 }
 
+/// Whether a media type carries a JSON document, usable in a constant.
+///
+/// True for `application/json` and any RFC 6839 `+json` suffix type, compared
+/// on the trimmed type and subtype in any ASCII case, whatever parameters
+/// follow them.
+#[cfg(feature = "openapi32")]
+pub(crate) const fn is_json(media_type: &str) -> bool {
+    use crate::extract::body::alternative::{eq_ignore_ascii_case, split_essence};
+
+    const SUFFIX: &[u8] = b"+json";
+
+    let essence = split_essence(media_type.as_bytes()).0;
+    eq_ignore_ascii_case(essence, mime_names::APPLICATION_JSON.as_bytes())
+        || (essence.len() >= SUFFIX.len()
+            && eq_ignore_ascii_case(essence.split_at(essence.len() - SUFFIX.len()).1, SUFFIX))
+}
+
 /// `application/octet-stream`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct OctetStream;
@@ -64,3 +81,6 @@ pub struct Json;
 impl MediaType for Json {
     const MEDIA_TYPE: &'static str = mime_names::APPLICATION_JSON;
 }
+
+#[cfg(all(test, feature = "openapi32"))]
+mod tests;

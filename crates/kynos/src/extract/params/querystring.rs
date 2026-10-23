@@ -2,12 +2,11 @@
 
 use crate::{
     error::rejection::QueryRejection,
-    extract::{
-        FromRequestParts,
-        body::alternative::{eq_ignore_ascii_case, split_essence},
-        describe::Describe,
+    extract::{FromRequestParts, describe::Describe},
+    http::{
+        Parts,
+        media::{MediaType, is_json},
     },
-    http::{Parts, media::MediaType},
     router::operation::OperationCx,
     schema::{
         Schema,
@@ -15,7 +14,6 @@ use crate::{
         type_admits_null,
     },
 };
-use kynos_openapi::model::body::mime_names::APPLICATION_JSON;
 
 /// The whole query string, described by media type.
 ///
@@ -61,20 +59,6 @@ impl<T, M> QueryString<T, M> {
 /// Required of every Parameter Object but unused for this location (OpenAPI
 /// 3.2); a constant keeps emitted documents byte-stable.
 const QUERYSTRING_NAME: &str = "querystring";
-
-/// Whether a media type carries a JSON document, usable in a constant.
-///
-/// True for `application/json` and any RFC 6839 `+json` suffix type, compared
-/// on the trimmed type and subtype in any ASCII case, whatever parameters
-/// follow them.
-const fn is_json(media_type: &str) -> bool {
-    const SUFFIX: &[u8] = b"+json";
-
-    let essence = split_essence(media_type.as_bytes()).0;
-    eq_ignore_ascii_case(essence, APPLICATION_JSON.as_bytes())
-        || (essence.len() >= SUFFIX.len()
-            && eq_ignore_ascii_case(essence.split_at(essence.len() - SUFFIX.len()).1, SUFFIX))
-}
 
 impl<T, M: MediaType> QueryString<T, M> {
     /// Refuses, in the constant evaluation reading it, a marker that does not
