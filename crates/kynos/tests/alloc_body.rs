@@ -284,4 +284,30 @@ mod a_declared_text_type {
             "writing under a declared `text/*` type costs other than `Text` does"
         );
     }
+
+    /// A marker that, with the appended charset, exactly fills the 128 octets
+    /// a `Content-Type` is built in at compile time: the longest that still
+    /// costs nothing per response.
+    struct Filling;
+
+    impl MediaType for Filling {
+        const MEDIA_TYPE: &'static str = "text/vnd.example.a-subtype-exactly-long-enough-to-fill-\
+                                          the-room-a-content-type-is-built-in-with-utf-8-appended-xy";
+    }
+
+    #[test]
+    fn a_marker_filling_the_built_room_costs_what_text_does() {
+        assert_eq!(
+            Filling::MEDIA_TYPE.len() + "; charset=utf-8".len(),
+            128,
+            "the marker no longer fills the room exactly"
+        );
+
+        let (plain, filling) = (TEXT.to_owned(), TEXT.to_owned());
+        assert_eq!(
+            cost(move || TextAs::<Filling>::new(filling).into_response()),
+            cost(move || Text(plain).into_response()),
+            "a marker that fits the built room is stated at run time"
+        );
+    }
 }
