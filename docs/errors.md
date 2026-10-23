@@ -287,8 +287,8 @@ All live in [`error::rejection`](../crates/kynos/src/error/rejection.rs).
 | `BodyRejection` | 400, 413, 415, 422 | every body extractor, and `OneOf<L, R>` |
 | `NegotiationRejection` | 400, 406 | `Accept<T>` |
 | `RangeRejection` | 416 | `Range<T>`'s `select`, `apply`, `select_parts` and `apply_parts`, and `Served::deliver` |
-| `AuthRejection` | 401, 403 | `Auth<S>`, `MaybeAuth<S>` |
-| `ScopedRejection<R>` | 401, 403 | `Scoped<S, R>` |
+| `AuthRejection` | 401, 403, and 503 where the scheme opts in | `Auth<S>`, `MaybeAuth<S>` |
+| `ScopedRejection<R>` | 401, 403, and 503 where the scheme opts in | `Scoped<S, R>` |
 
 The split is the whole point. A single shared rejection type would be *sound* —
 it satisfies `emitted ⊇ observable` — but every operation would advertise every
@@ -320,6 +320,12 @@ the rejection carries that length and writes the field itself, as
 *describes* that field, because the `unsatisfied-range` grammar is fixed and
 there is no per-operation string for a `Describe` to supply — which is what lets
 the header travel with the status wherever the status is declared from.
+
+`AuthRejection`'s 503, an unreachable credential store, is declared by the
+guard rather than the type: only the guard knows its scheme, and only a scheme
+setting `MAY_BE_UNAVAILABLE` can produce one, so the type declaring it would put
+a 503 on every guarded operation. See
+[`security.md`](security.md#an-unreachable-store-is-a-503-and-the-scheme-opts-in).
 
 `AuthRejection` is the one rejection whose problem `type` is not fixed.
 `AuthRejection::forbidden_as(type_uri)` puts an application's own URI on a 403,
