@@ -66,8 +66,9 @@ pub fn held<T: IntoResponse>(status: u16, held: T) -> Response {
 ///
 /// The entry is `T`'s own at `status`, else `T`'s 200 or sole representation
 /// re-keyed, as `Created` re-keys its body's. `description` replaces the
-/// entry's, which `fallback` stands in for only where the entry has none. A
-/// `$ref` entry is kept as is.
+/// entry's description. Without it, an entry `T` declares at `status` keeps
+/// its own, else takes `fallback`; a re-keyed entry always takes `fallback`,
+/// since its 200's description describes a 200. A `$ref` entry is kept as is.
 pub fn describe<T: Responses>(
     registry: &mut Registry,
     responses: &mut kynos_openapi::Responses,
