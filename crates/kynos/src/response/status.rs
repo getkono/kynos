@@ -273,7 +273,7 @@ fn set_location(response: &mut Response, location: Location) {
 
 /// Whether the body answered with an error, which a success wrapper sends as
 /// is: a problem's `status` must match the one sent (RFC 9457 §3.1.2).
-fn is_failure(response: &Response) -> bool {
+pub(crate) fn is_failure(response: &Response) -> bool {
     response.status().is_client_error() || response.status().is_server_error()
 }
 
@@ -300,7 +300,7 @@ fn location_header(description: &str) -> kynos_openapi::Header {
 ///   otherwise the wrapper's response is empty.
 ///
 /// A body's other statuses stay in the set; its 4xx and 5xx go out unchanged.
-fn body_response(
+pub(crate) fn body_response(
     description: &str,
     status: u16,
     body: &mut kynos_openapi::Responses,

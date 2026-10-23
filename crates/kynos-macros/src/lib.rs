@@ -641,6 +641,28 @@ pub fn derive_api_error(item: TokenStream) -> TokenStream {
 /// for the empty body, or exactly one type describing the body. A variant at
 /// 204, 205 or 304 holds nothing, since RFC 9110 gives those responses no
 /// content.
+///
+/// A variant marked `response` holds a response instead of a body, for a
+/// status that sends fields beside its content:
+///
+/// ```ignore
+/// #[derive(Reply)]
+/// enum PutReply {
+///     #[reply(status = 201, response)]
+///     Created(Created<Json<Entry>>),
+///
+///     #[reply(status = 200, description = "the entry was replaced")]
+///     Replaced(Entry),
+/// }
+/// ```
+///
+/// The held type implements `IntoResponse` and `Responses`, as `Created<T>` and
+/// `WithHeaders<T, H>` do, and is written as it writes itself under the
+/// variant's status. A 4xx or 5xx it answers with is sent unchanged, and is
+/// described under its own status unless a variant declares that status. Its
+/// entry at the variant's status, else its 200, describes the variant, with the
+/// headers it declares; a `description` or doc comment replaces the one that
+/// entry carries.
 #[proc_macro_derive(Reply, attributes(reply))]
 pub fn derive_reply(item: TokenStream) -> TokenStream {
     derive::reply::expand(item)

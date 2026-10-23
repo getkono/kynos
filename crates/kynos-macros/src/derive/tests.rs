@@ -5240,6 +5240,38 @@ mod reply {
                 "already declares a description",
             ),
             case(
+                "`response` on the enum, which holds no type of its own",
+                quote::quote!(
+                    #[reply(response)]
+                    enum CreateReply {
+                        #[reply(status = 201)]
+                        Created(Created<Json<u32>>),
+                    }
+                ),
+                "it belongs on that variant rather than the enum",
+            ),
+            case(
+                "`response` on a unit variant, which holds no type to answer with",
+                quote::quote!(
+                    enum DeleteReply {
+                        #[reply(status = 200, response)]
+                        Deleted,
+                    }
+                ),
+                "a unit variant holds none",
+            ),
+            case(
+                "`response` twice on one variant",
+                quote::quote!(
+                    enum CreateReply {
+                        #[reply(status = 201, response)]
+                        #[reply(response)]
+                        Created(Created<Json<u32>>),
+                    }
+                ),
+                "already says it holds a response",
+            ),
+            case(
                 "a key outside the reply grammar",
                 quote::quote!(
                     enum CreateReply {

@@ -5,9 +5,10 @@
 //!
 //! member := status = <200..=599>                required, exactly once
 //!         | description = "<what it means>"     at most once
+//!         | response                            at most once, not on a unit variant
 //! ```
 //!
-//! Neither member goes on the enum, and any other key is refused.
+//! No member goes on the enum, and any other key is refused.
 //!
 //! `status` is required on every variant, names a final response, and is
 //! unique. A variant at 204, 205 or 304 is a unit variant, since those
@@ -17,6 +18,12 @@
 //! A bodied variant is described and written as `application/json`, so its
 //! payload must be `serde::Serialize` (not `IntoResponse`, which `u32` or
 //! `String` lack). A unit variant writes an empty body.
+//!
+//! A `response` variant holds a response type instead, `IntoResponse` and
+//! `Responses` both, so `Created<Json<T>>` or `WithHeaders<Json<T>, H>` brings
+//! its headers. It is described by that type's entry at `status`, else its 200
+//! re-keyed, and the 4xx and 5xx it passes through join statuses no variant
+//! declares. A description it carries stands unless the variant gives one.
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
@@ -63,26 +70,12 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         }
     };
 
-    // A status and a description belong on each variant, not the enum.
-    let on_enum = parse_reply(&input.attrs)?;
-    if let Some((_, span)) = on_enum.status {
-        return Err(syn::Error::new(
-            span,
-            "a status belongs on each variant, because the point of a `Reply` enum is that its \
-             variants answer differently. Move it to the variants",
-        ));
-    }
-    if let Some((_, span)) = on_enum.description {
-        return Err(syn::Error::new(
-            span,
-            "a description belongs on each variant, since each describes the one response it \
-             answers with, and no response is described by the enum's. Move it to the variants",
-        ));
-    }
+    nothing_on_the_enum(&input.attrs)?;
 
     let mut seen: Vec<(u16, Span)> = Vec::new();
     let mut declared: Vec<TokenStream2> = Vec::new();
     let mut written: Vec<TokenStream2> = Vec::new();
+    let mut holds_a_response = false;
     for variant in &data.variants {
         body_is_one_named_type(variant)?;
 
@@ -128,10 +121,24 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
             ));
         }
 
+        let held = holds_a_response_type(variant, args.response)?;
+        holds_a_response |= held;
+
         let description = args.description.map(|(text, _)| text);
-        declared.push(response(variant, status, description.as_deref()));
-        written.push(write(variant, status));
+        declared.push(response(variant, status, description.as_deref(), held));
+        written.push(write(variant, status, held));
     }
+
+    // Statuses a held response passes through join after every variant's
+    // own, so a variant's status is never described by another's failure.
+    let (collect, join) = if holds_a_response {
+        (
+            quote!(let mut failures = ::kynos::openapi::Responses::new();),
+            quote!(responses.merge_from(&failures);),
+        )
+    } else {
+        (TokenStream2::new(), TokenStream2::new())
+    };
 
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
@@ -150,31 +157,92 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
                 registry: &mut ::kynos::schema::registry::Registry,
             ) -> ::kynos::openapi::Responses {
                 let mut responses = ::kynos::openapi::Responses::new();
+                #collect
                 #(#declared)*
+                #join
                 responses
             }
         }
     })
 }
 
+/// Every member belongs on a variant, since each describes the one response
+/// that variant answers with.
+fn nothing_on_the_enum(attrs: &[Attribute]) -> syn::Result<()> {
+    let on_enum = parse_reply(attrs)?;
+    if let Some((_, span)) = on_enum.status {
+        return Err(syn::Error::new(
+            span,
+            "a status belongs on each variant, because the point of a `Reply` enum is that its \
+             variants answer differently. Move it to the variants",
+        ));
+    }
+    if let Some((_, span)) = on_enum.description {
+        return Err(syn::Error::new(
+            span,
+            "a description belongs on each variant, since each describes the one response it \
+             answers with, and no response is described by the enum's. Move it to the variants",
+        ));
+    }
+    if let Some(span) = on_enum.response {
+        return Err(syn::Error::new(
+            span,
+            "`response` marks the variant holding a response type, so it belongs on that \
+             variant rather than the enum",
+        ));
+    }
+    Ok(())
+}
+
+/// Whether a variant marked `response` holds a type to answer with; a unit
+/// variant holds none.
+fn holds_a_response_type(variant: &Variant, response: Option<Span>) -> syn::Result<bool> {
+    match (response, &variant.fields) {
+        (Some(span), Fields::Unit) => Err(syn::Error::new(
+            span,
+            format!(
+                "`response` says variant `{}` holds the response type it answers with, and a \
+                 unit variant holds none. Give it the one field, or drop `response` for an \
+                 empty body",
+                variant.ident
+            ),
+        )),
+        (response, _) => Ok(response.is_some()),
+    }
+}
+
 /// One variant, as the response it declares: JSON content for a body, none for
-/// a unit variant.
-fn response(variant: &Variant, status: u16, description: Option<&str>) -> TokenStream2 {
+/// a unit variant, and the held type's own entry for a `response` variant.
+fn response(variant: &Variant, status: u16, description: Option<&str>, held: bool) -> TokenStream2 {
     let description = description
         .map(ToOwned::to_owned)
         .or_else(|| doc_string(&variant.attrs));
-    let description = description.map_or_else(
-        || {
-            let fallback = class_sentence(status);
-            quote! {
-                ::kynos::http::StatusCode::from_u16(#status)
-                    .ok()
-                    .and_then(|status| status.canonical_reason())
-                    .unwrap_or(#fallback)
-            }
-        },
-        |text| quote!(#text),
-    );
+    let class = class_sentence(status);
+    let fallback = quote! {
+        ::kynos::http::StatusCode::from_u16(#status)
+            .ok()
+            .and_then(|status| status.canonical_reason())
+            .unwrap_or(#class)
+    };
+
+    if let (true, Fields::Unnamed(fields)) = (held, &variant.fields) {
+        let ty = &fields.unnamed[0].ty;
+        let description = description.map_or_else(|| quote!(None), |text| quote!(Some(#text)));
+        // Spanned on the held type, so one lacking `Responses` is reported
+        // against the variant a user wrote.
+        return quote_spanned! {ty.span()=>
+            ::kynos::__private::reply::describe::<#ty>(
+                registry,
+                &mut responses,
+                &mut failures,
+                #status,
+                #description,
+                #fallback,
+            );
+        };
+    }
+
+    let description = description.map_or(fallback, |text| quote!(#text));
 
     let body = match &variant.fields {
         Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
@@ -210,10 +278,16 @@ fn class_sentence(status: u16) -> &'static str {
 }
 
 /// One variant, as the match arm that writes it; the mirror of [`response`].
-fn write(variant: &Variant, status: u16) -> TokenStream2 {
+fn write(variant: &Variant, status: u16, held: bool) -> TokenStream2 {
     let ident = &variant.ident;
 
     match &variant.fields {
+        Fields::Unnamed(fields) if held => {
+            let span = fields.unnamed[0].ty.span();
+            quote_spanned! {span=>
+                Self::#ident(held) => ::kynos::__private::reply::held(#status, held),
+            }
+        }
         Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
             // Spanned on the payload's type, so a payload without `Serialize`
             // is reported against the variant a user wrote.
@@ -233,6 +307,7 @@ fn write(variant: &Variant, status: u16) -> TokenStream2 {
 struct ReplyArgs {
     status: Option<(u16, Span)>,
     description: Option<(String, Span)>,
+    response: Option<Span>,
 }
 
 /// Reads one item's `#[reply(...)]` lists, validating every member.
@@ -277,6 +352,17 @@ fn parse_reply(attrs: &[Attribute]) -> syn::Result<ReplyArgs> {
                         ));
                     }
                     args.description = Some((literal.value(), literal.span()));
+                }
+                "response" => {
+                    let span = meta.path.span();
+                    if args.response.is_some() {
+                        return Err(syn::Error::new(
+                            span,
+                            "this already says it holds a response, and saying it twice says \
+                             nothing more",
+                        ));
+                    }
+                    args.response = Some(span);
                 }
                 other => {
                     return Err(syn::Error::new(

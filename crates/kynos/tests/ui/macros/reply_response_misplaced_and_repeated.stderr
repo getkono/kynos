@@ -1,0 +1,17 @@
+error: `response` marks the variant holding a response type, so it belongs on that variant rather than the enum
+  --> tests/ui/macros/reply_response_misplaced_and_repeated.rs:12:9
+   |
+12 | #[reply(response)]
+   |         ^^^^^^^^
+
+error: `response` says variant `Deleted` holds the response type it answers with, and a unit variant holds none. Give it the one field, or drop `response` for an empty body
+  --> tests/ui/macros/reply_response_misplaced_and_repeated.rs:20:27
+   |
+20 |     #[reply(status = 200, response)]
+   |                           ^^^^^^^^
+
+error: this already says it holds a response, and saying it twice says nothing more
+  --> tests/ui/macros/reply_response_misplaced_and_repeated.rs:27:13
+   |
+27 |     #[reply(response)]
+   |             ^^^^^^^^

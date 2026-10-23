@@ -3,12 +3,13 @@
 //! Functions rather than emitted tokens, since the deriving crate need not
 //! depend on `serde_json`.
 
-use kynos_openapi::model::body::mime_names;
+use kynos_openapi::{RefOr, StatusPattern, model::body::mime_names};
 
 use crate::{
     error::problem::Problem,
     http::{HeaderValue, Response, StatusCode, body::Body, header},
-    response::{IntoResponse, codec::json_bytes},
+    response::{IntoResponse, Responses, codec::json_bytes, status},
+    schema::registry::Registry,
 };
 
 /// The status a variant declared, which the derive checked is one.
@@ -44,4 +45,64 @@ pub fn json<T: serde::Serialize>(status: u16, body: &T) -> Response {
         HeaderValue::from_static(mime_names::APPLICATION_JSON),
     );
     response
+}
+
+/// A variant holding a response: what it writes, under the declared status.
+///
+/// A 4xx or 5xx it answers with is sent unchanged, as
+/// [`Created`](crate::response::status::Created) sends one.
+#[must_use]
+pub fn held<T: IntoResponse>(status: u16, held: T) -> Response {
+    let mut response = held.into_response();
+    if !status::is_failure(&response) {
+        *response.status_mut() = status_code(status);
+    }
+    response
+}
+
+/// Describes a variant holding `T` under its declared `status`, into
+/// `responses`, and collects the 4xx and 5xx `T` passes through into
+/// `failures`, which the derive joins after every variant's own status.
+///
+/// The entry is `T`'s own at `status`, else `T`'s 200 or sole representation
+/// re-keyed, as `Created` re-keys its body's. `description` replaces the
+/// entry's, which `fallback` stands in for only where the entry has none. A
+/// `$ref` entry is kept as is.
+pub fn describe<T: Responses>(
+    registry: &mut Registry,
+    responses: &mut kynos_openapi::Responses,
+    failures: &mut kynos_openapi::Responses,
+    status: u16,
+    description: Option<&str>,
+    fallback: &str,
+) {
+    let mut described = T::responses(registry);
+    let key = StatusPattern::Code(status).to_string();
+
+    let entry = match status::body_response(description.unwrap_or(fallback), status, &mut described)
+    {
+        Some(mut entry) => {
+            if let Some(description) = description {
+                entry.description = Some(description.to_owned());
+            } else if entry.description.is_none() {
+                entry.description = Some(fallback.to_owned());
+            }
+            RefOr::Item(entry)
+        }
+        // `body_response` declines only a `$ref` under `status`.
+        None => described
+            .responses
+            .get(&key)
+            .cloned()
+            .expect("a declined entry is a `$ref` under the status"),
+    };
+    responses.responses.insert(key.clone(), entry);
+
+    let mut passed = kynos_openapi::Responses::new();
+    for (other, response) in &described.responses {
+        if *other != key && other.starts_with(['4', '5']) {
+            passed.responses.insert(other.clone(), response.clone());
+        }
+    }
+    failures.union_from(&passed);
 }

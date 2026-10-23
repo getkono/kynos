@@ -4239,6 +4239,154 @@ fn a_reply_description_falls_back_from_attribute_to_doc_to_reason_phrase() {
     }
 }
 
+/// A `response` variant: the held type's status-fixing and headers, under the
+/// variant's status.
+#[cfg(feature = "json")]
+mod held_response {
+    use kynos::{
+        HeaderParams, Reply,
+        extract::body::json::Json,
+        http::header,
+        response::{
+            IntoResponse,
+            headers::WithHeaders,
+            status::{Created, Location},
+        },
+    };
+
+    use super::{Answered, StoreError, User, answered, emitted_responses};
+
+    #[derive(HeaderParams)]
+    struct Revision {
+        #[header(rename = "ETag")]
+        etag: String,
+    }
+
+    /// A create-or-replace `PUT`, the 201 with its `Location` and the 200
+    /// without one. `StoreError` passes a 404 and a 409 through the 201, and
+    /// the enum answers 404 itself.
+    #[derive(Reply)]
+    enum PutReply {
+        #[reply(status = 201, response)]
+        Created(Created<Result<Json<User>, StoreError>>),
+        #[reply(status = 200, response, description = "replaced")]
+        Replaced(WithHeaders<Json<User>, Revision>),
+        #[reply(status = 202, response)]
+        Queued(Json<User>),
+        #[reply(status = 404)]
+        Missing,
+    }
+
+    fn ada() -> User {
+        User {
+            id: 7,
+            name: "Ada".to_owned(),
+        }
+    }
+
+    /// Each held response answers the variant's status with the fields its
+    /// type writes: `Created` its `Location`, `WithHeaders` its group, and a
+    /// bare `Json`'s 200 moved to the declared 202.
+    #[tokio::test]
+    async fn a_held_response_answers_its_variant_status_with_its_own_headers() {
+        let created = answered(
+            PutReply::Created(Created::at(
+                Location::from_static("/users/7"),
+                Ok(Json(ada())),
+            ))
+            .into_response(),
+        )
+        .await;
+        assert_eq!(created.status, 201);
+        assert_eq!(created.headers[header::LOCATION], "/users/7");
+        assert_eq!(created.headers[header::CONTENT_TYPE], "application/json");
+        let body: serde_json::Value = serde_json::from_slice(&created.body).expect("JSON");
+        assert_eq!(body, serde_json::json!({ "id": 7, "name": "Ada" }));
+
+        let replaced = answered(
+            PutReply::Replaced(WithHeaders::new(
+                Json(ada()),
+                Revision {
+                    etag: "\"r2\"".to_owned(),
+                },
+            ))
+            .into_response(),
+        )
+        .await;
+        assert_eq!(replaced.status, 200);
+        assert_eq!(replaced.headers["etag"], "\"r2\"");
+        assert_eq!(replaced.headers.get(header::LOCATION), None);
+
+        let queued = answered(PutReply::Queued(Json(ada())).into_response()).await;
+        assert_eq!(queued.status, 202);
+        assert_eq!(queued.headers[header::CONTENT_TYPE], "application/json");
+    }
+
+    /// A failure the held type answers with is sent as it is, neither moved to
+    /// the variant's status nor given a `Location`.
+    #[tokio::test]
+    async fn a_failure_a_held_response_answers_with_is_sent_unchanged() {
+        let Answered {
+            status, headers, ..
+        } = answered(
+            PutReply::Created(Created::at(
+                Location::from_static("/users/7"),
+                Err(StoreError::Conflict),
+            ))
+            .into_response(),
+        )
+        .await;
+
+        assert_eq!(status, 409);
+        assert_eq!(headers.get(header::LOCATION), None);
+        assert_eq!(headers[header::CONTENT_TYPE], "application/problem+json");
+    }
+
+    /// Each held variant is described by its type's entry under the variant's
+    /// status, headers included; a failure it passes through is described
+    /// where no variant answers that status, and never over one that does.
+    #[test]
+    fn a_held_response_is_described_by_its_type_under_the_variant_status() {
+        let responses = emitted_responses::<PutReply>();
+
+        let created = &responses["201"];
+        assert_eq!(created["description"], "the resource was created");
+        assert_eq!(created["headers"]["Location"]["required"], true);
+        assert!(
+            created["content"]["application/json"]["schema"].is_object(),
+            "{created}"
+        );
+
+        let replaced = &responses["200"];
+        assert_eq!(replaced["description"], "replaced");
+        assert!(replaced["headers"]["ETag"].is_object(), "{replaced}");
+        assert!(replaced["headers"].get("Location").is_none(), "{replaced}");
+
+        let queued = &responses["202"];
+        assert_eq!(queued["description"], "Accepted");
+        assert!(
+            queued["content"]["application/json"]["schema"].is_object(),
+            "{queued}"
+        );
+
+        assert_eq!(responses["404"]["description"], "Not Found");
+        assert!(responses["404"].get("content").is_none(), "{responses}");
+        assert!(
+            responses["409"]["content"]["application/problem+json"].is_object(),
+            "{responses}"
+        );
+
+        let mut statuses: Vec<&str> = responses
+            .as_object()
+            .expect("a map of statuses")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        statuses.sort_unstable();
+        assert_eq!(statuses, ["200", "201", "202", "404", "409"]);
+    }
+}
+
 /// A problem publishes the members its variant marked `extension` beside the
 /// registered ones, and nothing else the variant holds: `trace` stays a Rust
 /// field.
