@@ -17,8 +17,12 @@
 //! [`MaybeAuth`](crate::security::auth::MaybeAuth) prepends `{}` to any of the
 //! three. A combinator takes schemes and not other combinators, so each shape
 //! has exactly one spelling.
+//!
+//! [`Scoped`](crate::security::auth::Scoped) demands its scope set of a
+//! scheme, or of every alternative of an [`AnyOf`] whose schemes share one
+//! [`SecurityScheme::Scope`]: [`Scopable`] is what admits the two.
 
-use std::{future::Future, marker::PhantomData};
+use std::{borrow::Cow, future::Future, marker::PhantomData};
 
 use kynos_openapi::{ComponentName, SecurityRequirement};
 
@@ -85,6 +89,55 @@ pub trait CheckedBy<C>: Requirement {
     ) -> impl Future<Output = Result<Option<Self::Credential>, AuthRejection>> + Send;
 }
 
+/// A [`Requirement`] a [`Scoped`](crate::security::auth::Scoped) guard can
+/// demand a scope set of: a [`SecurityScheme`], or an [`AnyOf`] whose schemes
+/// share one [`SecurityScheme::Scope`].
+///
+/// An `AnyOf` demands the set of whichever alternative authenticates, and
+/// declares it on each, `[{A: [r]}, {B: [r]}]`. An [`AllOf`] is not one: a set
+/// it demanded would be demanded of every scheme in it.
+///
+/// Sealed, as [`Requirement`] is.
+pub trait Scopable: Requirement {
+    /// What each scope is: the [`SecurityScheme::Scope`] of every scheme named.
+    type Scope: Scope;
+
+    /// The `WWW-Authenticate` challenge a 403 refusing a demanded scope may
+    /// send.
+    ///
+    /// The first scheme's
+    /// [`insufficient_scope_challenge`](SecurityScheme::insufficient_scope_challenge),
+    /// in declaration order: a guard demanding a scope set authorizes every
+    /// scheme, so each may refuse a scope.
+    fn scope_challenge() -> Option<&'static str>;
+
+    /// Registers every scheme named, and returns the alternatives, each
+    /// carrying its scheme's default scopes followed by each of `required`
+    /// they do not already name.
+    fn declare_scoped(
+        operation: &mut OperationCx<'_>,
+        required: &'static [Self::Scope],
+    ) -> Vec<SecurityRequirement>;
+}
+
+/// A [`Scopable`] requirement the context `C` can check against a request,
+/// together with a scope set.
+///
+/// Implemented wherever `C` implements [`Authenticates`] for every scheme the
+/// requirement names, as [`CheckedBy`] is.
+pub trait ScopeCheckedBy<C>: Scopable {
+    /// Reads and verifies the credential the request presented, and authorizes
+    /// it for its scheme's default scopes and `required` in one call.
+    ///
+    /// `Ok(None)` is *absent*, as in [`CheckedBy::check`]. A presented
+    /// credential is always authorized, even for an empty demand.
+    fn check_scoped(
+        parts: &Parts,
+        context: &C,
+        required: &'static [Self::Scope],
+    ) -> impl Future<Output = Result<Option<Self::Credential>, AuthRejection>> + Send;
+}
+
 impl<S: SecurityScheme> sealed::Sealed for S {}
 
 impl<S: SecurityScheme> Requirement for S {
@@ -117,6 +170,41 @@ where
         };
 
         verify::<S, C>(presented, owed_defaults::<S>(), context)
+            .await
+            .map(Some)
+    }
+}
+
+impl<S: SecurityScheme> Scopable for S {
+    type Scope = <S as SecurityScheme>::Scope;
+
+    fn scope_challenge() -> Option<&'static str> {
+        <S as SecurityScheme>::insufficient_scope_challenge()
+    }
+
+    fn declare_scoped(
+        operation: &mut OperationCx<'_>,
+        required: &'static [<S as SecurityScheme>::Scope],
+    ) -> Vec<SecurityRequirement> {
+        vec![require::<S>(operation, demanded_names::<S>(required))]
+    }
+}
+
+impl<C, S> ScopeCheckedBy<C> for S
+where
+    S: Carries,
+    C: Authenticates<S>,
+{
+    async fn check_scoped(
+        parts: &Parts,
+        context: &C,
+        required: &'static [<S as SecurityScheme>::Scope],
+    ) -> Result<Option<S::Credential>, AuthRejection> {
+        let Some(presented) = S::present(parts)? else {
+            return Ok(None);
+        };
+
+        verify::<S, C>(presented, Some(&demanded::<S>(required)), context)
             .await
             .map(Some)
     }
@@ -205,9 +293,13 @@ fn first_challenge(challenges: &[fn() -> Option<&'static str>]) -> Option<&'stat
     challenges.iter().find_map(|challenge| challenge())
 }
 
-/// Implements [`Requirement`] and [`CheckedBy`] for one [`AnyOf`] arity.
+/// Implements [`Requirement`], [`CheckedBy`], [`Scopable`] and
+/// [`ScopeCheckedBy`] for one [`AnyOf`] arity.
+///
+/// The first scheme is named apart, `$first`, so the others' scope types can
+/// be bound to its.
 macro_rules! any_of {
-    ($either:ident; $($scheme:ident => $variant:ident),+) => {
+    ($either:ident; $first:ident; $($scheme:ident => $variant:ident),+; $($rest:ident),+) => {
         impl<$($scheme: SecurityScheme),+> sealed::Sealed for AnyOf<($($scheme,)+)> {}
 
         impl<$($scheme: SecurityScheme),+> Requirement for AnyOf<($($scheme,)+)> {
@@ -249,6 +341,63 @@ macro_rules! any_of {
                 let mut refused = None;
                 $(
                     match <$scheme as CheckedBy<C>>::check(parts, context).await {
+                        Ok(Some(credential)) => return Ok(Some($either::$variant(credential))),
+                        Ok(None) => {}
+                        Err(rejection) => {
+                            refused.get_or_insert(rejection);
+                        }
+                    }
+                )+
+                refused.map_or(Ok(None), Err)
+            }
+        }
+
+        impl<$first, $($rest),+> Scopable for AnyOf<($first, $($rest,)+)>
+        where
+            $first: SecurityScheme,
+            $($rest: SecurityScheme<Scope = <$first as SecurityScheme>::Scope>,)+
+        {
+            type Scope = <$first as SecurityScheme>::Scope;
+
+            fn scope_challenge() -> Option<&'static str> {
+                first_challenge(&[$(<$scheme as SecurityScheme>::insufficient_scope_challenge),+])
+            }
+
+            fn declare_scoped(
+                operation: &mut OperationCx<'_>,
+                required: &'static [<$first as SecurityScheme>::Scope],
+            ) -> Vec<SecurityRequirement> {
+                // As `declare`: two schemes under one key are one alternative.
+                let mut alternatives = Vec::new();
+                $(
+                    let requirement =
+                        require::<$scheme>(operation, demanded_names::<$scheme>(required));
+                    if !alternatives.contains(&requirement) {
+                        alternatives.push(requirement);
+                    }
+                )+
+                alternatives
+            }
+        }
+
+        impl<C, $first, $($rest),+> ScopeCheckedBy<C> for AnyOf<($first, $($rest,)+)>
+        where
+            $first: Carries,
+            $($rest: Carries<Scope = <$first as SecurityScheme>::Scope>,)+
+            $(C: Authenticates<$scheme>,)+
+        {
+            async fn check_scoped(
+                parts: &Parts,
+                context: &C,
+                required: &'static [<$first as SecurityScheme>::Scope],
+            ) -> Result<Option<Self::Credential>, AuthRejection> {
+                // `check`'s order and precedence, with `required` demanded of
+                // whichever alternative is tried.
+                let mut refused = None;
+                $(
+                    match <$scheme as ScopeCheckedBy<C>>::check_scoped(parts, context, required)
+                        .await
+                    {
                         Ok(Some(credential)) => return Ok(Some($either::$variant(credential))),
                         Ok(None) => {}
                         Err(rejection) => {
@@ -328,9 +477,9 @@ macro_rules! all_of {
     };
 }
 
-any_of!(Either2; A => First, B => Second);
-any_of!(Either3; A => First, B => Second, D => Third);
-any_of!(Either4; A => First, B => Second, D => Third, E => Fourth);
+any_of!(Either2; A; A => First, B => Second; B);
+any_of!(Either3; A; A => First, B => Second, D => Third; B, D);
+any_of!(Either4; A; A => First, B => Second, D => Third, E => Fourth; B, D, E);
 
 all_of!(A, B);
 all_of!(A, B, D);
@@ -435,6 +584,37 @@ pub(crate) fn require<S: SecurityScheme>(
 /// The names of the scopes scheme `S` demands by default.
 pub(crate) fn defaults<S: SecurityScheme>() -> Vec<&'static str> {
     S::scopes().iter().map(Scope::name).collect()
+}
+
+/// The scopes a guard demanding `required` authorizes scheme `S` for: `S`'s
+/// defaults, then each of `required` that the defaults do not already name.
+///
+/// `required` joins the defaults rather than replacing them, so the scheme's
+/// demand holds under every guard. Borrowed, and so free, when `S` has none.
+fn demanded<S: SecurityScheme>(required: &'static [S::Scope]) -> Cow<'static, [S::Scope]> {
+    let defaults = S::scopes();
+    if defaults.is_empty() {
+        return Cow::Borrowed(required);
+    }
+
+    let mut union = defaults.to_vec();
+    for scope in required {
+        if !union.iter().any(|held| held.name() == scope.name()) {
+            union.push(scope.clone());
+        }
+    }
+    Cow::Owned(union)
+}
+
+/// The names of the scopes [`demanded`] authorizes, without naming one twice.
+fn demanded_names<S: SecurityScheme>(required: &'static [S::Scope]) -> Vec<&'static str> {
+    let mut names = Vec::new();
+    for name in demanded::<S>(required).iter().map(Scope::name) {
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
 }
 
 /// The component key scheme `S` is both registered and required under.
