@@ -25,7 +25,7 @@
 feature	text	delta
 openapi31	1059228	0
 assets	1059228	0
-assets-fs	1092764	33536
+assets-fs	1095196	35968
 cache	1059196	-32
 compression	1059228	0
 cookie	1059228	0
@@ -45,7 +45,7 @@ test-util	1056124	-3104
 time-chrono	1059228	0
 time-jiff	1059228	0
 trace	1059228	0
-unchecked	1092764	33536
+unchecked	1095196	35968
 uuid	1059196	-32
 yaml	1065468	6240
-(all-features)	1203980	144752
+(all-features)	1206396	147168
