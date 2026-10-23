@@ -129,7 +129,7 @@ enum StoreError {
 | variant | `title` | the problem's `title`, and what the response's description is composed from. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
 | variant | `type` | an absolute URI, overriding `base` |
 | variant | `transparent` | answer as the `ApiError` the variant's one field holds, instead of `status`, `title` and `type` |
-| field | `extension` | serialize this field as an extension member under its own name |
+| field | `extension` | serialize this field as an extension member under its own name, and declare it by its type's schema |
 | field | `headers` | send this field, a header group, on this failure's response, and declare it under this failure's status alone |
 
 **`title` is read twice, and its absence is answered differently each time.**
@@ -151,6 +151,15 @@ one that can drift from it.
 **A field is not serialized unless it says so.** `#[problem(extension)]` is
 opt-in because a variant carries whatever the error site had to hand, and the
 default must not be to publish it. `trace` above stays internal.
+
+**A member sent is a member declared.** An extension field's type is sent
+through `Into<serde_json::Value>` and declared by its `Schema`, so a type
+lacking either is refused at the field. The failure's branch names the member
+under `properties`, its type registered as a component like any other, and
+lists it under `required`. An `Option<T>` member is the exception, recognised
+syntactically as parameters are: it is sent only when it holds a value, as
+`detail` is, so it is declared by `T`'s schema and left optional rather than
+sent as `null`.
 
 **A header one failure sends is that failure's.** `Retry-After` on a 429 is
 `#[problem(headers)]` on a field of the 429's variant, holding a group deriving
@@ -232,12 +241,16 @@ Two rules follow from what is actually on the wire:
   the surviving branch takes the summary declared first as its `title`; where
   the dedup leaves *one*, there is no `oneOf` and the single `allOf` carries no
   `title` at all — the description already says the only thing that status
-  publishes.
+  publishes. The one branch must match what each of those variants sends, so
+  it declares every extension member any of them does, a member they type
+  differently as an `anyOf` of the types, and requires a member only where
+  every one of them sends it.
 
 **A status an extractor also claims publishes both halves of it.** An argument's
 rejection is contributed before the return type's responses, and a description
 files one response per status — so the two are unioned rather than raced. Each
-side's branches are flattened, a `type` already published is dropped, and what
+side's branches are flattened, a `type` already published folds its members
+into the branch kept by the rule just above, and what
 survives is rebuilt as a single `allOf` or a `oneOf` of them; the descriptions
 join the way a shared status already joins its variants. A `Path<T>` capture's
 400 beside a handler error's 400 is therefore a choice between `about:blank` and
@@ -299,6 +312,11 @@ it is the kind of claim a client generator turns into dead retry logic.
 
 `BodyRejection` keeps 400 and 422 apart deliberately. A client can retry
 neither, but only one of them means its serializer is wrong.
+
+A schema failure says what was wrong in `errors`, an array of
+`{pointer, detail}` objects, and the status it answers with declares that
+member: required on the body's 422, which only a schema failure sends, and
+optional on a parameter's 400, which an undecodable value sends without it.
 
 **A JSON struct body is read only from an object.** `serde`'s derive also reads
 a struct from an array of its members, and from `[]` where every member

@@ -12,17 +12,73 @@
 
 use serde_json::Value;
 
-use crate::error::problem::narrowed_response;
+use crate::error::problem::{Branch, Member, narrowed_response};
 
 /// The `Problem` component, as `Registry::resolve` hands it over.
 fn component() -> kynos_openapi::Schema {
     kynos_openapi::Schema::component("Problem")
 }
 
-/// The schema one status declares, as JSON.
+/// The schema one status declares, as JSON, for failures sending no members.
 fn declared(status: u16, branches: &[(Option<&'static str>, Option<&'static str>)]) -> Value {
+    let branches: Vec<Branch<'_>> = branches
+        .iter()
+        .map(|(uri, summary)| (*uri, *summary, &[][..]))
+        .collect();
+    declared_with(status, &branches)
+}
+
+/// The schema one status declares, as JSON.
+fn declared_with(status: u16, branches: &[Branch<'_>]) -> Value {
     let response = narrowed_response(&component(), status, branches);
     serde_json::to_value(response).expect("a response serializes")
+}
+
+/// A schema of one JSON type.
+fn typed(ty: &str) -> kynos_openapi::Schema {
+    serde_json::from_value(serde_json::json!({ "type": ty })).expect("a schema")
+}
+
+/// Two failures publishing one URI describe, on their one branch, every member
+/// either sends: one they type differently by either type, one they type alike
+/// once, and one only some of them send as optional. A member named like a registered one is never
+/// sent, so it is not declared either.
+#[test]
+fn one_branch_declares_every_member_its_failures_send() {
+    let invalid: [Member; 3] = [
+        ("code", typed("string"), true),
+        ("errors", typed("array"), true),
+        ("detail", typed("integer"), true),
+    ];
+    let empty: [Member; 3] = [
+        ("code", typed("integer"), true),
+        ("errors", typed("array"), false),
+        ("hint", typed("string"), true),
+    ];
+    let response = declared_with(
+        422,
+        &[
+            (Some("https://errors.example.com/invalid"), None, &invalid),
+            (Some("https://errors.example.com/invalid"), None, &empty),
+        ],
+    );
+    let narrowing = &response["content"]["application/problem+json"]["schema"]["allOf"][1];
+
+    assert_eq!(
+        narrowing["properties"],
+        serde_json::json!({
+            "type": { "type": "string", "const": "https://errors.example.com/invalid" },
+            "code": { "anyOf": [{ "type": "string" }, { "type": "integer" }] },
+            "errors": { "type": "array" },
+            "hint": { "type": "string" },
+        }),
+        "{narrowing}"
+    );
+    assert_eq!(
+        narrowing["required"],
+        serde_json::json!(["code"]),
+        "{narrowing}"
+    );
 }
 
 /// A `oneOf` whose branches repeat a `const` is satisfied by two of them at
