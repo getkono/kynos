@@ -23,8 +23,8 @@ const UTF_8: &str = "; charset=utf-8";
 /// The room a marker and [`UTF_8`] are built into at compile time.
 ///
 /// A marker past it is stated at run time instead, at the cost of one
-/// allocation per response; RFC 6838's 127-character type and subtype names
-/// put a registered type well inside it.
+/// allocation per response. RFC 6838 allows a type and a subtype of 127
+/// characters each, but a registered `text/*` type is a fraction of this.
 const CAPACITY: usize = 128;
 
 /// `media_type` with [`UTF_8`] appended, and the length used; a length of zero
