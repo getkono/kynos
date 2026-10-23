@@ -25,14 +25,13 @@ macro_rules! guard {
     };
 }
 
-/// Merges the guard's description and its rejection's responses.
+/// Writes the guard's description, which declares its refusals itself: only
+/// the guard knows its schemes, so its rejection's `Responses` would add a 403
+/// a scheme that never forbids leaves out.
 macro_rules! describe_guard {
-    ($ty:ident, $operation:expr) => {{
-        <$ty as Describe>::describe($operation);
-        let rejected =
-            <<$ty as Guard<C>>::Rejection as Responses>::responses($operation.registry());
-        $operation.add_responses(&rejected);
-    }};
+    ($ty:ident, $operation:expr) => {
+        <$ty as Describe>::describe($operation)
+    };
 }
 
 /// Runs one head extractor, short-circuiting into its rejection's response.

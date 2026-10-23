@@ -644,7 +644,7 @@ fn the_503_is_declared_only_where_asked_for() {
     use crate::{response::Responses, schema::registry::Registry};
 
     let mut registry = Registry::default();
-    let asked = serde_json::to_value(super::auth_responses(&mut registry, None, true))
+    let asked = serde_json::to_value(super::auth_responses(&mut registry, None, true, true))
         .expect("a set of responses serializes");
     let declared = &asked["503"];
     assert_eq!(
@@ -660,12 +660,41 @@ fn the_503_is_declared_only_where_asked_for() {
         "a 503 need not say when to retry"
     );
 
-    let unasked = super::auth_responses(&mut registry, None, false);
+    let unasked = super::auth_responses(&mut registry, None, true, false);
     assert!(!unasked.responses.contains_key("503"));
     assert!(
         !AuthRejection::responses(&mut registry)
             .responses
             .contains_key("503")
+    );
+}
+
+/// The 403 is left out only where a guard says none of its schemes forbids,
+/// whatever type a scope set names, and the rejection type alone keeps it: it
+/// knows no scheme, and a hand-written extractor erroring with it may forbid.
+#[test]
+fn the_403_is_left_out_only_where_no_scheme_forbids() {
+    use crate::{response::Responses, schema::registry::Registry};
+
+    let mut registry = Registry::default();
+    let unforbidding = super::auth_responses(
+        &mut registry,
+        Some("https://errors.example.com/no-scope"),
+        false,
+        false,
+    );
+    assert!(!unforbidding.responses.contains_key("403"));
+    assert!(unforbidding.responses.contains_key("401"));
+
+    assert!(
+        super::auth_responses(&mut registry, None, true, false)
+            .responses
+            .contains_key("403")
+    );
+    assert!(
+        AuthRejection::responses(&mut registry)
+            .responses
+            .contains_key("403")
     );
 }
 

@@ -53,6 +53,11 @@ pub trait Requirement: sealed::Sealed + Send + Sync + 'static {
     /// is consulted.
     const MAY_BE_UNAVAILABLE: bool;
 
+    /// Whether a guard over this requirement may answer 403: any scheme's
+    /// [`SecurityScheme::FORBIDS`], since each one's authenticator is
+    /// consulted.
+    const FORBIDS: bool;
+
     /// The `WWW-Authenticate` challenge a 401 refusing this requirement sends.
     ///
     /// The first scheme's that has one, in declaration order: a 401 needs only
@@ -144,6 +149,8 @@ impl<S: SecurityScheme> Requirement for S {
     type Credential = <S as SecurityScheme>::Credential;
 
     const MAY_BE_UNAVAILABLE: bool = <S as SecurityScheme>::MAY_BE_UNAVAILABLE;
+
+    const FORBIDS: bool = <S as SecurityScheme>::FORBIDS;
 
     fn challenge() -> Option<&'static str> {
         <S as SecurityScheme>::challenge()
@@ -308,6 +315,8 @@ macro_rules! any_of {
             const MAY_BE_UNAVAILABLE: bool =
                 false $(|| <$scheme as SecurityScheme>::MAY_BE_UNAVAILABLE)+;
 
+            const FORBIDS: bool = false $(|| <$scheme as SecurityScheme>::FORBIDS)+;
+
             fn challenge() -> Option<&'static str> {
                 first_challenge(&[$(<$scheme as SecurityScheme>::challenge),+])
             }
@@ -421,6 +430,8 @@ macro_rules! all_of {
 
             const MAY_BE_UNAVAILABLE: bool =
                 false $(|| <$scheme as SecurityScheme>::MAY_BE_UNAVAILABLE)+;
+
+            const FORBIDS: bool = false $(|| <$scheme as SecurityScheme>::FORBIDS)+;
 
             fn challenge() -> Option<&'static str> {
                 first_challenge(&[$(<$scheme as SecurityScheme>::challenge),+])

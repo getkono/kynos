@@ -638,7 +638,7 @@ The budget is the honest record of what stayed. A path leaves it when its module
 is split, and one joins it only with the argument for why that module needs the
 room, in the same commit.
 
-Twelve of them crossed the line after v0.1.0, and each was argued for as it did.
+Thirteen of them crossed the line after v0.1.0, and each was argued for as it did.
 `response/status.rs` is the shape above rather than a new argument. It declares
 seven public types — `Location`, `InvalidLocation`, `NoContent`, `Created`,
 `Accepted`, `Redirect` and `ValidRedirectCode` — so splitting it would turn
@@ -753,6 +753,15 @@ one. What pushed it over was a scope refusal's challenge: a 403 from
 now tells the two apart. That helper and the combinators are one concern —
 how a requirement is checked — and a new combinator changes both.
 
+`security/mod.rs` is `status.rs`'s shape. It declares `Guard`,
+`SecurityScheme`, `Scope`, `Unscoped`, `Authenticator` and `Authenticates`, so
+a split would turn `security::SecurityScheme`, the path every derived and
+hand-written scheme names, into a longer one. What pushed it over was
+`SecurityScheme::FORBIDS`, whose documentation says what the type system cannot
+hold and the harness does. The traits are one concern — what a scheme is and
+what verifies it — and an opt-in on the scheme changes what an authenticator
+may return.
+
 The budget, which may only shrink:
 
 - `crates/kynos-macros/src/derive/schema.rs`
@@ -785,6 +794,7 @@ The budget, which may only shrink:
 - `crates/kynos/src/schema/constraints.rs`
 - `crates/kynos/src/schema/mod.rs`
 - `crates/kynos/src/security/auth.rs`
+- `crates/kynos/src/security/mod.rs`
 - `crates/kynos/src/security/requirement.rs`
 - `crates/kynos/src/server/connection.rs`
 - `crates/kynos/src/server/mod.rs`

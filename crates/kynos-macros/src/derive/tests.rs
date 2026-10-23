@@ -5435,6 +5435,14 @@ mod security_scheme {
                 "`carrier` is already set",
             ),
             case(
+                "a scheme that never forbids, demanding default scopes a refusal of is a 403",
+                quote::quote!(
+                    #[security(bearer, scopes(Grant::Audit), forbids = false)]
+                    struct Bearer;
+                ),
+                "drop `forbids = false`, or the scopes",
+            ),
+            case(
                 "one flow declared twice",
                 quote::quote!(
                     #[security(oauth2(

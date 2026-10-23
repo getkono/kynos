@@ -268,3 +268,100 @@ async fn a_client_without_the_coverage_does_not_count_toward_it() {
     let document = service().expect("a describable router").openapi().clone();
     coverage.assert_declared_responses_covered(&document);
 }
+
+// --- A scheme that never forbids ---------------------------------------------
+//
+// `forbids = false` says a scheme's authenticator never refuses a valid
+// credential, so its guards declare the 401 alone. The promise is the
+// application's, and the harness is what holds it.
+
+/// A scrape token: right or wrong, with nothing to forbid.
+#[derive(kynos::SecurityScheme)]
+#[security(bearer, carrier = optional, credential = (), forbids = false)]
+struct ScrapeToken;
+
+/// Admits `secret`, and breaks the scheme's promise on `suspended`.
+struct Scrape;
+
+impl kynos::security::Authenticator<ScrapeToken, ()> for Scrape {
+    async fn authenticate(
+        &self,
+        presented: Option<kynos::security::carrier::BearerToken>,
+        (): &(),
+    ) -> Result<(), kynos::error::rejection::AuthRejection> {
+        match presented
+            .as_ref()
+            .map(kynos::security::carrier::BearerToken::as_str)
+        {
+            Some("secret") => Ok(()),
+            Some("suspended") => Err(kynos::error::rejection::AuthRejection::forbidden()),
+            _ => Err(kynos::error::rejection::AuthRejection::unauthenticated()),
+        }
+    }
+
+    async fn authorize(
+        &self,
+        (): &(),
+        _: &[kynos::security::Unscoped],
+        (): &(),
+    ) -> Result<(), kynos::error::rejection::AuthRejection> {
+        Ok(())
+    }
+}
+
+impl kynos::security::Authenticates<ScrapeToken> for () {
+    type Authenticator = Scrape;
+
+    fn authenticator(&self) -> &Scrape {
+        &Scrape
+    }
+}
+
+#[kynos::get("/metrics")]
+async fn metrics(caller: kynos::security::auth::Auth<ScrapeToken>) -> NoContent {
+    caller.into_inner();
+    NoContent
+}
+
+fn scraped() -> kynos::Result<Service<()>> {
+    Router::<()>::new().mount(kynos::routes![metrics]).build(())
+}
+
+/// A guard over a scheme that never forbids declares no 403, so a right and a
+/// wrong token exercise every response it does declare.
+#[tokio::test]
+async fn a_scheme_that_never_forbids_is_covered_by_a_right_and_a_wrong_token() {
+    let client = TestClient::new(scraped().expect("a describable router"));
+
+    client
+        .get("/metrics")
+        .send()
+        .await
+        .assert_status(StatusCode::UNAUTHORIZED);
+    client
+        .get("/metrics")
+        .header("authorization", "Bearer secret")
+        .send()
+        .await
+        .assert_status(StatusCode::NO_CONTENT);
+
+    client.assert_conformance();
+    client.assert_declared_responses_covered();
+}
+
+/// An authenticator that forbids under such a scheme anyway sends a status the
+/// description does not name, and the harness reports it.
+#[tokio::test]
+#[should_panic(expected = "GET /metrics -> 403: status 403 is not declared")]
+async fn a_403_from_a_scheme_that_never_forbids_fails_conformance() {
+    let client = TestClient::new(scraped().expect("a describable router"));
+
+    client
+        .get("/metrics")
+        .header("authorization", "Bearer suspended")
+        .send()
+        .await
+        .assert_status(StatusCode::FORBIDDEN);
+
+    client.assert_conformance();
+}
