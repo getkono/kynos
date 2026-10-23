@@ -119,7 +119,7 @@ use crate::{
 /// OneOf::<Text, TextAs<Plain>>::media_types();
 /// ```
 ///
-/// and one beside a `Binary` of its own type and subtype:
+/// one beside a `Binary` of its own type and subtype,
 ///
 /// ```compile_fail
 /// use kynos::{
@@ -128,6 +128,37 @@ use crate::{
 /// };
 ///
 /// OneOf::<TextAs<Html>, Binary<Html>>::media_types();
+/// ```
+///
+/// and one beside a `JsonAs` whose marker is the same `text/*` type with a
+/// `+json` suffix, which both bodies accept, in either order:
+///
+/// ```compile_fail
+/// use kynos::{
+///     extract::{body::{OneOf, json_as::JsonAs, text_as::TextAs}, describe::RequestContent},
+///     http::media::MediaType,
+/// };
+///
+/// struct Example;
+/// impl MediaType for Example {
+///     const MEDIA_TYPE: &'static str = "text/vnd.example+json";
+/// }
+///
+/// OneOf::<TextAs<Example>, JsonAs<Example, u64>>::media_types();
+/// ```
+///
+/// ```compile_fail
+/// use kynos::{
+///     extract::{body::{OneOf, json_as::JsonAs, text_as::TextAs}, describe::RequestContent},
+///     http::media::MediaType,
+/// };
+///
+/// struct Example;
+/// impl MediaType for Example {
+///     const MEDIA_TYPE: &'static str = "text/vnd.example+json";
+/// }
+///
+/// OneOf::<JsonAs<Example, u64>, TextAs<Example>>::media_types();
 /// ```
 ///
 /// Distinct types are alternatives, in a request and in a response offer:

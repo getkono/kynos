@@ -30,8 +30,9 @@ where
     /// pair its types cannot prove distinct, since a marker may name that
     /// body's own media type, so its implementations compare the two; so is a
     /// `JsonAs` beside a `Json`, another `JsonAs` or a `Binary`, and a
-    /// [`TextAs`](super::text_as::TextAs) beside a `Text`, another `TextAs` or a
-    /// `Binary`. `OneOf` evaluates this
+    /// [`TextAs`](super::text_as::TextAs) beside a `Text`, another `TextAs`, a
+    /// `Binary` or a `JsonAs`, whose `+json` marker may be a `text/*` type.
+    /// `OneOf` evaluates this
     /// wherever it is used, so such a pair fails the build that instantiates
     /// it rather than the description of its route.
     ///
@@ -136,8 +137,8 @@ pub(crate) const fn distinct(marker: &str, body: &str) {
 }
 
 /// Refuses, in the constant evaluation calling it, a `JsonAs` marker offered a
-/// request `body` is offered too: another `JsonAs`'s marker, or `Json`'s own
-/// media type.
+/// request `body` is offered too: another `JsonAs`'s marker, `Json`'s own
+/// media type, or a `TextAs`'s marker.
 #[cfg(feature = "json")]
 pub(crate) const fn distinct_json(marker: &str, body: &str) {
     assert!(
@@ -147,8 +148,8 @@ pub(crate) const fn distinct_json(marker: &str, body: &str) {
 }
 
 /// Refuses, in the constant evaluation calling it, a `TextAs` marker offered a
-/// request `body` is offered too: another `TextAs`'s marker, or `Text`'s own
-/// media type.
+/// request `body` is offered too: another `TextAs`'s marker, `Text`'s own
+/// media type, or a `JsonAs`'s marker.
 pub(crate) const fn distinct_text(marker: &str, body: &str) {
     assert!(
         !shares_requests(marker, body),

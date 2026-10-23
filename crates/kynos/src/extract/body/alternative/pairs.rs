@@ -219,7 +219,8 @@ impl<T: Schema, U: Schema> Alternative<JsonSeq<Records<U>>> for Protobuf<T> {}
 
 // JSON under a declared media type. Its marker is a JSON type, so it is
 // compared only against the bodies that could name one: another `JsonAs`,
-// `Json`, and a `Binary`. Every other codec's fixed media type is neither
+// `Json`, a `Binary`, and a `TextAs` (below), since a `+json` suffix may sit on
+// a `text/*` type. Every other codec's fixed media type is neither
 // `application/json` nor a `+json` type, so those pairs are unconditional.
 #[cfg(feature = "json")]
 impl<M: MediaType, T: Schema, N: MediaType, U: Schema> Alternative<JsonAs<N, U>> for JsonAs<M, T> {
@@ -272,9 +273,9 @@ impl<M: MediaType, T: Schema, U: Schema> Alternative<JsonAs<M, U>> for JsonSeq<R
 
 // UTF-8 text under a declared media type. Its marker is a `text/*` type, so it
 // is compared only against the bodies that could name one: another `TextAs`,
-// `Text`, and a `Binary`. Every other codec's fixed media type, and every
-// `JsonAs` marker, is an `application/*` type, so those pairs are
-// unconditional.
+// `Text`, a `Binary`, and a `JsonAs`, whose `+json` marker may be a `text/*`
+// type too. Every other codec's fixed media type is an `application/*` type,
+// so those pairs are unconditional.
 impl<M: MediaType, N: MediaType> Alternative<TextAs<N>> for TextAs<M> {
     const DISTINCT: () = distinct_text(M::MEDIA_TYPE, N::MEDIA_TYPE);
 }
@@ -296,9 +297,13 @@ impl<M: MediaType, T: Schema> Alternative<Json<T>> for TextAs<M> {}
 #[cfg(feature = "json")]
 impl<M: MediaType, T: Schema> Alternative<TextAs<M>> for Json<T> {}
 #[cfg(feature = "json")]
-impl<M: MediaType, N: MediaType, T: Schema> Alternative<JsonAs<N, T>> for TextAs<M> {}
+impl<M: MediaType, N: MediaType, T: Schema> Alternative<JsonAs<N, T>> for TextAs<M> {
+    const DISTINCT: () = distinct_text(M::MEDIA_TYPE, N::MEDIA_TYPE);
+}
 #[cfg(feature = "json")]
-impl<M: MediaType, N: MediaType, T: Schema> Alternative<TextAs<M>> for JsonAs<N, T> {}
+impl<M: MediaType, N: MediaType, T: Schema> Alternative<TextAs<M>> for JsonAs<N, T> {
+    const DISTINCT: () = distinct_json(N::MEDIA_TYPE, M::MEDIA_TYPE);
+}
 
 #[cfg(feature = "form")]
 impl<M: MediaType, T: Schema> Alternative<Form<T>> for TextAs<M> {}
