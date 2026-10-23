@@ -1181,6 +1181,34 @@ fn scoped_any_of_declares_the_set_on_every_alternative() {
     );
 }
 
+/// A set naming one scope twice declares it once on every alternative, even
+/// where no default scope is there to be joined.
+#[test]
+fn a_scope_named_twice_is_declared_once() {
+    /// `reports:read`, twice.
+    struct Twice;
+
+    impl Scopes for Twice {
+        type Scope = Grant;
+        const REQUIRED: &'static [Grant] = &[Grant::ReadReports, Grant::ReadReports];
+    }
+
+    let (operation, _) = described::<Scoped<AnyOf<(Audited, Bearer<String, Grant>)>, Twice>>();
+    assert_eq!(
+        operation.security,
+        Some(vec![
+            SecurityRequirement::scoped(
+                component_name::<Audited>().as_str(),
+                ["audit", "reports:read"],
+            ),
+            SecurityRequirement::scoped(
+                component_name::<Bearer<String, Grant>>().as_str(),
+                ["reports:read"],
+            ),
+        ])
+    );
+}
+
 /// What refusing a scope set is called narrows the 403 a combined requirement
 /// declares exactly as it does a single scheme's.
 #[test]
