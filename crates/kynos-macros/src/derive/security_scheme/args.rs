@@ -21,6 +21,9 @@ pub(super) struct SchemeArgs {
     pub(super) challenge: Option<LitStr>,
     pub(super) description: Option<LitStr>,
     pub(super) deprecated: bool,
+    /// `unavailable`: sets `SecurityScheme::MAY_BE_UNAVAILABLE`, declaring the
+    /// 503 an authenticator answers when its credential store is unreachable.
+    pub(super) unavailable: bool,
     /// What `carrier = ...` said, if it was written.
     pub(super) carrier: Option<Carrier>,
     /// The scheme-level `scopes(..)`: values of `scope`.
@@ -90,6 +93,7 @@ pub(super) fn parse_args(input: &DeriveInput) -> syn::Result<SchemeArgs> {
                     ));
                 }
                 "deprecated" => args.deprecated = true,
+                "unavailable" => args.unavailable = true,
                 "carrier" => {
                     if args.carrier.is_some() {
                         return Err(syn::Error::new(

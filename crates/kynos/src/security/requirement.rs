@@ -44,6 +44,11 @@ pub trait Requirement: sealed::Sealed + Send + Sync + 'static {
     /// What satisfying the requirement yields the handler.
     type Credential: Send;
 
+    /// Whether a guard over this requirement may answer 503: any scheme's
+    /// [`SecurityScheme::MAY_BE_UNAVAILABLE`], since each one's authenticator
+    /// is consulted.
+    const MAY_BE_UNAVAILABLE: bool;
+
     /// The `WWW-Authenticate` challenge a 401 refusing this requirement sends.
     ///
     /// The first scheme's that has one, in declaration order: a 401 needs only
@@ -84,6 +89,8 @@ impl<S: SecurityScheme> sealed::Sealed for S {}
 
 impl<S: SecurityScheme> Requirement for S {
     type Credential = <S as SecurityScheme>::Credential;
+
+    const MAY_BE_UNAVAILABLE: bool = <S as SecurityScheme>::MAY_BE_UNAVAILABLE;
 
     fn challenge() -> Option<&'static str> {
         <S as SecurityScheme>::challenge()
@@ -206,6 +213,9 @@ macro_rules! any_of {
         impl<$($scheme: SecurityScheme),+> Requirement for AnyOf<($($scheme,)+)> {
             type Credential = $either<$(<$scheme as SecurityScheme>::Credential),+>;
 
+            const MAY_BE_UNAVAILABLE: bool =
+                false $(|| <$scheme as SecurityScheme>::MAY_BE_UNAVAILABLE)+;
+
             fn challenge() -> Option<&'static str> {
                 first_challenge(&[$(<$scheme as SecurityScheme>::challenge),+])
             }
@@ -259,6 +269,9 @@ macro_rules! all_of {
 
         impl<$($scheme: SecurityScheme),+> Requirement for AllOf<($($scheme,)+)> {
             type Credential = ($(<$scheme as SecurityScheme>::Credential,)+);
+
+            const MAY_BE_UNAVAILABLE: bool =
+                false $(|| <$scheme as SecurityScheme>::MAY_BE_UNAVAILABLE)+;
 
             fn challenge() -> Option<&'static str> {
                 first_challenge(&[$(<$scheme as SecurityScheme>::challenge),+])

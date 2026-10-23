@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::{sync::Mutex, time::Duration};
 
 use kynos_openapi::SecurityRequirement;
 
@@ -1019,6 +1019,149 @@ async fn a_default_scope_refusal_challenges_with_the_refusing_schemes_challenge(
             header["example"],
             serde_json::json!(INSUFFICIENT),
             "{header}"
+        );
+    }
+}
+
+/// A bearer scheme whose credential store can be unreachable.
+struct Outage;
+
+impl SecurityScheme for Outage {
+    const NAME: &'static str = "Outage";
+    const MAY_BE_UNAVAILABLE: bool = true;
+    type Credential = String;
+    type Scope = Grant;
+
+    fn describe() -> kynos_openapi::SecurityScheme {
+        kynos_openapi::SecurityScheme::bearer(None)
+    }
+
+    fn challenge() -> Option<&'static str> {
+        Some("Bearer")
+    }
+}
+
+impl Carries for Outage {
+    type Presented = BearerToken;
+
+    fn present(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
+        carrier::bearer(parts)
+    }
+}
+
+/// Cannot reach its store, and expects it back in a second and a half.
+struct Down;
+
+impl<C: Sync> Authenticator<Outage, C> for Down {
+    async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
+        Err(AuthRejection::unavailable::<Outage>().with_retry_after(Duration::from_millis(1_500)))
+    }
+
+    async fn authorize(&self, _: &String, _: &[Grant], _: &C) -> Result<(), AuthRejection> {
+        Ok(())
+    }
+}
+
+impl Authenticates<Outage> for Recording {
+    type Authenticator = Down;
+
+    fn authenticator(&self) -> &Down {
+        &Down
+    }
+}
+
+/// The 503 guard `D`'s operation declares, if it declares one.
+fn declared_unavailable<D: Describe>() -> Option<kynos_openapi::Response> {
+    let (operation, _) = described::<D>();
+    operation
+        .responses
+        .responses
+        .get("503")
+        .map(|response| response.as_item().expect("an inline 503").clone())
+}
+
+/// The opt-in is the scheme's, and every guard naming it declares the 503 its
+/// authenticator may send: alone, anonymously, scoped, or as either half of a
+/// combination, since each scheme's authenticator is consulted. The 503 is the
+/// `about:blank` problem `Problem::new` writes, with the optional
+/// `Retry-After` it may carry.
+#[test]
+fn a_scheme_that_may_be_unavailable_declares_the_503_under_every_guard() {
+    for declared in [
+        declared_unavailable::<Auth<Outage>>(),
+        declared_unavailable::<MaybeAuth<Outage>>(),
+        declared_unavailable::<Scoped<Outage, ReadReports>>(),
+        declared_unavailable::<Auth<AnyOf<(Bearer, Outage)>>>(),
+        declared_unavailable::<Auth<AllOf<(Outage, Bearer)>>>(),
+    ] {
+        let response = serde_json::to_value(declared.expect("a declared 503"))
+            .expect("a serializable response");
+
+        assert_eq!(
+            response["content"]["application/problem+json"]["schema"]["allOf"][1]["properties"]["type"]
+                ["const"],
+            serde_json::json!("about:blank"),
+            "{response}"
+        );
+        let retry_after = &response["headers"]["Retry-After"];
+        assert!(retry_after.is_object(), "{response}");
+        assert_ne!(
+            retry_after["required"],
+            serde_json::json!(true),
+            "{response}"
+        );
+        // An outage challenges nothing.
+        assert!(
+            response["headers"].get("WWW-Authenticate").is_none(),
+            "{response}"
+        );
+    }
+}
+
+/// The control: a guard none of whose schemes opted in keeps its refusals to
+/// 401 and 403, which is what every operation declared before the opt-in.
+#[test]
+fn a_guard_whose_schemes_never_answer_503_declares_none() {
+    assert!(declared_unavailable::<Auth<Bearer>>().is_none());
+    assert!(declared_unavailable::<MaybeAuth<Bearer>>().is_none());
+    assert!(declared_unavailable::<Scoped<Bearer<String, Grant>, ReadReports>>().is_none());
+    assert!(declared_unavailable::<Auth<AnyOf<(Bearer, Audited)>>>().is_none());
+    assert!(declared_unavailable::<Auth<AllOf<(Bearer, Audited)>>>().is_none());
+}
+
+/// The response guard `G` refuses `parts` with under `context`.
+async fn refused<C: Sync, G: Guard<C>>(parts: &Parts, context: &C) -> crate::http::Response {
+    use crate::response::IntoResponse as _;
+
+    let Err(refused) = G::guard(parts, context).await else {
+        panic!("the request is refused");
+    };
+    refused.into_response()
+}
+
+/// An unreachable store is a 503 under every guard, never the 401 that would
+/// tell a client to discard its credential: no guard attaches a challenge to
+/// it, and the `Retry-After` it carries is whole seconds, rounded up.
+#[tokio::test]
+async fn an_unreachable_store_answers_503_rather_than_401() {
+    let context = Recording::admitting();
+    let parts = presenting_a_token();
+
+    for response in [
+        refused::<_, Auth<Outage>>(&parts, &context).await,
+        refused::<_, MaybeAuth<Outage>>(&parts, &context).await,
+        refused::<_, Scoped<Outage, ReadReports>>(&parts, &context).await,
+        refused::<_, Auth<AllOf<(Bearer, Outage)>>>(&parts, &context).await,
+    ] {
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            response.headers().get(crate::http::header::RETRY_AFTER),
+            Some(&HeaderValue::from_static("2"))
+        );
+        assert!(
+            !response
+                .headers()
+                .contains_key(crate::http::header::WWW_AUTHENTICATE)
         );
     }
 }

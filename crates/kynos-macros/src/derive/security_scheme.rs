@@ -26,6 +26,7 @@
 //! option := name = "<ComponentName>" | credential = <Type> | scope = <Type>
 //!         | description = "<CommonMark>" | challenge = "<WWW-Authenticate>"
 //!         | scopes(<expr>, ..) | deprecated | carrier = manual | carrier = optional
+//!         | unavailable
 //! ```
 //!
 //! Each kind and each flow takes only the options its row lists, each once; a
@@ -103,6 +104,11 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         |value| quote!(::core::option::Option::Some(#value)),
     );
     let insufficient_scope = default_insufficient_scope_challenge(kind);
+    let unavailable = args.unavailable.then(|| {
+        quote!(
+            const MAY_BE_UNAVAILABLE: bool = true;
+        )
+    });
 
     let carrier = (args.carrier != Some(Carrier::Manual)).then(|| {
         let (mut presented, mut read) = carrier_of(&args.nested, kind);
@@ -134,6 +140,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
             for #name #ty_generics #where_clause
         {
             const NAME: &'static str = #declared;
+            #unavailable
 
             type Credential = #credential;
 
