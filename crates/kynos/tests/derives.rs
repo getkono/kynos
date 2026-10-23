@@ -1604,7 +1604,10 @@ fn bounded(mut schema: serde_json::Value, bounds: &serde_json::Value) -> serde_j
 }
 
 /// Each parameter's schema is its type's under the field's bounds, beside the
-/// `$ref` for a named type, as the `Schema` derive writes the property.
+/// `$ref` for a named type, as the `Schema` derive writes the property. An
+/// `Option<T>` field is described by `T`'s schema, never one admitting `null`:
+/// a query string has no spelling of `null`, so `required: false` alone says
+/// the parameter may be absent.
 #[test]
 fn a_query_parameter_carries_its_fields_bounds() {
     assert_eq!(
@@ -1621,7 +1624,7 @@ fn a_query_parameter_carries_its_fields_bounds() {
                 "in": "query",
                 "required": false,
                 "schema": bounded(
-                    resolved::<Option<u32>>(),
+                    resolved::<u32>(),
                     &serde_json::json!({"minimum": 1.0, "maximum": 1000.0}),
                 ),
             },
@@ -1629,7 +1632,7 @@ fn a_query_parameter_carries_its_fields_bounds() {
                 "name": "score",
                 "in": "query",
                 "required": false,
-                "schema": bounded(resolved::<Option<Score>>(), &serde_json::json!({"minimum": 1.0})),
+                "schema": bounded(resolved::<Score>(), &serde_json::json!({"minimum": 1.0})),
             },
         ])
     );
@@ -1805,14 +1808,12 @@ fn a_path_value_that_breaks_a_bound_is_refused_naming_its_parameter() {
 }
 
 /// A header's schema carries its field's bounds, as a request parameter and as
-/// a response header alike.
+/// a response header alike, and an `Option<T>` header is described by `T`'s
+/// schema in both.
 #[test]
 fn a_header_carries_its_fields_bounds_in_either_direction() {
     let request_id = bounded(resolved::<String>(), &serde_json::json!({"maxLength": 8}));
-    let score = bounded(
-        resolved::<Option<Score>>(),
-        &serde_json::json!({"minimum": 1.0}),
-    );
+    let score = bounded(resolved::<Score>(), &serde_json::json!({"minimum": 1.0}));
 
     let mut registry = kynos::schema::registry::Registry::new();
     assert_eq!(
@@ -1900,10 +1901,7 @@ fn a_cookie_carries_its_fields_bounds_and_refuses_a_value_breaking_one() {
         schemas,
         [
             bounded(resolved::<String>(), &serde_json::json!({"minLength": 4})),
-            bounded(
-                resolved::<Option<Score>>(),
-                &serde_json::json!({"minimum": 1.0}),
-            ),
+            bounded(resolved::<Score>(), &serde_json::json!({"minimum": 1.0})),
         ]
     );
 
