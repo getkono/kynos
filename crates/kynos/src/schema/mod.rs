@@ -314,8 +314,9 @@ impl MapKey for String {
 ///
 /// The dates and durations write the text serde writes for a body; a newtype
 /// whose `FromStr` refuses them is the remedy where that matters. An
-/// `Option<T>` field is the derive's business: it makes the parameter optional
-/// and bounds `T`.
+/// `Option<T>` field is the derive's business: it makes the parameter optional,
+/// bounds `T`, and describes the parameter by `T`'s schema, which admits no
+/// `null` that a parameter could not carry.
 ///
 /// ```compile_fail
 /// # use std::{fmt, str::FromStr};
