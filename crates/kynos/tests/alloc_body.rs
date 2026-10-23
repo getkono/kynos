@@ -32,8 +32,8 @@
 //! both are asserted with `==`.
 //!
 //! Ungated. Nothing here names a derive, a router or a runtime — only
-//! `kynos::http`, which is behind no feature — so the numbers hold at every
-//! feature set `features:targets` builds.
+//! `kynos::http` and the two text bodies, which are behind no feature — so the
+//! numbers hold at every feature set `features:targets` builds.
 
 use alloc_counter::{AllocCounterSystem, count_alloc};
 use bytes::Bytes;
@@ -202,4 +202,86 @@ fn the_counter_reports_every_heap_operation_in_the_region() {
          recorded above would pass it",
         calibrated.saturating_sub(empty)
     );
+}
+
+/// What a text body under a declared media type costs, held to `Text`'s cost
+/// rather than recorded: it is `Text`'s decoder and writer under another
+/// `Content-Type`, so a count of its own could only hide a difference.
+///
+/// The response half is the one with room to differ. `Text` states a static
+/// `Content-Type`, and a marker stating no charset has one appended; that is
+/// built at compile time, so it must cost nothing per response. Both halves
+/// read the same bytes, built before the region opens.
+mod a_declared_text_type {
+    use std::{
+        future::Future,
+        pin::pin,
+        task::{Context, Poll, Waker},
+    };
+
+    use kynos::{
+        extract::{
+            FromRequest,
+            body::{text::Text, text_as::TextAs},
+        },
+        http::{HeaderValue, Request, body::Body, header, media::MediaType},
+        response::IntoResponse,
+    };
+
+    /// A marker stating no charset, so a response appends one.
+    struct Csv;
+
+    impl MediaType for Csv {
+        const MEDIA_TYPE: &'static str = "text/csv";
+    }
+
+    const TEXT: &str = "id,name\n1,lamp\n";
+
+    /// The heap operations `run` made, fresh and grown alike.
+    fn cost<R>(run: impl FnOnce() -> R) -> usize {
+        let ((allocations, reallocations, _), value) = alloc_counter::count_alloc(run);
+        drop(value);
+        allocations + reallocations
+    }
+
+    /// A request carrying [`TEXT`] under `content_type`.
+    fn request(content_type: &'static str) -> Request {
+        let mut request =
+            Request::new(Body::from_bytes(bytes::Bytes::from_static(TEXT.as_bytes())));
+        request
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+        request
+    }
+
+    /// Extracts `T` in one poll, which an in-memory body always allows.
+    fn extract<T: FromRequest<()>>(request: Request) -> T
+    where
+        T::Rejection: std::fmt::Debug,
+    {
+        let (mut parts, body) = request.into_parts();
+        let extracted = pin!(T::from_request(&mut parts, body, &()))
+            .poll(&mut Context::from_waker(Waker::noop()));
+        match extracted {
+            Poll::Ready(extracted) => extracted.expect("the body is accepted"),
+            Poll::Pending => panic!("an in-memory body is read in one poll"),
+        }
+    }
+
+    #[test]
+    fn costs_what_text_does() {
+        let (plain, csv) = (request("text/plain"), request("text/csv"));
+        assert_eq!(
+            cost(move || extract::<TextAs<Csv>>(csv)),
+            cost(move || extract::<Text>(plain)),
+            "decoding under a declared `text/*` type costs other than `Text` does"
+        );
+
+        let (plain, csv) = (TEXT.to_owned(), TEXT.to_owned());
+        assert_eq!(
+            cost(move || TextAs::<Csv>::new(csv).into_response()),
+            cost(move || Text(plain).into_response()),
+            "writing under a declared `text/*` type costs other than `Text` does"
+        );
+    }
 }
