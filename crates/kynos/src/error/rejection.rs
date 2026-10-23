@@ -854,7 +854,7 @@ fn forbidden(
 }
 
 /// The rejection a [`Scoped<S, R>`](crate::security::auth::Scoped) argument
-/// raises: the same two failures [`AuthRejection`] carries — it wraps one —
+/// raises: the same failures [`AuthRejection`] carries — it wraps one —
 /// described against the scope set that demanded them.
 ///
 /// Its 403 narrows to what [`Scopes::FORBIDDEN_TYPE`] names; naming none
