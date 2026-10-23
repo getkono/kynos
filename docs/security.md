@@ -10,7 +10,7 @@ as a handler's guard sets `security`, registers each scheme under
 `components.securitySchemes`, adds 401 and 403 to `responses`, and declares the
 `WWW-Authenticate` each carries. Four things, one argument, no way to do a
 subset. A scheme that opts in adds a fifth, the 503 of an unreachable
-credential store.
+credential store, and one with nothing to forbid opts out of the 403.
 
 ## Policy
 
@@ -377,6 +377,29 @@ keeps declaring 401 and 403 alone.
   names it. The conformance harness, which checks
   each status against the description, is what finds either.
 
+### A scheme with nothing to forbid opts out of the 403
+
+A scrape token or a webhook secret is right or wrong, and a right one grants
+everything the endpoint does: there is no valid credential to refuse. A 403
+declared there is a branch no generated client can reach and a response
+`assert_declared_responses_covered` can never see. `SecurityScheme::FORBIDS`,
+`#[security(forbids = false)]` on a derived scheme, leaves it out of every
+`Auth` and `MaybeAuth` whose schemes all opt out — `AnyOf` and `AllOf` keep it
+while any one forbids, since each one's authenticator is consulted.
+
+- **On the scheme, for the reason the 503's opt-in is.** The guard's type is
+  all the document is built from.
+- **`Scoped` keeps the 403.** It demands a scope set, and refusing one is a 403
+  whatever the scheme says. A derived scheme cannot pair `forbids = false` with
+  default `scopes(..)`, which every guard demands, for the same reason.
+- **The harness holds the promise, not the build.** `AuthRejection::forbidden()`
+  names no scheme, so an authenticator breaking it compiles, and sends a status
+  the description does not name, which `assert_conformance` reports.
+- **The guard declares its own refusals.** A handler no longer merges a guard's
+  `Rejection::responses` after its `Describe`: `AuthRejection` knows no scheme
+  and would put the 403 back. Its `Responses`, the one a hand-written extractor
+  reaches, still declares it.
+
 ### What Kynos does not verify
 
 No JWT verifier, no session store, no password hasher. Each is application
@@ -393,7 +416,7 @@ What Kynos *does* ship is the part that is the same for everyone:
 | RFC 7617 basic decoding | base64, the *first* colon, and UTF-8 — a fixed wire form |
 | [`constant_time_eq`](../crates/kynos/src/security/mod.rs) | `==` on a shared secret says how much of a guess was right |
 | The `WWW-Authenticate` challenge | It is part of what the 401, and a bearer token's scope-refusing 403, *is*, and it has to match the description |
-| 401 and 403 on the operation | A guard that did not declare them would make the document wrong |
+| 401 and 403 on the operation, the 403 unless the scheme opts out | A guard that did not declare them would make the document wrong, and one declaring a 403 it cannot send would promise a branch no client reaches |
 | 503 on the operation, where the scheme opts in | A store outage is neither a 401 nor a 403, and an undeclared 503 would make the document wrong |
 | The `type` seam on a 403 | Which authorization rule refused is the application's to say, and nothing but the authorizer can say it |
 | `Scopes::FORBIDDEN_TYPE` | The description half of that seam: the scope set is the one type an operation names that a per-check refusal can be pinned to |
