@@ -22,6 +22,10 @@
 //! its own `type` hangs its slug under; a literal is joined here, a `const`
 //! in the expansion's own `const` items. `detail` comes from `Display`.
 //!
+//! An `extension` field is sent through `Into<serde_json::Value>` and declared
+//! by its type's `Schema` on its failure's branch, required; an `Option<T>` is
+//! sent only when it holds a value, so it is declared by `T` and optional.
+//!
 //! A `headers` field holds a header group, its type implementing
 //! `EncodeHeaders`: `into_response` writes it onto that failure's problem, and
 //! `Responses` declares it under that failure's status alone.
@@ -168,9 +172,8 @@ struct Failure {
     /// `Self::Variant`, or `Self` for a struct.
     path: TokenStream2,
 
-    /// The extension members, as the name each is published under and the
-    /// binding the pattern gives it.
-    extensions: Vec<(String, Ident)>,
+    /// The extension members, in declaration order.
+    extensions: Vec<Extension>,
 
     /// The `#[problem(headers)]` field, if this failure sends a header group.
     headers: Option<Box<HeaderField>>,
@@ -181,6 +184,21 @@ struct Failure {
 
     /// The prose a reader already wrote, used where no `title` was given.
     doc: Option<String>,
+}
+
+/// A `#[problem(extension)]` field: the name it is published under, which is
+/// also the binding the pattern gives it, and its type.
+struct Extension {
+    name: Ident,
+    ty: Type,
+}
+
+impl Extension {
+    /// The `T` of an `Option<T>` member, which is sent only when it holds a
+    /// value; the recognition is syntactic, so an alias for it is sent always.
+    fn optional(&self) -> Option<&Type> {
+        crate::derive::common::wrapped(&self.ty, "Option")
+    }
 }
 
 /// A `#[problem(headers)]` field: where the group sits, and its type.
@@ -196,14 +214,14 @@ impl Failure {
     /// The pattern binding every published extension member.
     fn pattern(&self) -> TokenStream2 {
         let path = &self.path;
-        let bindings = self.extensions.iter().map(|(_, binding)| binding);
+        let bindings = self.extensions.iter().map(|extension| &extension.name);
         quote!(#path { #(#bindings,)* .. })
     }
 
     /// [`pattern`](Self::pattern), binding the header group too.
     fn response_pattern(&self) -> TokenStream2 {
         let path = &self.path;
-        let bindings = self.extensions.iter().map(|(_, binding)| binding);
+        let bindings = self.extensions.iter().map(|extension| &extension.name);
         let headers = self.headers.as_ref().map(|field| {
             let member = &field.member;
             let binding = Ident::new(HEADERS_BINDING, Span::call_site());

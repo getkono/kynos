@@ -551,7 +551,9 @@ pub fn derive_schema(item: TokenStream) -> TokenStream {
 ///
 /// A field is published as an extension member only when it says
 /// `#[problem(extension)]`, so error-site context stays off the wire by
-/// default.
+/// default. Its type is sent through `Into<serde_json::Value>` and declared by
+/// its `Schema`, required on its failure's branch; an `Option<T>` member is
+/// sent only when it holds a value, so it is declared by `T` and optional.
 ///
 /// A header only one failure sends lives on that failure: one field of a
 /// variant, or of a struct, may say `#[problem(headers)]`, its type a header

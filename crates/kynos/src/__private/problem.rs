@@ -18,12 +18,13 @@ use crate::{
 /// publish.
 ///
 /// Each branch is the type URI a failure publishes, or `None` where it names
-/// none, paired with the summary its declaration gave it.
+/// none, the summary its declaration gave it, and its extension members: each
+/// one's name, its type's schema, and whether every occurrence sends it.
 #[must_use]
 pub fn response(
     problem: &OpenApiSchema,
     status: u16,
-    branches: &[(Option<&'static str>, Option<&'static str>)],
+    branches: &[crate::error::problem::Branch<'_>],
 ) -> Response {
     crate::error::problem::narrowed_response(problem, status, branches)
 }
