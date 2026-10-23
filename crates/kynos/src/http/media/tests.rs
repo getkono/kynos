@@ -54,3 +54,39 @@ fn a_declared_charset_is_read_and_held_to_utf_8() {
     assert!(!is_utf8_or_unstated("text/csv; charset=iso-8859-1"));
     assert!(!is_utf8_or_unstated("text/csv; charset=utf8"));
 }
+
+/// What a `BodyCodec`'s `MEDIA_TYPE` must be: a `type/subtype` of RFC 9110
+/// tokens, with any parameters in octets a field value may hold.
+#[test]
+fn a_codec_media_type_is_a_type_and_subtype_of_tokens() {
+    use super::is_media_type;
+
+    for admitted in [
+        "application/vnd.example.tally",
+        "Application/CBOR",
+        "application/vnd.example+cbor",
+        "text/x-ledger; charset=utf-8",
+        " application/msgpack ",
+        "application/vnd.example; version=\"2\"",
+        "application/!#$%&'*+-.^_`|~09AZaz",
+    ] {
+        assert!(is_media_type(admitted), "`{admitted}` is a media type");
+    }
+    for refused in [
+        "",
+        "application",
+        "application/",
+        "/cbor",
+        "application/cbor/v2",
+        "application /cbor",
+        "application/cb or",
+        "application/cbor(1)",
+        "application/cbor{1}",
+        "application/\"cbor\"",
+        "application/cbor\r\nx-injected: 1",
+        "application/cbor; note=caf\u{e9}",
+        "; charset=utf-8",
+    ] {
+        assert!(!is_media_type(refused), "`{refused:?}` is not a media type");
+    }
+}
