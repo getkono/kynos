@@ -174,15 +174,39 @@ a branch on a header. [`TextAs<M>`](../crates/kynos/src/extract/body/text_as.rs)
 is `Text` under the `text/*` type its marker names; it decodes only UTF-8, so a
 marker stating another charset fails the build.
 
+Putting a body under a media type is a ladder of three rungs, each taken only
+when the one before cannot carry the body:
+
+| Rung | Carries | Validated by |
+| --- | --- | --- |
+| [`Binary<M>`](../crates/kynos/src/extract/body/binary.rs) | bytes, under any media type | nothing |
+| `JsonAs<M, T>`, `TextAs<M>` | a typed JSON document or UTF-8 text, under a declared type | decoding it |
+| [`Encoded<C, T>`](../crates/kynos/src/extract/body/codec.rs) | any other format, through a `BodyCodec` the application implements | its codec's decoding |
+
+`Binary<M>` never checks its bytes against `M`: `M` is the sender's claim, and
+checking it would need a parser per media type, a policy for which ones count,
+and failure statuses no description states. Validation happens only where a
+codec decodes, so a typed format is one with a codec, and serving a file stays
+`Binary<M>`. Pairing a codec with a `Binary` of its own type fails the build.
+
+A `BodyCodec` writes only the two conversions. Kynos keeps the 415, the body
+limit, the content-coding refusal, the 400/422 split, `T`'s bounds, the 500 and
+the description, so an implementor cannot skip any of them. What Kynos cannot
+check is that `T`'s schema describes the codec's data form, which OpenAPI 3.2
+reads a non-JSON body through; the implementor asserts it, and a codec whose
+format cannot carry a value the schema admits refuses it rather than let the
+document lie.
+
 The third row is the counter-case to the second, and the difference is the
 specification's rather than a preference.
 [`AcceptLanguage<L>`](../crates/kynos/src/response/language/mod.rs) *does*
 contribute a parameter: OpenAPI names exactly three fields whose definition
 shall be ignored — `Accept`, `Content-Type`, `Authorization` — and this is not
-one of them. Nor is its trait sealed. The offerable representations are exactly
-the codecs Kynos can describe, so an outside implementation would be one the
-`content` map could not state; a catalogue is the opposite, and only the
-application knows it.
+one of them. Nor is its trait sealed. A representation is a body type whose
+`content` entry Kynos writes — an outside format joins through `Encoded`, whose
+entry is still Kynos's — so an outside implementation of the trait would be an
+entry nobody wrote; a catalogue is the opposite, and only the application knows
+it.
 
 What the two share is that the offer is a type, so the description cannot miss
 an arm. `Localized` has no public constructor, which is what makes the emitted
@@ -200,9 +224,9 @@ it: a shared cache reads `Vary`, and a client generator has no use for it.
 that field shall be ignored. What describes the negotiation is the operation's
 `content` map, contributed by the representation tuple; `Accept`'s own
 `Describe` contributes only rejection responses, the 406 among them. The `Representation` and `Representations` traits are public and sealed by a
-private supertrait: the set of offerable representations is exactly the set of
-codecs Kynos can describe, and the bound is still nameable by a program generic
-over what it offers.
+private supertrait against outside implementations, and open to outside codecs
+through `Encoded`; the bound is still nameable by a program generic over what it
+offers.
 
 ## Rules
 
