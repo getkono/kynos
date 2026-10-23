@@ -380,7 +380,11 @@ mod harness {
 #[cfg(feature = "json")]
 mod json {
     use kynos::{
-        extract::body::{binary::Binary, json_as::JsonAs},
+        extract::body::{
+            binary::Binary,
+            codec::{BodyCodec, DecodeError, Encoded},
+            json_as::JsonAs,
+        },
         http::{
             Method, Request, StatusCode,
             media::{MediaType, OctetStream},
@@ -466,6 +470,35 @@ mod json {
         JsonAs::new(Reading { id: 7, value: 11 })
     }
 
+    /// `Json`'s own decoder and writer, brought as an application's codec, so
+    /// that what `Encoded` adds around a codec is all that differs.
+    struct OutsideJson;
+
+    impl BodyCodec<Reading> for OutsideJson {
+        const MEDIA_TYPE: &'static str = "application/vnd.example.reading";
+
+        fn decode(bytes: &bytes::Bytes) -> Result<Reading, DecodeError> {
+            serde_json::from_slice(bytes).map_err(|error| DecodeError::Syntax(error.to_string()))
+        }
+
+        fn encode(value: &Reading, out: &mut impl std::io::Write) -> std::io::Result<()> {
+            serde_json::to_writer(out, value).map_err(std::io::Error::other)
+        }
+    }
+
+    /// The same decode through an application's codec.
+    #[kynos::post("/encoded")]
+    async fn decode_encoded(reading: Encoded<OutsideJson, Reading>) -> NoContent {
+        let _ = reading.into_inner();
+        NoContent
+    }
+
+    /// The same encode through an application's codec.
+    #[kynos::get("/encoded/out")]
+    async fn encode_encoded() -> Encoded<OutsideJson, Reading> {
+        Encoded::new(Reading { id: 7, value: 11 })
+    }
+
     fn service() -> Service<()> {
         Router::<()>::new()
             .mount(kynos::routes![
@@ -475,7 +508,9 @@ mod json {
                 decode,
                 encode,
                 decode_as,
-                encode_as
+                encode_as,
+                decode_encoded,
+                encode_encoded
             ])
             .build(())
             .expect("a describable router")
@@ -514,6 +549,45 @@ mod json {
         request(Method::GET, "/json-as/out", None, b"")
     }
 
+    fn decode_encoded_request() -> Request {
+        request(
+            Method::POST,
+            "/encoded",
+            Some(<OutsideJson as BodyCodec<Reading>>::MEDIA_TYPE),
+            BODY,
+        )
+    }
+
+    fn encode_encoded_request() -> Request {
+        request(Method::GET, "/encoded/out", None, b"")
+    }
+
+    /// An application's codec costs what the built-in one does, both ways.
+    ///
+    /// A relation, as for `JsonAs`: the codec is `Json`'s decoder and writer,
+    /// so any count `Encoded` adds over `Json` on the same document is the
+    /// wrapper's — a `Vec` per response, or a copy of the body on the way in.
+    #[test]
+    fn an_outside_codec_costs_what_json_does() {
+        let service = service();
+        let count = |build: fn() -> Request, status| {
+            let (allocations, response) = counting::counted(&service, build(), status);
+            drop(response);
+            allocations
+        };
+
+        assert_eq!(
+            count(decode_encoded_request, StatusCode::NO_CONTENT),
+            count(decode_request, StatusCode::NO_CONTENT),
+            "decoding through an outside codec costs other than `Json` does"
+        );
+        assert_eq!(
+            count(encode_encoded_request, StatusCode::OK),
+            count(encode_request, StatusCode::OK),
+            "writing through an outside codec costs other than `Json` does"
+        );
+    }
+
     /// A declared media type costs what `application/json` does, both ways.
     ///
     /// A relation rather than a row of its own: `JsonAs` is `Json`'s decoder
@@ -541,9 +615,10 @@ mod json {
         );
     }
 
-    /// Every operation this service holds but the two `JsonAs` ones, and what
-    /// one request to it costs today. Those two are held to `Json`'s rows by
-    /// `a_declared_media_type_costs_what_json_does` instead.
+    /// Every operation this service holds but the `JsonAs` and `Encoded` pairs,
+    /// and what one request to it costs today. Those are held to `Json`'s rows
+    /// by `a_declared_media_type_costs_what_json_does` and
+    /// `an_outside_codec_costs_what_json_does` instead.
     ///
     /// Read rather than chosen: each ceiling was set to zero, the target run,
     /// and the number the failure reported transcribed into the row. This table
@@ -605,11 +680,12 @@ mod json {
     }
 
     /// The leak check, over every operation this service holds: `RECORDED`'s
-    /// rows, then the `JsonAs` pair in place of `Json`'s.
+    /// rows, then the `JsonAs` pair and the `Encoded` pair in place of
+    /// `Json`'s.
     ///
-    /// The second table repeats the three floors, since `harness::replay` reads
-    /// a whole table; their ceilings are `Json`'s, which the relation above
-    /// holds them to, and the replay reads none of them.
+    /// The later tables repeat the three floors, since `harness::replay` reads
+    /// a whole table; their ceilings are `Json`'s, which the relations above
+    /// hold them to, and the replay reads none of them.
     #[test]
     fn a_replayed_request_costs_what_the_first_one_did() {
         let service = service();
@@ -628,9 +704,25 @@ mod json {
             ),
             ..RECORDED
         };
+        let outside = Table {
+            decoding: (
+                "POST /encoded",
+                decode_encoded_request,
+                StatusCode::NO_CONTENT,
+                RECORDED.decoding.3,
+            ),
+            encoding: (
+                "GET /encoded/out",
+                encode_encoded_request,
+                StatusCode::OK,
+                RECORDED.encoding.3,
+            ),
+            ..RECORDED
+        };
 
         harness::replay(&service, &RECORDED, 1_000);
         harness::replay(&service, &declared, 1_000);
+        harness::replay(&service, &outside, 1_000);
     }
 }
 
