@@ -626,8 +626,10 @@ impl AuthRejection {
     /// `S` is the scheme the authenticator checks, and it must opt in with
     /// [`SecurityScheme::MAY_BE_UNAVAILABLE`]
     /// (`#[security(unavailable)]` on a derived one), which is what declares
-    /// the 503 on every operation it guards. Naming a scheme that has not
-    /// opted in fails the build:
+    /// the 503 on every operation it guards. The 503 is declared only there:
+    /// returned from a handler or custom guard on an operation no guard over
+    /// `S` covers, it is a status the description does not name. Naming a
+    /// scheme that has not opted in fails the build:
     ///
     /// ```
     /// # #[cfg(feature = "macros")]

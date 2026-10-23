@@ -360,9 +360,14 @@ keeps declaring 401 and 403 alone.
 - **The constructor names the scheme, and the build refuses one that has not
   opted in.** `unavailable::<S>()` asserts `S::MAY_BE_UNAVAILABLE` in a
   `const` block, and the variant is `#[non_exhaustive]`, so it is not built any
-  other way outside Kynos. An authenticator naming a scheme other than its own
-  is the one hole left, and the conformance harness, which checks each status
-  against the description, is what finds it.
+  other way outside Kynos. The build checks that *some* scheme opted in, not
+  that the operation is guarded by it, so two holes are left: an authenticator
+  naming a scheme other than its own, and a handler or custom guard whose error
+  type is `AuthRejection` returning `unavailable::<S>()` on an operation no
+  guard over `S` covers. `AuthRejection`'s own `Responses` declares no 503,
+  since the bare type knows no scheme, and declaring one there would put a
+  503 on every operation that names it. The conformance harness, which checks
+  each status against the description, is what finds either.
 
 ### What Kynos does not verify
 
