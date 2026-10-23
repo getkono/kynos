@@ -220,17 +220,17 @@ fn a_schema_failures_errors_member_is_declared_where_it_is_sent() {
     };
     let registry = &mut Registry::new();
 
-    let mut sent = vec![
+    let sent = [
         (declared(BodyRejection::responses(registry), "422"), true),
         (declared(QueryRejection::responses(registry), "400"), false),
         (declared(PathRejection::responses(registry), "400"), false),
         (declared(HeaderRejection::responses(registry), "400"), false),
+        #[cfg(feature = "cookie")]
+        (
+            declared(super::CookieRejection::responses(registry), "400"),
+            false,
+        ),
     ];
-    #[cfg(feature = "cookie")]
-    sent.push((
-        declared(super::CookieRejection::responses(registry), "400"),
-        false,
-    ));
 
     for (branch, required) in sent {
         assert_eq!(branch["properties"]["errors"], errors, "{branch}");
