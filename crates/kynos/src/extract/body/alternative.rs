@@ -1,10 +1,12 @@
 //! Which pairs of body representations may be offered as alternatives.
 //!
 //! The trait and the constant checks its implementations evaluate live here;
-//! the implementations, one per codec pair, in a private submodule.
+//! the implementations, one per codec pair, in private submodules: `encoded`
+//! for an application's codec beside every body, `pairs` for the rest.
 
 use crate::extract::describe::RequestContent;
 
+mod encoded;
 mod pairs;
 
 /// Proves that two request content types can be alternatives.
@@ -31,8 +33,9 @@ where
     /// body's own media type, so its implementations compare the two; so is a
     /// `JsonAs` beside a `Json`, another `JsonAs` or a `Binary`, and a
     /// [`TextAs`](super::text_as::TextAs) beside a `Text`, another `TextAs`, a
-    /// `Binary` or a `JsonAs`, whose `+json` marker may be a `text/*` type.
-    /// `OneOf` evaluates this
+    /// `Binary` or a `JsonAs`, whose `+json` marker may be a `text/*` type,
+    /// and an [`Encoded`](super::codec::Encoded) beside any body, since a
+    /// codec may name any media type. `OneOf` evaluates this
     /// wherever it is used, so such a pair fails the build that instantiates
     /// it rather than the description of its route.
     ///
@@ -154,6 +157,19 @@ pub(crate) const fn distinct_text(marker: &str, body: &str) {
     assert!(
         !shares_requests(marker, body),
         "a `TextAs` marker is offered requests the body beside it in `OneOf` is offered too"
+    );
+}
+
+/// Refuses, in the constant evaluation calling it, a [`BodyCodec`]'s media
+/// type offered a request `body` is offered too: another codec's, a built-in
+/// body's own, or a `JsonAs` or `TextAs` marker.
+///
+/// [`BodyCodec`]: super::codec::BodyCodec
+pub(crate) const fn distinct_codec(codec: &str, body: &str) {
+    assert!(
+        !shares_requests(codec, body),
+        "a `BodyCodec`'s media type is offered requests the body beside it in `OneOf` is offered \
+         too"
     );
 }
 

@@ -1,9 +1,12 @@
 //! The sealed traits behind content negotiation.
 //!
 //! [`Representation`] makes a type offerable as one alternative, and
-//! [`Representations`] lifts that to a tuple. Both are sealed, since the
-//! offerable set is exactly the codecs Kynos can describe, but public so a
-//! bound on [`Accept::respond_with`](super::Accept::respond_with) can name them.
+//! [`Representations`] lifts that to a tuple. Both are sealed against outside
+//! implementations, so every offer is a body type whose description Kynos
+//! writes, but public so a bound on
+//! [`Accept::respond_with`](super::Accept::respond_with) can name them. An
+//! outside format is offered through [`Encoded`]: the codec is the
+//! application's, the implementation of the trait still Kynos's.
 
 use kynos_openapi::model::body::mime_names;
 
@@ -11,6 +14,7 @@ use crate::{
     extract::body::{
         alternative::{eq_ignore_ascii_case, split_essence},
         binary::Binary,
+        codec::{BodyCodec, Encoded},
         text::Text,
         text_as::TextAs,
     },
@@ -26,7 +30,7 @@ use crate::extract::body::multipart::MultipartForm;
 #[cfg(feature = "protobuf")]
 use crate::extract::body::protobuf::Protobuf;
 
-/// What makes the set of offerable representations closed.
+/// What keeps an outside type from implementing the representation traits.
 mod sealed {
     /// The private supertrait of a representation.
     pub trait SealedRepresentation {
@@ -48,7 +52,10 @@ mod sealed {
 
 /// A type offerable as one alternative in content negotiation.
 ///
-/// Sealed: the offerable set is exactly the codecs Kynos can describe.
+/// Sealed against outside implementations, and open to outside codecs: a
+/// format Kynos does not ship is offered as an [`Encoded`] of its
+/// [`BodyCodec`], so the offer and its `content` key are still Kynos's to
+/// write.
 pub trait Representation: IntoResponse + Responses + sealed::SealedRepresentation {
     /// The media type this representation is offered under.
     #[must_use]
@@ -96,6 +103,18 @@ impl<M: MediaType> sealed::SealedRepresentation for TextAs<M> {
 }
 
 impl<M: MediaType> Representation for TextAs<M> {}
+
+// The one way an outside type is offered: through the wrapper, whose
+// implementation is still this one, so the codec opens and the trait stays
+// sealed.
+impl<C: BodyCodec<T>, T> sealed::SealedRepresentation for Encoded<C, T> {
+    const MEDIA_TYPE: &'static str = {
+        let () = Self::WELL_FORMED;
+        C::MEDIA_TYPE
+    };
+}
+
+impl<C: BodyCodec<T>, T: crate::schema::Schema> Representation for Encoded<C, T> {}
 
 impl<M: MediaType> sealed::SealedRepresentation for Binary<M> {
     const MEDIA_TYPE: &'static str = M::MEDIA_TYPE;

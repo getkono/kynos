@@ -1,0 +1,23 @@
+error[E0277]: `Png` is not a body codec for `u64`
+  --> tests/ui/traits/body_codec.rs:15:24
+   |
+15 |     from_request::<(), Encoded<Png, u64>>();
+   |                        ^^^^^^^^^^^^^^^^^ not a `BodyCodec<u64>`
+   |
+   = help: the trait `BodyCodec<u64>` is not implemented for `Png`
+   = note: the first parameter of `Encoded<C, T>` is a type implementing `BodyCodec<T>`, which names the media type and converts `T` from and into bytes
+help: the trait `FromRequest<C>` is implemented for `kynos::extract::body::codec::Encoded<K, T>`
+  --> src/extract/body/codec.rs
+   |
+   | / impl<C, K, T> FromRequest<C> for Encoded<K, T>
+   | | where
+   | |     C: Sync,
+   | |     K: BodyCodec<T>,
+   | |     T: Schema + Send,
+   | |_____________________^
+   = note: required for `kynos::extract::body::codec::Encoded<Png, u64>` to implement `FromRequest<()>`
+note: required by a bound in `from_request`
+  --> tests/ui/traits/body_codec.rs:12:23
+   |
+12 | fn from_request<C, T: FromRequest<C>>() {}
+   |                       ^^^^^^^^^^^^^^ required by this bound in `from_request`

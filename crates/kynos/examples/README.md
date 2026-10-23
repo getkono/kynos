@@ -40,7 +40,7 @@ as reading the authenticated caller in a handler, which is
 | Example | Shows | Features |
 | --- | --- | --- |
 | [`responses.rs`](responses.rs) | Status in the return type: `Created`, `Accepted`, `Redirect<CODE>`, `Reply`, `WithHeaders`, typed URIs | — |
-| [`negotiation.rs`](negotiation.rs) | Choosing a representation from the client's `Accept` header, including a version of a `+json` document | — |
+| [`negotiation.rs`](negotiation.rs) | Choosing a representation from the client's `Accept` header, including a version of a `+json` document, and a format Kynos does not ship through a `BodyCodec` | — |
 | [`localization.rs`](localization.rs) | Choosing a language from `Accept-Language`, and why that field *is* a parameter where `Accept` is not | — |
 | [`errors.rs`](errors.rs) | `#[derive(ApiError)]`, RFC 9457 problem documents, a header only one failure sends, and every other way a status reaches an operation | — |
 | [`localized_errors.rs`](localized_errors.rs) | Translating a problem's `title` from the application's own catalogue, including the rejections Kynos raises | — |

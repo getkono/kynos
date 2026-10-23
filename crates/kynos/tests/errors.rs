@@ -171,6 +171,21 @@ struct Reading {
     value: f64,
 }
 
+/// An application's own format, for the `Encoded` witness.
+struct Tally;
+
+impl kynos::extract::body::codec::BodyCodec<u64> for Tally {
+    const MEDIA_TYPE: &'static str = "application/vnd.example.tally";
+
+    fn decode(_: &bytes::Bytes) -> Result<u64, kynos::extract::body::codec::DecodeError> {
+        Ok(0)
+    }
+
+    fn encode(_: &u64, _: &mut impl std::io::Write) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// The operation a link is to.
 #[allow(clippy::unused_async)]
 #[kynos::get("/linked")]
@@ -222,6 +237,11 @@ witnesses! {
             kynos::extract::body::text_as::TextAs<kynos::http::media::Html>
         );
         body_rejects_with(BodyRejection, (), Binary<OctetStream>);
+        body_rejects_with(
+            BodyRejection,
+            (),
+            kynos::extract::body::codec::Encoded<Tally, u64>
+        );
         #[cfg(feature = "json")]
         body_rejects_with(BodyRejection, (), kynos::extract::body::json::Json<User>);
         #[cfg(feature = "json")]

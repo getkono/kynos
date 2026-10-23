@@ -347,6 +347,9 @@ fn a_representation_is_offered_under_the_media_type_it_describes() {
     offered_under_what_it_describes::<
         crate::extract::body::text_as::TextAs<crate::http::media::Html>,
     >();
+    offered_under_what_it_describes::<
+        crate::extract::body::codec::Encoded<a_body_in_an_outside_format::Tally, u64>,
+    >();
     #[cfg(feature = "json")]
     offered_under_what_it_describes::<crate::extract::body::json::Json<String>>();
     #[cfg(feature = "json")]
@@ -619,5 +622,68 @@ fn an_accept_naming_a_declared_text_type_chooses_it() {
             .choose::<Offer>()
             .ok();
         assert_eq!(accepted, Some(chosen), "Accept: {field}");
+    }
+}
+
+/// A body in an application's own format is described under its codec's media
+/// type verbatim and chosen by an `Accept` naming it; what it writes is
+/// `codec/tests.rs`'s.
+mod a_body_in_an_outside_format {
+    use crate::{
+        extract::body::{
+            codec::{BodyCodec, DecodeError, Encoded},
+            text::Text,
+        },
+        response::{Responses, negotiate::Accept},
+        schema::registry::Registry,
+    };
+
+    /// A decimal tally, carrying a parameter `Accept` ignores.
+    pub(super) struct Tally;
+
+    impl BodyCodec<u64> for Tally {
+        const MEDIA_TYPE: &'static str = "application/vnd.example.tally; base=10";
+
+        fn decode(_: &bytes::Bytes) -> Result<u64, DecodeError> {
+            unreachable!("only offered")
+        }
+
+        fn encode(value: &u64, out: &mut impl std::io::Write) -> std::io::Result<()> {
+            write!(out, "{value}")
+        }
+    }
+
+    #[test]
+    fn is_described_under_its_media_type_over_the_schema_of_its_value() {
+        let described = Encoded::<Tally, u64>::responses(&mut Registry::default());
+        let Some(kynos_openapi::RefOr::Item(ok)) = described.get(200) else {
+            panic!("no inline 200 response");
+        };
+
+        let media_type = <Tally as BodyCodec<u64>>::MEDIA_TYPE;
+        assert_eq!(ok.content.keys().collect::<Vec<_>>(), [media_type]);
+        assert_eq!(
+            ok.content[media_type].schema,
+            Some(Registry::default().resolve::<u64>())
+        );
+    }
+
+    #[test]
+    fn an_accept_naming_it_chooses_it() {
+        type Offer = (Text, Encoded<Tally, u64>);
+
+        for (field, chosen) in [
+            ("text/plain", 0),
+            ("application/vnd.example.tally", 1),
+            ("Application/Vnd.Example.Tally; base=10", 1),
+            ("application/*, text/plain;q=0.5", 1),
+            ("*/*", 0),
+        ] {
+            let accepted = Accept::<Offer>::parse(field)
+                .expect("valid Accept header")
+                .choose::<Offer>()
+                .ok();
+            assert_eq!(accepted, Some(chosen), "Accept: {field}");
+        }
     }
 }

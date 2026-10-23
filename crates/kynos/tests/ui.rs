@@ -119,6 +119,7 @@ fn every_guided_diagnostic_has_a_snapshot() {
             "macros/schema_field_skipped_on_read_beside_open_map.stderr",
         ),
         ("Alternative", "traits/alternative.stderr"),
+        ("BodyCodec", "traits/body_codec.stderr"),
         ("ByteSource", "traits/byte_source.stderr"),
         ("Carries", "traits/carries.stderr"),
         (

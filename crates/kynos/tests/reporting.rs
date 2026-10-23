@@ -167,6 +167,7 @@ reportable! {
     /// What a constructor or a reader hands back to the code that called it.
     fn a_refused_value_is_reportable {
         kynos::extract::params::header::UnencodableHeader;
+        kynos::extract::body::codec::DecodeError;
         kynos::http::cookie::Unreadable;
         kynos::response::status::InvalidLocation;
         kynos::response::language::tag::TagDefect;

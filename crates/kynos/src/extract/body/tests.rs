@@ -1833,3 +1833,273 @@ mod a_text_body_under_a_declared_media_type {
         assert_eq!(body.required, Some(true));
     }
 }
+
+/// The constant a `OneOf` holding an `Encoded` evaluates refuses a codec's
+/// media type sharing requests with the body beside it.
+#[test]
+#[should_panic(expected = "a `BodyCodec`'s media type is offered requests the body beside it")]
+fn a_shared_codec_media_type_is_refused_by_the_constant_one_of_evaluates() {
+    crate::extract::body::alternative::distinct_codec(
+        "application/vnd.example.tally; signed=true",
+        "Application/Vnd.Example.Tally",
+    );
+}
+
+/// The control: another subtype is another media type.
+#[test]
+fn a_codec_media_type_of_another_subtype_is_admitted() {
+    crate::extract::body::alternative::distinct_codec(
+        "application/vnd.example.tally",
+        "application/vnd.example.signed-tally",
+    );
+}
+
+/// A body in an application's own format is read under every check Kynos
+/// applies to its own codecs, which the codec cannot reach to skip.
+mod a_body_in_an_outside_format {
+    use kynos_openapi::RefOr;
+
+    use crate::{
+        error::rejection::BodyRejection,
+        extract::{
+            body::{
+                codec::{BodyCodec, DecodeError, Encoded},
+                limit::BodyLimit,
+            },
+            describe::{Describe, RequestContent},
+        },
+        http::{HeaderValue, Request, StatusCode, body::Body, header},
+        router::operation::OperationCx,
+        schema::{
+            Schema,
+            constraints::{Pointer, Violations},
+            registry::Registry,
+        },
+    };
+
+    /// A decimal tally, carrying a parameter a request need not repeat:
+    /// anything but ASCII digits is not the format, and digits past `u64::MAX`
+    /// are the format holding a value `u64` cannot.
+    struct Tally;
+
+    impl BodyCodec<u64> for Tally {
+        const MEDIA_TYPE: &'static str = "application/vnd.example.tally; base=10";
+
+        fn decode(bytes: &bytes::Bytes) -> Result<u64, DecodeError> {
+            if bytes.is_empty() || !bytes.iter().all(u8::is_ascii_digit) {
+                return Err(DecodeError::Syntax("not a tally".to_owned()));
+            }
+            std::str::from_utf8(bytes)
+                .unwrap_or_default()
+                .parse()
+                .map_err(|_| DecodeError::Data("past u64".to_owned()))
+        }
+
+        fn encode(value: &u64, out: &mut impl std::io::Write) -> std::io::Result<()> {
+            write!(out, "{value}")
+        }
+    }
+
+    /// A count whose schema declares a bound the codec does not enforce.
+    #[derive(Debug)]
+    struct Quantity {
+        count: u64,
+    }
+
+    impl Schema for Quantity {
+        fn schema(registry: &mut Registry) -> kynos_openapi::Schema {
+            registry.resolve::<u64>()
+        }
+
+        fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
+            if self.count == 0 {
+                violations.report(at.member("count"), "must be at least 1");
+            }
+        }
+    }
+
+    impl BodyCodec<Quantity> for Tally {
+        const MEDIA_TYPE: &'static str = "application/vnd.example.tally";
+
+        fn decode(bytes: &bytes::Bytes) -> Result<Quantity, DecodeError> {
+            <Self as BodyCodec<u64>>::decode(bytes).map(|count| Quantity { count })
+        }
+
+        fn encode(value: &Quantity, out: &mut impl std::io::Write) -> std::io::Result<()> {
+            <Self as BodyCodec<u64>>::encode(&value.count, out)
+        }
+    }
+
+    /// A codec decoding to where its bytes sit, so a test can see whether it
+    /// was handed the frame the request carried or a copy of it.
+    struct Address;
+
+    impl BodyCodec<u64> for Address {
+        const MEDIA_TYPE: &'static str = "application/vnd.example.address";
+
+        fn decode(bytes: &bytes::Bytes) -> Result<u64, DecodeError> {
+            Ok(bytes.as_ptr() as u64)
+        }
+
+        fn encode(_: &u64, _: &mut impl std::io::Write) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn request(content_type: &'static str, body: &'static [u8]) -> Request {
+        let mut request = Request::new(Body::from_bytes(bytes::Bytes::from_static(body)));
+        request
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+        request
+    }
+
+    #[tokio::test]
+    async fn reads_its_own_media_type_with_or_without_its_parameter() {
+        for content_type in [
+            "application/vnd.example.tally",
+            "Application/Vnd.Example.Tally; base=10",
+            "application/vnd.example.tally; charset=utf-8",
+        ] {
+            let tally = super::extract::<Encoded<Tally, u64>>(request(content_type, b"42"))
+                .await
+                .unwrap_or_else(|rejection| panic!("{content_type}: {rejection:?}"));
+            assert_eq!(tally.into_inner(), 42);
+        }
+    }
+
+    #[tokio::test]
+    async fn another_media_type_is_refused_before_the_codec_reads() {
+        for content_type in [
+            "application/json",
+            "application/vnd.example.tally+json",
+            "application/vnd.example.tally; base=16",
+        ] {
+            let rejection = super::extract::<Encoded<Tally, u64>>(request(content_type, b"42"))
+                .await
+                .expect_err(content_type);
+            assert!(
+                matches!(rejection, BodyRejection::UnsupportedMediaType { .. }),
+                "{content_type}: {rejection:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_body_past_the_limit_is_refused_before_the_codec_reads() {
+        let mut request = request("application/vnd.example.tally", b"123456");
+        request.extensions_mut().insert(BodyLimit(5));
+
+        let rejection = super::extract::<Encoded<Tally, u64>>(request)
+            .await
+            .expect_err("six octets past a five-octet limit");
+        assert!(
+            matches!(rejection, BodyRejection::TooLarge { limit: 5 }),
+            "{rejection:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_undecoded_coding_is_refused_before_the_codec_reads() {
+        let mut request = request("application/vnd.example.tally", b"42");
+        request
+            .headers_mut()
+            .insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+
+        let rejection = super::extract::<Encoded<Tally, u64>>(request)
+            .await
+            .expect_err("a body still under gzip");
+        assert!(
+            matches!(rejection, BodyRejection::UnsupportedCoding { .. }),
+            "{rejection:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_syntax_error_is_a_400() {
+        let rejection =
+            super::extract::<Encoded<Tally, u64>>(request("application/vnd.example.tally", b"4x2"))
+                .await
+                .expect_err("not ASCII digits");
+        assert_eq!(rejection.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            matches!(&rejection, BodyRejection::Syntax { detail } if detail == "not a tally"),
+            "{rejection:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_data_error_is_a_422_at_the_root_pointer() {
+        let rejection = super::extract::<Encoded<Tally, u64>>(request(
+            "application/vnd.example.tally",
+            b"18446744073709551616",
+        ))
+        .await
+        .expect_err("one past u64::MAX");
+        assert_eq!(rejection.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let BodyRejection::Schema { failures } = rejection else {
+            panic!("{rejection:?}");
+        };
+        assert_eq!(
+            failures.into_iter().collect::<Vec<_>>(),
+            [(String::new(), "past u64".to_owned())]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_broken_bound_is_a_422_at_its_pointer() {
+        let rejection = super::extract::<Encoded<Tally, Quantity>>(request(
+            "application/vnd.example.tally",
+            b"0",
+        ))
+        .await
+        .expect_err("a count of zero breaks the bound");
+        assert_eq!(rejection.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let BodyRejection::Schema { failures } = rejection else {
+            panic!("{rejection:?}");
+        };
+        assert_eq!(failures.keys().collect::<Vec<_>>(), ["/count"]);
+    }
+
+    /// The single-frame handoff holds through the codec: it reads the frame
+    /// the request carried, at the same address, rather than a copy.
+    #[tokio::test]
+    async fn the_codec_is_handed_the_frame_uncopied() {
+        static FRAME: &[u8] = b"one frame";
+
+        let address = super::extract::<Encoded<Address, u64>>(request(
+            "application/vnd.example.address",
+            FRAME,
+        ))
+        .await
+        .expect("any body decodes")
+        .into_inner();
+        assert_eq!(address, FRAME.as_ptr() as u64);
+    }
+
+    #[test]
+    fn describes_its_own_media_type_over_the_schema_of_its_value() {
+        assert_eq!(
+            Encoded::<Tally, u64>::media_types(),
+            [<Tally as BodyCodec<u64>>::MEDIA_TYPE]
+        );
+
+        let mut registry = Registry::default();
+        let mut operation = OperationCx::new(&mut registry);
+        Encoded::<Tally, u64>::describe(&mut operation);
+        let Some(RefOr::Item(body)) = operation.finish().request_body else {
+            panic!("describing the body declares no request body");
+        };
+
+        let media_type = <Tally as BodyCodec<u64>>::MEDIA_TYPE;
+        assert_eq!(
+            body.content.keys().map(String::as_str).collect::<Vec<_>>(),
+            [media_type]
+        );
+        assert_eq!(
+            body.content[media_type].schema,
+            Some(Registry::default().resolve::<u64>())
+        );
+        assert_eq!(body.required, Some(true));
+    }
+}

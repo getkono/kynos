@@ -17,11 +17,19 @@
 //!   carries the same tuple `Accept<T>` was parameterised by, so a
 //!   representation the handler can return is a representation the document
 //!   lists. There is no way to add an arm at run time.
-//! * **`Representation` is sealed, and still nameable.** The offerable set is
-//!   exactly the codecs Kynos can describe. Both traits are public — they
+//! * **`Representation` is sealed, and still nameable.** Every offer is a body
+//!   type whose `content` entry Kynos writes. Both traits are public — they
 //!   appear in `Accept::respond_with`'s bound, and a bound nobody can write down is
 //!   a bound nobody can satisfy deliberately — but a private supertrait is what
 //!   stops an outside implementation, rather than the module being shut.
+//!
+//! * **An outside format is offered through its codec, not the trait.**
+//!   `ReportLines` below is a `BodyCodec` for a line-oriented format Kynos does
+//!   not ship. `Encoded<ReportLines, Report>` is read, offered beside `Json` and
+//!   described under its own `content` key, while the 415, the body limit, the
+//!   400/422 split and the schema stay Kynos's: `PUT /reports/{month}` answers
+//!   400 for a body that is not the format, and 422 for one whose total is not
+//!   a `u64`.
 //!
 //! * **Only the chosen representation is built.** `respond_with` takes closures
 //!   rather than values, so the PDF below is rendered for a client that asked
@@ -38,11 +46,17 @@
 //! two alternatives equally. Put the representation you would rather serve
 //! first.
 
-use std::net::Ipv4Addr;
+use std::{io::Write, net::Ipv4Addr};
 
+use bytes::Bytes;
 use kynos::{
     error::rejection::NegotiationRejection,
-    extract::body::{binary::Binary, json_as::JsonAs, text::Text},
+    extract::body::{
+        binary::Binary,
+        codec::{BodyCodec, DecodeError, Encoded},
+        json_as::JsonAs,
+        text::Text,
+    },
     http::media::{MediaType, Pdf},
     prelude::*,
     response::negotiate::{
@@ -172,11 +186,85 @@ async fn get_versioned_report(
     )
 }
 
+/// A report as `month: …` and `total_cents: …` lines, in that order: a format
+/// Kynos does not ship, brought by the application.
+///
+/// The codec asserts that `Report`'s schema describes this format, which it
+/// does: one string and one non-negative integer, under the same names.
+struct ReportLines;
+
+impl BodyCodec<Report> for ReportLines {
+    const MEDIA_TYPE: &'static str = "application/vnd.example.report-lines";
+
+    fn decode(bytes: &Bytes) -> Result<Report, DecodeError> {
+        let malformed = || DecodeError::Syntax("expected `month:` and `total_cents:` lines".into());
+
+        let text = std::str::from_utf8(bytes).map_err(|_| malformed())?;
+        let mut lines = text.lines();
+        let mut field = |name: &str| {
+            lines
+                .next()
+                .and_then(|line| line.strip_prefix(name)?.strip_prefix(':'))
+                .map(str::trim)
+                .ok_or_else(malformed)
+        };
+        let month = field("month")?.to_owned();
+        let total = field("total_cents")?;
+        if lines.next().is_some() {
+            return Err(malformed());
+        }
+
+        // The format holds any token here; the schema holds only a `u64`.
+        let total_cents = total
+            .parse()
+            .map_err(|_| DecodeError::Data(format!("`{total}` is not a total in cents")))?;
+        Ok(Report { month, total_cents })
+    }
+
+    fn encode(report: &Report, out: &mut impl Write) -> std::io::Result<()> {
+        write!(
+            out,
+            "month: {}\ntotal_cents: {}\n",
+            report.month, report.total_cents
+        )
+    }
+}
+
+/// The two ways this service reads and serves a stored report.
+type StoredReport = (Json<Report>, Encoded<ReportLines, Report>);
+
+/// Stores a report sent in the line format, and answers it in whichever of the
+/// two formats the client accepts.
+///
+/// `curl -X PUT -H 'content-type: application/vnd.example.report-lines'
+/// --data-binary $'month: 2026-10\ntotal_cents: ten\n'` is the 422: the lines
+/// are the format, and `ten` is not a `u64`. Dropping a line is the 400.
+#[kynos::put("/reports/{month}")]
+async fn put_report(
+    Path(path): Path<ReportPath>,
+    accept: Accept<StoredReport>,
+    report: Encoded<ReportLines, Report>,
+) -> Result<Negotiated<StoredReport>, NegotiationRejection> {
+    // The path names the report, whatever month the body states.
+    let report = Report {
+        month: path.month,
+        ..report.into_inner()
+    };
+
+    accept.respond_with(
+        &report,
+        (
+            |report: &Report| Json(report.clone()),
+            |report: &Report| Encoded::new(report.clone()),
+        ),
+    )
+}
+
 /// A program generic over what it offers.
 ///
 /// This is why the traits are public rather than merely sealed. The bound is
 /// writable, so a helper can be generic over an offer — and it is still closed,
-/// so the offer can only be codecs the description knows.
+/// so every offer is one whose `content` entry Kynos writes.
 fn media_types_offered<T: Representations>() -> Vec<&'static str> {
     T::media_types()
 }
@@ -193,7 +281,8 @@ async fn main() -> kynos::Result<()> {
     println!("offering {:?}", media_types_offered::<ReportFormats>());
     println!("the first is {}", media_type_of::<Json<Report>>());
 
-    let router = Router::<()>::new().mount(kynos::routes![get_report, get_versioned_report]);
+    let router =
+        Router::<()>::new().mount(kynos::routes![get_report, get_versioned_report, put_report]);
 
     let document = router.openapi()?;
     println!("{}", document.to_json()?);

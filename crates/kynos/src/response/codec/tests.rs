@@ -76,6 +76,55 @@ fn json_writes_a_body_whole_on_either_side_of_the_stack_buffer() {
     }
 }
 
+/// An application's format, a decimal tally that refuses to encode zero,
+/// which stands in for a value the format cannot carry.
+struct Tally;
+
+impl crate::extract::body::codec::BodyCodec<u64> for Tally {
+    const MEDIA_TYPE: &'static str = "application/vnd.example.tally; base=10";
+
+    fn decode(_: &bytes::Bytes) -> Result<u64, crate::extract::body::codec::DecodeError> {
+        unreachable!("only written")
+    }
+
+    fn encode(value: &u64, out: &mut impl std::io::Write) -> std::io::Result<()> {
+        if *value == 0 {
+            return Err(std::io::Error::other("a tally starts at one"));
+        }
+        write!(out, "{value}")
+    }
+}
+
+#[tokio::test]
+async fn an_outside_codec_writes_what_it_encodes_and_states_its_type() {
+    use crate::extract::body::codec::Encoded;
+
+    let response = Encoded::<Tally, u64>::new(42).into_response();
+
+    assert_eq!(
+        media_type(&response),
+        "application/vnd.example.tally; base=10"
+    );
+    assert_eq!(&body(response).await[..], b"42");
+}
+
+/// A value the codec refuses answers the problem a `Json<T>` that cannot be
+/// serialized answers, rather than a 200 with a partial body: it is encoded in
+/// full before the status is committed.
+#[tokio::test]
+async fn an_outside_codec_that_cannot_encode_answers_the_500_problem() {
+    use crate::{error::problem::Problem, extract::body::codec::Encoded, http::StatusCode};
+
+    let response = Encoded::<Tally, u64>::new(0).into_response();
+    let expected = Problem::new(StatusCode::INTERNAL_SERVER_ERROR)
+        .with_detail("the response body could not be serialized")
+        .into_response();
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(media_type(&response), media_type(&expected));
+    assert_eq!(body(response).await, body(expected).await);
+}
+
 #[cfg(feature = "form")]
 #[tokio::test]
 async fn a_form_writes_the_pairs_and_states_its_type() {
@@ -278,11 +327,19 @@ async fn multipart_states_the_boundary_the_body_is_framed_with() {
 fn every_codec_has_a_wire_case() {
     const SOURCE: &str = include_str!("mod.rs");
     /// The codecs a case above pins the bytes of, in declaration order.
-    const WITNESSED: [&str; 6] = ["binary", "text", "form", "json", "multipart", "protobuf"];
+    const WITNESSED: [&str; 7] = [
+        "binary",
+        "encoded",
+        "text",
+        "form",
+        "json",
+        "multipart",
+        "protobuf",
+    ];
 
     // Either visibility. What is counted is codecs, and whether a codec's
     // module is `pub` says only whether it declares an item of its own --
-    // `multipart` declares two traits, the other five declare nothing and are
+    // `multipart` declares two traits, the other six declare nothing and are
     // private. A codec still writes bytes either way, so keying this on `pub`
     // would have let the whole set go uncounted the day they were sealed.
     let declared = SOURCE

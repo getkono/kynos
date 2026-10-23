@@ -5,6 +5,7 @@
 
 // Private where they declare no item; `multipart` declares `IntoMultipart`.
 mod binary;
+mod encoded;
 mod text;
 
 #[cfg(feature = "form")]
@@ -31,7 +32,7 @@ mod tests;
 pub(crate) fn json_bytes<T: serde::Serialize + ?Sized>(
     value: &T,
 ) -> serde_json::Result<bytes::Bytes> {
-    let mut writer = JsonWriter::new();
+    let mut writer = BodyWriter::new();
     serde_json::to_writer(&mut writer, value)?;
     Ok(writer.into_bytes())
 }
@@ -48,15 +49,19 @@ const STACK_OCTETS: usize = 1024;
 /// heap, starting at twice the stack so a spilled body skips the small
 /// doublings.
 ///
+/// Codec-neutral: [`json_bytes`] writes JSON into it, and an
+/// [`Encoded`](crate::extract::body::codec::Encoded) response hands it to its
+/// `BodyCodec`, so an application's format pays what JSON does.
+///
 /// No hint carried between responses: the first response costs what the
 /// thousandth does, which is the property the counting harness holds.
-struct JsonWriter {
+struct BodyWriter {
     stack: [u8; STACK_OCTETS],
     len: usize,
     spilled: Vec<u8>,
 }
 
-impl JsonWriter {
+impl BodyWriter {
     fn new() -> Self {
         Self {
             stack: [0; STACK_OCTETS],
@@ -84,7 +89,7 @@ impl JsonWriter {
 
 // Inlined, as `Vec<u8>`'s are: `serde_json` writes in pieces of a few octets,
 // and an out-of-line call per piece costs more than the piece.
-impl std::io::Write for JsonWriter {
+impl std::io::Write for BodyWriter {
     #[inline]
     fn write(&mut self, octets: &[u8]) -> std::io::Result<usize> {
         self.write_all(octets)?;
