@@ -40,7 +40,8 @@
 //! * **A context declares what it can verify.** One `App`, seven
 //!   implementations, so the set of schemes an application supports is visible
 //!   in one place rather than spread across the handlers requiring them. Only
-//!   one of them verifies for real; the other six say so in their name.
+//!   one of them verifies for real, one reports its store down, and the other
+//!   five say so in their name.
 //! * **An operation takes one guard.** A second credential argument does not
 //!   compile, because both would run while the description listed them as
 //!   alternatives. `/exports` accepts either of two schemes through `AnyOf`,
@@ -58,6 +59,11 @@
 //! type at all, because which credential check refused is a fact a caller
 //! cannot act on and an attacker would like to have.
 //!
+//! `Sessions` answers neither: its store is down, so it cannot say whether the
+//! session is valid. `#[security(unavailable)]` on `SessionCookie` is what lets
+//! it return `AuthRejection::unavailable`, a 503 with `Retry-After`, and what
+//! declares that 503 on `/preferences` alone.
+//!
 //! `ReadReports` says that URI a second time as `Scopes::FORBIDDEN_TYPE`, which
 //! is the only seam a document assembled from *types* has for a value chosen at
 //! run time. `/reports` then declares a 403 publishing that type or
@@ -65,15 +71,15 @@
 //! declares the shared `Problem` component, which is the widest thing true of a
 //! refusal nothing has named.
 
-use std::{collections::HashMap, net::Ipv4Addr};
+use std::{collections::HashMap, net::Ipv4Addr, time::Duration};
 
 use kynos::{
     error::rejection::AuthRejection,
     prelude::*,
     security::{
-        Authenticates, Authenticator, Scope,
+        Authenticates, Authenticator, Scope, Unscoped,
         auth::{Auth, MaybeAuth, Scoped, Scopes},
-        carrier::{BearerToken, Carries, Credentials},
+        carrier::{ApiKey, BearerToken, Carries, Credentials},
         requirement::{AllOf, AnyOf, Either2},
     },
     server::Server,
@@ -133,8 +139,12 @@ struct ServiceKey;
 ///
 /// The same scheme kind as above with a different location, which is why the
 /// location is a member rather than three separate kinds.
+///
+/// `unavailable` because a session is looked up in a store that can be down,
+/// and that is neither a 401 nor a 403: it declares a 503 on every operation
+/// this scheme guards, and is what lets `Sessions` answer with one.
 #[derive(SecurityScheme)]
-#[security(api_key(in = "cookie", name = "session"))]
+#[security(api_key(in = "cookie", name = "session"), unavailable)]
 struct SessionCookie;
 
 /// Username and password, over the `Authorization` header.
@@ -270,11 +280,43 @@ impl<C: Sync> Authenticator<AccessToken, C> for Tokens {
     }
 }
 
-/// One stand-in, for the six schemes whose verifier would be arbitrary.
+/// A session store that is currently unreachable.
 ///
-/// A session is checked against a store, a client certificate against a CA, a
-/// federated identity against a discovery document — none of that is Kynos's
-/// business, and inventing six of them would teach nothing `Tokens` does not.
+/// Answering 401 here would tell a browser its session is invalid, and it would
+/// sign its user out over a database blip. A 503 says nothing about the
+/// credential, and `Retry-After` says when to try again.
+struct Sessions;
+
+impl<C: Sync> Authenticator<SessionCookie, C> for Sessions {
+    async fn authenticate(&self, presented: ApiKey, context: &C) -> Result<String, AuthRejection> {
+        let _ = (presented, context);
+        Err(AuthRejection::unavailable::<SessionCookie>().with_retry_after(Duration::from_secs(5)))
+    }
+
+    async fn authorize(
+        &self,
+        credential: &String,
+        scopes: &[Unscoped],
+        context: &C,
+    ) -> Result<(), AuthRejection> {
+        let _ = (credential, scopes, context);
+        Ok(())
+    }
+}
+
+impl Authenticates<SessionCookie> for App {
+    type Authenticator = Sessions;
+
+    fn authenticator(&self) -> &Self::Authenticator {
+        &Sessions
+    }
+}
+
+/// One stand-in, for the five schemes whose verifier would be arbitrary.
+///
+/// A client certificate is checked against a CA, a federated identity against
+/// a discovery document — none of that is Kynos's business, and inventing five
+/// of them would teach nothing `Tokens` does not.
 /// What this one still shows is the shape: an authenticator is chosen by the
 /// compiler from the scheme type, so a handler taking `Auth<S>` against a
 /// context that cannot verify `S` is a compile error rather than a 500.
@@ -346,7 +388,6 @@ macro_rules! verifies {
 
 verifies!(
     ServiceKey,
-    SessionCookie,
     AdminLogin,
     PartnerCertificate,
     DelegatedAccess,
