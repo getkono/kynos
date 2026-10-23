@@ -105,48 +105,135 @@ fn admits(schema: &Schema) -> Admits<'_> {
 
 /// The `type` a single branch constrains a problem to.
 fn published(branch: &Schema) -> Option<&str> {
+    narrowing(branch).and_then(constant)
+}
+
+/// The `allOf` member of a branch fixing `type` to a `const`, which is where
+/// the branch declares the members it sends beside it.
+fn narrowing(branch: &Schema) -> Option<&SchemaObject> {
     let Schema::Object(object) = branch else {
         return None;
     };
 
-    object.all_of.as_ref()?.iter().find_map(|member| {
-        let Schema::Object(member) = member else {
-            return None;
-        };
-        let Schema::Object(ty) = member.properties.get("type")? else {
-            return None;
-        };
-
-        match ty.const_value.as_ref()? {
-            Value::String(uri) => Some(uri.as_str()),
+    object
+        .all_of
+        .as_ref()?
+        .iter()
+        .find_map(|member| match member {
+            Schema::Object(member) if constant(member).is_some() => Some(&**member),
             _ => None,
-        }
-    })
+        })
+}
+
+/// [`narrowing`], to edit.
+fn narrowing_mut(branch: &mut Schema) -> Option<&mut SchemaObject> {
+    let Schema::Object(object) = branch else {
+        return None;
+    };
+
+    object
+        .all_of
+        .as_mut()?
+        .iter_mut()
+        .find_map(|member| match member {
+            Schema::Object(member) if constant(member).is_some() => Some(&mut **member),
+            _ => None,
+        })
+}
+
+/// The URI an object's `type` property is fixed to.
+fn constant(object: &SchemaObject) -> Option<&str> {
+    let Schema::Object(ty) = object.properties.get("type")? else {
+        return None;
+    };
+
+    match ty.const_value.as_ref()? {
+        Value::String(uri) => Some(uri.as_str()),
+        _ => None,
+    }
 }
 
 /// The two branch lists as one schema: deduplicated by the URI each publishes,
-/// in the order they were declared.
+/// in the order they were declared, a repeated URI's members folded into the
+/// branch kept.
 fn rebuilt(declared: Vec<(&str, &Schema)>, incoming: Vec<(&str, &Schema)>) -> Schema {
-    let mut distinct: Vec<(&str, &Schema)> = Vec::with_capacity(declared.len() + incoming.len());
+    let mut distinct: Vec<(&str, Schema)> = Vec::with_capacity(declared.len() + incoming.len());
     for (uri, branch) in declared.into_iter().chain(incoming) {
-        if !distinct.iter().any(|(seen, _)| *seen == uri) {
-            distinct.push((uri, branch));
+        match distinct.iter_mut().find(|(seen, _)| *seen == uri) {
+            Some((_, kept)) => fold_members(kept, branch),
+            None => distinct.push((uri, branch.clone())),
         }
     }
 
-    match distinct.as_slice() {
+    if distinct.len() == 1 {
         // One type, so a `oneOf` would be a choice between one thing.
-        [(_, only)] => (*only).clone(),
-        several => Schema::Object(Box::new(SchemaObject {
-            one_of: Some(
-                several
-                    .iter()
-                    .map(|(_, branch)| (*branch).clone())
-                    .collect(),
-            ),
-            ..SchemaObject::default()
-        })),
+        return distinct.remove(0).1;
     }
+
+    Schema::Object(Box::new(SchemaObject {
+        one_of: Some(distinct.into_iter().map(|(_, branch)| branch).collect()),
+        ..SchemaObject::default()
+    }))
+}
+
+/// Folds what `other` sends into `kept`, two branches publishing one URI: the
+/// branch kept must match a document either side sends.
+///
+/// Every member either declares is declared, one the two declare differently
+/// admits either schema, and a member is required only where both require it.
+/// Where either branch is not a shape this reads, `kept` stands.
+fn fold_members(kept: &mut Schema, other: &Schema) {
+    let (Some(kept), Some(other)) = (narrowing_mut(kept), narrowing(other)) else {
+        return;
+    };
+
+    for (name, schema) in &other.properties {
+        // The `const` both sides already agree on.
+        if name == "type" {
+            continue;
+        }
+        match kept.properties.get_mut(name) {
+            None => {
+                kept.properties.insert(name.clone(), schema.clone());
+            }
+            Some(declared) if declared == schema => {}
+            Some(declared) => *declared = either(declared, schema),
+        }
+    }
+
+    let both = other.required.as_deref().unwrap_or_default();
+    if let Some(required) = &mut kept.required {
+        required.retain(|name| both.contains(name));
+    }
+    if kept.required.as_ref().is_some_and(Vec::is_empty) {
+        kept.required = None;
+    }
+}
+
+/// A schema admitting what `declared` or `other` does, extending `declared`
+/// where it is already a bare `anyOf`.
+fn either(declared: &Schema, other: &Schema) -> Schema {
+    let mut choices = match declared {
+        Schema::Object(object)
+            if object.any_of.is_some()
+                && **object
+                    == SchemaObject {
+                        any_of: object.any_of.clone(),
+                        ..SchemaObject::default()
+                    } =>
+        {
+            object.any_of.clone().unwrap_or_default()
+        }
+        _ => vec![declared.clone()],
+    };
+    if !choices.contains(other) {
+        choices.push(other.clone());
+    }
+
+    Schema::Object(Box::new(SchemaObject {
+        any_of: Some(choices),
+        ..SchemaObject::default()
+    }))
 }
 
 /// Both descriptions, joined and without repeats.
