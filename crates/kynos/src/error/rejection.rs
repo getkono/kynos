@@ -20,10 +20,14 @@
 
 use std::{collections::BTreeMap, marker::PhantomData, time::Duration};
 
+use kynos_openapi::{
+    Schema as OpenApiSchema, SchemaObject,
+    model::schema::types::{SchemaType, TypeSet},
+};
 use serde_json::json;
 
 use crate::{
-    error::problem::{IntoProblem, Problem, narrowed_response, problem_response},
+    error::problem::{IntoProblem, Member, Problem, narrowed_response, problem_response},
     http::{HeaderValue, StatusCode, header},
     middleware::{retry_after_header, set_retry_after},
     response::{IntoResponse, Responses},
@@ -35,11 +39,28 @@ use crate::{
 /// component to `about:blank`, which every rejection described here writes
 /// through [`Problem::new`]. [`AuthRejection`]'s 403 is the exception and
 /// declares itself in [`auth_responses`].
-fn problem_responses(registry: &mut Registry, statuses: &[StatusCode]) -> kynos_openapi::Responses {
+///
+/// `errors` names the status a schema failure answers with, if any, and
+/// whether every response at it sends the [`pointer_errors`] member.
+fn problem_responses(
+    registry: &mut Registry,
+    statuses: &[StatusCode],
+    errors: Option<(StatusCode, bool)>,
+) -> kynos_openapi::Responses {
     statuses
         .iter()
         .fold(kynos_openapi::Responses::new(), |responses, status| {
-            responses.with(status.as_u16(), narrowed_problem(registry, *status))
+            let members: Vec<Member> = errors
+                .filter(|(at, _)| at == status)
+                .map(|(_, sent)| ("errors", pointer_errors_schema(registry), sent))
+                .into_iter()
+                .collect();
+            let problem = registry.resolve::<Problem>();
+
+            responses.with(
+                status.as_u16(),
+                narrowed_response(&problem, status.as_u16(), &[(None, None, &members)]),
+            )
         })
 }
 
@@ -48,13 +69,17 @@ fn problem_responses(registry: &mut Registry, statuses: &[StatusCode]) -> kynos_
 fn narrowed_problem(registry: &mut Registry, status: StatusCode) -> kynos_openapi::Response {
     let problem = registry.resolve::<Problem>();
 
-    narrowed_response(&problem, status.as_u16(), &[(None, None)])
+    narrowed_response(&problem, status.as_u16(), &[(None, None, &[])])
 }
 
 /// Emits the two implementations that are mechanical for every rejection: the
 /// bridge to a response, and the description built from `statuses()`.
+///
+/// `errors: STATUS => SENT` declares the [`pointer_errors`] member under the
+/// status a schema failure answers with, required where `SENT` says every
+/// response at that status carries it.
 macro_rules! rejection_response {
-    ($rejection:ty) => {
+    (@[$errors:expr] $rejection:ty) => {
         impl IntoResponse for $rejection {
             fn into_response(self) -> crate::http::Response {
                 IntoProblem::into_problem(self).into_response()
@@ -63,9 +88,15 @@ macro_rules! rejection_response {
 
         impl Responses for $rejection {
             fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-                problem_responses(registry, <$rejection as IntoProblem>::statuses())
+                problem_responses(registry, <$rejection as IntoProblem>::statuses(), $errors)
             }
         }
+    };
+    ($rejection:ty, errors: $status:expr => $sent:expr) => {
+        rejection_response!(@[Some(($status, $sent))] $rejection);
+    };
+    ($rejection:ty) => {
+        rejection_response!(@[None] $rejection);
     };
 }
 
@@ -75,6 +106,34 @@ fn pointer_errors(failures: BTreeMap<String, String>) -> Vec<serde_json::Value> 
         .into_iter()
         .map(|(pointer, detail)| json!({ "pointer": pointer, "detail": detail }))
         .collect()
+}
+
+/// What [`pointer_errors`] sends, declared: an array of `{pointer, detail}`
+/// objects, each pointer a JSON Pointer (RFC 6901).
+fn pointer_errors_schema(registry: &mut Registry) -> OpenApiSchema {
+    let detail = registry.resolve::<String>();
+    let mut pointer = detail.clone();
+    if let OpenApiSchema::Object(object) = &mut pointer {
+        object.format = Some("json-pointer".to_owned());
+    }
+
+    let entry = SchemaObject {
+        ty: Some(TypeSet::One(SchemaType::Object)),
+        properties: [
+            ("pointer".to_owned(), pointer),
+            ("detail".to_owned(), detail),
+        ]
+        .into_iter()
+        .collect(),
+        required: Some(vec!["pointer".to_owned(), "detail".to_owned()]),
+        ..SchemaObject::default()
+    };
+
+    OpenApiSchema::Object(Box::new(SchemaObject {
+        ty: Some(TypeSet::One(SchemaType::Array)),
+        items: Some(Box::new(OpenApiSchema::Object(Box::new(entry)))),
+        ..SchemaObject::default()
+    }))
 }
 
 /// Declares a parameter rejection: an `Invalid` and a `Schema` variant, both
@@ -156,7 +215,7 @@ macro_rules! parameter_rejection {
         }
 
         $(#[cfg($cfg)])?
-        rejection_response!($name);
+        rejection_response!($name, errors: StatusCode::BAD_REQUEST => false);
     };
     ($($rest:tt)*) => {
         parameter_rejection!(@[] $($rest)*);
@@ -357,7 +416,7 @@ impl IntoProblem for BodyRejection {
     }
 }
 
-rejection_response!(BodyRejection);
+rejection_response!(BodyRejection, errors: StatusCode::UNPROCESSABLE_ENTITY => true);
 
 /// No offered representation satisfied the request's `Accept`.
 #[derive(Debug, thiserror::Error)]
@@ -472,7 +531,7 @@ impl IntoResponse for RangeRejection {
 impl Responses for RangeRejection {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         let mut responses =
-            problem_responses(registry, <RangeRejection as IntoProblem>::statuses());
+            problem_responses(registry, <RangeRejection as IntoProblem>::statuses(), None);
 
         let unsatisfiable = StatusCode::RANGE_NOT_SATISFIABLE.as_u16().to_string();
         if let Some(kynos_openapi::RefOr::Item(response)) =
@@ -851,7 +910,7 @@ fn forbidden(
     narrowed_response(
         &problem,
         status.as_u16(),
-        &[(None, None), (Some(named), None)],
+        &[(None, None, &[]), (Some(named), None, &[])],
     )
 }
 

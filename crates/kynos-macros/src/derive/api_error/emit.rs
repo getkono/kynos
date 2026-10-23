@@ -4,7 +4,7 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{ToTokens, quote, quote_spanned};
 use syn::{Ident, spanned::Spanned};
 
-use super::{Failure, HEADERS_BINDING, Outcome, Transparent};
+use super::{Extension, Failure, HEADERS_BINDING, Outcome, Transparent};
 
 /// The statuses as a `&'static [u16]` expression, in declaration order without
 /// repeats.
@@ -170,10 +170,20 @@ fn problem(failure: &Failure) -> TokenStream2 {
         .title
         .as_ref()
         .map(|title| quote!(problem.title = ::std::borrow::Cow::Borrowed(#title);));
-    let with_extensions = failure
-        .extensions
-        .iter()
-        .map(|(name, binding)| quote!(problem = problem.with_extension(#name, #binding);));
+    // An `Option` member is sent only when it holds a value, as `detail` is.
+    let with_extensions = failure.extensions.iter().map(|extension| {
+        let binding = &extension.name;
+        let name = binding.to_string();
+        if extension.optional().is_some() {
+            quote! {
+                if let ::core::option::Option::Some(value) = #binding {
+                    problem = problem.with_extension(#name, value);
+                }
+            }
+        } else {
+            quote!(problem = problem.with_extension(#name, #binding);)
+        }
+    });
 
     quote! {{
         let status = ::kynos::http::StatusCode::from_u16(#status)
@@ -207,7 +217,8 @@ pub(super) fn responses(
         let branches = declaring.iter().map(|failure| {
             let uri = optional(failure.type_uri.as_ref());
             let summary = optional(failure.title.as_deref().or(failure.doc.as_deref()));
-            quote!((#uri, #summary))
+            let members = failure.extensions.iter().map(member);
+            quote!((#uri, #summary, &[#(#members),*]))
         });
         let response =
             quote!(::kynos::__private::problem::response(&schema, #status, &[#(#branches),*]));
@@ -265,6 +276,20 @@ pub(super) fn responses(
         #(#handed_over)*
         responses
     }
+}
+
+/// One extension member as the helper declares it: its name, its type's
+/// schema, and whether every occurrence sends it. An `Option<T>` is described
+/// by `T`, since `None` is not sent rather than sent as `null`.
+fn member(extension: &Extension) -> TokenStream2 {
+    let name = extension.name.to_string();
+    let (ty, sent) = extension
+        .optional()
+        .map_or((&extension.ty, true), |inner| (inner, false));
+    // Spanned to the field, so a type with no schema is reported where it is
+    // named.
+    let schema = quote_spanned!(ty.span()=> registry.resolve::<#ty>());
+    quote!((#name, #schema, #sent))
 }
 
 /// A string the declaration may not have given, as the `Option` the helper

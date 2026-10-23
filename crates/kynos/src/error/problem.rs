@@ -362,7 +362,7 @@ pub(crate) fn refusal_response<T: ProblemType>(
 ) -> Response {
     let problem = registry.resolve::<Problem>();
 
-    narrowed_response(&problem, status, &[(T::TYPE_URI, Some(summary))])
+    narrowed_response(&problem, status, &[(T::TYPE_URI, Some(summary), &[])])
 }
 
 // --- What one status declares --------------------------------------------
@@ -370,9 +370,13 @@ pub(crate) fn refusal_response<T: ProblemType>(
 // A function here rather than macro tokens, so `about:blank` has one spelling;
 // the derive reaches it through `__private::problem`.
 
-/// One failure answering with a status: the type URI it publishes, and the
-/// summary its declaration gave it.
-pub(crate) type Branch = (Option<&'static str>, Option<&'static str>);
+/// One extension member a failure sends beside the registered ones: the name
+/// it is sent under, its type's schema, and whether every occurrence sends it.
+pub(crate) type Member = (&'static str, OpenApiSchema, bool);
+
+/// One failure answering with a status: the type URI it publishes, the
+/// summary its declaration gave it, and the extension members it sends.
+pub(crate) type Branch<'a> = (Option<&'static str>, Option<&'static str>, &'a [Member]);
 
 /// The response one status declares, narrowed to the types it publishes.
 ///
@@ -387,7 +391,7 @@ pub(crate) type Branch = (Option<&'static str>, Option<&'static str>);
 pub(crate) fn narrowed_response(
     problem: &OpenApiSchema,
     status: u16,
-    branches: &[Branch],
+    branches: &[Branch<'_>],
 ) -> Response {
     // From every branch, not the deduplicated ones: prose has no exactly-one rule.
     let description = description(status, branches);
@@ -399,12 +403,12 @@ pub(crate) fn narrowed_response(
              empty branch list"
         ),
         // A lone branch's title would repeat the description.
-        [(uri, _)] => narrowed_branch(problem, uri, None),
+        [only] => narrowed_branch(problem, only, None),
         several => object(SchemaObject {
             one_of: Some(
                 several
                     .iter()
-                    .map(|(uri, summary)| narrowed_branch(problem, uri, *summary))
+                    .map(|branch| narrowed_branch(problem, branch, branch.summary))
                     .collect(),
             ),
             ..SchemaObject::default()
@@ -418,18 +422,60 @@ pub(crate) fn narrowed_response(
     )
 }
 
+/// The failures publishing one URI, as the one branch the schema gives them.
+struct Narrowed<'a> {
+    uri: String,
+
+    /// The first summary given; a branch carries one title.
+    summary: Option<&'static str>,
+
+    /// Each member any of them sends, in order of first sighting: every
+    /// distinct schema it is declared by, and whether all of them send it.
+    members: Vec<(&'static str, Vec<&'a OpenApiSchema>, bool)>,
+}
+
 /// The schema's branches: resolved and deduplicated by URI in declaration
 /// order.
 ///
-/// A `oneOf` repeating a `const` would match twice, so a repeated URI keeps
-/// only its first summary.
-fn distinct(status: u16, branches: &[Branch]) -> Vec<(String, Option<&'static str>)> {
-    let mut distinct: Vec<(String, Option<&'static str>)> = Vec::with_capacity(branches.len());
+/// A `oneOf` repeating a `const` would match twice, so a repeated URI is one
+/// branch, describing what each of its failures sends.
+fn distinct<'a>(status: u16, branches: &[Branch<'a>]) -> Vec<Narrowed<'a>> {
+    let mut distinct: Vec<Narrowed<'a>> = Vec::with_capacity(branches.len());
 
-    for (uri, summary) in branches {
+    for (uri, summary, members) in branches {
         let uri = uri.map_or_else(|| about_blank(status), ToOwned::to_owned);
-        if !distinct.iter().any(|(seen, _)| *seen == uri) {
-            distinct.push((uri, *summary));
+        // A registered member's name never reaches the wire as an extension.
+        let sent = members
+            .iter()
+            .filter(|(name, _, _)| !RESERVED.contains(name));
+
+        let Some(narrowed) = distinct.iter_mut().find(|seen| seen.uri == uri) else {
+            distinct.push(Narrowed {
+                uri,
+                summary: *summary,
+                members: sent
+                    .map(|(name, schema, required)| (*name, vec![schema], *required))
+                    .collect(),
+            });
+            continue;
+        };
+
+        // Required only where every failure publishing the URI sends it.
+        for (name, _, required) in &mut narrowed.members {
+            *required &= members
+                .iter()
+                .any(|(other, _, sends)| other == name && *sends);
+        }
+        for (name, schema, _) in sent {
+            match narrowed
+                .members
+                .iter_mut()
+                .find(|(seen, _, _)| seen == name)
+            {
+                Some((_, schemas, _)) if !schemas.contains(&schema) => schemas.push(schema),
+                Some(_) => {}
+                None => narrowed.members.push((*name, vec![schema], false)),
+            }
         }
     }
 
@@ -444,17 +490,37 @@ fn about_blank(status: u16) -> String {
     Problem::new(status).type_uri.into_owned()
 }
 
-/// The shared component, and the one thing this branch adds to it.
-fn narrowed_branch(problem: &OpenApiSchema, uri: &str, summary: Option<&str>) -> OpenApiSchema {
+/// The shared component, and what this branch adds to it: the `type` it
+/// publishes and the extension members it sends.
+fn narrowed_branch(
+    problem: &OpenApiSchema,
+    branch: &Narrowed<'_>,
+    summary: Option<&str>,
+) -> OpenApiSchema {
     let mut properties = Map::new();
     properties.insert(
         "type".to_owned(),
         object(SchemaObject {
             ty: Some(TypeSet::One(SchemaType::String)),
-            const_value: Some(Value::String(uri.to_owned())),
+            const_value: Some(Value::String(branch.uri.clone())),
             ..SchemaObject::default()
         }),
     );
+
+    let mut required = Vec::new();
+    for (name, schemas, sent) in &branch.members {
+        let schema = match schemas.as_slice() {
+            [only] => (*only).clone(),
+            several => object(SchemaObject {
+                any_of: Some(several.iter().map(|schema| (*schema).clone()).collect()),
+                ..SchemaObject::default()
+            }),
+        };
+        properties.insert((*name).to_owned(), schema);
+        if *sent {
+            required.push((*name).to_owned());
+        }
+    }
 
     object(SchemaObject {
         // The problem type's summary (RFC 9457 section 3.1.2), per branch.
@@ -463,6 +529,7 @@ fn narrowed_branch(problem: &OpenApiSchema, uri: &str, summary: Option<&str>) ->
             problem.clone(),
             object(SchemaObject {
                 properties,
+                required: (!required.is_empty()).then_some(required),
                 ..SchemaObject::default()
             }),
         ]),
@@ -473,9 +540,9 @@ fn narrowed_branch(problem: &OpenApiSchema, uri: &str, summary: Option<&str>) ->
 /// The response's description: every summary the status's failures gave, in
 /// declaration order and without repeats, falling back to the code's own
 /// reason phrase.
-fn description(status: u16, branches: &[Branch]) -> String {
+fn description(status: u16, branches: &[Branch<'_>]) -> String {
     let mut summaries: Vec<&str> = Vec::with_capacity(branches.len());
-    for (_, summary) in branches {
+    for (_, summary, _) in branches {
         match summary {
             Some(summary) if !summaries.contains(summary) => summaries.push(summary),
             _ => {}

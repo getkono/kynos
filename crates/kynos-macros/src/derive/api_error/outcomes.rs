@@ -9,7 +9,7 @@ use syn::{
 };
 
 use super::{
-    Failure, HeaderField, Outcome, Transparent, TypeUri,
+    Extension, Failure, HeaderField, Outcome, Transparent, TypeUri,
     args::{
         Base, Position, ProblemArgs, check_field_markers, is_extension, is_headers, parse_problem,
     },
@@ -228,9 +228,8 @@ fn kebab(name: &str) -> String {
     slug
 }
 
-/// The named fields marked `#[problem(extension)]`, as the name each is
-/// published under and the identifier the pattern binds it to.
-fn extensions(fields: &Fields) -> Vec<(String, Ident)> {
+/// The named fields marked `#[problem(extension)]`.
+fn extensions(fields: &Fields) -> Vec<Extension> {
     let Fields::Named(named) = fields else {
         return Vec::new();
     };
@@ -239,7 +238,12 @@ fn extensions(fields: &Fields) -> Vec<(String, Ident)> {
         .named
         .iter()
         .filter(|field| field.attrs.iter().any(is_extension))
-        .filter_map(|field| field.ident.clone().map(|ident| (ident.to_string(), ident)))
+        .filter_map(|field| {
+            field.ident.clone().map(|name| Extension {
+                name,
+                ty: field.ty.clone(),
+            })
+        })
         .collect()
 }
 

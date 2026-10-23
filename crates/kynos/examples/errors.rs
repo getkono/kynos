@@ -108,7 +108,7 @@ struct RowMissing(u64);
 struct Invalid {
     /// The member a client should correct.
     #[problem(extension)]
-    field: &'static str,
+    field: String,
 }
 
 /// How long a client should wait before trying again.
@@ -270,7 +270,10 @@ fn load(id: u64) -> Result<User, RowMissing> {
 #[allow(clippy::needless_pass_by_value)]
 fn insert(user: User) -> Result<User, StoreError> {
     if user.name.is_empty() {
-        return Err(Invalid { field: "name" }.into());
+        return Err(Invalid {
+            field: "name".to_owned(),
+        }
+        .into());
     }
 
     if user.id == 0 {

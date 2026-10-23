@@ -160,8 +160,30 @@
                         "type": {
                           "type": "string",
                           "const": "about:blank"
+                        },
+                        "errors": {
+                          "items": {
+                            "properties": {
+                              "pointer": {
+                                "type": "string",
+                                "format": "json-pointer"
+                              },
+                              "detail": {
+                                "type": "string"
+                              }
+                            },
+                            "type": "object",
+                            "required": [
+                              "pointer",
+                              "detail"
+                            ]
+                          },
+                          "type": "array"
                         }
-                      }
+                      },
+                      "required": [
+                        "errors"
+                      ]
                     }
                   ]
                 }

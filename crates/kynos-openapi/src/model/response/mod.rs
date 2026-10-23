@@ -140,7 +140,9 @@ impl Responses {
     /// * **The schema.** Where both sides are *narrowed* (every branch
     ///   constrains `type` to a `const`, as `#[derive(ApiError)]` emits), the
     ///   branches are flattened, deduplicated by URI so `oneOf` stays sound, and
-    ///   rebuilt as one `allOf` or a `oneOf` of several. Where one side admits
+    ///   rebuilt as one `allOf` or a `oneOf` of several. A URI both sides
+    ///   publish keeps one branch declaring every member either side's does,
+    ///   required only where both require it. Where one side admits
     ///   every problem document — `true`, or a bare `$ref` to the shared
     ///   component — that side is the union. Any other schema keeps the entry
     ///   already declared.
