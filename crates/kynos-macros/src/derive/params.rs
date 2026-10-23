@@ -4,7 +4,8 @@
 //! A value becomes a field through [`FromStr`](std::str::FromStr) alone, never
 //! serde. Each field's type is bounded by `kynos::schema::ParamValue`, so its
 //! schema describes the one value `FromStr` reads. An `Option<T>` field is
-//! optional; the recognition is syntactic, so an alias for it reads as required.
+//! optional and described by `T`'s schema; the recognition is syntactic, so an
+//! alias for it reads as required.
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
@@ -205,9 +206,13 @@ fn bounds(param: &Param<'_>) -> Option<TokenStream2> {
     constraints(param.field).map(|constraints| quote!(let schema = #constraints.apply(schema);))
 }
 
-/// The field's type's schema, or a fixed parameter's `const`.
+/// The schema of the one value the field carries, or a fixed parameter's
+/// `const`.
+///
+/// An `Option<T>` field is described by `T`'s schema: no parameter location
+/// can spell `null`, so its optionality is `required: false` alone.
 fn schema(param: &Param<'_>) -> TokenStream2 {
-    let ty = param.ty();
+    let ty = param.optional().unwrap_or(param.ty());
     param.fixed.as_ref().map_or_else(
         || quote!(registry.resolve::<#ty>()),
         |value| named_string(std::slice::from_ref(value)),
