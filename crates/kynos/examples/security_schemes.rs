@@ -64,7 +64,8 @@
 //! `Sessions` answers neither: its store is down, so it cannot say whether the
 //! session is valid. `#[security(unavailable)]` on `SessionCookie` is what lets
 //! it return `AuthRejection::unavailable`, a 503 with `Retry-After`, and what
-//! declares that 503 on `/preferences` alone.
+//! declares that 503 on `/preferences` alone. `ServiceKey` opts the other way,
+//! out of the 403 a key that is only right or wrong cannot send.
 //!
 //! `ReadReports` says that URI a second time as `Scopes::FORBIDDEN_TYPE`, which
 //! is the only seam a document assembled from *types* has for a value chosen at
@@ -132,8 +133,13 @@ impl Scope for Grant {
 ///
 /// `in` and `name` are both required: a key that does not say where it travels
 /// is a scheme a client cannot use, and there is no default worth guessing.
+///
+/// `forbids = false` because a key is right or wrong and grants its whole
+/// integration: there is no valid key to refuse, so `/usage` declares the 401
+/// alone. `/exports` still declares a 403, since `AccessToken` beside it may
+/// refuse one.
 #[derive(SecurityScheme)]
-#[security(api_key(in = "header", name = "X-Api-Key"))]
+#[security(api_key(in = "header", name = "X-Api-Key"), forbids = false)]
 #[security(name = "ServiceKey", description = "Issued per integration")]
 struct ServiceKey;
 
