@@ -1,0 +1,31 @@
+error[E0080]: evaluation panicked: a `TextAs` marker does not name a `text/*` type, and its body is decoded as text
+ --> $RUST/core/src/panic.rs
+  |
+  |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `kynos::extract::body::text_as::TextAs::<Csv>::TEXT` failed here
+  |
+ ::: src/extract/body/text_as.rs
+  |
+  | /         assert!(
+  | |             is_text(M::MEDIA_TYPE),
+  | |             "a `TextAs` marker does not name a `text/*` type, and its body is decoded as text"
+  | |         );
+  | |_________- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/extract/body/text_as.rs
+  |
+  |         let () = Self::TEXT;
+  |                  ^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn <TextAs<Csv> as RequestContent>::request_body`
+ --> src/extract/body/text_as.rs
+  |
+  |         let body = <Self as RequestContent>::request_body(operation.registry());
+  |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/extract/body/text_as.rs
+  |
+  |         let () = Self::TEXT;
+  |                  ^^^^^^^^^^

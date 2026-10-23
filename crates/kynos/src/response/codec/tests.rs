@@ -147,6 +147,54 @@ async fn text_writes_the_string_and_states_its_charset() {
     assert_eq!(&body(response).await[..], "héllo".as_bytes());
 }
 
+/// `Text`'s codec under a declared `text/*` type: the charset is stated as
+/// `Text` states it, unless the marker already states one, which is then
+/// written verbatim.
+#[tokio::test]
+async fn declared_text_states_its_type_and_a_charset_once() {
+    use crate::{
+        extract::body::text_as::TextAs,
+        http::media::{Html, MediaType},
+    };
+
+    struct Csv;
+
+    impl MediaType for Csv {
+        const MEDIA_TYPE: &'static str = "text/csv; header=present";
+    }
+
+    /// Past the room a `Content-Type` is built in at compile time, so the
+    /// charset is appended at run time instead.
+    struct Long;
+
+    impl MediaType for Long {
+        const MEDIA_TYPE: &'static str = "text/vnd.example.a-subtype-long-enough-that-it-and-the-\
+                                          charset-it-is-given-do-not-fit-in-the-room-a-content-\
+                                          type-is-built-in";
+    }
+
+    let response = TextAs::<Csv>::new("id\n1\n").into_response();
+    assert_eq!(
+        media_type(&response),
+        "text/csv; header=present; charset=utf-8"
+    );
+    assert_eq!(&body(response).await[..], b"id\n1\n");
+
+    let response = TextAs::<Html>::new("<p>héllo</p>").into_response();
+    assert_eq!(media_type(&response), Html::MEDIA_TYPE);
+    assert_eq!(&body(response).await[..], "<p>héllo</p>".as_bytes());
+
+    assert!(
+        Long::MEDIA_TYPE.len() + "; charset=utf-8".len() > 128,
+        "the room is 128 octets"
+    );
+    let response = TextAs::<Long>::new("").into_response();
+    assert_eq!(
+        media_type(&response),
+        format!("{}; charset=utf-8", Long::MEDIA_TYPE)
+    );
+}
+
 #[tokio::test]
 async fn binary_writes_its_bytes_verbatim_under_the_type_it_was_given() {
     use crate::{extract::body::binary::Binary, http::media::OctetStream};

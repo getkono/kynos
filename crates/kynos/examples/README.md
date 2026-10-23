@@ -32,7 +32,7 @@ as reading the authenticated caller in a handler, which is
 | Example | Shows | Features |
 | --- | --- | --- |
 | [`parameters.rs`](parameters.rs) | Path, query, header and cookie groups, plus a hand-written extractor | `cookie` |
-| [`payloads.rs`](payloads.rs) | Every request body codec, the three shapes binary content takes, two versions of a document as `+json` types, and a body limit per operation | `form,multipart` |
+| [`payloads.rs`](payloads.rs) | Every request body codec, the three shapes binary content takes, two versions of a document as `+json` types, CSV beside JSON as a declared `text/*` type, and a body limit per operation | `form,multipart` |
 | [`protobuf.rs`](protobuf.rs) | Protocol Buffers as a request and a response body | `protobuf` |
 
 ## Responses

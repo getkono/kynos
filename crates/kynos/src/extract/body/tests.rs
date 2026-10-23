@@ -1703,3 +1703,133 @@ mod a_json_body_under_a_declared_media_type {
         assert_eq!(body.required, Some(true));
     }
 }
+
+/// The constant a `OneOf` holding a `TextAs` evaluates refuses a marker sharing
+/// requests with the body beside it, whatever parameter tells them apart.
+#[test]
+#[should_panic(expected = "a `TextAs` marker is offered requests the body beside it")]
+fn a_shared_text_marker_is_refused_by_the_constant_one_of_evaluates() {
+    crate::extract::body::alternative::distinct_text("text/csv; header=present", "TEXT/CSV");
+}
+
+/// The control: another subtype is another media type.
+#[test]
+fn a_text_marker_of_another_subtype_is_admitted() {
+    crate::extract::body::alternative::distinct_text("text/csv", "text/plain");
+}
+
+/// UTF-8 text under a declared media type reads and refuses as `Text` does,
+/// keyed by its own media type rather than `text/plain`.
+mod a_text_body_under_a_declared_media_type {
+    use kynos_openapi::RefOr;
+
+    use crate::{
+        error::rejection::BodyRejection,
+        extract::{
+            body::{text::Text, text_as::TextAs},
+            describe::{Describe, RequestContent},
+        },
+        http::{HeaderValue, Request, body::Body, header, media::MediaType},
+        router::operation::OperationCx,
+        schema::registry::Registry,
+    };
+
+    /// A text type carrying a parameter, which a request need not repeat.
+    #[derive(Debug)]
+    struct Csv;
+
+    impl MediaType for Csv {
+        const MEDIA_TYPE: &'static str = "text/csv; header=present";
+    }
+
+    fn request(content_type: &'static str, body: &'static [u8]) -> Request {
+        let mut request = Request::new(Body::from_bytes(bytes::Bytes::from_static(body)));
+        request
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+        request
+    }
+
+    #[tokio::test]
+    async fn reads_its_own_media_type_with_or_without_utf_8_stated() {
+        for content_type in [
+            "text/csv",
+            "TEXT/Csv; header=present",
+            "text/csv; charset=utf-8",
+            "text/csv; charset=UTF-8; header=present",
+        ] {
+            let text = super::extract::<TextAs<Csv>>(request(content_type, "a,é\n".as_bytes()))
+                .await
+                .unwrap_or_else(|rejection| panic!("{content_type}: {rejection:?}"));
+            assert_eq!(text.into_inner(), "a,é\n");
+        }
+    }
+
+    #[tokio::test]
+    async fn another_media_type_is_unsupported() {
+        for content_type in ["text/plain", "application/json", "text/csv+json"] {
+            let rejection = super::extract::<TextAs<Csv>>(request(content_type, b"a,b"))
+                .await
+                .expect_err(content_type);
+            assert!(
+                matches!(rejection, BodyRejection::UnsupportedMediaType { .. }),
+                "{content_type}: {rejection:?}"
+            );
+        }
+
+        // And the reverse: `Text` reads no other `text/*` type.
+        let rejection = super::extract::<Text>(request("text/csv", b"a,b"))
+            .await
+            .expect_err("`text/csv` is not `text/plain`");
+        assert!(
+            matches!(rejection, BodyRejection::UnsupportedMediaType { .. }),
+            "{rejection:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_contradicted_parameter_is_unsupported() {
+        for content_type in ["text/csv; charset=iso-8859-1", "text/csv; header=absent"] {
+            let rejection = super::extract::<TextAs<Csv>>(request(content_type, b"a,b"))
+                .await
+                .expect_err(content_type);
+            assert!(
+                matches!(rejection, BodyRejection::UnsupportedMediaType { .. }),
+                "{content_type}: {rejection:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn bytes_that_are_not_utf_8_are_a_syntax_rejection() {
+        let rejection = super::extract::<TextAs<Csv>>(request("text/csv", b"caf\xe9"))
+            .await
+            .expect_err("Latin-1 is not UTF-8");
+        assert!(
+            matches!(rejection, BodyRejection::Syntax { .. }),
+            "{rejection:?}"
+        );
+    }
+
+    #[test]
+    fn describes_its_own_media_type_over_a_string() {
+        assert_eq!(TextAs::<Csv>::media_types(), [Csv::MEDIA_TYPE]);
+
+        let mut registry = Registry::default();
+        let mut operation = OperationCx::new(&mut registry);
+        TextAs::<Csv>::describe(&mut operation);
+        let Some(RefOr::Item(body)) = operation.finish().request_body else {
+            panic!("describing the body declares no request body");
+        };
+
+        assert_eq!(
+            body.content.keys().map(String::as_str).collect::<Vec<_>>(),
+            [Csv::MEDIA_TYPE]
+        );
+        assert_eq!(
+            body.content[Csv::MEDIA_TYPE].schema,
+            Some(Registry::default().resolve::<String>())
+        );
+        assert_eq!(body.required, Some(true));
+    }
+}

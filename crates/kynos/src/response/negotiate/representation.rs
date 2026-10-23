@@ -12,6 +12,7 @@ use crate::{
         alternative::{eq_ignore_ascii_case, split_essence},
         binary::Binary,
         text::Text,
+        text_as::TextAs,
     },
     http::{Response, media::MediaType},
     response::{IntoResponse, Responses},
@@ -86,6 +87,15 @@ impl sealed::SealedRepresentation for Text {
 }
 
 impl Representation for Text {}
+
+impl<M: MediaType> sealed::SealedRepresentation for TextAs<M> {
+    const MEDIA_TYPE: &'static str = {
+        let () = Self::TEXT;
+        M::MEDIA_TYPE
+    };
+}
+
+impl<M: MediaType> Representation for TextAs<M> {}
 
 impl<M: MediaType> sealed::SealedRepresentation for Binary<M> {
     const MEDIA_TYPE: &'static str = M::MEDIA_TYPE;

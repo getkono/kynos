@@ -12,6 +12,7 @@ error[E0277]: `kynos::extract::body::text::Text` and `kynos::extract::body::text
              Alternative<JsonSeq<Records<T>>>
              Alternative<MultipartForm<T>>
              Alternative<Protobuf<T>>
+             Alternative<TextAs<M>>
              Alternative<kynos::extract::body::binary::Binary<M>>
              Alternative<kynos::extract::body::form::Form<T>>
              Alternative<kynos::prelude::Json<T>>

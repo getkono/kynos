@@ -29,7 +29,10 @@ where
     /// [`Binary<M>`](super::binary::Binary) beside another body is the one
     /// pair its types cannot prove distinct, since a marker may name that
     /// body's own media type, so its implementations compare the two; so is a
-    /// `JsonAs` beside a `Json`, another `JsonAs` or a `Binary`. `OneOf` evaluates this
+    /// `JsonAs` beside a `Json`, another `JsonAs` or a `Binary`, and a
+    /// [`TextAs`](super::text_as::TextAs) beside a `Text`, another `TextAs`, a
+    /// `Binary` or a `JsonAs`, whose `+json` marker may be a `text/*` type.
+    /// `OneOf` evaluates this
     /// wherever it is used, so such a pair fails the build that instantiates
     /// it rather than the description of its route.
     ///
@@ -134,13 +137,23 @@ pub(crate) const fn distinct(marker: &str, body: &str) {
 }
 
 /// Refuses, in the constant evaluation calling it, a `JsonAs` marker offered a
-/// request `body` is offered too: another `JsonAs`'s marker, or `Json`'s own
-/// media type.
+/// request `body` is offered too: another `JsonAs`'s marker, `Json`'s own
+/// media type, or a `TextAs`'s marker.
 #[cfg(feature = "json")]
 pub(crate) const fn distinct_json(marker: &str, body: &str) {
     assert!(
         !shares_requests(marker, body),
         "a `JsonAs` marker is offered requests the body beside it in `OneOf` is offered too"
+    );
+}
+
+/// Refuses, in the constant evaluation calling it, a `TextAs` marker offered a
+/// request `body` is offered too: another `TextAs`'s marker, `Text`'s own
+/// media type, or a `JsonAs`'s marker.
+pub(crate) const fn distinct_text(marker: &str, body: &str) {
+    assert!(
+        !shares_requests(marker, body),
+        "a `TextAs` marker is offered requests the body beside it in `OneOf` is offered too"
     );
 }
 
@@ -165,7 +178,7 @@ pub(crate) const fn split_essence(media_type: &[u8]) -> (&[u8], &[u8]) {
 }
 
 /// The bytes before the first `byte`, and those after it.
-const fn split_at_byte(bytes: &[u8], byte: u8) -> (&[u8], &[u8]) {
+pub(crate) const fn split_at_byte(bytes: &[u8], byte: u8) -> (&[u8], &[u8]) {
     let mut end = 0;
     while end < bytes.len() && bytes[end] != byte {
         end += 1;

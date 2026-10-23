@@ -170,7 +170,9 @@ A body's media type is its type's. `Json<T>` is `application/json`;
 [`JsonAs<M, T>`](../crates/kynos/src/extract/body/json_as.rs) is the same codec
 under the `application/json` or `+json` type its marker names, so two versions
 of a document are two distinct types in one `OneOf` or `Negotiated` rather than
-a branch on a header.
+a branch on a header. [`TextAs<M>`](../crates/kynos/src/extract/body/text_as.rs)
+is `Text` under the `text/*` type its marker names; it decodes only UTF-8, so a
+marker stating another charset fails the build.
 
 The third row is the counter-case to the second, and the difference is the
 specification's rather than a preference.

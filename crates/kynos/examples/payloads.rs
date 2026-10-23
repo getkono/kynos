@@ -26,7 +26,9 @@
 //!   registry, so a vendor type is a unit struct and one associated constant —
 //!   see `Manifest` below. A marker naming a `+json` type also carries a
 //!   *decoded* document through `JsonAs<M, T>`, which is how
-//!   `/products/imports` reads two versions of one document.
+//!   `/products/imports` reads two versions of one document, and a `text/*`
+//!   marker carries decoded text through `TextAs<M>`, which is how
+//!   `/products/catalog` reads and writes CSV beside JSON.
 //! * **Each operation caps its own body.** A note and a batch of images are
 //!   not the same size, so `BodySize` is mounted per operation, sized from
 //!   what that body can legitimately hold. There is no router-wide default
@@ -42,12 +44,15 @@
 use std::net::Ipv4Addr;
 
 use kynos::{
+    error::rejection::NegotiationRejection,
     extract::body::{
         OneOf, binary::Binary, form::Form, json_as::JsonAs, multipart::MultipartForm, text::Text,
+        text_as::TextAs,
     },
     http::media::{MediaType, Png},
     middleware::limits::body_size::BodySize,
     prelude::*,
+    response::negotiate::{Accept, Negotiated},
     server::Server,
 };
 use serde::{Deserialize, Serialize};
@@ -211,7 +216,7 @@ impl MediaType for ProductV2 {
 }
 
 /// A product as version 2 of the document carries it.
-#[derive(Schema, Serialize, Deserialize)]
+#[derive(Clone, Schema, Serialize, Deserialize)]
 struct PricedProduct {
     id: u64,
     name: String,
@@ -238,6 +243,78 @@ async fn import_product(
     }
 
     NoContent
+}
+
+/// CSV, declared here rather than shipped by Kynos.
+///
+/// A `text/*` marker also carries *decoded* text through `TextAs<M>`. It states
+/// no charset, so a request may add `charset=utf-8` and a response states it.
+struct Csv;
+
+impl MediaType for Csv {
+    const MEDIA_TYPE: &'static str = "text/csv";
+}
+
+/// A whole catalogue of products, as one JSON document.
+struct Catalog;
+
+impl MediaType for Catalog {
+    const MEDIA_TYPE: &'static str = "application/vnd.example.catalog+json";
+}
+
+/// What both representations of the catalogue are offered under, in the order
+/// an equal `Accept` ranking breaks toward.
+type CatalogFormats = (JsonAs<Catalog, Vec<PricedProduct>>, TextAs<Csv>);
+
+/// Accepts a catalogue as CSV, or as JSON.
+///
+/// `TextAs<M>` is `Text` under the `text/*` type `M` names: the same UTF-8
+/// decode and the same 400 for other bytes, and a `string` under `M`'s
+/// `content` key. A marker outside `text/*`, or stating another charset, fails
+/// the build, since UTF-8 is the only text Kynos decodes. Splitting the rows
+/// is the handler's, since Kynos ships no CSV parser.
+#[kynos::post("/products/catalog")]
+async fn import_catalog(
+    body: OneOf<TextAs<Csv>, JsonAs<Catalog, Vec<PricedProduct>>>,
+) -> NoContent {
+    match body {
+        OneOf::Left(csv) => {
+            let rows = csv.into_inner().lines().skip(1).count();
+            println!("csv: {rows} products");
+        }
+        OneOf::Right(json) => println!("json: {} products", json.into_inner().len()),
+    }
+
+    NoContent
+}
+
+/// Serves the catalogue as whichever of the two the client's `Accept` prefers.
+#[kynos::get("/products/catalog")]
+async fn export_catalog(
+    accept: Accept<CatalogFormats>,
+) -> Result<Negotiated<CatalogFormats>, NegotiationRejection> {
+    let catalog = vec![PricedProduct {
+        id: 1,
+        name: "lamp".to_owned(),
+        price_cents: 4_200,
+    }];
+
+    accept.respond_with(
+        &catalog,
+        (
+            |catalog: &Vec<PricedProduct>| JsonAs::new(catalog.clone()),
+            |catalog: &Vec<PricedProduct>| {
+                let rows = catalog.iter().map(|product| {
+                    format!("{},{},{}\n", product.id, product.name, product.price_cents)
+                });
+                TextAs::new(
+                    std::iter::once("id,name,price_cents\n".to_owned())
+                        .chain(rows)
+                        .collect::<String>(),
+                )
+            },
+        ),
+    )
 }
 
 /// What `/products/{id}/image` captures.
@@ -282,6 +359,11 @@ async fn main() -> kynos::Result<()> {
         kynos::routes![import_product]
             .0
             .intercept(BodySize::new(16 * KIB)),
+        // A catalogue is many products, in either format.
+        kynos::routes![import_catalog]
+            .0
+            .intercept(BodySize::new(MIB)),
+        kynos::routes![export_catalog],
     ));
 
     let document = router.openapi()?;

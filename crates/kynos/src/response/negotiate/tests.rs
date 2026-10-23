@@ -344,6 +344,9 @@ fn offered_under_what_it_describes<T: Representation>() {
 fn a_representation_is_offered_under_the_media_type_it_describes() {
     offered_under_what_it_describes::<Text>();
     offered_under_what_it_describes::<Binary<Pdf>>();
+    offered_under_what_it_describes::<
+        crate::extract::body::text_as::TextAs<crate::http::media::Html>,
+    >();
     #[cfg(feature = "json")]
     offered_under_what_it_describes::<crate::extract::body::json::Json<String>>();
     #[cfg(feature = "json")]
@@ -587,5 +590,34 @@ mod a_json_body_under_a_declared_media_type {
                 .ok();
             assert_eq!(accepted, Some(chosen), "Accept: {field}");
         }
+    }
+}
+
+/// A text body under a declared media type is chosen by an `Accept` naming
+/// that type, beside `Text`, whose `text/plain` it is told apart from.
+#[test]
+fn an_accept_naming_a_declared_text_type_chooses_it() {
+    use crate::{extract::body::text_as::TextAs, http::media::MediaType};
+
+    struct Csv;
+
+    impl MediaType for Csv {
+        const MEDIA_TYPE: &'static str = "text/csv";
+    }
+
+    type Offer = (Text, TextAs<Csv>);
+
+    for (field, chosen) in [
+        ("text/plain", 0),
+        ("text/csv", 1),
+        ("TEXT/CSV; charset=utf-8", 1),
+        ("text/csv, text/plain;q=0.5", 1),
+        ("text/*", 0),
+    ] {
+        let accepted = Accept::<Offer>::parse(field)
+            .expect("valid Accept header")
+            .choose::<Offer>()
+            .ok();
+        assert_eq!(accepted, Some(chosen), "Accept: {field}");
     }
 }

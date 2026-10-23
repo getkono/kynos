@@ -216,6 +216,11 @@ witnesses! {
     // implements `Message` for.
     fn a_body_extractor_rejects_with_the_body_type {
         body_rejects_with(BodyRejection, (), Text);
+        body_rejects_with(
+            BodyRejection,
+            (),
+            kynos::extract::body::text_as::TextAs<kynos::http::media::Html>
+        );
         body_rejects_with(BodyRejection, (), Binary<OctetStream>);
         #[cfg(feature = "json")]
         body_rejects_with(BodyRejection, (), kynos::extract::body::json::Json<User>);

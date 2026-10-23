@@ -2,10 +2,10 @@
 //!
 //! Gated per item: a cross-codec pair needs both codecs' features.
 
-use super::{Alternative, distinct};
+use super::{Alternative, distinct, distinct_text};
 use crate::{
     extract::{
-        body::{OneOf, binary::Binary, text::Text},
+        body::{OneOf, binary::Binary, text::Text, text_as::TextAs},
         describe::RequestContent,
     },
     http::media::MediaType,
@@ -219,7 +219,8 @@ impl<T: Schema, U: Schema> Alternative<JsonSeq<Records<U>>> for Protobuf<T> {}
 
 // JSON under a declared media type. Its marker is a JSON type, so it is
 // compared only against the bodies that could name one: another `JsonAs`,
-// `Json`, and a `Binary`. Every other codec's fixed media type is neither
+// `Json`, a `Binary`, and a `TextAs` (below), since a `+json` suffix may sit on
+// a `text/*` type. Every other codec's fixed media type is neither
 // `application/json` nor a `+json` type, so those pairs are unconditional.
 #[cfg(feature = "json")]
 impl<M: MediaType, T: Schema, N: MediaType, U: Schema> Alternative<JsonAs<N, U>> for JsonAs<M, T> {
@@ -269,3 +270,61 @@ impl<M: MediaType, T: Schema, U: Schema> Alternative<JsonAs<M, U>> for JsonLines
 impl<M: MediaType, T: Schema, U: Schema> Alternative<JsonSeq<Records<U>>> for JsonAs<M, T> {}
 #[cfg(all(feature = "json", feature = "openapi32"))]
 impl<M: MediaType, T: Schema, U: Schema> Alternative<JsonAs<M, U>> for JsonSeq<Records<T>> {}
+
+// UTF-8 text under a declared media type. Its marker is a `text/*` type, so it
+// is compared only against the bodies that could name one: another `TextAs`,
+// `Text`, a `Binary`, and a `JsonAs`, whose `+json` marker may be a `text/*`
+// type too. Every other codec's fixed media type is an `application/*` type,
+// so those pairs are unconditional.
+impl<M: MediaType, N: MediaType> Alternative<TextAs<N>> for TextAs<M> {
+    const DISTINCT: () = distinct_text(M::MEDIA_TYPE, N::MEDIA_TYPE);
+}
+impl<M: MediaType> Alternative<Text> for TextAs<M> {
+    const DISTINCT: () = distinct_text(M::MEDIA_TYPE, crate::extract::body::text::MEDIA_TYPE);
+}
+impl<M: MediaType> Alternative<TextAs<M>> for Text {
+    const DISTINCT: () = distinct_text(M::MEDIA_TYPE, crate::extract::body::text::MEDIA_TYPE);
+}
+impl<M: MediaType, N: MediaType> Alternative<Binary<N>> for TextAs<M> {
+    const DISTINCT: () = distinct(N::MEDIA_TYPE, M::MEDIA_TYPE);
+}
+impl<M: MediaType, N: MediaType> Alternative<TextAs<M>> for Binary<N> {
+    const DISTINCT: () = distinct(N::MEDIA_TYPE, M::MEDIA_TYPE);
+}
+
+#[cfg(feature = "json")]
+impl<M: MediaType, T: Schema> Alternative<Json<T>> for TextAs<M> {}
+#[cfg(feature = "json")]
+impl<M: MediaType, T: Schema> Alternative<TextAs<M>> for Json<T> {}
+#[cfg(feature = "json")]
+impl<M: MediaType, N: MediaType, T: Schema> Alternative<JsonAs<N, T>> for TextAs<M> {
+    const DISTINCT: () = distinct_text(M::MEDIA_TYPE, N::MEDIA_TYPE);
+}
+#[cfg(feature = "json")]
+impl<M: MediaType, N: MediaType, T: Schema> Alternative<TextAs<M>> for JsonAs<N, T> {
+    const DISTINCT: () = distinct_json(N::MEDIA_TYPE, M::MEDIA_TYPE);
+}
+
+#[cfg(feature = "form")]
+impl<M: MediaType, T: Schema> Alternative<Form<T>> for TextAs<M> {}
+#[cfg(feature = "form")]
+impl<M: MediaType, T: Schema> Alternative<TextAs<M>> for Form<T> {}
+
+#[cfg(feature = "multipart")]
+impl<M: MediaType, T: Schema> Alternative<MultipartForm<T>> for TextAs<M> {}
+#[cfg(feature = "multipart")]
+impl<M: MediaType, T: Schema> Alternative<TextAs<M>> for MultipartForm<T> {}
+
+#[cfg(feature = "protobuf")]
+impl<M: MediaType, T: Schema> Alternative<Protobuf<T>> for TextAs<M> {}
+#[cfg(feature = "protobuf")]
+impl<M: MediaType, T: Schema> Alternative<TextAs<M>> for Protobuf<T> {}
+
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<M: MediaType, T: Schema> Alternative<JsonLines<Records<T>>> for TextAs<M> {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<M: MediaType, T: Schema> Alternative<TextAs<M>> for JsonLines<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<M: MediaType, T: Schema> Alternative<JsonSeq<Records<T>>> for TextAs<M> {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<M: MediaType, T: Schema> Alternative<TextAs<M>> for JsonSeq<Records<T>> {}
