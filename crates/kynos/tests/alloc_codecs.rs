@@ -541,8 +541,9 @@ mod json {
         );
     }
 
-    /// Every operation this service holds, and what one request to it costs
-    /// today.
+    /// Every operation this service holds but the two `JsonAs` ones, and what
+    /// one request to it costs today. Those two are held to `Json`'s rows by
+    /// `a_declared_media_type_costs_what_json_does` instead.
     ///
     /// Read rather than chosen: each ceiling was set to zero, the target run,
     /// and the number the failure reported transcribed into the row. This table
@@ -603,10 +604,33 @@ mod json {
         harness::writing_costs_more_than_the_status(&service(), &RECORDED);
     }
 
-    /// The leak check, over every operation this service holds.
+    /// The leak check, over every operation this service holds: `RECORDED`'s
+    /// rows, then the `JsonAs` pair in place of `Json`'s.
+    ///
+    /// The second table repeats the three floors, since `harness::replay` reads
+    /// a whole table; their ceilings are `Json`'s, which the relation above
+    /// holds them to, and the replay reads none of them.
     #[test]
     fn a_replayed_request_costs_what_the_first_one_did() {
-        harness::replay(&service(), &RECORDED, 1_000);
+        let service = service();
+        let declared = Table {
+            decoding: (
+                "POST /json-as",
+                decode_as_request,
+                StatusCode::NO_CONTENT,
+                RECORDED.decoding.3,
+            ),
+            encoding: (
+                "GET /json-as/out",
+                encode_as_request,
+                StatusCode::OK,
+                RECORDED.encoding.3,
+            ),
+            ..RECORDED
+        };
+
+        harness::replay(&service, &RECORDED, 1_000);
+        harness::replay(&service, &declared, 1_000);
     }
 }
 
