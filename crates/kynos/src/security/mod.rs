@@ -208,6 +208,13 @@ pub trait SecurityScheme: Send + Sync + 'static {
     /// The component name this scheme is registered under.
     const NAME: &'static str;
 
+    /// Whether the store this scheme's credential is checked against can be
+    /// unreachable: `true` declares a 503, with an optional `Retry-After`, on
+    /// every operation a guard naming it guards, and lets an [`Authenticator`]
+    /// return [`AuthRejection::unavailable`] for it. `#[security(unavailable)]`
+    /// sets it on a derived scheme; [`schemes`]' built-ins leave it `false`.
+    const MAY_BE_UNAVAILABLE: bool = false;
+
     /// What a successful authentication yields to the handler.
     type Credential: Send;
 
@@ -345,6 +352,8 @@ pub trait Authenticator<S: carrier::Carries, C: Sync>: Send + Sync + 'static {
     /// [`challenge`](SecurityScheme::challenge) on the way out, so the wire and
     /// the description cannot name different ones.
     ///
+    /// A store that cannot be reached is neither: [`AuthRejection::unavailable`].
+    ///
     /// A credential that was *absent* never reaches here — that is
     /// [`Auth`](auth::Auth)'s 401 and [`MaybeAuth`](auth::MaybeAuth)'s
     /// anonymity — unless the scheme was derived with `carrier = optional`.
@@ -364,7 +373,7 @@ pub trait Authenticator<S: carrier::Carries, C: Sync>: Send + Sync + 'static {
     ///
     /// A refusal is [`AuthRejection::forbidden`], or
     /// [`AuthRejection::forbidden_as`] where the application has a problem type
-    /// for the rule that refused.
+    /// for the rule that refused, and [`AuthRejection::unavailable`] as above.
     fn authorize(
         &self,
         credential: &S::Credential,

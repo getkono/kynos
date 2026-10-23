@@ -9,7 +9,8 @@ to describe one without enforcing it. `Auth<S>` is the only door, and taking one
 as a handler's guard sets `security`, registers each scheme under
 `components.securitySchemes`, adds 401 and 403 to `responses`, and declares the
 `WWW-Authenticate` each carries. Four things, one argument, no way to do a
-subset.
+subset. A scheme that opts in adds a fifth, the 503 of an unreachable
+credential store.
 
 ## Policy
 
@@ -334,6 +335,41 @@ narrowing has to reach the contributor that decides the status —
 `ScopedRejection<R>`, the rejection a `Scoped` argument raises — and not only
 the `Describe` beside it.
 
+### An unreachable store is a 503, and the scheme opts in
+
+A session table whose database is down, or an introspection endpoint that
+timed out, leaves an authenticator unable to say whether the credential is
+valid. A 401 would be false, and harmful: a browser client receiving one signs
+its user out, so a transient outage logs everyone out.
+`AuthRejection::unavailable::<S>()` answers RFC 9110's 503 instead, the
+`about:blank` problem with no challenge, and `.with_retry_after(delay)` adds
+`Retry-After` in whole seconds, rounded up.
+
+The opt-in is `SecurityScheme::MAY_BE_UNAVAILABLE`, `#[security(unavailable)]`
+on a derived scheme. Every guard naming an opted-in scheme declares the 503
+with an optional `Retry-After` — `AnyOf` and `AllOf` when any of their schemes
+opted in, since each one's authenticator is consulted — and every other guard
+keeps declaring 401 and 403 alone.
+
+- **On the scheme, not on `Authenticates`.** The description is assembled from
+  the guard's type, and `Auth<S>` names a scheme and no context, so the
+  context's implementation is unreachable while the document is built — the
+  same reason `FORBIDDEN_TYPE` is not on it either. The built-in schemes never
+  opt in; a deployment whose bearer tokens are introspected remotely derives
+  its own.
+- **The constructor names the scheme, and the build refuses one that has not
+  opted in.** `unavailable::<S>()` asserts `S::MAY_BE_UNAVAILABLE` in a
+  `const` block, and the variant is `#[non_exhaustive]`, so it is not built any
+  other way outside Kynos. The build checks that *some* scheme opted in, not
+  that the operation is guarded by it, so two holes are left: an authenticator
+  naming a scheme other than its own, and a handler or custom guard whose error
+  type is `AuthRejection` or `ScopedRejection<R>`, which wraps one through
+  `From`, returning `unavailable::<S>()` on an operation no guard over `S`
+  covers. Neither type's `Responses` declares a 503, since neither knows a
+  scheme, and declaring one there would put a 503 on every operation that
+  names it. The conformance harness, which checks
+  each status against the description, is what finds either.
+
 ### What Kynos does not verify
 
 No JWT verifier, no session store, no password hasher. Each is application
@@ -351,6 +387,7 @@ What Kynos *does* ship is the part that is the same for everyone:
 | [`constant_time_eq`](../crates/kynos/src/security/mod.rs) | `==` on a shared secret says how much of a guess was right |
 | The `WWW-Authenticate` challenge | It is part of what the 401, and a bearer token's scope-refusing 403, *is*, and it has to match the description |
 | 401 and 403 on the operation | A guard that did not declare them would make the document wrong |
+| 503 on the operation, where the scheme opts in | A store outage is neither a 401 nor a 403, and an undeclared 503 would make the document wrong |
 | The `type` seam on a 403 | Which authorization rule refused is the application's to say, and nothing but the authorizer can say it |
 | `Scopes::FORBIDDEN_TYPE` | The description half of that seam: the scope set is the one type an operation names that a per-check refusal can be pinned to |
 

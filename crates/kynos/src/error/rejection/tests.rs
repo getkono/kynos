@@ -533,6 +533,93 @@ fn a_scope_challenge_is_set_on_a_403_alone() {
     assert_eq!(unauthenticated.challenge(), Some("Bearer"));
 }
 
+/// An unreachable store's 503 is the `about:blank` problem with the reason
+/// phrase as its title, and neither challenge pass gives it a
+/// `WWW-Authenticate`: an outage asks nothing of the credential.
+#[test]
+fn an_unavailable_store_is_a_503_no_challenge_reaches() {
+    use crate::{http::header, response::IntoResponse};
+
+    let down = AuthRejection::Unavailable { retry_after: None }
+        .with_challenge(Some("Bearer"))
+        .with_scope_challenge(Some("Bearer error=\"insufficient_scope\""));
+    assert_eq!(down.challenge(), None);
+    assert_eq!(down.retry_after(), None);
+
+    let problem = AuthRejection::Unavailable { retry_after: None }.into_problem();
+    assert_eq!(problem.type_uri, "about:blank");
+    assert_eq!(problem.title, "Service Unavailable");
+
+    let response = down.into_response();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(!response.headers().contains_key(header::WWW_AUTHENTICATE));
+    assert!(!response.headers().contains_key(header::RETRY_AFTER));
+}
+
+/// `Retry-After` is set on a 503 alone, in whole seconds rounded up (RFC 9110
+/// section 10.2.3's delay-seconds), so a sub-second wait is never sent as `0`.
+#[test]
+fn a_retry_after_reaches_a_503_alone_rounded_up() {
+    use std::time::Duration;
+
+    use crate::{http::header, response::IntoResponse};
+
+    let response = AuthRejection::Unavailable { retry_after: None }
+        .with_retry_after(Duration::from_millis(200))
+        .into_response();
+    assert_eq!(response.headers()[header::RETRY_AFTER], "1");
+
+    let exact =
+        AuthRejection::Unavailable { retry_after: None }.with_retry_after(Duration::from_secs(30));
+    assert_eq!(exact.retry_after(), Some(Duration::from_secs(30)));
+    assert_eq!(exact.into_response().headers()[header::RETRY_AFTER], "30");
+
+    for other in [AuthRejection::unauthenticated(), AuthRejection::forbidden()] {
+        let other = other.with_retry_after(Duration::from_secs(30));
+        assert_eq!(other.retry_after(), None);
+        assert!(
+            !other
+                .into_response()
+                .headers()
+                .contains_key(header::RETRY_AFTER)
+        );
+    }
+}
+
+/// The 503 is declared only where a guard says its scheme may send one, with
+/// the `Retry-After` it may carry, and never by the rejection type alone: the
+/// type cannot know its scheme, and declaring it there would put a 503 on
+/// every guarded operation.
+#[test]
+fn the_503_is_declared_only_where_asked_for() {
+    use crate::{response::Responses, schema::registry::Registry};
+
+    let mut registry = Registry::default();
+    let asked = serde_json::to_value(super::auth_responses(&mut registry, None, true))
+        .expect("a set of responses serializes");
+    let declared = &asked["503"];
+    assert_eq!(
+        declared["content"]["application/problem+json"]["schema"]["allOf"][1]["properties"]["type"]
+            ["const"],
+        serde_json::json!("about:blank"),
+        "{asked}"
+    );
+    assert!(declared["headers"]["Retry-After"].is_object(), "{asked}");
+    assert_ne!(
+        declared["headers"]["Retry-After"]["required"],
+        serde_json::json!(true),
+        "a 503 need not say when to retry"
+    );
+
+    let unasked = super::auth_responses(&mut registry, None, false);
+    assert!(!unasked.responses.contains_key("503"));
+    assert!(
+        !AuthRejection::responses(&mut registry)
+            .responses
+            .contains_key("503")
+    );
+}
+
 // --- The closed set --------------------------------------------------------
 
 /// Every rejection type, counted against the ones this file exercises.
@@ -690,6 +777,7 @@ fn auth(expected: StatusCode, rejection: &AuthRejection) -> Row {
     let name = match rejection {
         AuthRejection::Unauthenticated { .. } => "AuthRejection::Unauthenticated",
         AuthRejection::Forbidden { .. } => "AuthRejection::Forbidden",
+        AuthRejection::Unavailable { .. } => "AuthRejection::Unavailable",
     };
     let statuses = (rejection.status(), AuthRejection::statuses());
     Row::new(name, expected, statuses, rejection)
@@ -831,6 +919,10 @@ fn content_ledger() -> Vec<Row> {
         ),
         auth(StatusCode::UNAUTHORIZED, &AuthRejection::unauthenticated()),
         auth(StatusCode::FORBIDDEN, &AuthRejection::forbidden()),
+        auth(
+            StatusCode::SERVICE_UNAVAILABLE,
+            &AuthRejection::Unavailable { retry_after: None },
+        ),
     ]
     .into()
 }
@@ -866,6 +958,7 @@ fn every_variant_produces_a_status_its_type_declares() {
         "RangeRejection::NotSatisfiable",
         "AuthRejection::Unauthenticated",
         "AuthRejection::Forbidden",
+        "AuthRejection::Unavailable",
     ];
 
     let rows = ledger();

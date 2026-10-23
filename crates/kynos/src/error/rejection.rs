@@ -18,16 +18,17 @@
 //! type on [`AuthRejection::Forbidden`], which the application's authorizer
 //! supplies.
 
-use std::{collections::BTreeMap, marker::PhantomData};
+use std::{collections::BTreeMap, marker::PhantomData, time::Duration};
 
 use serde_json::json;
 
 use crate::{
     error::problem::{IntoProblem, Problem, narrowed_response, problem_response},
     http::{HeaderValue, StatusCode, header},
+    middleware::{retry_after_header, set_retry_after},
     response::{IntoResponse, Responses},
     schema::registry::Registry,
-    security::auth::Scopes,
+    security::{SecurityScheme, auth::Scopes},
 };
 
 /// One response per declared status, each narrowing the shared [`Problem`]
@@ -489,11 +490,13 @@ impl Responses for RangeRejection {
     }
 }
 
-/// A credential was absent, invalid, or insufficient.
+/// A credential was absent, invalid, or insufficient, or could not be checked.
 ///
 /// The only rejection carrying 401 or 403, which is what keeps an endpoint with
 /// no [`Auth`](crate::security::auth::Auth) argument from advertising a
-/// challenge it will never send.
+/// challenge it will never send. Its 503 is declared only by a guard whose
+/// scheme opts in through
+/// [`SecurityScheme::MAY_BE_UNAVAILABLE`].
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum AuthRejection {
@@ -506,7 +509,7 @@ pub enum AuthRejection {
         /// An [`Authenticator`](crate::security::Authenticator) leaves this
         /// `None` — use [`AuthRejection::unauthenticated`] — and
         /// [`Auth`](crate::security::auth::Auth) fills it in from
-        /// [`SecurityScheme::challenge`](crate::security::SecurityScheme::challenge),
+        /// [`SecurityScheme::challenge`],
         /// so the wire and the description carry the same string.
         challenge: Option<&'static str>,
     },
@@ -527,11 +530,29 @@ pub enum AuthRejection {
         /// `None`, as both constructors do, and a guard replaces it: a refusal
         /// from [`Authenticator::authorize`](crate::security::Authenticator::authorize)
         /// carries
-        /// [`SecurityScheme::insufficient_scope_challenge`](crate::security::SecurityScheme::insufficient_scope_challenge),
+        /// [`SecurityScheme::insufficient_scope_challenge`],
         /// and one from
         /// [`Authenticator::authenticate`](crate::security::Authenticator::authenticate)
         /// carries none, so the wire and the description carry the same string.
         challenge: Option<&'static str>,
+    },
+
+    /// What a credential is checked against could not be reached. Produces
+    /// 503.
+    ///
+    /// Says nothing about the credential, so a client keeps it and retries
+    /// rather than discarding it as it would on a 401. Built only through
+    /// [`AuthRejection::unavailable`], which a scheme that has not opted in
+    /// through [`SecurityScheme::MAY_BE_UNAVAILABLE`]
+    /// refuses at build time, so only an operation declaring the 503 can send
+    /// it.
+    #[error("authentication is temporarily unavailable")]
+    #[non_exhaustive]
+    Unavailable {
+        /// How long the client should wait before retrying, sent as
+        /// `Retry-After` in whole seconds, rounded up (RFC 9110 section
+        /// 10.2.3). Set it with [`AuthRejection::with_retry_after`].
+        retry_after: Option<Duration>,
     },
 }
 
@@ -594,12 +615,85 @@ impl AuthRejection {
         }
     }
 
+    /// A 503: the credential store scheme `S` checks against is unreachable.
+    ///
+    /// What an [`Authenticator`](crate::security::Authenticator) returns when
+    /// it cannot tell whether the credential is valid — a session table whose
+    /// database is down, an introspection endpoint timing out. Answering 401
+    /// instead would tell a browser to sign its user out over a transient
+    /// outage.
+    ///
+    /// `S` is the scheme the authenticator checks, and it must opt in with
+    /// [`SecurityScheme::MAY_BE_UNAVAILABLE`]
+    /// (`#[security(unavailable)]` on a derived one), which is what declares
+    /// the 503 on every operation it guards. The 503 is declared only there:
+    /// returned from a handler or custom guard on an operation no guard over
+    /// `S` covers, it is a status the description does not name. Naming a
+    /// scheme that has not opted in fails the build:
+    ///
+    /// ```
+    /// # #[cfg(feature = "macros")]
+    /// # {
+    /// use kynos::{SecurityScheme, error::rejection::AuthRejection, http::StatusCode};
+    ///
+    /// #[derive(SecurityScheme)]
+    /// #[security(api_key(in = "cookie", name = "session"), unavailable)]
+    /// struct Session;
+    ///
+    /// let down = AuthRejection::unavailable::<Session>()
+    ///     .with_retry_after(std::time::Duration::from_secs(5));
+    /// assert_eq!(down.status(), StatusCode::SERVICE_UNAVAILABLE);
+    /// # }
+    /// ```
+    ///
+    /// ```compile_fail,E0080
+    /// use kynos::{error::rejection::AuthRejection, security::schemes::Bearer};
+    ///
+    /// let _ = AuthRejection::unavailable::<Bearer>();
+    /// ```
+    #[must_use]
+    pub const fn unavailable<S: SecurityScheme>() -> Self {
+        const {
+            assert!(
+                S::MAY_BE_UNAVAILABLE,
+                "this scheme does not declare a 503: set `SecurityScheme::MAY_BE_UNAVAILABLE`, \
+                 or `#[security(unavailable)]` on a derived scheme"
+            );
+        }
+        Self::Unavailable { retry_after: None }
+    }
+
+    /// Sets the `Retry-After` a 503 sends, leaving a 401 or a 403 alone.
+    ///
+    /// RFC 9110 section 10.2.3 lets a 503 say how long the outage is expected
+    /// to last; the delay is sent in whole seconds, rounded up, so a
+    /// sub-second wait is never sent as `0`.
+    #[must_use]
+    pub const fn with_retry_after(self, delay: Duration) -> Self {
+        match self {
+            Self::Unavailable { .. } => Self::Unavailable {
+                retry_after: Some(delay),
+            },
+            other => other,
+        }
+    }
+
+    /// The `Retry-After` delay a 503 sends, if any; `None` on a 401 or a 403.
+    #[must_use]
+    pub fn retry_after(&self) -> Option<Duration> {
+        match self {
+            Self::Unavailable { retry_after } => *retry_after,
+            Self::Unauthenticated { .. } | Self::Forbidden { .. } => None,
+        }
+    }
+
     /// The status this rejection produces.
     #[must_use]
     pub fn status(&self) -> StatusCode {
         match self {
             Self::Unauthenticated { .. } => StatusCode::UNAUTHORIZED,
             Self::Forbidden { .. } => StatusCode::FORBIDDEN,
+            Self::Unavailable { .. } => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
 
@@ -618,10 +712,12 @@ impl AuthRejection {
     pub fn challenge(&self) -> Option<&'static str> {
         match self {
             Self::Unauthenticated { challenge } | Self::Forbidden { challenge, .. } => *challenge,
+            // An outage asks nothing of the credential.
+            Self::Unavailable { .. } => None,
         }
     }
 
-    /// Sets the challenge a 401 carries, leaving a 403 alone.
+    /// Sets the challenge a 401 carries, leaving a 403 or a 503 alone.
     ///
     /// Replaces any challenge already set, so the one
     /// [`Auth`](crate::security::auth::Auth) supplies from the scheme is the
@@ -630,11 +726,11 @@ impl AuthRejection {
     pub fn with_challenge(self, challenge: Option<&'static str>) -> Self {
         match self {
             Self::Unauthenticated { .. } => Self::Unauthenticated { challenge },
-            forbidden @ Self::Forbidden { .. } => forbidden,
+            other @ (Self::Forbidden { .. } | Self::Unavailable { .. }) => other,
         }
     }
 
-    /// Sets the challenge a 403 carries, leaving a 401 alone.
+    /// Sets the challenge a 403 carries, leaving a 401 or a 503 alone.
     ///
     /// [`with_challenge`](Self::with_challenge)'s counterpart for a scope
     /// refusal. Replaces any challenge already set, so a guard's 403 carries
@@ -646,7 +742,7 @@ impl AuthRejection {
                 type_uri,
                 challenge,
             },
-            unauthenticated @ Self::Unauthenticated { .. } => unauthenticated,
+            other @ (Self::Unauthenticated { .. } | Self::Unavailable { .. }) => other,
         }
     }
 }
@@ -663,25 +759,34 @@ impl IntoProblem for AuthRejection {
                 type_uri: Some(type_uri),
                 ..
             } => Problem::of_type(status, type_uri, "Forbidden"),
-            Self::Forbidden { type_uri: None, .. } | Self::Unauthenticated { .. } => {
-                Problem::new(status)
-            }
+            Self::Forbidden { type_uri: None, .. }
+            | Self::Unauthenticated { .. }
+            | Self::Unavailable { .. } => Problem::new(status),
         }
         .with_detail(detail)
     }
 
     fn statuses() -> &'static [StatusCode] {
-        &[StatusCode::UNAUTHORIZED, StatusCode::FORBIDDEN]
+        &[
+            StatusCode::UNAUTHORIZED,
+            StatusCode::FORBIDDEN,
+            StatusCode::SERVICE_UNAVAILABLE,
+        ]
     }
 }
 
 /// Adds the `WWW-Authenticate` field RFC 9110 section 15.5.2 requires on a
 /// 401, and RFC 6750 section 3.1 asks of a bearer token's scope refusal, from
-/// the challenge the rejection carries.
+/// the challenge the rejection carries; and a 503's `Retry-After`.
 impl IntoResponse for AuthRejection {
     fn into_response(self) -> crate::http::Response {
         let challenge = self.challenge();
+        let retry_after = self.retry_after();
         let mut response = IntoProblem::into_problem(self).into_response();
+
+        if let Some(delay) = retry_after {
+            set_retry_after(&mut response, delay);
+        }
 
         // `from_str` refuses a challenge that would splice a header; it is then
         // dropped rather than panicking, as `Auth`'s description also does.
@@ -697,18 +802,23 @@ impl IntoResponse for AuthRejection {
 
 /// [`AuthRejection`]'s statuses: the 401 narrowed to `about:blank`, the 403 to
 /// `named` (from [`Scopes::FORBIDDEN_TYPE`](crate::security::auth::Scopes::FORBIDDEN_TYPE))
-/// as well, or left wide when `None`.
+/// as well, or left wide when `None`; and the 503 only where `unavailable`,
+/// [`SecurityScheme::MAY_BE_UNAVAILABLE`] of a scheme the guard names, says
+/// one can be sent.
 pub(crate) fn auth_responses(
     registry: &mut Registry,
     named: Option<&'static str>,
+    unavailable: bool,
 ) -> kynos_openapi::Responses {
     <AuthRejection as IntoProblem>::statuses().iter().fold(
         kynos_openapi::Responses::new(),
         |responses, status| {
-            let declared = if *status == StatusCode::FORBIDDEN {
-                forbidden(registry, *status, named)
-            } else {
-                narrowed_problem(registry, *status)
+            let declared = match *status {
+                StatusCode::FORBIDDEN => forbidden(registry, *status, named),
+                StatusCode::SERVICE_UNAVAILABLE if !unavailable => return responses,
+                StatusCode::SERVICE_UNAVAILABLE => narrowed_problem(registry, *status)
+                    .with_header("Retry-After", retry_after_header()),
+                _ => narrowed_problem(registry, *status),
             };
 
             responses.with(status.as_u16(), declared)
@@ -746,7 +856,7 @@ fn forbidden(
 }
 
 /// The rejection a [`Scoped<S, R>`](crate::security::auth::Scoped) argument
-/// raises: the same two failures [`AuthRejection`] carries — it wraps one —
+/// raises: the same failures [`AuthRejection`] carries — it wraps one —
 /// described against the scope set that demanded them.
 ///
 /// Its 403 narrows to what [`Scopes::FORBIDDEN_TYPE`] names; naming none
@@ -809,16 +919,23 @@ impl<R: Scopes> IntoResponse for ScopedRejection<R> {
 
 /// The 401 and the 403, the second narrowed to what
 /// [`Scopes::FORBIDDEN_TYPE`] names.
+///
+/// No 503: the scope set does not know its scheme, so the guard declares that
+/// where the scheme opts in.
 impl<R: Scopes> Responses for ScopedRejection<R> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        auth_responses(registry, R::FORBIDDEN_TYPE)
+        auth_responses(registry, R::FORBIDDEN_TYPE, false)
     }
 }
 
 /// What a guard naming no scope set declares: the 403 left wide.
+///
+/// No 503, which only a scheme opting in through
+/// [`SecurityScheme::MAY_BE_UNAVAILABLE`] can send; the guard naming that
+/// scheme declares it.
 impl Responses for AuthRejection {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        auth_responses(registry, None)
+        auth_responses(registry, None, false)
     }
 }
 

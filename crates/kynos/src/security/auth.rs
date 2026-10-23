@@ -2,7 +2,8 @@
 //!
 //! Taking one of these as a handler's [`Guard`] enforces the requirement, sets
 //! the operation's `security`, and adds 401 and 403 to its `responses`, as one
-//! act.
+//! act — and 503 where a scheme it names sets
+//! [`MAY_BE_UNAVAILABLE`](crate::security::SecurityScheme::MAY_BE_UNAVAILABLE).
 
 use std::borrow::Cow;
 
@@ -104,7 +105,7 @@ impl<S: Requirement> Describe for Auth<S> {
             unauthenticated: S::challenge(),
             insufficient_scope: S::insufficient_scope_challenge(),
         };
-        declare(operation, challenges, security, None);
+        declare(operation, challenges, security, None, S::MAY_BE_UNAVAILABLE);
     }
 }
 
@@ -209,7 +210,7 @@ impl<S: Requirement> Describe for MaybeAuth<S> {
             unauthenticated: S::challenge(),
             insufficient_scope: S::insufficient_scope_challenge(),
         };
-        declare(operation, challenges, security, None);
+        declare(operation, challenges, security, None, S::MAY_BE_UNAVAILABLE);
     }
 }
 
@@ -431,7 +432,13 @@ impl<S: SecurityScheme, R: Scopes<Scope = S::Scope>> Describe for Scoped<S, R> {
             unauthenticated: <S as SecurityScheme>::challenge(),
             insufficient_scope: <S as SecurityScheme>::insufficient_scope_challenge(),
         };
-        declare(operation, challenges, security, R::FORBIDDEN_TYPE);
+        declare(
+            operation,
+            challenges,
+            security,
+            R::FORBIDDEN_TYPE,
+            <S as SecurityScheme>::MAY_BE_UNAVAILABLE,
+        );
     }
 }
 
@@ -493,16 +500,18 @@ where
 ///
 /// `security` is the guard's whole list, set once rather than appended to.
 /// `forbidden_type` is [`Scopes::FORBIDDEN_TYPE`] where the argument named a
-/// scope set, and `None` where it named only a scheme.
+/// scope set, and `None` where it named only a scheme. `unavailable` is the
+/// guard's [`Requirement::MAY_BE_UNAVAILABLE`], which adds the 503.
 fn declare(
     operation: &mut OperationCx<'_>,
     challenges: Challenges,
     security: Vec<SecurityRequirement>,
     forbidden_type: Option<&'static str>,
+    unavailable: bool,
 ) {
     // Before the header: `add_response_header` invents a thin 401 when none is
     // declared, and merging cannot replace an existing response.
-    let responses = auth_responses(operation.registry(), forbidden_type);
+    let responses = auth_responses(operation.registry(), forbidden_type, unavailable);
     operation.add_responses(&responses);
 
     // RFC 9110 section 15.5.2: a 401 MUST carry a challenge. A scheme that
