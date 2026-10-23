@@ -4254,7 +4254,9 @@ mod held_response {
         },
     };
 
-    use super::{Answered, StoreError, User, answered, emitted_responses};
+    use super::{
+        Answered, SessionError, StoreError, User, answered, declared_problem, emitted_responses,
+    };
 
     #[derive(HeaderParams)]
     struct Revision {
@@ -4384,6 +4386,37 @@ mod held_response {
             .collect();
         statuses.sort_unstable();
         assert_eq!(statuses, ["200", "201", "202", "404", "409"]);
+    }
+
+    /// Two held types whose failures both pass a 409 through, which no
+    /// variant answers itself.
+    #[derive(Reply)]
+    enum SignUpReply {
+        #[reply(status = 201, response)]
+        Stored(Result<Json<User>, StoreError>),
+        #[reply(status = 200, response)]
+        Resumed(Result<Json<User>, SessionError>),
+    }
+
+    /// A status two held types' failures meet on is one response whose
+    /// problem schema names both types' failures there, the first variant's
+    /// first, rather than either type's alone.
+    #[test]
+    fn held_failures_meeting_on_one_status_merge_their_problems() {
+        let responses = emitted_responses::<SignUpReply>();
+        let schema = declared_problem(&responses, "409");
+        let branches = schema["oneOf"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a shared status is a `oneOf`: {schema}"));
+
+        assert_eq!(
+            branches.as_slice(),
+            [
+                declared_problem(&emitted_responses::<StoreError>(), "409"),
+                declared_problem(&emitted_responses::<SessionError>(), "409"),
+            ],
+            "{schema}"
+        );
     }
 }
 
