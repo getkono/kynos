@@ -1,0 +1,37 @@
+error[E0080]: evaluation panicked: a `JsonAs` marker is offered requests the body beside it in `OneOf` is offered too
+ --> src/extract/body/alternative/pairs.rs
+  |
+  |     const DISTINCT: () = distinct_json(M::MEDIA_TYPE, N::MEDIA_TYPE);
+  |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `kynos::extract::body::alternative::pairs::<impl kynos::extract::body::alternative::Alternative<kynos::extract::body::json_as::JsonAs<V2, std::string::String>> for kynos::extract::body::json_as::JsonAs<V1, u32>>::DISTINCT` failed inside this call
+  |
+note: inside `alternative::distinct_json`
+ --> $RUST/core/src/panic.rs
+  |
+  |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |
+ ::: src/extract/body/alternative.rs
+  |
+  | /     assert!(
+  | |         !shares_requests(marker, body),
+  | |         "a `JsonAs` marker is offered requests the body beside it in `OneOf` is offered too"
+  | |     );
+  | |_____- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/extract/body/mod.rs
+  |
+  |         let () = <L as Alternative<R>>::DISTINCT;
+  |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn <OneOf<JsonAs<V1, u32>, JsonAs<V2, std::string::String>> as RequestContent>::request_body`
+ --> src/extract/body/mod.rs
+  |
+  |         let body = <Self as RequestContent>::request_body(operation.registry());
+  |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/extract/body/mod.rs
+  |
+  |         let () = <L as Alternative<R>>::DISTINCT;
+  |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

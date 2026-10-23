@@ -9,9 +9,10 @@ help: the trait `RequestContent` is not implemented for `NotABody`
   |
 3 | struct NotABody;
   | ^^^^^^^^^^^^^^^
-  = note: a body is one of `Json<T>`, `Form<T>`, `MultipartForm<T>`, `Protobuf<T>`, `JsonLines<Records<T>>`, `JsonSeq<Records<T>>`, `Text` or `Binary<M>`, optionally wrapped in `Option` or `OneOf`
+  = note: a body is one of `Json<T>`, `JsonAs<M, T>`, `Form<T>`, `MultipartForm<T>`, `Protobuf<T>`, `JsonLines<Records<T>>`, `JsonSeq<Records<T>>`, `Text` or `Binary<M>`, optionally wrapped in `Option` or `OneOf`
   = note: only the last handler argument may consume the body
   = help: the following other types implement trait `RequestContent`:
+            JsonAs<M, T>
             JsonLines<Records<T>>
             JsonSeq<Records<T>>
             MultipartForm<T>
@@ -19,8 +20,7 @@ help: the trait `RequestContent` is not implemented for `NotABody`
             Protobuf<T>
             kynos::extract::body::binary::Binary<M>
             kynos::extract::body::form::Form<T>
-            kynos::extract::body::text::Text
-            kynos::prelude::Json<T>
+          and $N others
 note: required by a bound in `is_content`
  --> tests/ui/traits/request_content.rs:5:18
   |

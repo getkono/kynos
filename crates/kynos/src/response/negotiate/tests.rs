@@ -346,6 +346,10 @@ fn a_representation_is_offered_under_the_media_type_it_describes() {
     offered_under_what_it_describes::<Binary<Pdf>>();
     #[cfg(feature = "json")]
     offered_under_what_it_describes::<crate::extract::body::json::Json<String>>();
+    #[cfg(feature = "json")]
+    offered_under_what_it_describes::<
+        crate::extract::body::json_as::JsonAs<crate::http::media::Json, String>,
+    >();
     #[cfg(feature = "form")]
     offered_under_what_it_describes::<crate::extract::body::form::Form<String>>();
     #[cfg(feature = "multipart")]
@@ -501,5 +505,87 @@ impl crate::schema::Schema for Fields {
 impl crate::response::codec::multipart::IntoMultipart for Fields {
     fn into_parts(self) -> Vec<crate::extract::body::multipart::Part> {
         Vec::new()
+    }
+}
+
+/// A JSON document under a declared media type: written under that type
+/// verbatim, described under it, and chosen by an `Accept` naming it.
+#[cfg(feature = "json")]
+mod a_json_body_under_a_declared_media_type {
+    use http_body_util::BodyExt as _;
+
+    use crate::{
+        extract::body::{json::Json, json_as::JsonAs},
+        http::{StatusCode, header, media::MediaType},
+        response::{IntoResponse, Responses, negotiate::Accept},
+        schema::registry::Registry,
+    };
+
+    struct V1;
+
+    impl MediaType for V1 {
+        const MEDIA_TYPE: &'static str = "application/vnd.acme.v1+json";
+    }
+
+    struct V2;
+
+    impl MediaType for V2 {
+        const MEDIA_TYPE: &'static str = "application/vnd.acme.v2+json; charset=utf-8";
+    }
+
+    #[tokio::test]
+    async fn is_written_as_json_under_its_media_type() {
+        let response = JsonAs::<V2, Vec<u32>>::new(vec![1, 2]).into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .map(crate::http::HeaderValue::as_bytes),
+            Some(V2::MEDIA_TYPE.as_bytes())
+        );
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("an in-memory body")
+            .to_bytes();
+        assert_eq!(
+            serde_json::from_slice::<Vec<u32>>(&body).expect("JSON"),
+            [1, 2]
+        );
+    }
+
+    #[test]
+    fn is_described_under_its_media_type_over_the_schema_of_its_document() {
+        let described = JsonAs::<V1, u32>::responses(&mut Registry::default());
+        let Some(kynos_openapi::RefOr::Item(ok)) = described.get(200) else {
+            panic!("no inline 200 response");
+        };
+
+        assert_eq!(ok.content.keys().collect::<Vec<_>>(), [V1::MEDIA_TYPE]);
+        assert_eq!(
+            ok.content[V1::MEDIA_TYPE].schema,
+            Some(Registry::default().resolve::<u32>())
+        );
+    }
+
+    #[test]
+    fn an_accept_naming_it_chooses_it() {
+        type Offer = (Json<u32>, JsonAs<V1, u32>, JsonAs<V2, u32>);
+
+        for (field, chosen) in [
+            ("application/json", 0),
+            ("application/vnd.acme.v1+json", 1),
+            ("Application/VND.Acme.V2+JSON", 2),
+            ("application/vnd.acme.v2+json, application/json;q=0.5", 2),
+        ] {
+            let accepted = Accept::<Offer>::parse(field)
+                .expect("valid Accept header")
+                .choose::<Offer>()
+                .ok();
+            assert_eq!(accepted, Some(chosen), "Accept: {field}");
+        }
     }
 }

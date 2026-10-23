@@ -1,33 +1,11 @@
 //! Which pairs of body representations may be offered as alternatives.
 //!
-//! Gated per item: a cross-codec pair needs both codecs' features.
+//! The trait and the constant checks its implementations evaluate live here;
+//! the implementations, one per codec pair, in a private submodule.
 
 use crate::extract::describe::RequestContent;
 
-use crate::{
-    extract::body::{OneOf, binary::Binary, text::Text},
-    http::media::MediaType,
-};
-
-// Only the codec pairs describe a schema; text and raw bytes do not.
-#[cfg(any(
-    feature = "json",
-    feature = "form",
-    feature = "multipart",
-    feature = "protobuf"
-))]
-use crate::schema::Schema;
-
-#[cfg(feature = "form")]
-use crate::extract::body::form::Form;
-#[cfg(feature = "json")]
-use crate::extract::body::json::Json;
-#[cfg(all(feature = "json", feature = "openapi32"))]
-use crate::extract::body::json_lines::{JsonLines, JsonSeq, records::Records};
-#[cfg(feature = "multipart")]
-use crate::extract::body::multipart::MultipartForm;
-#[cfg(feature = "protobuf")]
-use crate::extract::body::protobuf::Protobuf;
+mod pairs;
 
 /// Proves that two request content types can be alternatives.
 ///
@@ -48,15 +26,16 @@ where
     /// Fails to evaluate when the two sides are offered the same requests.
     ///
     /// A pair of distinct body types keeps the default. A
-    /// [`Binary<M>`](Binary) beside another body is the one pair its types
-    /// cannot prove distinct, since a marker may name that body's own media
-    /// type, so its implementations compare the two. `OneOf` evaluates this
+    /// [`Binary<M>`](super::binary::Binary) beside another body is the one
+    /// pair its types cannot prove distinct, since a marker may name that
+    /// body's own media type, so its implementations compare the two; so is a
+    /// `JsonAs` beside a `Json`, another `JsonAs` or a `Binary`. `OneOf` evaluates this
     /// wherever it is used, so such a pair fails the build that instantiates
     /// it rather than the description of its route.
     ///
     /// A marker parameter does not keep the pair: a request need not repeat
-    /// it, so a bare `text/plain` would reach both [`Text`] and a marker
-    /// spelled `text/plain; charset=iso-8859-1`, in either order,
+    /// it, so a bare `text/plain` would reach both [`Text`](super::text::Text)
+    /// and a marker spelled `text/plain; charset=iso-8859-1`, in either order,
     ///
     /// ```compile_fail
     /// use kynos::{
@@ -154,6 +133,17 @@ pub(crate) const fn distinct(marker: &str, body: &str) {
     );
 }
 
+/// Refuses, in the constant evaluation calling it, a `JsonAs` marker offered a
+/// request `body` is offered too: another `JsonAs`'s marker, or `Json`'s own
+/// media type.
+#[cfg(feature = "json")]
+pub(crate) const fn distinct_json(marker: &str, body: &str) {
+    assert!(
+        !shares_requests(marker, body),
+        "a `JsonAs` marker is offered requests the body beside it in `OneOf` is offered too"
+    );
+}
+
 /// Whether [`offers`](super::offers) hands some request to both a marker and
 /// `body`, a codec's own parameterless media type.
 ///
@@ -201,175 +191,3 @@ pub(crate) const fn eq_ignore_ascii_case(left: &[u8], right: &[u8]) -> bool {
     }
     true
 }
-
-/// A body beside a nested `OneOf` is an alternative to each of its sides.
-impl<L, R, N> Alternative<N> for OneOf<L, R>
-where
-    L: Alternative<R> + Alternative<N>,
-    R: Alternative<N>,
-    N: RequestContent,
-{
-    const DISTINCT: () = {
-        let () = <L as Alternative<R>>::DISTINCT;
-        let () = <L as Alternative<N>>::DISTINCT;
-        let () = <R as Alternative<N>>::DISTINCT;
-    };
-}
-
-// No `Binary<A>`/`Binary<B>` pair: any impl admitting it would also admit
-// `OneOf<Binary<Pdf>, Binary<Pdf>>`.
-impl<M: MediaType> Alternative<Binary<M>> for Text {
-    const DISTINCT: () = distinct(M::MEDIA_TYPE, super::text::MEDIA_TYPE);
-}
-impl<M: MediaType> Alternative<Text> for Binary<M> {
-    const DISTINCT: () = distinct(M::MEDIA_TYPE, super::text::MEDIA_TYPE);
-}
-
-#[cfg(feature = "json")]
-impl<T: Schema> Alternative<Text> for Json<T> {}
-#[cfg(feature = "json")]
-impl<T: Schema> Alternative<Json<T>> for Text {}
-#[cfg(feature = "json")]
-impl<T: Schema, M: MediaType> Alternative<Binary<M>> for Json<T> {
-    const DISTINCT: () = distinct(M::MEDIA_TYPE, super::json::MEDIA_TYPE);
-}
-#[cfg(feature = "json")]
-impl<T: Schema, M: MediaType> Alternative<Json<T>> for Binary<M> {
-    const DISTINCT: () = distinct(M::MEDIA_TYPE, super::json::MEDIA_TYPE);
-}
-
-#[cfg(feature = "form")]
-impl<T: Schema> Alternative<Text> for Form<T> {}
-#[cfg(feature = "form")]
-impl<T: Schema> Alternative<Form<T>> for Text {}
-#[cfg(feature = "form")]
-impl<T: Schema, M: MediaType> Alternative<Binary<M>> for Form<T> {
-    const DISTINCT: () = distinct(M::MEDIA_TYPE, super::form::MEDIA_TYPE);
-}
-#[cfg(feature = "form")]
-impl<T: Schema, M: MediaType> Alternative<Form<T>> for Binary<M> {
-    const DISTINCT: () = distinct(M::MEDIA_TYPE, super::form::MEDIA_TYPE);
-}
-
-#[cfg(all(feature = "json", feature = "form"))]
-impl<T: Schema, U: Schema> Alternative<Form<U>> for Json<T> {}
-#[cfg(all(feature = "json", feature = "form"))]
-impl<T: Schema, U: Schema> Alternative<Json<U>> for Form<T> {}
-
-#[cfg(feature = "multipart")]
-impl<T: Schema> Alternative<Text> for MultipartForm<T> {}
-#[cfg(feature = "multipart")]
-impl<T: Schema> Alternative<MultipartForm<T>> for Text {}
-#[cfg(feature = "multipart")]
-impl<T: Schema, M: MediaType> Alternative<Binary<M>> for MultipartForm<T> {
-    const DISTINCT: () = distinct(M::MEDIA_TYPE, super::multipart::MEDIA_TYPE);
-}
-#[cfg(feature = "multipart")]
-impl<T: Schema, M: MediaType> Alternative<MultipartForm<T>> for Binary<M> {
-    const DISTINCT: () = distinct(M::MEDIA_TYPE, super::multipart::MEDIA_TYPE);
-}
-
-#[cfg(all(feature = "json", feature = "multipart"))]
-impl<T: Schema, U: Schema> Alternative<MultipartForm<U>> for Json<T> {}
-#[cfg(all(feature = "json", feature = "multipart"))]
-impl<T: Schema, U: Schema> Alternative<Json<U>> for MultipartForm<T> {}
-
-#[cfg(all(feature = "form", feature = "multipart"))]
-impl<T: Schema, U: Schema> Alternative<MultipartForm<U>> for Form<T> {}
-#[cfg(all(feature = "form", feature = "multipart"))]
-impl<T: Schema, U: Schema> Alternative<Form<U>> for MultipartForm<T> {}
-
-#[cfg(feature = "protobuf")]
-impl<T: Schema> Alternative<Text> for Protobuf<T> {}
-#[cfg(feature = "protobuf")]
-impl<T: Schema> Alternative<Protobuf<T>> for Text {}
-#[cfg(feature = "protobuf")]
-impl<T: Schema, M: MediaType> Alternative<Binary<M>> for Protobuf<T> {
-    const DISTINCT: () = distinct(M::MEDIA_TYPE, super::protobuf::MEDIA_TYPE);
-}
-#[cfg(feature = "protobuf")]
-impl<T: Schema, M: MediaType> Alternative<Protobuf<T>> for Binary<M> {
-    const DISTINCT: () = distinct(M::MEDIA_TYPE, super::protobuf::MEDIA_TYPE);
-}
-
-#[cfg(all(feature = "json", feature = "protobuf"))]
-impl<T: Schema, U: Schema> Alternative<Protobuf<U>> for Json<T> {}
-#[cfg(all(feature = "json", feature = "protobuf"))]
-impl<T: Schema, U: Schema> Alternative<Json<U>> for Protobuf<T> {}
-
-#[cfg(all(feature = "form", feature = "protobuf"))]
-impl<T: Schema, U: Schema> Alternative<Protobuf<U>> for Form<T> {}
-#[cfg(all(feature = "form", feature = "protobuf"))]
-impl<T: Schema, U: Schema> Alternative<Form<U>> for Protobuf<T> {}
-
-#[cfg(all(feature = "multipart", feature = "protobuf"))]
-impl<T: Schema, U: Schema> Alternative<Protobuf<U>> for MultipartForm<T> {}
-#[cfg(all(feature = "multipart", feature = "protobuf"))]
-impl<T: Schema, U: Schema> Alternative<MultipartForm<U>> for Protobuf<T> {}
-
-// The streamed JSON bodies: each has a fixed media type, NDJSON and RFC 7464
-// distinct from each other.
-#[cfg(all(feature = "json", feature = "openapi32"))]
-impl<T: Schema> Alternative<Text> for JsonLines<Records<T>> {}
-#[cfg(all(feature = "json", feature = "openapi32"))]
-impl<T: Schema> Alternative<JsonLines<Records<T>>> for Text {}
-#[cfg(all(feature = "json", feature = "openapi32"))]
-impl<T: Schema, M: MediaType> Alternative<Binary<M>> for JsonLines<Records<T>> {
-    const DISTINCT: () = distinct(M::MEDIA_TYPE, super::json_lines::LINES_MEDIA_TYPE);
-}
-#[cfg(all(feature = "json", feature = "openapi32"))]
-impl<T: Schema, M: MediaType> Alternative<JsonLines<Records<T>>> for Binary<M> {
-    const DISTINCT: () = distinct(M::MEDIA_TYPE, super::json_lines::LINES_MEDIA_TYPE);
-}
-#[cfg(all(feature = "json", feature = "openapi32"))]
-impl<T: Schema> Alternative<Text> for JsonSeq<Records<T>> {}
-#[cfg(all(feature = "json", feature = "openapi32"))]
-impl<T: Schema> Alternative<JsonSeq<Records<T>>> for Text {}
-#[cfg(all(feature = "json", feature = "openapi32"))]
-impl<T: Schema, M: MediaType> Alternative<Binary<M>> for JsonSeq<Records<T>> {
-    const DISTINCT: () = distinct(M::MEDIA_TYPE, super::json_lines::SEQUENCE_MEDIA_TYPE);
-}
-#[cfg(all(feature = "json", feature = "openapi32"))]
-impl<T: Schema, M: MediaType> Alternative<JsonSeq<Records<T>>> for Binary<M> {
-    const DISTINCT: () = distinct(M::MEDIA_TYPE, super::json_lines::SEQUENCE_MEDIA_TYPE);
-}
-
-#[cfg(all(feature = "json", feature = "openapi32"))]
-impl<T: Schema, U: Schema> Alternative<Json<U>> for JsonLines<Records<T>> {}
-#[cfg(all(feature = "json", feature = "openapi32"))]
-impl<T: Schema, U: Schema> Alternative<JsonLines<Records<U>>> for Json<T> {}
-#[cfg(all(feature = "json", feature = "openapi32"))]
-impl<T: Schema, U: Schema> Alternative<Json<U>> for JsonSeq<Records<T>> {}
-#[cfg(all(feature = "json", feature = "openapi32"))]
-impl<T: Schema, U: Schema> Alternative<JsonSeq<Records<U>>> for Json<T> {}
-#[cfg(all(feature = "json", feature = "openapi32"))]
-impl<T: Schema, U: Schema> Alternative<JsonSeq<Records<U>>> for JsonLines<Records<T>> {}
-#[cfg(all(feature = "json", feature = "openapi32"))]
-impl<T: Schema, U: Schema> Alternative<JsonLines<Records<U>>> for JsonSeq<Records<T>> {}
-
-#[cfg(all(feature = "json", feature = "openapi32", feature = "form"))]
-impl<T: Schema, U: Schema> Alternative<Form<U>> for JsonLines<Records<T>> {}
-#[cfg(all(feature = "json", feature = "openapi32", feature = "form"))]
-impl<T: Schema, U: Schema> Alternative<JsonLines<Records<U>>> for Form<T> {}
-#[cfg(all(feature = "json", feature = "openapi32", feature = "form"))]
-impl<T: Schema, U: Schema> Alternative<Form<U>> for JsonSeq<Records<T>> {}
-#[cfg(all(feature = "json", feature = "openapi32", feature = "form"))]
-impl<T: Schema, U: Schema> Alternative<JsonSeq<Records<U>>> for Form<T> {}
-
-#[cfg(all(feature = "json", feature = "openapi32", feature = "multipart"))]
-impl<T: Schema, U: Schema> Alternative<MultipartForm<U>> for JsonLines<Records<T>> {}
-#[cfg(all(feature = "json", feature = "openapi32", feature = "multipart"))]
-impl<T: Schema, U: Schema> Alternative<JsonLines<Records<U>>> for MultipartForm<T> {}
-#[cfg(all(feature = "json", feature = "openapi32", feature = "multipart"))]
-impl<T: Schema, U: Schema> Alternative<MultipartForm<U>> for JsonSeq<Records<T>> {}
-#[cfg(all(feature = "json", feature = "openapi32", feature = "multipart"))]
-impl<T: Schema, U: Schema> Alternative<JsonSeq<Records<U>>> for MultipartForm<T> {}
-
-#[cfg(all(feature = "json", feature = "openapi32", feature = "protobuf"))]
-impl<T: Schema, U: Schema> Alternative<Protobuf<U>> for JsonLines<Records<T>> {}
-#[cfg(all(feature = "json", feature = "openapi32", feature = "protobuf"))]
-impl<T: Schema, U: Schema> Alternative<JsonLines<Records<U>>> for Protobuf<T> {}
-#[cfg(all(feature = "json", feature = "openapi32", feature = "protobuf"))]
-impl<T: Schema, U: Schema> Alternative<Protobuf<U>> for JsonSeq<Records<T>> {}
-#[cfg(all(feature = "json", feature = "openapi32", feature = "protobuf"))]
-impl<T: Schema, U: Schema> Alternative<JsonSeq<Records<U>>> for Protobuf<T> {}
