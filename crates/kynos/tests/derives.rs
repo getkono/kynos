@@ -4381,6 +4381,37 @@ fn an_optional_extension_member_is_sent_only_when_present() {
     );
 }
 
+/// Two failures publishing one URI, only one of which sends `errors`.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum ReviewError {
+    #[error("the review is invalid")]
+    #[problem(status = 422, type = "https://errors.example.com/invalid")]
+    Invalid {
+        #[problem(extension)]
+        errors: Vec<FieldError>,
+    },
+
+    #[error("the review is empty")]
+    #[problem(status = 422, type = "https://errors.example.com/invalid")]
+    Empty,
+}
+
+/// Two failures publishing one URI are one branch, which declares the member
+/// either sends but requires it only where both do: the failure omitting it
+/// must still match.
+#[test]
+fn one_branch_two_failures_publish_requires_only_what_both_send() {
+    let declared = declared_problem(&emitted_responses::<ReviewError>(), "422");
+    let narrowed = &declared["allOf"][1];
+
+    assert_eq!(
+        narrowed["properties"]["errors"]["items"]["$ref"],
+        serde_json::json!("#/components/schemas/FieldError"),
+        "{declared}"
+    );
+    assert_eq!(narrowed.get("required"), None, "{declared}");
+}
+
 /// A variant naming no `type` publishes its kebab-cased name under the type's
 /// `base`; one naming its own `type` publishes that instead.
 #[test]

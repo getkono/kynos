@@ -394,6 +394,89 @@ fn two_sides_publishing_one_type_declare_one_branch() {
     assert_eq!(published(&schema), vec!["about:blank".to_owned()]);
 }
 
+/// `uri`'s branch, also declaring `members` as `(name, schema, required)`.
+fn branch_with(uri: &str, members: &[(&str, Schema, bool)]) -> Schema {
+    let mut schema = branch(uri);
+    let Schema::Object(object) = &mut schema else {
+        unreachable!("a branch is an object")
+    };
+    let Some(Schema::Object(narrowing)) = object.all_of.as_mut().and_then(|all| all.get_mut(1))
+    else {
+        unreachable!("a branch narrows in its second `allOf` member")
+    };
+    for (name, member, required) in members {
+        narrowing
+            .properties
+            .insert((*name).to_owned(), member.clone());
+        if *required {
+            narrowing
+                .required
+                .get_or_insert_with(Vec::new)
+                .push((*name).to_owned());
+        }
+    }
+    schema
+}
+
+/// A schema of one JSON type.
+fn typed(ty: &str) -> Schema {
+    serde_json::from_value(serde_json::json!({ "type": ty })).expect("a schema")
+}
+
+/// The one branch two sides publishing one URI keep describes what either
+/// sends: every member either declares, one both declare differently as
+/// either schema, and required only where both sides require it, since a
+/// document from the side that omits it must still match.
+#[test]
+fn one_branch_two_sides_publish_declares_what_either_sends() {
+    let mut base = Responses::new().with(
+        422,
+        problem(
+            "Unprocessable Entity",
+            branch_with(
+                "about:blank",
+                &[
+                    ("errors", typed("array"), true),
+                    ("code", typed("string"), true),
+                ],
+            ),
+        ),
+    );
+    let other = Responses::new().with(
+        422,
+        problem(
+            "Invalid",
+            branch_with(
+                "about:blank",
+                &[
+                    ("code", typed("integer"), true),
+                    ("hint", typed("string"), false),
+                ],
+            ),
+        ),
+    );
+    base.union_from(&other);
+
+    let schema = declared(&base, 422);
+    assert_eq!(schema.get("oneOf"), None, "{schema}");
+    let narrowing = &schema["allOf"][1];
+    assert_eq!(
+        narrowing["properties"],
+        serde_json::json!({
+            "type": { "const": "about:blank" },
+            "errors": { "type": "array" },
+            "code": { "anyOf": [{ "type": "string" }, { "type": "integer" }] },
+            "hint": { "type": "string" },
+        }),
+        "{schema}"
+    );
+    assert_eq!(
+        narrowing["required"],
+        serde_json::json!(["code"]),
+        "{schema}"
+    );
+}
+
 /// A bare `$ref` matches every problem document, so it is already the union —
 /// whichever side carries it. Narrowing to the other side would declare less
 /// than the operation can send.
