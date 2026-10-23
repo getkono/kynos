@@ -30,7 +30,7 @@
 feature	lines	copies	delta_lines	delta_copies
 openapi31	44206	1771	0	0
 assets	43511	1739	-695	-32
-assets-fs	46917	1915	2711	144
+assets-fs	47553	1945	3347	174
 cache	44194	1769	-12	-2
 compression	44162	1768	-44	-3
 cookie	44206	1771	0	0
@@ -50,7 +50,7 @@ test-util	41422	1706	-2784	-65
 time-chrono	44192	1769	-14	-2
 time-jiff	44202	1770	-4	-1
 trace	44196	1770	-10	-1
-unchecked	47612	1947	3406	176
+unchecked	48248	1977	4042	206
 uuid	44206	1771	0	0
 yaml	44223	1773	17	2
-(all-features)	47024	1916	2818	145
+(all-features)	47660	1946	3454	175
