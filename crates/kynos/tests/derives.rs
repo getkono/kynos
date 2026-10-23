@@ -4272,6 +4272,115 @@ async fn a_derived_problem_carries_its_extension_members_and_no_other_field() {
     );
 }
 
+/// One entry of [`SubmitError`]'s `errors`, a named type so the description
+/// registers it as a component.
+#[derive(Debug, Schema, serde::Serialize)]
+struct FieldError {
+    pointer: String,
+    detail: String,
+}
+
+/// An extension member reaches the wire as a `serde_json::Value`.
+impl From<FieldError> for serde_json::Value {
+    fn from(error: FieldError) -> Self {
+        serde_json::json!({ "pointer": error.pointer, "detail": error.detail })
+    }
+}
+
+/// A failure publishing a member it always sends and one it sends only when
+/// it has it.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum SubmitError {
+    #[error("the submission is invalid")]
+    #[problem(
+        status = 422,
+        type = "https://errors.example.com/invalid",
+        title = "Invalid"
+    )]
+    Invalid {
+        #[problem(extension)]
+        errors: Vec<FieldError>,
+        #[problem(extension)]
+        hint: Option<String>,
+    },
+}
+
+/// Each extension member is declared on its failure's branch under the name
+/// it is sent as, by its type's schema, a named type registered as a component:
+/// required where the member is always sent, and an `Option` described by the
+/// type it holds and left optional, since `None` is not sent.
+#[test]
+fn a_derived_problem_declares_its_extension_members() {
+    let mut registry = kynos::schema::registry::Registry::new();
+    let responses = serde_json::to_value(SubmitError::responses(&mut registry))
+        .expect("a set of responses serializes");
+    let narrowed = &declared_problem(&responses, "422")["allOf"][1];
+
+    assert_eq!(
+        narrowed["properties"]["errors"],
+        serde_json::json!({
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/FieldError" },
+        }),
+        "{narrowed}"
+    );
+    assert_eq!(
+        narrowed["properties"]["hint"],
+        serde_json::json!({ "type": "string" }),
+        "{narrowed}"
+    );
+    assert_eq!(
+        narrowed["required"],
+        serde_json::json!(["errors"]),
+        "{narrowed}"
+    );
+    assert!(
+        registry
+            .into_components()
+            .schemas
+            .contains_key("FieldError"),
+        "the member's type is registered"
+    );
+
+    let declared = declared_problem(&emitted_responses::<StoreError>(), "404");
+    assert_eq!(
+        declared["allOf"][1]["properties"]["id"],
+        serde_json::json!({ "type": "integer", "format": "uint64", "minimum": 0.0 }),
+        "{declared}"
+    );
+}
+
+/// An `Option` member is sent when it holds a value and left out when it does
+/// not, so the body is what the description's optional member promised.
+#[test]
+fn an_optional_extension_member_is_sent_only_when_present() {
+    use kynos::error::problem::IntoProblem;
+
+    let absent = SubmitError::Invalid {
+        errors: vec![FieldError {
+            pointer: "/name".to_owned(),
+            detail: "expected a string".to_owned(),
+        }],
+        hint: None,
+    }
+    .into_problem();
+    assert_eq!(
+        absent.extensions.keys().collect::<Vec<_>>(),
+        ["errors"],
+        "{absent:?}"
+    );
+
+    let present = SubmitError::Invalid {
+        errors: Vec::new(),
+        hint: Some("check the name".to_owned()),
+    }
+    .into_problem();
+    assert_eq!(
+        present.extensions["hint"],
+        serde_json::json!("check the name")
+    );
+}
+
 /// A variant naming no `type` publishes its kebab-cased name under the type's
 /// `base`; one naming its own `type` publishes that instead.
 #[test]

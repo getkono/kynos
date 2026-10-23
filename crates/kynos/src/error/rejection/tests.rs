@@ -195,6 +195,55 @@ fn a_path_header_or_cookie_schema_failure_travels_as_an_errors_entry() {
     }
 }
 
+/// The `errors` member a schema failure sends is declared under the status it
+/// arrives with: required on the body's 422, which only a schema failure
+/// answers, and optional on a parameter's 400, which an undecodable value
+/// answers without it. The body's 400, a syntax error, declares none.
+#[test]
+fn a_schema_failures_errors_member_is_declared_where_it_is_sent() {
+    use crate::{response::Responses, schema::registry::Registry};
+
+    let errors = serde_json::json!({
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "pointer": { "type": "string", "format": "json-pointer" },
+                "detail": { "type": "string" },
+            },
+            "required": ["pointer", "detail"],
+        },
+    });
+    let declared = |responses: kynos_openapi::Responses, status: &str| {
+        let responses = serde_json::to_value(responses).expect("responses serialize");
+        responses[status]["content"]["application/problem+json"]["schema"]["allOf"][1].clone()
+    };
+    let registry = &mut Registry::new();
+
+    let mut sent = vec![
+        (declared(BodyRejection::responses(registry), "422"), true),
+        (declared(QueryRejection::responses(registry), "400"), false),
+        (declared(PathRejection::responses(registry), "400"), false),
+        (declared(HeaderRejection::responses(registry), "400"), false),
+    ];
+    #[cfg(feature = "cookie")]
+    sent.push((
+        declared(super::CookieRejection::responses(registry), "400"),
+        false,
+    ));
+
+    for (branch, required) in sent {
+        assert_eq!(branch["properties"]["errors"], errors, "{branch}");
+        let listed = branch["required"]
+            .as_array()
+            .is_some_and(|names| names.contains(&serde_json::json!("errors")));
+        assert_eq!(listed, required, "{branch}");
+    }
+
+    let syntax = declared(BodyRejection::responses(registry), "400");
+    assert_eq!(syntax["properties"].get("errors"), None, "{syntax}");
+}
+
 /// A 415 names the media type the client sent, or says it sent none, so a
 /// client can tell a wrong `Content-Type` from a missing one.
 #[test]
