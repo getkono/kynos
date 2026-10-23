@@ -47,6 +47,8 @@
 //!   alternatives. `/exports` accepts either of two schemes through `AnyOf`,
 //!   and `/partners/settlements` demands two together through `AllOf`: the
 //!   combination is the guard's type, so it is what runs and what is declared.
+//!   `/reports/summary` demands one scope set of either of two schemes, through
+//!   `Scoped` over an `AnyOf`.
 //!
 //! The challenge is declared on the scheme rather than on the authenticator, so
 //! the `WWW-Authenticate` a client receives and the one the description
@@ -497,6 +499,25 @@ async fn reports(caller: Scoped<AccessToken, ReadReports>) -> NoContent {
     NoContent
 }
 
+/// Shows a report to a delegated client or a token holder, either one holding
+/// `reports:read`.
+///
+/// A scope set over `AnyOf` is demanded of whichever alternative is tried, on
+/// top of its scheme's defaults, and declared on each:
+/// `[{DelegatedAccess: [users:read, reports:read]}, {AccessToken: [reports:read]}]`.
+/// Both schemes name `Grant`, which is what lets one set apply to the two, and
+/// `ReadReports` narrows this 403 as it does `/reports`'.
+#[kynos::get("/reports/summary")]
+async fn report_summary(
+    caller: Scoped<AnyOf<(DelegatedAccess, AccessToken)>, ReadReports>,
+) -> NoContent {
+    match caller.into_inner() {
+        Either2::First(subject) => drop(subject),
+        Either2::Second(claims) => drop(claims.subject),
+    }
+    NoContent
+}
+
 /// Exports data for whoever is calling, a machine or a person.
 ///
 /// `AnyOf` declares `security: [{ServiceKey: []}, {AccessToken: []}]`, which
@@ -536,6 +557,7 @@ async fn main() -> kynos::Result<()> {
         delegated_users,
         federated_me,
         reports,
+        report_summary,
         exports,
         settlement,
     ]);

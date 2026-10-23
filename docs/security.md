@@ -32,6 +32,7 @@ spelling and the `security` the guard emits is the whole list, set once:
 | `Auth<AllOf<(A, B)>>` | `[{A, B}]` | both |
 | `MaybeAuth<…>` | `[{}, …]` | the same, or nothing presented at all |
 | `Scoped<S, R>` | `[{S: S::scopes() + R::REQUIRED}]` | `S`, then both scope lists |
+| `Scoped<AnyOf<(A, B)>, R>` | `[{A: A::scopes() + R::REQUIRED}, {B: …}]` | the first of `A`, `B` that is satisfied, each holding both lists |
 
 Each `{S}` above carries `S::scopes()`, the scheme's default scopes, and
 satisfying it means authenticating *and* holding them: see
@@ -50,8 +51,12 @@ satisfying it means authenticating *and* holding them: see
   request, so one is what is sent. Every built-in scheme has one, so tuple
   order picks it: `AnyOf<(MutualTls, Bearer)>` challenges `MutualTLS`, and
   listing `Bearer` first advertises `Bearer`.
-- **A combinator takes schemes, from two to four**, never another combinator,
-  and `Scoped` stays single-scheme. Nesting would give one shape two spellings.
+- **A combinator takes schemes, from two to four**, never another combinator.
+  Nesting would give one shape two spellings.
+- **`Scoped` takes a scheme or an `AnyOf`**, whose schemes share one scope type
+  (`Scopable`), and never sits inside a combinator: a scope set over "either"
+  is written once, not once per alternative. An `AllOf` is refused, since its
+  set would be demanded of every scheme in it, mutual TLS's included.
 
 ### A scheme says where its credential travels, once
 
@@ -192,7 +197,8 @@ missing partner as a partial set.
 `SecurityScheme::Scope` names, once per scheme, what one scope is — an
 application's enum, with `Scope::name` the one place it becomes the string a
 token and the description carry. A `Scopes` set names its own `Scope`, and
-`Scoped<S, R>` is bounded by `R: Scopes<Scope = S::Scope>`, so a set written
+`Scoped<S, R>` is bounded by `R: Scopes<Scope = S::Scope>`, an `AnyOf`'s being
+the one its schemes share, so a set written
 against another type does not compile. `Authenticator::authorize` receives
 `&[S::Scope]`: a scope it does not handle is a non-exhaustive `match`, not a
 string a `filter_map` silently drops.
@@ -225,6 +231,7 @@ or combined, so its 403 is `authenticate`'s alone.
 | `AnyOf` | each alternative's own, after it authenticates |
 | `AllOf` | each scheme's own, after every scheme authenticates |
 | `Scoped<S, R>` | `S::scopes()`, then each of `R::REQUIRED` they do not name, in one call |
+| `Scoped<AnyOf<…>, R>` | the same, per alternative tried, with that alternative's defaults |
 
 An `AnyOf` alternative whose defaults are refused is not satisfied, so the next
 one is tried, and the refusal is the answer only when none is. `AllOf`

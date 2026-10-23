@@ -5,8 +5,6 @@
 //! act — and 503 where a scheme it names sets
 //! [`MAY_BE_UNAVAILABLE`](crate::security::SecurityScheme::MAY_BE_UNAVAILABLE).
 
-use std::borrow::Cow;
-
 use kynos_openapi::{
     Header, Schema, SecurityRequirement, StatusPattern, model::schema::types::SchemaType,
 };
@@ -17,9 +15,8 @@ use crate::{
     http::{HeaderValue, Parts, StatusCode},
     router::operation::OperationCx,
     security::{
-        Authenticates, Guard, Scope, SecurityScheme,
-        carrier::Carries,
-        requirement::{CheckedBy, Requirement, require, verify},
+        Guard, Scope,
+        requirement::{CheckedBy, Requirement, Scopable, ScopeCheckedBy},
         sealed,
     },
 };
@@ -236,9 +233,9 @@ where
 ///
 /// Declared as a unit struct, so a scope set is named once rather than
 /// repeated across handlers. Its scopes are values of a [`Scope`] type, which a
-/// [`Scoped<S, R>`](Scoped) argument holds to scheme `S`'s own
-/// [`SecurityScheme::Scope`]: a set written against another type does not
-/// compile.
+/// [`Scoped<S, R>`](Scoped) argument holds to the
+/// [`SecurityScheme::Scope`](crate::security::SecurityScheme::Scope) of every
+/// scheme `S` names: a set written against another type does not compile.
 ///
 /// ```
 /// use kynos::security::{Scope, auth::Scopes};
@@ -279,8 +276,9 @@ where
 /// assert_eq!(ReadReports::FORBIDDEN_TYPE, None);
 /// ```
 pub trait Scopes: Send + Sync + 'static {
-    /// What each scope is: the [`SecurityScheme::Scope`] of every scheme this
-    /// set is demanded under.
+    /// What each scope is: the
+    /// [`SecurityScheme::Scope`](crate::security::SecurityScheme::Scope) of
+    /// every scheme this set is demanded under.
     type Scope: Scope;
 
     /// The scopes required.
@@ -321,6 +319,11 @@ pub trait Scopes: Send + Sync + 'static {
 /// The scopes appear in the operation's security requirement, so a description
 /// reader learns not just that a token is needed but which grants it must
 /// carry.
+///
+/// `S` is a scheme, or an [`AnyOf`](crate::security::requirement::AnyOf) of
+/// schemes sharing one scope type, which demands the set of whichever
+/// alternative authenticates and declares it on each: `[{A: [r]}, {B: [r]}]`.
+/// [`Scopable`] is what admits the two.
 ///
 /// The scope set is a type implementing [`Scopes`], since a slice is not a
 /// permitted const parameter type, and its [`Scope`](Scopes::Scope) must be
@@ -364,13 +367,53 @@ pub trait Scopes: Send + Sync + 'static {
 ///
 /// async fn reports(caller: Scoped<Bearer<String>, ReadReports>) {}
 /// ```
-pub struct Scoped<S: SecurityScheme, R: Scopes<Scope = S::Scope>>(
+///
+/// So does an [`AnyOf`](crate::security::requirement::AnyOf) holding one such
+/// scheme, since the set is demanded of every alternative:
+///
+/// ```compile_fail,E0277
+/// # use kynos::security::{Scope, auth::{Scoped, Scopes}, requirement::AnyOf};
+/// # use kynos::security::schemes::{Basic, Bearer};
+/// # #[derive(Clone, Copy)]
+/// # enum Grant { ReadReports }
+/// # impl Scope for Grant {
+/// #     fn name(&self) -> &'static str { "reports:read" }
+/// # }
+/// # struct ReadReports;
+/// # impl Scopes for ReadReports {
+/// #     type Scope = Grant;
+/// #     const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
+/// # }
+/// async fn reports(caller: Scoped<AnyOf<(Bearer<String, Grant>, Basic)>, ReadReports>) {}
+/// ```
+///
+/// An [`AllOf`](crate::security::requirement::AllOf) is not [`Scopable`]:
+///
+/// ```compile_fail,E0277
+/// # use kynos::security::{Scope, auth::{Scoped, Scopes}, requirement::AllOf};
+/// # use kynos::security::schemes::{Basic, Bearer};
+/// # #[derive(Clone, Copy)]
+/// # enum Grant { ReadReports }
+/// # impl Scope for Grant {
+/// #     fn name(&self) -> &'static str { "reports:read" }
+/// # }
+/// # struct ReadReports;
+/// # impl Scopes for ReadReports {
+/// #     type Scope = Grant;
+/// #     const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
+/// # }
+/// async fn reports(
+///     caller: Scoped<AllOf<(Bearer<String, Grant>, Basic<String, Grant>)>, ReadReports>,
+/// ) {
+/// }
+/// ```
+pub struct Scoped<S: Scopable, R: Scopes<Scope = S::Scope>>(
     pub S::Credential,
     std::marker::PhantomData<R>,
 );
 
 // As on `Auth`: bounded on the credential, without `Default`.
-impl<S: SecurityScheme, R: Scopes<Scope = S::Scope>> Clone for Scoped<S, R>
+impl<S: Scopable, R: Scopes<Scope = S::Scope>> Clone for Scoped<S, R>
 where
     S::Credential: Clone,
 {
@@ -379,9 +422,9 @@ where
     }
 }
 
-impl<S: SecurityScheme, R: Scopes<Scope = S::Scope>> Copy for Scoped<S, R> where S::Credential: Copy {}
+impl<S: Scopable, R: Scopes<Scope = S::Scope>> Copy for Scoped<S, R> where S::Credential: Copy {}
 
-impl<S: SecurityScheme, R: Scopes<Scope = S::Scope>> std::fmt::Debug for Scoped<S, R>
+impl<S: Scopable, R: Scopes<Scope = S::Scope>> std::fmt::Debug for Scoped<S, R>
 where
     S::Credential: std::fmt::Debug,
 {
@@ -390,7 +433,7 @@ where
     }
 }
 
-impl<S: SecurityScheme, R: Scopes<Scope = S::Scope>> PartialEq for Scoped<S, R>
+impl<S: Scopable, R: Scopes<Scope = S::Scope>> PartialEq for Scoped<S, R>
 where
     S::Credential: PartialEq,
 {
@@ -399,9 +442,9 @@ where
     }
 }
 
-impl<S: SecurityScheme, R: Scopes<Scope = S::Scope>> Eq for Scoped<S, R> where S::Credential: Eq {}
+impl<S: Scopable, R: Scopes<Scope = S::Scope>> Eq for Scoped<S, R> where S::Credential: Eq {}
 
-impl<S: SecurityScheme, R: Scopes<Scope = S::Scope>> Scoped<S, R> {
+impl<S: Scopable, R: Scopes<Scope = S::Scope>> Scoped<S, R> {
     /// Wraps a credential that has been verified and authorized.
     ///
     /// The marker field is private, so this is how one is built from outside
@@ -417,37 +460,30 @@ impl<S: SecurityScheme, R: Scopes<Scope = S::Scope>> Scoped<S, R> {
     }
 }
 
-impl<S: SecurityScheme, R: Scopes<Scope = S::Scope>> Describe for Scoped<S, R> {
+impl<S: Scopable, R: Scopes<Scope = S::Scope>> Describe for Scoped<S, R> {
     fn describe(operation: &mut OperationCx<'_>) {
-        // The scopes the guard authorizes, without naming one twice.
-        let mut scopes = Vec::new();
-        for scope in demanded::<S, R>().iter().map(Scope::name) {
-            if !scopes.contains(&scope) {
-                scopes.push(scope);
-            }
-        }
-        let security = vec![require::<S>(operation, scopes)];
-        // `Scoped` always authorizes, so its scheme may always refuse a scope.
+        let security = S::declare_scoped(operation, R::REQUIRED);
+        // `Scoped` always authorizes, so each scheme may always refuse a scope.
         let challenges = Challenges {
-            unauthenticated: <S as SecurityScheme>::challenge(),
-            insufficient_scope: <S as SecurityScheme>::insufficient_scope_challenge(),
+            unauthenticated: S::challenge(),
+            insufficient_scope: S::scope_challenge(),
         };
         declare(
             operation,
             challenges,
             security,
             R::FORBIDDEN_TYPE,
-            <S as SecurityScheme>::MAY_BE_UNAVAILABLE,
+            S::MAY_BE_UNAVAILABLE,
         );
     }
 }
 
-impl<S: SecurityScheme, R: Scopes<Scope = S::Scope>> sealed::Sealed for Scoped<S, R> {}
+impl<S: Scopable, R: Scopes<Scope = S::Scope>> sealed::Sealed for Scoped<S, R> {}
 
 impl<C, S, R> Guard<C> for Scoped<S, R>
 where
-    C: Authenticates<S>,
-    S: Carries,
+    C: Sync,
+    S: ScopeCheckedBy<C>,
     R: Scopes<Scope = S::Scope>,
 {
     /// [`AuthRejection`] described against `R`, which is what narrows the 403
@@ -455,45 +491,14 @@ where
     type Rejection = ScopedRejection<R>;
 
     async fn guard(parts: &Parts, context: &C) -> Result<Self, Self::Rejection> {
-        // On both halves: an `authorize` answering 401 owes a challenge too.
-        let challenged = |rejection: AuthRejection| {
-            ScopedRejection::new(rejection.with_challenge(S::challenge()))
-        };
-
-        let presented = S::present(parts)
-            .map_err(challenged)?
-            .ok_or_else(AuthRejection::unauthenticated)
-            .map_err(challenged)?;
-
-        let credential = verify::<S, C>(presented, Some(&demanded::<S, R>()), context)
+        // Every refusal is challenged: an `authorize` answering 401 owes one
+        // too. An absent credential is `Scoped`'s own 401.
+        S::check_scoped(parts, context, R::REQUIRED)
             .await
-            .map_err(challenged)?;
-        Ok(Self(credential, std::marker::PhantomData))
+            .and_then(|checked| checked.ok_or_else(AuthRejection::unauthenticated))
+            .map(|credential| Self(credential, std::marker::PhantomData))
+            .map_err(|rejection| ScopedRejection::new(rejection.with_challenge(S::challenge())))
     }
-}
-
-/// The scopes a [`Scoped<S, R>`](Scoped) argument demands: `S`'s defaults,
-/// then each of `R`'s that the defaults do not already name.
-///
-/// `R`'s scopes join the defaults rather than replacing them, so the scheme's
-/// demand holds under every guard. Borrowed, and so free, when `S` has none.
-fn demanded<S, R>() -> Cow<'static, [S::Scope]>
-where
-    S: SecurityScheme,
-    R: Scopes<Scope = S::Scope>,
-{
-    let defaults = S::scopes();
-    if defaults.is_empty() {
-        return Cow::Borrowed(R::REQUIRED);
-    }
-
-    let mut union = defaults.to_vec();
-    for scope in R::REQUIRED {
-        if !union.iter().any(|held| held.name() == scope.name()) {
-            union.push(scope.clone());
-        }
-    }
-    Cow::Owned(union)
 }
 
 /// Sets the operation's `security` to the guard's, and declares how it refuses.
@@ -544,11 +549,11 @@ fn declare(
 /// The challenges a guard's refusals carry, as [`declare`] declares them.
 #[derive(Clone, Copy)]
 struct Challenges {
-    /// The 401's: [`SecurityScheme::challenge`].
+    /// The 401's: [`Requirement::challenge`].
     unauthenticated: Option<&'static str>,
-    /// A scope-refusing 403's:
-    /// [`SecurityScheme::insufficient_scope_challenge`], where the guard
-    /// authorizes a scope at all.
+    /// A scope-refusing 403's, where the guard authorizes a scope at all:
+    /// [`Requirement::insufficient_scope_challenge`] for a guard naming no
+    /// scope set, and [`Scopable::scope_challenge`] for one that does.
     insufficient_scope: Option<&'static str>,
 }
 

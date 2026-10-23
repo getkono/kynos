@@ -1093,6 +1093,7 @@ fn a_scheme_that_may_be_unavailable_declares_the_503_under_every_guard() {
         declared_unavailable::<Scoped<Outage, ReadReports>>(),
         declared_unavailable::<Auth<AnyOf<(Bearer, Outage)>>>(),
         declared_unavailable::<Auth<AllOf<(Outage, Bearer)>>>(),
+        declared_unavailable::<Scoped<AnyOf<(Bearer<String, Grant>, Outage)>, ReadReports>>(),
     ] {
         let response = serde_json::to_value(declared.expect("a declared 503"))
             .expect("a serializable response");
@@ -1127,6 +1128,176 @@ fn a_guard_whose_schemes_never_answer_503_declares_none() {
     assert!(declared_unavailable::<Scoped<Bearer<String, Grant>, ReadReports>>().is_none());
     assert!(declared_unavailable::<Auth<AnyOf<(Bearer, Audited)>>>().is_none());
     assert!(declared_unavailable::<Auth<AllOf<(Bearer, Audited)>>>().is_none());
+    assert!(
+        declared_unavailable::<Scoped<AnyOf<(Audited, Bearer<String, Grant>)>, ReadReports>>()
+            .is_none()
+    );
+}
+
+// --- A scope set over a combined requirement ---------------------------------
+
+/// Either `Audited` or a bearer token, each holding `reports:read`.
+type EitherReader = Scoped<AnyOf<(Audited, Bearer<String, Grant>)>, ReadReports>;
+
+/// `Scoped` over an `AnyOf` declares one alternative per scheme, each carrying
+/// its scheme's defaults followed by the set's scopes they do not name, and
+/// registers every scheme.
+#[test]
+fn scoped_any_of_declares_the_set_on_every_alternative() {
+    let (operation, components) = described::<EitherReader>();
+
+    assert_eq!(
+        operation.security,
+        Some(vec![
+            SecurityRequirement::scoped(
+                component_name::<Audited>().as_str(),
+                ["audit", "reports:read"],
+            ),
+            SecurityRequirement::scoped(
+                component_name::<Bearer<String, Grant>>().as_str(),
+                ["reports:read"],
+            ),
+        ])
+    );
+    for key in [
+        component_name::<Audited>(),
+        component_name::<Bearer<String, Grant>>(),
+    ] {
+        assert!(
+            components.security_schemes.contains_key(key.as_str()),
+            "{key:?}"
+        );
+    }
+
+    // Two schemes under one key are one alternative, as under `Auth`.
+    let (once, _) =
+        described::<Scoped<AnyOf<(Bearer<String, Grant>, Bearer<u64, Grant>)>, ReadReports>>();
+    assert_eq!(
+        once.security,
+        Some(vec![SecurityRequirement::scoped(
+            component_name::<Bearer<String, Grant>>().as_str(),
+            ["reports:read"],
+        )])
+    );
+}
+
+/// A set naming one scope twice declares it once on every alternative, even
+/// where no default scope is there to be joined.
+#[test]
+fn a_scope_named_twice_is_declared_once() {
+    /// `reports:read`, twice.
+    struct Twice;
+
+    impl Scopes for Twice {
+        type Scope = Grant;
+        const REQUIRED: &'static [Grant] = &[Grant::ReadReports, Grant::ReadReports];
+    }
+
+    let (operation, _) = described::<Scoped<AnyOf<(Audited, Bearer<String, Grant>)>, Twice>>();
+    assert_eq!(
+        operation.security,
+        Some(vec![
+            SecurityRequirement::scoped(
+                component_name::<Audited>().as_str(),
+                ["audit", "reports:read"],
+            ),
+            SecurityRequirement::scoped(
+                component_name::<Bearer<String, Grant>>().as_str(),
+                ["reports:read"],
+            ),
+        ])
+    );
+}
+
+/// What refusing a scope set is called narrows the 403 a combined requirement
+/// declares exactly as it does a single scheme's.
+#[test]
+fn scoped_any_of_narrows_the_403_to_the_sets_refusal() {
+    /// Names its refusal.
+    struct Named;
+
+    impl Scopes for Named {
+        type Scope = Grant;
+        const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
+        const FORBIDDEN_TYPE: Option<&'static str> = Some("https://errors.example.com/no-scope");
+    }
+
+    let forbidden = |operation: kynos_openapi::Operation| {
+        serde_json::to_value(&operation.responses.responses["403"]).expect("a serializable 403")
+    };
+    let (single, _) = described::<Scoped<Bearer<String, Grant>, Named>>();
+    let (combined, _) = described::<Scoped<AnyOf<(Audited, Bearer<String, Grant>)>, Named>>();
+    let (unnamed, _) = described::<EitherReader>();
+
+    let combined = forbidden(combined);
+    assert_eq!(combined, forbidden(single));
+    assert!(
+        combined
+            .to_string()
+            .contains("https://errors.example.com/no-scope"),
+        "{combined}"
+    );
+    assert_ne!(combined, forbidden(unnamed));
+}
+
+/// The set is demanded of whichever alternative is tried: an alternative
+/// refused it is not satisfied, so the next is tried with the same set, and
+/// the first that holds it wins.
+#[tokio::test]
+async fn scoped_any_of_demands_the_set_of_each_alternative_tried() {
+    let refusing = Recording::refusing();
+    let refused = <EitherReader as Guard<_>>::guard(&presenting_a_token(), &refusing).await;
+    assert_eq!(
+        refused.err().map(|r| r.into_inner().status()),
+        Some(StatusCode::FORBIDDEN)
+    );
+    assert_eq!(
+        refusing.0.authorized(),
+        [vec!["audit", "reports:read"], vec!["reports:read"]]
+    );
+
+    // `Revoked` refuses the token outright, so `Bearer` is tried, and holds it.
+    let admitting = Recording::admitting();
+    let admitted =
+        <Scoped<AnyOf<(Revoked, Bearer<String, Grant>)>, ReadReports> as Guard<_>>::guard(
+            &presenting_a_token(),
+            &admitting,
+        )
+        .await;
+    assert!(
+        matches!(
+            admitted.map(Scoped::into_inner),
+            Ok(Either2::Second(caller)) if caller == "caller"
+        ),
+        "the bearer alternative was not admitted"
+    );
+    assert_eq!(admitting.0.authorized(), [vec!["reports:read"]]);
+}
+
+/// A request presenting nothing either alternative reads is `Scoped`'s 401,
+/// challenged as the combination's first scheme with a challenge, and a scope
+/// refusal sends and declares the first scheme's `insufficient_scope`.
+#[tokio::test]
+async fn scoped_any_of_challenges_as_the_combination() {
+    const INSUFFICIENT: &str = r#"Bearer error="insufficient_scope""#;
+    let anonymous = Request::new(Body::empty()).into_parts().0;
+
+    assert_eq!(
+        challenges_sent::<EitherReader>(&anonymous).await,
+        ["Bearer"]
+    );
+    assert_eq!(
+        forbidden_challenges::<_, EitherReader>(&presenting_a_token(), &Recording::refusing())
+            .await,
+        [INSUFFICIENT]
+    );
+
+    let header = declared_scope_challenge::<EitherReader>().expect("a declared challenge");
+    assert_eq!(
+        header["example"],
+        serde_json::json!(INSUFFICIENT),
+        "{header}"
+    );
 }
 
 /// The response guard `G` refuses `parts` with under `context`.
@@ -1152,6 +1323,8 @@ async fn an_unreachable_store_answers_503_rather_than_401() {
         refused::<_, MaybeAuth<Outage>>(&parts, &context).await,
         refused::<_, Scoped<Outage, ReadReports>>(&parts, &context).await,
         refused::<_, Auth<AllOf<(Bearer, Outage)>>>(&parts, &context).await,
+        // `Revoked` refuses after the outage, so the first refusal answers.
+        refused::<_, Scoped<AnyOf<(Outage, Revoked)>, ReadReports>>(&parts, &context).await,
     ] {
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(

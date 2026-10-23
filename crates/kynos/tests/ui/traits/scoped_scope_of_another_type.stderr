@@ -12,5 +12,5 @@ note: expected this to be `Unscoped`
 note: required by a bound in `Scoped`
   --> src/security/auth.rs
    |
-   | pub struct Scoped<S: SecurityScheme, R: Scopes<Scope = S::Scope>>(
-   |                                                ^^^^^^^^^^^^^^^^ required by this bound in `Scoped`
+   | pub struct Scoped<S: Scopable, R: Scopes<Scope = S::Scope>>(
+   |                                          ^^^^^^^^^^^^^^^^ required by this bound in `Scoped`
