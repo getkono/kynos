@@ -1,15 +1,17 @@
 //! Naming a media type in the type system.
 //!
 //! A marker lets [`Binary`](crate::extract::body::binary::Binary) state what
-//! its bytes are; a vendor type needs only a unit struct implementing
+//! its bytes are, and `JsonAs` name the JSON media type its document is
+//! carried under; a vendor type needs only a unit struct implementing
 //! [`MediaType`]. Markers type request and response bodies alike, including a
 //! ranged [`Served`](crate::response::range::served::Served) response.
 
 use kynos_openapi::model::body::mime_names;
 
 /// A media type usable as the `M` parameter of
-/// [`Binary`](crate::extract::body::binary::Binary) or
-/// [`QueryString`](crate::extract::params::querystring::QueryString).
+/// [`Binary`](crate::extract::body::binary::Binary),
+/// [`QueryString`](crate::extract::params::querystring::QueryString), or
+/// `JsonAs` (`kynos::extract::body::json_as`, behind `json`).
 ///
 /// Implemented by the marker types in this module, and by any unit struct you
 /// declare for a vendor type. A marker offered a request the body beside its
@@ -17,10 +19,30 @@ use kynos_openapi::model::body::mime_names;
 /// the build: one naming that body's type and subtype, whatever parameters it
 /// declares. So does a `QueryString` marker naming neither `application/json`
 /// nor an RFC 6839 `+json` type, since JSON is the only media type a query
-/// string is decoded as.
+/// string is decoded as, and a `JsonAs` marker naming neither, since its body
+/// is decoded as JSON.
 pub trait MediaType {
     /// The media type, as it appears in a `Content-Type` header.
     const MEDIA_TYPE: &'static str;
+}
+
+/// Whether a media type carries a JSON document, usable in a constant.
+///
+/// True for `application/json` and any RFC 6839 `+json` suffix type, compared
+/// on the trimmed type and subtype in any ASCII case, whatever parameters
+/// follow them.
+///
+/// Gated to its two readers, `JsonAs` and `QueryString`.
+#[cfg(any(feature = "json", feature = "openapi32"))]
+pub(crate) const fn is_json(media_type: &str) -> bool {
+    use crate::extract::body::alternative::{eq_ignore_ascii_case, split_essence};
+
+    const SUFFIX: &[u8] = b"+json";
+
+    let essence = split_essence(media_type.as_bytes()).0;
+    eq_ignore_ascii_case(essence, mime_names::APPLICATION_JSON.as_bytes())
+        || (essence.len() >= SUFFIX.len()
+            && eq_ignore_ascii_case(essence.split_at(essence.len() - SUFFIX.len()).1, SUFFIX))
 }
 
 /// `application/octet-stream`.
@@ -64,3 +86,6 @@ pub struct Json;
 impl MediaType for Json {
     const MEDIA_TYPE: &'static str = mime_names::APPLICATION_JSON;
 }
+
+#[cfg(all(test, any(feature = "json", feature = "openapi32")))]
+mod tests;

@@ -1,0 +1,33 @@
+error[E0080]: evaluation panicked: a `JsonAs` marker names neither `application/json` nor a `+json` type, and its body is decoded as JSON
+ --> $RUST/core/src/panic.rs
+  |
+  |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `kynos::extract::body::json_as::JsonAs::<Order, u32>::JSON` failed here
+  |
+ ::: src/extract/body/json_as.rs
+  |
+  |       pub(crate) const JSON: () = assert!(
+  |  _________________________________-
+  | |         is_json(M::MEDIA_TYPE),
+  | |         "a `JsonAs` marker names neither `application/json` nor a `+json` type, and its body \
+  | |          is decoded as JSON"
+  | |     );
+  | |_____- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/extract/body/json_as.rs
+  |
+  |         let () = Self::JSON;
+  |                  ^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn <JsonAs<Order, u32> as RequestContent>::request_body`
+ --> src/extract/body/json_as.rs
+  |
+  |         let body = <Self as RequestContent>::request_body(operation.registry());
+  |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/extract/body/json_as.rs
+  |
+  |         let () = Self::JSON;
+  |                  ^^^^^^^^^^

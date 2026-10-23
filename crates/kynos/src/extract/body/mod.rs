@@ -18,6 +18,8 @@ mod tests;
 pub mod form;
 #[cfg(feature = "json")]
 pub mod json;
+#[cfg(feature = "json")]
+pub mod json_as;
 #[cfg(all(feature = "json", feature = "openapi32"))]
 pub mod json_lines;
 #[cfg(feature = "multipart")]

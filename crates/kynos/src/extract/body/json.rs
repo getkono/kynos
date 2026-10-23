@@ -63,7 +63,7 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send> FromRequest<C> for
 /// Keyed at the root pointer: serde reports a line and column, not a location.
 // By value to fit `map_err`.
 #[allow(clippy::needless_pass_by_value)]
-fn rejection(error: serde_json::Error) -> BodyRejection {
+pub(super) fn rejection(error: serde_json::Error) -> BodyRejection {
     if is_schema_failure(&error) {
         BodyRejection::Schema {
             failures: BTreeMap::from([(String::new(), error.to_string())]),

@@ -166,6 +166,12 @@ description can express "whichever the router tried first". The implementations
 are enumerated per codec pair and each is `#[cfg]`-gated at item level, because
 a cross-codec pair needs both features and no single gate covers a group.
 
+A body's media type is its type's. `Json<T>` is `application/json`;
+[`JsonAs<M, T>`](../crates/kynos/src/extract/body/json_as.rs) is the same codec
+under the `application/json` or `+json` type its marker names, so two versions
+of a document are two distinct types in one `OneOf` or `Negotiated` rather than
+a branch on a header.
+
 The third row is the counter-case to the second, and the difference is the
 specification's rather than a preference.
 [`AcceptLanguage<L>`](../crates/kynos/src/response/language/mod.rs) *does*

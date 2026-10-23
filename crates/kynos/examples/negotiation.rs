@@ -29,6 +29,11 @@
 //!   would mean rendering all three and discarding two — work no request asked
 //!   for, and invisible until one of the alternatives is expensive.
 //!
+//! * **A version is a media type.** `JsonAs<M, T>` is `Json<T>` under the
+//!   `+json` type `M` names. `/reports/{month}/versioned` offers two versions
+//!   of the report, each with its own schema, and the client picks one in
+//!   `Accept`.
+//!
 //! Tuple order is meaningful: it breaks the tie when a client's `Accept` ranks
 //! two alternatives equally. Put the representation you would rather serve
 //! first.
@@ -37,8 +42,8 @@ use std::net::Ipv4Addr;
 
 use kynos::{
     error::rejection::NegotiationRejection,
-    extract::body::{binary::Binary, text::Text},
-    http::media::Pdf,
+    extract::body::{binary::Binary, json_as::JsonAs, text::Text},
+    http::media::{MediaType, Pdf},
     prelude::*,
     response::negotiate::{
         Accept, Negotiated,
@@ -111,6 +116,62 @@ async fn get_report(
     )
 }
 
+/// Version 1 of the report document: `Report` as it was first published.
+struct ReportV1;
+
+impl MediaType for ReportV1 {
+    const MEDIA_TYPE: &'static str = "application/vnd.example.report.v1+json";
+}
+
+/// Version 2, which states its currency.
+struct ReportV2;
+
+impl MediaType for ReportV2 {
+    const MEDIA_TYPE: &'static str = "application/vnd.example.report.v2+json";
+}
+
+/// A report as version 2 of the document carries it.
+#[derive(Schema, Serialize, Deserialize)]
+struct PricedReport {
+    month: String,
+    total_cents: u64,
+    currency: String,
+}
+
+/// Both versions of the report, newest first so that it wins a tie.
+///
+/// A client pins a version with
+/// `Accept: application/vnd.example.report.v1+json`, and one sending `*/*`
+/// gets the newest. The description lists each version under its own
+/// `content` key, with its own schema.
+type VersionedReport = (JsonAs<ReportV2, PricedReport>, JsonAs<ReportV1, Report>);
+
+/// Serves either version of a report.
+#[kynos::get("/reports/{month}/versioned")]
+async fn get_versioned_report(
+    Path(path): Path<ReportPath>,
+    accept: Accept<VersionedReport>,
+) -> Result<Negotiated<VersionedReport>, NegotiationRejection> {
+    let report = Report {
+        month: path.month,
+        total_cents: 1_234_500,
+    };
+
+    accept.respond_with(
+        &report,
+        (
+            |report: &Report| {
+                JsonAs::new(PricedReport {
+                    month: report.month.clone(),
+                    total_cents: report.total_cents,
+                    currency: "EUR".to_owned(),
+                })
+            },
+            |report: &Report| JsonAs::new(report.clone()),
+        ),
+    )
+}
+
 /// A program generic over what it offers.
 ///
 /// This is why the traits are public rather than merely sealed. The bound is
@@ -132,7 +193,7 @@ async fn main() -> kynos::Result<()> {
     println!("offering {:?}", media_types_offered::<ReportFormats>());
     println!("the first is {}", media_type_of::<Json<Report>>());
 
-    let router = Router::<()>::new().mount(kynos::routes![get_report]);
+    let router = Router::<()>::new().mount(kynos::routes![get_report, get_versioned_report]);
 
     let document = router.openapi()?;
     println!("{}", document.to_json()?);

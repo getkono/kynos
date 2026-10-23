@@ -380,14 +380,17 @@ mod harness {
 #[cfg(feature = "json")]
 mod json {
     use kynos::{
-        extract::body::binary::Binary,
-        http::{Method, Request, StatusCode, media::OctetStream},
+        extract::body::{binary::Binary, json_as::JsonAs},
+        http::{
+            Method, Request, StatusCode,
+            media::{MediaType, OctetStream},
+        },
         prelude::*,
         router::service::Service,
     };
 
     use crate::{
-        counting::request,
+        counting::{self, request},
         harness::{self, Table},
     };
 
@@ -442,6 +445,27 @@ mod json {
         Json(Reading { id: 7, value: 11 })
     }
 
+    /// A vendor type for the same document, so that the two codecs are
+    /// compared on one payload.
+    struct Vendor;
+
+    impl MediaType for Vendor {
+        const MEDIA_TYPE: &'static str = "application/vnd.example.reading+json";
+    }
+
+    /// The same decode under a declared `+json` type.
+    #[kynos::post("/json-as")]
+    async fn decode_as(reading: JsonAs<Vendor, Reading>) -> NoContent {
+        let _ = reading.into_inner();
+        NoContent
+    }
+
+    /// The same encode under a declared `+json` type.
+    #[kynos::get("/json-as/out")]
+    async fn encode_as() -> JsonAs<Vendor, Reading> {
+        JsonAs::new(Reading { id: 7, value: 11 })
+    }
+
     fn service() -> Service<()> {
         Router::<()>::new()
             .mount(kynos::routes![
@@ -449,7 +473,9 @@ mod json {
                 floor_bytes,
                 floor_out,
                 decode,
-                encode
+                encode,
+                decode_as,
+                encode_as
             ])
             .build(())
             .expect("a describable router")
@@ -480,8 +506,44 @@ mod json {
         request(Method::GET, "/json/out", None, b"")
     }
 
-    /// Every operation this service holds, and what one request to it costs
-    /// today.
+    fn decode_as_request() -> Request {
+        request(Method::POST, "/json-as", Some(Vendor::MEDIA_TYPE), BODY)
+    }
+
+    fn encode_as_request() -> Request {
+        request(Method::GET, "/json-as/out", None, b"")
+    }
+
+    /// A declared media type costs what `application/json` does, both ways.
+    ///
+    /// A relation rather than a row of its own: `JsonAs` is `Json`'s decoder
+    /// and writer under another `Content-Type`, so any count it adds over
+    /// `Json` on the same document is a cost the media type introduced, and
+    /// `RECORDED` already holds `Json`'s.
+    #[test]
+    fn a_declared_media_type_costs_what_json_does() {
+        let service = service();
+        let count = |build: fn() -> Request, status| {
+            let (allocations, response) = counting::counted(&service, build(), status);
+            drop(response);
+            allocations
+        };
+
+        assert_eq!(
+            count(decode_as_request, StatusCode::NO_CONTENT),
+            count(decode_request, StatusCode::NO_CONTENT),
+            "decoding under a declared `+json` type costs other than `Json` does"
+        );
+        assert_eq!(
+            count(encode_as_request, StatusCode::OK),
+            count(encode_request, StatusCode::OK),
+            "writing under a declared `+json` type costs other than `Json` does"
+        );
+    }
+
+    /// Every operation this service holds but the two `JsonAs` ones, and what
+    /// one request to it costs today. Those two are held to `Json`'s rows by
+    /// `a_declared_media_type_costs_what_json_does` instead.
     ///
     /// Read rather than chosen: each ceiling was set to zero, the target run,
     /// and the number the failure reported transcribed into the row. This table
@@ -542,10 +604,33 @@ mod json {
         harness::writing_costs_more_than_the_status(&service(), &RECORDED);
     }
 
-    /// The leak check, over every operation this service holds.
+    /// The leak check, over every operation this service holds: `RECORDED`'s
+    /// rows, then the `JsonAs` pair in place of `Json`'s.
+    ///
+    /// The second table repeats the three floors, since `harness::replay` reads
+    /// a whole table; their ceilings are `Json`'s, which the relation above
+    /// holds them to, and the replay reads none of them.
     #[test]
     fn a_replayed_request_costs_what_the_first_one_did() {
-        harness::replay(&service(), &RECORDED, 1_000);
+        let service = service();
+        let declared = Table {
+            decoding: (
+                "POST /json-as",
+                decode_as_request,
+                StatusCode::NO_CONTENT,
+                RECORDED.decoding.3,
+            ),
+            encoding: (
+                "GET /json-as/out",
+                encode_as_request,
+                StatusCode::OK,
+                RECORDED.encoding.3,
+            ),
+            ..RECORDED
+        };
+
+        harness::replay(&service, &RECORDED, 1_000);
+        harness::replay(&service, &declared, 1_000);
     }
 }
 

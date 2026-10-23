@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::{admits_null, is_json};
+use super::admits_null;
 
 /// Whether `schema`, written as JSON, admits `null`.
 fn admits(schema: serde_json::Value) -> bool {
@@ -44,21 +44,4 @@ fn null_is_admitted_only_where_the_schema_visibly_says_so() {
     })));
     // Unrecognised rather than refused: an unconstrained object schema.
     assert!(!admits(json!({})));
-}
-
-/// A structured syntax suffix is JSON, which is what lets a vendor media
-/// type be decoded as the JSON it is.
-#[test]
-fn a_json_suffixed_media_type_is_read_as_json() {
-    assert!(is_json("application/json"));
-    assert!(is_json("application/json; charset=utf-8"));
-    assert!(is_json("APPLICATION/JSON"));
-    assert!(is_json("application/vnd.acme.filter+json"));
-    // The suffix in any case, and the essence trimmed of whitespace.
-    assert!(is_json(" application/vnd.acme.filter+JSON ; version=2"));
-
-    assert!(!is_json("application/xml"));
-    assert!(!is_json("text/plain"));
-    // A suffix is a suffix of the base type, not of the parameters.
-    assert!(!is_json("application/xml; note=+json"));
 }

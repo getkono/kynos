@@ -21,7 +21,7 @@ mod tests;
 
 /// Serializes `value` as JSON into a body of exactly its length.
 ///
-/// The body of a [`Json`], a `#[derive(Reply)]` variant and a [`Problem`]
+/// The body of a [`Json`] or `JsonAs`, a `#[derive(Reply)]` variant and a [`Problem`]
 /// goes through here; streamed JSON records, server-sent events and the
 /// OpenAPI description serialize on their own. Ungated, since a problem
 /// document is written without the `json` feature.

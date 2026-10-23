@@ -67,6 +67,20 @@ impl<T> Representation for crate::extract::body::json::Json<T> where
 {
 }
 
+#[cfg(feature = "json")]
+impl<M: MediaType, T> sealed::SealedRepresentation for crate::extract::body::json_as::JsonAs<M, T> {
+    const MEDIA_TYPE: &'static str = {
+        let () = Self::JSON;
+        M::MEDIA_TYPE
+    };
+}
+
+#[cfg(feature = "json")]
+impl<M: MediaType, T> Representation for crate::extract::body::json_as::JsonAs<M, T> where
+    T: serde::Serialize + crate::schema::Schema
+{
+}
+
 impl sealed::SealedRepresentation for Text {
     const MEDIA_TYPE: &'static str = mime_names::TEXT_PLAIN;
 }

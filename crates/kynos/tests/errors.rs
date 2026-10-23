@@ -219,6 +219,12 @@ witnesses! {
         body_rejects_with(BodyRejection, (), Binary<OctetStream>);
         #[cfg(feature = "json")]
         body_rejects_with(BodyRejection, (), kynos::extract::body::json::Json<User>);
+        #[cfg(feature = "json")]
+        body_rejects_with(
+            BodyRejection,
+            (),
+            kynos::extract::body::json_as::JsonAs<kynos::http::media::Json, User>
+        );
         #[cfg(feature = "form")]
         body_rejects_with(BodyRejection, (), kynos::extract::body::form::Form<Login>);
         #[cfg(feature = "multipart")]

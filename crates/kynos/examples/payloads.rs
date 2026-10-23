@@ -24,7 +24,9 @@
 //!   `contentMediaType`. Binary itself is fully in scope.
 //! * **A media type is a marker type.** `MediaType` has no `dyn` form and no
 //!   registry, so a vendor type is a unit struct and one associated constant —
-//!   see `Manifest` below.
+//!   see `Manifest` below. A marker naming a `+json` type also carries a
+//!   *decoded* document through `JsonAs<M, T>`, which is how
+//!   `/products/imports` reads two versions of one document.
 //! * **Each operation caps its own body.** A note and a batch of images are
 //!   not the same size, so `BodySize` is mounted per operation, sized from
 //!   what that body can legitimately hold. There is no router-wide default
@@ -40,7 +42,9 @@
 use std::net::Ipv4Addr;
 
 use kynos::{
-    extract::body::{OneOf, binary::Binary, form::Form, multipart::MultipartForm, text::Text},
+    extract::body::{
+        OneOf, binary::Binary, form::Form, json_as::JsonAs, multipart::MultipartForm, text::Text,
+    },
     http::media::{MediaType, Png},
     middleware::limits::body_size::BodySize,
     prelude::*,
@@ -187,6 +191,55 @@ async fn upload_manifest(body: OneOf<Binary<Manifest>, Text>) -> NoContent {
     NoContent
 }
 
+/// The first version of the product document, as its own media type.
+///
+/// The version sits in the subtype rather than in a parameter. A request does
+/// not have to repeat a parameter its marker declares, so `; version=1` and
+/// `; version=2` would both match a bare request, and `OneOf` refuses that
+/// pair at compile time.
+struct ProductV1;
+
+impl MediaType for ProductV1 {
+    const MEDIA_TYPE: &'static str = "application/vnd.example.product.v1+json";
+}
+
+/// The second version, which added a price.
+struct ProductV2;
+
+impl MediaType for ProductV2 {
+    const MEDIA_TYPE: &'static str = "application/vnd.example.product.v2+json";
+}
+
+/// A product as version 2 of the document carries it.
+#[derive(Schema, Serialize, Deserialize)]
+struct PricedProduct {
+    id: u64,
+    name: String,
+    price_cents: u64,
+}
+
+/// Accepts either version of a product document, told apart by media type.
+///
+/// `JsonAs<M, T>` is `Json<T>` under the media type `M` names, which must be
+/// `application/json` or a `+json` type. It has the same decoder and the same
+/// 400 and 422, and it puts `T`'s schema under the `content` key `M` names.
+/// Each version is its own arm, so neither type grows optional fields to fit
+/// the other. A request sent as plain `application/json` gets a 415.
+#[kynos::post("/products/imports")]
+async fn import_product(
+    body: OneOf<JsonAs<ProductV1, ProductForm>, JsonAs<ProductV2, PricedProduct>>,
+) -> NoContent {
+    match body {
+        OneOf::Left(v1) => println!("v1: {}", v1.into_inner().name),
+        OneOf::Right(v2) => {
+            let product = v2.into_inner();
+            println!("v2: {} at {} cents", product.name, product.price_cents);
+        }
+    }
+
+    NoContent
+}
+
 /// What `/products/{id}/image` captures.
 #[allow(dead_code)]
 #[derive(Schema, PathParams)]
@@ -225,6 +278,10 @@ async fn main() -> kynos::Result<()> {
         kynos::routes![upload_manifest]
             .0
             .intercept(BodySize::new(64 * KIB)),
+        // No thumbnail in either version, so a product document is small.
+        kynos::routes![import_product]
+            .0
+            .intercept(BodySize::new(16 * KIB)),
     ));
 
     let document = router.openapi()?;

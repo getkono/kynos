@@ -1513,3 +1513,193 @@ mod a_body_is_read_whole_under_its_limit {
         );
     }
 }
+
+/// The constant a `OneOf` holding a `JsonAs` evaluates refuses a marker
+/// sharing requests with the body beside it, by the rule `Binary`'s is
+/// held to above.
+#[cfg(feature = "json")]
+#[test]
+#[should_panic(expected = "a `JsonAs` marker is offered requests the body beside it")]
+fn a_shared_json_marker_is_refused_by_the_constant_one_of_evaluates() {
+    crate::extract::body::alternative::distinct_json(
+        "application/vnd.acme+json; version=2",
+        "Application/VND.acme+json",
+    );
+}
+
+/// The control: a version in the subtype is another media type.
+#[cfg(feature = "json")]
+#[test]
+fn a_json_marker_of_another_subtype_is_admitted() {
+    crate::extract::body::alternative::distinct_json(
+        "application/vnd.acme.v2+json",
+        "application/vnd.acme.v1+json",
+    );
+}
+
+/// A JSON document under a declared media type reads and refuses as `Json`
+/// does, keyed by its own media type rather than `application/json`.
+#[cfg(feature = "json")]
+mod a_json_body_under_a_declared_media_type {
+    use kynos_openapi::RefOr;
+
+    use crate::{
+        error::rejection::BodyRejection,
+        extract::{
+            body::{json::Json, json_as::JsonAs},
+            describe::{Describe, RequestContent},
+        },
+        http::{HeaderValue, Request, body::Body, header, media::MediaType},
+        router::operation::OperationCx,
+        schema::{
+            Schema,
+            constraints::{Pointer, Violations},
+            registry::Registry,
+        },
+    };
+
+    /// A vendor type carrying a parameter, which a request need not repeat.
+    #[derive(Debug)]
+    struct Order;
+
+    impl MediaType for Order {
+        const MEDIA_TYPE: &'static str = "application/vnd.acme.order+json; version=2";
+    }
+
+    /// A document whose schema declares a bound `serde` does not enforce.
+    #[derive(Debug, serde::Deserialize)]
+    struct Quantity {
+        count: u32,
+    }
+
+    impl Schema for Quantity {
+        fn schema(registry: &mut Registry) -> kynos_openapi::Schema {
+            registry.resolve::<u32>()
+        }
+
+        fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
+            if self.count == 0 {
+                violations.report(at.member("count"), "must be at least 1");
+            }
+        }
+    }
+
+    fn request(content_type: &'static str, body: &'static [u8]) -> Request {
+        let mut request = Request::new(Body::from_bytes(bytes::Bytes::from_static(body)));
+        request
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+        request
+    }
+
+    #[tokio::test]
+    async fn reads_its_own_media_type_in_any_case_with_or_without_its_parameter() {
+        for content_type in [
+            "application/vnd.acme.order+json",
+            "Application/VND.Acme.Order+JSON; version=2",
+            "application/vnd.acme.order+json; charset=utf-8",
+        ] {
+            let order = super::extract::<JsonAs<Order, u32>>(request(content_type, b"7"))
+                .await
+                .unwrap_or_else(|rejection| panic!("{content_type}: {rejection:?}"));
+            assert_eq!(order.into_inner(), 7);
+        }
+    }
+
+    #[tokio::test]
+    async fn application_json_is_another_media_type() {
+        let rejection = super::extract::<JsonAs<Order, u32>>(request("application/json", b"7"))
+            .await
+            .expect_err("`application/json` is not the declared type");
+        assert!(
+            matches!(rejection, BodyRejection::UnsupportedMediaType { .. }),
+            "{rejection:?}"
+        );
+
+        // And the reverse: `Json` reads no `+json` type.
+        let rejection =
+            super::extract::<Json<u32>>(request("application/vnd.acme.order+json", b"7"))
+                .await
+                .expect_err("a `+json` type is not `application/json`");
+        assert!(
+            matches!(rejection, BodyRejection::UnsupportedMediaType { .. }),
+            "{rejection:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_contradicted_parameter_is_another_media_type() {
+        let rejection = super::extract::<JsonAs<Order, u32>>(request(
+            "application/vnd.acme.order+json; version=1",
+            b"7",
+        ))
+        .await
+        .expect_err("version 1 is not the declared version 2");
+        assert!(
+            matches!(rejection, BodyRejection::UnsupportedMediaType { .. }),
+            "{rejection:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_json_is_a_syntax_rejection() {
+        let rejection =
+            super::extract::<JsonAs<Order, u32>>(request("application/vnd.acme.order+json", b"7,"))
+                .await
+                .expect_err("not JSON");
+        assert!(
+            matches!(rejection, BodyRejection::Syntax { .. }),
+            "{rejection:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn json_of_the_wrong_shape_is_a_schema_rejection_at_the_root() {
+        let rejection = super::extract::<JsonAs<Order, u32>>(request(
+            "application/vnd.acme.order+json",
+            br#""seven""#,
+        ))
+        .await
+        .expect_err("a string is not a `u32`");
+        let BodyRejection::Schema { failures } = rejection else {
+            panic!("{rejection:?}");
+        };
+        assert_eq!(failures.keys().collect::<Vec<_>>(), [""]);
+    }
+
+    #[tokio::test]
+    async fn a_broken_bound_is_a_schema_rejection_at_its_pointer() {
+        let rejection = super::extract::<JsonAs<Order, Quantity>>(request(
+            "application/vnd.acme.order+json",
+            br#"{"count":0}"#,
+        ))
+        .await
+        .expect_err("a count of zero breaks the bound");
+        let BodyRejection::Schema { failures } = rejection else {
+            panic!("{rejection:?}");
+        };
+        assert_eq!(failures.keys().collect::<Vec<_>>(), ["/count"]);
+    }
+
+    #[test]
+    fn describes_its_own_media_type_over_the_schema_of_its_document() {
+        assert_eq!(JsonAs::<Order, u32>::media_types(), [Order::MEDIA_TYPE]);
+
+        let mut registry = Registry::default();
+        let mut operation = OperationCx::new(&mut registry);
+        JsonAs::<Order, u32>::describe(&mut operation);
+        let Some(RefOr::Item(body)) = operation.finish().request_body else {
+            panic!("describing the body declares no request body");
+        };
+
+        assert_eq!(
+            body.content.keys().map(String::as_str).collect::<Vec<_>>(),
+            [Order::MEDIA_TYPE]
+        );
+        assert_eq!(
+            body.content[Order::MEDIA_TYPE].schema,
+            Some(Registry::default().resolve::<u32>())
+        );
+        assert_eq!(body.required, Some(true));
+    }
+}
