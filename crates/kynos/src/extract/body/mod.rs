@@ -1,14 +1,15 @@
 //! Inputs that consume the request body, each describing itself as an OpenAPI
 //! Request Body Object.
 //!
-//! One module per codec: [`text`] and [`binary`] in every build, the rest each
-//! gated on its feature. [`OneOf`] and `Option<T>`
+//! One module per codec: [`text`], [`text_as`] and [`binary`] in every build,
+//! the rest each gated on its feature. [`OneOf`] and `Option<T>`
 //! combine them; [`limit`] bounds how much of a body a buffering codec holds.
 
 pub mod alternative;
 pub mod binary;
 pub mod limit;
 pub mod text;
+pub mod text_as;
 
 mod optional;
 #[cfg(test)]

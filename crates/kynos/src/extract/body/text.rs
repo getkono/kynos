@@ -1,5 +1,6 @@
 //! The `text/plain` body codec.
 
+use bytes::Bytes;
 use kynos_openapi::model::body::mime_names;
 
 use crate::{
@@ -14,6 +15,9 @@ use crate::{
 };
 
 /// A `text/plain` request or response body.
+///
+/// Another `text/*` type is [`TextAs`](super::text_as::TextAs), the same
+/// codec under the media type its marker names.
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Text(pub String);
 
@@ -29,14 +33,16 @@ impl<C: Sync> FromRequest<C> for Text {
         _context: &C,
     ) -> Result<Self, Self::Rejection> {
         let bytes = super::read_body(parts, body, MEDIA_TYPE).await?;
-
-        // Only UTF-8 is accepted, so other bytes are a 400.
-        String::from_utf8(bytes.into())
-            .map(Self)
-            .map_err(|error| BodyRejection::Syntax {
-                detail: error.to_string(),
-            })
+        decode(bytes).map(Self)
     }
+}
+
+/// A text body's octets as the string they encode: only UTF-8 is accepted, so
+/// other bytes are a 400.
+pub(super) fn decode(bytes: Bytes) -> Result<String, BodyRejection> {
+    String::from_utf8(bytes.into()).map_err(|error| BodyRejection::Syntax {
+        detail: error.to_string(),
+    })
 }
 
 impl Describe for Text {

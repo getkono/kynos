@@ -32,8 +32,8 @@ pub trait Describe {
     message = "`{Self}` is not a request body",
     label = "not a request body",
     note = "a body is one of `Json<T>`, `JsonAs<M, T>`, `Form<T>`, `MultipartForm<T>`, \
-            `Protobuf<T>`, `JsonLines<Records<T>>`, `JsonSeq<Records<T>>`, `Text` or `Binary<M>`, \
-            optionally wrapped in `Option` or `OneOf`",
+            `Protobuf<T>`, `JsonLines<Records<T>>`, `JsonSeq<Records<T>>`, `Text`, `TextAs<M>` or \
+            `Binary<M>`, optionally wrapped in `Option` or `OneOf`",
     note = "only the last handler argument may consume the body"
 )]
 pub trait RequestContent: Describe {
