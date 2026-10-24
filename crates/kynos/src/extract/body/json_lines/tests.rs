@@ -536,6 +536,37 @@ async fn a_record_that_does_not_fit_the_type_does_not_end_the_stream() {
     assert!(records.next().await.is_none());
 }
 
+/// A record is read only from the JSON type its schema declares, as a `Json`
+/// body is, though `serde` would read `Reading` from `[1]`; either framing.
+#[tokio::test]
+async fn an_array_for_a_struct_record_is_refused_at_its_index() {
+    for mut records in [
+        ndjson(one_frame(b"[1]\n{\"at\":2}\n")).await,
+        json_seq(one_frame(b"\x1e[1]\n\x1e{\"at\":2}\n")).await,
+    ] {
+        let rejection = records
+            .next()
+            .await
+            .expect("the array record is reported")
+            .expect_err("an array is not an object");
+        let BodyRejection::Schema { failures } = &rejection else {
+            panic!("an array record is a schema rejection, not {rejection:?}");
+        };
+        assert_eq!(failures.keys().collect::<Vec<_>>(), vec!["/0"]);
+        assert!(
+            failures["/0"].contains("expected a JSON object"),
+            "{failures:?}"
+        );
+
+        assert_eq!(
+            expect_record(&mut records).await,
+            Reading { at: 2 },
+            "the boundaries held, so reading continues"
+        );
+        assert!(records.next().await.is_none());
+    }
+}
+
 /// What arrived is not the body the client meant to send, which is the same
 /// 400 a whole-body read answers with.
 #[tokio::test]
