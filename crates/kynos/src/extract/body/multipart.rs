@@ -191,7 +191,9 @@ impl FromPart for Bytes {
 /// `FromStr`'s error as the detail.
 ///
 /// Any `T` but `String` parses the octets in place. `String` takes them over
-/// instead of copying them through `FromStr`: see [`owned_text`].
+/// instead of copying them through `FromStr`: octets nothing else holds become
+/// the string in place, shared ones are copied, and the string is shrunk to its
+/// length, so a short field never keeps the rest of the request body alive.
 ///
 /// `'static` because that is what tells `String` apart; a part is owned, so no
 /// value built from one borrows anyway.
@@ -217,12 +219,8 @@ fn not_utf8(name: &str) -> BodyRejection {
     malformed_part(name, "the part is not valid UTF-8")
 }
 
-/// A part's octets as an owned string. Octets nothing else holds become the
-/// string in place; shared ones are copied.
-///
-/// Taking over the last reference to a buffer takes over all of it, so the
-/// string is shrunk to its length: a short field never keeps the rest of the
-/// request body alive.
+/// A part's octets as an owned string, shrunk because taking over the last
+/// reference to a buffer takes over all of it.
 fn owned_text(part: Part) -> Result<String, BodyRejection> {
     let mut text = String::from_utf8(Vec::from(part.bytes)).map_err(|_| not_utf8(&part.name))?;
     text.shrink_to_fit();
