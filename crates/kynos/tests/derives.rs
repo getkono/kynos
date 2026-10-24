@@ -4345,8 +4345,8 @@ mod held_response {
     }
 
     /// Each held variant is described by its type's entry under the variant's
-    /// status, headers included; a failure it passes through is described
-    /// where no variant answers that status, and never over one that does.
+    /// status, headers included, and a failure it passes through under that
+    /// failure's own status.
     #[test]
     fn a_held_response_is_described_by_its_type_under_the_variant_status() {
         let responses = emitted_responses::<PutReply>();
@@ -4371,8 +4371,6 @@ mod held_response {
             "{queued}"
         );
 
-        assert_eq!(responses["404"]["description"], "Not Found");
-        assert!(responses["404"].get("content").is_none(), "{responses}");
         assert!(
             responses["409"]["content"]["application/problem+json"].is_object(),
             "{responses}"
@@ -4386,6 +4384,44 @@ mod held_response {
             .collect();
         statuses.sort_unstable();
         assert_eq!(statuses, ["200", "201", "202", "404", "409"]);
+    }
+
+    /// `StoreError`'s 404, which the held `Created` sends as problem+json, is
+    /// a response the 404 entry describes beside `Missing`'s empty one: the
+    /// entry keeps `Missing`'s description and gains the problem's.
+    #[tokio::test]
+    async fn a_held_failure_at_a_status_a_variant_declares_joins_its_entry() {
+        let sent = answered(
+            PutReply::Created(Created::at(
+                Location::from_static("/users/7"),
+                Err(StoreError::NotFound {
+                    id: 7,
+                    trace: String::new(),
+                }),
+            ))
+            .into_response(),
+        )
+        .await;
+        assert_eq!(sent.status, 404);
+        assert_eq!(
+            sent.headers[header::CONTENT_TYPE],
+            "application/problem+json"
+        );
+
+        let responses = emitted_responses::<PutReply>();
+        let store = emitted_responses::<StoreError>();
+        assert_eq!(
+            declared_problem(&responses, "404"),
+            declared_problem(&store, "404"),
+            "{responses}"
+        );
+        let description = responses["404"]["description"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a described 404: {responses}"));
+        let held = store["404"]["description"]
+            .as_str()
+            .expect("a described problem");
+        assert_eq!(description, format!("Not Found; {held}"));
     }
 
     /// Two held types whose failures both pass a 409 through, which no
