@@ -1681,6 +1681,34 @@ mod a_json_body_under_a_declared_media_type {
         assert_eq!(failures.keys().collect::<Vec<_>>(), ["/count"]);
     }
 
+    /// `serde` reads a struct from an array of its members, which `JsonAs`
+    /// refuses as `Json` does; a sequence type still reads one.
+    #[tokio::test]
+    async fn an_array_for_a_struct_is_a_schema_rejection_at_the_root() {
+        let rejection = super::extract::<JsonAs<Order, Quantity>>(request(
+            "application/vnd.acme.order+json",
+            b"[5]",
+        ))
+        .await
+        .expect_err("an array is not an object");
+        let BodyRejection::Schema { failures } = rejection else {
+            panic!("{rejection:?}");
+        };
+        assert_eq!(failures.keys().collect::<Vec<_>>(), [""]);
+        assert!(
+            failures[""].contains("expected a JSON object"),
+            "{failures:?}"
+        );
+
+        let counts = super::extract::<JsonAs<Order, Vec<u32>>>(request(
+            "application/vnd.acme.order+json",
+            b"[5]",
+        ))
+        .await
+        .expect("an array is a `Vec`");
+        assert_eq!(counts.into_inner(), [5]);
+    }
+
     #[test]
     fn describes_its_own_media_type_over_the_schema_of_its_document() {
         assert_eq!(JsonAs::<Order, u32>::media_types(), [Order::MEDIA_TYPE]);
