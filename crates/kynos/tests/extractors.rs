@@ -763,6 +763,23 @@ mod a_json_struct_body {
         }
     }
 
+    /// Bytes that are not one JSON document stay a 400, though they open an
+    /// array: the refusal is only for well-formed JSON.
+    #[tokio::test]
+    async fn a_malformed_array_is_still_malformed() {
+        for body in [&b"["[..], b"[1,", b"[}", b"[] x"] {
+            let rejection = read::<Json<Patch>>(Some("application/json"), body)
+                .await
+                .err()
+                .unwrap_or_else(|| panic!("{:?} is not JSON", String::from_utf8_lossy(body)));
+            assert!(
+                matches!(rejection, BodyRejection::Syntax { .. }),
+                "{:?}: expected a 400, got {rejection:?}",
+                String::from_utf8_lossy(body)
+            );
+        }
+    }
+
     /// A newtype is described, and read, as its member.
     #[derive(Debug, PartialEq, Schema, Deserialize)]
     struct Wrapped(Patch);
