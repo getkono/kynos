@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/getkono/kynos/compare/kynos-macros-v0.4.0...kynos-macros-v0.5.0) - 2026-10-24
+
+### Added
+
+- *(security)* let a guard whose scheme never forbids declare 401 alone ([#1010](https://github.com/getkono/kynos/pull/1010))
+- *(security)* let an authenticator answer 503 when its store is unavailable ([#995](https://github.com/getkono/kynos/pull/995))
+- *(security)* [**breaking**] challenge an api_key and mutual-TLS 401 ([#932](https://github.com/getkono/kynos/pull/932))
+
+### Documentation
+
+- correct the prose a third audit pass found drifting ([#962](https://github.com/getkono/kynos/pull/962))
+- correct the rustdoc a second audit pass found drifting from its code ([#949](https://github.com/getkono/kynos/pull/949))
+- align kynos-openapi and kynos-macros rustdoc with the code ([#909](https://github.com/getkono/kynos/pull/909))
+
+### Fixed
+
+- *(macros)* [**breaking**] declare a problem's extension members in its response ([#1006](https://github.com/getkono/kynos/pull/1006))
+- *(macros)* describe an Option<T> parameter by T's schema ([#996](https://github.com/getkono/kynos/pull/996))
+- *(security)* [**breaking**] refuse a derived http kind without a token scheme ([#947](https://github.com/getkono/kynos/pull/947))
+- *(security)* [**breaking**] challenge a derived http-scheme 401 with its scheme token ([#942](https://github.com/getkono/kynos/pull/942))
+- build on the declared MSRV without let-chains ([#937](https://github.com/getkono/kynos/pull/937))
+- *(security)* [**breaking**] challenge a bearer scope refusal with insufficient_scope ([#926](https://github.com/getkono/kynos/pull/926))
+- *(router)* [**breaking**] refuse two tag types describing one name differently ([#896](https://github.com/getkono/kynos/pull/896))
+- *(macros)* tell option-less security kinds given a value to write the bare kind ([#871](https://github.com/getkono/kynos/pull/871))
+- *(macros)* name an identifier enum's variants by the side serde reads ([#870](https://github.com/getkono/kynos/pull/870))
+- *(macros)* judge a split rename_all_fields by the sides each variant resolves ([#869](https://github.com/getkono/kynos/pull/869))
+- *(macros)* [**breaking**] refuse unknown, qualified and repeated keys in security, problem and schema ([#866](https://github.com/getkono/kynos/pull/866))
+- *(macros)* describe an identifier enum's skipped variants, which serde still reads ([#862](https://github.com/getkono/kynos/pull/862))
+- *(extract)* [**breaking**] refuse a response header group that cannot encode ([#857](https://github.com/getkono/kynos/pull/857))
+- *(macros)* [**breaking**] refuse device_authorization_url outside the device flow ([#856](https://github.com/getkono/kynos/pull/856))
+- *(macros)* [**breaking**] keep a cookie derive from moving the emitted version when openapi32 is enabled ([#854](https://github.com/getkono/kynos/pull/854))
+- *(macros)* merge a variant's one-sided rename_all with rename_all_fields before refusing it ([#850](https://github.com/getkono/kynos/pull/850))
+- *(macros)* [**breaking**] refuse a field_identifier enum's catch-all in the Schema derive ([#848](https://github.com/getkono/kynos/pull/848))
+- *(security)* [**breaking**] send a realm in the default Basic challenge ([#844](https://github.com/getkono/kynos/pull/844))
+- *(macros)* [**breaking**] refuse unknown and repeated keys in every helper-attribute grammar ([#837](https://github.com/getkono/kynos/pull/837))
+- *(macros)* [**breaking**] refuse a bodied Reply variant at 204, 205 or 304 ([#835](https://github.com/getkono/kynos/pull/835))
+- *(macros)* [**breaking**] make MultipartForm's decoder agree with the schema it publishes ([#826](https://github.com/getkono/kynos/pull/826))
+- *(macros)* keep a doc comment's Markdown indentation in emitted descriptions ([#811](https://github.com/getkono/kynos/pull/811))
+- *(macros)* refuse a tagged enum with no described variant ([#810](https://github.com/getkono/kynos/pull/810))
+- *(macros)* report an overflowing assets! warn_over as malformed ([#807](https://github.com/getkono/kynos/pull/807))
+- *(macros)* describe an undocumented Reply status by its class, not as a success ([#806](https://github.com/getkono/kynos/pull/806))
+- *(macros)* [**breaking**] refuse a #[kynos::operation] method the router cannot mount ([#809](https://github.com/getkono/kynos/pull/809))
+- *(multipart)* escape rejection keys as RFC 6901 pointers ([#657](https://github.com/getkono/kynos/pull/657))
+- *(params)* [**breaking**] refuse a path value that cannot address its route in relative_uri ([#646](https://github.com/getkono/kynos/pull/646))
+
+### Performance
+
+- *(extract)* borrow path captures and decode only declared query values ([#910](https://github.com/getkono/kynos/pull/910))
+- *(multipart)* cut the per-part allocations of a multipart round trip ([#917](https://github.com/getkono/kynos/pull/917))
+
 ## [0.4.0](https://github.com/getkono/kynos/compare/kynos-macros-v0.3.0...kynos-macros-v0.4.0) - 2026-10-13
 
 ### Added
