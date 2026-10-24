@@ -22,8 +22,9 @@
 //! A `response` variant holds a response type instead, `IntoResponse` and
 //! `Responses` both, so `Created<Json<T>>` or `WithHeaders<Json<T>, H>` brings
 //! its headers. It is described by that type's entry at `status`, else its 200
-//! re-keyed, and the 4xx and 5xx it passes through join statuses no variant
-//! declares. A description it carries stands unless the variant gives one.
+//! re-keyed, and the 4xx and 5xx it passes through are described under their
+//! own statuses, joining the entry of any variant declaring one. A description
+//! it carries stands unless the variant gives one.
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
@@ -130,11 +131,11 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     }
 
     // Statuses a held response passes through join after every variant's
-    // own, so a variant's status is never described by another's failure.
+    // own, so a status both answer is described with what each sends.
     let (collect, join) = if holds_a_response {
         (
             quote!(let mut failures = ::kynos::openapi::Responses::new();),
-            quote!(responses.merge_from(&failures);),
+            quote!(::kynos::__private::reply::join(&mut responses, &failures);),
         )
     } else {
         (TokenStream2::new(), TokenStream2::new())

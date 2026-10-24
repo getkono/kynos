@@ -107,3 +107,47 @@ pub fn describe<T: Responses>(
     }
     failures.union_from(&passed);
 }
+
+/// Joins the failures [`describe`] collected after every variant's own
+/// status, so a status both describe documents everything sent at it.
+///
+/// Two problem entries meeting on one status are unioned as
+/// [`union_from`](kynos_openapi::Responses::union_from) unions them. Where
+/// the variant's entry still lacks a representation or header the failure
+/// declares (a unit variant's empty 404 beside a held type's problem, say),
+/// it gains them, and the failure's description is appended after a `"; "`.
+/// A `$ref` entry on either side is kept as is.
+pub fn join(responses: &mut kynos_openapi::Responses, failures: &kynos_openapi::Responses) {
+    responses.union_from(failures);
+    for (key, incoming) in &failures.responses {
+        let (Some(RefOr::Item(declared)), RefOr::Item(incoming)) =
+            (responses.responses.get_mut(key), incoming)
+        else {
+            continue;
+        };
+
+        let mut gained = false;
+        for (media, representation) in &incoming.content {
+            if !declared.content.contains_key(media) {
+                declared
+                    .content
+                    .insert(media.clone(), representation.clone());
+                gained = true;
+            }
+        }
+        for (name, header) in &incoming.headers {
+            if !declared.headers.contains_key(name) {
+                declared.headers.insert(name.clone(), header.clone());
+                gained = true;
+            }
+        }
+
+        if let (true, Some(appended)) = (gained, incoming.description.as_deref()) {
+            declared.description = Some(match declared.description.take() {
+                Some(own) if own == appended => own,
+                Some(own) => format!("{own}; {appended}"),
+                None => appended.to_owned(),
+            });
+        }
+    }
+}

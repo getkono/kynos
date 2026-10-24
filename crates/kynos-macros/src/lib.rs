@@ -659,7 +659,8 @@ pub fn derive_api_error(item: TokenStream) -> TokenStream {
 /// The held type implements `IntoResponse` and `Responses`, as `Created<T>` and
 /// `WithHeaders<T, H>` do, and is written as it writes itself under the
 /// variant's status. A 4xx or 5xx it answers with is sent unchanged, and is
-/// described under its own status unless a variant declares that status. Its
+/// described under its own status; where a variant declares that status too,
+/// its entry joins that variant's, so the status describes both. Its
 /// entry at the variant's status, else its 200, describes the variant, with the
 /// headers it declares; a `description` or doc comment replaces the one that
 /// entry carries.
