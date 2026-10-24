@@ -440,6 +440,39 @@ async fn a_reply_body_that_cannot_be_serialized_answers_500() {
     );
 }
 
+/// Two problem entries on one status, the failure also declaring a header the
+/// variant's entry lacks: the entry gains the header, and its description
+/// holds each sentence once, though both the union and the gain join them.
+#[test]
+fn a_joined_failure_gaining_a_header_repeats_no_description() {
+    use kynos_openapi::model::{
+        body::media_type::MediaType,
+        parameter::header::Header,
+        reference::RefOr,
+        response::{Response, Responses},
+        schema::Schema,
+    };
+
+    let problem = || MediaType::new(Schema::any());
+    let mut responses = Responses::new().with(
+        404,
+        Response::with_content("A", "application/problem+json", problem()),
+    );
+    let failures = Responses::new().with(
+        404,
+        Response::with_content("B", "application/problem+json", problem())
+            .with_header("Retry-After", Header::new(Schema::any())),
+    );
+
+    crate::__private::reply::join(&mut responses, &failures);
+
+    let Some(RefOr::Item(joined)) = responses.responses.get("404") else {
+        panic!("the 404 entry is an item");
+    };
+    assert_eq!(joined.description.as_deref(), Some("A; B"));
+    assert!(joined.headers.contains_key("Retry-After"));
+}
+
 /// A key pattern no engine can check is reported against every key rather
 /// than read as met, naming the pattern and why; a pattern that compiles
 /// reports only the keys it refuses. A router refuses the first kind while it
