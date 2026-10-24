@@ -13,7 +13,8 @@
 //!   to make that impossible is to take the choice out of the request path.
 //! * **Several statuses means an enum.** `#[derive(Reply)]` declares a closed
 //!   set, one variant per status. Two variants may not share a status, because
-//!   the description keys them by status alone.
+//!   the description keys them by status alone. A variant marked `response`
+//!   holds a response type such as `Created<T>`, headers and all.
 //! * **`Redirect<CODE>` refuses the wrong codes.** The bound is a witness
 //!   implemented for exactly 301, 302, 303, 307 and 308, and both the trait and
 //!   `()` are foreign to an application — so the set cannot be widened from
@@ -102,11 +103,15 @@ struct Quota {
 /// Two statuses, so an enum. The 200 is not a failure — an identical user
 /// already existed and the request was idempotent — which is why this is a
 /// `Reply` and not an `ApiError`.
+///
+/// The 201 holds a `Created` rather than a `User`: `response` says the variant
+/// holds a response type, so its `Location` is sent and described with it,
+/// and the 200 beside it sends none.
 #[allow(dead_code)]
 #[derive(Reply)]
 enum CreateReply {
-    #[reply(status = 201, description = "the user as stored")]
-    Created(User),
+    #[reply(status = 201, response, description = "the user as stored")]
+    Created(Created<Json<User>>),
 
     #[reply(status = 200, description = "an identical user already existed")]
     AlreadyExists(User),
@@ -145,7 +150,8 @@ async fn upsert_user(Json(user): Json<User>) -> CreateReply {
     // Which variant is the whole decision, and the status follows from it --
     // there is no second place where a code is chosen.
     if user.id == 0 {
-        CreateReply::Created(user)
+        let location = get_user::relative_uri(UserPath { id: user.id });
+        CreateReply::Created(Created::at(location, Json(user)))
     } else {
         CreateReply::AlreadyExists(user)
     }
