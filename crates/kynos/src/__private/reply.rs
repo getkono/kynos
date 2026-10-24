@@ -115,7 +115,8 @@ pub fn describe<T: Responses>(
 /// [`union_from`](kynos_openapi::Responses::union_from) unions them. Where
 /// the variant's entry still lacks a representation or header the failure
 /// declares (a unit variant's empty 404 beside a held type's problem, say),
-/// it gains them, and the failure's description is appended after a `"; "`.
+/// it gains them, and the failure's description is appended after a `"; "`,
+/// less any sentence the entry's already holds.
 /// A `$ref` entry on either side is kept as is.
 pub fn join(responses: &mut kynos_openapi::Responses, failures: &kynos_openapi::Responses) {
     responses.union_from(failures);
@@ -142,12 +143,26 @@ pub fn join(responses: &mut kynos_openapi::Responses, failures: &kynos_openapi::
             }
         }
 
-        if let (true, Some(appended)) = (gained, incoming.description.as_deref()) {
-            declared.description = Some(match declared.description.take() {
-                Some(own) if own == appended => own,
-                Some(own) => format!("{own}; {appended}"),
-                None => appended.to_owned(),
-            });
+        if gained {
+            declared.description = joined(
+                declared.description.as_deref(),
+                incoming.description.as_deref(),
+            );
         }
     }
+}
+
+/// Both descriptions, joined with `"; "` and without repeats.
+///
+/// Split first, since `union_from` may already have joined the failure's into
+/// the entry's.
+fn joined(own: Option<&str>, appended: Option<&str>) -> Option<String> {
+    let mut sentences: Vec<&str> = Vec::new();
+    for sentence in own.into_iter().chain(appended).flat_map(|d| d.split("; ")) {
+        if !sentences.contains(&sentence) {
+            sentences.push(sentence);
+        }
+    }
+
+    (!sentences.is_empty()).then(|| sentences.join("; "))
 }
