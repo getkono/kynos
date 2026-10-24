@@ -4,6 +4,8 @@
 //! the operation's `security`, and adds 401 and 403 to its `responses`, as one
 //! act — and 503 where a scheme it names sets
 //! [`MAY_BE_UNAVAILABLE`](crate::security::SecurityScheme::MAY_BE_UNAVAILABLE).
+//! [`Auth`] and [`MaybeAuth`] leave the 403 out where no scheme they name sets
+//! [`FORBIDS`](crate::security::SecurityScheme::FORBIDS).
 
 use kynos_openapi::{
     Header, Schema, SecurityRequirement, StatusPattern, model::schema::types::SchemaType,
@@ -26,7 +28,8 @@ use crate::{
 /// Taking this as a handler's guard — its first argument — does three things at
 /// once: it enforces the requirement, it sets the operation's `security` to
 /// `S`'s, and it adds 401 and 403 to the operation's `responses`. There is no
-/// way to do one without the others.
+/// way to do one without the others. The 403 is left out where no scheme `S`
+/// names sets [`SecurityScheme::FORBIDS`](crate::security::SecurityScheme::FORBIDS).
 ///
 /// `S` is a scheme, or schemes combined through
 /// [`AnyOf`](crate::security::requirement::AnyOf) or
@@ -102,7 +105,12 @@ impl<S: Requirement> Describe for Auth<S> {
             unauthenticated: S::challenge(),
             insufficient_scope: S::insufficient_scope_challenge(),
         };
-        declare(operation, challenges, security, None, S::MAY_BE_UNAVAILABLE);
+        let refusals = Refusals {
+            forbidden_type: None,
+            forbids: S::FORBIDS,
+            unavailable: S::MAY_BE_UNAVAILABLE,
+        };
+        declare(operation, challenges, security, refusals);
     }
 }
 
@@ -207,7 +215,12 @@ impl<S: Requirement> Describe for MaybeAuth<S> {
             unauthenticated: S::challenge(),
             insufficient_scope: S::insufficient_scope_challenge(),
         };
-        declare(operation, challenges, security, None, S::MAY_BE_UNAVAILABLE);
+        let refusals = Refusals {
+            forbidden_type: None,
+            forbids: S::FORBIDS,
+            unavailable: S::MAY_BE_UNAVAILABLE,
+        };
+        declare(operation, challenges, security, refusals);
     }
 }
 
@@ -468,13 +481,13 @@ impl<S: Scopable, R: Scopes<Scope = S::Scope>> Describe for Scoped<S, R> {
             unauthenticated: S::challenge(),
             insufficient_scope: S::scope_challenge(),
         };
-        declare(
-            operation,
-            challenges,
-            security,
-            R::FORBIDDEN_TYPE,
-            S::MAY_BE_UNAVAILABLE,
-        );
+        // Nor can a scheme that never forbids drop the 403 a scope refusal is.
+        let refusals = Refusals {
+            forbidden_type: R::FORBIDDEN_TYPE,
+            forbids: true,
+            unavailable: S::MAY_BE_UNAVAILABLE,
+        };
+        declare(operation, challenges, security, refusals);
     }
 }
 
@@ -504,19 +517,20 @@ where
 /// Sets the operation's `security` to the guard's, and declares how it refuses.
 ///
 /// `security` is the guard's whole list, set once rather than appended to.
-/// `forbidden_type` is [`Scopes::FORBIDDEN_TYPE`] where the argument named a
-/// scope set, and `None` where it named only a scheme. `unavailable` is the
-/// guard's [`Requirement::MAY_BE_UNAVAILABLE`], which adds the 503.
 fn declare(
     operation: &mut OperationCx<'_>,
     challenges: Challenges,
     security: Vec<SecurityRequirement>,
-    forbidden_type: Option<&'static str>,
-    unavailable: bool,
+    refusals: Refusals,
 ) {
     // Before the header: `add_response_header` invents a thin 401 when none is
     // declared, and merging cannot replace an existing response.
-    let responses = auth_responses(operation.registry(), forbidden_type, unavailable);
+    let responses = auth_responses(
+        operation.registry(),
+        refusals.forbidden_type,
+        refusals.forbids,
+        refusals.unavailable,
+    );
     operation.add_responses(&responses);
 
     // RFC 9110 section 15.5.2: a 401 MUST carry a challenge. A scheme that
@@ -533,17 +547,34 @@ fn declare(
 
     // RFC 6750 section 3.1: a bearer token lacking a scope is answered with
     // `insufficient_scope`. Not required: a 403 `authenticate` answers declines
-    // the credential rather than a scope, and sends none.
-    declare_challenge(
-        operation,
-        StatusCode::FORBIDDEN,
-        challenges.insufficient_scope,
-        Header::new(Schema::of_type(SchemaType::String)).with_description(
-            "Sent when the credential lacks a required scope, per RFC 6750 section 3.1.",
-        ),
-    );
+    // the credential rather than a scope, and sends none. No 403 is declared
+    // without `forbids`, and the header would invent one.
+    if refusals.forbids {
+        declare_challenge(
+            operation,
+            StatusCode::FORBIDDEN,
+            challenges.insufficient_scope,
+            Header::new(Schema::of_type(SchemaType::String)).with_description(
+                "Sent when the credential lacks a required scope, per RFC 6750 section 3.1.",
+            ),
+        );
+    }
 
     operation.set_security(security);
+}
+
+/// Which refusals beside the 401 a guard declares, as [`declare`] declares
+/// them.
+#[derive(Clone, Copy)]
+struct Refusals {
+    /// [`Scopes::FORBIDDEN_TYPE`] where the argument named a scope set, and
+    /// `None` where it named only a scheme.
+    forbidden_type: Option<&'static str>,
+    /// Whether the 403 is declared: [`Requirement::FORBIDS`] for a guard
+    /// naming no scope set, and always for one that does.
+    forbids: bool,
+    /// [`Requirement::MAY_BE_UNAVAILABLE`], which adds the 503.
+    unavailable: bool,
 }
 
 /// The challenges a guard's refusals carry, as [`declare`] declares them.

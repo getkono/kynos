@@ -134,8 +134,12 @@ mod sealed {
 /// is_handler::<App, _, _>(read);
 /// ```
 pub trait Guard<C>: sealed::Sealed + Describe + Sized + Send {
-    /// How this guard refuses, and what that refusal looks like in the
-    /// description.
+    /// How this guard refuses.
+    ///
+    /// The guard's own [`Describe`] declares its refusals, from its schemes,
+    /// rather than this type's [`Responses`]: the type knows no scheme, so it
+    /// cannot leave out the 403 of one that never sets
+    /// [`FORBIDS`](SecurityScheme::FORBIDS).
     type Rejection: IntoResponse + Responses;
 
     /// Checks the request head, yielding the verified credential.
@@ -214,6 +218,21 @@ pub trait SecurityScheme: Send + Sync + 'static {
     /// return [`AuthRejection::unavailable`] for it. `#[security(unavailable)]`
     /// sets it on a derived scheme; [`schemes`]' built-ins leave it `false`.
     const MAY_BE_UNAVAILABLE: bool = false;
+
+    /// Whether this scheme's [`Authenticator`] can refuse a valid credential:
+    /// `false` drops the 403 from every operation an [`Auth`](auth::Auth) or
+    /// [`MaybeAuth`](auth::MaybeAuth) naming only such schemes guards, for a
+    /// shared token that is right or wrong and grants nothing beyond itself.
+    ///
+    /// A promise the type system does not hold: an [`AuthRejection::forbidden`]
+    /// from such a scheme's authenticator is a status the description does not
+    /// name, which the conformance harness reports. Its default
+    /// [`scopes`](SecurityScheme::scopes) should stay empty, since refusing one
+    /// is a 403. A [`Scoped`](auth::Scoped) argument declares the 403 whatever
+    /// this says, since it demands scopes an authorizer may refuse.
+    /// `#[security(forbids = false)]` clears it on a derived scheme; [`schemes`]'
+    /// built-ins leave it `true`.
+    const FORBIDS: bool = true;
 
     /// What a successful authentication yields to the handler.
     type Credential: Send;

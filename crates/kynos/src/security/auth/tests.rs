@@ -1338,3 +1338,81 @@ async fn an_unreachable_store_answers_503_rather_than_401() {
         );
     }
 }
+
+/// A bearer scheme whose authenticator never refuses a valid credential, with
+/// a scope challenge a declared 403 would carry; its scope type is `Grant` so
+/// a `Scoped` argument can still name it.
+struct Scrape;
+
+impl SecurityScheme for Scrape {
+    const NAME: &'static str = "Scrape";
+    const FORBIDS: bool = false;
+    type Credential = String;
+    type Scope = Grant;
+
+    fn describe() -> kynos_openapi::SecurityScheme {
+        kynos_openapi::SecurityScheme::bearer(None)
+    }
+
+    fn challenge() -> Option<&'static str> {
+        Some("Bearer")
+    }
+
+    fn insufficient_scope_challenge() -> Option<&'static str> {
+        <Bearer as SecurityScheme>::insufficient_scope_challenge()
+    }
+}
+
+impl Carries for Scrape {
+    type Presented = BearerToken;
+
+    fn present(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
+        carrier::bearer(parts)
+    }
+}
+
+/// A second scheme that never forbids, to combine with the first.
+struct Probe;
+
+impl SecurityScheme for Probe {
+    const NAME: &'static str = "Probe";
+    const FORBIDS: bool = false;
+    type Credential = String;
+    type Scope = Grant;
+
+    fn describe() -> kynos_openapi::SecurityScheme {
+        kynos_openapi::SecurityScheme::bearer(None)
+    }
+}
+
+impl Carries for Probe {
+    type Presented = BearerToken;
+
+    fn present(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
+        carrier::bearer(parts)
+    }
+}
+
+/// Whether guard `D`'s operation declares a 403, beside the 401 it always
+/// declares.
+fn declares_forbidden<D: Describe>() -> bool {
+    let (operation, _) = described::<D>();
+    assert!(operation.responses.responses.contains_key("401"));
+    operation.responses.responses.contains_key("403")
+}
+
+/// A guard none of whose schemes forbids declares the 401 alone, without the
+/// 403 its `insufficient_scope` challenge would otherwise invent, while one
+/// naming a scheme that forbids, or demanding a scope set, keeps the 403.
+#[test]
+fn only_a_guard_whose_schemes_may_forbid_declares_a_403() {
+    assert!(!declares_forbidden::<Auth<Scrape>>());
+    assert!(!declares_forbidden::<MaybeAuth<Scrape>>());
+    assert!(!declares_forbidden::<Auth<AnyOf<(Scrape, Probe)>>>());
+    assert!(!declares_forbidden::<Auth<AllOf<(Scrape, Probe)>>>());
+
+    assert!(declares_forbidden::<Auth<Bearer>>());
+    assert!(declares_forbidden::<Auth<AnyOf<(Scrape, Bearer)>>>());
+    assert!(declares_forbidden::<Auth<AllOf<(Bearer, Scrape)>>>());
+    assert!(declares_forbidden::<Scoped<Scrape, ReadReports>>());
+}

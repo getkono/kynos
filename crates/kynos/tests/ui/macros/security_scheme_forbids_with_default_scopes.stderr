@@ -1,0 +1,5 @@
+error: a scheme with default `scopes(..)` can refuse a credential lacking one, which is a 403; drop `forbids = false`, or the scopes
+ --> tests/ui/macros/security_scheme_forbids_with_default_scopes.rs:2:47
+  |
+2 | #[security(bearer, scopes("audit"), forbids = false)]
+  |                                               ^^^^^

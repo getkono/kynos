@@ -2,7 +2,7 @@
 //! and the checks an API key and an `http` scheme need where their spans are.
 
 use kynos_openapi::model::parameter::header::is_ignored_header_parameter;
-use syn::{DeriveInput, Expr, Ident, LitStr, Token, Type, spanned::Spanned};
+use syn::{DeriveInput, Expr, Ident, LitBool, LitStr, Token, Type, spanned::Spanned};
 
 use super::flow::{FlowArgs, check_oauth2, read_flow};
 use crate::derive::{attribute::key_name, common::non_token_message};
@@ -24,6 +24,9 @@ pub(super) struct SchemeArgs {
     /// `unavailable`: sets `SecurityScheme::MAY_BE_UNAVAILABLE`, declaring the
     /// 503 an authenticator answers when its credential store is unreachable.
     pub(super) unavailable: bool,
+    /// `forbids = <bool>`: sets `SecurityScheme::FORBIDS`, and `false` drops
+    /// the 403 its guards declare.
+    pub(super) forbids: Option<LitBool>,
     /// What `carrier = ...` said, if it was written.
     pub(super) carrier: Option<Carrier>,
     /// The scheme-level `scopes(..)`: values of `scope`.
@@ -94,6 +97,7 @@ pub(super) fn parse_args(input: &DeriveInput) -> syn::Result<SchemeArgs> {
                 }
                 "deprecated" => args.deprecated = true,
                 "unavailable" => args.unavailable = true,
+                "forbids" => args.forbids = Some(meta.value()?.parse()?),
                 "carrier" => {
                     if args.carrier.is_some() {
                         return Err(syn::Error::new(
@@ -146,6 +150,19 @@ pub(super) fn parse_args(input: &DeriveInput) -> syn::Result<SchemeArgs> {
             seen.push(key);
             Ok(())
         })?;
+    }
+
+    // Every guard authorizes the default scopes, and refusing one is a 403.
+    if let Some(forbids) = args
+        .forbids
+        .as_ref()
+        .filter(|forbids| !forbids.value && !args.scopes.is_empty())
+    {
+        return Err(syn::Error::new(
+            forbids.span(),
+            "a scheme with default `scopes(..)` can refuse a credential lacking one, which is a \
+             403; drop `forbids = false`, or the scopes",
+        ));
     }
 
     Ok(args)

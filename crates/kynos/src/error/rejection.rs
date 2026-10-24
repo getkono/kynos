@@ -861,18 +861,22 @@ impl IntoResponse for AuthRejection {
 
 /// [`AuthRejection`]'s statuses: the 401 narrowed to `about:blank`, the 403 to
 /// `named` (from [`Scopes::FORBIDDEN_TYPE`](crate::security::auth::Scopes::FORBIDDEN_TYPE))
-/// as well, or left wide when `None`; and the 503 only where `unavailable`,
+/// as well, or left wide when `None`, and only where `forbids`,
+/// [`SecurityScheme::FORBIDS`] of a scheme the guard names, says one can be
+/// sent; and the 503 only where `unavailable`,
 /// [`SecurityScheme::MAY_BE_UNAVAILABLE`] of a scheme the guard names, says
 /// one can be sent.
 pub(crate) fn auth_responses(
     registry: &mut Registry,
     named: Option<&'static str>,
+    forbids: bool,
     unavailable: bool,
 ) -> kynos_openapi::Responses {
     <AuthRejection as IntoProblem>::statuses().iter().fold(
         kynos_openapi::Responses::new(),
         |responses, status| {
             let declared = match *status {
+                StatusCode::FORBIDDEN if !forbids => return responses,
                 StatusCode::FORBIDDEN => forbidden(registry, *status, named),
                 StatusCode::SERVICE_UNAVAILABLE if !unavailable => return responses,
                 StatusCode::SERVICE_UNAVAILABLE => narrowed_problem(registry, *status)
@@ -980,21 +984,24 @@ impl<R: Scopes> IntoResponse for ScopedRejection<R> {
 /// [`Scopes::FORBIDDEN_TYPE`] names.
 ///
 /// No 503: the scope set does not know its scheme, so the guard declares that
-/// where the scheme opts in.
+/// where the scheme opts in. A 403 always, since a scope set is demanded of an
+/// authorizer that may refuse it.
 impl<R: Scopes> Responses for ScopedRejection<R> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        auth_responses(registry, R::FORBIDDEN_TYPE, false)
+        auth_responses(registry, R::FORBIDDEN_TYPE, true, false)
     }
 }
 
-/// What a guard naming no scope set declares: the 403 left wide.
+/// The 401 and the 403 left wide: what a hand-written extractor erroring with
+/// this type declares.
 ///
-/// No 503, which only a scheme opting in through
-/// [`SecurityScheme::MAY_BE_UNAVAILABLE`] can send; the guard naming that
-/// scheme declares it.
+/// A guard declares its own instead, from its schemes: no 403 where none sets
+/// [`SecurityScheme::FORBIDS`], and the 503 only where one opts in through
+/// [`SecurityScheme::MAY_BE_UNAVAILABLE`]. This type knows no scheme, so it
+/// keeps the 403 and declares no 503.
 impl Responses for AuthRejection {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        auth_responses(registry, None, false)
+        auth_responses(registry, None, true, false)
     }
 }
 
