@@ -928,7 +928,7 @@ mod form {
 /// do. Multipart's currency is
 /// [`Part`](kynos::extract::body::multipart::Part), which owns a `String` field
 /// name — and a declared field owns its value, since `FromPart` is implemented
-/// for `String`, `Bytes` and `FilePart` and only the middle one borrows.
+/// for `Bytes`, `FilePart` and every `ParamValue`, and only `Bytes` borrows.
 /// Building the parts is therefore the codec's own cost rather than a cost a
 /// cleverer fixture could measure away, and the payload below is the smallest
 /// one the derive accepts: a single field.
@@ -950,9 +950,10 @@ mod multipart {
     ///
     /// One `String` field rather than the all-integer struct the other codecs
     /// measure, because there is no all-integer multipart payload: a part is
-    /// octets plus a media type, and the three `FromPart` shapes are `String`,
-    /// `Bytes` and `FilePart`. `Bytes` is the one that borrows, and it has no
-    /// `Schema`, so a declared field is an owned one.
+    /// octets plus a media type, and a part's `FromPart` shapes are `Bytes`,
+    /// `FilePart` and the text of a `ParamValue`. `Bytes` is the one that
+    /// borrows, and it has no `Schema`, so a declared field is an owned one.
+    /// `String` is the text field that takes its octets over without parsing.
     #[derive(Schema, kynos::MultipartForm)]
     struct Upload {
         note: String,

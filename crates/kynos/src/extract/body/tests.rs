@@ -368,6 +368,61 @@ mod a_text_part_holds_only_its_own_octets {
     }
 }
 
+/// Any `ParamValue` is a text field, read with `FromStr` as a parameter is,
+/// and text it refuses is a 422 at the part's name carrying `FromStr`'s own
+/// error, as is a part that is no text at all.
+#[cfg(feature = "multipart")]
+mod a_param_value_part_is_read_as_its_text {
+    use std::collections::BTreeMap;
+
+    use bytes::Bytes;
+
+    use crate::{
+        error::rejection::BodyRejection,
+        extract::body::multipart::{FromPart, Part},
+    };
+
+    fn part(octets: &'static [u8]) -> Part {
+        Part {
+            name: "count".to_owned(),
+            file_name: None,
+            content_type: None,
+            bytes: Bytes::from_static(octets),
+        }
+    }
+
+    /// The 422's failures, keyed by JSON Pointer.
+    fn failures<T: std::fmt::Debug>(result: Result<T, BodyRejection>) -> BTreeMap<String, String> {
+        let rejection = result.expect_err("a refused part");
+        let BodyRejection::Schema { failures } = rejection else {
+            panic!("expected a 422, got {rejection:?}");
+        };
+        failures
+    }
+
+    fn at_count(detail: &str) -> BTreeMap<String, String> {
+        BTreeMap::from([("/count".to_owned(), detail.to_owned())])
+    }
+
+    #[test]
+    fn its_text_is_parsed() {
+        assert_eq!(u16::from_part(part(b"42")).expect("a u16"), 42);
+    }
+
+    #[test]
+    fn text_it_refuses_names_the_part_and_the_refusal() {
+        let error = "x".parse::<u16>().expect_err("not a u16").to_string();
+        assert_eq!(failures(u16::from_part(part(b"x"))), at_count(&error));
+    }
+
+    #[test]
+    fn octets_that_are_no_text_name_the_part() {
+        let expected = at_count("the part is not valid UTF-8");
+        assert_eq!(failures(u16::from_part(part(b"\xff"))), expected);
+        assert_eq!(failures(String::from_part(part(b"\xff"))), expected);
+    }
+}
+
 /// The `boundary` is read by the same rule that accepted the media type:
 /// RFC 9110 section 5.6.6 allows optional whitespace on both sides of each
 /// `;`, so a `Content-Type` spelled with it decodes the parts rather than being

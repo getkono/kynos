@@ -878,7 +878,8 @@ pub fn derive_cookies(item: TokenStream) -> TokenStream {
 /// element, `Option<T>` is a part that need not have been sent, and anything
 /// else is a part that must have been, whose second and later occurrences are
 /// ignored. The element type converts through `FromPart` and `IntoPart`, which
-/// Kynos implements for `FilePart`, `String` and `Bytes`.
+/// Kynos implements for `FilePart`, `Bytes` and every `ParamValue`, such as
+/// `String` or an enum deriving it, which travels as its text.
 ///
 /// A part naming no declared field is ignored, unless the struct carries
 /// `#[serde(deny_unknown_fields)]`, which closes its description and makes such

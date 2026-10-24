@@ -2,7 +2,10 @@
 
 pub(crate) mod disposition;
 
-use std::collections::BTreeMap;
+use std::{
+    any::{Any, TypeId},
+    collections::BTreeMap,
+};
 
 use bytes::Bytes;
 use http_body_util::BodyExt;
@@ -16,7 +19,7 @@ use crate::{
     },
     http::{HeaderMap, Parts, body::Body, header},
     router::operation::OperationCx,
-    schema::{Schema, constraints::Pointer, registry::Registry},
+    schema::{ParamValue, Schema, constraints::Pointer, registry::Registry},
 };
 
 /// A `multipart/form-data` request body with declared fields.
@@ -148,9 +151,11 @@ pub trait FromMultipart: Sized {
 /// Multipart's counterpart to the [`FromStr`](std::str::FromStr) that
 /// [`params`](crate::extract::params) decodes a parameter through.
 ///
-/// Implemented for [`FilePart`], `String` and [`Bytes`]. `#[derive(MultipartForm)]`
-/// reads an `Option<T>` field as an optional part and a `Vec<T>` field as a
-/// repeated one, so an implementation only ever answers for a single part.
+/// Implemented for [`FilePart`], [`Bytes`] and every [`ParamValue`], so a
+/// closed vocabulary such as an enum deriving `ParamValue` is a form field the
+/// way it is a query parameter. `#[derive(MultipartForm)]` reads an `Option<T>`
+/// field as an optional part and a `Vec<T>` field as a repeated one, so an
+/// implementation only ever answers for a single part.
 pub trait FromPart: Sized {
     /// Builds the field from one part.
     ///
@@ -181,19 +186,47 @@ impl FromPart for Bytes {
     }
 }
 
-/// A part that is not UTF-8 is a 422. Octets nothing else holds become the
+/// The part's text read with `FromStr`, as a parameter's is. A part that is not
+/// UTF-8, or whose text `T` refuses, is a 422 keyed by the part's name, with
+/// `FromStr`'s error as the detail.
+///
+/// Any `T` but `String` parses the octets in place. `String` takes them over
+/// instead of copying them through `FromStr`: see [`owned_text`].
+///
+/// `'static` because that is what tells `String` apart; a part is owned, so no
+/// value built from one borrows anyway.
+impl<T: ParamValue + 'static> FromPart for T {
+    fn from_part(part: Part) -> Result<Self, BodyRejection> {
+        if TypeId::of::<T>() == TypeId::of::<String>() {
+            let mut text = Some(owned_text(part)?);
+            let text = (&mut text as &mut dyn Any)
+                .downcast_mut::<Option<T>>()
+                .and_then(Option::take);
+            return Ok(text.expect("`T` is `String`"));
+        }
+
+        std::str::from_utf8(&part.bytes)
+            .map_err(|_| not_utf8(&part.name))?
+            .parse()
+            .map_err(|error: T::Err| malformed_part(&part.name, &error.to_string()))
+    }
+}
+
+/// The 422 a part whose octets are not text produces.
+fn not_utf8(name: &str) -> BodyRejection {
+    malformed_part(name, "the part is not valid UTF-8")
+}
+
+/// A part's octets as an owned string. Octets nothing else holds become the
 /// string in place; shared ones are copied.
 ///
 /// Taking over the last reference to a buffer takes over all of it, so the
 /// string is shrunk to its length: a short field never keeps the rest of the
 /// request body alive.
-impl FromPart for String {
-    fn from_part(part: Part) -> Result<Self, BodyRejection> {
-        let mut text = Self::from_utf8(Vec::from(part.bytes))
-            .map_err(|_| malformed_part(&part.name, "the part is not valid UTF-8"))?;
-        text.shrink_to_fit();
-        Ok(text)
-    }
+fn owned_text(part: Part) -> Result<String, BodyRejection> {
+    let mut text = String::from_utf8(Vec::from(part.bytes)).map_err(|_| not_utf8(&part.name))?;
+    text.shrink_to_fit();
+    Ok(text)
 }
 
 /// The delimiter the request declares, or the rejection saying why there is
