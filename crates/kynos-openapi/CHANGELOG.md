@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/getkono/kynos/compare/kynos-openapi-v0.4.0...kynos-openapi-v0.5.0) - 2026-10-24
+
+### Added
+
+- *(openapi)* add PathItem::operations_mut over every operation ([#886](https://github.com/getkono/kynos/pull/886))
+
+### Documentation
+
+- correct the prose a third audit pass found drifting ([#962](https://github.com/getkono/kynos/pull/962))
+- correct the rustdoc a second audit pass found drifting from its code ([#949](https://github.com/getkono/kynos/pull/949))
+- align kynos-openapi and kynos-macros rustdoc with the code ([#909](https://github.com/getkono/kynos/pull/909))
+- correct claims the code contradicts or has outgrown ([#872](https://github.com/getkono/kynos/pull/872))
+
+### Fixed
+
+- *(macros)* [**breaking**] declare a problem's extension members in its response ([#1006](https://github.com/getkono/kynos/pull/1006))
+- *(containment)* close the gate's false negatives and correct the feature and profile prose ([#950](https://github.com/getkono/kynos/pull/950))
+- build on the declared MSRV without let-chains ([#937](https://github.com/getkono/kynos/pull/937))
+- *(openapi)* report a tag parent cycle only at the tags on it ([#933](https://github.com/getkono/kynos/pull/933))
+- *(router)* [**breaking**] refuse two tag types describing one name differently ([#896](https://github.com/getkono/kynos/pull/896))
+- *(router)* [**breaking**] refuse a policy set on a nested or merged router ([#895](https://github.com/getkono/kynos/pull/895))
+- *(openapi)* stop the discriminator memo keeping verdicts reached through a cut cycle ([#864](https://github.com/getkono/kynos/pull/864))
+- *(openapi)* check the Discriminator Object's MUSTs ([#855](https://github.com/getkono/kynos/pull/855))
+- *(openapi)* resolve a Link's operationId and local operationRef ([#853](https://github.com/getkono/kynos/pull/853))
+- *(openapi)* report a not-authoritative stamp on an authoritative document ([#852](https://github.com/getkono/kynos/pull/852))
+- *(openapi)* require each OAuth flow's REQUIRED URLs ([#849](https://github.com/getkono/kynos/pull/849))
+- *(openapi)* enforce the Media Type and Encoding Object MUSTs at every level ([#846](https://github.com/getkono/kynos/pull/846))
+- *(openapi)* reject unrecognised non-x- fields under 3.2 as under 3.1 ([#845](https://github.com/getkono/kynos/pull/845))
+- *(openapi)* resolve a same-document security scheme pointer in requirements ([#843](https://github.com/getkono/kynos/pull/843))
+- *(openapi)* refuse additionalOperations entries for fixed-field methods ([#840](https://github.com/getkono/kynos/pull/840))
+- *(openapi)* check Server Variable MUSTs on every Server Object ([#836](https://github.com/getkono/kynos/pull/836))
+- *(openapi)* refuse response keys the model cannot read back ([#834](https://github.com/getkono/kynos/pull/834))
+- *(openapi)* refuse a Callback item keyed like an extension ([#832](https://github.com/getkono/kynos/pull/832))
+- *(openapi)* refuse to emit as 3.1 a document 3.1 cannot express ([#829](https://github.com/getkono/kynos/pull/829))
+- *(openapi)* name a parameter style as the description spells it in violations ([#828](https://github.com/getkono/kynos/pull/828))
+- *(openapi)* run the content rules over default and component responses and request bodies ([#820](https://github.com/getkono/kynos/pull/820))
+- *(openapi)* keep unknown fields when rewriting the opaque annotations ([#822](https://github.com/getkono/kynos/pull/822))
+- *(openapi)* translate ECMA-262's \0 instead of calling it a backreference ([#812](https://github.com/getkono/kynos/pull/812))
+- *(openapi)* admit ? and # inside a path template expression ([#817](https://github.com/getkono/kynos/pull/817))
+- *(openapi)* report violation and blocker locations as escaped JSON Pointers ([#802](https://github.com/getkono/kynos/pull/802))
+- *(openapi)* refuse \p{...} property names ECMA-262 does not spell ([#644](https://github.com/getkono/kynos/pull/644))
+
+### Other
+
+- *(openapi)* [**breaking**] gate YAML emission on one pub mod yaml ([#940](https://github.com/getkono/kynos/pull/940))
+- *(router)* [**breaking**] move the router's own violations out of SpecError ([#928](https://github.com/getkono/kynos/pull/928))
+- *(openapi)* [**breaking**] model xml nodeType as an enum excluding attribute and wrapped ([#927](https://github.com/getkono/kynos/pull/927))
+- *(openapi)* [**breaking**] remove SpecError::EmptyDocument, which nothing raises ([#887](https://github.com/getkono/kynos/pull/887))
+
 ## [0.4.0](https://github.com/getkono/kynos/compare/kynos-openapi-v0.3.0...kynos-openapi-v0.4.0) - 2026-10-13
 
 ### Added
