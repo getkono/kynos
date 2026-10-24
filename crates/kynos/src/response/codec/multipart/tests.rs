@@ -223,6 +223,23 @@ fn typeless_bytes_are_written_as_an_octet_stream_part() {
     );
 }
 
+/// Any `ParamValue` is written as its `Display` text in a UTF-8 `text/plain`
+/// part, the text its `FromPart` reads back, and a `String` as itself.
+#[test]
+fn a_param_value_is_written_as_its_text() {
+    use super::IntoPart;
+
+    let text = |octets: &'static str| Part {
+        name: "count".to_owned(),
+        file_name: None,
+        content_type: Some("text/plain; charset=utf-8".to_owned()),
+        bytes: bytes::Bytes::from_static(octets.as_bytes()),
+    };
+
+    assert_eq!(42_u16.into_part("count"), text("42"));
+    assert_eq!("forty-two".to_owned().into_part("count"), text("forty-two"));
+}
+
 /// A file field is written under the name it is carried by, with the file
 /// name, media type and bytes it was read with, so a `FilePart` echoed back
 /// reaches the client as the part it arrived as.

@@ -120,13 +120,26 @@ struct ProductForm {
 /// puts them in the description. Both still read serde's attributes, so
 /// `default` is how a field says its part may be left out: an empty `images`
 /// is written as no part at all, so the description must not require one.
+///
+/// A text part is any `ParamValue`, read and written as the text a query
+/// parameter of that type would be: `angle` is a closed vocabulary, and a part
+/// naming no variant is a 422 at `/angle`.
 #[allow(dead_code)]
 #[derive(Schema, MultipartForm)]
 struct Upload {
     name: String,
+    angle: Angle,
     #[serde(default)]
     #[schema(max_items = 8)]
     images: Vec<kynos::extract::body::multipart::FilePart>,
+}
+
+/// Which side of the product the images show.
+#[derive(Schema, Serialize, Deserialize, kynos::ParamValue)]
+#[serde(rename_all = "snake_case")]
+enum Angle {
+    Front,
+    Back,
 }
 
 /// Accepts a product as JSON, or as a form.
@@ -156,7 +169,7 @@ async fn create_note(Text(note): Text) -> NoContent {
 /// Accepts an image upload.
 #[kynos::post("/products/images")]
 async fn upload_images(MultipartForm(upload): MultipartForm<Upload>) -> NoContent {
-    println!("upload: {}", upload.name);
+    println!("upload: {} ({})", upload.name, upload.angle);
     for image in &upload.images {
         println!("image of {} bytes", image.bytes.len());
     }

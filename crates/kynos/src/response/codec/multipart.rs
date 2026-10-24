@@ -8,6 +8,8 @@
 //! [`IntoMultipart`] rather than `Serialize`, under which a [`FilePart`]'s
 //! bytes would reach the wire as an array of numbers.
 
+use std::any::Any;
+
 use bytes::Bytes;
 use kynos_openapi::model::body::mime_names;
 
@@ -21,7 +23,7 @@ use crate::{
         IntoResponse, Responses,
         framing::{self, Boundary, Encapsulation, Sink},
     },
-    schema::{Schema, registry::Registry},
+    schema::{ParamValue, Schema, registry::Registry},
 };
 
 #[cfg(test)]
@@ -62,7 +64,8 @@ pub trait IntoMultipart {
 ///
 /// The counterpart of
 /// [`FromPart`](crate::extract::body::multipart::FromPart), implemented for the
-/// same three shapes a form field takes. An `Option<T>` field writes nothing
+/// same types: [`FilePart`], [`Bytes`] and every [`ParamValue`], which is
+/// written as the text it is read from. An `Option<T>` field writes nothing
 /// when it is absent and a `Vec<T>` field writes one part per element, so an
 /// implementation here only ever produces a single part.
 pub trait IntoPart {
@@ -93,15 +96,25 @@ impl IntoPart for Bytes {
     }
 }
 
-/// UTF-8 text, with the charset stated rather than left to RFC 7578's
-/// `text/plain` default.
-impl IntoPart for String {
+/// The value's `Display` text, as a parameter's is written, in UTF-8 with the
+/// charset stated rather than left to RFC 7578's `text/plain` default.
+///
+/// A `String` is moved into the part rather than formatted into a copy;
+/// `'static` is what tells it apart.
+impl<T: ParamValue + 'static> IntoPart for T {
     fn into_part(self, name: &str) -> Part {
+        let mut value = Some(self);
+        let text = match (&mut value as &mut dyn Any).downcast_mut::<Option<String>>() {
+            Some(text) => text.take(),
+            None => value.as_ref().map(ToString::to_string),
+        }
+        .expect("filled above");
+
         Part {
             name: name.to_owned(),
             file_name: None,
             content_type: Some("text/plain; charset=utf-8".to_owned()),
-            bytes: Bytes::from(self.into_bytes()),
+            bytes: Bytes::from(text.into_bytes()),
         }
     }
 }
