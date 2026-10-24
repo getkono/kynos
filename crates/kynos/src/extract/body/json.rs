@@ -66,7 +66,8 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send> FromRequest<C> for
 /// the `type: object` its schema declares refuses; where every member
 /// defaults, it reads `[]` as `{}`. The refusal comes before any member is
 /// read, and reaches through `Option` and newtypes; a struct nested in the
-/// document is `serde`'s to read.
+/// document is `serde`'s to read. Bytes that are not one JSON document keep
+/// their syntax error, so the 400/422 split holds.
 pub(super) fn from_slice<T: serde::de::DeserializeOwned>(
     bytes: &[u8],
 ) -> Result<T, serde_json::Error> {
@@ -77,6 +78,7 @@ pub(super) fn from_slice<T: serde::de::DeserializeOwned>(
     let mut deserializer = serde_json::Deserializer::from_slice(bytes);
     let value = T::deserialize(TopLevel {
         inner: &mut deserializer,
+        bytes,
         array,
     })?;
     deserializer.end()?;
@@ -87,6 +89,10 @@ pub(super) fn from_slice<T: serde::de::DeserializeOwned>(
 struct TopLevel<'a, 'de> {
     /// What every request is forwarded to.
     inner: &'a mut serde_json::Deserializer<serde_json::de::SliceRead<'de>>,
+
+    /// The whole document, checked for well-formedness before an array is
+    /// refused.
+    bytes: &'de [u8],
 
     /// Whether the document's first token opens an array.
     array: bool,
@@ -147,6 +153,8 @@ impl<'de> serde::Deserializer<'de> for TopLevel<'_, 'de> {
         visitor: V,
     ) -> Result<V::Value, Self::Error> {
         if self.array {
+            // A syntax error wins: the refusal is only for well-formed JSON.
+            serde_json::from_slice::<serde::de::IgnoredAny>(self.bytes)?;
             Err(serde::de::Error::invalid_type(
                 serde::de::Unexpected::Seq,
                 &"a JSON object",

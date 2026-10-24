@@ -323,8 +323,10 @@ a struct from an array of its members, and from `[]` where every member
 defaults, so a merge-patch body would answer `[]` as if it were `{}` although
 the schema says `type: object`. `Json<T>` and `JsonAs<M, T>` refuse a top-level
 array where `T` reads a struct, through `Option` and newtypes too, with a 422
-keyed at the root before any member is read. A member nested deeper is still
-`serde`'s to read.
+keyed at the root before any member is read; an array that is not well-formed
+JSON stays a 400. A member nested deeper is still `serde`'s to read, and so is
+a top-level internally tagged enum, which `serde` reads through
+`deserialize_any`.
 
 `RangeRejection` is the one raised by a *method* rather than by extraction.
 [`Range<T>`](../crates/kynos/src/response/range/mod.rs) is infallible — RFC 9110
