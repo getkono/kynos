@@ -151,6 +151,16 @@ fields are its response body, so it holds exactly one described type, or none
 for the empty body — and none at 204, 205 or 304, whose responses RFC 9110
 gives no content.
 
+A variant marked `#[reply(status = N, response)]` holds a response type
+instead, one implementing both `IntoResponse` and `Responses`, such as
+`Created<Json<T>>`, so its headers (`Location`, a header group) come with it.
+It writes itself and is moved to the variant's status, except a 4xx or 5xx it
+answers with, which goes out unchanged because a problem's `status` must match
+the one sent (RFC 9457 §3.1.2). It is described the same way: its own entry at
+`N`, else its 200 re-keyed to `N`, and each 4xx and 5xx it declares under that
+status, joined into the entry of any variant declaring the same one, so the
+document describes every response the variant can send.
+
 ## Negotiation, on both sides
 
 | Direction | Selected by | Type | Distinctness proved by |
