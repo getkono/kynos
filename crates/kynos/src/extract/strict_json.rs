@@ -135,6 +135,12 @@ impl State {
         }
     }
 
+    /// Forgets a path a swallowed error left, before a read whose own
+    /// failure would otherwise unwind onto it.
+    fn begin(&self) {
+        self.path.borrow_mut().clear();
+    }
+
     /// Where the key buffer is now, for a map or sequence to truncate it to.
     fn mark(&self) -> usize {
         self.keys.borrow().len()

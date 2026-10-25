@@ -34,9 +34,11 @@ impl<'de, A: SeqAccess<'de>> SeqAccess<'de> for Elements<'_, A> {
     ) -> Result<Option<T::Value>, Self::Error> {
         self.state.keys.borrow_mut().truncate(self.start);
         let state = self.state;
+        state.begin();
         let index = self.index;
         let result = self.inner.next_element_seed(Strict { inner, state });
-        if let Ok(Some(_)) = &result {
+        // An element that failed was still read, so the next is the next one.
+        if !matches!(result, Ok(None)) {
             self.index += 1;
         }
         state.at(result, || Some(Step::Index(index)))
@@ -70,6 +72,7 @@ impl<'de, A: MapAccess<'de>> MapAccess<'de> for Members<'_, 'de, A> {
         seed: K,
     ) -> Result<Option<K::Value>, Self::Error> {
         let state = self.state;
+        state.begin();
         state.keys.borrow_mut().truncate(self.start);
         self.key = Key::Absent;
         let result = self.inner.next_key_seed(Naming {
@@ -85,6 +88,7 @@ impl<'de, A: MapAccess<'de>> MapAccess<'de> for Members<'_, 'de, A> {
         inner: T,
     ) -> Result<T::Value, Self::Error> {
         let state = self.state;
+        state.begin();
         let result = self.inner.next_value_seed(Strict { inner, state });
         state.at(result, || self.key.name(&state.keys).map(Step::Member))
     }
@@ -106,6 +110,7 @@ impl<'a, 'de, A: EnumAccess<'de>> EnumAccess<'de> for Strict<'a, A> {
         seed: V,
     ) -> Result<(V::Value, Self::Variant), Self::Error> {
         let state = self.state;
+        state.begin();
         let mut name = Key::Absent;
         let (value, inner) = self.inner.variant_seed(Naming {
             inner: seed,
@@ -161,6 +166,7 @@ impl<'de, A: VariantAccess<'de>> VariantAccess<'de> for Variant<'_, 'de, A> {
         self,
         inner: T,
     ) -> Result<T::Value, Self::Error> {
+        self.state.begin();
         let entered = Cell::new(false);
         let seed = Entering {
             inner: Strict {
@@ -178,6 +184,7 @@ impl<'de, A: VariantAccess<'de>> VariantAccess<'de> for Variant<'_, 'de, A> {
         len: usize,
         visitor: V,
     ) -> Result<V::Value, Self::Error> {
+        self.state.begin();
         let entered = Cell::new(false);
         let visitor = Visit {
             visitor,
@@ -194,6 +201,7 @@ impl<'de, A: VariantAccess<'de>> VariantAccess<'de> for Variant<'_, 'de, A> {
         fields: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, Self::Error> {
+        self.state.begin();
         let entered = Cell::new(false);
         let visitor = Visit {
             visitor,
