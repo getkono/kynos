@@ -289,7 +289,7 @@ impl<T: serde::de::DeserializeOwned + Schema> Records<T> {
         self.index += 1;
 
         // A struct is read only from an object, as a `Json` body is.
-        let value = crate::extract::body::json::from_slice(record).map_err(|error| {
+        let value = crate::extract::strict_json::from_slice(record).map_err(|error| {
             if crate::extract::body::json::is_schema_failure(&error) {
                 // Only the shape was wrong; the boundaries held, so reading
                 // continues.

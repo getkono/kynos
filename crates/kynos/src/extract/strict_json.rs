@@ -1,4 +1,7 @@
 //! Reading a struct only from an object, at every position of a document.
+//!
+//! Shared by every input decoded as JSON — the `Json`, `JsonAs` and record
+//! bodies, and the `QueryString` parameter — so each reads a document alike.
 
 use std::cell::Cell;
 
@@ -6,19 +9,53 @@ use serde::de::{
     DeserializeSeed, Deserializer, EnumAccess, MapAccess, SeqAccess, VariantAccess, Visitor,
 };
 
+/// Reads one JSON document as [`serde_json::from_slice`] does, except that a
+/// struct is read only from an object, wherever the document holds one.
+///
+/// `serde`'s derive also reads a struct from an array of its members, which
+/// the `type: object` its schema declares refuses; where every member
+/// defaults, it reads `[]` as `{}`. The refusal comes before any member is
+/// read, and reaches every position `serde_json` hands out: a member, a
+/// sequence element, a map value, `Option`, a newtype and an enum variant.
+/// What `serde` buffers before choosing a type — an untagged or internally
+/// tagged enum, every member of a struct that flattens one — is `serde`'s to
+/// read. Bytes that are not one JSON document keep their syntax error, so the
+/// 400/422 split holds.
+pub(crate) fn from_slice<T: serde::de::DeserializeOwned>(
+    bytes: &[u8],
+) -> Result<T, serde_json::Error> {
+    let refused = Cell::new(false);
+    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+    let value = T::deserialize(Strict {
+        inner: &mut deserializer,
+        refused: &refused,
+    })
+    .map_err(|error| {
+        // A syntax error wins: the refusal is only for well-formed JSON.
+        if refused.get() {
+            serde_json::from_slice::<serde::de::IgnoredAny>(bytes).err()
+        } else {
+            None
+        }
+        .unwrap_or(error)
+    })?;
+    deserializer.end()?;
+    Ok(value)
+}
+
 /// A position in a document, refusing to read a struct from an array, and
 /// handing the same refusal to every position it hands out: as the
 /// deserializer, seed, element and variant accessors `serde_json` passes in.
 ///
 /// Each wrapper adds a pointer and allocates nothing; what one costs per
 /// element is the forwarding the compiler inlines.
-pub(super) struct Strict<'a, D> {
+struct Strict<'a, D> {
     /// What every request is forwarded to.
-    pub(super) inner: D,
+    inner: D,
 
     /// Set when an array was refused, so a syntax error later in the
     /// document can still win.
-    pub(super) refused: &'a Cell<bool>,
+    refused: &'a Cell<bool>,
 }
 
 /// Forwards each named `deserialize_*` method, with its extra arguments, to

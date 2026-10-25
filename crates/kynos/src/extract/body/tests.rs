@@ -1793,7 +1793,10 @@ mod a_json_body_under_a_declared_media_type {
 mod a_nested_json_struct_is_read_only_from_an_object {
     use std::collections::BTreeMap;
 
-    use crate::{error::rejection::BodyRejection, extract::body::json};
+    use crate::{
+        error::rejection::BodyRejection,
+        extract::{body::json, strict_json},
+    };
 
     /// Every member defaults, so `serde` reads `[]` as `{}`.
     #[derive(Debug, PartialEq, serde::Deserialize)]
@@ -1841,7 +1844,7 @@ mod a_nested_json_struct_is_read_only_from_an_object {
 
     /// The 422 `Json` answers `body` with, which must be a refused array.
     fn refused<T: serde::de::DeserializeOwned + std::fmt::Debug>(body: &str) {
-        let error = json::from_slice::<T>(body.as_bytes())
+        let error = strict_json::from_slice::<T>(body.as_bytes())
             .expect_err(&format!("{body}: an array is not an object"));
         let BodyRejection::Schema { failures } = json::rejection(error) else {
             panic!("{body}: expected a 422");
@@ -1871,7 +1874,7 @@ mod a_nested_json_struct_is_read_only_from_an_object {
     #[test]
     fn a_malformed_document_holding_an_array_is_still_malformed() {
         for body in [r#"{"inner": [}"#, r#"{"inner": [], "#, r#"{"inner": []} x"#] {
-            let error = json::from_slice::<Outer>(body.as_bytes()).expect_err(body);
+            let error = strict_json::from_slice::<Outer>(body.as_bytes()).expect_err(body);
             assert!(
                 matches!(json::rejection(error), BodyRejection::Syntax { .. }),
                 "{body}: expected a 400"
@@ -1883,35 +1886,36 @@ mod a_nested_json_struct_is_read_only_from_an_object {
     fn an_object_and_a_sequence_are_still_read() {
         let patch = || Patch { note: None };
         assert_eq!(
-            json::from_slice::<Deep>(br#"{"outer": {"inner": {}}}"#).expect("objects"),
+            strict_json::from_slice::<Deep>(br#"{"outer": {"inner": {}}}"#).expect("objects"),
             Deep {
                 outer: Outer { inner: patch() }
             }
         );
         assert_eq!(
-            json::from_slice::<Maybe>(br#"{"inner": null}"#).expect("null"),
+            strict_json::from_slice::<Maybe>(br#"{"inner": null}"#).expect("null"),
             Maybe { inner: None }
         );
         assert_eq!(
-            json::from_slice::<Vec<Vec<u32>>>(b"[[1], []]").expect("arrays"),
+            strict_json::from_slice::<Vec<Vec<u32>>>(b"[[1], []]").expect("arrays"),
             [vec![1], vec![]]
         );
         assert_eq!(
-            json::from_slice::<Vec<Pair>>(b"[[1, 2]]").expect("a tuple struct"),
+            strict_json::from_slice::<Vec<Pair>>(b"[[1, 2]]").expect("a tuple struct"),
             [Pair(1, 2)]
         );
         assert_eq!(
-            json::from_slice::<Change>(br#"{"Move": [{}, 1]}"#).expect("a tuple variant"),
+            strict_json::from_slice::<Change>(br#"{"Move": [{}, 1]}"#).expect("a tuple variant"),
             Change::Move(patch(), 1)
         );
         assert_eq!(
-            json::from_slice::<Change>(br#"{"Edit": {"note": "x"}}"#).expect("a struct variant"),
+            strict_json::from_slice::<Change>(br#"{"Edit": {"note": "x"}}"#)
+                .expect("a struct variant"),
             Change::Edit {
                 note: Some("x".to_owned())
             }
         );
         assert_eq!(
-            json::from_slice::<HoldsWrapped>(br#"{"inner": {}}"#).expect("a newtype"),
+            strict_json::from_slice::<HoldsWrapped>(br#"{"inner": {}}"#).expect("a newtype"),
             HoldsWrapped {
                 inner: Wrapped(patch())
             }

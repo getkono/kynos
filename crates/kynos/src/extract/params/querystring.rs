@@ -75,7 +75,8 @@ impl<T, M: MediaType> QueryString<T, M> {
 /// `T: DeserializeOwned + Schema`, as for `Json<T>`: the parameter is a
 /// document, deserialized whole rather than field by field as a
 /// [`QueryParams`](crate::extract::params::query::QueryParams) group is, and
-/// held to the bounds `T`'s schema declares.
+/// held to the bounds `T`'s schema declares. As for a body, a struct is read
+/// only from an object, wherever the document holds one.
 ///
 /// # Absence
 ///
@@ -112,8 +113,9 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send, M: MediaType + Sen
             ))
         })?;
 
-        let value: T =
-            serde_json::from_str(&decoded).map_err(|error| invalid(error.to_string()))?;
+        // A struct is read only from an object, as a `Json` body is.
+        let value: T = crate::extract::strict_json::from_slice(decoded.as_bytes())
+            .map_err(|error| invalid(error.to_string()))?;
 
         let mut violations = Violations::new();
         value.check_constraints(Pointer::root(), &mut violations);

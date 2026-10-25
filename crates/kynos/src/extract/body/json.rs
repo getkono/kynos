@@ -1,18 +1,15 @@
 //! The `application/json` body codec.
 
-// Private: what it declares is how `from_slice` reads, which no handler names.
-mod strict;
-
-use std::{cell::Cell, collections::BTreeMap};
+use std::collections::BTreeMap;
 
 use kynos_openapi::model::body::mime_names;
 
-use self::strict::Strict;
 use crate::{
     error::rejection::BodyRejection,
     extract::{
         FromRequest,
         describe::{Describe, RequestContent},
+        strict_json,
     },
     http::{Parts, body::Body},
     router::operation::OperationCx,
@@ -59,43 +56,9 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send> FromRequest<C> for
         _context: &C,
     ) -> Result<Self, Self::Rejection> {
         let bytes = super::read_body(parts, body, MEDIA_TYPE).await?;
-        let value = from_slice(&bytes).map_err(rejection)?;
+        let value = strict_json::from_slice(&bytes).map_err(rejection)?;
         super::checked(value, Pointer::root()).map(Self)
     }
-}
-
-/// Reads one JSON document as [`serde_json::from_slice`] does, except that a
-/// struct is read only from an object, wherever the document holds one.
-///
-/// `serde`'s derive also reads a struct from an array of its members, which
-/// the `type: object` its schema declares refuses; where every member
-/// defaults, it reads `[]` as `{}`. The refusal comes before any member is
-/// read, and reaches every position `serde_json` hands out: a member, a
-/// sequence element, a map value, `Option`, a newtype and an enum variant.
-/// What `serde` buffers before choosing a type — an untagged or internally
-/// tagged enum, every member of a struct that flattens one — is `serde`'s to
-/// read. Bytes that are not one JSON document keep their syntax error, so the
-/// 400/422 split holds.
-pub(super) fn from_slice<T: serde::de::DeserializeOwned>(
-    bytes: &[u8],
-) -> Result<T, serde_json::Error> {
-    let refused = Cell::new(false);
-    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
-    let value = T::deserialize(Strict {
-        inner: &mut deserializer,
-        refused: &refused,
-    })
-    .map_err(|error| {
-        // A syntax error wins: the refusal is only for well-formed JSON.
-        if refused.get() {
-            serde_json::from_slice::<serde::de::IgnoredAny>(bytes).err()
-        } else {
-            None
-        }
-        .unwrap_or(error)
-    })?;
-    deserializer.end()?;
-    Ok(value)
 }
 
 /// Malformed JSON is a 400; well-formed JSON that does not fit `T` is a 422.

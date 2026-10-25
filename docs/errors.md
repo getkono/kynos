@@ -329,7 +329,8 @@ members is read; a document that is not well-formed JSON stays a 400. The 422
 is keyed where every `serde` failure is: at the root, or at a record's index.
 What `serde` buffers before choosing a type is still its own to read: an
 untagged or internally tagged enum, and every member of a struct that flattens
-one.
+one. A `QueryString<T, M>` document is read by the same rule, and answers its
+refusal with the 400 every undecodable query string gets.
 
 `RangeRejection` is the one raised by a *method* rather than by extraction.
 [`Range<T>`](../crates/kynos/src/response/range/mod.rs) is infallible — RFC 9110
