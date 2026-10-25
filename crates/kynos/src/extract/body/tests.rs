@@ -2186,6 +2186,7 @@ mod a_json_failure_is_keyed_where_it_happened {
             keyed::<HoldsRetrying>(r#"{"a": ["x", {"count": "y"}]}"#),
             "/a/1/count"
         );
+        assert_eq!(keyed::<HoldsRetrying>(r#"{"a": ["x", 5]}"#), "/a/1");
     }
 
     /// An error a visitor answers a failed read with is keyed at that read:
