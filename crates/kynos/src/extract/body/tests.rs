@@ -2025,6 +2025,43 @@ mod a_json_failure_is_keyed_where_it_happened {
         b: u32,
     }
 
+    /// Reads a sequence, answering its first element's failure with an error
+    /// of its own.
+    #[derive(Debug)]
+    struct Replacing;
+
+    impl<'de> serde::Deserialize<'de> for Replacing {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct Visitor;
+
+            impl<'de> serde::de::Visitor<'de> for Visitor {
+                type Value = Replacing;
+
+                fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    formatter.write_str("a sequence")
+                }
+
+                fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                    self,
+                    mut elements: A,
+                ) -> Result<Replacing, A::Error> {
+                    elements.next_element::<u32>().map_err(|_| {
+                        <A::Error as serde::de::Error>::custom("not a list of counts")
+                    })?;
+                    Ok(Replacing)
+                }
+            }
+
+            deserializer.deserialize_seq(Visitor)
+        }
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    #[allow(dead_code)]
+    struct HoldsReplacing {
+        a: Replacing,
+    }
+
     /// The one pointer the 422 `Json` answers `body` with is keyed at.
     fn keyed<T: serde::de::DeserializeOwned + std::fmt::Debug>(body: &str) -> String {
         let failure = strict_json::from_slice::<T>(body.as_bytes())
@@ -2109,6 +2146,13 @@ mod a_json_failure_is_keyed_where_it_happened {
     #[test]
     fn a_swallowed_failure_is_not_part_of_the_next_pointer() {
         assert_eq!(keyed::<HoldsLenient>(r#"{"a": ["x", 1], "b": "y"}"#), "/b");
+    }
+
+    /// An error a visitor answers a failed read with is keyed at that read:
+    /// it cannot be told from the read's own error passed on.
+    #[test]
+    fn an_error_answering_a_failed_read_is_keyed_at_that_read() {
+        assert_eq!(keyed::<HoldsReplacing>(r#"{"a": ["x"]}"#), "/a/0");
     }
 }
 

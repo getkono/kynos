@@ -115,7 +115,11 @@ impl State {
     /// through it.
     ///
     /// A position that read forgets a path a value it read swallowed the
-    /// error of, so that path is not taken for the next error's.
+    /// error of, so that path is not taken for the next error's. An error a
+    /// visitor returns straight after a read failed keeps that read's path:
+    /// `serde`'s errors carry no identity, so one the visitor made in its
+    /// place cannot be told from the read's own passed on, and the read is
+    /// where the document went wrong.
     fn at<T, E>(&self, result: Result<T, E>, step: impl FnOnce() -> Option<Step>) -> Result<T, E> {
         match result {
             Ok(value) => {
