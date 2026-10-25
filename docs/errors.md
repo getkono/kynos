@@ -321,12 +321,16 @@ optional on a parameter's 400, which an undecodable value sends without it.
 **A JSON struct body is read only from an object.** `serde`'s derive also reads
 a struct from an array of its members, and from `[]` where every member
 defaults, so a merge-patch body would answer `[]` as if it were `{}` although
-the schema says `type: object`. `Json<T>` and `JsonAs<M, T>` refuse a top-level
-array where `T` reads a struct, through `Option` and newtypes too, with a 422
-keyed at the root before any member is read; an array that is not well-formed
-JSON stays a 400. A member nested deeper is still `serde`'s to read, and so is
-a top-level internally tagged enum, which `serde` reads through
-`deserialize_any`.
+the schema says `type: object`. `Json<T>`, `JsonAs<M, T>` and each `JsonLines`
+or `JsonSeq` record refuse an array wherever `T` reads a struct — at the top
+level, as a member, a sequence element, a map value or an enum variant's
+content, through `Option` and newtypes too — with a 422 before any of its
+members is read; a document that is not well-formed JSON stays a 400. The 422
+is keyed where every `serde` failure is: at the root, or at a record's index.
+What `serde` buffers before choosing a type is still its own to read: an
+untagged or internally tagged enum, and every member of a struct that flattens
+one. A `QueryString<T, M>` document is read by the same rule, and answers its
+refusal with the 400 every undecodable query string gets.
 
 `RangeRejection` is the one raised by a *method* rather than by extraction.
 [`Range<T>`](../crates/kynos/src/response/range/mod.rs) is infallible — RFC 9110

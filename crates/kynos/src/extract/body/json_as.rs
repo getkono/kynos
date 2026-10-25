@@ -219,7 +219,8 @@ where
         let () = Self::JSON;
 
         let bytes = super::read_body(parts, body, M::MEDIA_TYPE).await?;
-        let value = super::json::from_slice(&bytes).map_err(super::json::rejection)?;
+        let value =
+            crate::extract::strict_json::from_slice(&bytes).map_err(super::json::rejection)?;
         super::checked(value, Pointer::root()).map(Self::new)
     }
 }

@@ -1055,6 +1055,26 @@ mod query_string {
         assert_refused(read::<Payload, media::Json>("/search?%7B%7D").await);
     }
 
+    /// A struct is read only from an object, as a `Json` body is, though
+    /// `serde` would read one from an array of its members: `[]` is not the
+    /// `{}` every optional field allows, nor `[3]` the `{"limit":3}`, at the
+    /// top level or under `Option`.
+    #[tokio::test]
+    async fn an_array_for_a_struct_query_string_is_refused() {
+        assert_refused(read::<Filter, media::Json>("/search?%5B%5D").await);
+        assert_refused(read::<Filter, media::Json>("/search?%5B3%5D").await);
+        assert_refused(read::<Option<Filter>, media::Json>("/search?%5B%5D").await);
+
+        // The control: an array is still read where the type is a sequence.
+        assert_eq!(
+            read::<Vec<Filter>, media::Json>("/search?%5B%7B%7D%5D")
+                .await
+                .expect("a sequence of objects")
+                .into_inner(),
+            vec![Filter { limit: None }]
+        );
+    }
+
     /// One `in: querystring` parameter, carrying its schema under the media
     /// type its marker names — and nothing else on the operation. `Payload`
     /// does not admit `null`, which is what an absent query string reads as,

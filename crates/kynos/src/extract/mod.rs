@@ -44,6 +44,9 @@ pub mod params;
 // Gated with `response::stream::sse`, its send half.
 #[cfg(feature = "openapi32")]
 pub mod sse;
+// Private: a handler only ever sees the value it read, never the reader.
+#[cfg(any(feature = "json", feature = "openapi32"))]
+pub(crate) mod strict_json;
 
 use std::future::Future;
 
