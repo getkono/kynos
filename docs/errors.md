@@ -325,12 +325,31 @@ the schema says `type: object`. `Json<T>`, `JsonAs<M, T>` and each `JsonLines`
 or `JsonSeq` record refuse an array wherever `T` reads a struct — at the top
 level, as a member, a sequence element, a map value or an enum variant's
 content, through `Option` and newtypes too — with a 422 before any of its
-members is read; a document that is not well-formed JSON stays a 400. The 422
-is keyed where every `serde` failure is: at the root, or at a record's index.
-What `serde` buffers before choosing a type is still its own to read: an
-untagged or internally tagged enum, and every member of a struct that flattens
-one. A `QueryString<T, M>` document is read by the same rule, and answers its
-refusal with the 400 every undecodable query string gets.
+members is read; a document that is not well-formed JSON stays a 400. What
+`serde` buffers before choosing a type is still its own to read: an untagged or
+internally tagged enum, and every member of a struct that flattens one. A
+`QueryString<T, M>` document is read by the same rule, and answers its refusal
+with the 400 every undecodable query string gets.
+
+**A JSON `serde` failure is keyed where it happened**, as a broken bound is:
+`{"inner": {"count": "x"}}` at `/inner/count`, `[{}, []]` for `Vec<Struct>` at
+`/1`, and a `JsonLines` or `JsonSeq` record's under its index, `/N/...`. The
+reader records the path only as a failure unwinds through the members and
+elements it passed, so the two halves of one 422 mean the same thing by a key.
+A missing member is its object's failure; an unknown one, under
+`deny_unknown_fields`, is its own. A member is named as its key reads,
+unescaped then RFC 6901-escaped, and a number or boolean key as the value read.
+A variant's content is keyed under the variant's name once it is read; content
+of the wrong kind and a variant the enum lacks are keyed at the enum, since
+`serde_json` reports them alike for a bare `"Variant"` string, which names no
+member. A failure in what `serde` buffered is keyed at the buffered value. A
+`QueryString<T, M>` that does not fit names the same pointer in its 400's
+detail, the one place it has for it.
+
+The path costs nothing on a document that reads: an unescaped key is borrowed
+from the body, and the keys `serde_json` has to unescape share one buffer, so
+a document's escaped keys allocate once between them
+(`crates/kynos/tests/alloc_codecs.rs` holds both).
 
 `RangeRejection` is the one raised by a *method* rather than by extraction.
 [`Range<T>`](../crates/kynos/src/response/range/mod.rs) is infallible — RFC 9110

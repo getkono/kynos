@@ -1055,6 +1055,28 @@ mod query_string {
         assert_refused(read::<Payload, media::Json>("/search?%7B%7D").await);
     }
 
+    /// JSON that does not fit the type names where in the document it did
+    /// not; JSON that is not well-formed names no position.
+    #[tokio::test]
+    async fn an_ill_fitting_query_string_names_the_pointer_that_did_not_fit() {
+        let detail = |rejection: QueryRejection| match rejection {
+            QueryRejection::Invalid { detail, .. } => detail,
+            other => panic!("expected an invalid parameter, got {other:?}"),
+        };
+
+        let ill_fitting = read::<Filter, media::Json>("/search?%7B%22limit%22%3A%22x%22%7D")
+            .await
+            .expect_err("a string is not a `u32`");
+        let ill_fitting = detail(ill_fitting);
+        assert!(ill_fitting.starts_with("at `/limit`: "), "{ill_fitting}");
+
+        let malformed = read::<Filter, media::Json>("/search?%7B%22limit%22%3A%7D")
+            .await
+            .expect_err("not JSON");
+        let malformed = detail(malformed);
+        assert!(!malformed.starts_with("at "), "{malformed}");
+    }
+
     /// A struct is read only from an object, as a `Json` body is, though
     /// `serde` would read one from an array of its members: `[]` is not the
     /// `{}` every optional field allows, nor `[3]` the `{"limit":3}`, at the
