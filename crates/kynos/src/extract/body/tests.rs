@@ -2062,6 +2062,42 @@ mod a_json_failure_is_keyed_where_it_happened {
         a: Replacing,
     }
 
+    /// Reads a sequence, swallowing its first element's failure and passing
+    /// its second's on.
+    #[derive(Debug)]
+    struct Retrying;
+
+    impl<'de> serde::Deserialize<'de> for Retrying {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct Visitor;
+
+            impl<'de> serde::de::Visitor<'de> for Visitor {
+                type Value = Retrying;
+
+                fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    formatter.write_str("a sequence")
+                }
+
+                fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                    self,
+                    mut elements: A,
+                ) -> Result<Retrying, A::Error> {
+                    assert!(elements.next_element::<u32>().is_err(), "a failing element");
+                    elements.next_element::<Counted>()?;
+                    Ok(Retrying)
+                }
+            }
+
+            deserializer.deserialize_seq(Visitor)
+        }
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    #[allow(dead_code)]
+    struct HoldsRetrying {
+        a: Retrying,
+    }
+
     /// The one pointer the 422 `Json` answers `body` with is keyed at.
     fn keyed<T: serde::de::DeserializeOwned + std::fmt::Debug>(body: &str) -> String {
         let failure = strict_json::from_slice::<T>(body.as_bytes())
@@ -2146,6 +2182,10 @@ mod a_json_failure_is_keyed_where_it_happened {
     #[test]
     fn a_swallowed_failure_is_not_part_of_the_next_pointer() {
         assert_eq!(keyed::<HoldsLenient>(r#"{"a": ["x", 1], "b": "y"}"#), "/b");
+        assert_eq!(
+            keyed::<HoldsRetrying>(r#"{"a": ["x", {"count": "y"}]}"#),
+            "/a/1/count"
+        );
     }
 
     /// An error a visitor answers a failed read with is keyed at that read:
