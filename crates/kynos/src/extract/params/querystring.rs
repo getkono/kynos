@@ -91,7 +91,9 @@ impl<T, M: MediaType> QueryString<T, M> {
 ///
 /// A document that decodes and breaks a bound is
 /// [`QueryRejection::Schema`], a 400 keyed by JSON Pointer into the decoded
-/// document, as a body's is into the body.
+/// document, as a body's is into the body. One that does not decode is
+/// [`QueryRejection::Invalid`], whose detail names the pointer of the position
+/// that did not fit `T`.
 impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send, M: MediaType + Send>
     FromRequestParts<C> for QueryString<T, M>
 {
@@ -115,7 +117,7 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send, M: MediaType + Sen
 
         // A struct is read only from an object, as a `Json` body is.
         let value: T = crate::extract::strict_json::from_slice(decoded.as_bytes())
-            .map_err(|error| invalid(error.to_string()))?;
+            .map_err(|failure| invalid(undecoded(&failure)))?;
 
         let mut violations = Violations::new();
         value.check_constraints(Pointer::root(), &mut violations);
@@ -127,6 +129,17 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send, M: MediaType + Sen
                 failures: violations.into_failures(),
             })
         }
+    }
+}
+
+/// An undecodable document's detail: where it did not fit `T`, when it was
+/// well-formed JSON that did not.
+fn undecoded(failure: &crate::extract::strict_json::Failure) -> String {
+    let error = &failure.error;
+    let at = failure.pointer(Pointer::root());
+    match error.classify() {
+        serde_json::error::Category::Data if !at.is_empty() => format!("at `{at}`: {error}"),
+        _ => error.to_string(),
     }
 }
 

@@ -64,14 +64,15 @@ enum State {
 /// | The record | Answer | Afterwards |
 /// | --- | --- | --- |
 /// | is not well-formed JSON | 400 | the stream ends — a policy, not a necessity: the separator still marks where the next record starts. For NDJSON the reason is that a body breaking its media type is rejected rather than salvaged; `json-seq` departs from its RFC here, as below |
-/// | is JSON that does not fit `T` | 422 at JSON Pointer `/{index}` | the stream continues — the boundaries held, so a bulk ingest can report every bad record at once |
+/// | is JSON that does not fit `T` | 422 at the JSON Pointer of the position that did not, under `/{index}` | the stream continues — the boundaries held, so a bulk ingest can report every bad record at once |
 /// | breaks a bound `T`'s schema declares | 422 at each offending member, under `/{index}` | the stream continues, for the same reason |
 /// | did not arrive, because the transport failed | 400 | the stream ends |
 /// | opens a `json-seq` body without a record separator | 400 | the stream ends |
 /// | is longer than the operation's body limit | 413 | the stream ends — the rest of the record was never read, so nothing after it can be framed |
 ///
-/// The pointer is the record's index in the body, as OpenAPI 3.2 reads a
-/// sequential media type as an array: `/3` names the fourth record.
+/// Every pointer starts at the record's index in the body, as OpenAPI 3.2
+/// reads a sequential media type as an array: `/3` names the fourth record,
+/// and `/3/at` its `at` member.
 ///
 /// For `application/json-seq`, ending the stream at a malformed record is a
 /// deliberate departure from RFC 7464. Its §2.1 says a parser "SHOULD
@@ -289,12 +290,17 @@ impl<T: serde::de::DeserializeOwned + Schema> Records<T> {
         self.index += 1;
 
         // A struct is read only from an object, as a `Json` body is.
-        let value = crate::extract::strict_json::from_slice(record).map_err(|error| {
-            if crate::extract::body::json::is_schema_failure(&error) {
+        let value = crate::extract::strict_json::from_slice(record).map_err(|failure| {
+            let error = &failure.error;
+            if crate::extract::body::json::is_schema_failure(error) {
                 // Only the shape was wrong; the boundaries held, so reading
                 // continues.
+                let root = Pointer::root();
                 BodyRejection::Schema {
-                    failures: BTreeMap::from([(format!("/{index}"), error.to_string())]),
+                    failures: BTreeMap::from([(
+                        failure.pointer(root.index(index)),
+                        error.to_string(),
+                    )]),
                 }
             } else {
                 // Fail-fast by policy: the separator framed this record, so

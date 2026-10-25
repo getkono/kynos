@@ -1,16 +1,25 @@
-//! Reading a struct only from an object, at every position of a document.
+//! Reading a struct only from an object, at every position of a document, and
+//! keying a failure at the position it happened.
 //!
 //! Shared by every input decoded as JSON — the `Json`, `JsonAs` and record
 //! bodies, and the `QueryString` parameter — so each reads a document alike.
 
-use std::cell::Cell;
+mod access;
+mod key;
 
-use serde::de::{
-    DeserializeSeed, Deserializer, EnumAccess, MapAccess, SeqAccess, VariantAccess, Visitor,
+use std::cell::{Cell, RefCell};
+
+use serde::de::{DeserializeSeed, Deserializer, EnumAccess, MapAccess, SeqAccess, Visitor};
+
+use self::{
+    access::{Elements, Members},
+    key::Key,
 };
+use crate::schema::constraints::Pointer;
 
 /// Reads one JSON document as [`serde_json::from_slice`] does, except that a
-/// struct is read only from an object, wherever the document holds one.
+/// struct is read only from an object, wherever the document holds one, and a
+/// failure says where it happened.
 ///
 /// `serde`'s derive also reads a struct from an array of its members, which
 /// the `type: object` its schema declares refuses; where every member
@@ -19,43 +28,139 @@ use serde::de::{
 /// sequence element, a map value, `Option`, a newtype and an enum variant.
 /// What `serde` buffers before choosing a type — an untagged or internally
 /// tagged enum, every member of a struct that flattens one — is `serde`'s to
-/// read. Bytes that are not one JSON document keep their syntax error, so the
-/// 400/422 split holds.
-pub(crate) fn from_slice<T: serde::de::DeserializeOwned>(
-    bytes: &[u8],
-) -> Result<T, serde_json::Error> {
-    let refused = Cell::new(false);
+/// read, and a failure in it is keyed at the buffered value. Bytes that are
+/// not one JSON document keep their syntax error, so the 400/422 split holds.
+pub(crate) fn from_slice<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, Failure> {
+    let state = State::default();
     let mut deserializer = serde_json::Deserializer::from_slice(bytes);
     let value = T::deserialize(Strict {
         inner: &mut deserializer,
-        refused: &refused,
+        state: &state,
     })
-    .map_err(|error| {
+    .map_err(|error| Failure {
         // A syntax error wins: the refusal is only for well-formed JSON.
-        if refused.get() {
+        error: if state.refused.get() {
             serde_json::from_slice::<serde::de::IgnoredAny>(bytes).err()
         } else {
             None
         }
-        .unwrap_or(error)
+        .unwrap_or(error),
+        path: state.path.take(),
     })?;
-    deserializer.end()?;
+    deserializer.end().map_err(|error| Failure {
+        error,
+        path: Vec::new(),
+    })?;
     Ok(value)
+}
+
+/// Why a document did not read, and where in it.
+#[derive(Debug)]
+pub(crate) struct Failure {
+    /// What `serde_json` reported.
+    pub(crate) error: serde_json::Error,
+
+    /// The steps from the document to the position that failed, the
+    /// innermost first, as the error unwound through them.
+    path: Vec<Step>,
+}
+
+impl Failure {
+    /// The JSON Pointer of the position that failed, under `base`: where the
+    /// document sits in what holds it.
+    ///
+    /// A member is named as its key read: an escaped key unescaped, and a
+    /// key read as a number by that number as Rust writes it, so a `"1e2"`
+    /// read as an `f64` is named `100`.
+    pub(crate) fn pointer(&self, base: Pointer<'_>) -> String {
+        /// Descends from `at` along `rest`, the outermost step last.
+        fn render(at: Pointer<'_>, rest: &[Step]) -> String {
+            match rest.split_last() {
+                None => at.to_string(),
+                Some((Step::Member(name), rest)) => render(at.member(name), rest),
+                Some((Step::Index(index), rest)) => render(at.index(*index), rest),
+            }
+        }
+
+        render(base, &self.path)
+    }
+}
+
+/// One step of a failure's path.
+#[derive(Debug)]
+enum Step {
+    Member(String),
+    Index(usize),
+}
+
+/// What every position of one document shares.
+#[derive(Debug, Default)]
+struct State {
+    /// Set when an array was refused, so a syntax error later in the
+    /// document can still win.
+    refused: Cell<bool>,
+
+    /// The names of the keys being read that could not be borrowed, as a
+    /// stack: each map and sequence truncates it to where it began before
+    /// its next member or element.
+    keys: RefCell<String>,
+
+    /// The path an error has unwound through so far; empty unless one is
+    /// unwinding.
+    path: RefCell<Vec<Step>>,
+}
+
+impl State {
+    /// Passes `result` on, adding `step` to the path of an error unwinding
+    /// through it.
+    ///
+    /// A position that read forgets a path a value it read swallowed the
+    /// error of, so that path is not taken for the next error's. An error a
+    /// visitor returns straight after a read failed keeps that read's path:
+    /// `serde`'s errors carry no identity, so one the visitor made in its
+    /// place cannot be told from the read's own passed on, and the read is
+    /// where the document went wrong.
+    fn at<T, E>(&self, result: Result<T, E>, step: impl FnOnce() -> Option<Step>) -> Result<T, E> {
+        match result {
+            Ok(value) => {
+                self.path.borrow_mut().clear();
+                Ok(value)
+            }
+            Err(error) => {
+                if let Some(step) = step() {
+                    self.path.borrow_mut().push(step);
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Forgets a path a swallowed error left, before a read whose own
+    /// failure would otherwise unwind onto it.
+    fn begin(&self) {
+        self.path.borrow_mut().clear();
+    }
+
+    /// Where the key buffer is now, for a map or sequence to truncate it to.
+    fn mark(&self) -> usize {
+        self.keys.borrow().len()
+    }
 }
 
 /// A position in a document, refusing to read a struct from an array, and
 /// handing the same refusal to every position it hands out: as the
-/// deserializer, seed, element and variant accessors `serde_json` passes in.
+/// deserializer, seed and enum accessor `serde_json` passes in.
 ///
-/// Each wrapper adds a pointer and allocates nothing; what one costs per
-/// element is the forwarding the compiler inlines.
+/// Each wrapper adds a pointer or two, and what one costs per element is the
+/// forwarding the compiler inlines and the key a member holds. A document
+/// that reads allocates nothing for them but the one key buffer its escaped
+/// keys share; a failure's path is built only as the failure unwinds.
 struct Strict<'a, D> {
     /// What every request is forwarded to.
     inner: D,
 
-    /// Set when an array was refused, so a syntax error later in the
-    /// document can still win.
-    refused: &'a Cell<bool>,
+    /// The document's shared state.
+    state: &'a State,
 }
 
 /// Forwards each named `deserialize_*` method, with its extra arguments, to
@@ -67,13 +172,13 @@ macro_rules! forward {
             $($argument: $kind,)*
             visitor: V,
         ) -> Result<V::Value, Self::Error> {
-            let visitor = forward!(@visitor $wrap visitor self.refused);
+            let visitor = forward!(@visitor $wrap visitor self.state);
             self.inner.$method($($argument,)* visitor)
         }
     )*};
-    (@visitor raw $visitor:ident $refused:expr) => { $visitor };
-    (@visitor wrap $visitor:ident $refused:expr) => {
-        Visit { visitor: $visitor, refused: $refused, object: false }
+    (@visitor raw $visitor:ident $state:expr) => { $visitor };
+    (@visitor wrap $visitor:ident $state:expr) => {
+        Visit { visitor: $visitor, state: $state, object: false, entered: None }
     };
 }
 
@@ -120,8 +225,9 @@ impl<'de, D: Deserializer<'de>> Deserializer<'de> for Strict<'_, D> {
     ) -> Result<V::Value, Self::Error> {
         let visitor = Visit {
             visitor,
-            refused: self.refused,
+            state: self.state,
             object: true,
+            entered: None,
         };
         self.inner.deserialize_struct(name, fields, visitor)
     }
@@ -138,8 +244,9 @@ impl<'de, D: Deserializer<'de>> Deserializer<'de> for Strict<'_, D> {
         } else {
             let visitor = Visit {
                 visitor,
-                refused: self.refused,
+                state: self.state,
                 object: false,
+                entered: None,
             };
             self.inner.deserialize_newtype_struct(name, visitor)
         }
@@ -154,9 +261,23 @@ impl<'de, D: Deserializer<'de>> Deserializer<'de> for Strict<'_, D> {
 /// it was asked for a struct.
 struct Visit<'a, V> {
     visitor: V,
-    refused: &'a Cell<bool>,
+    state: &'a State,
+
     /// Whether the value asked for is a struct, which an array is not.
     object: bool,
+
+    /// Set once a sequence or map is visited, for a variant's content to
+    /// tell a failure inside it from content of the wrong kind.
+    entered: Option<&'a Cell<bool>>,
+}
+
+impl<V> Visit<'_, V> {
+    /// Notes that the content was reached.
+    fn enter(&self) {
+        if let Some(entered) = self.entered {
+            entered.set(true);
+        }
+    }
 }
 
 /// Forwards each named scalar `visit_*` method to the inner visitor.
@@ -207,36 +328,48 @@ impl<'de, V: Visitor<'de>> Visitor<'de> for Visit<'_, V> {
     }
 
     fn visit_some<D: Deserializer<'de>>(self, inner: D) -> Result<Self::Value, D::Error> {
-        let refused = self.refused;
-        self.visitor.visit_some(Strict { inner, refused })
+        let state = self.state;
+        self.visitor.visit_some(Strict { inner, state })
     }
 
     fn visit_newtype_struct<D: Deserializer<'de>>(self, inner: D) -> Result<Self::Value, D::Error> {
-        let refused = self.refused;
-        self.visitor.visit_newtype_struct(Strict { inner, refused })
+        let state = self.state;
+        self.visitor.visit_newtype_struct(Strict { inner, state })
     }
 
     /// Refused before any element is read.
     fn visit_seq<A: SeqAccess<'de>>(self, inner: A) -> Result<Self::Value, A::Error> {
+        self.enter();
         if self.object {
-            self.refused.set(true);
+            self.state.refused.set(true);
             return Err(serde::de::Error::invalid_type(
                 serde::de::Unexpected::Seq,
                 &"a JSON object",
             ));
         }
-        let refused = self.refused;
-        self.visitor.visit_seq(Strict { inner, refused })
+        let state = self.state;
+        self.visitor.visit_seq(Elements {
+            inner,
+            state,
+            start: state.mark(),
+            index: 0,
+        })
     }
 
     fn visit_map<A: MapAccess<'de>>(self, inner: A) -> Result<Self::Value, A::Error> {
-        let refused = self.refused;
-        self.visitor.visit_map(Strict { inner, refused })
+        self.enter();
+        let state = self.state;
+        self.visitor.visit_map(Members {
+            inner,
+            state,
+            start: state.mark(),
+            key: Key::Absent,
+        })
     }
 
     fn visit_enum<A: EnumAccess<'de>>(self, inner: A) -> Result<Self::Value, A::Error> {
-        let refused = self.refused;
-        self.visitor.visit_enum(Strict { inner, refused })
+        let state = self.state;
+        self.visitor.visit_enum(Strict { inner, state })
     }
 }
 
@@ -245,106 +378,7 @@ impl<'de, S: DeserializeSeed<'de>> DeserializeSeed<'de> for Strict<'_, S> {
     type Value = S::Value;
 
     fn deserialize<D: Deserializer<'de>>(self, inner: D) -> Result<Self::Value, D::Error> {
-        let refused = self.refused;
-        self.inner.deserialize(Strict { inner, refused })
-    }
-}
-
-/// Each element read through [`Strict`].
-impl<'de, A: SeqAccess<'de>> SeqAccess<'de> for Strict<'_, A> {
-    type Error = A::Error;
-
-    fn next_element_seed<T: DeserializeSeed<'de>>(
-        &mut self,
-        inner: T,
-    ) -> Result<Option<T::Value>, Self::Error> {
-        let refused = self.refused;
-        self.inner.next_element_seed(Strict { inner, refused })
-    }
-
-    fn size_hint(&self) -> Option<usize> {
-        self.inner.size_hint()
-    }
-}
-
-/// Each value read through [`Strict`]; a key is a string, never a struct.
-impl<'de, A: MapAccess<'de>> MapAccess<'de> for Strict<'_, A> {
-    type Error = A::Error;
-
-    fn next_key_seed<K: DeserializeSeed<'de>>(
-        &mut self,
-        seed: K,
-    ) -> Result<Option<K::Value>, Self::Error> {
-        self.inner.next_key_seed(seed)
-    }
-
-    fn next_value_seed<T: DeserializeSeed<'de>>(
-        &mut self,
-        inner: T,
-    ) -> Result<T::Value, Self::Error> {
-        let refused = self.refused;
-        self.inner.next_value_seed(Strict { inner, refused })
-    }
-
-    fn size_hint(&self) -> Option<usize> {
-        self.inner.size_hint()
-    }
-}
-
-/// The variant's content read through [`Strict`]; its name is an identifier.
-impl<'a, 'de, A: EnumAccess<'de>> EnumAccess<'de> for Strict<'a, A> {
-    type Error = A::Error;
-    type Variant = Strict<'a, A::Variant>;
-
-    fn variant_seed<V: DeserializeSeed<'de>>(
-        self,
-        seed: V,
-    ) -> Result<(V::Value, Self::Variant), Self::Error> {
-        let refused = self.refused;
-        let (value, inner) = self.inner.variant_seed(seed)?;
-        Ok((value, Strict { inner, refused }))
-    }
-}
-
-/// A struct variant is read only from an object, as a struct is.
-impl<'de, A: VariantAccess<'de>> VariantAccess<'de> for Strict<'_, A> {
-    type Error = A::Error;
-
-    fn unit_variant(self) -> Result<(), Self::Error> {
-        self.inner.unit_variant()
-    }
-
-    fn newtype_variant_seed<T: DeserializeSeed<'de>>(
-        self,
-        inner: T,
-    ) -> Result<T::Value, Self::Error> {
-        let refused = self.refused;
-        self.inner.newtype_variant_seed(Strict { inner, refused })
-    }
-
-    fn tuple_variant<V: Visitor<'de>>(
-        self,
-        len: usize,
-        visitor: V,
-    ) -> Result<V::Value, Self::Error> {
-        let visitor = Visit {
-            visitor,
-            refused: self.refused,
-            object: false,
-        };
-        self.inner.tuple_variant(len, visitor)
-    }
-
-    fn struct_variant<V: Visitor<'de>>(
-        self,
-        fields: &'static [&'static str],
-        visitor: V,
-    ) -> Result<V::Value, Self::Error> {
-        let visitor = Visit {
-            visitor,
-            refused: self.refused,
-            object: true,
-        };
-        self.inner.struct_variant(fields, visitor)
+        let state = self.state;
+        self.inner.deserialize(Strict { inner, state })
     }
 }

@@ -523,8 +523,8 @@ async fn a_record_that_does_not_fit_the_type_does_not_end_the_stream() {
     };
     assert_eq!(
         failures.keys().collect::<Vec<_>>(),
-        vec!["/1"],
-        "the pointer is the record's index, which 3.2 makes well defined by reading a \
+        vec!["/1/at"],
+        "the pointer is under the record's index, which 3.2 makes well defined by reading a \
          sequential media type as an array in order"
     );
 

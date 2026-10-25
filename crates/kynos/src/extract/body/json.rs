@@ -23,8 +23,9 @@ use crate::{
 /// different content type rejects with 415. Malformed or incomplete JSON
 /// rejects with 400, while valid JSON that cannot deserialize into `T` or
 /// breaks a bound `T`'s schema declares rejects with 422, keyed by the JSON
-/// Pointer of each member that broke one. An array is not a struct, at the
-/// top level or nested in it, though `serde` would read one from its members.
+/// Pointer of the position that did not deserialize, or of each member that
+/// broke a bound. An array is not a struct, at the top level or nested in it,
+/// though `serde` would read one from its members.
 /// Which bounds are enforced is [`constraints`](crate::schema::constraints)'
 /// to say.
 ///
@@ -61,19 +62,21 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send> FromRequest<C> for
     }
 }
 
-/// Malformed JSON is a 400; well-formed JSON that does not fit `T` is a 422.
-///
-/// Keyed at the root pointer: serde reports a line and column, not a location.
+/// Malformed JSON is a 400; well-formed JSON that does not fit `T` is a 422,
+/// keyed at the JSON Pointer of the position that did not.
 // By value to fit `map_err`.
 #[allow(clippy::needless_pass_by_value)]
-pub(super) fn rejection(error: serde_json::Error) -> BodyRejection {
-    if is_schema_failure(&error) {
+pub(super) fn rejection(failure: strict_json::Failure) -> BodyRejection {
+    if is_schema_failure(&failure.error) {
         BodyRejection::Schema {
-            failures: BTreeMap::from([(String::new(), error.to_string())]),
+            failures: BTreeMap::from([(
+                failure.pointer(Pointer::root()),
+                failure.error.to_string(),
+            )]),
         }
     } else {
         BodyRejection::Syntax {
-            detail: error.to_string(),
+            detail: failure.error.to_string(),
         }
     }
 }

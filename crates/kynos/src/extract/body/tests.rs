@@ -1842,14 +1842,16 @@ mod a_nested_json_struct_is_read_only_from_an_object {
         Move(Patch, u32),
     }
 
-    /// The 422 `Json` answers `body` with, which must be a refused array.
-    fn refused<T: serde::de::DeserializeOwned + std::fmt::Debug>(body: &str) {
-        let error = strict_json::from_slice::<T>(body.as_bytes())
+    /// The 422 `Json` answers `body` with, which must be a refused array,
+    /// keyed at the array's own pointer.
+    fn refused<T: serde::de::DeserializeOwned + std::fmt::Debug>(body: &str, at: &str) {
+        let failure = strict_json::from_slice::<T>(body.as_bytes())
             .expect_err(&format!("{body}: an array is not an object"));
-        let BodyRejection::Schema { failures } = json::rejection(error) else {
+        let BodyRejection::Schema { failures } = json::rejection(failure) else {
             panic!("{body}: expected a 422");
         };
-        let detail = &failures[""];
+        assert_eq!(failures.keys().collect::<Vec<_>>(), [at], "{body}");
+        let detail = &failures[at];
         assert!(
             detail.contains("expected a JSON object"),
             "{body}: {detail}"
@@ -1857,26 +1859,26 @@ mod a_nested_json_struct_is_read_only_from_an_object {
     }
 
     #[test]
-    fn an_array_for_a_nested_struct_is_refused() {
-        refused::<Outer>(r#"{"inner": []}"#);
-        refused::<Deep>(r#"{"outer": {"inner": [null]}}"#);
-        refused::<Maybe>(r#"{"inner": []}"#);
-        refused::<HoldsWrapped>(r#"{"inner": []}"#);
-        refused::<Vec<Patch>>("[{}, []]");
-        refused::<BTreeMap<String, Patch>>(r#"{"a": []}"#);
-        refused::<(Patch,)>("[[]]");
-        refused::<Change>(r#"{"Replace": []}"#);
-        refused::<Change>(r#"{"Edit": []}"#);
-        refused::<Change>(r#"{"Move": [[], 1]}"#);
+    fn an_array_for_a_nested_struct_is_refused_at_its_pointer() {
+        refused::<Outer>(r#"{"inner": []}"#, "/inner");
+        refused::<Deep>(r#"{"outer": {"inner": [null]}}"#, "/outer/inner");
+        refused::<Maybe>(r#"{"inner": []}"#, "/inner");
+        refused::<HoldsWrapped>(r#"{"inner": []}"#, "/inner");
+        refused::<Vec<Patch>>("[{}, []]", "/1");
+        refused::<BTreeMap<String, Patch>>(r#"{"a": []}"#, "/a");
+        refused::<(Patch,)>("[[]]", "/0");
+        refused::<Change>(r#"{"Replace": []}"#, "/Replace");
+        refused::<Change>(r#"{"Edit": []}"#, "/Edit");
+        refused::<Change>(r#"{"Move": [[], 1]}"#, "/Move/0");
     }
 
     /// The refusal is only for well-formed JSON, as at the top level.
     #[test]
     fn a_malformed_document_holding_an_array_is_still_malformed() {
         for body in [r#"{"inner": [}"#, r#"{"inner": [], "#, r#"{"inner": []} x"#] {
-            let error = strict_json::from_slice::<Outer>(body.as_bytes()).expect_err(body);
+            let failure = strict_json::from_slice::<Outer>(body.as_bytes()).expect_err(body);
             assert!(
-                matches!(json::rejection(error), BodyRejection::Syntax { .. }),
+                matches!(json::rejection(failure), BodyRejection::Syntax { .. }),
                 "{body}: expected a 400"
             );
         }
@@ -1920,6 +1922,322 @@ mod a_nested_json_struct_is_read_only_from_an_object {
                 inner: Wrapped(patch())
             }
         );
+    }
+}
+
+/// A value that does not deserialize is keyed at the JSON Pointer of the
+/// position that failed, as a broken bound is, rather than at the root.
+#[cfg(feature = "json")]
+mod a_json_failure_is_keyed_where_it_happened {
+    use std::collections::BTreeMap;
+
+    use crate::{
+        error::rejection::BodyRejection,
+        extract::{body::json, strict_json},
+    };
+
+    #[derive(Debug, serde::Deserialize)]
+    #[allow(dead_code)]
+    struct Counted {
+        count: u32,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    #[allow(dead_code)]
+    struct Outer {
+        inner: Counted,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    #[allow(dead_code)]
+    struct Closed {
+        count: u32,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    #[allow(dead_code)]
+    struct HoldsClosed {
+        inner: Closed,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    #[allow(dead_code)]
+    struct Pair {
+        a: Counted,
+        b: Counted,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    #[allow(dead_code)]
+    enum Change {
+        Count(u32),
+        Edit { note: String },
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    #[serde(untagged)]
+    #[allow(dead_code)]
+    enum Either {
+        Number(u32),
+        Text(String),
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    #[allow(dead_code)]
+    struct HoldsEither {
+        inner: Either,
+    }
+
+    /// A map key read as bytes, as `serde_json` hands them over.
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+    struct ByteKey(Vec<u8>);
+
+    impl<'de> serde::Deserialize<'de> for ByteKey {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct Visitor;
+
+            impl serde::de::Visitor<'_> for Visitor {
+                type Value = ByteKey;
+
+                fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    formatter.write_str("bytes")
+                }
+
+                fn visit_bytes<E: serde::de::Error>(self, value: &[u8]) -> Result<ByteKey, E> {
+                    Ok(ByteKey(value.to_vec()))
+                }
+            }
+
+            deserializer.deserialize_bytes(Visitor)
+        }
+    }
+
+    /// Reads a sequence, swallowing its first element's failure.
+    #[derive(Debug)]
+    struct Lenient;
+
+    impl<'de> serde::Deserialize<'de> for Lenient {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct Visitor;
+
+            impl<'de> serde::de::Visitor<'de> for Visitor {
+                type Value = Lenient;
+
+                fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    formatter.write_str("a sequence")
+                }
+
+                fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                    self,
+                    mut elements: A,
+                ) -> Result<Lenient, A::Error> {
+                    assert!(elements.next_element::<u32>().is_err(), "a failing element");
+                    while elements.next_element::<serde::de::IgnoredAny>()?.is_some() {}
+                    Ok(Lenient)
+                }
+            }
+
+            deserializer.deserialize_seq(Visitor)
+        }
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    #[allow(dead_code)]
+    struct HoldsLenient {
+        a: Lenient,
+        b: u32,
+    }
+
+    /// Reads a sequence, answering its first element's failure with an error
+    /// of its own.
+    #[derive(Debug)]
+    struct Replacing;
+
+    impl<'de> serde::Deserialize<'de> for Replacing {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct Visitor;
+
+            impl<'de> serde::de::Visitor<'de> for Visitor {
+                type Value = Replacing;
+
+                fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    formatter.write_str("a sequence")
+                }
+
+                fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                    self,
+                    mut elements: A,
+                ) -> Result<Replacing, A::Error> {
+                    elements.next_element::<u32>().map_err(|_| {
+                        <A::Error as serde::de::Error>::custom("not a list of counts")
+                    })?;
+                    Ok(Replacing)
+                }
+            }
+
+            deserializer.deserialize_seq(Visitor)
+        }
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    #[allow(dead_code)]
+    struct HoldsReplacing {
+        a: Replacing,
+    }
+
+    /// Reads a sequence, swallowing its first element's failure and passing
+    /// its second's on.
+    #[derive(Debug)]
+    struct Retrying;
+
+    impl<'de> serde::Deserialize<'de> for Retrying {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct Visitor;
+
+            impl<'de> serde::de::Visitor<'de> for Visitor {
+                type Value = Retrying;
+
+                fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    formatter.write_str("a sequence")
+                }
+
+                fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                    self,
+                    mut elements: A,
+                ) -> Result<Retrying, A::Error> {
+                    assert!(elements.next_element::<u32>().is_err(), "a failing element");
+                    elements.next_element::<Counted>()?;
+                    Ok(Retrying)
+                }
+            }
+
+            deserializer.deserialize_seq(Visitor)
+        }
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    #[allow(dead_code)]
+    struct HoldsRetrying {
+        a: Retrying,
+    }
+
+    /// The one pointer the 422 `Json` answers `body` with is keyed at.
+    fn keyed<T: serde::de::DeserializeOwned + std::fmt::Debug>(body: impl AsRef<[u8]>) -> String {
+        let body = body.as_ref();
+        let failure = strict_json::from_slice::<T>(body)
+            .expect_err(&format!("{}: does not fit", String::from_utf8_lossy(body)));
+        let body = String::from_utf8_lossy(body);
+        let BodyRejection::Schema { failures } = json::rejection(failure) else {
+            panic!("{body}: expected a 422");
+        };
+        let mut pointers = failures.into_keys();
+        let pointer = pointers.next().expect("one failure");
+        assert_eq!(pointers.next(), None, "{body}: one failure");
+        pointer
+    }
+
+    #[test]
+    fn a_member_or_an_element_that_does_not_fit_is_keyed_at_its_own_pointer() {
+        assert_eq!(
+            keyed::<Outer>(r#"{"inner": {"count": "x"}}"#),
+            "/inner/count"
+        );
+        assert_eq!(keyed::<Vec<u32>>(r#"[1, "x"]"#), "/1");
+        assert_eq!(
+            keyed::<Vec<Counted>>(r#"[{"count": 1}, {"count": -1}]"#),
+            "/1/count"
+        );
+        assert_eq!(keyed::<u32>(r#""x""#), "");
+    }
+
+    /// A missing member is the object's failure; an unknown one is its own.
+    #[test]
+    fn a_missing_member_is_keyed_at_its_object_and_an_unknown_one_at_itself() {
+        assert_eq!(keyed::<Outer>(r#"{"inner": {}}"#), "/inner");
+        assert_eq!(
+            keyed::<HoldsClosed>(r#"{"inner": {"count": 1, "extra": 2}}"#),
+            "/inner/extra"
+        );
+    }
+
+    /// An escaped name is read as unescaped, and written as RFC 6901 escapes
+    /// it; a key read as a number or a boolean is named as its text.
+    #[test]
+    fn a_member_is_named_as_its_key_reads() {
+        assert_eq!(
+            keyed::<Outer>(r#"{"in\u006eer": {"count": "x"}}"#),
+            "/inner/count"
+        );
+        assert_eq!(
+            keyed::<Pair>(r#"{"\u0061": {"count": 1}, "\u0062": {"\u0063ount": "x"}}"#),
+            "/b/count"
+        );
+        assert_eq!(
+            keyed::<BTreeMap<String, u32>>(r#"{"a/b~c": "x"}"#),
+            "/a~1b~0c"
+        );
+        assert_eq!(keyed::<BTreeMap<u32, u32>>(r#"{"7": "x"}"#), "/7");
+        assert_eq!(keyed::<BTreeMap<bool, u32>>(r#"{"true": "x"}"#), "/true");
+    }
+
+    /// A key read as a character or as bytes is named as its text, and bytes
+    /// that are not UTF-8 lossily.
+    #[test]
+    fn a_character_or_byte_key_is_named_as_its_text() {
+        assert_eq!(keyed::<BTreeMap<char, u32>>(r#"{"a": "x"}"#), "/a");
+        assert_eq!(keyed::<BTreeMap<char, u32>>(r#"{"a": "x"}"#), "/a");
+        assert_eq!(keyed::<BTreeMap<ByteKey, u32>>(r#"{"ab": "x"}"#), "/ab");
+        assert_eq!(keyed::<BTreeMap<ByteKey, u32>>(r#"{"ab": "x"}"#), "/ab");
+        assert_eq!(
+            keyed::<BTreeMap<ByteKey, u32>>(b"{\"a\xffb\": \"x\"}"),
+            "/a\u{fffd}b"
+        );
+        assert_eq!(
+            keyed::<BTreeMap<ByteKey, u32>>(r#"{"a\ud800b": "x"}"#),
+            "/a\u{fffd}\u{fffd}\u{fffd}b"
+        );
+    }
+
+    /// A variant's content is keyed under its name once it is read; a variant
+    /// the enum does not have, or content of the wrong kind, is the enum's.
+    #[test]
+    fn a_variant_is_keyed_under_its_name_once_its_content_is_read() {
+        assert_eq!(keyed::<Change>(r#"{"Count": "x"}"#), "/Count");
+        assert_eq!(keyed::<Change>(r#"{"Edit": {"note": 5}}"#), "/Edit/note");
+        assert_eq!(keyed::<Change>(r#"{"Edit": {}}"#), "/Edit");
+        assert_eq!(
+            keyed::<Change>(r#"{"\u0045dit": {"note": 5}}"#),
+            "/Edit/note"
+        );
+        assert_eq!(keyed::<Change>(r#"{"Edit": 5}"#), "");
+        assert_eq!(keyed::<Change>(r#""Edit""#), "");
+        assert_eq!(keyed::<Change>(r#"{"Nope": 1}"#), "");
+    }
+
+    /// What `serde` buffers is read after the wrappers hand it over, so its
+    /// failure is keyed at the buffered value.
+    #[test]
+    fn a_buffered_value_is_keyed_at_itself() {
+        assert_eq!(keyed::<HoldsEither>(r#"{"inner": []}"#), "/inner");
+    }
+
+    /// A failure a value swallowed leaves nothing in the next one's pointer.
+    #[test]
+    fn a_swallowed_failure_is_not_part_of_the_next_pointer() {
+        assert_eq!(keyed::<HoldsLenient>(r#"{"a": ["x", 1], "b": "y"}"#), "/b");
+        assert_eq!(
+            keyed::<HoldsRetrying>(r#"{"a": ["x", {"count": "y"}]}"#),
+            "/a/1/count"
+        );
+        assert_eq!(keyed::<HoldsRetrying>(r#"{"a": ["x", 5]}"#), "/a/1");
+    }
+
+    /// An error a visitor answers a failed read with is keyed at that read:
+    /// it cannot be told from the read's own error passed on.
+    #[test]
+    fn an_error_answering_a_failed_read_is_keyed_at_that_read() {
+        assert_eq!(keyed::<HoldsReplacing>(r#"{"a": ["x"]}"#), "/a/0");
     }
 }
 

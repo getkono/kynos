@@ -615,6 +615,51 @@ mod json {
         );
     }
 
+    /// [`BODY`] with its first key escaped, which `serde_json` unescapes into
+    /// scratch of its own rather than borrowing.
+    const ONE_ESCAPED_BODY: &[u8] = br#"{"\u0069d":7,"value":11}"#;
+
+    /// [`BODY`] with both keys escaped.
+    const BOTH_ESCAPED_BODY: &[u8] = br#"{"\u0069d":7,"\u0076alue":11}"#;
+
+    /// What naming the members costs a body that reads, against plain
+    /// `serde_json` on the same octets: nothing where every key is borrowed,
+    /// and one allocation per document where any is escaped, however many
+    /// are.
+    ///
+    /// `Json` names each member it reads, so a failure inside one is keyed at
+    /// its pointer. A relation to `OutsideJson`, which reads the same document
+    /// through `serde_json::from_slice` and names nothing, so the difference
+    /// is the path alone: [`BODY`]'s keys are borrowed from the body, and an
+    /// escaped key is written to the one buffer every key of the document
+    /// shares.
+    #[test]
+    fn naming_the_members_costs_a_body_that_reads_one_allocation_at_most() {
+        let service = service();
+        let count = |target: &str, content_type: &'static str, body: &'static [u8]| {
+            let request = request(Method::POST, target, Some(content_type), body);
+            let (allocations, response) =
+                counting::counted(&service, request, StatusCode::NO_CONTENT);
+            drop(response);
+            allocations
+        };
+        let outside = <OutsideJson as BodyCodec<Reading>>::MEDIA_TYPE;
+
+        assert_eq!(
+            count("/json", "application/json", BODY),
+            count("/encoded", outside, BODY),
+            "a borrowed key costs nothing to name"
+        );
+        for body in [ONE_ESCAPED_BODY, BOTH_ESCAPED_BODY] {
+            assert_eq!(
+                count("/json", "application/json", body),
+                count("/encoded", outside, body) + 1,
+                "{}: a document's escaped keys share one allocation",
+                String::from_utf8_lossy(body)
+            );
+        }
+    }
+
     /// Every operation this service holds but the `JsonAs` and `Encoded` pairs,
     /// and what one request to it costs today. Those are held to `Json`'s rows
     /// by `a_declared_media_type_costs_what_json_does` and
