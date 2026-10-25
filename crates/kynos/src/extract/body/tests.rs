@@ -1989,6 +1989,30 @@ mod a_json_failure_is_keyed_where_it_happened {
         inner: Either,
     }
 
+    /// A map key read as bytes, as `serde_json` hands them over.
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+    struct ByteKey(Vec<u8>);
+
+    impl<'de> serde::Deserialize<'de> for ByteKey {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct Visitor;
+
+            impl serde::de::Visitor<'_> for Visitor {
+                type Value = ByteKey;
+
+                fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    formatter.write_str("bytes")
+                }
+
+                fn visit_bytes<E: serde::de::Error>(self, value: &[u8]) -> Result<ByteKey, E> {
+                    Ok(ByteKey(value.to_vec()))
+                }
+            }
+
+            deserializer.deserialize_bytes(Visitor)
+        }
+    }
+
     /// Reads a sequence, swallowing its first element's failure.
     #[derive(Debug)]
     struct Lenient;
@@ -2099,9 +2123,11 @@ mod a_json_failure_is_keyed_where_it_happened {
     }
 
     /// The one pointer the 422 `Json` answers `body` with is keyed at.
-    fn keyed<T: serde::de::DeserializeOwned + std::fmt::Debug>(body: &str) -> String {
-        let failure = strict_json::from_slice::<T>(body.as_bytes())
-            .expect_err(&format!("{body}: does not fit"));
+    fn keyed<T: serde::de::DeserializeOwned + std::fmt::Debug>(body: impl AsRef<[u8]>) -> String {
+        let body = body.as_ref();
+        let failure = strict_json::from_slice::<T>(body)
+            .expect_err(&format!("{}: does not fit", String::from_utf8_lossy(body)));
+        let body = String::from_utf8_lossy(body);
         let BodyRejection::Schema { failures } = json::rejection(failure) else {
             panic!("{body}: expected a 422");
         };
@@ -2153,6 +2179,24 @@ mod a_json_failure_is_keyed_where_it_happened {
         );
         assert_eq!(keyed::<BTreeMap<u32, u32>>(r#"{"7": "x"}"#), "/7");
         assert_eq!(keyed::<BTreeMap<bool, u32>>(r#"{"true": "x"}"#), "/true");
+    }
+
+    /// A key read as a character or as bytes is named as its text, and bytes
+    /// that are not UTF-8 lossily.
+    #[test]
+    fn a_character_or_byte_key_is_named_as_its_text() {
+        assert_eq!(keyed::<BTreeMap<char, u32>>(r#"{"a": "x"}"#), "/a");
+        assert_eq!(keyed::<BTreeMap<char, u32>>(r#"{"a": "x"}"#), "/a");
+        assert_eq!(keyed::<BTreeMap<ByteKey, u32>>(r#"{"ab": "x"}"#), "/ab");
+        assert_eq!(keyed::<BTreeMap<ByteKey, u32>>(r#"{"ab": "x"}"#), "/ab");
+        assert_eq!(
+            keyed::<BTreeMap<ByteKey, u32>>(b"{\"a\xffb\": \"x\"}"),
+            "/a\u{fffd}b"
+        );
+        assert_eq!(
+            keyed::<BTreeMap<ByteKey, u32>>(r#"{"a\ud800b": "x"}"#),
+            "/a\u{fffd}\u{fffd}\u{fffd}b"
+        );
     }
 
     /// A variant's content is keyed under its name once it is read; a variant
