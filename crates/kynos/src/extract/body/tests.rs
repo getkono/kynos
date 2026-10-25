@@ -2186,9 +2186,12 @@ mod a_json_failure_is_keyed_where_it_happened {
     #[test]
     fn a_character_or_byte_key_is_named_as_its_text() {
         assert_eq!(keyed::<BTreeMap<char, u32>>(r#"{"a": "x"}"#), "/a");
-        assert_eq!(keyed::<BTreeMap<char, u32>>(r#"{"a": "x"}"#), "/a");
+        assert_eq!(keyed::<BTreeMap<char, u32>>(r#"{"\u0061": "x"}"#), "/a");
         assert_eq!(keyed::<BTreeMap<ByteKey, u32>>(r#"{"ab": "x"}"#), "/ab");
-        assert_eq!(keyed::<BTreeMap<ByteKey, u32>>(r#"{"ab": "x"}"#), "/ab");
+        assert_eq!(
+            keyed::<BTreeMap<ByteKey, u32>>(r#"{"\u0061b": "x"}"#),
+            "/ab"
+        );
         assert_eq!(
             keyed::<BTreeMap<ByteKey, u32>>(b"{\"a\xffb\": \"x\"}"),
             "/a\u{fffd}b"
