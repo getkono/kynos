@@ -2113,13 +2113,53 @@ async fn an_http2_only_connection_that_never_speaks_is_closed_at_the_idle_timeou
         .expect("server exits cleanly");
 }
 
+/// A stream the server is serving when shutdown starts is answered before the
+/// connection closes.
+///
+/// The client must have taken the response in hand before the GOAWAY reaches
+/// it, which hyper's does late: its dispatch task hands the request to `h2`,
+/// and only on its next run spawns the future that awaits the response. That
+/// run first checks whether the connection can open another stream, and gives
+/// up on any GOAWAY already received, failing a request the server is still
+/// serving with `GoAway(NO_ERROR, Remote)`. The task reads its next request
+/// only after that run, so an answered probe on the same connection shows the
+/// response is awaited before shutdown is triggered.
 #[cfg(feature = "http2")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shutdown_drains_an_active_http2_stream() {
     use http_body_util::{BodyExt as _, Empty};
     use hyper_util::rt::{TokioExecutor, TokioIo};
 
-    let (service, started, release) = blocking_service();
+    const PROBE: &str = "/probe";
+
+    let started = std::sync::Arc::new(tokio::sync::Notify::new());
+    let release = std::sync::Arc::new(tokio::sync::Notify::new());
+    // `blocking_service`, except that the probe is answered at once.
+    let service: crate::router::service::Service<()> = {
+        let started = std::sync::Arc::clone(&started);
+        let release = std::sync::Arc::clone(&release);
+        let document = kynos_openapi::Document::new(
+            kynos_openapi::SpecVersion::V3_1,
+            kynos_openapi::Info::new("Test", "1"),
+        );
+        crate::router::service::Service::new(document, move |request: crate::http::Request| {
+            let held = (request.uri().path() != PROBE).then(|| {
+                (
+                    std::sync::Arc::clone(&started),
+                    std::sync::Arc::clone(&release),
+                )
+            });
+            async move {
+                if let Some((started, release)) = held {
+                    started.notify_one();
+                    release.notified().await;
+                }
+                crate::http::Response::new(crate::http::body::Body::from_bytes(
+                    bytes::Bytes::from_static(b"ok"),
+                ))
+            }
+        })
+    };
     let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
     let bound = crate::server::Server::new(service)
         .bind((std::net::Ipv4Addr::LOCALHOST, 0))
@@ -2140,13 +2180,16 @@ async fn shutdown_drains_an_active_http2_stream() {
             .await
             .expect("HTTP/2 handshake completes");
     let connection = tokio::spawn(connection);
-    let request = tokio::spawn(async move {
-        let request = hyper::Request::builder()
-            .uri("http://localhost/")
+    let request = |path: &str| {
+        hyper::Request::builder()
+            .uri(format!("http://localhost{path}"))
             .body(Empty::<bytes::Bytes>::new())
-            .expect("request builds");
+            .expect("request builds")
+    };
+    let mut probe = sender.clone();
+    let drained = tokio::spawn(async move {
         sender
-            .send_request(request)
+            .send_request(request("/"))
             .await
             .expect("request succeeds")
             .into_body()
@@ -2159,6 +2202,11 @@ async fn shutdown_drains_an_active_http2_stream() {
     tokio::time::timeout(std::time::Duration::from_secs(1), started.notified())
         .await
         .expect("the stream reaches the handler");
+    probe
+        .send_request(request(PROBE))
+        .await
+        .expect("the probe is answered before shutdown");
+    drop(probe);
     let _ = shutdown_sender.send(());
     tokio::task::yield_now().await;
     assert!(
@@ -2168,7 +2216,7 @@ async fn shutdown_drains_an_active_http2_stream() {
 
     release.notify_one();
     assert_eq!(
-        request.await.expect("request task joins"),
+        drained.await.expect("request task joins"),
         bytes::Bytes::from_static(b"ok")
     );
     connection
