@@ -497,11 +497,14 @@ impl fmt::Display for ShapeConflict {
     }
 }
 
+/// The one `content` entry a shape may hold, keyed by its media type.
+type ContentEntry = (String, RefOr<MediaType>);
+
 /// Splits the wire fields into a shape, or says why they will not go.
 pub(crate) fn shape_from(
     schema: Option<Schema>,
     content: Map<RefOr<MediaType>>,
-) -> Result<(Schema, Option<(String, RefOr<MediaType>)>), ShapeConflict> {
+) -> Result<(Schema, Option<ContentEntry>), ShapeConflict> {
     match (schema, content.len()) {
         (Some(_), 1..) => Err(ShapeConflict::Both),
         (None, 0) => Err(ShapeConflict::Neither),
