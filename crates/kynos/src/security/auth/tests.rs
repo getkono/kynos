@@ -1416,3 +1416,46 @@ fn only_a_guard_whose_schemes_may_forbid_declares_a_403() {
     assert!(declares_forbidden::<Auth<AllOf<(Bearer, Scrape)>>>());
     assert!(declares_forbidden::<Scoped<Scrape, ReadReports>>());
 }
+
+// --- What the written-out implementations say ------------------------------
+
+/// Witnesses the four implementations a guard's value writes out.
+fn assert_clone_debug_eq<T: Clone + std::fmt::Debug + Eq>() {}
+
+/// Witnesses the `Copy` beside them.
+fn assert_copy<T: Copy>() {}
+
+/// `Auth`, `MaybeAuth` and `Scoped` print, compare and clone their credential
+/// and nothing else, bounded on the credential alone.
+///
+/// `Audited` and `ReadReports` derive nothing, so these witnesses are refused
+/// the moment a bound lands on the scheme or the scope set; the values below
+/// hold what each implementation does once it exists.
+#[test]
+fn a_guard_value_prints_compares_and_clones_its_credential_alone() {
+    assert_clone_debug_eq::<Auth<Audited>>();
+    assert_clone_debug_eq::<MaybeAuth<Audited>>();
+    assert_clone_debug_eq::<Scoped<Audited, ReadReports>>();
+    assert_copy::<Auth<Bearer<u32, Grant>>>();
+    assert_copy::<MaybeAuth<Bearer<u32, Grant>>>();
+    assert_copy::<Scoped<Bearer<u32, Grant>, ReadReports>>();
+
+    let auth = Auth::<Audited>("alice".to_owned());
+    assert_eq!(format!("{auth:?}"), r#"Auth("alice")"#);
+    assert_eq!(auth.clone(), auth);
+    assert_ne!(auth, Auth("bob".to_owned()));
+
+    let maybe = MaybeAuth::<Audited>(Some("alice".to_owned()));
+    assert_eq!(format!("{maybe:?}"), r#"MaybeAuth(Some("alice"))"#);
+    assert_eq!(
+        format!("{:?}", MaybeAuth::<Audited>(None)),
+        "MaybeAuth(None)"
+    );
+    assert_eq!(maybe.clone(), maybe);
+    assert_ne!(maybe, MaybeAuth(None));
+
+    let scoped = Scoped::<Audited, ReadReports>::new("alice".to_owned());
+    assert_eq!(format!("{scoped:?}"), r#"Scoped("alice")"#);
+    assert_eq!(scoped.clone(), scoped);
+    assert_ne!(scoped, Scoped::new("bob".to_owned()));
+}
