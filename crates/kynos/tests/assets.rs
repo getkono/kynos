@@ -400,7 +400,11 @@ async fn an_unsatisfiable_range_carries_exactly_its_fields() {
         .await;
 
     assert_eq!(reply.status, StatusCode::RANGE_NOT_SATISFIABLE);
-    let mut names: Vec<&str> = reply.headers.keys().map(|name| name.as_str()).collect();
+    let mut names: Vec<&str> = reply
+        .headers
+        .keys()
+        .map(kynos::http::HeaderName::as_str)
+        .collect();
     names.sort_unstable();
     assert_eq!(names, ["content-range", "content-type"]);
     assert_eq!(
