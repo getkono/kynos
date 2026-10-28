@@ -65,6 +65,36 @@ fn duplicate_operation_ids_are_rejected() {
     ));
 }
 
+/// Every repeat names the first sighting, not the repeat before it.
+#[test]
+fn a_third_duplicate_operation_id_names_the_first_sighting() {
+    let item = || {
+        PathItem::new().with_operation(
+            Method::Get,
+            Operation::new("x").with_responses(ok_responses()),
+        )
+    };
+
+    let found = located_errors(&document_with(&[
+        ("/a", item()),
+        ("/b", item()),
+        ("/c", item()),
+    ]));
+    let repeat_at = |location: &str| {
+        (
+            location.to_owned(),
+            SpecError::DuplicateOperationId {
+                operation_id: "x".to_owned(),
+                first: "#/paths/~1a/get".to_owned(),
+            },
+        )
+    };
+    assert_eq!(
+        found,
+        vec![repeat_at("#/paths/~1b/get"), repeat_at("#/paths/~1c/get")]
+    );
+}
+
 /// Every operation the document describes is validated, not only `paths`.
 ///
 /// `references/3.1.2.md:979` and `references/3.2.0.md:680` say an
@@ -443,6 +473,42 @@ fn paths_differing_only_in_variable_name_are_the_same_path() {
             .iter()
             .any(|e| matches!(e, SpecError::DuplicatePathTemplate { .. })),
         "expected a duplicate path violation, got {found:?}"
+    );
+}
+
+/// Every repeated template names the first `paths` key, not the repeat before
+/// it.
+#[test]
+fn a_third_same_shaped_template_names_the_first_key() {
+    let make = |id: &str| {
+        PathItem::new().with_operation(
+            Method::Get,
+            Operation::new(format!("get{id}"))
+                .with_parameter(Parameter::path(id, Schema::of_type(SchemaType::String)))
+                .with_responses(ok_responses()),
+        )
+    };
+
+    let found = located_errors(&document_with(&[
+        ("/pets/{x}", make("x")),
+        ("/pets/{y}", make("y")),
+        ("/pets/{z}", make("z")),
+    ]));
+    let repeat = |location: &str, template: &str| {
+        (
+            location.to_owned(),
+            SpecError::DuplicatePathTemplate {
+                template: template.to_owned(),
+                existing: "/pets/{x}".to_owned(),
+            },
+        )
+    };
+    assert_eq!(
+        found,
+        vec![
+            repeat("#/paths/~1pets~1{y}", "/pets/{y}"),
+            repeat("#/paths/~1pets~1{z}", "/pets/{z}"),
+        ]
     );
 }
 
