@@ -248,20 +248,21 @@ fn a_server_configured_for_tls_is_refused() {
 // --- The transport settings a listener's connection runs under -------------
 
 /// Reads a text body, so a request body that stalls is felt.
+#[cfg(feature = "http1")]
 #[kynos::post("/echo")]
 async fn echo(Text(body): Text) -> Text {
     Text(body)
 }
 
-/// Writes `request` to a connection `server` serves over a duplex, and
+/// Writes `request` to a connection `configured` serves over a duplex, and
 /// returns everything it sends before it closes, bounded.
 #[cfg(feature = "http1")]
-async fn exchange(server: Server<()>, request: &[u8]) -> String {
+async fn exchange(configured: Server<()>, request: &[u8]) -> String {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
     let (mut client, io) = tokio::io::duplex(64 * 1024);
     let served = tokio::spawn(
-        server
+        configured
             .serve_io(io, peer_addr())
             .expect("the configuration is accepted"),
     );
@@ -281,6 +282,7 @@ async fn exchange(server: Server<()>, request: &[u8]) -> String {
 }
 
 /// The router [`echo`] is mounted on, beside [`peer`].
+#[cfg(feature = "http1")]
 fn echoing() -> Service<()> {
     Router::<()>::new()
         .mount(kynos::routes![peer, echo])
@@ -350,10 +352,10 @@ async fn the_http2_settings_reach_the_connection() {
 
     /// The status a prior-knowledge HTTP/2 `GET /peer` carrying one 2 KiB
     /// field is answered with, or `None` where the stream is refused.
-    async fn answered(server: Server<()>) -> Option<http::StatusCode> {
+    async fn answered(configured: Server<()>) -> Option<http::StatusCode> {
         let (client, io) = tokio::io::duplex(64 * 1024);
         let served = tokio::spawn(
-            server
+            configured
                 .serve_io(io, peer_addr())
                 .expect("the configuration is accepted"),
         );
