@@ -762,6 +762,33 @@ async fn one_limit_per_endpoint_caps_each_endpoint_separately() {
     );
 }
 
+/// The counterpart: two endpoints holding clones of one `Concurrency` share
+/// its cap, since a clone shares the slots rather than copying the limit.
+#[tokio::test]
+async fn clones_of_one_limit_share_its_cap() {
+    let limit = Concurrency::new(one());
+    let service = Router::<()>::new()
+        .mount(kynos::routes![
+            slow.intercept(limit.clone()),
+            prompt.intercept(limit),
+        ])
+        .build(())
+        .expect("a describable router");
+
+    let (held, refused) = tokio::join!(get(&service, "/slow").call(), async {
+        // Long enough for the first request to have taken the shared slot.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        get(&service, "/prompt").call().await
+    });
+
+    assert_eq!(held.status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        refused.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "a clone counted against a cap of its own"
+    );
+}
+
 /// A bounded queue absorbs a burst instead of shedding it.
 ///
 /// The wait is not a declaration: the answer when it expires is the same 503,

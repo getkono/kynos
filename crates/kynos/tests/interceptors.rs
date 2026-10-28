@@ -1238,3 +1238,220 @@ fn naming_a_problem_type_costs_the_marker_no_derives() {
         assert_clone_and_debug::<Decompression<Bare, Bare, Bare>>();
     }
 }
+
+// --- What the written-out implementations say ------------------------------
+
+/// Witnesses the `Copy` a marked type writes out beside its `Clone`.
+fn assert_copy<T: Copy>() {}
+
+/// Each refusal a marker names prints, compares and clones exactly the fields
+/// it carries, and nothing of the marker.
+///
+/// The witnesses above prove the implementations exist; this proves what they
+/// do, since nothing regenerates a written-out `Debug` or `eq` when a field
+/// moves. One inequality per field, for the reason
+/// `two_refusals_differing_in_one_field_are_unequal` gives in the rate
+/// limiter's own suite, which already holds its two refusals to this.
+#[test]
+fn a_marked_refusal_prints_compares_and_clones_its_fields() {
+    use std::time::Duration;
+
+    use kynos::middleware::{
+        csrf::CrossSite,
+        limits::{body_size::BodySizeExceeded, concurrency::AtCapacity, timeout::TimedOut},
+    };
+
+    assert_copy::<CrossSite<Bare>>();
+    assert_copy::<TimedOut<Bare>>();
+    assert_copy::<BodySizeExceeded<Bare>>();
+    assert_copy::<AtCapacity<Bare>>();
+
+    // A field-free refusal prints its name alone, and every one equals every
+    // other: there is nothing to tell two apart by.
+    let cross_site = CrossSite::<Bare>::new();
+    assert_eq!(format!("{cross_site:?}"), "CrossSite");
+    assert_eq!(cross_site.clone(), CrossSite::<Bare>::default());
+
+    let timed_out = TimedOut::<Bare>::new(Duration::from_secs(5));
+    assert_eq!(format!("{timed_out:?}"), "TimedOut { after: 5s }");
+    assert_eq!(timed_out.clone(), timed_out);
+    assert_ne!(
+        timed_out,
+        TimedOut::new(Duration::from_secs(6)),
+        "after is not compared"
+    );
+
+    let too_large = BodySizeExceeded::<Bare>::new(16);
+    assert_eq!(format!("{too_large:?}"), "BodySizeExceeded { limit: 16 }");
+    assert_eq!(too_large.clone(), too_large);
+    assert_ne!(
+        too_large,
+        BodySizeExceeded::new(17),
+        "limit is not compared"
+    );
+
+    let at_capacity = AtCapacity::<Bare>::new(Some(Duration::from_secs(2)));
+    assert_eq!(
+        format!("{at_capacity:?}"),
+        "AtCapacity { retry_after: Some(2s) }"
+    );
+    assert_eq!(at_capacity.clone(), at_capacity);
+    assert_ne!(
+        at_capacity,
+        AtCapacity::new(None),
+        "retry_after is not compared"
+    );
+
+    #[cfg(feature = "compression")]
+    {
+        use kynos::middleware::{compression::NotAcceptable, decompression::Undecodable};
+
+        assert_copy::<NotAcceptable<Bare>>();
+        assert_copy::<Undecodable<Bare, Bare, Bare>>();
+
+        let not_acceptable = NotAcceptable::<Bare>::new();
+        assert_eq!(format!("{not_acceptable:?}"), "NotAcceptable");
+        assert_eq!(not_acceptable.clone(), NotAcceptable::<Bare>::default());
+
+        let undecodable = Undecodable::<Bare, Bare, Bare>::too_large(10);
+        assert_eq!(
+            format!("{undecodable:?}"),
+            "Undecodable { reason: TooLarge { limit: 10 } }"
+        );
+        assert_eq!(
+            format!("{:?}", Undecodable::<Bare, Bare, Bare>::malformed()),
+            "Undecodable { reason: Malformed }"
+        );
+        assert_eq!(undecodable.clone(), undecodable);
+        assert_ne!(
+            undecodable,
+            Undecodable::too_large(11),
+            "reason is not compared"
+        );
+        assert_ne!(
+            Undecodable::<Bare, Bare, Bare>::unsupported_coding(),
+            Undecodable::malformed(),
+            "reason is not compared"
+        );
+    }
+}
+
+/// Each interceptor a marker names prints every setting it holds, and a clone
+/// prints the same.
+///
+/// None compares, so a clone is held to its original through what it prints.
+/// `Timeout` alone ends non-exhaustively: its marker is the response it
+/// answers with, which is a type and no setting.
+#[test]
+fn a_marked_interceptor_prints_and_clones_its_settings() {
+    use std::{num::NonZeroUsize, time::Duration};
+
+    use kynos::middleware::{
+        csrf::Csrf,
+        limits::{body_size::BodySize, concurrency::Concurrency, timeout::Timeout},
+    };
+
+    /// What `interceptor` prints, asserting its clone prints the same.
+    fn printed<T: Clone + std::fmt::Debug>(interceptor: &T) -> String {
+        let printed = format!("{interceptor:?}");
+        assert_eq!(format!("{:?}", interceptor.clone()), printed);
+        printed
+    }
+
+    assert_copy::<BodySize<Bare>>();
+    assert_copy::<Timeout<kynos::middleware::limits::timeout::TimedOut<Bare>>>();
+
+    assert_eq!(
+        printed(
+            &Csrf::new()
+                .trusting_origin("https://a.example")
+                .problem_type::<Bare>()
+        ),
+        r#"Csrf { trusted: ["https://a.example"] }"#
+    );
+    assert_eq!(printed(&Csrf::<Bare>::default()), "Csrf { trusted: [] }");
+    assert_eq!(
+        printed(&Timeout::new(Duration::from_secs(5)).problem_type::<Bare>()),
+        "Timeout { limit: 5s, .. }"
+    );
+    assert_eq!(
+        printed(&BodySize::new(4096).problem_type::<Bare>()),
+        "BodySize { limit: 4096 }"
+    );
+
+    // The slots are tokio's semaphore, whose own `Debug` is not this crate's
+    // to pin; the settings either side of it are.
+    let concurrency = printed(
+        &Concurrency::new(NonZeroUsize::new(3).expect("three is not zero"))
+            .queue_for(Duration::from_millis(250))
+            .retry_after(Duration::from_secs(1))
+            .problem_type::<Bare>(),
+    );
+    assert!(
+        concurrency.starts_with("Concurrency { limit: 3, slots: "),
+        "{concurrency}"
+    );
+    assert!(
+        concurrency.ends_with(", queue_for: 250ms, retry_after: Some(1s) }"),
+        "{concurrency}"
+    );
+
+    #[cfg(feature = "compression")]
+    {
+        use kynos::middleware::{
+            compression::{Compression, streaming::LatencyMode},
+            decompression::Decompression,
+        };
+
+        assert_copy::<Compression<Bare>>();
+        assert_copy::<Decompression<Bare, Bare, Bare>>();
+
+        let compression = printed(
+            &Compression::new()
+                .min_size(512)
+                .latency_mode(LatencyMode::Throughput)
+                .problem_type::<Bare>(),
+        );
+        assert!(
+            compression.starts_with("Compression { min_size: 512, levels: Levels { "),
+            "{compression}"
+        );
+        assert!(
+            compression.ends_with(" }, latency: Throughput }"),
+            "{compression}"
+        );
+
+        assert_eq!(
+            printed(
+                &Decompression::new(1024)
+                    .max_ratio(10)
+                    .too_large_problem_type::<Bare>()
+            ),
+            "Decompression { limit: 1024, max_ratio: Some(10) }"
+        );
+        assert_eq!(
+            printed(&Decompression::new(1024)),
+            "Decompression { limit: 1024, max_ratio: None }"
+        );
+    }
+}
+
+/// `Compression::new()` and `Compression::default()` are one configuration,
+/// as is naming a problem type on the first and defaulting the second.
+///
+/// The two are written separately, and `Compression` does not compare, so
+/// what each prints — every setting it holds — is what is held equal.
+#[cfg(feature = "compression")]
+#[test]
+fn a_new_compression_is_the_default_one() {
+    use kynos::middleware::compression::Compression;
+
+    assert_eq!(
+        format!("{:?}", Compression::new()),
+        format!("{:?}", Compression::<()>::default())
+    );
+    assert_eq!(
+        format!("{:?}", Compression::new().problem_type::<Bare>()),
+        format!("{:?}", Compression::<Bare>::default())
+    );
+}
