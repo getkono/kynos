@@ -49,6 +49,12 @@ jobs:
       - name: Test the containment gate's parsers
         run: mise run containment:test
 
+      - name: Verify the dev build profile and the Python floor
+        run: mise run tooling:check
+
+      - name: Test the tooling gate's rules
+        run: mise run tooling:test
+
       - name: Test the cost sweep's parsers and report
         run: mise run cost:test
 
