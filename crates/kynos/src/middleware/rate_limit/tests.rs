@@ -999,3 +999,30 @@ fn a_policy_with_no_window_renders_no_w_parameter() {
         [("ratelimit-policy".to_owned(), r#""open";q=5"#.to_owned())]
     );
 }
+
+/// `w` rounds a part-second window up, and omits a zero one.
+///
+/// The draft's section 3.1.3: "The time window MUST be a non-negative,
+/// non-zero, Integer". Truncating writes `w=0` for a sub-second window, and
+/// advertises a faster rate than the one enforced for a fractional one.
+#[test]
+fn a_window_is_never_advertised_shorter_than_enforced() {
+    let policy = |window| RateLimitFields {
+        limits: Vec::new(),
+        policies: vec![Quota::new("p", 5, window).policy()],
+    };
+
+    for (window, expected) in [
+        (Duration::from_millis(500), r#""p";q=5;w=1"#),
+        (Duration::from_millis(1_500), r#""p";q=5;w=2"#),
+        (Duration::from_secs(2), r#""p";q=5;w=2"#),
+        (Duration::ZERO, r#""p";q=5"#),
+        (Duration::MAX, &format!(r#""p";q=5;w={}"#, u64::MAX)),
+    ] {
+        assert_eq!(
+            rendered(&policy(window)),
+            [("ratelimit-policy".to_owned(), expected.to_owned())],
+            "{window:?}"
+        );
+    }
+}
