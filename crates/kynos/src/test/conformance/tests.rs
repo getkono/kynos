@@ -354,6 +354,68 @@ fn an_undeclared_media_type_still_does_not_match() {
     assert!(super::declared_representation(&declared, "application/json").is_none());
 }
 
+/// A `content` key may be a media range (OAS 3.1.1 `response-content`,
+/// RFC 9110 section 12.5.1), parameters and all, so a range covers every
+/// media type it names.
+#[test]
+fn a_media_range_key_declares_every_media_type_it_covers() {
+    for (range, media_type) in [
+        ("image/*", "image/png"),
+        ("IMAGE/*", "image/png"),
+        ("text/*; charset=utf-8", "text/plain"),
+        ("*/*", "application/json"),
+    ] {
+        let declared = content(&[range]);
+        assert!(
+            super::declared_representation(&declared, media_type).is_some(),
+            "{range} should cover {media_type}"
+        );
+    }
+}
+
+/// A range covers its own type only: `image/*` says nothing about `text/plain`,
+/// and a range's `*` is never a prefix match on the type.
+#[test]
+fn a_media_range_key_does_not_cover_another_type() {
+    for (range, media_type) in [
+        ("image/*", "text/plain"),
+        ("image/*", "imagery/png"),
+        ("text/*", "application/text"),
+    ] {
+        let declared = content(&[range]);
+        assert!(
+            super::declared_representation(&declared, media_type).is_none(),
+            "{range} should not cover {media_type}"
+        );
+    }
+}
+
+/// Only the most specific matching key applies (`text/plain` overrides
+/// `text/*`), whatever order the map holds them in.
+#[test]
+fn the_most_specific_matching_key_applies() {
+    for order in [
+        ["*/*", "image/*", "image/png"],
+        ["image/png", "image/*", "*/*"],
+    ] {
+        let declared = content(&order);
+        for (media_type, expected) in [
+            ("image/png", "image/png"),
+            ("image/gif", "image/*"),
+            ("text/plain", "*/*"),
+        ] {
+            let chosen = super::declared_representation(&declared, media_type);
+            assert!(
+                chosen.is_some_and(|chosen| std::ptr::eq(
+                    chosen,
+                    declared.get(expected).expect("the expected entry"),
+                )),
+                "{order:?}: {media_type} should resolve to {expected}"
+            );
+        }
+    }
+}
+
 /// A document declaring one `GET /thing` operation with `responses`.
 ///
 /// The sibling of [`document`] for the cases that are about what a response
@@ -615,6 +677,25 @@ fn only_a_json_based_body_is_validated_against_its_schema() {
 
     let reasons = conformance(&document, &observed(200, Some("text/plain"), "{}"));
     assert!(reasons.is_empty(), "{reasons:?}");
+}
+
+/// A response under a media-range key conforms, and is held to that key's
+/// schema: whether a body is validated follows the media type actually sent,
+/// not the range that declared it.
+#[test]
+fn a_body_under_a_media_range_key_is_checked_against_that_key() {
+    let document = document_declaring(refusing_ok(&["image/*", "*/*"]));
+
+    let reasons = conformance(&document, &observed(200, Some("image/png"), "\u{89}PNG"));
+    assert!(reasons.is_empty(), "{reasons:?}");
+
+    let reasons = conformance(&document, &observed(200, Some("application/json"), "{}"));
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    assert!(
+        reasons[0].contains("the body does not match the declared schema"),
+        "{}",
+        reasons[0]
+    );
 }
 
 /// Every reason `conformance` gives that names the exchange rather than the
