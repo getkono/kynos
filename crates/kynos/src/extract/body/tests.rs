@@ -1147,6 +1147,28 @@ mod an_undecoded_content_coding_is_refused {
         );
     }
 
+    /// The same order holds for a streamed body, which enforces both 415s
+    /// before it takes the body rather than before it buffers one.
+    #[cfg(all(feature = "json", feature = "openapi32"))]
+    #[tokio::test]
+    async fn the_media_type_is_enforced_first_by_a_streamed_body() {
+        use crate::extract::body::json_lines::{JsonLines, JsonSeq, records::Records};
+
+        for rejection in [
+            refusal::<JsonLines<Records<u32>>>("text/plain", &[b"gzip"], b"1\n").await,
+            refusal::<JsonSeq<Records<u32>>>("text/plain", &[b"gzip"], b"\x1e1\n").await,
+        ] {
+            assert!(
+                matches!(
+                    rejection,
+                    Some(BodyRejection::UnsupportedMediaType { received: Some(ref received) })
+                        if received == "text/plain"
+                ),
+                "{rejection:?}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn by_a_binary_body() {
         holds::<Binary<OctetStream>>("application/octet-stream", b"\x1f\x8b").await;
@@ -1432,6 +1454,54 @@ mod an_optional_body_without_a_content_type {
             "{rejection:?}"
         );
     }
+
+    /// What an empty body declaring `values`, one `Content-Length` line each,
+    /// is read as.
+    async fn declared(values: &[&'static [u8]]) -> Result<Option<Text>, BodyRejection> {
+        let mut request = Request::new(Body::empty());
+        for value in values {
+            request.headers_mut().append(
+                crate::http::header::CONTENT_LENGTH,
+                crate::http::HeaderValue::from_bytes(value).expect("a field value"),
+            );
+        }
+        super::extract::<Option<Text>>(request).await
+    }
+
+    /// A declared zero is read past surrounding whitespace, on every line; any
+    /// line that is not a decimal zero declares content, the 415 naming no
+    /// type, before the body is read at all. `+0` is a zero as `u64`'s parser
+    /// reads it, which is more lenient than RFC 9110 section 8.6's `1*DIGIT`
+    /// and pinned as it stands, for the reason `limit`'s case gives.
+    #[tokio::test]
+    async fn a_declared_zero_is_read_past_whitespace_on_every_line() {
+        for values in [
+            &[&b" 0 "[..]][..],
+            &[&b"\t0"[..]][..],
+            &[&b"+0"[..]][..],
+            &[&b"0"[..], &b" 0"[..]][..],
+        ] {
+            assert_eq!(declared(values).await.expect("absent"), None, "{values:?}");
+        }
+
+        for values in [
+            &[&b""[..]][..],
+            &[&b"-0"[..]][..],
+            &[&b"0x0"[..]][..],
+            &[&b"0 0"[..]][..],
+            &[&b"\xff"[..]][..],
+            &[&b" 0"[..], &b"1"[..]][..],
+        ] {
+            let rejection = declared(values).await.expect_err("declared content");
+            assert!(
+                matches!(
+                    rejection,
+                    BodyRejection::UnsupportedMediaType { received: None }
+                ),
+                "{values:?}: {rejection:?}"
+            );
+        }
+    }
 }
 
 /// `limit::read`, the read under every buffering codec: a lone data frame is
@@ -1565,6 +1635,70 @@ mod a_body_is_read_whole_under_its_limit {
         assert!(
             matches!(&rejection, BodyRejection::Syntax { detail } if detail == "reset"),
             "{rejection:?}"
+        );
+    }
+
+    /// A head carrying one `Content-Length` line per entry of `values`.
+    fn declaring(values: &[&'static [u8]]) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        for value in values {
+            headers.append(
+                crate::http::header::CONTENT_LENGTH,
+                crate::http::HeaderValue::from_bytes(value).expect("a field value"),
+            );
+        }
+        headers
+    }
+
+    /// The length a head declares is its first `Content-Length` line, read
+    /// past surrounding whitespace as an unsigned decimal; a line that is not
+    /// one declares nothing, so the limit falls to the read.
+    ///
+    /// Two readings here are more lenient than RFC 9110 section 8.6's
+    /// `1*DIGIT`, and are pinned as they stand so a change to either is made
+    /// on purpose: a leading `+`, which `u64`'s parser accepts, and a second
+    /// line, which is never read. HTTP/1.1 framing refuses both before a
+    /// request reaches an extractor.
+    #[test]
+    fn the_declared_length_is_the_first_line_read_as_a_decimal() {
+        for (values, expected) in [
+            (&[][..], None),
+            (&[&b"5"[..]][..], Some(5)),
+            (&[&b" 5 "[..]][..], Some(5)),
+            (&[&b"\t5\t"[..]][..], Some(5)),
+            (&[&b"0"[..]][..], Some(0)),
+            (&[&b"+5"[..]][..], Some(5)),
+            (&[&b"5"[..], &b"7"[..]][..], Some(5)),
+            (&[&b""[..]][..], None),
+            (&[&b"abc"[..]][..], None),
+            (&[&b"-1"[..]][..], None),
+            (&[&b"0x5"[..]][..], None),
+            (&[&b"5 5"[..]][..], None),
+            (&[&b"5, 5"[..]][..], None),
+            (&[&b"18446744073709551616"[..]][..], None),
+            (&[&b"\xff5"[..]][..], None),
+        ] {
+            assert_eq!(
+                limit::declared_length(&declaring(values)),
+                expected,
+                "{values:?}"
+            );
+        }
+    }
+
+    /// A declared length refuses from the head only past the limit, and one
+    /// that declares nothing is left to the read.
+    #[test]
+    fn a_declared_length_is_refused_only_past_the_limit() {
+        assert!(limit::refuse_declared(&declaring(&[b" 5 "]), 5).is_ok());
+        assert!(limit::refuse_declared(&declaring(&[b"abc"]), 5).is_ok());
+        assert!(limit::refuse_declared(&declaring(&[]), 5).is_ok());
+
+        let refused = limit::refuse_declared(&declaring(&[b"\t6"]), 5)
+            .expect_err("six octets declared past a five-octet limit");
+        assert!(
+            matches!(refused, BodyRejection::TooLarge { limit: 5 }),
+            "{refused:?}"
         );
     }
 }
