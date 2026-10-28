@@ -300,6 +300,18 @@ def section(text, start, failures, end=None, unrun=""):
     return text[begin:stop]
 
 
+def table_rows(table):
+    """Each row of the Markdown table `table` opens at, as its raw line.
+
+    `table` starts on the header line; it and the separator below it are
+    skipped, and the first line not opening `|` ends the table.
+    """
+    for line in table.split("\n")[2:]:
+        if not line.startswith("|"):
+            return
+        yield line
+
+
 def expand(entry):
     """`server/{accept,mod}.rs` -> `server/accept.rs`, `server/mod.rs`."""
     brace = re.search(r"\{([^}]*)\}", entry)
@@ -463,9 +475,7 @@ def dependency_rules(nfr, failures, members=MEMBERS):
         )
         return []
     rules = []
-    for line in text[header:].split("\n")[2:]:
-        if not line.startswith("|"):
-            break
+    for line in table_rows(text[header:]):
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         if CONTAINMENT_METHOD not in line:
             continue
@@ -838,9 +848,7 @@ def taxonomy_failures(text):
         ]
 
     kinds = []
-    for line in text[header:].split("\n")[2:]:
-        if not line.startswith("|"):
-            break
+    for line in table_rows(text[header:]):
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         kinds.append((cells[0], cells[-1]))
 
@@ -1043,9 +1051,7 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
     # `(sites, names)` per row whose *Names* cell this rule enforces.
     named_rows = []
     if table is not None:
-        for line in table.split("\n")[2:]:
-            if not line.startswith("|"):
-                break
+        for line in table_rows(table):
             cells = line.split("|")
             row = re.findall(r"`([^`]+)`", cells[1])
             rows.append(row)
@@ -1113,9 +1119,7 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
     off_path_rows = 0
     # Backticked tokens of every *Element* cell, for the feature grading below.
     off_path_elements = set()
-    for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
-        if not line.startswith("|"):
-            break
+    for line in table_rows(halves[1] if len(halves) == 2 else ""):
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         if len(cells) != 4:
             failures.append(f"testing.md's off-path table has a malformed row: {line.strip()}")
@@ -1297,9 +1301,7 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
 
     graded, off_path_graded, grades = [], [], []
     if grading is not None:
-        for line in grading.split("\n")[2:]:
-            if not line.startswith("|"):
-                break
+        for line in table_rows(grading):
             cells = line.split("|")
             flags = re.findall(r"`([^`]+)`", cells[3])
             graded += flags
