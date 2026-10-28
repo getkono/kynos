@@ -168,6 +168,9 @@ mod a_wrapper_produces_and_declares_one_status {
         let response = NoContent.into_response();
 
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert!(response.headers().is_empty(), "{:?}", response.headers());
+        assert!(http_body::Body::is_end_stream(response.body()));
+        assert_eq!(http_body::Body::size_hint(response.body()).exact(), Some(0));
         assert_eq!(declared::<NoContent>(), ["204"]);
     }
 
