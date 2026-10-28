@@ -453,7 +453,9 @@ RateLimit:        "burst";r=13;t=1, "daily";r=9998;t=69158
 
 A name that cannot be an `sf-string` drops its member rather than producing a
 field a parser will reject: one unnameable policy must not cost the client the
-others.
+others. `w` is whole seconds rounded *up*, since a shorter window advertises a
+faster rate than the one enforced; a zero window, which no non-zero integer
+states, omits `w` rather than its member.
 
 ### What the framework computes and what it does not
 

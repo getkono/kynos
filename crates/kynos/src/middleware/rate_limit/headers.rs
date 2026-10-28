@@ -203,8 +203,11 @@ fn render_policies(policies: &[QuotaPolicy]) -> Option<http::HeaderValue> {
             use std::fmt::Write as _;
 
             let mut member = format!("{};q={}", sf_string(&policy.name)?, policy.quota);
-            if let Some(window) = policy.window {
-                let _ = write!(member, ";w={}", window.as_secs());
+            // Section 3.1.3: "MUST be a non-negative, non-zero, Integer".
+            // Rounded up, since a shorter window advertises a faster rate
+            // than the one enforced; a zero window has no such integer.
+            if let Some(window) = policy.window.map(whole_seconds).filter(|&w| w > 0) {
+                let _ = write!(member, ";w={window}");
             }
             // `requests` is the draft's default. The draft's section 3.1.2 says
             // the value "MUST be a String", not a token.
