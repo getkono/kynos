@@ -151,8 +151,10 @@ pub enum ParameterShape {
         /// The media type the value is carried as.
         media_type: String,
 
-        /// What that media type describes.
-        value: Box<MediaType>,
+        /// What that media type describes, inline or by reference.
+        ///
+        /// A reference is 3.2's alone: 3.1 admits only a Media Type Object here.
+        value: Box<RefOr<MediaType>>,
     },
 }
 
@@ -179,14 +181,14 @@ impl Parameter {
         name: impl Into<String>,
         location: ParameterIn,
         media_type: impl Into<String>,
-        value: MediaType,
+        value: impl Into<RefOr<MediaType>>,
     ) -> Self {
         Self::shaped(
             name,
             location,
             ParameterShape::Content {
                 media_type: media_type.into(),
-                value: Box::new(value),
+                value: Box::new(value.into()),
             },
         )
     }
@@ -309,9 +311,10 @@ impl Parameter {
         }
     }
 
-    /// The media type and its description, when this parameter uses `content`.
+    /// The media type and its description, inline or by reference, when this
+    /// parameter uses `content`.
     #[must_use]
-    pub fn content(&self) -> Option<(&str, &MediaType)> {
+    pub fn content(&self) -> Option<(&str, &RefOr<MediaType>)> {
         match &self.shape {
             ParameterShape::Content { media_type, value } => Some((media_type, &**value)),
             ParameterShape::Schema { .. } => None,
@@ -432,7 +435,7 @@ struct RawParameter {
     examples: Option<Map<RefOr<Example>>>,
 
     #[serde(default, skip_serializing_if = "Map::is_empty")]
-    content: Map<MediaType>,
+    content: Map<RefOr<MediaType>>,
 
     #[serde(flatten)]
     extensions: Extensions,
@@ -497,8 +500,8 @@ impl fmt::Display for ShapeConflict {
 /// Splits the wire fields into a shape, or says why they will not go.
 pub(crate) fn shape_from(
     schema: Option<Schema>,
-    content: Map<MediaType>,
-) -> Result<(Schema, Option<(String, MediaType)>), ShapeConflict> {
+    content: Map<RefOr<MediaType>>,
+) -> Result<(Schema, Option<(String, RefOr<MediaType>)>), ShapeConflict> {
     match (schema, content.len()) {
         (Some(_), 1..) => Err(ShapeConflict::Both),
         (None, 0) => Err(ShapeConflict::Neither),

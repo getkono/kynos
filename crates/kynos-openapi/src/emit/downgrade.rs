@@ -30,7 +30,7 @@ use crate::model::{
 
 /// Lists the constructs in a document that OpenAPI 3.1 cannot express.
 ///
-/// Each entry is a location. Four kinds are listed, in this order:
+/// Each entry is a location. Five kinds are listed, in this order:
 ///
 /// - each 3.2-only field the model types, which only a build with the
 ///   `openapi32` feature can hold;
@@ -38,6 +38,8 @@ use crate::model::{
 ///   object's [`Extensions`](crate::model::extensions::Extensions) because its
 ///   name lacks the `x-` prefix (where a build without `openapi32` keeps every
 ///   3.2 field);
+/// - in every build, each `content` entry given by reference, which only 3.2
+///   admits, located at the entry;
 /// - in every build, each inline response without a `description`, which 3.1
 ///   requires and 3.2 does not, located at the `description` it lacks;
 /// - in every build, each security requirement name that names a scheme by
@@ -62,7 +64,8 @@ pub fn three_two_only_constructs(document: &Document) -> Vec<String> {
 /// What [`three_two_only_constructs`] lists, kept apart by kind so that
 /// validation can report each the way its own rule names it.
 pub(crate) struct ThreeOneObstacles {
-    /// The 3.2 fields the model types, then the fields it does not recognise.
+    /// The 3.2 fields the model types, then the fields it does not recognise,
+    /// then each `content` entry given by reference.
     pub(crate) fields: Vec<String>,
     /// Each inline response without a `description`, at the response itself.
     pub(crate) undescribed_responses: Vec<String>,
@@ -77,6 +80,7 @@ pub(crate) fn three_one_obstacles(document: &Document) -> ThreeOneObstacles {
     #[cfg(feature = "openapi32")]
     collect_three_two_fields(document, &mut fields);
     fields.extend(found.fields);
+    fields.extend(found.media_type_refs);
     ThreeOneObstacles {
         fields,
         undescribed_responses: found.undescribed_responses,

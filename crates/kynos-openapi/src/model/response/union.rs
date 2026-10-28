@@ -7,21 +7,27 @@ use serde_json::Value;
 
 use crate::model::{
     body::mime_names::APPLICATION_PROBLEM_JSON,
+    reference::RefOr,
     response::Response,
     schema::{Schema, object::SchemaObject},
 };
 
 /// The union of two problem responses, or `None` where the two are not a
 /// shape this rule reads and the declared one stands.
+///
+/// A representation given by reference is not read: what it names is not in
+/// either response.
 pub(super) fn unioned(declared: &Response, incoming: &Response) -> Option<Response> {
     let left = declared
         .content
         .get(APPLICATION_PROBLEM_JSON)?
+        .as_item()?
         .schema
         .as_ref();
     let right = incoming
         .content
         .get(APPLICATION_PROBLEM_JSON)?
+        .as_item()?
         .schema
         .as_ref();
     let schema = union_of(left?, right?)?;
@@ -32,7 +38,7 @@ pub(super) fn unioned(declared: &Response, incoming: &Response) -> Option<Respon
 
     let mut unioned = declared.clone();
     unioned.description = description;
-    if let Some(representation) = unioned.content.get_mut(APPLICATION_PROBLEM_JSON) {
+    if let Some(RefOr::Item(representation)) = unioned.content.get_mut(APPLICATION_PROBLEM_JSON) {
         representation.schema = Some(schema);
     }
 

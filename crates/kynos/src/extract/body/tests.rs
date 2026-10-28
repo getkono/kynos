@@ -28,6 +28,7 @@ fn a_raw_binary_body_states_no_type_and_repeats_no_media_type() {
     let content = body
         .content
         .get("image/png")
+        .and_then(kynos_openapi::RefOr::as_item)
         .expect("the body is keyed by its own media type");
 
     let Some(OpenApiSchema::Object(schema)) = &content.schema else {
@@ -283,7 +284,10 @@ mod a_body_describes_the_media_type_it_reads {
             body.content.keys().map(String::as_str).collect::<Vec<_>>(),
             [media_type]
         );
-        assert_eq!(body.content[media_type].schema, Some(schema));
+        assert_eq!(
+            body.content[media_type].as_item().expect("inline").schema,
+            Some(schema)
+        );
     }
 
     #[test]
@@ -1780,7 +1784,10 @@ mod a_json_body_under_a_declared_media_type {
             [Order::MEDIA_TYPE]
         );
         assert_eq!(
-            body.content[Order::MEDIA_TYPE].schema,
+            body.content[Order::MEDIA_TYPE]
+                .as_item()
+                .expect("inline")
+                .schema,
             Some(Registry::default().resolve::<u32>())
         );
         assert_eq!(body.required, Some(true));
@@ -2367,7 +2374,10 @@ mod a_text_body_under_a_declared_media_type {
             [Csv::MEDIA_TYPE]
         );
         assert_eq!(
-            body.content[Csv::MEDIA_TYPE].schema,
+            body.content[Csv::MEDIA_TYPE]
+                .as_item()
+                .expect("inline")
+                .schema,
             Some(Registry::default().resolve::<String>())
         );
         assert_eq!(body.required, Some(true));
@@ -2637,7 +2647,7 @@ mod a_body_in_an_outside_format {
             [media_type]
         );
         assert_eq!(
-            body.content[media_type].schema,
+            body.content[media_type].as_item().expect("inline").schema,
             Some(Registry::default().resolve::<u64>())
         );
         assert_eq!(body.required, Some(true));

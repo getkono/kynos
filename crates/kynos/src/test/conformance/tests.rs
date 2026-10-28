@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use kynos_openapi::{Document, Operation, PathItem, PathTemplate};
+use kynos_openapi::{Document, Operation, PathItem, PathTemplate, RefOr};
 
 use super::{conformance, declared_response, matched_template, template_matches};
 
@@ -307,13 +307,13 @@ fn a_status_resolves_to_the_most_specific_key_declaring_it() {
 }
 
 /// One `content` map, from the media types it declares.
-fn content(declared: &[&str]) -> kynos_openapi::Map<kynos_openapi::MediaType> {
+fn content(declared: &[&str]) -> kynos_openapi::Map<RefOr<kynos_openapi::MediaType>> {
     declared
         .iter()
         .map(|name| {
             (
                 (*name).to_owned(),
-                kynos_openapi::MediaType::new(kynos_openapi::Schema::Object(Box::default())),
+                kynos_openapi::MediaType::new(kynos_openapi::Schema::Object(Box::default())).into(),
             )
         })
         .collect()
@@ -340,7 +340,7 @@ fn an_exact_declaration_wins_over_a_parameter_stripped_one() {
     let chosen = super::declared_representation(&declared, "text/plain");
     assert!(chosen.is_some());
     assert!(std::ptr::eq(
-        chosen.expect("a representation"),
+        chosen.expect("a representation").1,
         declared.get("text/plain").expect("the exact entry"),
     ));
 }
@@ -585,7 +585,7 @@ fn refusing_ok(media_types: &[&str]) -> kynos_openapi::Responses {
         .map(|name| {
             (
                 (*name).to_owned(),
-                kynos_openapi::MediaType::new(kynos_openapi::Schema::Bool(false)),
+                kynos_openapi::MediaType::new(kynos_openapi::Schema::Bool(false)).into(),
             )
         })
         .collect();
@@ -617,6 +617,33 @@ fn only_a_json_based_body_is_validated_against_its_schema() {
     assert!(reasons.is_empty(), "{reasons:?}");
 }
 
+/// A representation given by a `#/components/mediaTypes` `$ref` is held to the
+/// schema of the media type it names, as an inline one is to its own.
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_representation_by_reference_is_held_to_the_schema_it_names() {
+    use kynos_openapi::{MediaType, Ref, Response, Responses, Schema};
+
+    let mut ok = Response::new("the thing");
+    ok.content.insert(
+        "application/json".to_owned(),
+        RefOr::Ref(Ref::new("#/components/mediaTypes/Refusing")),
+    );
+    let mut document = document_declaring(Responses::new().with(200, ok));
+    document.components.media_types.insert(
+        "Refusing".to_owned(),
+        MediaType::new(Schema::Bool(false)).into(),
+    );
+
+    let reasons = conformance(&document, &observed(200, Some("application/json"), "{}"));
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    assert!(
+        reasons[0].contains("the body does not match the declared schema"),
+        "{}",
+        reasons[0]
+    );
+}
+
 /// Every reason `conformance` gives that names the exchange rather than the
 /// body's content, word for word: the sentence is what a failing suite prints,
 /// so a reworded one is a changed contract.
@@ -628,6 +655,11 @@ fn every_reason_is_reported_in_its_own_sentence() {
     unresolved
         .responses
         .insert("200".to_owned(), RefOr::Ref(Ref::response("Missing")));
+    let mut unresolved_representation = kynos_openapi::Response::new("the thing");
+    unresolved_representation.content.insert(
+        "application/json".to_owned(),
+        RefOr::Ref(Ref::new("#/components/mediaTypes/Missing")),
+    );
 
     let posted = crate::test::Observed {
         method: crate::http::Method::POST,
@@ -697,6 +729,12 @@ fn every_reason_is_reported_in_its_own_sentence() {
             ],
         ),
         (
+            "an unresolved representation `$ref`",
+            document_declaring(Responses::new().with(200, unresolved_representation)),
+            observed(200, Some("application/json"), "{}"),
+            vec!["the `application/json` representation resolves to no component".to_owned()],
+        ),
+        (
             "a body that is not JSON",
             document_declaring(json_ok()),
             observed(200, Some("application/json"), "not json"),
@@ -757,7 +795,7 @@ fn a_schema_that_does_not_compile_is_reported_as_such() {
     }));
     ok.content.insert(
         "application/json".to_owned(),
-        kynos_openapi::MediaType::new(unclosed),
+        kynos_openapi::MediaType::new(unclosed).into(),
     );
     let document = document_declaring(kynos_openapi::Responses::new().with(200, ok));
 

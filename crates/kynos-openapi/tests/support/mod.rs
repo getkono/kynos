@@ -793,8 +793,8 @@ pub(crate) fn arb_media_type() -> BoxedStrategy<MediaType> {
         .boxed()
 }
 
-pub(crate) fn arb_content() -> BoxedStrategy<Map<MediaType>> {
-    arb_map(MEDIA_TYPE_NAMES, arb_media_type(), 2).boxed()
+pub(crate) fn arb_content() -> BoxedStrategy<Map<RefOr<MediaType>>> {
+    arb_map(MEDIA_TYPE_NAMES, arb_ref_or(arb_media_type()), 2).boxed()
 }
 
 pub(crate) fn arb_request_body() -> BoxedStrategy<RequestBody> {
@@ -946,10 +946,12 @@ pub(crate) fn arb_parameter() -> BoxedStrategy<Parameter> {
                     }
                     parameter
                 } else {
-                    let (media_type, value) = content
-                        .into_iter()
-                        .next()
-                        .unwrap_or_else(|| ("application/json".to_owned(), MediaType::default()));
+                    let (media_type, value) = content.into_iter().next().unwrap_or_else(|| {
+                        (
+                            "application/json".to_owned(),
+                            RefOr::Item(MediaType::default()),
+                        )
+                    });
                     Parameter::with_content(name, location, media_type, value)
                 };
 

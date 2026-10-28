@@ -315,8 +315,10 @@ fn declared(responses: &Responses, status: u16) -> serde_json::Value {
         .and_then(RefOr::as_item)
         .expect("a declared status");
 
-    serde_json::to_value(&response.content["application/problem+json"].schema)
-        .expect("a schema serializes")
+    let representation = response.content["application/problem+json"]
+        .as_item()
+        .expect("an inline representation");
+    serde_json::to_value(&representation.schema).expect("a schema serializes")
 }
 
 /// Every URI a branch of `schema` constrains `type` to.
@@ -504,7 +506,10 @@ fn a_third_side_publishing_one_type_extends_the_branch_kept() {
         let schema = response
             .content
             .get_mut("application/problem+json")
-            .and_then(|media| media.schema.as_mut())
+            .and_then(|media| match media {
+                RefOr::Item(media) => media.schema.as_mut(),
+                RefOr::Ref(_) => None,
+            })
             .expect("a problem schema");
         let Schema::Object(object) = schema else {
             unreachable!("a branch is an object")

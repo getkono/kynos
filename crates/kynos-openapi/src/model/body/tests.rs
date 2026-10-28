@@ -12,6 +12,25 @@ fn a_body_can_offer_several_representations() {
     assert_eq!(body.content.len(), 2);
 }
 
+/// A `content` entry carrying `$ref` is the Reference Object 3.2 admits there
+/// (`references/3.2.0.md:1210`), never a Media Type Object whose extensions
+/// absorbed the key, and it writes back as the bare reference it was read as.
+#[test]
+fn a_content_entry_carrying_a_ref_reads_and_writes_as_a_reference() {
+    use crate::model::reference::{Ref, RefOr};
+
+    let wire = serde_json::json!({
+        "content": {"application/json": {"$ref": "#/components/mediaTypes/Json"}}
+    });
+    let body: RequestBody = serde_json::from_value(wire.clone()).expect("a request body");
+
+    assert_eq!(
+        body.content["application/json"],
+        RefOr::Ref(Ref::new("#/components/mediaTypes/Json"))
+    );
+    assert_eq!(serde_json::to_value(&body).expect("serializable"), wire);
+}
+
 #[test]
 fn an_encoding_declaring_a_style_no_query_parameter_could_take_is_refused() {
     use crate::model::body::encoding::Encoding;
