@@ -371,7 +371,7 @@ fn declared_representation<'a>(
 /// The media type an entry names, following one `#/components/mediaTypes`
 /// hop; a build without `openapi32` has no such section to follow.
 fn resolve_media_type<'d>(
-    document: &'d Document,
+    #[cfg_attr(not(feature = "openapi32"), expect(unused_variables))] document: &'d Document,
     entry: &'d RefOr<kynos_openapi::MediaType>,
 ) -> Option<&'d kynos_openapi::MediaType> {
     match entry {
@@ -383,10 +383,7 @@ fn resolve_media_type<'d>(
             .and_then(|name| document.components.media_types.get(name))
             .and_then(RefOr::as_item),
         #[cfg(not(feature = "openapi32"))]
-        RefOr::Ref(_) => {
-            let _ = document;
-            None
-        }
+        RefOr::Ref(_) => None,
     }
 }
 
