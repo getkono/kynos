@@ -252,22 +252,26 @@ LOOKED_IN = {
 ROW_COUNT_CLAIM = r"\*\*(\w+) rows, and the count is the check\.\*\*"
 
 
-def claimed(text, sentence, failures):
-    """The number `text` writes into the count claim `sentence`, or `None`.
+def claimed(text, sentence, failures, document="architecture.md", gone=None, count="count"):
+    """The number `document`'s `text` writes into the count claim `sentence`, or `None`.
 
-    A missing or unreadable count is appended to `failures`.
+    A missing count is appended to `failures` as `document` no longer stating
+    `gone` (by default, a count matching `sentence`), and an unreadable one as
+    an unreadable `count`.
     """
     found = re.search(sentence, text)
     if found is None:
-        failures.append(
-            f"architecture.md no longer states a count matching /{sentence}/, so "
-            "the claim this gate exists to hold is gone"
-        )
+        if gone is None:
+            gone = (
+                f"a count matching /{sentence}/, so the claim this gate exists "
+                "to hold is gone"
+            )
+        failures.append(f"{document} no longer states {gone}")
         return None
     word = found.group(1)
     number = NUMBERS.get(word.capitalize())
     if number is None:
-        failures.append(f"architecture.md writes an unreadable count: {word!r}")
+        failures.append(f"{document} writes an unreadable {count}: {word!r}")
     return number
 
 
@@ -848,20 +852,20 @@ def taxonomy_failures(text):
         ]
 
     problems = []
-    stated = re.search(TAXONOMY_CLAIM, text)
-    if stated is None:
-        problems.append(
-            "performance.md no longer states how many of the kinds below its "
-            "taxonomy run today, so a row can be added or dropped without "
-            "failing this gate. The sentence is held as written -- rewording it "
-            "means rewording TAXONOMY_CLAIM in the same commit"
-        )
-    elif (expected := NUMBERS.get(stated.group(1).capitalize())) is None:
-        problems.append(
-            "performance.md writes an unreadable count of measurement kinds: "
-            f"{stated.group(1)!r}"
-        )
-    elif expected != len(kinds):
+    expected = claimed(
+        text,
+        TAXONOMY_CLAIM,
+        problems,
+        "performance.md",
+        gone=(
+            "how many of the kinds below its taxonomy run today, so a row can "
+            "be added or dropped without failing this gate. The sentence is "
+            "held as written -- rewording it means rewording TAXONOMY_CLAIM in "
+            "the same commit"
+        ),
+        count="count of measurement kinds",
+    )
+    if expected is not None and expected != len(kinds):
         problems.append(
             f"performance.md claims {expected} kinds of measurement and its "
             f"taxonomy table has {len(kinds)}. Adding a kind means moving that "
@@ -1207,25 +1211,23 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
 
     # The stated row count catches a deleted row or a table cut short.
     elif len(halves) == 2:
-        stated = re.search(ROW_COUNT_CLAIM, testing)
-        if stated is None:
+        expected = claimed(
+            testing,
+            ROW_COUNT_CLAIM,
+            failures,
+            "testing.md",
+            gone=(
+                "how many rows its off-path table has, so a row can be dropped "
+                "without failing this gate"
+            ),
+            count="off-path row count",
+        )
+        if expected is not None and expected != off_path_rows:
             failures.append(
-                "testing.md no longer states how many rows its off-path table has, "
-                "so a row can be dropped without failing this gate"
+                f"testing.md claims {expected} off-path rows and the table has "
+                f"{off_path_rows}. Adding an element means saying so there; "
+                "losing one means a row was dropped or the table was cut short"
             )
-        else:
-            expected = NUMBERS.get(stated.group(1).capitalize())
-            if expected is None:
-                failures.append(
-                    f"testing.md writes an unreadable off-path row count: "
-                    f"{stated.group(1)!r}"
-                )
-            elif expected != off_path_rows:
-                failures.append(
-                    f"testing.md claims {expected} off-path rows and the table has "
-                    f"{off_path_rows}. Adding an element means saying so there; "
-                    "losing one means a row was dropped or the table was cut short"
-                )
 
     # --- Hand-rolled `Stream` implementations ---------------------------------
     # Only links in the section that enumerates them authorise a site.
