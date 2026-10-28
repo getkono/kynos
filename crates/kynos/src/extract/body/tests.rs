@@ -865,6 +865,34 @@ mod a_form_body_decodes_what_it_describes {
         assert_eq!(tags.tag, ["a"]);
     }
 
+    /// A form that does not fit `T` is one failure keyed at the root, whose
+    /// detail is the decoder's own message, unchanged.
+    #[tokio::test]
+    async fn a_misfit_form_is_the_decoders_message_at_the_root() {
+        #[derive(Debug, serde::Deserialize)]
+        #[allow(dead_code)]
+        struct Page {
+            page: u32,
+        }
+        unbounded!(Page);
+
+        let decoder = serde_html_form::from_str::<Page>("page=first")
+            .expect_err("`first` is not a `u32`")
+            .to_string();
+        let rejection = read::<Page>(b"page=first")
+            .await
+            .expect_err("`first` is not a `u32`");
+
+        assert_eq!(rejection.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let BodyRejection::Schema { failures } = rejection else {
+            panic!("expected a schema failure, got {rejection:?}");
+        };
+        assert_eq!(
+            failures.into_iter().collect::<Vec<_>>(),
+            [(String::new(), decoder)]
+        );
+    }
+
     /// The items are parsed as the item type, not only collected as text.
     #[tokio::test]
     async fn the_items_are_read_as_the_item_type() {
