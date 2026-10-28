@@ -2342,7 +2342,7 @@ class Main(unittest.TestCase):
         # narrowed was reported at all.
         offenders = [line.strip() for line in reported[0].split("\n")[1:] if line.strip()]
         self.assertTrue(offenders)
-        self.assertNotIn(gate.OFF_PATH_SCOPE + site, offenders)
+        self.assertNotIn(gate.KYNOS_SOURCE + site, offenders)
 
     def test_a_registry_minted_without_naming_a_constructor_is_reported(self):
         # The registry row by the type: `Default::default()` into a field a

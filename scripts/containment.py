@@ -15,6 +15,8 @@ from pathlib import Path
 
 # Relative to the script, so a run from any directory checks the same tree.
 ROOT = Path(__file__).resolve().parent.parent
+#: The `kynos` crate's source tree, which a bare site in every table is relative to.
+KYNOS_SOURCE = "crates/kynos/src/"
 ARCHITECTURE = (ROOT / "docs/architecture.md").read_text()
 # Counts a document may state in words; an unlisted word fails loudly.
 NUMBERS = {
@@ -345,7 +347,7 @@ def allowed_at(path, sites):
 
 
 #: The runtime's own module: its row's *Names* cell is prose, and not enforced.
-HOME_SITE = "crates/kynos/src/server/"
+HOME_SITE = KYNOS_SOURCE + "server/"
 # A `use` statement, through to its `;`.
 USE_STATEMENT = re.compile(r"\buse\s+[^;]*;")
 # A path rooted at the `tokio` crate: not a segment of another path, such as
@@ -406,9 +408,6 @@ REQUIREMENT = re.compile(
 CRATE_RESIDUE = re.compile(r"(?:[\s,]|\band\b)*")
 SITE_RESIDUE = re.compile(r"(?:[\s,]|\b(?:and|in|under)\b)*")
 CRATE_TOKEN = re.compile(r"[\w-]+")
-# Bare sites are relative to this; one opening with a member's name is that
-# member's `src/`.
-DEPENDENCY_SCOPE = "crates/kynos/src/"
 #: Workspace members with a `src/` tree, by directory name.
 MEMBERS = frozenset(
     crate.name for crate in (ROOT / "crates").iterdir() if (crate / "src").is_dir()
@@ -421,7 +420,7 @@ def site_path(site, members=MEMBERS):
     head, _, rest = site.partition("/")
     if head in members:
         return f"crates/{head}/src/{rest}"
-    return DEPENDENCY_SCOPE + site.lstrip("/")
+    return KYNOS_SOURCE + site.lstrip("/")
 
 
 def confinement(requirement, members=MEMBERS):
@@ -516,8 +515,6 @@ def listed(path, sites):
 # fails. A site that stopped naming its element is stale, not a failure.
 TESTING = (ROOT / "docs/testing.md").read_text()
 OFF_PATH_HEADER = "| Element | Named by | Named only in | Why a request cannot reach it |"
-# Bare sites are relative to this; a `crates/...` site widens its row's scope.
-OFF_PATH_SCOPE = "crates/kynos/src/"
 
 
 # A *Named by* spelling: an identifier or `::` path. Backticks separate several
@@ -724,7 +721,7 @@ def allowed_sites(cell):
     """The files one *Named only in* cell allows.
 
     A comma-separated list of backticked, brace-expandable paths, relative to
-    `OFF_PATH_SCOPE` unless they start at `crates/`. `None` when anything but
+    `KYNOS_SOURCE` unless they start at `crates/`. `None` when anything but
     commas sits outside the backticks.
     """
     entries = backticked(cell)
@@ -735,7 +732,7 @@ def allowed_sites(cell):
     for entry in entries:
         for path in expand(entry.strip()):
             path = path.strip()
-            sites.add(path if path.startswith("crates/") else OFF_PATH_SCOPE + path.lstrip("/"))
+            sites.add(path if path.startswith("crates/") else KYNOS_SOURCE + path.lstrip("/"))
     return sites
 
 
@@ -749,7 +746,7 @@ def scanned(allowance, exists=None):
     """
     if exists is None:
         exists = lambda tree: (ROOT / tree).is_dir()
-    trees = {OFF_PATH_SCOPE}
+    trees = {KYNOS_SOURCE}
     for site in allowance:
         parts = site.split("/")
         if len(parts) > 3 and parts[0] == "crates" and parts[2] == "src":
@@ -1048,14 +1045,16 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
             "caused it"
         ),
     )
-    # `(sites, names)` per row whose *Names* cell this rule enforces.
-    named_rows = []
+    # `(sites, names)` per row whose *Names* cell this rule enforces, and every
+    # row's sites together.
+    named_rows, allowed = [], set()
     if table is not None:
         for line in table_rows(table):
             cells = line.split("|")
             row = re.findall(r"`([^`]+)`", cells[1])
             rows.append(row)
-            sites = {f"crates/kynos/src/{site.lstrip('/')}" for entry in row for site in expand(entry)}
+            sites = {KYNOS_SOURCE + site.lstrip("/") for entry in row for site in expand(entry)}
+            allowed |= sites
             if sites == {HOME_SITE}:
                 continue
             names = runtime_names(cells[2])
@@ -1074,8 +1073,6 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
             failures.append(
                 f"architecture.md's allowance table claims {stated} rows and has {len(rows)}"
             )
-
-        allowed = {f"crates/kynos/src/{site.lstrip('/')}" for row in rows for entry in row for site in expand(entry)}
 
         if offenders := sorted(p for p in corpus.naming("tokio") if not permitted(p, allowed)):
             failures.append(
@@ -1144,7 +1141,7 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
             failures.append(
                 f"testing.md's off-path table allows {element} in a crate that "
                 "does not exist, so the tree derived from that site is scanned for "
-                "nothing and the row narrows back to " + OFF_PATH_SCOPE + " without "
+                "nothing and the row narrows back to " + KYNOS_SOURCE + " without "
                 "saying so. Either the crate was renamed and the cell was not, or "
                 "the site is a typo. The row's sites go unchecked meanwhile:\n    "
                 + "\n    ".join(missing)
