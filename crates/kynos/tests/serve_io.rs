@@ -2,9 +2,10 @@
 //!
 //! One reason: `Server::serve_io` is the public way onto the connection driver
 //! without a socket, and whether it serves what a listener's connection would
-//! — both protocols, the peer it was handed, the local address standing in
-//! for a listener's, a client that breaks the protocol, and a configuration
-//! `prepare` refuses — is only visible by composing it as a caller does.
+//! — both protocols under the settings a listener's connection runs under,
+//! the peer it was handed, the local address standing in for a listener's, a
+//! client that breaks the protocol, and a configuration `prepare` refuses — is
+//! only visible by composing it as a caller does.
 
 #![cfg(all(feature = "server", feature = "macros"))]
 
@@ -241,5 +242,158 @@ fn a_server_configured_for_tls_is_refused() {
             ))
         ),
         "{refused:?}"
+    );
+}
+
+// --- The transport settings a listener's connection runs under -------------
+
+/// Reads a text body, so a request body that stalls is felt.
+#[kynos::post("/echo")]
+async fn echo(Text(body): Text) -> Text {
+    Text(body)
+}
+
+/// Writes `request` to a connection `server` serves over a duplex, and
+/// returns everything it sends before it closes, bounded.
+#[cfg(feature = "http1")]
+async fn exchange(server: Server<()>, request: &[u8]) -> String {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    let (mut client, io) = tokio::io::duplex(64 * 1024);
+    let served = tokio::spawn(
+        server
+            .serve_io(io, peer_addr())
+            .expect("the configuration is accepted"),
+    );
+
+    client.write_all(request).await.expect("the request writes");
+    let mut response = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), client.read_to_end(&mut response))
+        .await
+        .expect("the server answers and closes within the bound")
+        .expect("the response reads");
+    drop(client);
+    let _ = tokio::time::timeout(Duration::from_secs(5), served)
+        .await
+        .expect("the connection ends once the client closes");
+
+    String::from_utf8(response).expect("a text response")
+}
+
+/// The router [`echo`] is mounted on, beside [`peer`].
+fn echoing() -> Service<()> {
+    Router::<()>::new()
+        .mount(kynos::routes![peer, echo])
+        .build(())
+        .expect("a describable router")
+}
+
+/// The HTTP/1 settings reach the connection: a head with more fields than
+/// `max_headers` allows is refused with 431, where the default's hundred
+/// would have served it.
+#[cfg(feature = "http1")]
+#[tokio::test]
+async fn the_http1_settings_reach_the_connection() {
+    use kynos::server::protocol::http1::Http1Config;
+
+    const HEAD: &[u8] = b"GET /peer HTTP/1.1\r\nhost: example\r\na: 1\r\nb: 2\r\nc: 3\r\n\
+        d: 4\r\nconnection: close\r\n\r\n";
+
+    let limited = exchange(
+        Server::new(service()).http1(Http1Config::default().max_headers(4)),
+        HEAD,
+    )
+    .await;
+    assert!(
+        limited.starts_with("HTTP/1.1 431 Request Header Fields Too Large\r\n"),
+        "{limited}"
+    );
+
+    // The control: the same head under the default.
+    let served = exchange(Server::new(service()), HEAD).await;
+    assert!(served.starts_with("HTTP/1.1 200 OK\r\n"), "{served}");
+}
+
+/// The request-body idle timeout reaches the connection: a body that stops
+/// arriving is answered 408, naming the limit it passed.
+#[cfg(feature = "http1")]
+#[tokio::test]
+async fn the_request_body_idle_timeout_reaches_the_connection() {
+    // Ten octets declared, two sent, and the client's side left open.
+    const STALLED: &[u8] = b"POST /echo HTTP/1.1\r\nhost: example\r\n\
+        content-type: text/plain\r\ncontent-length: 10\r\n\r\nab";
+
+    let response = exchange(
+        Server::new(echoing()).request_body_idle_timeout(Some(Duration::from_millis(100))),
+        STALLED,
+    )
+    .await
+    .to_ascii_lowercase();
+
+    assert!(
+        response.starts_with("http/1.1 408 request timeout\r\n"),
+        "{response}"
+    );
+    assert!(
+        response.contains(r#""detail":"the request body sent nothing for 100ms""#),
+        "{response}"
+    );
+}
+
+/// The HTTP/2 settings reach the connection: a request whose header list is
+/// past `max_header_list_size` is answered 431, where the default's 16 KiB
+/// would have served it.
+#[cfg(feature = "http2")]
+#[tokio::test]
+async fn the_http2_settings_reach_the_connection() {
+    use kynos::server::protocol::http2::Http2Config;
+
+    /// The status a prior-knowledge HTTP/2 `GET /peer` carrying one 2 KiB
+    /// field is answered with, or `None` where the stream is refused.
+    async fn answered(server: Server<()>) -> Option<http::StatusCode> {
+        let (client, io) = tokio::io::duplex(64 * 1024);
+        let served = tokio::spawn(
+            server
+                .serve_io(io, peer_addr())
+                .expect("the configuration is accepted"),
+        );
+
+        let (mut sender, connection) =
+            hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(client))
+                .await
+                .expect("HTTP/2 handshake completes");
+        let client = tokio::spawn(connection);
+
+        let mut request = get_peer(hyper::Version::HTTP_2);
+        request.headers_mut().insert(
+            "x-padding",
+            http::HeaderValue::from_str(&"p".repeat(2048)).expect("a field value"),
+        );
+        let status = tokio::time::timeout(Duration::from_secs(5), sender.send_request(request))
+            .await
+            .expect("the request is answered within the bound")
+            .ok()
+            .map(|response| response.status());
+
+        drop(sender);
+        let _ = client.await;
+        let _ = tokio::time::timeout(Duration::from_secs(5), served)
+            .await
+            .expect("the connection ends once the client closes");
+        status
+    }
+
+    let limited =
+        answered(Server::new(service()).http2(Http2Config::default().max_header_list_size(1024)))
+            .await;
+    assert_eq!(
+        limited,
+        Some(http::StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE)
+    );
+
+    // The control: the same request under the default.
+    assert_eq!(
+        answered(Server::new(service())).await,
+        Some(http::StatusCode::OK)
     );
 }
