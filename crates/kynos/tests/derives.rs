@@ -4443,6 +4443,43 @@ fn untyped_variants_sharing_a_status_are_each_named() {
     );
 }
 
+/// One failure per source of a status's description.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum DescribedError {
+    /// From the doc comment.
+    #[error("titled")]
+    #[problem(status = 400, title = "From the title")]
+    Titled,
+
+    /// From the doc comment.
+    #[error("documented")]
+    #[problem(status = 409)]
+    Documented,
+
+    #[error("bare")]
+    #[problem(status = 410)]
+    Bare,
+}
+
+/// A status's description is its failure's `title`, else its doc comment,
+/// else the status's reason phrase.
+#[test]
+fn an_error_description_falls_back_from_title_to_doc_to_reason_phrase() {
+    let responses = emitted_responses::<DescribedError>();
+
+    for (status, description) in [
+        ("400", "From the title"),
+        ("409", "From the doc comment."),
+        ("410", "Gone"),
+    ] {
+        assert_eq!(
+            responses[status]["description"],
+            serde_json::json!(description),
+            "{status}: {responses}"
+        );
+    }
+}
+
 // --- A derived reply and a derived problem answer as they declare ----------
 //
 // The runtime half of `Reply` and `ApiError`: the response each variant writes.
@@ -5166,6 +5203,54 @@ fn a_transparent_variant_answers_as_the_error_it_holds() {
     let own = PauseError::AlreadyPaused.into_problem();
     assert_eq!(own.status, 409);
     assert_eq!(own.detail.as_deref(), Some("the torrent is already paused"));
+}
+
+/// A transparent variant's response is the held error's, through a tuple field
+/// and a named one, in an enum declaring failures of its own and in one
+/// declaring none; a failure the enum declares still answers with its own
+/// `Display` as `detail`.
+#[tokio::test]
+async fn a_transparent_variant_responds_as_the_error_it_holds() {
+    let invalid = || ValidationFailed {
+        field: "name".to_owned(),
+    };
+
+    for (error, held) in [
+        (
+            PauseError::from(LookupError::TenantUnknown).into_response(),
+            LookupError::TenantUnknown.into_response(),
+        ),
+        (
+            PauseError::from(invalid()).into_response(),
+            invalid().into_response(),
+        ),
+        (
+            SharedOnly::<0>::Lookup(LookupError::UserUnknown).into_response(),
+            LookupError::UserUnknown.into_response(),
+        ),
+        (
+            SharedOnly::<0>::Invalid(invalid()).into_response(),
+            invalid().into_response(),
+        ),
+    ] {
+        let (error, held) = (answered(error).await, answered(held).await);
+        assert_eq!(error.status, held.status);
+        assert_eq!(error.headers, held.headers);
+        assert_eq!(error.body, held.body);
+    }
+
+    let own = answered(PauseError::ProfileUnknown.into_response()).await;
+    assert_eq!(own.status, 404);
+    let body: serde_json::Value = serde_json::from_slice(&own.body).expect("a JSON body");
+    assert_eq!(
+        body,
+        serde_json::json!({
+            "type": "https://errors.example.com/profile-unknown",
+            "title": "Profile unknown",
+            "status": 404,
+            "detail": "no profile with that name",
+        })
+    );
 }
 
 /// A status met both in the enum and in a held error is one response naming
