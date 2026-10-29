@@ -4,7 +4,7 @@ use bytes::Bytes;
 
 use crate::{
     extract::body::binary::Binary,
-    http::media::MediaType,
+    http::media::{MediaType, WellFormed},
     response::{IntoResponse, Responses},
 };
 
@@ -99,6 +99,7 @@ impl<M> sealed::Sealed for Binary<M> {}
 
 impl<M: MediaType> Rangeable for Binary<M> {
     fn media_type() -> &'static str {
+        let () = <M as WellFormed>::WELL_FORMED;
         M::MEDIA_TYPE
     }
 

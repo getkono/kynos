@@ -6,7 +6,11 @@ use crate::{
         FromRequest,
         describe::{Describe, RequestContent},
     },
-    http::{Parts, body::Body, media::MediaType},
+    http::{
+        Parts,
+        body::Body,
+        media::{MediaType, WellFormed},
+    },
     router::operation::OperationCx,
     schema::registry::Registry,
 };
@@ -64,6 +68,8 @@ impl<C: Sync, M: MediaType + Send> FromRequest<C> for Binary<M> {
         body: Body,
         _context: &C,
     ) -> Result<Self, Self::Rejection> {
+        let () = <M as WellFormed>::WELL_FORMED;
+
         super::read_body(parts, body, M::MEDIA_TYPE)
             .await
             .map(Self::new)
@@ -79,6 +85,7 @@ impl<M: MediaType> Describe for Binary<M> {
 
 impl<M: MediaType> RequestContent for Binary<M> {
     fn media_types() -> Vec<&'static str> {
+        let () = <M as WellFormed>::WELL_FORMED;
         vec![M::MEDIA_TYPE]
     }
 
@@ -86,6 +93,7 @@ impl<M: MediaType> RequestContent for Binary<M> {
     // no `contentMediaType` (the content key already states it).
     fn request_body(registry: &mut Registry) -> kynos_openapi::RequestBody {
         let _ = registry;
+        let () = <M as WellFormed>::WELL_FORMED;
         kynos_openapi::RequestBody::new(
             M::MEDIA_TYPE,
             kynos_openapi::MediaType::new(kynos_openapi::Schema::Object(Box::default())),

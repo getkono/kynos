@@ -16,7 +16,23 @@ use kynos_openapi::model::body::mime_names;
 /// (`kynos::extract::body::json_as`, behind `json`).
 ///
 /// Implemented by the marker types in this module, and by any unit struct you
-/// declare for a vendor type. A marker offered a request the body beside its
+/// declare for a vendor type. `MEDIA_TYPE` is an RFC 9110 `type/subtype` of
+/// tokens, with any parameters in octets a header may hold; any other fails
+/// the build wherever a body naming the marker is extracted, written,
+/// described or offered, rather than panicking at the first response:
+///
+/// ```compile_fail
+/// use kynos::{extract::body::binary::Binary, http::media::MediaType, response::IntoResponse};
+///
+/// struct Tally;
+/// impl MediaType for Tally {
+///     const MEDIA_TYPE: &'static str = "vnd.example.tally";
+/// }
+///
+/// Binary::<Tally>::new("7").into_response();
+/// ```
+///
+/// A marker offered a request the body beside its
 /// `Binary` in a [`OneOf`](crate::extract::body::OneOf) is offered too fails
 /// the build: one naming that body's type and subtype, whatever parameters it
 /// declares. So does a `QueryString` marker naming neither `application/json`
@@ -94,8 +110,9 @@ pub(crate) const fn charset(media_type: &str) -> Option<&[u8]> {
 /// non-empty token, with whatever parameters follow it held only to the
 /// octets a field value may hold (section 5.5); usable in a constant.
 ///
-/// The `MEDIA_TYPE` check of a `BodyCodec`, whose second half is what
-/// `HeaderValue::from_static` would otherwise panic on at the first response.
+/// The `MEDIA_TYPE` check of a `BodyCodec` and of a [`MediaType`] marker,
+/// whose second half is what `HeaderValue::from_static` would otherwise panic
+/// on at the first response.
 pub(crate) const fn is_media_type(media_type: &str) -> bool {
     use super::{is_field_value, is_token, split_at_byte};
 
@@ -107,6 +124,23 @@ pub(crate) const fn is_media_type(media_type: &str) -> bool {
     let (type_, subtype) = split_at_byte(split_essence(bytes).0, b'/');
     is_token(type_) && is_token(subtype)
 }
+
+/// Refuses, in the constant evaluation reading it, a marker whose
+/// `MEDIA_TYPE` is not a media type a header can carry.
+///
+/// Blanket-implemented, so every marker has it; each body taking a marker
+/// forces it wherever the body is extracted, written, described or offered,
+/// as `Encoded` forces its codec's.
+pub(crate) trait WellFormed: MediaType {
+    /// The check, read as `let () = <M as WellFormed>::WELL_FORMED;`.
+    const WELL_FORMED: () = assert!(
+        is_media_type(Self::MEDIA_TYPE),
+        "a `MediaType` marker's `MEDIA_TYPE` is not a `type/subtype` of tokens in octets a \
+         header may hold, and a body is named by one"
+    );
+}
+
+impl<M: MediaType + ?Sized> WellFormed for M {}
 
 /// `application/octet-stream`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]

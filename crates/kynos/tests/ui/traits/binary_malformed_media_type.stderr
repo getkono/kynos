@@ -1,0 +1,33 @@
+error[E0080]: evaluation panicked: a `MediaType` marker's `MEDIA_TYPE` is not a `type/subtype` of tokens in octets a header may hold, and a body is named by one
+ --> $RUST/core/src/panic.rs
+  |
+  |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<Tally as kynos::http::media::WellFormed>::WELL_FORMED` failed here
+  |
+ ::: src/http/media.rs
+  |
+  |       const WELL_FORMED: () = assert!(
+  |  _____________________________-
+  | |         is_media_type(Self::MEDIA_TYPE),
+  | |         "a `MediaType` marker's `MEDIA_TYPE` is not a `type/subtype` of tokens in octets a \
+  | |          header may hold, and a body is named by one"
+  | |     );
+  | |_____- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/response/codec/binary.rs
+  |
+  |         let () = <M as WellFormed>::WELL_FORMED;
+  |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn kynos::response::codec::binary::<impl kynos::response::Responses for kynos::extract::body::binary::Binary<Tally>>::responses`
+ --> src/handler/impls.rs
+  |
+  |         let returned = <Res as Responses>::responses(operation.registry());
+  |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/response/codec/binary.rs
+  |
+  |         let () = <M as WellFormed>::WELL_FORMED;
+  |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -11,7 +11,7 @@ use crate::{
     http::{
         Parts,
         body::Body,
-        media::{MediaType, is_text, is_utf8_or_unstated},
+        media::{MediaType, WellFormed, is_text, is_utf8_or_unstated},
     },
     router::operation::OperationCx,
     schema::registry::Registry,
@@ -206,9 +206,11 @@ impl<M> TextAs<M> {
 }
 
 impl<M: MediaType> TextAs<M> {
-    /// Refuses, in the constant evaluation reading it, a marker that does not
-    /// name a `text/*` type, or that declares a charset other than UTF-8.
+    /// Refuses, in the constant evaluation reading it, a marker that is not
+    /// [`WellFormed`], does not name a `text/*` type, or declares a charset
+    /// other than UTF-8.
     pub(crate) const TEXT: () = {
+        let () = <M as WellFormed>::WELL_FORMED;
         assert!(
             is_text(M::MEDIA_TYPE),
             "a `TextAs` marker does not name a `text/*` type, and its body is decoded as text"
