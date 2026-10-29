@@ -2,7 +2,7 @@
 
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{quote, quote_spanned};
-use syn::{Ident, spanned::Spanned};
+use syn::{Ident, Type, spanned::Spanned};
 
 use super::{Extension, Failure, HEADERS_BINDING, Outcome, Transparent};
 use crate::derive::common::optional;
@@ -56,26 +56,12 @@ pub(super) fn into_problem(failures: &[&Failure], delegates: &[&Transparent]) ->
         quote!(#pattern => #problem)
     });
 
-    let handed_over = delegates.iter().map(|delegate| {
-        let variant = &delegate.variant;
-        let member = &delegate.member;
-        let ty = &delegate.ty;
-        let delegate =
-            quote_spanned!(ty.span()=> <#ty as ::kynos::error::problem::IntoProblem>::into_problem);
-        quote! {
-            Self::#variant { #member: inner } => #delegate(inner),
-        }
-    });
-
-    let detail = detail(failures, delegates);
-
-    quote! {
-        #detail
-        match self {
-            #(#arms)*
-            #(#handed_over)*
-        }
-    }
+    dispatch(
+        failures,
+        delegates,
+        arms,
+        |ty| quote_spanned!(ty.span()=> <#ty as ::kynos::error::problem::IntoProblem>::into_problem),
+    )
 }
 
 /// The `into_response` body: the problem rendered, then the failure's header
@@ -116,12 +102,27 @@ pub(super) fn into_response(failures: &[&Failure], delegates: &[&Transparent]) -
         }
     });
 
-    let handed_over = delegates.iter().map(|delegate| {
-        let variant = &delegate.variant;
-        let member = &delegate.member;
-        let ty = &delegate.ty;
-        let delegate =
-            quote_spanned!(ty.span()=> <#ty as ::kynos::response::IntoResponse>::into_response);
+    dispatch(
+        failures,
+        delegates,
+        arms,
+        |ty| quote_spanned!(ty.span()=> <#ty as ::kynos::response::IntoResponse>::into_response),
+    )
+}
+
+/// A `match self` over `arms`, one per failure declared here, then an arm per
+/// transparent variant handing its field to the function `delegate` names for
+/// the field's type, after the `let detail` an arm reads.
+fn dispatch(
+    failures: &[&Failure],
+    delegates: &[&Transparent],
+    arms: impl Iterator<Item = TokenStream2>,
+    delegate: impl Fn(&Type) -> TokenStream2,
+) -> TokenStream2 {
+    let handed_over = delegates.iter().map(|transparent| {
+        let variant = &transparent.variant;
+        let member = &transparent.member;
+        let delegate = delegate(&transparent.ty);
         quote! {
             Self::#variant { #member: inner } => #delegate(inner),
         }
