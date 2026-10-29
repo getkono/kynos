@@ -374,12 +374,17 @@ fn specificity(name: &str, media_type: &str) -> Option<u8> {
     if range.eq_ignore_ascii_case(media_type) {
         return Some(2);
     }
+
+    // A range covers only a `type/subtype` value (RFC 9110 section 8.3.1).
+    let (observed_type, observed_subtype) = media_type.split_once('/')?;
+    if observed_type.is_empty() || observed_subtype.is_empty() {
+        return None;
+    }
     if range == "*/*" {
         return Some(0);
     }
 
     let (range_type, subtype) = range.split_once('/')?;
-    let (observed_type, _) = media_type.split_once('/')?;
     (subtype == "*" && range_type.eq_ignore_ascii_case(observed_type)).then_some(1)
 }
 
