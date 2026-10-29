@@ -43,6 +43,14 @@ pub fn etag_matches_strongly(field: &HeaderValue, current: Option<&str>) -> bool
     crate::http::etag::matches_strongly(field, current)
 }
 
+/// The form-encoded pairs of `query`, percent-decoded, as `QueryParams` and
+/// query API keys read them.
+pub fn query_pairs(
+    query: Option<&str>,
+) -> impl Iterator<Item = (std::borrow::Cow<'_, [u8]>, std::borrow::Cow<'_, [u8]>)> {
+    crate::__private::uri::query_pairs(query)
+}
+
 /// Whether a `Form<T>` body `text` percent-decodes to UTF-8, checked in place.
 ///
 /// # Errors

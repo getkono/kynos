@@ -77,7 +77,7 @@ pub(crate) fn decode_path_value(
 /// Form rules, as OpenAPI requires of `in: query`: `+` is a space and `%2B` a
 /// plus sign. An empty pair is skipped, a pair with no `=` has an empty value,
 /// and a malformed escape is kept as the literal `%`.
-pub fn query_pairs(
+pub(crate) fn query_pairs(
     query: Option<&str>,
 ) -> impl Iterator<Item = (std::borrow::Cow<'_, [u8]>, std::borrow::Cow<'_, [u8]>)> {
     query_names(query).map(|(name, value)| (name, decode_query_component(value)))
@@ -225,14 +225,11 @@ pub fn endpoint_uri_with_path<P: EncodePath>(template: &str, path: &P) -> Uri {
 
 /// Builds a URI for a generated endpoint with query parameters.
 pub fn endpoint_uri_with_query<Q: EncodeQuery>(template: &str, query: &Q) -> Uri {
-    let query = query.encode();
-    let uri = if query.is_empty() {
-        template.to_owned()
-    } else {
-        format!("{template}?{query}")
-    };
-    uri.parse()
-        .expect("derived query parameters produce a valid URI")
+    with_query(
+        template.to_owned(),
+        query,
+        "derived query parameters produce a valid URI",
+    )
 }
 
 /// Builds a URI for a generated endpoint with path and query parameters.
@@ -245,15 +242,22 @@ pub fn endpoint_uri_with_path_and_query<P: EncodePath, Q: EncodeQuery>(
     path: &P,
     query: &Q,
 ) -> Uri {
-    let path = render_endpoint_path(template, path);
+    with_query(
+        render_endpoint_path(template, path),
+        query,
+        "derived endpoint parameters produce a valid URI",
+    )
+}
+
+/// `path` with `?` and the encoded `query` appended where there is one, parsed;
+/// a failure panics with `expectation`.
+fn with_query<Q: EncodeQuery>(mut path: String, query: &Q, expectation: &str) -> Uri {
     let query = query.encode();
-    let uri = if query.is_empty() {
-        path
-    } else {
-        format!("{path}?{query}")
-    };
-    uri.parse()
-        .expect("derived endpoint parameters produce a valid URI")
+    if !query.is_empty() {
+        path.push('?');
+        path.push_str(&query);
+    }
+    path.parse().expect(expectation)
 }
 
 fn render_endpoint_path<P: EncodePath>(template: &str, path: &P) -> String {
