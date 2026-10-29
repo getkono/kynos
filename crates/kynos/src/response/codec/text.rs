@@ -37,15 +37,8 @@ const fn with_charset(media_type: &str) -> ([u8; CAPACITY], usize) {
         return (built, 0);
     }
 
-    let mut at = 0;
-    while at < media_type.len() {
-        built[at] = media_type[at];
-        at += 1;
-    }
-    while at < len {
-        built[at] = suffix[at - media_type.len()];
-        at += 1;
-    }
+    let at = crate::http::copy_into(&mut built, 0, media_type);
+    crate::http::copy_into(&mut built, at, suffix);
     (built, len)
 }
 

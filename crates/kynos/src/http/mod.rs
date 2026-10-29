@@ -97,6 +97,22 @@ pub(crate) const fn is_field_value(bytes: &[u8]) -> bool {
     true
 }
 
+/// Copies `bytes` into `out` from `at`, returning where the copy ends; usable
+/// in a constant, where a field value is assembled into a fixed buffer.
+///
+/// # Panics
+///
+/// Where `bytes` runs past `out`'s end: each caller checks the room first, by
+/// its own policy.
+pub(crate) const fn copy_into(out: &mut [u8], at: usize, bytes: &[u8]) -> usize {
+    let mut index = 0;
+    while index < bytes.len() {
+        out[at + index] = bytes[index];
+        index += 1;
+    }
+    at + bytes.len()
+}
+
 /// `text`'s pieces between `delimiter`s outside any `quoted-string`, left to
 /// right: RFC 9110 section 5.6.6 lets a parameter value be one, and a `,` or
 /// `;` inside it separates nothing. A `\` inside quotes escapes the octet

@@ -151,18 +151,12 @@ const fn compose(realm: &str) -> ([u8; CHALLENGE_CAPACITY], usize) {
 }
 
 /// Copies `bytes` into `out` at `len`, returning the new length.
-const fn append(out: &mut [u8; CHALLENGE_CAPACITY], mut len: usize, bytes: &[u8]) -> usize {
+const fn append(out: &mut [u8; CHALLENGE_CAPACITY], len: usize, bytes: &[u8]) -> usize {
     assert!(
         len + bytes.len() <= CHALLENGE_CAPACITY,
         "a realm is at most 225 bytes once escaped"
     );
-    let mut index = 0;
-    while index < bytes.len() {
-        out[len] = bytes[index];
-        len += 1;
-        index += 1;
-    }
-    len
+    crate::http::copy_into(out, len, bytes)
 }
 
 /// Mutual TLS client certificate authentication.
