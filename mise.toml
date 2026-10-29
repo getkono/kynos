@@ -430,8 +430,56 @@ cargo package --workspace --all-features --exclude kynos-profile
 description = "Compare the public API against the last published release"
 # release-plz's own semver check compares default features only, so a break
 # behind a flag would surface at release; this compares `--all-features` on
-# `master` against the last published version. CI reports rather than blocks.
-run = "cargo semver-checks check-release --workspace --all-features"
+# `master` against the last published version. The report's verdict decides
+# the exit: a break fails unless `--advisory`, which is how CI reports rather
+# than blocks, and no verdict at all always fails. `semver-summary.md` records
+# the verdict for CI's job summary.
+usage = '''
+flag "--advisory" help="Pass on a break; still fail when there is no verdict"
+'''
+run = '''
+set -eu
+log="$(mktemp)"
+trap 'rm -f "$log"' EXIT
+
+# The verdict decides, not the tool's own exit status.
+cargo semver-checks check-release --workspace --all-features 2>&1 | tee "$log" || true
+
+# `CARGO_TERM_COLOR=always` puts escapes inside the verdict line.
+sed -r -i 's/\x1b\[[0-9;]*m//g' "$log"
+
+if grep -q 'Summary semver requires new major version' "$log"; then
+  verdict=broken
+elif grep -q 'Summary no semver update required' "$log"; then
+  verdict=clean
+else
+  echo "cargo-semver-checks produced no verdict" >&2
+  exit 1
+fi
+
+{
+  echo "## API compatibility against the last published release"
+  echo
+  if [ "$verdict" = clean ]; then
+    echo "No break against the published baseline."
+  else
+    echo "Breaks against the published baseline, listed below."
+    echo
+    echo "Pre-1.0, a minor bump is how a break is declared, so this is"
+    echo "evidence for the release review rather than a failure of this"
+    echo "pull request."
+  fi
+  echo
+  echo '```'
+  grep -E '^(--- failure|Failed in:|  [a-z]|[[:space:]]+Summary )' "$log" \
+    | sed "s#$PWD/##g"
+  echo '```'
+} >semver-summary.md
+
+if [ "$verdict" = broken ] && [ "${usage_advisory:-false}" != true ]; then
+  exit 1
+fi
+'''
 
 [tasks."deny:check"]
 description = "Check dependencies for advisories, licences, bans and sources"

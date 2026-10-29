@@ -43,6 +43,9 @@ cost-codegen.tsv
 profile-report.md
 profile-requests.tsv
 
+# Written by `semver:check` for CI's job summary.
+semver-summary.md
+
 # Bytecode an import from scripts/ writes. No task writes any: a script run as
 # `__main__` is never cached, and each one that imports a sibling sets
 # `sys.dont_write_bytecode` first. A direct `import containment` or an editor's
