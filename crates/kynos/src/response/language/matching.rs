@@ -134,15 +134,7 @@ impl Preference {
             }
         }
 
-        let mut quality = 1_000;
-        for parameter in segments {
-            let Some((name, value)) = parameter.trim().split_once('=') else {
-                return Err(RangeDefect::Weight);
-            };
-            if name.trim().eq_ignore_ascii_case("q") {
-                quality = crate::http::quality::parse(value.trim()).ok_or(RangeDefect::Weight)?;
-            }
-        }
+        let quality = crate::http::quality::weight(segments).ok_or(RangeDefect::Weight)?;
 
         Ok(Self {
             range: range.to_ascii_lowercase(),
