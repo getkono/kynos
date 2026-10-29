@@ -183,7 +183,7 @@ impl Cookie {
     /// `__Host-` cookie names a `Domain` or a `Path` other than `/`.
     #[must_use]
     pub fn encode(&self) -> Option<HeaderValue> {
-        if !crate::http::is_token(&self.name) || !is_cookie_value(&self.value) {
+        if !crate::http::is_token(self.name.as_bytes()) || !is_cookie_value(&self.value) {
             return None;
         }
 

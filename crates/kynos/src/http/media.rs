@@ -97,7 +97,7 @@ pub(crate) const fn charset(media_type: &str) -> Option<&[u8]> {
 /// The `MEDIA_TYPE` check of a `BodyCodec`, whose second half is what
 /// `HeaderValue::from_static` would otherwise panic on at the first response.
 pub(crate) const fn is_media_type(media_type: &str) -> bool {
-    use super::split_at_byte;
+    use super::{is_token, split_at_byte};
 
     let bytes = media_type.as_bytes();
     let mut at = 0;
@@ -110,25 +110,6 @@ pub(crate) const fn is_media_type(media_type: &str) -> bool {
 
     let (type_, subtype) = split_at_byte(split_essence(bytes).0, b'/');
     is_token(type_) && is_token(subtype)
-}
-
-/// Whether `bytes` is a non-empty RFC 9110 section 5.6.2 token: visible
-/// octets, none of them a delimiter.
-const fn is_token(bytes: &[u8]) -> bool {
-    const DELIMITERS: &[u8] = b"\"(),/:;<=>?@[\\]{}";
-
-    let mut at = 0;
-    while at < bytes.len() {
-        let mut delimiter = 0;
-        while delimiter < DELIMITERS.len() && DELIMITERS[delimiter] != bytes[at] {
-            delimiter += 1;
-        }
-        if !bytes[at].is_ascii_graphic() || delimiter < DELIMITERS.len() {
-            return false;
-        }
-        at += 1;
-    }
-    !bytes.is_empty()
 }
 
 /// `value` without one pair of surrounding double quotes.

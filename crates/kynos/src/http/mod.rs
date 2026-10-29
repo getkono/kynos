@@ -43,13 +43,23 @@ pub type Parts = http::request::Parts;
 /// An outgoing response.
 pub type Response = http::Response<Body>;
 
-/// RFC 9110 section 5.6.2 `token`, shared by `cookie`, `assets` and `multipart`.
-#[cfg(any(feature = "cookie", feature = "assets", feature = "multipart"))]
-pub(crate) fn is_token(text: &str) -> bool {
-    !text.is_empty()
-        && text
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
+/// Whether `bytes` is a non-empty RFC 9110 section 5.6.2 `token`: visible
+/// octets, none of them a delimiter; usable in a constant.
+pub(crate) const fn is_token(bytes: &[u8]) -> bool {
+    const DELIMITERS: &[u8] = b"\"(),/:;<=>?@[\\]{}";
+
+    let mut at = 0;
+    while at < bytes.len() {
+        let mut delimiter = 0;
+        while delimiter < DELIMITERS.len() && DELIMITERS[delimiter] != bytes[at] {
+            delimiter += 1;
+        }
+        if !bytes[at].is_ascii_graphic() || delimiter < DELIMITERS.len() {
+            return false;
+        }
+        at += 1;
+    }
+    !bytes.is_empty()
 }
 
 /// `text`'s pieces between `delimiter`s outside any `quoted-string`, left to
