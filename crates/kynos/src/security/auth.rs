@@ -23,6 +23,58 @@ use crate::{
     },
 };
 
+/// Implements `Clone`, `Copy`, `Debug`, `PartialEq` and `Eq` for a guard, and
+/// its `into_inner`.
+///
+/// Hand-written so the bounds fall on the credential, not the marker scheme.
+/// No `Default` (an unverified credential) and no `Ord`. `$new` rebuilds the
+/// guard from a cloned credential.
+macro_rules! credential_traits {
+    (
+        $guard:ident[$($generics:tt)*][$($args:tt)*], $new:expr;
+        $(#[$meta:meta])*
+        fn into_inner -> $inner:ty;
+    ) => {
+        impl<$($generics)*> Clone for $guard<$($args)*>
+        where
+            S::Credential: Clone,
+        {
+            fn clone(&self) -> Self {
+                $new(self.0.clone())
+            }
+        }
+
+        impl<$($generics)*> Copy for $guard<$($args)*> where S::Credential: Copy {}
+
+        impl<$($generics)*> std::fmt::Debug for $guard<$($args)*>
+        where
+            S::Credential: std::fmt::Debug,
+        {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.debug_tuple(stringify!($guard)).field(&self.0).finish()
+            }
+        }
+
+        impl<$($generics)*> PartialEq for $guard<$($args)*>
+        where
+            S::Credential: PartialEq,
+        {
+            fn eq(&self, other: &Self) -> bool {
+                self.0 == other.0
+            }
+        }
+
+        impl<$($generics)*> Eq for $guard<$($args)*> where S::Credential: Eq {}
+
+        impl<$($generics)*> $guard<$($args)*> {
+            $(#[$meta])*
+            pub fn into_inner(self) -> $inner {
+                self.0
+            }
+        }
+    };
+}
+
 /// A credential proving the request satisfies requirement `S`.
 ///
 /// Taking this as a handler's guard — its first argument — does three things at
@@ -53,44 +105,10 @@ use crate::{
 /// ```
 pub struct Auth<S: Requirement>(pub S::Credential);
 
-// Hand-written so the bounds fall on the credential, not the marker scheme. No
-// `Default` (an unverified credential) and no `Ord`.
-impl<S: Requirement> Clone for Auth<S>
-where
-    S::Credential: Clone,
-{
-    fn clone(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
-
-impl<S: Requirement> Copy for Auth<S> where S::Credential: Copy {}
-
-impl<S: Requirement> std::fmt::Debug for Auth<S>
-where
-    S::Credential: std::fmt::Debug,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("Auth").field(&self.0).finish()
-    }
-}
-
-impl<S: Requirement> PartialEq for Auth<S>
-where
-    S::Credential: PartialEq,
-{
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
-
-impl<S: Requirement> Eq for Auth<S> where S::Credential: Eq {}
-
-impl<S: Requirement> Auth<S> {
+credential_traits! {
+    Auth[S: Requirement][S], Self;
     /// Unwraps the verified credential.
-    pub fn into_inner(self) -> S::Credential {
-        self.0
-    }
+    fn into_inner -> S::Credential;
 }
 
 impl<S: Requirement> Describe for Auth<S> {
@@ -102,16 +120,7 @@ impl<S: Requirement> Describe for Auth<S> {
     /// argument names no scope set; [`Scoped`] is the guard that does.
     fn describe(operation: &mut OperationCx<'_>) {
         let security = S::declare(operation);
-        let challenges = Challenges {
-            unauthenticated: S::challenge(),
-            insufficient_scope: S::insufficient_scope_challenge(),
-        };
-        let refusals = Refusals {
-            forbidden_type: None,
-            forbids: S::FORBIDS,
-            unavailable: S::MAY_BE_UNAVAILABLE,
-        };
-        declare(operation, challenges, security, refusals);
+        declare_unscoped::<S>(operation, security);
     }
 }
 
@@ -167,43 +176,10 @@ where
 /// ```
 pub struct MaybeAuth<S: Requirement>(pub Option<S::Credential>);
 
-// As on `Auth`: bounded on the credential, without `Default` or `Ord`.
-impl<S: Requirement> Clone for MaybeAuth<S>
-where
-    S::Credential: Clone,
-{
-    fn clone(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
-
-impl<S: Requirement> Copy for MaybeAuth<S> where S::Credential: Copy {}
-
-impl<S: Requirement> std::fmt::Debug for MaybeAuth<S>
-where
-    S::Credential: std::fmt::Debug,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("MaybeAuth").field(&self.0).finish()
-    }
-}
-
-impl<S: Requirement> PartialEq for MaybeAuth<S>
-where
-    S::Credential: PartialEq,
-{
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
-
-impl<S: Requirement> Eq for MaybeAuth<S> where S::Credential: Eq {}
-
-impl<S: Requirement> MaybeAuth<S> {
+credential_traits! {
+    MaybeAuth[S: Requirement][S], Self;
     /// Unwraps the verified credential, if the request carried one.
-    pub fn into_inner(self) -> Option<S::Credential> {
-        self.0
-    }
+    fn into_inner -> Option<S::Credential>;
 }
 
 impl<S: Requirement> Describe for MaybeAuth<S> {
@@ -213,16 +189,7 @@ impl<S: Requirement> Describe for MaybeAuth<S> {
     fn describe(operation: &mut OperationCx<'_>) {
         let mut security = vec![SecurityRequirement::anonymous()];
         security.extend(S::declare(operation));
-        let challenges = Challenges {
-            unauthenticated: S::challenge(),
-            insufficient_scope: S::insufficient_scope_challenge(),
-        };
-        let refusals = Refusals {
-            forbidden_type: None,
-            forbids: S::FORBIDS,
-            unavailable: S::MAY_BE_UNAVAILABLE,
-        };
-        declare(operation, challenges, security, refusals);
+        declare_unscoped::<S>(operation, security);
     }
 }
 
@@ -427,37 +394,12 @@ pub struct Scoped<S: Scopable, R: Scopes<Scope = S::Scope>>(
     std::marker::PhantomData<R>,
 );
 
-// As on `Auth`: bounded on the credential, without `Default`.
-impl<S: Scopable, R: Scopes<Scope = S::Scope>> Clone for Scoped<S, R>
-where
-    S::Credential: Clone,
-{
-    fn clone(&self) -> Self {
-        Self(self.0.clone(), std::marker::PhantomData)
-    }
+credential_traits! {
+    Scoped[S: Scopable, R: Scopes<Scope = S::Scope>][S, R], Self::new;
+    /// Unwraps the verified and authorized credential.
+    #[must_use]
+    fn into_inner -> S::Credential;
 }
-
-impl<S: Scopable, R: Scopes<Scope = S::Scope>> Copy for Scoped<S, R> where S::Credential: Copy {}
-
-impl<S: Scopable, R: Scopes<Scope = S::Scope>> std::fmt::Debug for Scoped<S, R>
-where
-    S::Credential: std::fmt::Debug,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("Scoped").field(&self.0).finish()
-    }
-}
-
-impl<S: Scopable, R: Scopes<Scope = S::Scope>> PartialEq for Scoped<S, R>
-where
-    S::Credential: PartialEq,
-{
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
-
-impl<S: Scopable, R: Scopes<Scope = S::Scope>> Eq for Scoped<S, R> where S::Credential: Eq {}
 
 impl<S: Scopable, R: Scopes<Scope = S::Scope>> Scoped<S, R> {
     /// Wraps a credential that has been verified and authorized.
@@ -466,12 +408,6 @@ impl<S: Scopable, R: Scopes<Scope = S::Scope>> Scoped<S, R> {
     /// the crate.
     pub fn new(credential: S::Credential) -> Self {
         Self(credential, std::marker::PhantomData)
-    }
-
-    /// Unwraps the verified and authorized credential.
-    #[must_use]
-    pub fn into_inner(self) -> S::Credential {
-        self.0
     }
 }
 
@@ -563,6 +499,24 @@ fn declare(
     }
 
     operation.set_security(security);
+}
+
+/// [`declare`] for a guard naming no scope set: `S`'s challenges and
+/// refusals, with the 403 un-narrowed.
+fn declare_unscoped<S: Requirement>(
+    operation: &mut OperationCx<'_>,
+    security: Vec<SecurityRequirement>,
+) {
+    let challenges = Challenges {
+        unauthenticated: S::challenge(),
+        insufficient_scope: S::insufficient_scope_challenge(),
+    };
+    let refusals = Refusals {
+        forbidden_type: None,
+        forbids: S::FORBIDS,
+        unavailable: S::MAY_BE_UNAVAILABLE,
+    };
+    declare(operation, challenges, security, refusals);
 }
 
 /// Which refusals beside the 401 a guard declares, as [`declare`] declares

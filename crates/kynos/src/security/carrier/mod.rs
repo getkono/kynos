@@ -15,7 +15,7 @@
 //! *head*, and the URI query parameter (section 2.3) is `SHOULD NOT` in the RFC
 //! itself.
 
-pub(super) mod base64;
+mod base64;
 mod parse;
 mod query;
 mod redact;
