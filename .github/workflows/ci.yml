@@ -16,8 +16,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # What every pull request waits on, kept narrow. `full.yml` runs the rest of
-# `mise run check` and the slower checks; between the two, each task runs in
-# exactly one job.
+# `mise run check` and the slower checks; between the two, every task of
+# `check` runs, and only `test` runs in both, again on the other platforms.
 jobs:
   lint:
     name: Lint

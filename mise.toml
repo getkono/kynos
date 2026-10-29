@@ -59,7 +59,8 @@ description = "Lint every kynos target at each codec's own feature set"
 # `openapi31 + macros (+ codec)`: the only builds that compile one codec's test
 # and example gates alone (docs/testing.md#cross-cutting). Clippy, since what
 # they catch is a dead or mis-gated item. Incremental stays on: the same six
-# sets recur on every push. Written out, not looped, so each can be rerun alone.
+# sets recur on every push. The sets are spelled out rather than derived, so
+# each one's command can be copied and rerun alone.
 run = '''
 set -eu
 
@@ -657,7 +658,9 @@ run = "python3 scripts/commits_test.py"
 
 [tasks."hooks:pre-push"]
 description = "Run all pre-push checks"
-# The cheap gates; each `*:test` follows the gate whose instrument it tests.
+# Formatting, the lints, the suite under coverage, the docs build and the
+# repository's own gates; each `*:test` follows the gate whose instrument it
+# tests.
 run = [
   { task = "format:check" },
   { task = "lint" },
