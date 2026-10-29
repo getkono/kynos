@@ -62,7 +62,13 @@ import sys
 from collections import namedtuple
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+# Before the import below, which is a sibling script's: a run writes no `.pyc`
+# into the tree it reads.
+sys.dont_write_bytecode = True
+
+from cost_features import AMBIENT_FLAGS  # noqa: E402
+
+ROOT =Path(__file__).resolve().parent.parent
 BASELINE = ROOT / "crates/kynos-profile/requests.tsv"
 ALLOC = ROOT / "crates/kynos/tests/alloc.rs"
 REPORT = ROOT / "profile-report.md"
@@ -97,10 +103,6 @@ CALIBRATION = {
     "alloc_counter_agreement.stacked_4": ("stack", "4"),
     "alloc_counter_agreement.stacked_8": ("stack", "8"),
 }
-
-# An ambient flag builds something else; `-C target-cpu=native` with AVX-512
-# builds a binary Valgrind cannot decode.
-RUSTFLAGS = ("RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "CARGO_BUILD_RUSTFLAGS")
 
 #: `scenario` is the catalog name the benchmark was set up with, read off its
 #: summary; `None` where the summary names none.
@@ -191,17 +193,24 @@ def dhat(summary):
     )
 
 
-def measure(directory):
-    """Every benchmark under `directory`, as rows sorted by benchmark name.
+def summaries(directory):
+    """Every gungraun `summary.json` under `directory`, in path order.
 
-    Paths in a summary are relative to the `project_root` it names, which is
-    where gungraun ran rather than where this script lives.
+    Each as `(summary, root, output)`: the parsed summary, the `project_root`
+    it names and its output directory under that root. Paths in a summary are
+    relative to that root, which is where gungraun ran rather than where this
+    script lives.
     """
-    rows = []
     for path in sorted(directory.rglob("summary.json")):
         summary = json.loads(path.read_text())
         root = Path(summary["project_root"])
-        output = root / summary["output_dir"]
+        yield summary, root, root / summary["output_dir"]
+
+
+def measure(directory):
+    """Every benchmark under `directory`, as rows sorted by benchmark name."""
+    rows = []
+    for summary, root, output in summaries(directory):
         callgrind = output / f"callgrind.{summary['function_name']}.{summary['id']}.out"
         program = str(root / summary["benchmark_exe"])
         instructions, other = split_by_object(callgrind.read_text(), program)
@@ -560,10 +569,7 @@ def attribute(directory, annotate):
     `annotate` turns a Callgrind output path into `callgrind_annotate`'s text.
     """
     entries = []
-    for path in sorted(directory.rglob("summary.json")):
-        summary = json.loads(path.read_text())
-        root = Path(summary["project_root"])
-        output_dir = root / summary["output_dir"]
+    for summary, root, output_dir in summaries(directory):
         function, bench = summary["function_name"], summary["id"]
         frames = inclusive_frames(
             annotate(output_dir / f"callgrind.{function}.{bench}.out"),
@@ -618,9 +624,11 @@ def run_benchmarks(target):
     """Runs the benchmark from a clean output directory, under the pinned Valgrind.
 
     The previous run's output is removed first: a renamed or deleted benchmark
-    leaves its summary behind, and `measure` would read it.
+    leaves its summary behind, and `measure` would read it. An ambient flag
+    builds something else -- `-C target-cpu=native` with AVX-512 builds a
+    binary Valgrind cannot decode -- so each of `AMBIENT_FLAGS` is refused.
     """
-    ambient = [name for name in RUSTFLAGS if os.environ.get(name)]
+    ambient = [name for name in AMBIENT_FLAGS if os.environ.get(name)]
     if ambient:
         raise Unreadable(
             f"{', '.join(ambient)} is set; unset it -- the profile describes "

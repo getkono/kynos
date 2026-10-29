@@ -54,6 +54,18 @@ TOP = 5
 FIXTURE = "cost_fixture"
 CODEC_FIXTURE = "cost_codec"
 
+# The environment that builds something other than what a measurement
+# describes, refused by this sweep and by `profile_report.py` alike. Four names,
+# not the two that are obviously flags: cargo reads a profile's flags from
+# `CARGO_BUILD_RUSTFLAGS` when neither `RUSTFLAGS` nor its encoded form is set,
+# and `CARGO_BUILD_TARGET` moves the build off the host a measurement records.
+AMBIENT_FLAGS = (
+    "RUSTFLAGS",
+    "CARGO_ENCODED_RUSTFLAGS",
+    "CARGO_BUILD_RUSTFLAGS",
+    "CARGO_BUILD_TARGET",
+)
+
 # The opt-in payload codecs. Stated, since no `[features]` entry marks a codec;
 # `mise.toml`'s `lint:codecs` and `tests/alloc_codecs.rs` list the same five,
 # and `cost_features_test.py` holds this set against that task's.
@@ -290,21 +302,12 @@ def sweep_env():
     """The environment every build in the sweep runs under.
 
     An ambient flag silently changes every number recorded here, and a trend
-    built on that is noise rather than a trend, so each is refused rather than
-    overridden -- overriding one would discard a flag the caller meant.
-
-    Four names, not the two that are obviously flags. Cargo reads a profile's
-    flags from `CARGO_BUILD_RUSTFLAGS` when neither `RUSTFLAGS` nor its encoded
-    form is set, and `CARGO_BUILD_TARGET` moves the build off the host the
-    provenance header records -- so a sweep under either is measuring a program
-    the header does not describe.
+    built on that is noise rather than a trend, so each of `AMBIENT_FLAGS` is
+    refused rather than overridden -- overriding one would discard a flag the
+    caller meant. A sweep under one is measuring a program the provenance
+    header does not describe.
     """
-    for name in (
-        "RUSTFLAGS",
-        "CARGO_ENCODED_RUSTFLAGS",
-        "CARGO_BUILD_RUSTFLAGS",
-        "CARGO_BUILD_TARGET",
-    ):
+    for name in AMBIENT_FLAGS:
         if os.environ.get(name):
             fail(
                 f"{name} is set. It changes every number this sweep records "

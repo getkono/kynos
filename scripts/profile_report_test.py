@@ -15,7 +15,7 @@ different Callgrind configuration would add, a `positions:` column and a
 `jump=` line, are spliced in by the tests that need them.
 
 What runs around Valgrind without needing it is tested with `cargo bench`
-replaced: the ambient `RUSTFLAGS` refusal, the stale-output removal, the
+replaced: the ambient-flag refusal, the stale-output removal, the
 host key a report compares across hosts, and `cli`'s `--repeat`, which runs
 the benchmark N times and hands `main` every run but the last.
 
@@ -469,14 +469,21 @@ class RunBenchmarks(unittest.TestCase):
         self.environ = mock.patch.dict(report.os.environ, clear=False)
         self.environ.start()
         self.addCleanup(self.environ.stop)
-        for name in report.RUSTFLAGS:
+        for name in report.AMBIENT_FLAGS:
             report.os.environ.pop(name, None)
         self.cargo = mock.patch.object(report.subprocess, "run")
         self.run_cargo = self.cargo.start()
         self.addCleanup(self.cargo.stop)
 
-    def test_an_ambient_rustflags_variable_is_refused_before_anything_runs(self):
-        for name in report.RUSTFLAGS:
+    def test_an_ambient_flag_variable_is_refused_before_anything_runs(self):
+        # Named rather than read off `AMBIENT_FLAGS`, so a name dropped from
+        # that list fails here instead of leaving the loop shorter.
+        for name in (
+            "RUSTFLAGS",
+            "CARGO_ENCODED_RUSTFLAGS",
+            "CARGO_BUILD_RUSTFLAGS",
+            "CARGO_BUILD_TARGET",
+        ):
             with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
                 stale = Path(directory) / "gungraun/kynos-profile/stale"
                 stale.mkdir(parents=True)
