@@ -794,10 +794,10 @@ fn a_reusable_parameters_extensions_are_checked_at_its_escaped_pointer() {
     );
 }
 
-/// Every object the extension-name rule is called on reports a reserved
-/// prefix at its own pointer, as a warning: the document root, an operation,
-/// an inline parameter (at the operation whose list holds it) and a response
-/// header.
+/// A reserved prefix is reported as a warning at the pointer of the object
+/// whose `extensions` hold it, in document order: the document root, an
+/// operation, an inline parameter (at its own index, not the operation's) and
+/// a response header.
 /// `x-oas-` is reserved alongside `x-oai-`, and `x-oaith` is not.
 #[test]
 fn a_reserved_extension_name_is_a_warning_wherever_it_is_written() {
@@ -830,15 +830,136 @@ fn a_reserved_extension_name_is_a_warning_wherever_it_is_written() {
     assert_eq!(
         violations(&document),
         vec![
-            warning("#/paths/~1users/get", "x-oas-parameter"),
+            warning("#", "x-oas-root"),
+            warning("#/paths/~1users/get", "x-oai-operation"),
+            warning("#/paths/~1users/get/parameters/0", "x-oas-parameter"),
             warning(
                 "#/paths/~1users/get/responses/200/headers/X-Rate~1Limit",
                 "x-oai-header"
             ),
-            warning("#/paths/~1users/get", "x-oai-operation"),
-            warning("#", "x-oas-root"),
         ]
     );
+}
+
+/// A description with a reserved name planted in each object beyond the root,
+/// parameters, headers and operations that holds `extensions`.
+fn reserved_names_everywhere() -> Document {
+    serde_json::from_value(serde_json::json!({
+        "openapi": "3.1.2",
+        "info": {
+            "title": "Orders", "version": "1.0.0", "x-oai-info": 1,
+            "contact": {"x-oai-contact": 1},
+            "license": {"name": "MIT", "x-oai-license": 1}
+        },
+        "servers": [{
+            "url": "https://{region}.example.com", "x-oai-server": 1,
+            "variables": {"region": {"default": "eu", "x-oai-variable": 1}}
+        }],
+        "tags": [{"name": "orders", "x-oai-tag": 1}],
+        "externalDocs": {"url": "https://example.com", "x-oai-docs": 1},
+        "paths": {
+            "x-oai-paths": 1,
+            "/orders": {
+                "x-oai-path-item": 1,
+                "get": {
+                    "operationId": "listOrders",
+                    "requestBody": {
+                        "x-oai-body": 1,
+                        "content": {"multipart/form-data": {
+                            "x-oai-media-type": 1,
+                            "encoding": {"file": {"x-oai-encoding": 1}},
+                            "examples": {"one": {"value": {}, "x-oai-example": 1}}
+                        }}
+                    },
+                    "responses": {
+                        "x-oai-responses": 1,
+                        "200": {
+                            "description": "ok", "x-oai-response": 1,
+                            "links": {"next": {"operationId": "listOrders", "x-oai-link": 1}}
+                        }
+                    }
+                }
+            }
+        },
+        "components": {
+            "x-oai-components": 1,
+            "schemas": {"Order": {
+                "discriminator": {"propertyName": "kind", "x-oai-discriminator": 1},
+                "properties": {"lines": {"xml": {"x-oai-xml": 1}}}
+            }},
+            "securitySchemes": {"oauth": {
+                "type": "oauth2", "x-oai-scheme": 1,
+                "flows": {
+                    "x-oai-flows": 1,
+                    "implicit": {
+                        "authorizationUrl": "https://example.com/authorize",
+                        "scopes": {},
+                        "x-oai-flow": 1
+                    }
+                }
+            }}
+        }
+    }))
+    .expect("the description parses in every build")
+}
+
+/// The reservation holds wherever extensions are allowed
+/// (`references/3.1.2.md:4206`, `references/3.2.0.md:4747`), so each planted
+/// name warns once, at the pointer of the object holding it.
+#[test]
+fn a_reserved_extension_name_is_a_warning_on_every_object_that_holds_extensions() {
+    let operation = "#/paths/~1orders/get";
+    let body = format!("{operation}/requestBody/content/multipart~1form-data");
+    let response = format!("{operation}/responses/200");
+    let oauth = "#/components/securitySchemes/oauth";
+    let mut expected = [
+        ("#/info", "x-oai-info"),
+        ("#/info/contact", "x-oai-contact"),
+        ("#/info/license", "x-oai-license"),
+        ("#/servers/0", "x-oai-server"),
+        ("#/servers/0/variables/region", "x-oai-variable"),
+        ("#/tags/0", "x-oai-tag"),
+        ("#/externalDocs", "x-oai-docs"),
+        ("#/paths", "x-oai-paths"),
+        ("#/paths/~1orders", "x-oai-path-item"),
+        (&format!("{operation}/requestBody"), "x-oai-body"),
+        (&body, "x-oai-media-type"),
+        (&format!("{body}/encoding/file"), "x-oai-encoding"),
+        (&format!("{body}/examples/one"), "x-oai-example"),
+        (&format!("{operation}/responses"), "x-oai-responses"),
+        (&response, "x-oai-response"),
+        (&format!("{response}/links/next"), "x-oai-link"),
+        ("#/components", "x-oai-components"),
+        (
+            "#/components/schemas/Order/discriminator",
+            "x-oai-discriminator",
+        ),
+        (
+            "#/components/schemas/Order/properties/lines/xml",
+            "x-oai-xml",
+        ),
+        (oauth, "x-oai-scheme"),
+        (&format!("{oauth}/flows"), "x-oai-flows"),
+        (&format!("{oauth}/flows/implicit"), "x-oai-flow"),
+    ]
+    .map(|(location, name)| (location.to_owned(), name.to_owned()))
+    .to_vec();
+    expected.sort();
+
+    let mut warned: Vec<(String, String)> = Validator::new(SpecVersion::V3_1)
+        .validate(&reserved_names_everywhere())
+        .into_iter()
+        .filter_map(|violation| match violation {
+            Violation {
+                location,
+                severity: super::Severity::Warning,
+                error: SpecError::InvalidExtensionName { name },
+            } => Some((location, name)),
+            _ => None,
+        })
+        .collect();
+    warned.sort();
+    assert_eq!(warned, expected);
 }
 
 #[test]
