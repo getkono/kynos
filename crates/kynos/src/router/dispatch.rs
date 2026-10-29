@@ -391,8 +391,11 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
             return Err(self.unrouted(Unanswered::Method { path }, request));
         };
 
-        let operation = &entry.operations[position];
-        let route = Route::new(&entry.template, &operation.operation_id, operation.method);
+        let at = Location {
+            path: index,
+            position,
+        };
+        let route = self.route_at(at);
 
         let forwarded = self.forwarded(request);
         request.extensions_mut().insert(Routed {
@@ -400,7 +403,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
             matched: Some(entry.matched.clone()),
             captures,
             forwarded,
-            secured: operation.secured,
+            secured: entry.operations[position].secured,
             links: self.links.clone(),
         });
 
@@ -408,10 +411,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
             observer.on_request(request, Some(route), &self.context);
         }
 
-        Ok(Location {
-            path: index,
-            position,
-        })
+        Ok(at)
     }
 
     /// Whether some operation in the service answers `method`.
@@ -636,9 +636,8 @@ impl<C: Send + Sync + 'static> crate::unchecked::Resume for Dispatch<C> {
         request: Request,
     ) -> crate::unchecked::BoxResponse {
         Box::pin(async move {
-            let entry = &self.paths[path];
-            let operation = &entry.operations[position];
-            let route = Route::new(&entry.template, &operation.operation_id, operation.method);
+            let operation = &self.paths[path].operations[position];
+            let route = self.route_at(Location { path, position });
             Ok(self.run(operation, route, request).await)
         })
     }
