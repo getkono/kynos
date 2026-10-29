@@ -39,6 +39,118 @@
 //! matters, such as `Conditional` outside `Cache` and `Cache` outside `Cors`
 //! and `Compression`.
 
+/// Implements, for a type carrying phantom markers, the traits `#[derive]`
+/// would only implement with every marker bounded too.
+///
+/// `Name<P, ..> where Q, .. { marker: _, field, .. }: Traits` names the marker
+/// and every other field; each impl destructures `self` by them, so a new field
+/// is a compile error at the invocation. A parameter after `where` is held by a
+/// field, and is bounded on each trait. `Traits` takes:
+///
+/// - `Copy`, with a `Clone` that copies; `Clone` alone clones field by field.
+/// - `Debug`, printing every field but the marker; `Debug(..)` prints `..` for
+///   it.
+/// - `PartialEq`, comparing every field but the marker, with `Eq`.
+/// - `new`, a constructor and `Default` for a refusal with no other field.
+macro_rules! marker_traits {
+    (
+        $name:ident<$($param:ident),+> $(where $($held:ident),+)?
+        { $marker:ident: _ $(, $field:ident)* $(,)? }: $($traits:tt)+
+    ) => {
+        marker_traits!(
+            @each [$name [$($param),+] [$($($held),+)?] $marker [$($field),*]] $($traits)+
+        );
+    };
+
+    (@each $type:tt) => {};
+    (@each $type:tt Debug(..) $(, $($rest:tt)*)?) => {
+        marker_traits!(@Debug finish_non_exhaustive $type);
+        marker_traits!(@each $type $($($rest)*)?);
+    };
+    (@each $type:tt $trait:ident $(, $($rest:tt)*)?) => {
+        marker_traits!(@$trait $type);
+        marker_traits!(@each $type $($($rest)*)?);
+    };
+    (@Debug $type:tt) => {
+        marker_traits!(@Debug finish $type);
+    };
+
+    (@Copy [$name:ident [$($param:ident),+] [$($held:ident),*] $marker:ident [$($field:ident),*]]) => {
+        impl<$($param),+> Clone for $name<$($param),+>
+        where
+            $($held: Copy,)*
+        {
+            fn clone(&self) -> Self {
+                *self
+            }
+        }
+
+        impl<$($param),+> Copy for $name<$($param),+> where $($held: Copy,)* {}
+    };
+    (@Clone [$name:ident [$($param:ident),+] [$($held:ident),*] $marker:ident [$($field:ident),*]]) => {
+        impl<$($param),+> Clone for $name<$($param),+>
+        where
+            $($held: Clone,)*
+        {
+            fn clone(&self) -> Self {
+                let Self { $($field,)* $marker: _ } = self;
+
+                Self {
+                    $($field: Clone::clone($field),)*
+                    $marker: ::std::marker::PhantomData,
+                }
+            }
+        }
+    };
+    (@Debug $finish:ident [$name:ident [$($param:ident),+] [$($held:ident),*] $marker:ident [$($field:ident),*]]) => {
+        impl<$($param),+> ::std::fmt::Debug for $name<$($param),+>
+        where
+            $($held: ::std::fmt::Debug,)*
+        {
+            fn fmt(&self, formatter: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                let Self { $($field,)* $marker: _ } = self;
+
+                formatter
+                    .debug_struct(stringify!($name))
+                    $(.field(stringify!($field), $field))*
+                    .$finish()
+            }
+        }
+    };
+    (@PartialEq [$name:ident [$($param:ident),+] [$($held:ident),*] $marker:ident [$($field:ident),*]]) => {
+        impl<$($param),+> PartialEq for $name<$($param),+>
+        where
+            $($held: PartialEq,)*
+        {
+            fn eq(&self, other: &Self) -> bool {
+                let Self { $($field,)* $marker: _ } = self;
+                let _ = other;
+
+                true $(&& *$field == other.$field)*
+            }
+        }
+
+        impl<$($param),+> Eq for $name<$($param),+> where $($held: Eq,)* {}
+    };
+    (@new [$name:ident [$($param:ident),+] [$($held:ident),*] $marker:ident []]) => {
+        impl<$($param),+> $name<$($param),+> {
+            /// The refusal itself, which carries nothing but its type.
+            #[must_use]
+            pub fn new() -> Self {
+                Self {
+                    $marker: ::std::marker::PhantomData,
+                }
+            }
+        }
+
+        impl<$($param),+> Default for $name<$($param),+> {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+    };
+}
+
 pub mod catch_panic;
 pub mod contribution;
 pub mod cors;

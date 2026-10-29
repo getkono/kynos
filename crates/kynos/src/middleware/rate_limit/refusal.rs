@@ -4,7 +4,7 @@
 //! `Retry-After` beside it, and the description of both. Separate from
 //! [`headers`](super::headers), which is what an *allowed* exchange says.
 
-use std::{fmt, marker::PhantomData, time::Duration};
+use std::{marker::PhantomData, time::Duration};
 
 use crate::{
     error::problem::{ProblemType, refusal_problem, refusal_response},
@@ -159,79 +159,7 @@ fn write_group<G: EncodeHeaders>(response: &mut http::Response, group: &G) {
 }
 
 // Written out because `#[derive]` would bound the phantom marker `T`.
-
-impl<T> Clone for RateLimited<T> {
-    fn clone(&self) -> Self {
-        Self::new(self.retry_after, self.limit)
-    }
-}
-
-impl<T> fmt::Debug for RateLimited<T> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Destructured here and in `eq`, so a new field is a compile error.
-        let Self {
-            retry_after,
-            limit,
-            problem_type: _,
-        } = self;
-
-        formatter
-            .debug_struct("RateLimited")
-            .field("retry_after", retry_after)
-            .field("limit", limit)
-            .finish()
-    }
-}
-
-impl<T> PartialEq for RateLimited<T> {
-    fn eq(&self, other: &Self) -> bool {
-        let Self {
-            retry_after,
-            limit,
-            problem_type: _,
-        } = self;
-
-        *retry_after == other.retry_after && *limit == other.limit
-    }
-}
-
-impl<T> Eq for RateLimited<T> {}
-
-impl<T> Clone for RateLimitedFields<T> {
-    fn clone(&self) -> Self {
-        Self::new(self.retry_after, self.limits.clone(), self.policies.clone())
-    }
-}
-
-impl<T> fmt::Debug for RateLimitedFields<T> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self {
-            retry_after,
-            limits,
-            policies,
-            problem_type: _,
-        } = self;
-
-        formatter
-            .debug_struct("RateLimitedFields")
-            .field("retry_after", retry_after)
-            .field("limits", limits)
-            .field("policies", policies)
-            .finish()
-    }
-}
-
-impl<T> PartialEq for RateLimitedFields<T> {
-    fn eq(&self, other: &Self) -> bool {
-        let Self {
-            retry_after,
-            limits,
-            policies,
-            problem_type: _,
-        } = self;
-
-        *retry_after == other.retry_after && *limits == other.limits && *policies == other.policies
-    }
-}
-
-impl<T> Eq for RateLimitedFields<T> {}
+marker_traits!(RateLimited<T> { problem_type: _, retry_after, limit }: Clone, Debug, PartialEq);
+marker_traits!(
+    RateLimitedFields<T> { problem_type: _, retry_after, limits, policies }: Clone, Debug, PartialEq
+);

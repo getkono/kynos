@@ -6,7 +6,7 @@
 //!
 //! Content coding is out-of-document, but the refusals are declared.
 
-use std::{fmt, io, marker::PhantomData};
+use std::{io, marker::PhantomData};
 
 use async_compression::tokio::bufread::{BrotliDecoder, GzipDecoder, ZstdDecoder};
 use bytes::Bytes;
@@ -176,41 +176,7 @@ where
 }
 
 // Written out: `#[derive]` would bound each on all three markers.
-
-impl<U, M, L> Clone for Undecodable<U, M, L> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<U, M, L> Copy for Undecodable<U, M, L> {}
-
-impl<U, M, L> fmt::Debug for Undecodable<U, M, L> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self {
-            reason,
-            problem_type: _,
-        } = self;
-
-        formatter
-            .debug_struct("Undecodable")
-            .field("reason", reason)
-            .finish()
-    }
-}
-
-impl<U, M, L> PartialEq for Undecodable<U, M, L> {
-    fn eq(&self, other: &Self) -> bool {
-        let Self {
-            reason,
-            problem_type: _,
-        } = self;
-
-        *reason == other.reason
-    }
-}
-
-impl<U, M, L> Eq for Undecodable<U, M, L> {}
+marker_traits!(Undecodable<U, M, L> { problem_type: _, reason }: Copy, Debug, PartialEq);
 
 /// Describes the `Accept-Encoding` that rides on the 415.
 fn accepted_encoding_header() -> kynos_openapi::Header {
@@ -498,30 +464,7 @@ impl<U, M, L> Decompression<U, M, L> {
 }
 
 // Written out: `#[derive]` would bound each on all three markers.
-
-impl<U, M, L> Clone for Decompression<U, M, L> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<U, M, L> Copy for Decompression<U, M, L> {}
-
-impl<U, M, L> fmt::Debug for Decompression<U, M, L> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self {
-            limit,
-            max_ratio,
-            problem_type: _,
-        } = self;
-
-        formatter
-            .debug_struct("Decompression")
-            .field("limit", limit)
-            .field("max_ratio", max_ratio)
-            .finish()
-    }
-}
+marker_traits!(Decompression<U, M, L> { problem_type: _, limit, max_ratio }: Copy, Debug);
 
 impl<C, U, M, L> Interceptor<C> for Decompression<U, M, L>
 where

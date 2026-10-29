@@ -137,22 +137,6 @@ pub struct NotAcceptable<T = ()> {
     problem_type: PhantomData<fn() -> T>,
 }
 
-impl<T> NotAcceptable<T> {
-    /// The refusal itself, which carries nothing but its type.
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            problem_type: PhantomData,
-        }
-    }
-}
-
-impl<T> Default for NotAcceptable<T> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl<T: ProblemType> crate::response::IntoResponse for NotAcceptable<T> {
     fn into_response(self) -> http::Response {
         crate::error::problem::refusal_problem::<T>(http::StatusCode::NOT_ACCEPTABLE)
@@ -179,33 +163,7 @@ impl<T: ProblemType> crate::response::Responses for NotAcceptable<T> {
 }
 
 // Written out because `#[derive]` would bound each on the marker type.
-
-impl<T> Clone for NotAcceptable<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> Copy for NotAcceptable<T> {}
-
-impl<T> std::fmt::Debug for NotAcceptable<T> {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Self { problem_type: _ } = self;
-
-        formatter.debug_struct("NotAcceptable").finish()
-    }
-}
-
-impl<T> PartialEq for NotAcceptable<T> {
-    fn eq(&self, other: &Self) -> bool {
-        let Self { problem_type: _ } = self;
-        let Self { problem_type: _ } = other;
-
-        true
-    }
-}
-
-impl<T> Eq for NotAcceptable<T> {}
+marker_traits!(NotAcceptable<T> { problem_type: _ }: new, Copy, Debug, PartialEq);
 
 /// What negotiation decided, per RFC 9110 section 12.5.3.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -590,32 +548,7 @@ impl<T> Compression<T> {
 }
 
 // Written out because `#[derive]` would bound each on the marker type.
-
-impl<T> Clone for Compression<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> Copy for Compression<T> {}
-
-impl<T> std::fmt::Debug for Compression<T> {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Self {
-            min_size,
-            levels,
-            latency,
-            problem_type: _,
-        } = self;
-
-        formatter
-            .debug_struct("Compression")
-            .field("min_size", min_size)
-            .field("levels", levels)
-            .field("latency", latency)
-            .finish()
-    }
-}
+marker_traits!(Compression<T> { problem_type: _, min_size, levels, latency }: Copy, Debug);
 
 impl<T> Default for Compression<T> {
     fn default() -> Self {
