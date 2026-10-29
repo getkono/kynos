@@ -90,9 +90,14 @@ pub(super) fn property(field: &Field, container: &Container) -> TokenStream2 {
     let required = is_required(field, container);
 
     if let [wire] = names.as_slice() {
-        let require = required.then(|| quote!(required.push(::std::string::String::from(#wire));));
+        let require = required.then(|| {
+            quote!(required.push(<::std::string::String as ::core::convert::From<_>>::from(#wire));)
+        });
         return quote! {
-            keywords.properties.insert(::std::string::String::from(#wire), #schema);
+            keywords.properties.insert(
+                <::std::string::String as ::core::convert::From<_>>::from(#wire),
+                #schema,
+            );
             #require
         };
     }
@@ -106,9 +111,10 @@ pub(super) fn property(field: &Field, container: &Container) -> TokenStream2 {
         {
             let schema = #schema;
             #(
-                keywords
-                    .properties
-                    .insert(::std::string::String::from(#names), ::core::clone::Clone::clone(&schema));
+                keywords.properties.insert(
+                    <::std::string::String as ::core::convert::From<_>>::from(#names),
+                    ::core::clone::Clone::clone(&schema),
+                );
             )*
             let bound = #bound;
             keywords
@@ -133,7 +139,8 @@ pub(crate) fn named_string(names: &[String]) -> TokenStream2 {
     };
     quote! {
         {
-            let mut constant = ::kynos::openapi::SchemaObject::default();
+            let mut constant =
+                <::kynos::openapi::SchemaObject as ::core::default::Default>::default();
             constant.ty = ::core::option::Option::Some(
                 ::kynos::openapi::model::schema::types::TypeSet::One(
                     ::kynos::openapi::model::schema::types::SchemaType::String,
@@ -151,8 +158,9 @@ pub(crate) fn named_string(names: &[String]) -> TokenStream2 {
 pub(super) fn keyed(names: &[String], payload: &TokenStream2) -> TokenStream2 {
     let bound = if let [name] = names {
         quote! {
-            keywords.required =
-                ::core::option::Option::Some(::std::vec![::std::string::String::from(#name)]);
+            keywords.required = ::core::option::Option::Some(::std::vec![
+                <::std::string::String as ::core::convert::From<_>>::from(#name),
+            ]);
         }
     } else {
         let exactly = exactly_one(names);
@@ -160,7 +168,8 @@ pub(super) fn keyed(names: &[String], payload: &TokenStream2) -> TokenStream2 {
     };
     close(&quote! {
         {
-            let mut keywords = ::kynos::openapi::SchemaObject::default();
+            let mut keywords =
+                <::kynos::openapi::SchemaObject as ::core::default::Default>::default();
             keywords.ty = ::core::option::Option::Some(
                 ::kynos::openapi::model::schema::types::TypeSet::One(
                     ::kynos::openapi::model::schema::types::SchemaType::Object,
@@ -168,9 +177,10 @@ pub(super) fn keyed(names: &[String], payload: &TokenStream2) -> TokenStream2 {
             );
             let payload = #payload;
             #(
-                keywords
-                    .properties
-                    .insert(::std::string::String::from(#names), ::core::clone::Clone::clone(&payload));
+                keywords.properties.insert(
+                    <::std::string::String as ::core::convert::From<_>>::from(#names),
+                    ::core::clone::Clone::clone(&payload),
+                );
             )*
             #bound
             ::kynos::openapi::Schema::Object(::std::boxed::Box::new(keywords))
@@ -183,7 +193,8 @@ fn exactly_one(names: &[String]) -> TokenStream2 {
     let branches = names.iter().map(|name| requiring(&[name]));
     quote! {
         {
-            let mut exactly = ::kynos::openapi::SchemaObject::default();
+            let mut exactly =
+                <::kynos::openapi::SchemaObject as ::core::default::Default>::default();
             exactly.one_of = ::core::option::Option::Some(::std::vec![#(#branches),*]);
             ::kynos::openapi::Schema::Object(::std::boxed::Box::new(exactly))
         }
@@ -207,7 +218,8 @@ fn at_most_one(names: &[String]) -> TokenStream2 {
     } else {
         quote! {
             {
-                let mut either = ::kynos::openapi::SchemaObject::default();
+                let mut either =
+                    <::kynos::openapi::SchemaObject as ::core::default::Default>::default();
                 either.any_of = ::core::option::Option::Some(::std::vec![#(#pairs),*]);
                 ::kynos::openapi::Schema::Object(::std::boxed::Box::new(either))
             }
@@ -215,7 +227,7 @@ fn at_most_one(names: &[String]) -> TokenStream2 {
     };
     quote! {
         {
-            let mut apart = ::kynos::openapi::SchemaObject::default();
+            let mut apart = <::kynos::openapi::SchemaObject as ::core::default::Default>::default();
             apart.not = ::core::option::Option::Some(::std::boxed::Box::new(#refused));
             ::kynos::openapi::Schema::Object(::std::boxed::Box::new(apart))
         }
@@ -226,9 +238,10 @@ fn at_most_one(names: &[String]) -> TokenStream2 {
 fn requiring(names: &[&String]) -> TokenStream2 {
     quote! {
         {
-            let mut present = ::kynos::openapi::SchemaObject::default();
+            let mut present =
+                <::kynos::openapi::SchemaObject as ::core::default::Default>::default();
             present.required = ::core::option::Option::Some(
-                ::std::vec![#(::std::string::String::from(#names)),*],
+                ::std::vec![#(<::std::string::String as ::core::convert::From<_>>::from(#names)),*],
             );
             ::kynos::openapi::Schema::Object(::std::boxed::Box::new(present))
         }

@@ -556,7 +556,7 @@ pub(crate) fn constraints(field: &Field) -> Option<TokenStream2> {
             },
             Some(BoundValue::Pattern(text) | BoundValue::Annotation(text)) => quote! {
                 constraints.#key = ::core::option::Option::Some(
-                    ::std::string::String::from(#text),
+                    <::std::string::String as ::core::convert::From<_>>::from(#text),
                 );
             },
             Some(value) => quote! {
@@ -571,7 +571,8 @@ pub(crate) fn constraints(field: &Field) -> Option<TokenStream2> {
 
     Some(quote! {
         {
-            let mut constraints = ::kynos::schema::constraints::Constraints::default();
+            let mut constraints =
+                <::kynos::schema::constraints::Constraints as ::core::default::Default>::default();
             #(#assignments)*
             constraints
         }

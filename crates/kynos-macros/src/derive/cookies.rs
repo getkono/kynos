@@ -44,8 +44,10 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
                 ::core::result::Result::Ok(found) => found,
                 ::core::result::Result::Err(_) => {
                     return ::core::result::Result::Err(#rejection::Invalid {
-                        name: ::std::string::String::from(#wire),
-                        detail: ::std::string::String::from("the cookie value is not ASCII"),
+                        name: <::std::string::String as ::core::convert::From<_>>::from(#wire),
+                        detail: <::std::string::String as ::core::convert::From<_>>::from(
+                            "the cookie value is not ASCII",
+                        ),
                     });
                 }
             }
@@ -72,17 +74,19 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let parameters = if styled.contains(&true) {
         quote! {
             let parameters: ::std::vec::Vec<::kynos::openapi::Parameter> = { #parameters };
-            parameters
-                .into_iter()
-                .zip([#(#styled),*])
-                .map(|(parameter, styled)| {
+            ::core::iter::Iterator::collect(::core::iter::Iterator::map(
+                ::core::iter::Iterator::zip(
+                    ::core::iter::IntoIterator::into_iter(parameters),
+                    [#(#styled),*],
+                ),
+                |(parameter, styled)| {
                     if styled {
                         parameter.with_style(::kynos::openapi::Style::Cookie, true)
                     } else {
                         parameter
                     }
-                })
-                .collect()
+                },
+            ))
         }
     } else {
         parameters

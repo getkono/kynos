@@ -112,11 +112,13 @@ fn dispatch(declared: &[Declared<'_>], closed: bool) -> TokenStream2 {
         quote! {{
             return ::core::result::Result::Err(
                 ::kynos::error::rejection::BodyRejection::Schema {
-                    failures: ::std::collections::BTreeMap::from([(
+                    failures: ::core::iter::FromIterator::from_iter([(
                         ::std::string::ToString::to_string(
                             &::kynos::schema::constraints::Pointer::root().member(&part.name),
                         ),
-                        ::std::string::String::from("the part is not declared"),
+                        <::std::string::String as ::core::convert::From<_>>::from(
+                            "the part is not declared",
+                        ),
                     )]),
                 },
             );
@@ -290,11 +292,13 @@ impl<'a> Declared<'a> {
             (None, Arity::One) => quote! {
                 return ::core::result::Result::Err(
                     ::kynos::error::rejection::BodyRejection::Schema {
-                        failures: ::std::collections::BTreeMap::from([(
+                        failures: ::core::iter::FromIterator::from_iter([(
                             ::std::string::ToString::to_string(
                                 &::kynos::schema::constraints::Pointer::root().member(#name),
                             ),
-                            ::std::string::String::from("the part is required"),
+                            <::std::string::String as ::core::convert::From<_>>::from(
+                                "the part is required",
+                            ),
                         )]),
                     },
                 )

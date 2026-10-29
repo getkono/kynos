@@ -98,7 +98,7 @@ pub(crate) fn decode_field(
                 ::core::result::Result::Ok(value) => value,
                 ::core::result::Result::Err(error) => {
                     return ::core::result::Result::Err(#rejection::Invalid {
-                        name: ::std::string::String::from(#name),
+                        name: <::std::string::String as ::core::convert::From<_>>::from(#name),
                         detail: ::std::string::ToString::to_string(&error),
                     });
                 }
@@ -130,8 +130,8 @@ pub(crate) fn decode_field(
                 ::core::option::Option::Some(raw) => #parsed,
                 ::core::option::Option::None => {
                     return ::core::result::Result::Err(#rejection::Invalid {
-                        name: ::std::string::String::from(#name),
-                        detail: ::std::string::String::from(#missing),
+                        name: <::std::string::String as ::core::convert::From<_>>::from(#name),
+                        detail: <::std::string::String as ::core::convert::From<_>>::from(#missing),
                     });
                 }
             }
@@ -167,7 +167,7 @@ pub(crate) fn check_field(param: &Param<'_>, rejection: &TokenStream2) -> TokenS
             }
             if !__kynos_violations.is_empty() {
                 return ::core::result::Result::Err(#rejection::Schema {
-                    name: ::std::string::String::from(#name),
+                    name: <::std::string::String as ::core::convert::From<_>>::from(#name),
                     failures: __kynos_violations.into_failures(),
                 });
             }
@@ -236,7 +236,7 @@ pub(crate) fn parameters_body(
         let constrained = bounds(param);
         let described = doc_string(&param.field.attrs).map(|text| {
             quote!(parameter.description = ::core::option::Option::Some(
-                ::std::string::String::from(#text)
+                <::std::string::String as ::core::convert::From<_>>::from(#text)
             );)
         });
 
@@ -271,12 +271,12 @@ pub(crate) fn response_headers_body(params: &[Param<'_>]) -> TokenStream2 {
         let constrained = bounds(param);
         let described = doc_string(&param.field.attrs).map(|text| {
             quote!(header.description = ::core::option::Option::Some(
-                ::std::string::String::from(#text)
+                <::std::string::String as ::core::convert::From<_>>::from(#text)
             );)
         });
 
         quote! {
-            headers.insert(::std::string::String::from(#name), {
+            headers.insert(<::std::string::String as ::core::convert::From<_>>::from(#name), {
                 let schema = #schema;
                 #constrained
                 let mut header = ::kynos::openapi::Header::new(schema);
@@ -351,15 +351,20 @@ fn query_encoder() -> TokenStream2 {
             for byte in raw.as_bytes() {
                 match byte {
                     b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                        encoded.push(::core::primitive::char::from(*byte));
+                        encoded.push(<::core::primitive::char as ::core::convert::From<_>>::from(
+                            *byte,
+                        ));
                     }
                     other => {
                         encoded.push('%');
                         for digit in [other >> 4, other & 0x0f] {
-                            encoded.push(::core::primitive::char::from(match digit {
+                            let hex = match digit {
                                 0..=9 => b'0' + digit,
                                 _ => b'A' + digit - 10,
-                            }));
+                            };
+                            encoded.push(
+                                <::core::primitive::char as ::core::convert::From<_>>::from(hex),
+                            );
                         }
                     }
                 }

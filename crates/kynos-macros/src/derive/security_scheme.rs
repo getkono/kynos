@@ -236,7 +236,7 @@ fn describe(args: &SchemeArgs, kind: &Ident, input: &DeriveInput) -> proc_macro2
                     | ::kynos::openapi::SecurityScheme::OAuth2 { description, .. }
                     | ::kynos::openapi::SecurityScheme::OpenIdConnect { description, .. } => {
                         *description = ::core::option::Option::Some(
-                            ::std::string::String::from(#text),
+                            <::std::string::String as ::core::convert::From<_>>::from(#text),
                         );
                     }
                     // Unreachable today; `SecurityScheme` is `#[non_exhaustive]`.
@@ -274,7 +274,8 @@ fn describe(args: &SchemeArgs, kind: &Ident, input: &DeriveInput) -> proc_macro2
 /// through the model's constructors so no 3.2-only field is named here.
 fn of_kind(args: &SchemeArgs, kind: &Ident) -> proc_macro2::TokenStream {
     let owned = |value: Option<&LitStr>| {
-        optional(value.map(|value| quote!(::std::string::String::from(#value))))
+        let from = quote!(<::std::string::String as ::core::convert::From<_>>::from);
+        optional(value.map(|value| quote!(#from(#value))))
     };
     let text = |value: Option<&LitStr>| value.map_or_else(String::new, LitStr::value);
 
@@ -290,7 +291,7 @@ fn of_kind(args: &SchemeArgs, kind: &Ident) -> proc_macro2::TokenStream {
                     if let ::kynos::openapi::SecurityScheme::Http { scheme: name, .. } =
                         &mut scheme
                     {
-                        *name = ::std::string::String::from(#scheme);
+                        *name = <::std::string::String as ::core::convert::From<_>>::from(#scheme);
                     }
                     scheme
                 }
@@ -335,7 +336,7 @@ fn of_kind(args: &SchemeArgs, kind: &Ident) -> proc_macro2::TokenStream {
 
             quote! {
                 ::kynos::openapi::SecurityScheme::oauth2(
-                    ::kynos::openapi::OAuthFlows::default()
+                    <::kynos::openapi::OAuthFlows as ::core::default::Default>::default()
                         #(#flows)*
                 )
                 #metadata
