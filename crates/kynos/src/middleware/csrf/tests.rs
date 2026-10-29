@@ -274,9 +274,10 @@ fn the_target_authority_decides_where_a_request_states_both() {
     );
 }
 
-/// Every method RFC 9110 section 9.2.1 calls safe, and the ones it does not.
+/// `GET`, `HEAD` and `OPTIONS` are safe; `TRACE`, which RFC 9110 section 9.2.1
+/// also calls safe, is not, nor is any unsafe method.
 #[test]
-fn the_safe_methods_are_the_ones_the_specification_names() {
+fn the_safe_methods_are_get_head_and_options() {
     for method in [Method::GET, Method::HEAD, Method::OPTIONS] {
         assert!(is_safe(&method), "{method} is safe");
     }

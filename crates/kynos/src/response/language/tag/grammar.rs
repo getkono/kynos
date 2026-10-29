@@ -28,7 +28,7 @@ pub(in crate::response::language) const IRREGULAR: [&str; 17] = [
     "sgn-CH-DE",
 ];
 
-/// Where the subtag starting at `from` ends, and whether a hyphen follows it.
+/// Where the subtag starting at `from` ends.
 const fn subtag_end(bytes: &[u8], from: usize) -> usize {
     let mut end = from;
     while end < bytes.len() && bytes[end] != b'-' {

@@ -1,6 +1,6 @@
 //! Authentication and authorization, described by construction.
 //!
-//! The single rule here: **[`Auth`](auth::Auth) is the only way to guard an operation**.
+//! The single rule here: **a [`Guard`] is the only way to guard an operation**.
 //!
 //! Requiring a credential and declaring it are the same act, so enforcement and
 //! the description cannot drift apart.

@@ -31,6 +31,19 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 ///
 /// These surface while a router is built or a server runs — never as the
 /// answer to a request, where a [`Problem`](problem::Problem) is returned instead.
+///
+/// # What describing a router refuses first
+///
+/// [`Router::validate`](crate::router::Router::validate),
+/// [`openapi`](crate::router::Router::openapi),
+/// [`openapi_as`](crate::router::Router::openapi_as) and
+/// [`build`](crate::router::Router::build) each refuse these before reporting
+/// any violation: [`Middleware`](Error::Middleware) for an interceptor
+/// configured with a combination it cannot honour, [`Link`](Error::Link) for a
+/// `Link` to an operation no URI can be rendered for, and
+/// [`Schema`](Error::Schema), [`KeyPattern`](Error::KeyPattern) or
+/// [`Contribution`](Error::Contribution) for a component name, map key
+/// `pattern` or security scheme the registry refuses.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
