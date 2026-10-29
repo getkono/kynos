@@ -215,14 +215,9 @@ struct RawLicense {
 }
 
 /// A License Object that set both `identifier` and `url`.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("`identifier` and `url` are mutually exclusive on a License Object")]
 struct LicenseConflict;
-
-impl std::fmt::Display for LicenseConflict {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("`identifier` and `url` are mutually exclusive on a License Object")
-    }
-}
 
 impl TryFrom<RawLicense> for License {
     type Error = LicenseConflict;

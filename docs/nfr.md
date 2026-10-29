@@ -694,13 +694,6 @@ the model a compile error there rather than a map it silently stops reading.
 Every function in it asks the same question of a different object, so a split
 would separate the visits from each other. One concern, so one file.
 
-`kynos-openapi`'s `model/example.rs` is `status.rs`'s shape. It declares
-`Example`, `ExampleValue` and `Examples`, the three a Parameter, Header or Media
-Type Object shows its value with, so a split would turn
-`model::example::Examples`, the path each holder's `examples` returns, into a
-longer one. What pushed it over was `Examples::as_inline` and
-`Examples::as_named`, which the three holders' accessors had each written out.
-
 `server/mod.rs` is the shape above. It declares `Server` and `BoundServer`, so
 splitting the builder from what it builds would turn `server::Server` into
 `server::builder::Server`. What pushed it over was one more setter,
@@ -770,7 +763,6 @@ The budget, which may only shrink:
 - `crates/kynos-openapi/src/annotation/mod.rs`
 - `crates/kynos-openapi/src/emit/downgrade/unrecognised.rs`
 - `crates/kynos-openapi/src/emit/downgrade/walk.rs`
-- `crates/kynos-openapi/src/model/example.rs`
 - `crates/kynos-openapi/src/model/parameter/mod.rs`
 - `crates/kynos-openapi/src/model/schema/object.rs`
 - `crates/kynos-openapi/src/pattern.rs`

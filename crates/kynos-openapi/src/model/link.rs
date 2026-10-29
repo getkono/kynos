@@ -1,7 +1,5 @@
 //! The Link Object.
 
-use std::fmt;
-
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -157,26 +155,15 @@ struct RawLink {
 }
 
 /// A Link Object that does not identify exactly one target operation.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 enum LinkConflict {
     /// Neither `operationRef` nor `operationId` was given.
+    #[error("one of `operationRef` and `operationId` is required on a Link Object")]
     Neither,
 
     /// Both `operationRef` and `operationId` were given.
+    #[error("`operationRef` and `operationId` are mutually exclusive on a Link Object")]
     Both,
-}
-
-impl fmt::Display for LinkConflict {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Neither => {
-                f.write_str("one of `operationRef` and `operationId` is required on a Link Object")
-            }
-            Self::Both => f.write_str(
-                "`operationRef` and `operationId` are mutually exclusive on a Link Object",
-            ),
-        }
-    }
 }
 
 impl TryFrom<RawLink> for Link {

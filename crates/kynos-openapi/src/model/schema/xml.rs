@@ -119,16 +119,9 @@ struct RawXml {
 }
 
 /// An XML Object setting a deprecated flag beside `nodeType`.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("`attribute` and `wrapped` must not be present beside `nodeType` on an XML Object")]
 struct XmlConflict;
-
-impl std::fmt::Display for XmlConflict {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(
-            "`attribute` and `wrapped` must not be present beside `nodeType` on an XML Object",
-        )
-    }
-}
 
 impl TryFrom<RawXml> for Xml {
     type Error = XmlConflict;
