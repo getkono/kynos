@@ -31,6 +31,7 @@ use crate::{
     router::{
         Router,
         assets::{media, range},
+        install::error_at,
     },
 };
 
@@ -358,14 +359,12 @@ impl<C: Send + Sync + 'static, P: PanicPolicy, I, S> Router<C, P, I, S> {
     pub fn assets_directory(mut self, prefix: &str, directory: Directory) -> Self {
         let prefix = prefix.trim_end_matches('/');
         if prefix.contains('{') {
-            self.violations.push(kynos_openapi::Violation {
-                location: "#/paths".to_owned(),
-                severity: kynos_openapi::Severity::Error,
-                error: kynos_openapi::SpecError::OpaqueRoute {
+            self.violations.push(error_at(
+                "#/paths",
+                kynos_openapi::SpecError::OpaqueRoute {
                     pattern: format!("{prefix}/{{*path}}"),
-                }
-                .into(),
-            });
+                },
+            ));
             return self;
         }
 
