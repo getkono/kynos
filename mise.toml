@@ -392,8 +392,17 @@ description = "Package every crate exactly as crates.io will receive it"
 run = '''
 set -eu
 
-for package in $(cargo metadata --no-deps --format-version 1 \
-  | python3 -c 'import json,sys; print(" ".join(p["name"] for p in json.load(sys.stdin)["packages"] if p["publish"] != []))'); do
+# An assignment carries the listing's status to `set -e`; a `for` list would
+# not. A failed `cargo metadata` still fails the pipe, as `json.load` refuses
+# its empty output.
+packages="$(cargo metadata --no-deps --format-version 1 \
+  | python3 -c 'import json,sys; print(" ".join(p["name"] for p in json.load(sys.stdin)["packages"] if p["publish"] != []))')"
+if [ -z "$packages" ]; then
+  echo "cargo metadata listed no publishable package" >&2
+  exit 1
+fi
+
+for package in $packages; do
   if ! cargo package --list --quiet -p "$package" | grep -qx LICENSE; then
     echo "$package would be published without LICENSE" >&2
     exit 1
