@@ -19,7 +19,7 @@ use crate::{
     http::{self, body::Body},
     middleware::{
         Continued, Interceptor, Next,
-        compression::{Coding, DrainError, drain},
+        compression::codec::{Coding, DrainError, drain},
     },
     response::{IntoResponse, Responses, ShortCircuit},
     schema::registry::Registry,
