@@ -1,4 +1,10 @@
-use super::{BOUNDARY_PREFIX, Part, boundary, contains, quoted, render, unfolded};
+use super::{Part, quoted};
+use crate::response::framing::{BOUNDARY_PREFIX, Boundary, contains, render, unfolded};
+
+/// The delimiter a response over `parts` chooses.
+fn boundary(parts: &[Part]) -> Boundary {
+    crate::response::framing::boundary(parts.iter().map(|part| part.bytes.as_ref()))
+}
 
 /// Reads a rendered body back with `multer`.
 ///

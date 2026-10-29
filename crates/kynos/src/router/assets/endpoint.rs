@@ -5,7 +5,10 @@ use kynos_openapi::{Method, PathTemplate};
 use crate::{
     extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http::{HeaderValue, Request, Response, StatusCode, etag, header},
-    response::range::{Precondition, content_response, not_modified_response, spec},
+    response::range::{
+        delivery::{Precondition, content_response, not_modified_response},
+        spec,
+    },
     router::{
         assets::{Asset, range},
         endpoint::{Endpoint, operation_id},

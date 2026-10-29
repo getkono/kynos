@@ -103,7 +103,7 @@ pub(super) fn unsatisfiable(rejection: RangeRejection) -> Response {
 /// Called with the 200 and the 304 already declared; fields are attached to
 /// the 200 and 206 only.
 pub(super) fn describe(operation: &mut OperationCx<'_>, media_type: &str) {
-    let partial = range::content_response("the requested part of the file", media_type);
+    let partial = range::delivery::content_response("the requested part of the file", media_type);
     operation.add_responses(&kynos_openapi::Responses::new().with(206, partial));
 
     // Declared by the rejection that produces it.
@@ -112,7 +112,7 @@ pub(super) fn describe(operation: &mut OperationCx<'_>, media_type: &str) {
     operation.add_responses(&unsatisfiable);
 
     operation.add_parameter(range::parameter());
-    operation.add_parameter(range::conditional_parameter());
+    operation.add_parameter(range::delivery::conditional_parameter());
 
     for status in [200, 206] {
         for (name, header) in AcceptRanges::response_headers(operation.registry()) {

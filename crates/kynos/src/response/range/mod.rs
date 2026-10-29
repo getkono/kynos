@@ -29,6 +29,7 @@
 //! Several parts at once is `multipart/byteranges`, reached by returning
 //! [`parts`]' `RangedParts<T>`, which requires `openapi32`.
 
+pub(crate) mod delivery;
 pub mod headers;
 #[cfg(feature = "openapi32")]
 pub mod parts;
@@ -47,6 +48,7 @@ use crate::{
     http::{Parts, Response, StatusCode},
     response::{
         IntoResponse, Responses,
+        headers::declare_on_each,
         range::{
             headers::{AcceptRanges, ContentRange},
             rangeable::Rangeable,
@@ -177,13 +179,10 @@ impl<T> Range<T> {
         T: Rangeable,
     {
         let selection = self.select(whole.complete_length())?;
-
-        let body = match selection {
-            Selection::Whole(_) => whole,
-            Selection::Part { first, last, .. } => whole.slice(first, last),
-        };
-
-        Ok(Ranged { body, selection })
+        Ok(Ranged {
+            body: cut(whole, selection),
+            selection,
+        })
     }
 }
 
@@ -223,18 +222,14 @@ pub(crate) fn select(
     requested: &Result<Vec<spec::Spec>, Ignored>,
     complete_length: u64,
 ) -> Result<Selection, RangeRejection> {
-    let specs = match requested {
-        Err(reason) => return Ok(Selection::Whole(*reason)),
+    let specs = match applicable(requested, complete_length) {
         Ok(specs) => specs,
+        Err(whole) => return Ok(whole),
     };
 
-    // Section 14.2 permits ignoring the field for an empty representation.
-    if complete_length == 0 {
-        return Ok(Selection::Whole(Ignored::EmptyRepresentation));
-    }
-
-    let (first, last) = *spec::resolve(specs, complete_length)
-        .first()
+    let (first, last) = specs
+        .iter()
+        .find_map(|spec| spec::resolve_one(*spec, complete_length))
         .ok_or(RangeRejection::NotSatisfiable { complete_length })?;
 
     Ok(Selection::Part {
@@ -255,85 +250,6 @@ pub fn parameter() -> Parameter {
              this operation cannot apply is ignored and the whole representation is sent.",
         )
         .with_example("bytes=0-1023")
-}
-
-/// The `If-Range` precondition on applying that field.
-///
-/// Declared only where a validator exists to evaluate it, which excludes
-/// [`Range<T>`].
-#[must_use]
-pub(crate) fn conditional_parameter() -> Parameter {
-    Parameter::header(
-        "If-Range",
-        kynos_openapi::Schema::of_type(kynos_openapi::model::schema::types::SchemaType::String),
-    )
-    .with_description(
-        "The entity tag the client's partial copy came from, per RFC 9110 section 13.1.5. The \
-         `Range` is honoured only if it matches this representation under the strong \
-         comparison; otherwise the whole representation is sent.",
-    )
-}
-
-/// A precondition field a validated delivery reads besides `If-Range`.
-///
-/// One declaration per field, shared by a [`Served`](served::Served) delivery
-/// and a ranged asset, so the two describe it in the same words.
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum Precondition {
-    /// `If-Match`, section 13.1.1.
-    Match,
-    /// `If-Unmodified-Since`, section 13.1.4.
-    UnmodifiedSince,
-    /// `If-None-Match`, section 13.1.2.
-    NoneMatch,
-    /// `If-Modified-Since`, section 13.1.3.
-    ModifiedSince,
-}
-
-impl Precondition {
-    /// The header parameter declaring this field.
-    pub(crate) fn parameter(self) -> Parameter {
-        let (name, description) = match self {
-            Self::Match => (
-                "If-Match",
-                "The entity tag the client's copy was taken from, per RFC 9110 section 13.1.1",
-            ),
-            Self::UnmodifiedSince => (
-                "If-Unmodified-Since",
-                "The date the client's copy carries, refused if the representation changed since, \
-                 per RFC 9110 section 13.1.4",
-            ),
-            Self::NoneMatch => (
-                "If-None-Match",
-                "The entity tag the client already holds, per RFC 9110 section 13.1.2",
-            ),
-            Self::ModifiedSince => (
-                "If-Modified-Since",
-                "The date the client's copy carries, per RFC 9110 section 13.1.3",
-            ),
-        };
-
-        Parameter::header(
-            name,
-            kynos_openapi::Schema::of_type(kynos_openapi::model::schema::types::SchemaType::String),
-        )
-        .with_description(description)
-    }
-}
-
-/// A 200 or 206 carrying `media_type`, its schema unconstrained, as every
-/// binary codec describes its bytes.
-pub(crate) fn content_response(description: &str, media_type: &str) -> kynos_openapi::Response {
-    kynos_openapi::Response::with_content(
-        description,
-        media_type,
-        kynos_openapi::MediaType::new(kynos_openapi::Schema::Object(Box::default())),
-    )
-}
-
-/// The 304 a validated delivery sends when the client's copy is current.
-pub(crate) fn not_modified_response() -> kynos_openapi::Response {
-    kynos_openapi::Response::new("the client's copy is current")
 }
 
 /// A representation, or the part of it a request asked for.
@@ -411,115 +327,54 @@ pub(crate) fn write_selection(
 /// a [`WithHeaders`](crate::response::headers::WithHeaders).
 impl<T: Rangeable> Responses for Ranged<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        let advertised = AcceptRanges::response_headers(registry);
-        let enclosed = ContentRange::response_headers(registry);
-
-        let mut responses = T::responses(registry);
-        for response in responses.responses.values_mut() {
-            if let kynos_openapi::RefOr::Item(response) = response {
-                declare(response, &advertised);
-            }
-        }
+        let (responses, advertised) = advertised::<T>(registry);
 
         let mut partial =
-            content_response("the requested part of the representation", T::media_type());
-        declare(&mut partial, &advertised);
-        declare(&mut partial, &enclosed);
+            delivery::content_response("the requested part of the representation", T::media_type());
+        partial.headers.extend(advertised);
+        partial
+            .headers
+            .extend(ContentRange::response_headers(registry));
 
         responses.with(StatusCode::PARTIAL_CONTENT.as_u16(), partial)
     }
 }
 
-/// Copies a group's declared headers onto one response.
-fn declare(
-    response: &mut kynos_openapi::Response,
-    declared: &kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>>,
+/// `T`'s own responses, each advertising `Accept-Ranges`, and that
+/// advertisement for the 206 a ranged type adds beside them.
+fn advertised<T: Rangeable>(
+    registry: &mut Registry,
+) -> (
+    kynos_openapi::Responses,
+    kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>>,
 ) {
-    for (name, header) in declared {
-        response.headers.insert(name.clone(), header.clone());
+    let advertised = AcceptRanges::response_headers(registry);
+    let mut responses = T::responses(registry);
+    declare_on_each(&mut responses, &advertised, true);
+    (responses, advertised)
+}
+
+/// The `range-set` to resolve against a representation of `complete_length`,
+/// or the whole representation and the reason the field is not applied.
+fn applicable(
+    requested: &Result<Vec<spec::Spec>, Ignored>,
+    complete_length: u64,
+) -> Result<&[spec::Spec], Selection> {
+    match requested {
+        Err(reason) => Err(Selection::Whole(*reason)),
+        // Section 14.2 permits ignoring the field for an empty representation.
+        Ok(_) if complete_length == 0 => Err(Selection::Whole(Ignored::EmptyRepresentation)),
+        Ok(specs) => Ok(specs),
+    }
+}
+
+/// What `selection` sends of `whole`: all of it, or the part it names.
+fn cut<T: Rangeable>(whole: T, selection: Selection) -> T {
+    match selection {
+        Selection::Whole(_) => whole,
+        Selection::Part { first, last, .. } => whole.slice(first, last),
     }
 }
 
 #[cfg(test)]
 mod tests;
-
-/// The statuses and fields a [`Served`](served::Served) delivery can produce.
-///
-/// 200, 206, 304, 412 and [`RangeRejection`]'s 416; no 400, since section 14.2
-/// ignores an unusable `Range`. The fields the builder adds only on request,
-/// `Cache-Control` and `Content-Disposition`, are declared optional.
-#[must_use]
-pub(crate) fn delivery_responses(
-    registry: &mut Registry,
-    media_type: &str,
-) -> kynos_openapi::Responses {
-    use kynos_openapi::{Header, Response as OpenApiResponse, Schema, StatusPattern};
-
-    let string = || {
-        Header::new(Schema::of_type(
-            kynos_openapi::model::schema::types::SchemaType::String,
-        ))
-    };
-    // The type's own description, optional here: a delivery names a file only
-    // where its builder asked for one. A drift away from an inline header must
-    // fail loudly rather than declare an undescribed field.
-    let mut disposition =
-        crate::response::disposition::ContentDisposition::response_headers(registry)
-            .into_values()
-            .find_map(|header| header.as_item().cloned())
-            .expect("ContentDisposition declares its header inline");
-    disposition.required = None;
-
-    let mut responses = kynos_openapi::Responses::new()
-        .with(
-            200,
-            content_response("the whole representation", media_type),
-        )
-        .with(
-            206,
-            content_response("the part the request asked for", media_type),
-        )
-        .with(304, not_modified_response())
-        .with(
-            412,
-            OpenApiResponse::new("the representation is not the one the client's copy came from"),
-        );
-
-    for (status, name, header) in [
-        (200, "Accept-Ranges", string()),
-        (206, "Accept-Ranges", string()),
-        (200, "ETag", string()),
-        (206, "ETag", string()),
-        (304, "ETag", string()),
-        (200, "Last-Modified", string()),
-        (206, "Last-Modified", string()),
-        (304, "Last-Modified", string()),
-        // Section 15.4.5: a 304 owes `Cache-Control` wherever the 200 carries
-        // it, and no other metadata, so `Content-Disposition` stops at 206.
-        (200, "Cache-Control", string()),
-        (206, "Cache-Control", string()),
-        (304, "Cache-Control", string()),
-        (200, "Content-Disposition", disposition.clone()),
-        (206, "Content-Disposition", disposition),
-        (
-            206,
-            "Content-Range",
-            headers::ContentRange::satisfied_header(),
-        ),
-    ] {
-        if let Some(kynos_openapi::RefOr::Item(response)) = responses
-            .responses
-            .get_mut(&StatusPattern::Code(status).to_string())
-        {
-            response
-                .headers
-                .insert(name.to_owned(), kynos_openapi::RefOr::Item(header));
-        }
-    }
-
-    responses
-        .responses
-        .extend(<RangeRejection as Responses>::responses(registry).responses);
-
-    responses
-}

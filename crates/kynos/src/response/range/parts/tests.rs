@@ -1,4 +1,4 @@
-use super::{MEDIA_TYPE, RangedParts, Selected, byteranges};
+use super::{MEDIA_TYPE, RangedParts, Selected, byteranges, coalesce};
 use crate::{
     extract::body::binary::Binary,
     http::{Response, StatusCode, header, media::OctetStream},
@@ -27,7 +27,7 @@ fn served(
 ///
 /// The independently constructed oracle `docs/testing.md` asks for: a
 /// boolean per byte, marked from the *resolver's* answers and read back as
-/// runs. It never consults [`spec::coalesce`], and it reaches sortedness and
+/// runs. It never consults [`coalesce`], and it reaches sortedness and
 /// disjointness by construction rather than by the same sort and the same
 /// comparison the merge uses.
 ///
@@ -113,7 +113,7 @@ fn every_set() -> Vec<Vec<Spec>> {
 fn coalescing_recovers_the_octets_the_field_named_and_no_others() {
     for complete_length in 1..=6_u64 {
         for specs in every_set() {
-            let mut merged = spec::coalesce(&specs, complete_length);
+            let mut merged = coalesce(&specs, complete_length);
             merged.sort_unstable();
 
             assert_eq!(
@@ -139,7 +139,7 @@ fn no_field_can_ask_for_more_octets_than_the_representation_holds() {
             // properties of the *set* of parts, and reading them off an
             // ascending copy keeps them separable from the order the parts
             // are actually sent in.
-            let mut merged = spec::coalesce(&specs, complete_length);
+            let mut merged = coalesce(&specs, complete_length);
             merged.sort_unstable();
 
             let mut total = 0_u64;
@@ -187,7 +187,7 @@ fn overlapping_and_adjacent_parts_become_one() {
         let Ok(specs) = spec::parse(field) else {
             panic!("`{field}` is a legal field");
         };
-        assert_eq!(spec::coalesce(&specs, 10), expected, "{field}");
+        assert_eq!(coalesce(&specs, 10), expected, "{field}");
     }
 }
 
@@ -206,7 +206,7 @@ fn overlapping_and_adjacent_parts_become_one() {
 fn the_parts_leave_in_the_order_their_earliest_spec_arrived() {
     for complete_length in 1..=6_u64 {
         for specs in every_set() {
-            let merged = spec::coalesce(&specs, complete_length);
+            let merged = coalesce(&specs, complete_length);
             let resolved = spec::resolve(&specs, complete_length);
 
             let earliest: Vec<usize> = merged
