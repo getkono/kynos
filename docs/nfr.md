@@ -775,7 +775,6 @@ The budget, which may only shrink:
 - `crates/kynos/src/middleware/cors/mod.rs`
 - `crates/kynos/src/middleware/decompression/mod.rs`
 - `crates/kynos/src/middleware/mod.rs`
-- `crates/kynos/src/response/range/mod.rs`
 - `crates/kynos/src/response/range/served.rs`
 - `crates/kynos/src/response/status.rs`
 - `crates/kynos/src/response/stream/sse.rs`

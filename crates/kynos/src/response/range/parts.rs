@@ -26,15 +26,16 @@ use kynos_openapi::{Encoding, RefOr, Schema};
 
 use crate::{
     error::rejection::RangeRejection,
-    extract::params::header::HeaderParams,
-    http::{HeaderValue, Response, StatusCode, header},
+    http::{HeaderValue, Response, StatusCode},
     response::{
-        IntoResponse, Responses, framing,
+        IntoResponse, Responses,
+        codec::{unconstrained, with_content_type},
+        framing,
         range::{
-            Range, Ranged, Selection, declare,
+            Range, Ranged, Selection, advertised, applicable, cut,
             headers::{AcceptRanges, ContentRange},
             rangeable::{Rangeable, clamped},
-            spec::{self, Ignored},
+            spec::{self, Spec},
         },
     },
     schema::registry::Registry,
@@ -85,18 +86,12 @@ impl<T> Range<T> {
     /// and no spec in it is satisfiable, which is section 14.1.2's definition
     /// of an unsatisfiable `ranges-specifier`.
     pub fn select_parts(&self, complete_length: u64) -> Result<Selected, RangeRejection> {
-        let specs = match &self.requested {
-            Err(reason) => return Ok(Selected::Single(Selection::Whole(*reason))),
+        let specs = match applicable(&self.requested, complete_length) {
             Ok(specs) => specs,
+            Err(whole) => return Ok(Selected::Single(whole)),
         };
 
-        if complete_length == 0 {
-            return Ok(Selected::Single(Selection::Whole(
-                Ignored::EmptyRepresentation,
-            )));
-        }
-
-        let merged = spec::coalesce(specs, complete_length);
+        let merged = coalesce(specs, complete_length);
 
         match merged.as_slice() {
             [] => Err(RangeRejection::NotSatisfiable { complete_length }),
@@ -177,20 +172,64 @@ impl<T> RangedParts<T> {
 impl<T: Rangeable> IntoResponse for RangedParts<T> {
     fn into_response(self) -> Response {
         match self.selected {
-            Selected::Single(selection) => {
-                let body = match selection {
-                    Selection::Whole(_) => self.whole,
-                    Selection::Part { first, last, .. } => self.whole.slice(first, last),
-                };
-
-                Ranged { body, selection }.into_response()
+            Selected::Single(selection) => Ranged {
+                body: cut(self.whole, selection),
+                selection,
             }
+            .into_response(),
             Selected::Several {
                 ranges,
                 complete_length,
             } => multipart::<T>(self.whole.octets(), &ranges, complete_length),
         }
     }
+}
+
+/// The satisfiable ranges `specs` select, merged, in the order they were
+/// written.
+///
+/// Any two that overlap or touch become one, whichever order they arrived in
+/// (RFC 9110 section 15.3.7.2 MAY). Survivors are put back in the order of the
+/// earliest spec that fed each, per that section's SHOULD.
+///
+/// Disjoint parts bound the octets sent by the complete length, which defeats
+/// section 17.15's `bytes=0-0,0-0,...` amplification. Only the multipart
+/// writer merges: [`Range::select`] promises the first satisfiable spec.
+fn coalesce(specs: &[Spec], complete_length: u64) -> Vec<(u64, u64)> {
+    let mut resolved = positioned(specs, complete_length);
+    resolved.sort_unstable();
+
+    let mut merged: Vec<((u64, u64), usize)> = Vec::with_capacity(resolved.len());
+    for ((first, last), position) in resolved {
+        match merged.last_mut() {
+            // A saturated `last-pos` can be `u64::MAX`.
+            Some(((_, previous_last), earliest)) if first <= previous_last.saturating_add(1) => {
+                *previous_last = (*previous_last).max(last);
+                *earliest = (*earliest).min(position);
+            }
+            _ => merged.push(((first, last), position)),
+        }
+    }
+
+    // No two parts share an earliest position, so this order is total.
+    merged.sort_unstable_by_key(|&(_, earliest)| earliest);
+    merged.into_iter().map(|(range, _)| range).collect()
+}
+
+/// The satisfiable ranges `specs` select, each carrying the position of the
+/// spec that produced it, which section 15.3.7.2's part ordering needs.
+fn positioned(specs: &[Spec], complete_length: u64) -> Vec<((u64, u64), usize)> {
+    if complete_length == 0 {
+        return Vec::new();
+    }
+
+    specs
+        .iter()
+        .enumerate()
+        .filter_map(|(position, spec)| {
+            spec::resolve_one(*spec, complete_length).map(|range| (range, position))
+        })
+        .collect()
 }
 
 /// The `multipart/byteranges` body, and the 206 that carries it.
@@ -212,14 +251,13 @@ fn multipart<T: Rangeable>(
     let boundary = framing::boundary(parts.iter().map(|(_, content)| content.as_ref()));
     let body = framing::render(parts, &boundary);
 
-    let mut response = Response::new(crate::http::body::Body::from_bytes(body));
-    *response.status_mut() = StatusCode::PARTIAL_CONTENT;
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
+    let mut response = with_content_type(
+        crate::http::body::Body::from_bytes(body),
         HeaderValue::try_from(format!("{MEDIA_TYPE}; boundary={boundary}"))
             .expect("a generated boundary is printable ASCII"),
     );
-    crate::extract::params::header::write_or_refuse(&mut response, &AcceptRanges);
+    *response.status_mut() = StatusCode::PARTIAL_CONTENT;
+    crate::response::headers::write_or_refuse(&mut response, &AcceptRanges);
 
     response
 }
@@ -231,7 +269,7 @@ fn part_headers<T: Rangeable>(first: u64, last: u64, complete_length: u64) -> Ve
     let mut headers = Vec::with_capacity(96);
 
     headers.extend_from_slice(b"Content-Type: ");
-    headers.extend_from_slice(framing::unfolded(T::media_type()).as_bytes());
+    framing::put_unfolded(T::media_type(), &mut headers);
     headers.extend_from_slice(framing::CRLF);
 
     headers.extend_from_slice(b"Content-Range: ");
@@ -256,25 +294,17 @@ fn part_headers<T: Rangeable>(first: u64, last: u64, complete_length: u64) -> Ve
 /// apart.
 impl<T: Rangeable> Responses for RangedParts<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        let advertised = AcceptRanges::response_headers(registry);
-
-        let mut responses = T::responses(registry);
-        for response in responses.responses.values_mut() {
-            if let RefOr::Item(response) = response {
-                declare(response, &advertised);
-            }
-        }
+        let (responses, advertised) = advertised::<T>(registry);
 
         let mut partial = kynos_openapi::Response::new("the requested parts of the representation");
-        partial.content.insert(
-            T::media_type().to_owned(),
-            kynos_openapi::MediaType::new(Schema::Object(Box::default())).into(),
-        );
+        partial
+            .content
+            .insert(T::media_type().to_owned(), unconstrained().into());
         partial
             .content
             .insert(MEDIA_TYPE.to_owned(), byteranges(T::media_type()).into());
 
-        declare(&mut partial, &advertised);
+        partial.headers.extend(advertised);
         partial.headers.insert(
             "Content-Range".to_owned(),
             // Not required: section 15.3.7.2 forbids it atop a multipart 206,

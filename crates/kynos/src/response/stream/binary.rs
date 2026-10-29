@@ -4,10 +4,12 @@ use crate::{
     http::{
         HeaderValue, Response,
         body::Body,
-        header,
         media::{MediaType, WellFormed},
     },
-    response::{IntoResponse, Responses},
+    response::{
+        IntoResponse, Responses,
+        codec::{ok, unconstrained, with_content_type},
+    },
     schema::registry::Registry,
 };
 
@@ -51,12 +53,10 @@ where
     fn into_response(self) -> Response {
         let () = <M as WellFormed>::WELL_FORMED;
 
-        let mut response = Response::new(Body::from_stream(self.stream));
-        response.headers_mut().insert(
-            header::CONTENT_TYPE,
+        with_content_type(
+            Body::from_stream(self.stream),
             HeaderValue::from_static(M::MEDIA_TYPE),
-        );
-        response
+        )
     }
 }
 
@@ -70,14 +70,7 @@ where
     // sequential media types, which an arbitrary `M` is not.
     fn responses(_registry: &mut Registry) -> kynos_openapi::Responses {
         let () = <M as WellFormed>::WELL_FORMED;
-        kynos_openapi::Responses::new().with(
-            200,
-            kynos_openapi::Response::with_content(
-                "OK",
-                M::MEDIA_TYPE,
-                kynos_openapi::MediaType::new(kynos_openapi::Schema::Object(Box::default())),
-            ),
-        )
+        ok(M::MEDIA_TYPE, unconstrained())
     }
 }
 

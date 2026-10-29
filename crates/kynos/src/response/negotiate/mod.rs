@@ -127,7 +127,7 @@ impl<T> Accept<T> {
     pub(crate) fn choose<O: representation::Representations>(
         &self,
     ) -> Result<usize, NegotiationRejection> {
-        O::media_types()
+        representation::offered::<O>()
             .iter()
             .enumerate()
             .filter_map(|(index, media_type)| self.score(media_type).map(|score| (score, index)))

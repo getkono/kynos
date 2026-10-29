@@ -4,9 +4,12 @@
 use kynos_openapi::model::body::mime_names;
 
 use crate::{
-    error::problem::Problem,
-    http::{HeaderValue, Response, StatusCode, body::Body, header},
-    response::{IntoResponse, Responses, codec::json_bytes},
+    http::{HeaderValue, Response, body::Body},
+    response::{
+        IntoResponse, Responses,
+        codec::{json_bytes, ok, unserializable, with_content_type},
+        negotiate::representation::{Representation, sealed::SealedRepresentation},
+    },
     schema::{Schema, registry::Registry},
 };
 
@@ -20,16 +23,13 @@ use crate::{
 fn json_response<T: serde::Serialize>(value: &T, media_type: &'static str) -> Response {
     // Serialized in full first, so a failure can still change the status.
     let Ok(bytes) = json_bytes(value) else {
-        return Problem::new(StatusCode::INTERNAL_SERVER_ERROR)
-            .with_detail("the response body could not be serialized")
-            .into_response();
+        return unserializable("the response body could not be serialized");
     };
 
-    let mut response = Response::new(Body::from_bytes(bytes));
-    response
-        .headers_mut()
-        .insert(header::CONTENT_TYPE, HeaderValue::from_static(media_type));
-    response
+    with_content_type(
+        Body::from_bytes(bytes),
+        HeaderValue::from_static(media_type),
+    )
 }
 
 /// The one 200 a JSON body describes: `T`'s schema under `media_type`.
@@ -37,13 +37,9 @@ fn json_responses<T: Schema>(
     registry: &mut Registry,
     media_type: &'static str,
 ) -> kynos_openapi::Responses {
-    kynos_openapi::Responses::new().with(
-        200,
-        kynos_openapi::Response::with_content(
-            "OK",
-            media_type,
-            kynos_openapi::MediaType::new(registry.resolve::<T>()),
-        ),
+    ok(
+        media_type,
+        kynos_openapi::MediaType::new(registry.resolve::<T>()),
     )
 }
 
@@ -72,3 +68,18 @@ impl<M: MediaType, T: Schema> Responses for JsonAs<M, T> {
         json_responses::<T>(registry, M::MEDIA_TYPE)
     }
 }
+
+impl<T> SealedRepresentation for Json<T> {
+    const MEDIA_TYPE: &'static str = mime_names::APPLICATION_JSON;
+}
+
+impl<T: serde::Serialize + Schema> Representation for Json<T> {}
+
+impl<M: MediaType, T> SealedRepresentation for JsonAs<M, T> {
+    const MEDIA_TYPE: &'static str = {
+        let () = Self::JSON;
+        M::MEDIA_TYPE
+    };
+}
+
+impl<M: MediaType, T: serde::Serialize + Schema> Representation for JsonAs<M, T> {}

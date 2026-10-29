@@ -20,6 +20,43 @@ mod protobuf;
 #[cfg(test)]
 mod tests;
 
+use crate::{
+    error::problem::Problem,
+    http::{HeaderValue, Response, StatusCode, body::Body, header},
+    response::IntoResponse,
+};
+
+/// The one 200 a body describes: `media` under `media_type`.
+pub(crate) fn ok(media_type: &str, media: kynos_openapi::MediaType) -> kynos_openapi::Responses {
+    kynos_openapi::Responses::new().with(
+        200,
+        kynos_openapi::Response::with_content("OK", media_type, media),
+    )
+}
+
+/// The Media Type Object of raw bytes: the empty Schema Object, since raw
+/// bytes are outside what JSON Schema describes and `contentMediaType` would
+/// only repeat the content key.
+pub(crate) fn unconstrained() -> kynos_openapi::MediaType {
+    kynos_openapi::MediaType::new(kynos_openapi::Schema::Object(Box::default()))
+}
+
+/// `body` under `content_type`.
+pub(crate) fn with_content_type(body: Body, content_type: HeaderValue) -> Response {
+    let mut response = Response::new(body);
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, content_type);
+    response
+}
+
+/// The 500 a body that cannot be encoded answers, its detail saying why.
+pub(crate) fn unserializable(detail: &'static str) -> Response {
+    Problem::new(StatusCode::INTERNAL_SERVER_ERROR)
+        .with_detail(detail)
+        .into_response()
+}
+
 /// Serializes `value` as JSON into a body of exactly its length.
 ///
 /// The body of a [`Json`] or `JsonAs`, a `#[derive(Reply)]` variant and a [`Problem`]

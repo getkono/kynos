@@ -166,14 +166,17 @@ fn close(boundary: &str, sink: &mut impl Sink) {
 
 /// A header value with its line endings removed.
 ///
-/// Dropped rather than escaped, so a value cannot inject a header.
-#[cfg(any(feature = "openapi32", test))]
+/// Dropped rather than escaped, so a value cannot inject a header. The
+/// oracle [`put_unfolded`] is tested against.
+#[cfg(all(test, feature = "multipart"))]
 pub(crate) fn unfolded(value: &str) -> String {
     value.replace(['\r', '\n'], "")
 }
 
-/// [`unfolded`], written to `sink` rather than allocated.
-#[cfg(feature = "multipart")]
+/// A header value with its line endings removed, written to `sink` rather
+/// than allocated.
+///
+/// Dropped rather than escaped, so a value cannot inject a header.
 pub(crate) fn put_unfolded(value: &str, sink: &mut impl Sink) {
     // Split on octets: both are ASCII, which no UTF-8 sequence contains.
     for piece in value

@@ -3,8 +3,9 @@
 use kynos_openapi::{Header, Map, RefOr};
 
 use crate::{
-    extract::params::header::{EncodeHeaders, HeaderParams},
-    http::Response,
+    error::problem::Problem,
+    extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
+    http::{HeaderMap, HeaderName, HeaderValue, Response, StatusCode},
     response::{IntoResponse, Responses},
     schema::registry::Registry,
 };
@@ -49,7 +50,7 @@ where
 {
     fn into_response(self) -> Response {
         let mut response = self.body.into_response();
-        crate::extract::params::header::write_or_refuse(&mut response, &self.headers);
+        write_or_refuse(&mut response, &self.headers);
         response
     }
 }
@@ -70,23 +71,109 @@ where
             return responses;
         }
 
-        let declared = H::response_headers(registry);
-        let described = responses
-            .default_response
-            .iter_mut()
-            .chain(responses.responses.values_mut());
+        declare_on_each(&mut responses, &H::response_headers(registry), true);
+        responses
+    }
+}
 
-        for response in described {
-            // A `$ref` names a response the document holds elsewhere, and
-            // declaring a field on it would declare it on every other use.
-            if let kynos_openapi::RefOr::Item(response) = response {
-                for (name, header) in &declared {
+/// Declares `declared` on every response `responses` describes, the default
+/// included; a name a response already declares is replaced only where
+/// `overwrite`.
+pub(crate) fn declare_on_each(
+    responses: &mut kynos_openapi::Responses,
+    declared: &Map<RefOr<Header>>,
+    overwrite: bool,
+) {
+    let described = responses
+        .default_response
+        .iter_mut()
+        .chain(responses.responses.values_mut());
+
+    for response in described {
+        // A `$ref` names a response the document holds elsewhere, and
+        // declaring a field on it would declare it on every other use.
+        if let RefOr::Item(response) = response {
+            for (name, header) in declared {
+                if overwrite {
                     response.headers.insert(name.clone(), header.clone());
+                } else {
+                    response
+                        .headers
+                        .entry(name.clone())
+                        .or_insert_with(|| header.clone());
                 }
             }
         }
+    }
+}
 
-        responses
+/// A header whose value is described as `text/plain` constrained by
+/// `schema`, as OpenAPI 3.2's Appendix D describes one.
+pub(crate) fn text_header(schema: kynos_openapi::Schema) -> Header {
+    Header::with_content(
+        kynos_openapi::model::body::mime_names::TEXT_PLAIN,
+        kynos_openapi::MediaType::new(schema),
+    )
+}
+
+/// The 500 a writer answers with in place of a response whose header group
+/// refused to encode.
+pub(crate) fn refused() -> Response {
+    Problem::new(StatusCode::INTERNAL_SERVER_ERROR)
+        .with_detail("a response header could not be encoded")
+        .into_response()
+}
+
+/// Writes `group` onto `fields`, honouring [`REPEATABLE`](HeaderParams::REPEATABLE)
+/// and merging [`VARIES`](HeaderParams::VARIES).
+///
+/// The one writer for both `Continued::with_headers` and `WithHeaders`, so the
+/// two cannot disagree. A refused group writes nothing, `VARIES` included; the
+/// caller answers with [`refused`] instead.
+pub(crate) fn write<G: EncodeHeaders>(
+    fields: &mut HeaderMap,
+    group: &G,
+) -> Result<(), UnencodableHeader> {
+    write_encoded::<G>(fields, group.encode()?);
+    Ok(())
+}
+
+/// Writes what group `G` already [`encode`](EncodeHeaders::encode)d onto
+/// `fields`, as [`write`] does, for a writer that encoded it once to use twice.
+pub(crate) fn write_encoded<G: EncodeHeaders>(
+    fields: &mut HeaderMap,
+    encoded: Vec<(HeaderName, HeaderValue)>,
+) {
+    for (name, value) in encoded {
+        // Encoded fields must be a subset of `NAMES`, which the conflict check
+        // compares. Debug-only: the response path does not panic.
+        debug_assert!(
+            G::NAMES
+                .iter()
+                .any(|declared| crate::http::header_name_eq(declared, name.as_str())),
+            "`{}` encodes `{}`, which its `NAMES` does not declare",
+            std::any::type_name::<G>(),
+            name.as_str(),
+        );
+
+        if G::REPEATABLE {
+            fields.append(name, value);
+        } else {
+            fields.insert(name, value);
+        }
+    }
+
+    // `VARIES` names are not in `NAMES`, so they skip the check above.
+    crate::http::vary_on(fields, G::VARIES);
+}
+
+/// Writes `group` onto `response`, or replaces `response` with [`refused`]
+/// where the group refuses to encode.
+///
+/// For a writer that has nothing left to add once the group is written.
+pub(crate) fn write_or_refuse<G: EncodeHeaders>(response: &mut Response, group: &G) {
+    if write(response.headers_mut(), group).is_err() {
+        *response = refused();
     }
 }
 

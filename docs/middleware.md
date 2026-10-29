@@ -976,7 +976,7 @@ is one no client can decode.
 
 Both ways a group reaches the wire — `Continued::with_headers` and
 `WithHeaders::into_response` — go through one writer,
-`extract::params::header::write`, so a group naming `Set-Cookie` twice reaches
+`response::headers::write`, so a group naming `Set-Cookie` twice reaches
 the wire whole from a handler and from an interceptor alike.
 
 **OpenAPI cannot say a field repeats.** `Response.headers` is a map keyed by

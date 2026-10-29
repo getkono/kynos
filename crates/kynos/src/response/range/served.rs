@@ -21,7 +21,8 @@ use crate::{
         IntoResponse,
         disposition::ContentDisposition,
         range::{
-            Precondition, Selection,
+            Selection,
+            delivery::{self, Precondition},
             source::{ByteSource, Spans},
             spec, write_selection,
         },
@@ -149,7 +150,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
         // be spelled would otherwise be evaluated as no tag at all. Before the
         // source is read too, since no answer it gives changes this one.
         let tag = match self.etag.as_ref().map(ETag::encode) {
-            Some(None) => return Ok(Delivery::new(crate::extract::params::header::refused())),
+            Some(None) => return Ok(Delivery::new(crate::response::headers::refused())),
             Some(Some(tag)) => Some(tag),
             None => None,
         };
@@ -160,7 +161,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
 
         // Section 13.2.2 steps 1 and 2: the lost-update preconditions first.
         if self.precondition_failed(conditions, current) {
-            return Ok(Delivery::new(bodiless(StatusCode::PRECONDITION_FAILED)));
+            return Ok(Delivery::precondition_failed());
         }
 
         // Steps 3 and 4: the cache validations.
@@ -169,11 +170,11 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
             // HEAD alone, and a 412 for any other method. Only it can hold
             // here for one, since the date applies to GET and HEAD alone.
             if conditions.method != Method::GET && conditions.method != Method::HEAD {
-                return Ok(Delivery::new(bodiless(StatusCode::PRECONDITION_FAILED)));
+                return Ok(Delivery::precondition_failed());
             }
             let response = self
                 .head(None, complete_length, tag)
-                .unwrap_or_else(crate::extract::params::header::refused);
+                .unwrap_or_else(crate::response::headers::refused);
             return Ok(Delivery::new(response));
         }
 
@@ -192,7 +193,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
         // A refused head is answered as it is: the content goes only under
         // the fields that describe it.
         let Some(mut response) = self.head(Some(selection), complete_length, tag) else {
-            return Ok(Delivery::new(crate::extract::params::header::refused()));
+            return Ok(Delivery::new(crate::response::headers::refused()));
         };
 
         // Section 9.3.2: a HEAD sends every field above but no content.
@@ -241,7 +242,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
                 HeaderValue::from_static(M::MEDIA_TYPE),
             );
             if let Some(disposition) = &self.disposition {
-                if crate::extract::params::header::write(fields, disposition).is_err() {
+                if crate::response::headers::write(fields, disposition).is_err() {
                     return None;
                 }
             }
@@ -291,16 +292,9 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
 
         // Section 13.1.4: ignored unless exactly one HTTP-date and a
         // modification date to compare.
-        let mut lines = conditions
-            .fields
-            .get_all(header::IF_UNMODIFIED_SINCE)
-            .iter();
-        let (Some(line), None) = (lines.next(), lines.next()) else {
-            return false;
-        };
         let (Some(modified), Some(since)) = (
             self.last_modified,
-            line.to_str().ok().and_then(crate::http::date::parse),
+            single_date(&conditions.fields, header::IF_UNMODIFIED_SINCE),
         ) else {
             return false;
         };
@@ -324,13 +318,9 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
 
         // Section 13.1.3: ignored unless exactly one HTTP-date, as
         // `If-Unmodified-Since` is.
-        let mut lines = conditions.fields.get_all(header::IF_MODIFIED_SINCE).iter();
-        let (Some(line), None) = (lines.next(), lines.next()) else {
-            return false;
-        };
         let (Some(modified), Some(since)) = (
             self.last_modified,
-            line.to_str().ok().and_then(crate::http::date::parse),
+            single_date(&conditions.fields, header::IF_MODIFIED_SINCE),
         ) else {
             return false;
         };
@@ -354,6 +344,19 @@ fn decimal(length: u64) -> HeaderValue {
     // Digits are always a field value; the fallback is the same value, built
     // the costlier way.
     HeaderValue::from_bytes(&digits[..written]).unwrap_or_else(|_| HeaderValue::from(length))
+}
+
+/// The HTTP-date `name` carries, or `None` unless it is sent on exactly one
+/// line holding one.
+fn single_date(
+    fields: &crate::http::HeaderMap,
+    name: crate::http::HeaderName,
+) -> Option<SystemTime> {
+    let mut lines = fields.get_all(name).iter();
+    let (Some(line), None) = (lines.next(), lines.next()) else {
+        return None;
+    };
+    line.to_str().ok().and_then(crate::http::date::parse)
 }
 
 /// Whole seconds since the epoch, or zero for anything before it.
@@ -384,6 +387,11 @@ impl<M: MediaType> Delivery<M> {
         }
     }
 
+    /// The 412 a failed precondition answers, which sends no content.
+    fn precondition_failed() -> Self {
+        Self::new(bodiless(StatusCode::PRECONDITION_FAILED))
+    }
+
     /// The status this delivery will send.
     #[must_use]
     pub fn status(&self) -> StatusCode {
@@ -400,7 +408,7 @@ impl<M: MediaType> IntoResponse for Delivery<M> {
 impl<M: MediaType> crate::response::Responses for Delivery<M> {
     fn responses(registry: &mut crate::schema::registry::Registry) -> kynos_openapi::Responses {
         let () = <M as WellFormed>::WELL_FORMED;
-        crate::response::range::delivery_responses(registry, M::MEDIA_TYPE)
+        delivery::responses(registry, M::MEDIA_TYPE)
     }
 }
 
@@ -460,7 +468,7 @@ impl<C: Sync> crate::extract::FromRequestParts<C> for Conditions {
 impl crate::extract::describe::Describe for Conditions {
     fn describe(operation: &mut crate::router::operation::OperationCx<'_>) {
         operation.add_parameter(crate::response::range::parameter());
-        operation.add_parameter(crate::response::range::conditional_parameter());
+        operation.add_parameter(delivery::conditional_parameter());
 
         for precondition in [
             Precondition::Match,

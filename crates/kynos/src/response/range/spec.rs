@@ -257,64 +257,26 @@ fn digits(written: &str) -> Option<u64> {
 
 /// The byte offsets `specs` select from a representation of `complete_length`.
 ///
-/// Unsatisfiable specs drop out, per RFC 9110 section 14.1.2.
+/// Unsatisfiable specs drop out, per RFC 9110 section 14.1.2. The request path
+/// needs only the first, which it finds through [`resolve_one`] without
+/// collecting the rest.
+#[cfg(test)]
 pub(crate) fn resolve(specs: &[Spec], complete_length: u64) -> Vec<(u64, u64)> {
-    positioned(specs, complete_length)
-        .into_iter()
-        .map(|(range, _)| range)
-        .collect()
-}
-
-/// The same ranges, each carrying the position of the spec that produced it,
-/// which section 15.3.7.2's part ordering needs.
-fn positioned(specs: &[Spec], complete_length: u64) -> Vec<((u64, u64), usize)> {
     if complete_length == 0 {
         return Vec::new();
     }
 
     specs
         .iter()
-        .enumerate()
-        .filter_map(|(position, spec)| {
-            resolve_one(*spec, complete_length).map(|range| (range, position))
-        })
+        .filter_map(|spec| resolve_one(*spec, complete_length))
         .collect()
 }
 
-/// The satisfiable ranges `specs` select, merged, in the order they were
-/// written.
-///
-/// Any two that overlap or touch become one, whichever order they arrived in
-/// (RFC 9110 section 15.3.7.2 MAY). Survivors are put back in the order of the
-/// earliest spec that fed each, per that section's SHOULD.
-///
-/// Disjoint parts bound the octets sent by the complete length, which defeats
-/// section 17.15's `bytes=0-0,0-0,...` amplification. Only the multipart
-/// writer merges: [`super::Range::select`] promises the first satisfiable spec.
-#[cfg(feature = "openapi32")]
-pub(crate) fn coalesce(specs: &[Spec], complete_length: u64) -> Vec<(u64, u64)> {
-    let mut resolved = positioned(specs, complete_length);
-    resolved.sort_unstable();
-
-    let mut merged: Vec<((u64, u64), usize)> = Vec::with_capacity(resolved.len());
-    for ((first, last), position) in resolved {
-        match merged.last_mut() {
-            // A saturated `last-pos` can be `u64::MAX`.
-            Some(((_, previous_last), earliest)) if first <= previous_last.saturating_add(1) => {
-                *previous_last = (*previous_last).max(last);
-                *earliest = (*earliest).min(position);
-            }
-            _ => merged.push(((first, last), position)),
-        }
-    }
-
-    // No two parts share an earliest position, so this order is total.
-    merged.sort_unstable_by_key(|&(_, earliest)| earliest);
-    merged.into_iter().map(|(range, _)| range).collect()
-}
-
 /// One spec, or `None` when it is unsatisfiable.
-fn resolve_one(spec: Spec, complete_length: u64) -> Option<(u64, u64)> {
+///
+/// For a `complete_length` past zero: every caller has already answered an
+/// empty representation whole, which section 14.2 permits.
+pub(crate) fn resolve_one(spec: Spec, complete_length: u64) -> Option<(u64, u64)> {
     let end = complete_length.saturating_sub(1);
 
     match spec {

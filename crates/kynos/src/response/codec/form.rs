@@ -3,10 +3,13 @@
 use kynos_openapi::model::body::mime_names;
 
 use crate::{
-    error::problem::Problem,
     extract::body::form::Form,
-    http::{HeaderValue, Response, StatusCode, body::Body, header},
-    response::{IntoResponse, Responses},
+    http::{HeaderValue, Response, body::Body},
+    response::{
+        IntoResponse, Responses,
+        codec::{ok, unserializable, with_content_type},
+        negotiate::representation::{Representation, sealed::SealedRepresentation},
+    },
     schema::{Schema, registry::Registry},
 };
 
@@ -14,29 +17,27 @@ impl<T: serde::Serialize> IntoResponse for Form<T> {
     fn into_response(self) -> Response {
         // Encoded in full first, so a failure can still change the status.
         let Ok(encoded) = serde_html_form::to_string(&self.0) else {
-            return Problem::new(StatusCode::INTERNAL_SERVER_ERROR)
-                .with_detail("the response body could not be encoded as a form")
-                .into_response();
+            return unserializable("the response body could not be encoded as a form");
         };
 
-        let mut response = Response::new(Body::from_bytes(bytes::Bytes::from(encoded)));
-        response.headers_mut().insert(
-            header::CONTENT_TYPE,
+        with_content_type(
+            Body::from_bytes(bytes::Bytes::from(encoded)),
             HeaderValue::from_static(mime_names::APPLICATION_FORM_URLENCODED),
-        );
-        response
+        )
     }
 }
 
 impl<T: Schema> Responses for Form<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        kynos_openapi::Responses::new().with(
-            200,
-            kynos_openapi::Response::with_content(
-                "OK",
-                mime_names::APPLICATION_FORM_URLENCODED,
-                kynos_openapi::MediaType::new(registry.resolve::<T>()),
-            ),
+        ok(
+            mime_names::APPLICATION_FORM_URLENCODED,
+            kynos_openapi::MediaType::new(registry.resolve::<T>()),
         )
     }
 }
+
+impl<T> SealedRepresentation for Form<T> {
+    const MEDIA_TYPE: &'static str = mime_names::APPLICATION_FORM_URLENCODED;
+}
+
+impl<T: serde::Serialize + Schema> Representation for Form<T> {}

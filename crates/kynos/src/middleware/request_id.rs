@@ -385,7 +385,7 @@ where
             Ok(match run {
                 Ok((run, fields)) => run.await.with_encoded::<H>(fields),
                 Err(headers) => {
-                    Continued::new(crate::extract::params::header::refused()).with_headers(headers)
+                    Continued::new(crate::response::headers::refused()).with_headers(headers)
                 }
             })
         }

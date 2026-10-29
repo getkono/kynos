@@ -11,7 +11,7 @@ use crate::{
         erased::ErasedInterceptor,
         stack::{CompatibleStack, CompatibleWith, Cons, Flatten},
     },
-    response::short_circuit_mismatch,
+    response::ShortCircuit,
     router::error::RouterError,
     router::{
         ShortCircuitCheck,
@@ -19,6 +19,7 @@ use crate::{
         install,
         operation::{DeclaredTag, Tag},
     },
+    schema::registry::Registry,
 };
 
 /// A set of operations sharing a path prefix, tags, and interceptors.
@@ -226,3 +227,59 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
         self.retype()
     }
 }
+
+/// The statuses a [`kynos_openapi::Responses`] value declares as exact codes.
+///
+/// Wildcard patterns and `default` are skipped: they name no one status.
+#[must_use]
+fn described_statuses(responses: &kynos_openapi::Responses) -> Vec<u16> {
+    responses
+        .responses
+        .keys()
+        .filter_map(|key| key.parse::<u16>().ok())
+        .collect()
+}
+
+/// Checks that a [`ShortCircuit`]'s const and its responses agree.
+///
+/// Returns the violation when they do not. Called while a router or a group
+/// is built, where a [`Registry`] exists, for each interceptor either takes.
+#[must_use]
+pub(crate) fn short_circuit_mismatch<S: ShortCircuit>(
+    registry: &mut Registry,
+) -> Option<RouterError> {
+    mismatch_between(
+        std::any::type_name::<S>(),
+        S::STATUSES,
+        &S::responses(registry),
+    )
+}
+
+/// The comparison itself, without the type parameter, for testing.
+fn mismatch_between(
+    name: &str,
+    statuses: &[u16],
+    responses: &kynos_openapi::Responses,
+) -> Option<RouterError> {
+    let normalize = |mut codes: Vec<u16>| {
+        codes.sort_unstable();
+        codes.dedup();
+        codes
+    };
+
+    let declared = normalize(statuses.to_vec());
+    let described = normalize(described_statuses(responses));
+
+    if declared == described {
+        return None;
+    }
+
+    Some(RouterError::ShortCircuitMismatch {
+        name: name.to_owned(),
+        declared,
+        described,
+    })
+}
+
+#[cfg(test)]
+mod tests;

@@ -44,11 +44,11 @@ use crate::{
         erased::ErasedInterceptor,
         stack::{CompatibleStack, CompatibleWith, Cons, Flatten},
     },
-    response::short_circuit_mismatch,
     router::{
         dispatch::{Dispatch, EndpointTerminal, PathEntry},
         endpoint::{DynEndpoint, set::IntoEndpoints},
         group::Group,
+        group::short_circuit_mismatch,
         operation::{DeclaredTag, OperationCx, Tag},
         policy::{FallbackPolicy, TrailingSlashPolicy},
         service::Service,

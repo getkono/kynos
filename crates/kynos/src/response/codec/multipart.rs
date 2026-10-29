@@ -18,16 +18,15 @@ use crate::{
         body::multipart::{FilePart, MultipartForm, Part},
         describe::RequestContent,
     },
-    http::{HeaderValue, Response, body::Body, header},
+    http::{HeaderValue, Response, body::Body},
     response::{
         IntoResponse, Responses,
-        framing::{self, Boundary, Encapsulation, Sink},
+        codec::with_content_type,
+        framing::{self, Encapsulation, Sink},
+        negotiate::representation::{Representation, sealed::SealedRepresentation},
     },
     schema::{ParamValue, Schema, registry::Registry},
 };
-
-#[cfg(test)]
-use crate::response::framing::{BOUNDARY_PREFIX, contains, unfolded};
 
 /// How a declared type becomes the parts of a `multipart/form-data` body.
 ///
@@ -122,34 +121,22 @@ impl<T: ParamValue + 'static> IntoPart for T {
 impl<T: IntoMultipart> IntoResponse for MultipartForm<T> {
     fn into_response(self) -> Response {
         let parts = self.0.into_parts();
-        let boundary = boundary(&parts);
-        let body = render(parts, &boundary);
+        let boundary = framing::boundary(parts.iter().map(|part| part.bytes.as_ref()));
+        let body = framing::render(parts, &boundary);
 
         let mut content_type = String::with_capacity(CONTENT_TYPE_PREFIX.len() + boundary.len());
         content_type.push_str(CONTENT_TYPE_PREFIX);
         content_type.push_str(&boundary);
 
-        let mut response = Response::new(Body::from_bytes(body));
-        response.headers_mut().insert(
-            header::CONTENT_TYPE,
+        with_content_type(
+            Body::from_bytes(body),
             HeaderValue::try_from(content_type).expect("a generated boundary is printable ASCII"),
-        );
-        response
+        )
     }
 }
 
 /// The response's `Content-Type`, up to the delimiter it names.
 const CONTENT_TYPE_PREFIX: &str = "multipart/form-data; boundary=";
-
-/// A delimiter no part contains, over the octets these parts carry.
-fn boundary(parts: &[Part]) -> Boundary {
-    framing::boundary(parts.iter().map(|part| part.bytes.as_ref()))
-}
-
-/// The body: this subtype's header block per part, framed by RFC 2046.
-fn render(parts: Vec<Part>, boundary: &str) -> Bytes {
-    framing::render(parts, boundary)
-}
 
 /// The header lines a form-data part declares, written straight into the body.
 impl Encapsulation for Part {
@@ -217,6 +204,12 @@ impl<T: Schema> Responses for MultipartForm<T> {
         kynos_openapi::Responses::new().with(200, response)
     }
 }
+
+impl<T> SealedRepresentation for MultipartForm<T> {
+    const MEDIA_TYPE: &'static str = mime_names::MULTIPART_FORM_DATA;
+}
+
+impl<T: IntoMultipart + Schema> Representation for MultipartForm<T> {}
 
 #[cfg(test)]
 mod tests;

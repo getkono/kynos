@@ -19,7 +19,7 @@ use crate::{
         body::json_lines::{JsonLines, JsonSeq, records::Records},
     },
     http::{Request, Response, header},
-    response::{IntoResponse, stream::RecordBuffer},
+    response::{IntoResponse, stream::records::RecordBuffer},
     schema::{Schema, registry::Registry},
 };
 
@@ -187,7 +187,7 @@ fn each_record_of_a_stream_is_written_whole_and_alone() {
         suffix,
     );
     let second = encode(&mut records, &Reading { at: 3 }, prefix, suffix).expect("a record");
-    let long = "x".repeat(3 * super::super::BLOCK);
+    let long = "x".repeat(3 * super::super::records::BLOCK);
     let third = encode(&mut records, &long, prefix, suffix).expect("a record");
     let fourth = encode(&mut records, &Reading { at: 4 }, prefix, suffix).expect("a record");
 

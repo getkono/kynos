@@ -147,7 +147,7 @@ fn refusal<T: ProblemType, G: EncodeHeaders>(retry_after: Duration, group: &G) -
         .with_detail("the client has exceeded its request rate")
         .into_response();
     set_retry_after(&mut response, retry_after);
-    crate::extract::params::header::write_or_refuse(&mut response, group);
+    crate::response::headers::write_or_refuse(&mut response, group);
 
     response
 }

@@ -15,23 +15,17 @@
 use std::borrow::Cow;
 
 use kynos_openapi::{
-    Header, Map, MediaType, Parameter, RefOr, Schema, SchemaObject,
-    model::{
-        body::mime_names,
-        schema::types::{SchemaType, TypeSet},
-    },
+    Header, Map, Parameter, RefOr, Schema, SchemaObject,
+    model::schema::types::{SchemaType, TypeSet},
 };
 use serde_json::Value;
 
 use crate::{
     extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http::{HeaderName, HeaderValue, header},
-    response::language::tag::LanguageTag,
+    response::{headers::text_header, language::tag::LanguageTag},
     schema::registry::Registry,
 };
-
-/// The media type a header value is described under (OpenAPI 3.2 Appendix D).
-const AS_TEXT: &str = mime_names::TEXT_PLAIN;
 
 /// The field a client states its language preferences in.
 ///
@@ -41,20 +35,17 @@ const AS_TEXT: &str = mime_names::TEXT_PLAIN;
 /// document a rejection the service never makes.
 #[must_use]
 pub fn parameter(tags: &[&str]) -> Parameter {
-    Parameter::header(
-        "Accept-Language",
-        kynos_openapi::Schema::of_type(kynos_openapi::model::schema::types::SchemaType::String),
-    )
-    .with_description(format!(
-        "The natural languages preferred in the response, per RFC 9110 section 12.5.4. A \
+    Parameter::header("Accept-Language", Schema::of_type(SchemaType::String))
+        .with_description(format!(
+            "The natural languages preferred in the response, per RFC 9110 section 12.5.4. A \
          comma-separated priority list of RFC 4647 language ranges, each optionally weighted \
          with `;q=`. This operation answers in {}, and states which on `Content-Language`. A \
          request whose preferences match none of them is served {} rather than refused, and a \
          range this field cannot parse is ignored rather than refusing the request.",
-        english_list(tags),
-        tags.first().unwrap_or(&"the first of them"),
-    ))
-    .with_example("da, en-gb;q=0.8, en;q=0.7")
+            english_list(tags),
+            tags.first().unwrap_or(&"the first of them"),
+        ))
+        .with_example("da, en-gb;q=0.8, en;q=0.7")
 }
 
 /// `en`, `fr` and `de`, for a sentence rather than a schema.
@@ -156,7 +147,7 @@ fn described(tags: Option<&[&str]>) -> Header {
         None => Schema::of_type(SchemaType::String),
     };
 
-    Header::with_content(AS_TEXT, MediaType::new(schema))
+    text_header(schema)
         .with_description(
             "The natural language of this representation, per RFC 9110 section 8.5. Stated on \
              every response that negotiated one, including a response served in a language the \

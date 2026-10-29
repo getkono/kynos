@@ -7,6 +7,7 @@ use kynos_openapi::{Method, PathTemplate, model::body::mime_names};
 
 use crate::{
     http::{HeaderMap, HeaderValue, Request, Response, body::Body, header},
+    response::codec::{unconstrained, with_content_type},
     router::{docs::State, endpoint::Endpoint, operation::OperationCx},
 };
 
@@ -77,7 +78,7 @@ impl<C: Send + Sync + 'static> Endpoint<C> for DocsPage {
                 "the reference page",
                 HTML,
                 // Unconstrained, as every non-JSON payload is described.
-                kynos_openapi::MediaType::new(kynos_openapi::Schema::Object(Box::default())),
+                unconstrained(),
             ),
         ));
     }
@@ -119,7 +120,7 @@ impl<C: Send + Sync + 'static> Endpoint<C> for DocsDescription {
                 "the OpenAPI description",
                 JSON,
                 // Unconstrained: the OpenAPI meta-schema is deliberately not modelled.
-                kynos_openapi::MediaType::new(kynos_openapi::Schema::Object(Box::default())),
+                unconstrained(),
             ),
         ));
     }
@@ -133,11 +134,10 @@ impl<C: Send + Sync + 'static> Endpoint<C> for DocsDescription {
 /// One payload rendered from the finished document, with the media type it was
 /// rendered as. Built directly, since `Binary<Json>` needs the `json` feature.
 fn answer(bytes: bytes::Bytes, media_type: &'static str) -> Response {
-    let mut response = Response::new(Body::from_bytes(bytes));
-    response
-        .headers_mut()
-        .insert(header::CONTENT_TYPE, HeaderValue::from_static(media_type));
-    response
+    with_content_type(
+        Body::from_bytes(bytes),
+        HeaderValue::from_static(media_type),
+    )
 }
 
 /// The headers a shipped page is served with: its script policy and `nosniff`.

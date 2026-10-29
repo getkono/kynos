@@ -25,15 +25,11 @@ use crate::{
     schema::registry::Registry,
 };
 
-#[cfg(feature = "form")]
-use crate::extract::body::form::Form;
-#[cfg(feature = "multipart")]
-use crate::extract::body::multipart::MultipartForm;
-#[cfg(feature = "protobuf")]
-use crate::extract::body::protobuf::Protobuf;
-
 /// What keeps an outside type from implementing the representation traits.
-mod sealed {
+///
+/// Crate-visible so each gated codec implements them in its own module; the
+/// traits stay unnameable outside the crate.
+pub(crate) mod sealed {
     /// The private supertrait of a representation.
     pub trait SealedRepresentation {
         /// The media type offered, a constant so a tuple can compare its
@@ -45,6 +41,12 @@ mod sealed {
     pub trait Sealed {
         /// Fails to evaluate when two alternatives share a media type.
         const DISTINCT: ();
+
+        /// The media types on offer, in tuple order, once [`DISTINCT`]
+        /// holds.
+        ///
+        /// [`DISTINCT`]: Sealed::DISTINCT
+        const MEDIA_TYPES: &'static [&'static str];
     }
 
     /// The same for producer tuples; a separate trait because coherence sees
@@ -66,30 +68,8 @@ pub trait Representation: IntoResponse + Responses + sealed::SealedRepresentatio
     }
 }
 
-#[cfg(feature = "json")]
-impl<T> sealed::SealedRepresentation for crate::extract::body::json::Json<T> {
-    const MEDIA_TYPE: &'static str = mime_names::APPLICATION_JSON;
-}
-
-#[cfg(feature = "json")]
-impl<T> Representation for crate::extract::body::json::Json<T> where
-    T: serde::Serialize + crate::schema::Schema
-{
-}
-
-#[cfg(feature = "json")]
-impl<M: MediaType, T> sealed::SealedRepresentation for crate::extract::body::json_as::JsonAs<M, T> {
-    const MEDIA_TYPE: &'static str = {
-        let () = Self::JSON;
-        M::MEDIA_TYPE
-    };
-}
-
-#[cfg(feature = "json")]
-impl<M: MediaType, T> Representation for crate::extract::body::json_as::JsonAs<M, T> where
-    T: serde::Serialize + crate::schema::Schema
-{
-}
+// A codec behind a feature implements both traits in its own gated module
+// under `response::codec`; the ungated ones are implemented here.
 
 impl sealed::SealedRepresentation for Text {
     const MEDIA_TYPE: &'static str = mime_names::TEXT_PLAIN;
@@ -126,35 +106,6 @@ impl<M: MediaType> sealed::SealedRepresentation for Binary<M> {
 }
 
 impl<M: MediaType> Representation for Binary<M> {}
-
-#[cfg(feature = "form")]
-impl<T> sealed::SealedRepresentation for Form<T> {
-    const MEDIA_TYPE: &'static str = mime_names::APPLICATION_FORM_URLENCODED;
-}
-
-#[cfg(feature = "form")]
-impl<T> Representation for Form<T> where T: serde::Serialize + crate::schema::Schema {}
-
-#[cfg(feature = "multipart")]
-impl<T> sealed::SealedRepresentation for MultipartForm<T> {
-    const MEDIA_TYPE: &'static str = mime_names::MULTIPART_FORM_DATA;
-}
-
-#[cfg(feature = "multipart")]
-impl<T> Representation for MultipartForm<T> where
-    T: crate::response::codec::multipart::IntoMultipart + crate::schema::Schema
-{
-}
-
-// Bound through the codec so the protobuf crate stays named only where
-// `containment:check` allows it.
-#[cfg(feature = "protobuf")]
-impl<T> sealed::SealedRepresentation for Protobuf<T> {
-    const MEDIA_TYPE: &'static str = crate::extract::body::protobuf::MEDIA_TYPE;
-}
-
-#[cfg(feature = "protobuf")]
-impl<T> Representation for Protobuf<T> where Protobuf<T>: IntoResponse + Responses {}
 
 /// Refuses, in the constant evaluation calling it, two of `media_types` that
 /// [`same_media_type`] cannot tell apart.
@@ -259,32 +210,29 @@ fn merge_content(offered: &mut kynos_openapi::Responses, from: kynos_openapi::Re
     }
 }
 
-/// Seals producer tuples by arity; the closure bounds live on [`Producers`],
-/// since a marker trait cannot carry them without leaving `S` unconstrained.
-macro_rules! seal_producers {
-    ($($produce:ident),+) => {
-        impl<$($produce),+> sealed::SealedProducers for ($($produce,)+) {}
-    };
+/// The media types `T` offers, in tuple order, borrowed rather than collected.
+///
+/// What negotiation reads on every request; refuses a tuple offering two
+/// alternatives under one media type, as [`Representations::media_types`]
+/// does.
+pub(super) fn offered<T: Representations>() -> &'static [&'static str] {
+    <T as sealed::Sealed>::MEDIA_TYPES
 }
-
-seal_producers!(FA, FB);
-seal_producers!(FA, FB, FC);
-seal_producers!(FA, FB, FC, FD);
-seal_producers!(FA, FB, FC, FD, FE);
-seal_producers!(FA, FB, FC, FD, FE, FF);
-seal_producers!(FA, FB, FC, FD, FE, FF, FG);
-seal_producers!(FA, FB, FC, FD, FE, FF, FG, FH);
 
 macro_rules! tuple_representations {
     ($($type:ident : $produce:ident : $value:ident = $index:literal),+ $(,)?) => {
         impl<$($type: Representation),+> sealed::Sealed for ($($type,)+) {
             const DISTINCT: () = distinct(&[$($type::MEDIA_TYPE),+]);
+
+            const MEDIA_TYPES: &'static [&'static str] = {
+                let () = Self::DISTINCT;
+                &[$($type::MEDIA_TYPE),+]
+            };
         }
 
         impl<$($type: Representation),+> Representations for ($($type,)+) {
             fn media_types() -> Vec<&'static str> {
-                let () = <Self as sealed::Sealed>::DISTINCT;
-                vec![$($type::MEDIA_TYPE),+]
+                offered::<Self>().to_vec()
             }
 
             fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
@@ -294,6 +242,10 @@ macro_rules! tuple_representations {
                 offered
             }
         }
+
+        // The closure bounds live on `Producers`, since a marker trait cannot
+        // carry them without leaving `S` unconstrained.
+        impl<$($produce),+> sealed::SealedProducers for ($($produce,)+) {}
 
         impl<S, $($type: Representation, $produce: FnOnce(&S) -> $type),+>
             Producers<S, ($($type,)+)> for ($($produce,)+)
