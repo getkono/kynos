@@ -1736,8 +1736,16 @@ mod serialized_schema {
                 vec!["const/a/xml/nodeType"],
             ),
             (
+                json!({"example": {"xml": {"nodeType": "attribute"}}}),
+                vec!["example/xml/nodeType"],
+            ),
+            (
                 json!({"x-vendor": {"xml": {"nodeType": "x"}}}),
                 vec!["x-vendor/xml/nodeType"],
+            ),
+            (
+                json!({"$defs": {"discriminator": {"defaultMapping": "y"}}}),
+                vec!["$defs/discriminator/defaultMapping"],
             ),
             (
                 json!({"properties": {"xml": {"nodeType": "element"}}}),

@@ -28,8 +28,8 @@
 //!   derive.
 //! - [`Document::emit`] is where a nested walk over `paths` would live.
 //!   `emit::downgrade::three_two_only_constructs` iterates `document.paths.items`
-//!   and descends per entry, building a JSON pointer per node — and `to_json`
-//!   never calls it. Without this stage the target would count a walk that is
+//!   and descends per entry, rendering a JSON pointer for each construct it
+//!   reports — and `to_json` never calls it. Without this stage the target would count a walk that is
 //!   linear by construction and report the other one as unmeasured.
 //!
 //! **Reaching a cost is not the same as detecting it, and the two halves of the
@@ -58,21 +58,18 @@
 //!
 //! # Features
 //!
-//! **Stage two is recorded twice, because it costs two different amounts.**
-//! `emit/downgrade.rs` gates its typed walk behind `openapi32`, and the walk
-//! for unrecognised fields that every build runs renders a pointer only for a
-//! field it reports, so on this fixture a baseline build allocates nothing
-//! walking and does the clone alone: stage two reads 125,
-//! 1205 and 12 005 there against the 299, 2819 and 28 019 at
-//! `--all-features`. Enforcing the larger number at baseline would run
-//! `mise run test:baseline` — a gate of its own — at a ratchet more than twice
-//! as loose as its own measurement, which is the guessed ceiling
-//! [`nfr.md`](../../../docs/nfr.md#thresholds) refuses; a per-operation
-//! allocation added to `three_two_only_constructs`'s baseline arm, which
-//! `--all-features` never compiles, would fit inside the slack. So
-//! `EMIT_CEILINGS` is the one `#[cfg]`-gated number in the file and every other
-//! number is shared: stage one and the byte counts are identical under both,
-//! since neither feature changes what 3.1 serializes.
+//! **Every number is shared between the two builds this target runs at.**
+//! `emit/downgrade.rs` gates its typed walk behind `openapi32`, and that walk
+//! and the walk for unrecognised fields that every build runs each render a
+//! pointer only for a construct they report, so on this fixture neither
+//! allocates and stage two is the clone alone: 125, 1205 and 12 005, at
+//! baseline and at `--all-features` alike. Stage one and the byte counts are
+//! identical under both too, since neither feature changes what 3.1
+//! serializes. Should a walk come to cost something in one build only, the
+//! ceiling it moves is recorded per build rather than shared at the larger
+//! number, which would run the other build's gate at a ratchet looser than
+//! its own measurement — the guessed ceiling
+//! [`nfr.md`](../../../docs/nfr.md#thresholds) refuses.
 //!
 //! # What this cannot see
 //!
@@ -102,12 +99,12 @@
 //!   fires on `n^2.0001` and on `n³`; it does not fire at exactly `n²` over a
 //!   linear cost, at any coefficient, over any span of sizes. Concretely: a
 //!   descent in `three_two_only_constructs` allocating one pointer per
-//!   (path, path) pair reads 399, 12 819 and 1 028 019 at `--all-features` —
-//!   each recorded ceiling plus n², which is how `NESTED_WALK` below derives
-//!   them from whichever ceilings the build enforces, and over 95% of the cost
-//!   at a thousand operations — and *both* decades satisfy the relation.
+//!   (path, path) pair reads 225, 11 205 and 1 012 005 — each recorded ceiling
+//!   plus n², which is how `NESTED_WALK` below derives them from the ceilings,
+//!   and over 98% of the cost at a thousand operations — and *both* decades
+//!   satisfy the relation.
 //!
-//!   **The per-size ceilings are what catch that case** (399 exceeds the 299
+//!   **The per-size ceilings are what catch that case** (225 exceeds the 125
 //!   recorded at ten operations), and they are what catch the sub-quadratic
 //!   exponents above. That is the division of labour, and it is the reverse of
 //!   what a reader expects: the relation is the half that carries no recorded
@@ -161,25 +158,14 @@ struct Size {
     output_bytes: usize,
 }
 
-/// What one [`Document::emit`] allocates at each of [`SIZES`]'s points, at
-/// `--all-features`.
+/// What one [`Document::emit`] allocates at each of [`SIZES`]'s points, in
+/// either build.
 ///
-/// The only `#[cfg]`-gated number here, and it is gated because the cost it
-/// records is: `emit::downgrade::three_two_only_constructs` builds a pointer
-/// per node of `paths` under `openapi32` and none without it, so one table
-/// enforced under both would be more than twice as loose as its own
-/// measurement in the build that reads it lower.
-#[cfg(feature = "openapi32")]
-const EMIT_CEILINGS: [usize; 3] = [299, 2819, 28_019];
-
-/// ...and at baseline, where the typed downgrade walk is compiled out, the
-/// walk for unrecognised fields allocates nothing on this fixture, and
-/// [`Document::emit`]'s `self.clone()` is the whole of stage two.
-///
-/// Transcribed from the baseline run exactly as the `--all-features` numbers
-/// are from theirs, so `mise run test:baseline` ratchets on what it measures
-/// rather than on what another feature set does.
-#[cfg(not(feature = "openapi32"))]
+/// Neither walk `emit::downgrade::three_two_only_constructs` runs renders a
+/// pointer for a construct it does not report, so on this fixture both
+/// allocate nothing and [`Document::emit`]'s `self.clone()` is the whole of
+/// stage two, with `openapi32` or without it. Transcribed from each of the
+/// two runs, which read the same.
 const EMIT_CEILINGS: [usize; 3] = [125, 1205, 12_005];
 
 /// The three points, a decade apart, as the requirement names them.
@@ -334,8 +320,8 @@ fn counted_json(document: &Document) -> (usize, usize) {
 /// carries on to the end, so a fixture carrying one is walked exactly as far.
 /// What the blocker skips is [`Document::emit`]'s `self.clone()`, which the
 /// early `Err` return never reaches — the cost the Features note above reads
-/// on its own at baseline, where the walk allocates nothing and the clone
-/// is all that is left. A blocker-free fixture is chosen for the larger of two
+/// on its own, since the walk allocates nothing and the clone is all that is
+/// left. A blocker-free fixture is chosen for the larger of two
 /// readings, then, rather than for the longer of two walks.
 fn counted_emit(document: &Document) -> usize {
     let (allocations, emitted) = counted(|| document.emit(SpecVersion::V3_1));
@@ -761,8 +747,7 @@ fn calibrating() -> Vec<u8> {
 /// numbers were: set to zero, and the reading transcribed out of the failure.
 /// Two at baseline (`cargo nextest run -p kynos-openapi --test alloc`) and two
 /// with `--all-features`, the two feature sets this target is *run* at — the
-/// same two [`EMIT_CEILINGS`] is recorded at, and the only item in the file
-/// that needed a `#[cfg]` to hold both.
+/// same two [`EMIT_CEILINGS`] is recorded at.
 const CALIBRATION: usize = 2;
 
 /// The instrument's second invariant, and the one every number above rests on:
