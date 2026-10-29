@@ -295,13 +295,18 @@ jobs:
         uses: actions/checkout@v7
       - name: Set up
         uses: ./.github/actions/setup
-      # Pinned to `profile:valgrind`'s version: the CPU features Valgrind
+      # `profile:valgrind`'s version, from mise.toml: the CPU features Valgrind
       # reports decide which routines a dependency picks.
+      - name: Read the pinned Valgrind version
+        id: valgrind
+        run: |
+          version="$(mise env --json | jq -er .KYNOS_VALGRIND_VERSION)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Install Valgrind
         uses: gungraun/setup-gungraun@v1
         with:
           runner-strategy: none
-          valgrind-version: 3.27.1
+          valgrind-version: ${{ steps.valgrind.outputs.version }}
           # Never the distribution's, which is a different version.
           valgrind-strategy: builder,source
       - name: Count instructions and heap blocks over the request path

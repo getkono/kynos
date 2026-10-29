@@ -29,6 +29,11 @@ hk = "1.53.0"
 # `minimal-versions:check`. Dated, since an undated nightly moves under a job
 # between two nights, and a failure should be Kynos's own.
 KYNOS_NIGHTLY = "nightly-2026-06-10"
+# The Valgrind the request-path profile runs under, which `profile:valgrind`
+# builds and `full.yml` installs, and where `profile:valgrind` puts it unless
+# the caller exported one.
+KYNOS_VALGRIND_VERSION = "3.27.1"
+KYNOS_VALGRIND = "{{ get_env(name='KYNOS_VALGRIND', default=env.HOME ~ '/.local/share/kynos-valgrind') }}"
 
 [tasks.format]
 description = "Format the Rust workspace"
@@ -211,11 +216,12 @@ run = "python3 scripts/cost_features_test.py"
 [tasks."profile:valgrind"]
 description = "Build the Valgrind the request-path profile runs under"
 # From source into a user prefix, needing no root; CI installs it with
-# `gungraun/setup-gungraun`. The digest is the reviewed tarball's. Idempotent.
+# `gungraun/setup-gungraun`. The digest is the reviewed tarball's, so it moves
+# with `KYNOS_VALGRIND_VERSION`. Idempotent.
 run = '''
 set -eu
-prefix="${KYNOS_VALGRIND:-$HOME/.local/share/kynos-valgrind}"
-version=3.27.1
+prefix="$KYNOS_VALGRIND"
+version="$KYNOS_VALGRIND_VERSION"
 digest=5d589152eb8071c02feab8ce6ab719e431a1fbc3e2b1700f5432632a8b9264dc
 if "$prefix/bin/valgrind" --version 2>/dev/null | grep -qx "valgrind-$version"; then
   exit 0
