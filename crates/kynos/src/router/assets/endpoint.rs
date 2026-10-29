@@ -124,7 +124,7 @@ impl AssetEndpoint {
             return identity;
         }
 
-        let Some(accept) = crate::http::coding::accept_encoding(headers) else {
+        let Some(accept) = crate::http::field_lines(headers, header::ACCEPT_ENCODING) else {
             // No field (RFC 9110 section 12.5.3): identity, which every client reads.
             return identity;
         };

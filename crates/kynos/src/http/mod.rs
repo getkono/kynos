@@ -195,6 +195,35 @@ pub(crate) fn own_authority<'a>(
         })
 }
 
+/// The field `name` in `headers`: every line, comma-joined.
+///
+/// RFC 9110 section 5.3. A line that is not visible ASCII is skipped, and
+/// `None` means no line was left, which reads as no field at all. A single
+/// line, the usual case, is borrowed.
+#[must_use]
+pub(crate) fn field_lines(
+    headers: &HeaderMap,
+    name: HeaderName,
+) -> Option<std::borrow::Cow<'_, str>> {
+    let mut lines = headers
+        .get_all(name)
+        .iter()
+        .filter_map(|line| line.to_str().ok());
+
+    let first = lines.next()?;
+    let Some(second) = lines.next() else {
+        return Some(std::borrow::Cow::Borrowed(first));
+    };
+
+    let mut field = format!("{first},{second}");
+    for line in lines {
+        field.push(',');
+        field.push_str(line);
+    }
+
+    Some(std::borrow::Cow::Owned(field))
+}
+
 /// `names` as one comma-separated field value.
 ///
 /// `None` when there is no name, or when the joined names are not a field

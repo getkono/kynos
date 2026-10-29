@@ -3,36 +3,6 @@
 //! Shared by [`Compression`](crate::middleware::compression) and
 //! [`assets`](crate::router::assets) so both read RFC 9110 section 12.5.3 alike.
 
-use std::borrow::Cow;
-
-use super::{HeaderMap, header::ACCEPT_ENCODING};
-
-/// The request's `Accept-Encoding` field value: every line, comma-joined.
-///
-/// RFC 9110 section 5.3. A line that is not visible ASCII is skipped, and
-/// `None` means no line was left, which reads as no field at all. A single
-/// line, the usual case, is borrowed.
-#[must_use]
-pub(crate) fn accept_encoding(headers: &HeaderMap) -> Option<Cow<'_, str>> {
-    let mut lines = headers
-        .get_all(ACCEPT_ENCODING)
-        .iter()
-        .filter_map(|line| line.to_str().ok());
-
-    let first = lines.next()?;
-    let Some(second) = lines.next() else {
-        return Some(Cow::Borrowed(first));
-    };
-
-    let mut field = format!("{first},{second}");
-    for line in lines {
-        field.push(',');
-        field.push_str(line);
-    }
-
-    Some(Cow::Owned(field))
-}
-
 /// The deprecated spellings a recipient must treat as `token`.
 ///
 /// RFC 9110 sections 8.4.1.1 and 8.4.1.3; only `gzip` has one among the

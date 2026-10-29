@@ -223,7 +223,7 @@ enum Negotiated {
 
 /// The coding to apply, per RFC 9110 section 12.5.3.
 fn negotiate(headers: &http::HeaderMap) -> Negotiated {
-    let Some(accept) = crate::http::coding::accept_encoding(headers) else {
+    let Some(accept) = crate::http::field_lines(headers, http::header::ACCEPT_ENCODING) else {
         // Rule 1: "If no Accept-Encoding header field is in the request, any
         // content coding is considered acceptable by the user agent."
         return Negotiated::Unstated;
