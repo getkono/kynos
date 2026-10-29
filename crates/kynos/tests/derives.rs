@@ -5807,7 +5807,7 @@ mod shadowed_prelude {
     }
 
     #[derive(::kynos::Reply)]
-    enum Made {
+    enum Outcome {
         #[reply(status = 201, response)]
         Made(Created<Json<Item>>),
         #[reply(status = 200)]

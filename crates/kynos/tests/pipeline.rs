@@ -81,11 +81,13 @@ mod prelude_free {
     }
 }
 
-/// Its endpoint is the standard library's `Clone` and `Copy` nonetheless.
+/// It is a handler, and its endpoint the standard library's `Clone` and `Copy`
+/// nonetheless.
 #[test]
 fn a_route_declared_without_a_prelude_derives_the_standard_traits() {
     fn is_standard<T: Clone + Copy + std::fmt::Debug + Default>() {}
 
+    is_handler::<App, _, _>(prelude_free::ping);
     is_standard::<prelude_free::ping>();
 }
 
