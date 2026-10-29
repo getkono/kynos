@@ -1,7 +1,5 @@
 //! The `application/json` body codec.
 
-use std::collections::BTreeMap;
-
 use kynos_openapi::model::body::mime_names;
 
 use crate::{
@@ -57,9 +55,17 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send> FromRequest<C> for
         _context: &C,
     ) -> Result<Self, Self::Rejection> {
         let bytes = super::read_body(parts, body, MEDIA_TYPE).await?;
-        let value = strict_json::from_slice(&bytes).map_err(rejection)?;
-        super::checked(value, Pointer::root()).map(Self)
+        decode(&bytes).map(Self)
     }
+}
+
+/// Decodes a body read whole as one JSON document and holds it to the bounds
+/// `T` declares: what `Json` and `JsonAs` share once the body is read.
+pub(super) fn decode<T: serde::de::DeserializeOwned + Schema>(
+    bytes: &[u8],
+) -> Result<T, BodyRejection> {
+    let value = strict_json::from_slice(bytes).map_err(rejection)?;
+    super::checked(value, Pointer::root())
 }
 
 /// Malformed JSON is a 400; well-formed JSON that does not fit `T` is a 422,
@@ -67,13 +73,8 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send> FromRequest<C> for
 // By value to fit `map_err`.
 #[allow(clippy::needless_pass_by_value)]
 pub(super) fn rejection(failure: strict_json::Failure) -> BodyRejection {
-    if is_schema_failure(&failure.error) {
-        BodyRejection::Schema {
-            failures: BTreeMap::from([(
-                failure.pointer(Pointer::root()),
-                failure.error.to_string(),
-            )]),
-        }
+    if failure.is_schema_failure() {
+        BodyRejection::schema_at(failure.pointer(Pointer::root()), failure.error.to_string())
     } else {
         BodyRejection::Syntax {
             detail: failure.error.to_string(),
@@ -81,21 +82,9 @@ pub(super) fn rejection(failure: strict_json::Failure) -> BodyRejection {
     }
 }
 
-/// Where the 400/422 line falls for every JSON codec: serde's `Data` category
-/// is a value that does not fit the type; the rest are bytes that are not JSON.
-pub(super) fn is_schema_failure(error: &serde_json::Error) -> bool {
-    match error.classify() {
-        serde_json::error::Category::Data => true,
-        serde_json::error::Category::Io
-        | serde_json::error::Category::Syntax
-        | serde_json::error::Category::Eof => false,
-    }
-}
-
 impl<T: Schema> Describe for Json<T> {
     fn describe(operation: &mut OperationCx<'_>) {
-        let body = <Self as RequestContent>::request_body(operation.registry());
-        operation.set_request_body(body);
+        super::describe_body::<Self>(operation);
     }
 }
 

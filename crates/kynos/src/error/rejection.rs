@@ -54,21 +54,25 @@ fn problem_responses(
                 .map(|(_, sent)| ("errors", pointer_errors_schema(registry), sent))
                 .into_iter()
                 .collect();
-            let problem = registry.resolve::<Problem>();
 
             responses.with(
                 status.as_u16(),
-                narrowed_response(&problem, status.as_u16(), &[(None, None, &members)]),
+                narrowed_problem(registry, *status, &members),
             )
         })
 }
 
 /// The response one status declares: the shared component narrowed to
-/// `about:blank`, with no summary beyond the reason phrase.
-fn narrowed_problem(registry: &mut Registry, status: StatusCode) -> kynos_openapi::Response {
+/// `about:blank` and sending `members`, with no summary beyond the reason
+/// phrase.
+fn narrowed_problem(
+    registry: &mut Registry,
+    status: StatusCode,
+    members: &[Member],
+) -> kynos_openapi::Response {
     let problem = registry.resolve::<Problem>();
 
-    narrowed_response(&problem, status.as_u16(), &[(None, None, &[])])
+    narrowed_response(&problem, status.as_u16(), &[(None, None, members)])
 }
 
 /// Emits the two implementations that are mechanical for every rejection: the
@@ -373,6 +377,14 @@ impl BodyRejection {
                 StatusCode::UNSUPPORTED_MEDIA_TYPE
             }
             Self::TooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
+        }
+    }
+
+    /// The 422 for one failure, keyed at `pointer`; the empty pointer for a
+    /// decoder that names no location.
+    pub(crate) fn schema_at(pointer: String, detail: String) -> Self {
+        Self::Schema {
+            failures: BTreeMap::from([(pointer, detail)]),
         }
     }
 }
@@ -878,9 +890,9 @@ pub(crate) fn auth_responses(
                 StatusCode::FORBIDDEN if !forbids => return responses,
                 StatusCode::FORBIDDEN => forbidden(registry, *status, named),
                 StatusCode::SERVICE_UNAVAILABLE if !unavailable => return responses,
-                StatusCode::SERVICE_UNAVAILABLE => narrowed_problem(registry, *status)
+                StatusCode::SERVICE_UNAVAILABLE => narrowed_problem(registry, *status, &[])
                     .with_header("Retry-After", retry_after_header()),
-                _ => narrowed_problem(registry, *status),
+                _ => narrowed_problem(registry, *status, &[]),
             };
 
             responses.with(status.as_u16(), declared)

@@ -230,10 +230,7 @@ impl<T: HeaderParams> Describe for Headers<T> {
         if !T::DESCRIBED {
             return;
         }
-        let parameters = T::parameters(operation.registry());
-        for parameter in parameters {
-            operation.add_parameter(parameter);
-        }
+        super::describe_parameters(operation, T::parameters);
     }
 }
 

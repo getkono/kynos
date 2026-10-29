@@ -1,6 +1,6 @@
 //! Variables captured from the path template.
 
-use std::{borrow::Cow, str::Utf8Error};
+use std::borrow::Cow;
 
 use crate::{
     error::rejection::PathRejection,
@@ -117,12 +117,6 @@ fn narrow<F, N: TryFrom<F>>([start, end]: [F; 2]) -> Option<[N; 2]> {
 /// One past `matchit`'s own inline capacity of three, so the shortest route
 /// that spills here already paid one allocation for its variables there.
 const INLINE: usize = 4;
-
-/// Percent-decodes one captured value, through the one module allowed
-/// `percent-encoding`.
-fn decode_capture(value: &str) -> Result<Cow<'_, str>, Utf8Error> {
-    crate::__private::uri::decode_path_value(value)
-}
 
 /// A group of path parameters, as the description sees it.
 ///
@@ -252,9 +246,11 @@ fn decode_captures<'v, 'p: 'v>(
                 name: (*name).to_owned(),
                 detail: "the matched route captured no value for this variable".to_owned(),
             })?;
-        *slot = decode_capture(raw).map_err(|error| PathRejection::Invalid {
-            name: (*name).to_owned(),
-            detail: format!("the percent-decoded value is not valid UTF-8: {error}"),
+        *slot = crate::__private::uri::decode_path_value(raw).map_err(|error| {
+            PathRejection::Invalid {
+                name: (*name).to_owned(),
+                detail: format!("the percent-decoded value is not valid UTF-8: {error}"),
+            }
         })?;
     }
 
@@ -267,10 +263,7 @@ fn decode_captures<'v, 'p: 'v>(
 
 impl<T: PathParams> Describe for Path<T> {
     fn describe(operation: &mut OperationCx<'_>) {
-        let parameters = T::parameters(operation.registry());
-        for parameter in parameters {
-            operation.add_parameter(parameter);
-        }
+        super::describe_parameters(operation, T::parameters);
     }
 }
 

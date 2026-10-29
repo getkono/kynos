@@ -78,8 +78,7 @@ impl<C: Sync, M: MediaType + Send> FromRequest<C> for Binary<M> {
 
 impl<M: MediaType> Describe for Binary<M> {
     fn describe(operation: &mut OperationCx<'_>) {
-        let body = <Self as RequestContent>::request_body(operation.registry());
-        operation.set_request_body(body);
+        super::describe_body::<Self>(operation);
     }
 }
 
@@ -89,8 +88,6 @@ impl<M: MediaType> RequestContent for Binary<M> {
         vec![M::MEDIA_TYPE]
     }
 
-    // A raw binary body is the empty schema: no `type` (outside JSON Schema),
-    // no `contentMediaType` (the content key already states it).
     fn request_body(registry: &mut Registry) -> kynos_openapi::RequestBody {
         let _ = registry;
         let () = <M as WellFormed>::WELL_FORMED;

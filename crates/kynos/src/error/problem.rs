@@ -395,7 +395,7 @@ pub(crate) fn narrowed_response(
 ) -> Response {
     // From every branch, not the deduplicated ones: prose has no exactly-one rule.
     let description = description(status, branches);
-    let distinct = distinct(status, branches);
+    let distinct = distinct(branches);
 
     let schema = match distinct.as_slice() {
         [] => unreachable!(
@@ -439,11 +439,11 @@ struct Narrowed<'a> {
 ///
 /// A `oneOf` repeating a `const` would match twice, so a repeated URI is one
 /// branch, describing what each of its failures sends.
-fn distinct<'a>(status: u16, branches: &[Branch<'a>]) -> Vec<Narrowed<'a>> {
+fn distinct<'a>(branches: &[Branch<'a>]) -> Vec<Narrowed<'a>> {
     let mut distinct: Vec<Narrowed<'a>> = Vec::with_capacity(branches.len());
 
     for (uri, summary, members) in branches {
-        let uri = uri.map_or_else(|| about_blank(status), ToOwned::to_owned);
+        let uri = uri.unwrap_or(ABOUT_BLANK).to_owned();
         // A registered member's name never reaches the wire as an extension.
         let sent = members
             .iter()
@@ -480,14 +480,6 @@ fn distinct<'a>(status: u16, branches: &[Branch<'a>]) -> Vec<Narrowed<'a>> {
     }
 
     distinct
-}
-
-/// The type URI a failure naming none publishes, read from `Problem` itself.
-fn about_blank(status: u16) -> String {
-    let status = StatusCode::from_u16(status)
-        .expect("`#[derive(ApiError)]` rejects a status outside 400..=599");
-
-    Problem::new(status).type_uri.into_owned()
 }
 
 /// The shared component, and what this branch adds to it: the `type` it

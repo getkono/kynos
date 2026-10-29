@@ -304,6 +304,21 @@ impl Violations {
             .filter_map(|(pointer, details)| Some((pointer, details.into_iter().next()?)))
             .collect()
     }
+
+    /// Holds `value`, sitting at `at`, to the bounds its schema declares: the
+    /// [failures](Self::into_failures) when it breaks any.
+    pub(crate) fn of<T: crate::schema::Schema + ?Sized>(
+        value: &T,
+        at: Pointer<'_>,
+    ) -> Result<(), BTreeMap<String, String>> {
+        let mut violations = Self::new();
+        value.check_constraints(at, &mut violations);
+        if violations.is_empty() {
+            Ok(())
+        } else {
+            Err(violations.into_failures())
+        }
+    }
 }
 
 /// A value `minimum`, `maximum`, `exclusive_minimum`, `exclusive_maximum` and

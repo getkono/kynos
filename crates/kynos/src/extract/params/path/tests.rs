@@ -1,4 +1,4 @@
-use super::{DecodePath, INLINE, Path, PathCaptures, PathParams, Spans, decode_capture, narrow};
+use super::{DecodePath, INLINE, Path, PathCaptures, PathParams, Spans, narrow};
 use crate::{
     error::rejection::PathRejection,
     extract::{FromRequestParts, describe::Describe},
@@ -286,7 +286,7 @@ fn a_group_without_a_schema_describes_its_path() {
 #[test]
 fn a_capture_needing_no_decoding_is_not_copied() {
     assert!(matches!(
-        decode_capture("plain"),
+        crate::__private::uri::decode_path_value("plain"),
         Ok(std::borrow::Cow::Borrowed("plain"))
     ));
 }

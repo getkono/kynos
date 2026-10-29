@@ -1593,9 +1593,10 @@ mod an_optional_body_without_a_content_type {
     }
 }
 
-/// `limit::read`, the read under every buffering codec: a lone data frame is
-/// handed over as it arrived, several are joined, and the limit holds over
-/// their running total either way.
+/// `limit::collect_capped` read through `Capped::into_read`, the read under
+/// every buffering codec: a lone data frame is handed over as it arrived,
+/// several are joined, and the limit holds over their running total either
+/// way.
 mod a_body_is_read_whole_under_its_limit {
     use std::{
         collections::VecDeque,
@@ -1643,6 +1644,11 @@ mod a_body_is_read_whole_under_its_limit {
         Body::from_body(Frames(frames.into_iter().collect()))
     }
 
+    /// The read `read_body` makes.
+    async fn read(body: Body, limit: u64) -> Result<Bytes, BodyRejection> {
+        limit::collect_capped(body, limit).await.into_read()
+    }
+
     /// The one-frame body is the frame itself, same octets at the same
     /// address: neither copied nor queued behind a collector.
     #[tokio::test]
@@ -1650,7 +1656,7 @@ mod a_body_is_read_whole_under_its_limit {
         let frame = Bytes::from_static(b"one frame");
         let address = frame.as_ptr();
 
-        let read = limit::read(Body::from_bytes(frame), 64)
+        let read = read(Body::from_bytes(frame), 64)
             .await
             .expect("within the limit");
 
@@ -1663,7 +1669,7 @@ mod a_body_is_read_whole_under_its_limit {
     #[tokio::test]
     async fn empty_frames_and_trailers_do_not_join_a_lone_frame() {
         static OCTETS: &[u8] = b"payload";
-        let read = limit::read(
+        let read = read(
             body([
                 data(b""),
                 data(OCTETS),
@@ -1682,7 +1688,7 @@ mod a_body_is_read_whole_under_its_limit {
     /// Several data frames come back joined, in arrival order.
     #[tokio::test]
     async fn several_frames_are_joined_in_order() {
-        let read = limit::read(body([data(b"ab"), data(b"cd"), data(b"e")]), 64)
+        let read = read(body([data(b"ab"), data(b"cd"), data(b"e")]), 64)
             .await
             .expect("within the limit");
 
@@ -1693,10 +1699,10 @@ mod a_body_is_read_whole_under_its_limit {
     /// read, and one octet more is the 413, whichever frame carries it.
     #[tokio::test]
     async fn the_limit_holds_over_the_running_total() {
-        let at = limit::read(body([data(b"abc"), data(b"de")]), 5).await;
+        let at = read(body([data(b"abc"), data(b"de")]), 5).await;
         assert_eq!(at.expect("exactly at the limit"), b"abcde".as_slice());
 
-        let past = limit::read(body([data(b"abc"), data(b"def")]), 5)
+        let past = read(body([data(b"abc"), data(b"def")]), 5)
             .await
             .expect_err("one octet past the limit");
         assert!(
@@ -1704,7 +1710,7 @@ mod a_body_is_read_whole_under_its_limit {
             "{past:?}"
         );
 
-        let lone = limit::read(body([data(b"abcdef")]), 5)
+        let lone = read(body([data(b"abcdef")]), 5)
             .await
             .expect_err("a lone frame past the limit");
         assert!(
@@ -1717,7 +1723,7 @@ mod a_body_is_read_whole_under_its_limit {
     /// the octets that arrived passed off as the whole body.
     #[tokio::test]
     async fn a_failure_part_way_is_400() {
-        let rejection = limit::read(body([data(b"ab"), Err("reset".into())]), 64)
+        let rejection = read(body([data(b"ab"), Err("reset".into())]), 64)
             .await
             .expect_err("an unfinished body");
 

@@ -1,7 +1,6 @@
 //! Framing a streamed JSON request body into the records it carries.
 
 use std::{
-    collections::BTreeMap,
     fmt,
     marker::PhantomData,
     pin::Pin,
@@ -145,10 +144,7 @@ impl<T> Records<T> {
         media_type: &str,
         framing: Framing,
     ) -> Result<Self, BodyRejection> {
-        if !crate::extract::body::offers(&parts.headers, media_type) {
-            return Err(crate::extract::body::unsupported_media_type(&parts.headers));
-        }
-        crate::extract::body::refuse_undecoded(&parts.headers)?;
+        crate::extract::body::admit(&parts.headers, media_type)?;
 
         Ok(Self {
             limit: crate::extract::body::limit::of(parts),
@@ -223,7 +219,9 @@ impl<T> Records<T> {
 
             let _ = frame.split_to(prefix.min(frame.len()));
 
-            let record = trimmed(&frame.freeze());
+            // Absorbs a `\r\n` line ending and RFC 7464's trailing newline.
+            let frame = frame.freeze();
+            let record = frame.slice_ref(frame.trim_ascii());
             if record.is_empty() {
                 continue;
             }
@@ -291,26 +289,15 @@ impl<T: serde::de::DeserializeOwned + Schema> Records<T> {
 
         // A struct is read only from an object, as a `Json` body is.
         let value = crate::extract::strict_json::from_slice(record).map_err(|failure| {
-            let error = &failure.error;
-            if crate::extract::body::json::is_schema_failure(error) {
+            if failure.is_schema_failure() {
                 // Only the shape was wrong; the boundaries held, so reading
                 // continues.
-                let root = Pointer::root();
-                BodyRejection::Schema {
-                    failures: BTreeMap::from([(
-                        failure.pointer(root.index(index)),
-                        error.to_string(),
-                    )]),
-                }
+                let at = failure.pointer(Pointer::root().index(index));
+                BodyRejection::schema_at(at, failure.error.to_string())
             } else {
-                // Fail-fast by policy: the separator framed this record, so
-                // the next boundary is known. For NDJSON, a body that is not
-                // JSON where it claims to be is rejected rather than
-                // salvaged; for json-seq this departs from RFC 7464 §2.1,
-                // which says to keep reading (see the type's docs).
                 self.state = State::Fused;
                 BodyRejection::Syntax {
-                    detail: format!("record {index}: {error}"),
+                    detail: format!("record {index}: {}", failure.error),
                 }
             }
         })?;
@@ -318,22 +305,6 @@ impl<T: serde::de::DeserializeOwned + Schema> Records<T> {
         // A broken bound is a shape failure too, so reading continues past it.
         crate::extract::body::checked(value, Pointer::root().index(index))
     }
-}
-
-/// The record inside a frame, without the whitespace around it.
-///
-/// Absorbs a `\r\n` line ending and RFC 7464's trailing newline.
-fn trimmed(frame: &Bytes) -> Bytes {
-    let start = frame
-        .iter()
-        .position(|byte| !byte.is_ascii_whitespace())
-        .unwrap_or(frame.len());
-    let end = frame
-        .iter()
-        .rposition(|byte| !byte.is_ascii_whitespace())
-        .map_or(start, |position| position + 1);
-
-    frame.slice(start..end)
 }
 
 /// Every field is `Unpin`, so this needs no projection and no `unsafe`.

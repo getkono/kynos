@@ -13,3 +13,15 @@ pub mod querystring;
 
 #[cfg(feature = "cookie")]
 pub mod cookie;
+
+use crate::{router::operation::OperationCx, schema::registry::Registry};
+
+/// Adds each Parameter Object a group's `parameters` builds to `operation`.
+fn describe_parameters(
+    operation: &mut OperationCx<'_>,
+    parameters: fn(&mut Registry) -> Vec<kynos_openapi::Parameter>,
+) {
+    for parameter in parameters(operation.registry()) {
+        operation.add_parameter(parameter);
+    }
+}

@@ -62,10 +62,7 @@ impl<C: Sync, T: CookieParams + Send> FromRequestParts<C> for Cookies<T> {
 
 impl<T: CookieParams> Describe for Cookies<T> {
     fn describe(operation: &mut OperationCx<'_>) {
-        let parameters = T::parameters(operation.registry());
-        for parameter in parameters {
-            operation.add_parameter(parameter);
-        }
+        super::describe_parameters(operation, T::parameters);
     }
 }
 

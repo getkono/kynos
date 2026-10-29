@@ -14,7 +14,7 @@ use crate::{
         media::{MediaType, WellFormed, is_json},
     },
     router::operation::OperationCx,
-    schema::{Schema, constraints::Pointer, registry::Registry},
+    schema::{Schema, registry::Registry},
 };
 
 /// A JSON request or response body carried under the media type `M` names.
@@ -222,16 +222,13 @@ where
         let () = Self::JSON;
 
         let bytes = super::read_body(parts, body, M::MEDIA_TYPE).await?;
-        let value =
-            crate::extract::strict_json::from_slice(&bytes).map_err(super::json::rejection)?;
-        super::checked(value, Pointer::root()).map(Self::new)
+        super::json::decode(&bytes).map(Self::new)
     }
 }
 
 impl<M: MediaType, T: Schema> Describe for JsonAs<M, T> {
     fn describe(operation: &mut OperationCx<'_>) {
-        let body = <Self as RequestContent>::request_body(operation.registry());
-        operation.set_request_body(body);
+        super::describe_body::<Self>(operation);
     }
 }
 

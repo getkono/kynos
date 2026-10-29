@@ -50,9 +50,6 @@ impl<C: Sync, T: prost::Message + Default + Schema + Send> FromRequest<C> for Pr
         _context: &C,
     ) -> Result<Self, Self::Rejection> {
         let bytes = super::read_body(parts, body, MEDIA_TYPE).await?;
-
-        // Bytes protobuf cannot decode are a 400; a decoded message that
-        // breaks a bound is a 422.
         let value = T::decode(bytes).map_err(|error| BodyRejection::Syntax {
             detail: error.to_string(),
         })?;
@@ -62,8 +59,7 @@ impl<C: Sync, T: prost::Message + Default + Schema + Send> FromRequest<C> for Pr
 
 impl<T: Schema> Describe for Protobuf<T> {
     fn describe(operation: &mut OperationCx<'_>) {
-        let body = <Self as RequestContent>::request_body(operation.registry());
-        operation.set_request_body(body);
+        super::describe_body::<Self>(operation);
     }
 }
 

@@ -23,13 +23,10 @@ use crate::{
 /// after: the body is no representation `T` is handed.
 async fn carries_content(parts: &Parts, mut body: Body) -> Result<bool, BodyRejection> {
     let declared = parts.headers.get_all(header::CONTENT_LENGTH);
-    if declared.iter().any(|value| {
-        value
-            .to_str()
-            .ok()
-            .and_then(|length| length.trim().parse::<u64>().ok())
-            != Some(0)
-    }) {
+    if declared
+        .iter()
+        .any(|value| super::limit::parse_length(value) != Some(0))
+    {
         return Ok(true);
     }
 

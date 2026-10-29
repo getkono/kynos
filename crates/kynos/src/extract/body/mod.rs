@@ -41,7 +41,10 @@ use crate::{
     },
     http::{HeaderMap, Parts, body::Body, header, unquoted_split},
     router::operation::OperationCx,
-    schema::registry::Registry,
+    schema::{
+        constraints::{Pointer, Violations},
+        registry::Registry,
+    },
 };
 
 /// The media type a request declares, split from its parameters; `None`, which
@@ -117,14 +120,21 @@ fn offers_any(headers: &HeaderMap, media_types: &[&str]) -> bool {
     media_types.iter().any(|media| offers(headers, media))
 }
 
-/// The 415 a body extractor raises, quoting each `Content-Type` line, lossily.
-fn unsupported_media_type(headers: &HeaderMap) -> BodyRejection {
-    let lines = headers.get_all(header::CONTENT_TYPE).iter();
-    let received: Vec<_> = lines
+/// Each `name` line the request carries, lossily, joined by `, `; `None` for
+/// none.
+fn quoted(headers: &HeaderMap, name: header::HeaderName) -> Option<String> {
+    let received: Vec<_> = headers
+        .get_all(name)
+        .iter()
         .map(|value| String::from_utf8_lossy(value.as_bytes()))
         .collect();
+    (!received.is_empty()).then(|| received.join(", "))
+}
+
+/// The 415 a body extractor raises, quoting each `Content-Type` line.
+fn unsupported_media_type(headers: &HeaderMap) -> BodyRejection {
     BodyRejection::UnsupportedMediaType {
-        received: (!received.is_empty()).then(|| received.join(", ")),
+        received: quoted(headers, header::CONTENT_TYPE),
     }
 }
 
@@ -155,14 +165,25 @@ fn refuse_undecoded(headers: &HeaderMap) -> Result<(), BodyRejection> {
         return Ok(());
     }
 
-    let received: Vec<_> = headers
-        .get_all(header::CONTENT_ENCODING)
-        .iter()
-        .map(|value| String::from_utf8_lossy(value.as_bytes()))
-        .collect();
     Err(BodyRejection::UnsupportedCoding {
-        received: received.join(", "),
+        // A coded request carries at least one line.
+        received: quoted(headers, header::CONTENT_ENCODING).unwrap_or_default(),
     })
+}
+
+/// Admits a request head to a codec of `media_type`: the 415 when the request
+/// does not offer it, before the 415 for a body still under a coding.
+fn admit(headers: &HeaderMap, media_type: &str) -> Result<(), BodyRejection> {
+    if !offers(headers, media_type) {
+        return Err(unsupported_media_type(headers));
+    }
+    refuse_undecoded(headers)
+}
+
+/// Writes a body extractor's Request Body Object into `operation`.
+fn describe_body<T: RequestContent>(operation: &mut OperationCx<'_>) {
+    let body = T::request_body(operation.registry());
+    operation.set_request_body(body);
 }
 
 /// Enforces `media_type` and refuses an undecoded coding, then reads the whole
@@ -171,31 +192,19 @@ fn refuse_undecoded(headers: &HeaderMap) -> Result<(), BodyRejection> {
 /// The first half of every buffering codec; no byte is read before the content
 /// type and coding are enforced.
 async fn read_body(parts: &Parts, body: Body, media_type: &str) -> Result<Bytes, BodyRejection> {
-    if !offers(&parts.headers, media_type) {
-        return Err(unsupported_media_type(&parts.headers));
-    }
-    refuse_undecoded(&parts.headers)?;
+    admit(&parts.headers, media_type)?;
 
     let limit = limit::of(parts);
     limit::refuse_declared(&parts.headers, limit)?;
-    limit::read(body, limit).await
+    limit::collect_capped(body, limit).await.into_read()
 }
 
 /// Holds a decoded body, or the record of one sitting at `at`, to the bounds
 /// its schema declares: a broken bound is a 422 keyed by where it broke.
-fn checked<T: crate::schema::Schema>(
-    value: T,
-    at: crate::schema::constraints::Pointer<'_>,
-) -> Result<T, BodyRejection> {
-    use crate::schema::constraints::Violations;
-    let mut violations = Violations::new();
-    value.check_constraints(at, &mut violations);
-    if violations.is_empty() {
-        Ok(value)
-    } else {
-        Err(BodyRejection::Schema {
-            failures: violations.into_failures(),
-        })
+fn checked<T: crate::schema::Schema>(value: T, at: Pointer<'_>) -> Result<T, BodyRejection> {
+    match Violations::of(&value, at) {
+        Ok(()) => Ok(value),
+        Err(failures) => Err(BodyRejection::Schema { failures }),
     }
 }
 
@@ -330,8 +339,7 @@ where
     R: RequestContent,
 {
     fn describe(operation: &mut OperationCx<'_>) {
-        let body = <Self as RequestContent>::request_body(operation.registry());
-        operation.set_request_body(body);
+        describe_body::<Self>(operation);
     }
 }
 
