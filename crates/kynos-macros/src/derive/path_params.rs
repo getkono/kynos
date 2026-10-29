@@ -1,11 +1,12 @@
 //! `#[derive(PathParams)]`.
 
-use quote::quote;
+use proc_macro2::TokenStream as TokenStream2;
+use quote::{quote, quote_spanned};
 use syn::{DeriveInput, spanned::Spanned};
 
 use crate::derive::{
     common::{NameCase, named_fields, names_const, reject_duplicate_names, wire_names},
-    params::{Param, check_field, construct, decode_field, parameters_body, path_encode_body},
+    params::{Param, check_field, construct, decode_field, parameters_body},
 };
 
 /// A path variable is always captured, and an absent one would render as an
@@ -55,7 +56,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let value = construct(&params);
 
     let parameters = parameters_body(&params, &quote!(::kynos::openapi::ParameterIn::Path), true);
-    let encode = path_encode_body(&params);
+    let encode = encode_body(&params);
 
     // Three implementations, one per direction plus the description.
     Ok(quote! {
@@ -90,4 +91,22 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
             }
         }
     })
+}
+
+/// The `EncodePath::encode` body.
+///
+/// One entry per declared name, so every template slot is filled; values are
+/// percent-encoded where the template is rendered. No field is an `Option`,
+/// which the derive refuses, so no slot is filled with nothing.
+fn encode_body(params: &[Param<'_>]) -> TokenStream2 {
+    let entries = params.iter().map(|param| {
+        let name = param.name();
+        let ident = param.ident();
+        let span = param.ty().span();
+        quote_spanned! {span=>
+            (#name, ::std::string::ToString::to_string(&self.#ident))
+        }
+    });
+
+    quote!(::std::vec![#(#entries),*])
 }
