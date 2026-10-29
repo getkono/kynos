@@ -255,8 +255,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             }
 
             if mounted.catch_panics || catches::<P>() {
-                let responses = dispatch::recovery::panic_responses(cx.registry());
-                cx.add_responses(&responses);
+                dispatch::recovery::describe(&mut cx);
             }
 
             // The one place that sees every scope's tags, the endpoint's own
