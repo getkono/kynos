@@ -1,6 +1,6 @@
 //! What stands in the way of emitting a document as an earlier version.
 
-mod unrecognised;
+pub(crate) mod unrecognised;
 
 #[cfg(feature = "openapi32")]
 mod walk;
@@ -79,7 +79,7 @@ pub(crate) fn three_one_obstacles(document: &Document) -> ThreeOneObstacles {
     let mut fields = Vec::new();
     #[cfg(feature = "openapi32")]
     collect_three_two_fields(document, &mut fields);
-    fields.extend(found.fields);
+    fields.extend(found.fields.iter().map(unrecognised::Field::pointer));
     fields.extend(found.media_type_refs);
     ThreeOneObstacles {
         fields,
@@ -112,7 +112,11 @@ pub(crate) fn names_a_scheme_by_uri(name: &str) -> bool {
 /// misspelling or an extension missing its prefix.
 #[must_use]
 pub fn unrecognised_fields(document: &Document) -> Vec<String> {
-    unrecognised::walk(document).fields
+    unrecognised::walk(document)
+        .fields
+        .iter()
+        .map(unrecognised::Field::pointer)
+        .collect()
 }
 
 /// The 3.2-only fields the model types, which a build without `openapi32`

@@ -38,28 +38,50 @@ use crate::{
         server::{Server, ServerVariable},
         tag::Tag,
     },
-    pointer::At,
+    pointer::{At, pointer_token},
+    visit::{self, Visit},
 };
 
 /// What the walk collects, each kind at the pointer it lives at.
-pub(super) struct Found<'d> {
+pub(crate) struct Found<'d> {
     /// Each field without the `x-` prefix kept in an `extensions` map.
-    pub(super) fields: Vec<String>,
+    pub(crate) fields: Vec<Field>,
     /// Each inline response without a `description`, at the response itself.
-    pub(super) undescribed_responses: Vec<String>,
+    pub(crate) undescribed_responses: Vec<String>,
     /// Each security requirement name that is a scheme URI, at the name.
-    pub(super) scheme_uris: Vec<String>,
+    pub(crate) scheme_uris: Vec<String>,
     /// Each `content` entry given by reference, at the entry.
-    pub(super) media_type_refs: Vec<String>,
+    pub(crate) media_type_refs: Vec<String>,
     /// The document's declared scheme names, which no URI reading displaces.
     schemes: &'d Map<RefOr<SecurityScheme>>,
+}
+
+/// A field without the `x-` prefix: the object holding it, and its name.
+///
+/// Kept apart, since validation reports the name at its holder and emission
+/// at the field's own pointer.
+pub(crate) struct Field {
+    /// The pointer to the object whose `extensions` keep the field.
+    pub(crate) holder: String,
+    /// The field's name, as written.
+    pub(crate) name: String,
+}
+
+impl Field {
+    /// The field's own pointer.
+    pub(crate) fn pointer(&self) -> String {
+        format!("{}/{}", self.holder, pointer_token(&self.name))
+    }
 }
 
 /// Reports each key of `extensions` that lacks the `x-` prefix.
 fn check(at: At<'_>, extensions: &Extensions, found: &mut Found<'_>) {
     for key in extensions.0.keys() {
         if !key.starts_with(EXTENSION_PREFIX) {
-            found.fields.push(at.key(key).pointer());
+            found.fields.push(Field {
+                holder: at.pointer(),
+                name: key.clone(),
+            });
         }
     }
 }
@@ -76,7 +98,7 @@ fn security_fields(at: At<'_>, requirements: &[SecurityRequirement], found: &mut
 }
 
 /// Everything in `document` that stands in the way of 3.1 in every build.
-pub(super) fn walk(document: &Document) -> Found<'_> {
+pub(crate) fn walk(document: &Document) -> Found<'_> {
     let mut found = Found {
         fields: Vec::new(),
         undescribed_responses: Vec::new(),
@@ -97,7 +119,7 @@ fn document_fields(document: &Document, found: &mut Found<'_>) {
         json_schema_dialect: _,
         servers,
         paths,
-        webhooks,
+        webhooks: _,
         components,
         security,
         tags,
@@ -111,16 +133,9 @@ fn document_fields(document: &Document, found: &mut Found<'_>) {
     info_fields(at.key("info"), info, found);
     servers_fields(at.key("servers"), servers, found);
 
-    let at_paths = at.key("paths");
-    check(at_paths, &paths.extensions, found);
-    for (raw, item) in &paths.items {
-        path_item_fields(at_paths.key(raw), item, found);
-    }
-
-    let at_webhooks = at.key("webhooks");
-    for (name, item) in webhooks {
-        path_item_fields(at_webhooks.key(name), item, found);
-    }
+    check(at.key("paths"), &paths.extensions, found);
+    // Every Path Item under `paths`, then under `webhooks`.
+    visit::routes(document, found);
 
     components_fields(at.key("components"), components, found);
 
@@ -243,102 +258,120 @@ fn components_fields(at: At<'_>, components: &Components, found: &mut Found<'_>)
     for (name, schema) in schemas {
         schema_fields(section.key(name), schema, found);
     }
-    for_each_item(at.key("responses"), responses, found, response_fields);
-    for_each_item(at.key("parameters"), parameters, found, parameter_fields);
-    for_each_item(at.key("examples"), examples, found, example_fields);
-    for_each_item(
-        at.key("requestBodies"),
-        request_bodies,
-        found,
-        request_body_fields,
-    );
-    for_each_item(at.key("headers"), headers, found, header_fields);
-    for_each_item(
-        at.key("securitySchemes"),
-        security_schemes,
-        found,
-        security_scheme_fields,
-    );
-    for_each_item(at.key("links"), links, found, link_fields);
-    for_each_item(at.key("callbacks"), callbacks, found, callback_fields);
+    // A Reference Object carries no `extensions`, so each section's
+    // references are left to where they lead.
+    visit::inline_items(at.key("responses"), responses, |at, response| {
+        response_fields(at, response, found);
+    });
+    visit::inline_items(at.key("parameters"), parameters, |at, parameter| {
+        parameter_fields(at, parameter, found);
+    });
+    visit::inline_items(at.key("examples"), examples, |at, example| {
+        example_fields(at, example, found);
+    });
+    visit::inline_items(at.key("requestBodies"), request_bodies, |at, body| {
+        request_body_fields(at, body, found);
+    });
+    visit::inline_items(at.key("headers"), headers, |at, header| {
+        header_fields(at, header, found);
+    });
+    visit::inline_items(at.key("securitySchemes"), security_schemes, |at, scheme| {
+        security_scheme_fields(at, scheme, found);
+    });
+    visit::inline_items(at.key("links"), links, |at, link| {
+        link_fields(at, link, found);
+    });
+    visit::inline_items(at.key("callbacks"), callbacks, |at, callback| {
+        visit::callback(at, callback, found);
+    });
 
     let section = at.key("pathItems");
     for (name, item) in path_items {
-        path_item_fields(section.key(name), item, found);
+        visit::path_item(section.key(name), item, found);
     }
 
     #[cfg(feature = "openapi32")]
-    for_each_item(at.key("mediaTypes"), media_types, found, media_type_fields);
+    visit::inline_items(at.key("mediaTypes"), media_types, |at, media_type| {
+        media_type_fields(at, media_type, found);
+    });
 }
 
-/// Visits each inline item of a `RefOr` map under `at`.
-///
-/// A `RefOr::Ref` is skipped: a Reference Object carries no `extensions`, and
-/// what it names is walked where it is defined.
-fn for_each_item<'a, T: 'a>(
-    at: At<'_>,
-    entries: impl IntoIterator<Item = (&'a String, &'a RefOr<T>)>,
-    found: &mut Found<'_>,
-    visit: fn(At<'_>, &T, &mut Found<'_>),
-) {
-    for (name, entry) in entries {
-        if let Some(item) = entry.as_item() {
-            visit(at.key(name), item, found);
-        }
-    }
-}
+/// The Path Items, operations and callbacks, wherever they hang, as
+/// [`visit`] reaches them.
+impl<'doc> Visit<'doc> for Found<'_> {
+    /// A Path Item's own fields; its operations are visited after them.
+    fn path_item(&mut self, at: At<'_>, item: &'doc PathItem, _path: Option<&'doc str>) -> bool {
+        let PathItem {
+            reference: _,
+            summary: _,
+            description: _,
+            get: _,
+            put: _,
+            post: _,
+            delete: _,
+            options: _,
+            head: _,
+            patch: _,
+            trace: _,
+            #[cfg(feature = "openapi32")]
+                query: _,
+            #[cfg(feature = "openapi32")]
+                additional_operations: _,
+            servers,
+            parameters,
+            extensions,
+        } = item;
 
-fn path_item_fields(at: At<'_>, item: &PathItem, found: &mut Found<'_>) {
-    let PathItem {
-        reference: _,
-        summary: _,
-        description: _,
-        get,
-        put,
-        post,
-        delete,
-        options,
-        head,
-        patch,
-        trace,
-        #[cfg(feature = "openapi32")]
-        query,
-        #[cfg(feature = "openapi32")]
-        additional_operations,
-        servers,
-        parameters,
-        extensions,
-    } = item;
-
-    check(at, extensions, found);
-
-    for (method, operation) in [
-        ("get", get),
-        ("put", put),
-        ("post", post),
-        ("delete", delete),
-        ("options", options),
-        ("head", head),
-        ("patch", patch),
-        ("trace", trace),
-        #[cfg(feature = "openapi32")]
-        ("query", query),
-    ] {
-        if let Some(operation) = operation {
-            operation_fields(at.key(method), operation, found);
-        }
+        check(at, extensions, self);
+        servers_fields(at.key("servers"), servers, self);
+        parameters_fields(at.key("parameters"), parameters, self);
+        true
     }
 
-    #[cfg(feature = "openapi32")]
-    {
-        let section = at.key("additionalOperations");
-        for (method, operation) in additional_operations {
-            operation_fields(section.key(method), operation, found);
+    /// An operation's fields up to its callbacks, which are visited next.
+    fn operation(&mut self, at: At<'_>, _item: &'doc PathItem, operation: &'doc Operation) {
+        let Operation {
+            tags: _,
+            summary: _,
+            description: _,
+            external_docs,
+            operation_id: _,
+            parameters,
+            request_body,
+            responses,
+            callbacks: _,
+            deprecated: _,
+            security,
+            servers: _,
+            extensions,
+        } = operation;
+
+        check(at, extensions, self);
+        if let Some(security) = security {
+            security_fields(at.key("security"), security, self);
         }
+        if let Some(docs) = external_docs {
+            external_docs_fields(at.key("externalDocs"), docs, self);
+        }
+        parameters_fields(at.key("parameters"), parameters, self);
+        if let Some(body) = request_body.as_ref().and_then(RefOr::as_item) {
+            request_body_fields(at.key("requestBody"), body, self);
+        }
+        responses_fields(at.key("responses"), responses, self);
     }
 
-    servers_fields(at.key("servers"), servers, found);
-    parameters_fields(at.key("parameters"), parameters, found);
+    /// The operation's `servers`, which follow its callbacks.
+    fn operation_walked(&mut self, at: At<'_>, operation: &'doc Operation) {
+        servers_fields(at.key("servers"), &operation.servers, self);
+    }
+
+    fn callback(&mut self, at: At<'_>, callback: &'doc Callback) {
+        let Callback {
+            items: _,
+            extensions,
+        } = callback;
+        check(at, extensions, self);
+    }
 }
 
 fn parameters_fields(at: At<'_>, parameters: &[RefOr<Parameter>], found: &mut Found<'_>) {
@@ -347,39 +380,6 @@ fn parameters_fields(at: At<'_>, parameters: &[RefOr<Parameter>], found: &mut Fo
             parameter_fields(at.index(index), parameter, found);
         }
     }
-}
-
-fn operation_fields(at: At<'_>, operation: &Operation, found: &mut Found<'_>) {
-    let Operation {
-        tags: _,
-        summary: _,
-        description: _,
-        external_docs,
-        operation_id: _,
-        parameters,
-        request_body,
-        responses,
-        callbacks,
-        deprecated: _,
-        security,
-        servers,
-        extensions,
-    } = operation;
-
-    check(at, extensions, found);
-    if let Some(security) = security {
-        security_fields(at.key("security"), security, found);
-    }
-    if let Some(docs) = external_docs {
-        external_docs_fields(at.key("externalDocs"), docs, found);
-    }
-    parameters_fields(at.key("parameters"), parameters, found);
-    if let Some(body) = request_body.as_ref().and_then(RefOr::as_item) {
-        request_body_fields(at.key("requestBody"), body, found);
-    }
-    responses_fields(at.key("responses"), responses, found);
-    for_each_item(at.key("callbacks"), callbacks, found, callback_fields);
-    servers_fields(at.key("servers"), servers, found);
 }
 
 fn request_body_fields(at: At<'_>, body: &RequestBody, found: &mut Found<'_>) {
@@ -415,16 +415,15 @@ fn content_entry_fields(at: At<'_>, entry: &RefOr<MediaType>, found: &mut Found<
 
 fn responses_fields(at: At<'_>, responses: &Responses, found: &mut Found<'_>) {
     let Responses {
-        default_response,
-        responses,
+        default_response: _,
+        responses: _,
         extensions,
     } = responses;
 
     check(at, extensions, found);
-    if let Some(default) = default_response.as_ref().and_then(RefOr::as_item) {
-        response_fields(at.key("default"), default, found);
+    for (key, response) in responses.entries() {
+        response_fields(at.key(key), response, found);
     }
-    for_each_item(at, responses, found, response_fields);
 }
 
 fn response_fields(at: At<'_>, response: &Response, found: &mut Found<'_>) {
@@ -442,16 +441,13 @@ fn response_fields(at: At<'_>, response: &Response, found: &mut Found<'_>) {
         found.undescribed_responses.push(at.pointer());
     }
     check(at, extensions, found);
-    for_each_item(at.key("headers"), headers, found, header_fields);
+    visit::inline_items(at.key("headers"), headers, |at, header| {
+        header_fields(at, header, found);
+    });
     content_fields(at.key("content"), content, found);
-    for_each_item(at.key("links"), links, found, link_fields);
-}
-
-fn callback_fields(at: At<'_>, callback: &Callback, found: &mut Found<'_>) {
-    let Callback { items, extensions } = callback;
-
-    check(at, extensions, found);
-    for_each_item(at, items, found, path_item_fields);
+    visit::inline_items(at.key("links"), links, |at, link| {
+        link_fields(at, link, found);
+    });
 }
 
 /// `Link` keeps its target private, and the target is a string.
@@ -469,7 +465,9 @@ fn example_fields(at: At<'_>, example: &Example, found: &mut Found<'_>) {
 
 fn examples_fields(at: At<'_>, examples: Option<&Examples>, found: &mut Found<'_>) {
     if let Some(Examples::Named(examples)) = examples {
-        for_each_item(at.key("examples"), examples, found, example_fields);
+        visit::inline_items(at.key("examples"), examples, |at, example| {
+            example_fields(at, example, found);
+        });
     }
 }
 
@@ -550,7 +548,9 @@ fn encoding_fields(at: At<'_>, encoding: &Encoding, found: &mut Found<'_>) {
     } = encoding;
 
     check(at, extensions, found);
-    for_each_item(at.key("headers"), headers, found, header_fields);
+    visit::inline_items(at.key("headers"), headers, |at, header| {
+        header_fields(at, header, found);
+    });
 
     #[cfg(feature = "openapi32")]
     {

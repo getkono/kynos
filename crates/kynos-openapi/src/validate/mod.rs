@@ -60,11 +60,10 @@ impl Validator {
         // Validating as 3.2 refuses the walk's unrecognised fields alone, since
         // both versions require an extension's name to begin with `x-`.
         if self.version.supports_3_2() {
-            for field in crate::emit::downgrade::unrecognised_fields(document) {
-                let (location, name) = holder_and_key(&field);
+            for field in crate::emit::downgrade::unrecognised::walk(document).fields {
                 violations.push(Violation::error(
-                    location,
-                    SpecError::InvalidExtensionName { name },
+                    field.holder,
+                    SpecError::InvalidExtensionName { name: field.name },
                 ));
             }
         } else {
@@ -106,13 +105,6 @@ impl Validator {
 
         violations
     }
-}
-
-/// Splits a field's pointer into its holding object's pointer and the field's
-/// name, unescaped: the location and name every extension-name violation uses.
-fn holder_and_key(pointer: &str) -> (&str, String) {
-    let (holder, token) = pointer.rsplit_once('/').unwrap_or(("#", pointer));
-    (holder, token.replace("~1", "/").replace("~0", "~"))
 }
 
 impl Document {

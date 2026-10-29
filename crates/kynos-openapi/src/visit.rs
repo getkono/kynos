@@ -41,6 +41,9 @@ pub(crate) trait Visit<'doc> {
     /// The same operation, once its callbacks are walked.
     fn operation_walked(&mut self, _at: At<'_>, _operation: &'doc Operation) {}
 
+    /// A callback given inline, before its entries.
+    fn callback(&mut self, _at: At<'_>, _callback: &'doc Callback) {}
+
     /// One entry of a callback, before the Path Item it holds, which is
     /// walked only where it is written inline.
     fn callback_entry(&mut self, _at: At<'_>, _expression: &'doc str) {}
@@ -85,6 +88,7 @@ pub(crate) fn path_item<'doc>(at: At<'_>, item: &'doc PathItem, visit: &mut impl
 
 /// One callback's Path Items, and everything below them.
 pub(crate) fn callback<'doc>(at: At<'_>, callback: &'doc Callback, visit: &mut impl Visit<'doc>) {
+    visit.callback(at, callback);
     for (expression, entry) in &callback.items {
         let at = at.key(expression);
         visit.callback_entry(at, expression);
