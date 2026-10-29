@@ -4,7 +4,7 @@
 //! the trait that refused it.
 
 use proc_macro2::{Span, TokenStream as TokenStream2};
-use quote::quote;
+use quote::{ToTokens, quote};
 use syn::{
     Attribute, Data, DataStruct, DeriveInput, Field, Fields, FieldsNamed, GenericArgument, LitStr,
     PathArguments, Type, spanned::Spanned,
@@ -256,6 +256,16 @@ pub(crate) fn names_const(names: &[String]) -> TokenStream2 {
     quote! {
         const NAMES: &'static [&'static str] = &[#(#literals),*];
     }
+}
+
+/// A value the declaration may not have given, as the `Option` an expansion
+/// passes it as, named by its absolute path so no `Some` or `None` in the
+/// user's scope stands in for it.
+pub(crate) fn optional(value: Option<impl ToTokens>) -> TokenStream2 {
+    value.map_or_else(
+        || quote!(::core::option::Option::None),
+        |value| quote!(::core::option::Option::Some(#value)),
+    )
 }
 
 /// How two wire names of one location are compared.

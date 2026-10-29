@@ -51,7 +51,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, Ident, LitStr, Type, parse_macro_input, parse_quote};
 
-use crate::derive::common::{doc_string, unit_struct};
+use crate::derive::common::{doc_string, optional, unit_struct};
 use args::{Carrier, Nested, SchemeArgs, parse_args};
 use flow::{build_flow, flow_named};
 
@@ -97,7 +97,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let declared = args
         .name
         .unwrap_or_else(|| LitStr::new(&name.to_string(), name.span()));
-    let credential: Type = args
+    let credential = args
         .credential
         .unwrap_or_else(|| parse_quote!(::std::string::String));
 
@@ -274,10 +274,7 @@ fn describe(args: &SchemeArgs, kind: &Ident, input: &DeriveInput) -> proc_macro2
 /// through the model's constructors so no 3.2-only field is named here.
 fn of_kind(args: &SchemeArgs, kind: &Ident) -> proc_macro2::TokenStream {
     let optional = |value: Option<&LitStr>| {
-        value.map_or_else(
-            || quote!(::core::option::Option::None),
-            |value| quote!(::core::option::Option::Some(::std::string::String::from(#value))),
-        )
+        optional(value.map(|value| quote!(::std::string::String::from(#value))))
     };
     let text = |value: Option<&LitStr>| value.map_or_else(String::new, LitStr::value);
 
