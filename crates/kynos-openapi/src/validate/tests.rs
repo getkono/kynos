@@ -2957,6 +2957,64 @@ fn the_device_authorization_flow_must_declare_its_required_urls() {
     assert_eq!(missing_flow_urls(complete, SpecVersion::V3_2), []);
 }
 
+/// The locations of every error `version` reports for an `apiKey` scheme
+/// declared as `Key` and carried `in` `location`.
+fn api_key_location_errors(
+    location: crate::model::parameter::ParameterIn,
+    version: SpecVersion,
+) -> Vec<String> {
+    let mut document = document_with(&[]);
+    document.components.security_schemes.insert(
+        "Key".to_owned(),
+        crate::RefOr::Item(
+            serde_json::from_value(serde_json::json!({
+                "type": "apiKey",
+                "name": "k",
+                "in": location.as_str(),
+            }))
+            .expect("an apiKey scheme parses whatever its location"),
+        ),
+    );
+    Validator::new(version)
+        .validate(&document)
+        .into_iter()
+        .filter(|v| v.severity == super::Severity::Error)
+        .map(|v| v.location)
+        .collect()
+}
+
+/// `references/3.1.2.md:3958` and `references/3.2.0.md:4577` allow an `apiKey`
+/// scheme only `"query"`, `"header"` or `"cookie"`. A path parameter is
+/// excluded in both versions, and so is 3.2's `querystring`, which names the
+/// whole query string rather than one key in it.
+#[test]
+fn an_api_key_is_carried_only_in_a_query_header_or_cookie() {
+    use crate::model::parameter::ParameterIn;
+
+    let illegal = "#/components/securitySchemes/Key/in";
+    let mut cases = vec![
+        (ParameterIn::Query, SpecVersion::V3_1, None),
+        (ParameterIn::Header, SpecVersion::V3_1, None),
+        (ParameterIn::Cookie, SpecVersion::V3_1, None),
+        (ParameterIn::Path, SpecVersion::V3_1, Some(illegal)),
+    ];
+    #[cfg(feature = "openapi32")]
+    cases.extend([
+        (ParameterIn::Query, SpecVersion::V3_2, None),
+        (ParameterIn::Path, SpecVersion::V3_2, Some(illegal)),
+        (ParameterIn::Querystring, SpecVersion::V3_2, Some(illegal)),
+        (ParameterIn::Querystring, SpecVersion::V3_1, Some(illegal)),
+    ]);
+    for (location, version, expected) in cases {
+        assert_eq!(
+            api_key_location_errors(location, version),
+            Vec::from_iter(expected.map(str::to_owned)),
+            "an apiKey `in` `{}` under {version:?}",
+            location.as_str(),
+        );
+    }
+}
+
 #[test]
 fn an_unconstrained_schema_is_a_warning_not_an_error() {
     let mut operation = Operation::new("ingest").with_responses(ok_responses());
