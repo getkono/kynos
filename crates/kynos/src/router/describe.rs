@@ -34,12 +34,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     ///
     /// Returns [`Error::Invalid`] if the router cannot be described at all.
     ///
-    /// Before any of that, returns [`Error::Middleware`] for an interceptor
-    /// configured with a combination it cannot honour, [`Error::Link`] for a
-    /// `Link` to an operation no URI can be rendered for, and
-    /// [`Error::Schema`], [`Error::KeyPattern`] or [`Error::Contribution`] for a
-    /// component name, map key `pattern` or security scheme the registry
-    /// refuses.
+    /// Before any of that, returns what
+    /// [describing a router refuses first](Error#what-describing-a-router-refuses-first).
     pub fn validate(&self) -> Result<Vec<Violation<RouterError>>>
     where
         C: 'static,
@@ -63,12 +59,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// it, in every build, for a key without the `x-` prefix in any object's
     /// `extensions`, such as the `Info` given to [`info`](Router::info).
     ///
-    /// Before any of that, returns [`Error::Middleware`] for an interceptor
-    /// configured with a combination it cannot honour, [`Error::Link`] for a
-    /// `Link` to an operation no URI can be rendered for, and
-    /// [`Error::Schema`], [`Error::KeyPattern`] or [`Error::Contribution`] for a
-    /// component name, map key `pattern` or security scheme the registry
-    /// refuses.
+    /// Before any of that, returns what
+    /// [describing a router refuses first](Error#what-describing-a-router-refuses-first).
     pub fn openapi(&self) -> Result<Document>
     where
         C: 'static,
@@ -89,12 +81,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// construct `version` cannot express — a Server-Sent Events response
     /// requested as 3.1, say.
     ///
-    /// Before any of that, returns [`Error::Middleware`] for an interceptor
-    /// configured with a combination it cannot honour, [`Error::Link`] for a
-    /// `Link` to an operation no URI can be rendered for, and
-    /// [`Error::Schema`], [`Error::KeyPattern`] or [`Error::Contribution`] for a
-    /// component name, map key `pattern` or security scheme the registry
-    /// refuses.
+    /// Before any of that, returns what
+    /// [describing a router refuses first](Error#what-describing-a-router-refuses-first).
     pub fn openapi_as(&self, version: SpecVersion) -> Result<Document>
     where
         C: 'static,
@@ -113,12 +101,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     ///
     /// Returns [`Error::Invalid`] with every violation found.
     ///
-    /// Before any of that, returns [`Error::Middleware`] for an interceptor
-    /// configured with a combination it cannot honour, [`Error::Link`] for a
-    /// `Link` to an operation no URI can be rendered for, and
-    /// [`Error::Schema`], [`Error::KeyPattern`] or [`Error::Contribution`] for a
-    /// component name, map key `pattern` or security scheme the registry
-    /// refuses.
+    /// Before any of that, returns what
+    /// [describing a router refuses first](Error#what-describing-a-router-refuses-first).
     pub fn build(self, context: C) -> Result<Service<C>>
     where
         C: Send + Sync + 'static,
