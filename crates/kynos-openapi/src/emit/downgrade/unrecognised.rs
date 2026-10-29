@@ -4,6 +4,8 @@
 //! A flattened [`Extensions`] keeps any key its object leaves unclaimed,
 //! including every 3.2 field in a build without `openapi32`. A key lacking the
 //! `x-` prefix is no extension and 3.1 cannot read it, so each is reported.
+//! Since the walk reaches every such map, it also collects each name carrying
+//! a prefix the OpenAPI Initiative reserves, which validation warns about.
 //!
 //! The model holds the three relaxations in every build: a response without a
 //! `description`, which 3.1 requires; a security requirement naming a scheme
@@ -46,6 +48,10 @@ use crate::{
 pub(crate) struct Found<'d> {
     /// Each field without the `x-` prefix kept in an `extensions` map.
     pub(crate) fields: Vec<Field>,
+    /// Each `x-oai-` or `x-oas-` name kept in an `extensions` map: an
+    /// extension, so no obstacle to 3.1, but one only the OpenAPI Initiative
+    /// may define.
+    pub(crate) reserved: Vec<Field>,
     /// Each inline response without a `description`, at the response itself.
     pub(crate) undescribed_responses: Vec<String>,
     /// Each security requirement name that is a scheme URI, at the name.
@@ -56,7 +62,7 @@ pub(crate) struct Found<'d> {
     schemes: &'d Map<RefOr<SecurityScheme>>,
 }
 
-/// A field without the `x-` prefix: the object holding it, and its name.
+/// A field named in an `extensions` map: the object holding it, and its name.
 ///
 /// Kept apart, since validation reports the name at its holder and emission
 /// at the field's own pointer.
@@ -74,15 +80,21 @@ impl Field {
     }
 }
 
-/// Reports each key of `extensions` that lacks the `x-` prefix.
+/// Reports each key of `extensions` that lacks the `x-` prefix, and each that
+/// carries a reserved one.
 fn check(at: At<'_>, extensions: &Extensions, found: &mut Found<'_>) {
     for key in extensions.0.keys() {
-        if !key.starts_with(EXTENSION_PREFIX) {
-            found.fields.push(Field {
-                holder: at.pointer(),
-                name: key.clone(),
-            });
-        }
+        let kind = if !key.starts_with(EXTENSION_PREFIX) {
+            &mut found.fields
+        } else if !Extensions::is_valid_name(key) {
+            &mut found.reserved
+        } else {
+            continue;
+        };
+        kind.push(Field {
+            holder: at.pointer(),
+            name: key.clone(),
+        });
     }
 }
 
@@ -101,6 +113,7 @@ fn security_fields(at: At<'_>, requirements: &[SecurityRequirement], found: &mut
 pub(crate) fn walk(document: &Document) -> Found<'_> {
     let mut found = Found {
         fields: Vec::new(),
+        reserved: Vec::new(),
         undescribed_responses: Vec::new(),
         scheme_uris: Vec::new(),
         media_type_refs: Vec::new(),
@@ -619,11 +632,12 @@ fn oauth_flows_fields(at: At<'_>, flows: &OAuthFlows, found: &mut Found<'_>) {
     }
 }
 
-/// The two objects a Schema Object holds that carry `extensions`, at any
-/// depth.
+/// The two objects a Schema Object holds that carry `extensions`, and the
+/// reserved names among its own keywords, at any depth.
 ///
-/// Its own [`SchemaObject::unknown_keywords`] are not reported: a Schema Object
-/// alone may hold fields without the `x-` prefix.
+/// Its own [`SchemaObject::unknown_keywords`] lacking the `x-` prefix are not
+/// reported: a Schema Object alone may hold them. Those carrying it are its
+/// extensions, so a reserved one is collected as any other object's is.
 fn schema_fields(at: At<'_>, schema: &Schema, found: &mut Found<'_>) {
     let Schema::Object(object) = schema else {
         return;
@@ -694,8 +708,10 @@ fn schema_fields(at: At<'_>, schema: &Schema, found: &mut Found<'_>) {
         xml,
         external_docs,
         example: _,
-        unknown_keywords: _,
+        unknown_keywords,
     } = &**object;
+
+    reserved_keywords(at, unknown_keywords, found);
 
     if let Some(discriminator) = discriminator {
         let Discriminator {
@@ -722,4 +738,17 @@ fn schema_fields(at: At<'_>, schema: &Schema, found: &mut Found<'_>) {
     }
 
     object.for_each_subschema(at, |at, subschema| schema_fields(at, subschema, found));
+}
+
+/// Collects each reserved extension name among a Schema Object's own
+/// `keywords`.
+fn reserved_keywords<V>(at: At<'_>, keywords: &Map<V>, found: &mut Found<'_>) {
+    for key in keywords.keys() {
+        if key.starts_with(EXTENSION_PREFIX) && !Extensions::is_valid_name(key) {
+            found.reserved.push(Field {
+                holder: at.pointer(),
+                name: key.clone(),
+            });
+        }
+    }
 }

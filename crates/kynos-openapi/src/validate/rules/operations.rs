@@ -19,7 +19,6 @@ use crate::{
         rules::{
             content::{check_request_body, check_response},
             document::check_server_list,
-            extensions::check_extensions,
             parameters::check_parameter_list,
             paths::{Items, check_path_correspondence},
         },
@@ -125,8 +124,6 @@ impl<'doc> Items<'doc, '_> {
             check_path_correspondence(location, template, item, operation, components, violations);
         }
         check_operation_content(at, operation, components, violations);
-
-        check_extensions(location, &operation.extensions, violations);
     }
 }
 
