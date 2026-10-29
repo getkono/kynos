@@ -26,16 +26,13 @@
 //! own statuses, joining the entry of any variant declaring one. A description
 //! it carries stands unless the variant gives one.
 
-use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{quote, quote_spanned};
-use syn::{
-    Attribute, Data, DeriveInput, Fields, LitInt, LitStr, Variant, parse_macro_input,
-    spanned::Spanned,
-};
+use syn::{Attribute, Data, DeriveInput, Fields, LitStr, Variant, spanned::Spanned};
 
-use crate::derive::attribute::key_name;
-use crate::derive::common::{doc_string, optional};
+use crate::derive::attribute::{key_name, status};
+use crate::derive::common::optional;
+use crate::doc::doc_string;
 
 /// The range a reply's status may fall in: final responses only, never 1xx.
 const STATUS_RANGE: std::ops::RangeInclusive<u16> = 200..=599;
@@ -44,15 +41,7 @@ const STATUS_RANGE: std::ops::RangeInclusive<u16> = 200..=599;
 /// 9110 section saying so.
 const WITHOUT_CONTENT: [(u16, &str); 3] = [(204, "15.3.5"), (205, "15.3.6"), (304, "15.4.5")];
 
-pub(crate) fn expand(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as DeriveInput);
-    match expand_inner(&input) {
-        Ok(tokens) => tokens.into(),
-        Err(error) => error.to_compile_error().into(),
-    }
-}
-
-pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     // A closed set of responses needs an enum; one status is a status wrapper.
     let data = match &input.data {
         Data::Enum(data) => data,
@@ -323,28 +312,12 @@ fn parse_reply(attrs: &[Attribute]) -> syn::Result<ReplyArgs> {
         attr.parse_nested_meta(|meta| {
             let key = key_name(&meta.path);
             match key.as_str() {
-                "status" => {
-                    let literal: LitInt = meta.value()?.parse()?;
-                    let code: u16 = literal.base10_parse()?;
-                    if !STATUS_RANGE.contains(&code) {
-                        return Err(syn::Error::new(
-                            literal.span(),
-                            format!(
-                                "a handler returns the final response, so its status is between {} \
-                                 and {}; `{code}` is not",
-                                STATUS_RANGE.start(),
-                                STATUS_RANGE.end()
-                            ),
-                        ));
-                    }
-                    if args.status.is_some() {
-                        return Err(syn::Error::new(
-                            literal.span(),
-                            "this already declares a status, and a response has one",
-                        ));
-                    }
-                    args.status = Some((code, literal.span()));
-                }
+                "status" => status(
+                    &meta,
+                    STATUS_RANGE,
+                    "a handler returns the final response",
+                    &mut args.status,
+                )?,
                 "description" => {
                     let literal = meta.value()?.parse::<LitStr>()?;
                     if args.description.is_some() {

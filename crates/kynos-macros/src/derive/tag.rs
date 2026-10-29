@@ -16,13 +16,15 @@
 //! outside the grammar, and a member written twice, are refused for the same
 //! reason.
 
-use proc_macro::TokenStream;
 use quote::quote;
-use syn::{DeriveInput, LitStr, Type, parse_macro_input, spanned::Spanned};
+use syn::{DeriveInput, LitStr, Type};
 
-use crate::derive::{
-    attribute::key_name,
-    common::{doc_string, unit_struct},
+use crate::{
+    derive::{
+        attribute::{Keys, unknown},
+        common::unit_struct,
+    },
+    doc::doc_string,
 };
 
 /// What the attribute said, before it becomes a tag.
@@ -35,15 +37,7 @@ struct TagArgs {
     kind: Option<LitStr>,
 }
 
-pub(crate) fn expand(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as DeriveInput);
-    match expand_inner(&input) {
-        Ok(tokens) => tokens.into(),
-        Err(error) => error.to_compile_error().into(),
-    }
-}
-
-pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     unit_struct(input, "Tag", "names a group of operations")?;
 
     let name = &input.ident;
@@ -56,7 +50,6 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         .name
         .unwrap_or_else(|| LitStr::new(&name.to_string(), name.span()));
 
-    // Falls back to the doc comment.
     let described = args
         .description
         .map(|text| text.value())
@@ -133,35 +126,22 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
 /// and a key written twice across them.
 fn parse_args(input: &DeriveInput) -> syn::Result<TagArgs> {
     let mut args = TagArgs::default();
-    let mut seen: Vec<String> = Vec::new();
+    let mut keys = Keys::new("is already set, and `#[tag(...)]` takes each key once");
 
     for attr in &input.attrs {
         if !attr.path().is_ident("tag") {
             continue;
         }
         attr.parse_nested_meta(|meta| {
-            let key = key_name(&meta.path);
-            if seen.contains(&key) {
-                return Err(syn::Error::new(
-                    meta.path.span(),
-                    format!("`{key}` is already set, and `#[tag(...)]` takes each key once"),
-                ));
-            }
-
+            let key = keys.read(&meta.path)?;
             match key.as_str() {
                 "name" => args.name = Some(meta.value()?.parse()?),
                 "summary" => args.summary = Some(meta.value()?.parse()?),
                 "description" => args.description = Some(meta.value()?.parse()?),
                 "parent" => args.parent = Some(meta.value()?.parse()?),
                 "kind" => args.kind = Some(meta.value()?.parse()?),
-                _ => {
-                    return Err(syn::Error::new(
-                        meta.path.span(),
-                        format!("`{key}` is not part of the `#[tag(...)]` grammar"),
-                    ));
-                }
+                _ => return Err(unknown(&meta.path, &key, "the `#[tag(...)]` grammar")),
             }
-            seen.push(key);
             Ok(())
         })?;
     }

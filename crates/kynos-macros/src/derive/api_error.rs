@@ -39,23 +39,14 @@ mod args;
 mod emit;
 mod outcomes;
 
-use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{ToTokens, quote, quote_spanned};
-use syn::{Data, DeriveInput, ExprPath, Ident, Member, Type, parse_macro_input, spanned::Spanned};
+use syn::{Data, DeriveInput, ExprPath, Ident, Member, Type, spanned::Spanned};
 
 use emit::{codes, distinct_statuses, into_problem, into_response, responses};
 use outcomes::outcomes;
 
-pub(crate) fn expand(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as DeriveInput);
-    match expand_inner(&input) {
-        Ok(tokens) => tokens.into(),
-        Err(error) => error.to_compile_error().into(),
-    }
-}
-
-pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
+pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
     if let Data::Union(data) = &input.data {
         return Err(syn::Error::new(
             data.union_token.span(),

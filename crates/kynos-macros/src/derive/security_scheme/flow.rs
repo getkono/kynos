@@ -5,7 +5,7 @@ use quote::quote;
 use syn::{Ident, LitStr, Token, spanned::Spanned};
 
 use super::args::Nested;
-use crate::derive::attribute::key_name;
+use crate::derive::attribute::{Keys, unknown};
 
 /// Every OAuth 2.0 flow, and the URLs its own grant cannot work without.
 ///
@@ -87,10 +87,10 @@ impl FlowArgs {
 pub(super) fn build_flow(flow: &FlowArgs) -> proc_macro2::TokenStream {
     let scopes = flow.scopes.iter().map(|(name, described)| {
         // An undescribed scope maps to the empty string, as the spec's examples do.
-        let text = described.as_ref().map_or_else(String::new, LitStr::value);
+        let described = super::text(described.as_ref());
         quote! {(
             <::std::string::String as ::core::convert::From<_>>::from(#name),
-            <::std::string::String as ::core::convert::From<_>>::from(#text),
+            <::std::string::String as ::core::convert::From<_>>::from(#described),
         )}
     });
 
@@ -157,16 +157,12 @@ pub(super) fn read_flow(
 
     let mut args = FlowArgs::default();
     if option.input.peek(syn::token::Paren) {
-        let mut seen: Vec<String> = Vec::new();
+        let mut keys = Keys::new(format!(
+            "is already set, and `{name}(...)` takes each key once"
+        ));
         option.parse_nested_meta(|field| {
-            let key = key_name(&field.path);
+            let key = keys.read(&field.path)?;
             let span = field.path.span();
-            if seen.contains(&key) {
-                return Err(syn::Error::new(
-                    span,
-                    format!("`{key}` is already set, and `{name}(...)` takes each key once"),
-                ));
-            }
             match key.as_str() {
                 // The OAuth Flow Object applies the key to the device grant
                 // alone, the one flow whose row requires it.
@@ -202,13 +198,13 @@ pub(super) fn read_flow(
                     args.scopes.extend(scopes);
                 }
                 _ => {
-                    return Err(syn::Error::new(
-                        span,
-                        format!("`{key}` is not part of the `{name}(...)` grammar"),
+                    return Err(unknown(
+                        &field.path,
+                        &key,
+                        &format!("the `{name}(...)` grammar"),
                     ));
                 }
             }
-            seen.push(key);
             Ok(())
         })?;
     }

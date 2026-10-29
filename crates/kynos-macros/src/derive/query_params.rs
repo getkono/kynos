@@ -1,23 +1,14 @@
 //! `#[derive(QueryParams)]`.
 
-use proc_macro::TokenStream;
 use quote::quote;
-use syn::{DeriveInput, Ident, parse_macro_input};
+use syn::{DeriveInput, Ident};
 
 use crate::derive::{
     common::{NameCase, named_fields, reject_duplicate_names, wire_names},
-    params::{Param, check_field, construct, decode_field, parameters_body, query_encode_body},
+    params::{Param, check_field, construct, decode_field, parameters_body, render},
 };
 
-pub(crate) fn expand(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as DeriveInput);
-    match expand_inner(&input) {
-        Ok(tokens) => tokens.into(),
-        Err(error) => error.to_compile_error().into(),
-    }
-}
-
-fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = named_fields(input, "QueryParams")?;
     let names = wire_names(input, fields, "param")?;
     reject_duplicate_names(fields, &names, "query parameter", NameCase::Sensitive)?;
@@ -65,9 +56,8 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         &quote!(::kynos::openapi::ParameterIn::Query),
         false,
     );
-    let encode = query_encode_body(&params);
+    let encode = encode_body(&params);
 
-    // Three implementations, one per direction plus the description.
     Ok(quote! {
         impl #impl_generics ::kynos::extract::params::query::QueryParams
             for #name #ty_generics #where_clause
@@ -145,4 +135,32 @@ fn query_slots(params: &[Param<'_>]) -> proc_macro2::TokenStream {
 /// to.
 fn query_slot(index: usize) -> Ident {
     quote::format_ident!("__kynos_query_{index}")
+}
+
+/// The `EncodeQuery::encode` body.
+///
+/// An absent optional parameter is omitted rather than written empty. Each
+/// name and value is encoded by `kynos::__private::uri::encode_query_component`,
+/// so it round-trips through the decoder [`query_slots`] writes.
+fn encode_body(params: &[Param<'_>]) -> proc_macro2::TokenStream {
+    let entries = params.iter().map(|param| {
+        let name = param.name();
+        let rendered = render(param);
+        quote! {
+            if let ::core::option::Option::Some(value) = #rendered {
+                if !query.is_empty() {
+                    query.push('&');
+                }
+                query.push_str(&::kynos::__private::uri::encode_query_component(#name));
+                query.push('=');
+                query.push_str(&::kynos::__private::uri::encode_query_component(&value));
+            }
+        }
+    });
+
+    quote! {
+        let mut query = ::std::string::String::new();
+        #(#entries)*
+        query
+    }
 }

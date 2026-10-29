@@ -1864,6 +1864,28 @@ fn a_query_value_that_is_not_utf8_is_refused_naming_its_parameter() {
     }
 }
 
+/// The derived encoder writes each present pair under its wire name, every
+/// octet outside RFC 3986 `unreserved` escaped in both halves, and omits an
+/// absent optional one; what it writes decodes back to the group it encoded.
+#[test]
+fn a_derived_query_encoder_escapes_each_component_and_round_trips() {
+    use kynos::extract::params::query::{DecodeQuery, EncodeQuery};
+
+    let group = Named {
+        name: "a b+c&d=\u{e9}".to_owned(),
+        note: None,
+        sort: Some("x~y.z_-".to_owned()),
+    };
+    let encoded = group.encode();
+
+    assert_eq!(encoded, "name=a%20b%2Bc%26d%3D%C3%A9&sortBy=x~y.z_-");
+    let decoded = <Named as DecodeQuery>::decode(Some(&encoded)).expect("what it encoded");
+    assert_eq!(
+        (decoded.name, decoded.note, decoded.sort),
+        (group.name, group.note, group.sort)
+    );
+}
+
 /// A group declaring no parameter.
 #[derive(Schema, QueryParams)]
 struct Unparameterised {}

@@ -1,9 +1,6 @@
-//! Reading the attributes already on a handler: its doc comment, and whether it
-//! is deprecated.
+//! Reading a handler's doc comment as an operation's summary and description.
 
-use syn::{ItemFn, Meta};
-
-use crate::route::args::expect_str;
+use crate::doc::doc_markdown;
 
 /// Splits a doc comment into its summary and description.
 ///
@@ -11,10 +8,9 @@ use crate::route::args::expect_str;
 /// `description`, matching how the specification distinguishes the two. The
 /// summary is plain text, so its lines join into one; the description is
 /// CommonMark, so it keeps the indentation its Markdown depends on, less what
-/// every line of the comment shares (see
-/// [`doc_markdown`](crate::derive::common::doc_markdown)).
+/// every line of the comment shares (see [`doc_markdown`]).
 pub(crate) fn split_doc(texts: &[String]) -> (Option<String>, Option<String>) {
-    let lines = crate::derive::common::doc_markdown(texts);
+    let lines = doc_markdown(texts);
     let first_blank = lines.iter().position(|line| line.is_empty());
     let (summary, rest) = match first_blank {
         Some(index) => (&lines[..index], &lines[index + 1..]),
@@ -32,30 +28,4 @@ pub(crate) fn split_doc(texts: &[String]) -> (Option<String>, Option<String>) {
         (!summary.is_empty()).then_some(summary),
         (!rest.is_empty()).then(|| rest.to_owned()),
     )
-}
-
-/// Collects the text of every `#[doc]` attribute on an item.
-pub(crate) fn doc_lines(function: &ItemFn) -> Vec<String> {
-    function
-        .attrs
-        .iter()
-        .filter_map(|attribute| {
-            let Meta::NameValue(pair) = &attribute.meta else {
-                return None;
-            };
-            if !pair.path.is_ident("doc") {
-                return None;
-            }
-            expect_str(&pair.value).ok().map(|literal| literal.value())
-        })
-        .collect()
-}
-
-/// Whether the handler carries `#[deprecated]`, which becomes
-/// `Operation.deprecated`.
-///
-/// Delegates to [`crate::derive::common::is_deprecated`] so an operation and a
-/// schema answer the question the same way.
-pub(crate) fn is_deprecated(function: &ItemFn) -> bool {
-    crate::derive::common::is_deprecated(&function.attrs)
 }

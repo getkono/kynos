@@ -1,20 +1,14 @@
 //! `#[derive(Provider)]`.
 
-use proc_macro::TokenStream;
 use quote::quote;
-use syn::{DeriveInput, Field, Type, parse_macro_input, spanned::Spanned};
+use syn::{DeriveInput, Field, spanned::Spanned};
 
-use crate::derive::{attribute::key_name, common::named_fields};
+use crate::derive::{
+    attribute::{Keys, compact, unknown},
+    common::named_fields,
+};
 
-pub(crate) fn expand(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as DeriveInput);
-    match expand_inner(&input) {
-        Ok(tokens) => tokens.into(),
-        Err(error) => error.to_compile_error().into(),
-    }
-}
-
-pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = named_fields(input, "Provider")?;
 
     let mut provided: Vec<&Field> = Vec::new();
@@ -52,23 +46,15 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
 /// second `skip`, is refused rather than leaving the field provided.
 fn is_skipped(field: &Field) -> syn::Result<bool> {
     let mut skipped = false;
+    let mut keys = Keys::new("is already set, and `#[provide(...)]` takes each key once");
     for attr in &field.attrs {
         if !attr.path().is_ident("provide") {
             continue;
         }
         attr.parse_nested_meta(|meta| {
-            let key = key_name(&meta.path);
+            let key = keys.read(&meta.path)?;
             if key != "skip" {
-                return Err(syn::Error::new(
-                    meta.path.span(),
-                    format!("`{key}` is not part of the `#[provide(...)]` grammar"),
-                ));
-            }
-            if skipped {
-                return Err(syn::Error::new(
-                    meta.path.span(),
-                    "`skip` is already set, and `#[provide(...)]` takes each key once",
-                ));
+                return Err(unknown(&meta.path, &key, "the `#[provide(...)]` grammar"));
             }
             skipped = true;
             Ok(())
@@ -81,10 +67,12 @@ fn is_skipped(field: &Field) -> syn::Result<bool> {
 /// refused here so the error names both fields.
 fn reject_duplicate_types(provided: &[&Field]) -> syn::Result<()> {
     for (index, field) in provided.iter().enumerate() {
-        let rendered = render(&field.ty);
+        // Compared as written; differing spellings of one type fall through
+        // to coherence.
+        let rendered = compact(&field.ty);
         if let Some(earlier) = provided[..index]
             .iter()
-            .position(|seen| render(&seen.ty) == rendered)
+            .position(|seen| compact(&seen.ty) == rendered)
         {
             let first = provided[earlier]
                 .ident
@@ -122,7 +110,7 @@ fn reject_type_parameter_fields(input: &DeriveInput, provided: &[&Field]) -> syn
         .collect();
 
     for field in provided {
-        let rendered = render(&field.ty);
+        let rendered = compact(&field.ty);
         if !parameters.contains(&rendered) {
             continue;
         }
@@ -140,10 +128,4 @@ fn reject_type_parameter_fields(input: &DeriveInput, provided: &[&Field]) -> syn
         ));
     }
     Ok(())
-}
-
-/// A type as written, normalized enough to compare two spellings; differing
-/// spellings of one type fall through to coherence.
-fn render(ty: &Type) -> String {
-    quote!(#ty).to_string().replace(' ', "")
 }

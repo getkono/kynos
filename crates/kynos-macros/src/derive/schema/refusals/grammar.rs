@@ -5,7 +5,7 @@
 use proc_macro2::Span;
 use syn::{DeriveInput, Field, Fields, Lit, LitStr, Type, spanned::Spanned};
 
-use crate::derive::attribute::key_name;
+use crate::derive::attribute::{Keys, key_name};
 use crate::derive::common::non_token_message;
 use crate::derive::schema::{
     COUNTS, Container, NUMERIC,
@@ -32,12 +32,15 @@ pub(super) fn check_constraints(input: &DeriveInput) -> syn::Result<()> {
         let mut opened: Option<Span> = None;
 
         for field in named {
-            // Across every list on the field, so a second cannot overwrite the first.
-            let mut seen: Vec<String> = Vec::new();
+            // A second `as` is left to `check_described_as`, which names the
+            // type it duplicates.
+            let mut keys =
+                Keys::new("is already set, and a field's `#[schema(...)]` takes each key once")
+                    .except(|key| key == "as");
             for attr in &field.attrs {
                 if attr.path().is_ident("schema") {
                     attr.parse_nested_meta(|meta| {
-                        check_once(&meta.path, &mut seen)?;
+                        keys.read(&meta.path)?;
                         check_constraint(&meta)
                     })?;
                 }
@@ -138,21 +141,6 @@ fn enforceable(pattern: &LitStr) -> Result<(), String> {
                 .to_owned(),
         )
     }
-}
-
-/// Refuses a key `seen` already holds among the field's keys so far, and
-/// records it otherwise. A second `as` is left to `check_described_as`, which
-/// names the type it duplicates.
-fn check_once(path: &syn::Path, seen: &mut Vec<String>) -> syn::Result<()> {
-    let name = key_name(path);
-    if name != "as" && seen.contains(&name) {
-        return Err(syn::Error::new(
-            path.span(),
-            format!("`{name}` is already set, and a field's `#[schema(...)]` takes each key once"),
-        ));
-    }
-    seen.push(name);
-    Ok(())
 }
 
 /// One `key` or `key = value` inside a field's `#[schema(...)]`.

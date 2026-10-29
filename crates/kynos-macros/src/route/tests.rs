@@ -735,19 +735,21 @@ mod arguments {
     /// It catches the drift that happens -- a rule added without a case -- and
     /// not a case rewritten to reach a site another already covers. Two sites
     /// share a message (`expect_ident` refuses a non-path and a multi-segment
-    /// path in the same words), so the rows are what distinguish them.
+    /// path in the same words), so the rows are what distinguish them. The
+    /// row for a second argument reaches `attribute::Keys::read`, whose site
+    /// the `attribute` ledger counts, so it is left out here.
     #[test]
     fn every_route_argument_diagnostic_has_a_case() {
         const SOURCE: &str = include_str!("args.rs");
+        const IN_ATTRIBUTE: usize = 1;
 
         let sites =
             SOURCE.matches("syn::Error::new(").count() + SOURCE.matches("meta.error(").count();
+        let covered = cases().len() - IN_ATTRIBUTE;
         assert_eq!(
-            cases().len(),
-            sites,
-            "`args.rs` raises {sites} diagnostic(s) and {} have a case; an argument rule added \
-             without one is a rule that can stop firing silently",
-            cases().len()
+            covered, sites,
+            "`args.rs` raises {sites} diagnostic(s) and {covered} have a case; an argument rule \
+             added without one is a rule that can stop firing silently"
         );
     }
 

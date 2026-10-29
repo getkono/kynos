@@ -48,15 +48,15 @@ use attributes::{
 };
 use shape::{enum_body, struct_body};
 
-use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{
     Data, DataEnum, DeriveInput, Field, Fields, Lit, LitFloat, LitInt, LitStr, Type, Variant,
-    ext::IdentExt, parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma,
+    ext::IdentExt, punctuated::Punctuated, spanned::Spanned, token::Comma,
 };
 
-use crate::derive::common::{doc_string, is_deprecated, skip_value};
+use crate::derive::common::skip_value;
+use crate::doc::{doc_string, is_deprecated};
 
 /// Keys taking a number, which may be written as an integer or a float.
 const NUMERIC: &[&str] = &[
@@ -74,15 +74,7 @@ const COUNTS: &[&str] = &["min_length", "max_length", "min_items", "max_items"];
 /// string field and asserted by nothing.
 const ANNOTATIONS: &[&str] = &["content_encoding", "content_media_type"];
 
-pub(crate) fn expand(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as DeriveInput);
-    match expand_inner(&input) {
-        Ok(tokens) => tokens.into(),
-        Err(error) => error.to_compile_error().into(),
-    }
-}
-
-pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     if let Data::Union(data) = &input.data {
         return Err(syn::Error::new(
             data.union_token.span(),
@@ -510,7 +502,9 @@ fn described(schema: TokenStream2, doc: Option<&str>) -> TokenStream2 {
 }
 
 /// The names this derive would describe a struct's fields under, in order.
-/// Shared with [`multipart`](super::multipart) so part and property names agree.
+/// Shared with [`multipart`](super::multipart) so part and property names
+/// agree, and with [`common::wire_names`](super::common::wire_names) so a
+/// parameter's name falls back to the property name.
 pub(super) fn property_names(input: &DeriveInput, fields: &syn::FieldsNamed) -> Vec<String> {
     let container = Container::read(input);
     fields

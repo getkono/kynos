@@ -7,6 +7,8 @@ use syn::{
     spanned::Spanned,
 };
 
+use crate::derive::attribute::Keys;
+
 /// The arguments a route attribute accepts.
 pub(crate) struct RouteArgs {
     pub(crate) path: LitStr,
@@ -25,22 +27,13 @@ impl RouteArgs {
         let mut operation_id = None;
         let mut tag = None;
         let mut catch_panics = false;
-        let mut seen: Vec<String> = Vec::new();
+        // Each argument is read once; a second `tag` has its own word.
+        let mut keys =
+            Keys::new("is already given, and a route attribute takes each argument once")
+                .except(|key| key == "tag");
 
         for item in items {
-            // Each argument is read once; a second `tag` has its own word.
-            if let Some(name) = item.path().get_ident().map(ToString::to_string) {
-                if name != "tag" && seen.contains(&name) {
-                    return Err(syn::Error::new(
-                        item.path().span(),
-                        format!(
-                            "`{name}` is already given, and a route attribute takes each \
-                             argument once"
-                        ),
-                    ));
-                }
-                seen.push(name);
-            }
+            keys.read(item.path())?;
 
             match &item {
                 // A bare flag; `catch_panics` is the only one.

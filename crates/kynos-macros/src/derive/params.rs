@@ -11,9 +11,12 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
 use syn::{Field, FieldsNamed, Ident, Type, spanned::Spanned};
 
-use crate::derive::{
-    common::{doc_string, wrapped},
-    schema::{aliases::named_string, attributes::constraints, check::value_checks},
+use crate::{
+    derive::{
+        common::wrapped,
+        schema::{aliases::named_string, attributes::constraints, check::value_checks},
+    },
+    doc::doc_string,
 };
 
 /// One field of a parameter group, paired with the wire name it occupies.
@@ -292,84 +295,5 @@ pub(crate) fn response_headers_body(params: &[Param<'_>]) -> TokenStream2 {
         let mut headers = ::kynos::openapi::Map::new();
         #(#entries)*
         headers
-    }
-}
-
-/// The `PathParams::encode` body.
-///
-/// One entry per declared name, so every template slot is filled; values are
-/// percent-encoded where the template is rendered. No field is an `Option`,
-/// which the derive refuses, so no slot is filled with nothing.
-pub(crate) fn path_encode_body(params: &[Param<'_>]) -> TokenStream2 {
-    let entries = params.iter().map(|param| {
-        let name = &param.name;
-        let ident = param.ident();
-        let span = param.field.ty.span();
-        quote_spanned! {span=>
-            (#name, ::std::string::ToString::to_string(&self.#ident))
-        }
-    });
-
-    quote!(::std::vec![#(#entries),*])
-}
-
-/// The `QueryParams::encode` body.
-///
-/// An absent optional parameter is omitted rather than written empty.
-pub(crate) fn query_encode_body(params: &[Param<'_>]) -> TokenStream2 {
-    let entries = params.iter().map(|param| {
-        let name = &param.name;
-        let rendered = render(param);
-        quote! {
-            if let ::core::option::Option::Some(value) = #rendered {
-                if !query.is_empty() {
-                    query.push('&');
-                }
-                query.push_str(&encode(#name));
-                query.push('=');
-                query.push_str(&encode(&value));
-            }
-        }
-    });
-
-    let encoder = query_encoder();
-    quote! {
-        #encoder
-        let mut query = ::std::string::String::new();
-        #(#entries)*
-        query
-    }
-}
-
-/// A form-encoder for one query string component, escaping everything outside
-/// RFC 3986's unreserved set so a value round-trips through the decoder
-/// `query_params::query_slots` writes.
-fn query_encoder() -> TokenStream2 {
-    quote! {
-        fn encode(raw: &str) -> ::std::string::String {
-            let mut encoded = ::std::string::String::with_capacity(raw.len());
-            for byte in raw.as_bytes() {
-                match byte {
-                    b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                        encoded.push(<::core::primitive::char as ::core::convert::From<_>>::from(
-                            *byte,
-                        ));
-                    }
-                    other => {
-                        encoded.push('%');
-                        for digit in [other >> 4, other & 0x0f] {
-                            let hex = match digit {
-                                0..=9 => b'0' + digit,
-                                _ => b'A' + digit - 10,
-                            };
-                            encoded.push(
-                                <::core::primitive::char as ::core::convert::From<_>>::from(hex),
-                            );
-                        }
-                    }
-                }
-            }
-            encoded
-        }
     }
 }

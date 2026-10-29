@@ -2,7 +2,10 @@ use crate::{
     __private::{
         path::path_parameter_mismatch,
         problem::{union, union_len},
-        uri::{decode_path_value, encode_ext_value, endpoint_uri_with_path, query_pairs},
+        uri::{
+            decode_path_value, decode_query_component, encode_ext_value, encode_query_component,
+            endpoint_uri_with_path, query_pairs,
+        },
     },
     extract::params::path::{EncodePath, PathParams},
 };
@@ -245,6 +248,42 @@ fn every_ascii_character_in_a_path_value_decodes_back_to_itself() {
             "{byte:#04x} rendered as {segment}"
         );
     }
+}
+
+/// A query component keeps exactly RFC 3986's `unreserved` octets and writes
+/// every other one, each octet of a multi-byte character included, as an
+/// uppercase triplet; the expected text is built from the octet, never from
+/// the encoder.
+#[test]
+fn a_query_component_escapes_every_octet_outside_unreserved() {
+    for byte in 0u8..=0x7f {
+        let character = char::from(byte);
+        let expected = if character.is_ascii_alphanumeric() || "-._~".contains(character) {
+            character.to_string()
+        } else {
+            format!("%{byte:02X}")
+        };
+        assert_eq!(
+            encode_query_component(&character.to_string()),
+            expected,
+            "{byte:#04x}"
+        );
+    }
+    assert_eq!(encode_query_component("\u{e9}"), "%C3%A9");
+    assert!(matches!(
+        encode_query_component("plain-text_1.0~"),
+        std::borrow::Cow::Borrowed("plain-text_1.0~")
+    ));
+}
+
+/// What a component encodes to decodes back to it under the form rules, a
+/// literal `+` and `%` included.
+#[test]
+fn a_query_component_decodes_back_to_what_it_encoded() {
+    let value = "a+b c%25&=?#/\u{e9}";
+    let encoded = encode_query_component(value);
+
+    assert_eq!(decode_query_component(&encoded).as_ref(), value.as_bytes());
 }
 
 /// The pairs `query` carries, as owned octets, for comparing against literals.

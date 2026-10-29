@@ -14,7 +14,7 @@ use super::{
         Base, Position, ProblemArgs, check_field_markers, is_extension, is_headers, parse_problem,
     },
 };
-use crate::derive::common::doc_string;
+use crate::doc::doc_string;
 
 /// Every way the type can fail, read from the `#[problem(...)]` declarations.
 pub(super) fn outcomes(input: &DeriveInput) -> syn::Result<Vec<Outcome>> {

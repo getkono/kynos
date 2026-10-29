@@ -47,23 +47,15 @@
 mod args;
 mod flow;
 
-use proc_macro::TokenStream;
 use quote::quote;
-use syn::{DeriveInput, Ident, LitStr, Type, parse_macro_input, parse_quote};
+use syn::{DeriveInput, Ident, LitStr, Type, parse_quote};
 
-use crate::derive::common::{doc_string, optional, unit_struct};
+use crate::derive::common::{optional, unit_struct};
+use crate::doc::doc_string;
 use args::{Carrier, Nested, SchemeArgs, parse_args};
 use flow::{build_flow, flow_named};
 
-pub(crate) fn expand(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as DeriveInput);
-    match expand_inner(&input) {
-        Ok(tokens) => tokens.into(),
-        Err(error) => error.to_compile_error().into(),
-    }
-}
-
-pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     // A scheme is a marker; the credential type carries the data.
     unit_struct(input, "SecurityScheme", "names a way of authenticating")?;
 
@@ -168,6 +160,11 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     })
 }
 
+/// The text an option was given, or the empty string where it was not.
+fn text(value: Option<&LitStr>) -> String {
+    value.map_or_else(String::new, LitStr::value)
+}
+
 /// Where this kind's credential travels, and the type it reads back as; read
 /// from the same `Nested` as `of_kind`.
 fn carrier_of(
@@ -175,7 +172,6 @@ fn carrier_of(
     kind: &Ident,
 ) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
     let carrier = quote!(::kynos::security::carrier);
-    let text = |value: Option<&LitStr>| value.map_or_else(String::new, LitStr::value);
 
     match kind.to_string().as_str() {
         "basic" => (
@@ -277,7 +273,6 @@ fn of_kind(args: &SchemeArgs, kind: &Ident) -> proc_macro2::TokenStream {
         let from = quote!(<::std::string::String as ::core::convert::From<_>>::from);
         optional(value.map(|value| quote!(#from(#value))))
     };
-    let text = |value: Option<&LitStr>| value.map_or_else(String::new, LitStr::value);
 
     match kind.to_string().as_str() {
         "basic" => quote!(::kynos::openapi::SecurityScheme::basic()),
@@ -367,10 +362,7 @@ fn default_challenge(kind: &Ident, nested: &Nested) -> proc_macro2::TokenStream 
     match kind.to_string().as_str() {
         "bearer" | "oauth2" | "openid_connect" => quote!(::core::option::Option::Some("Bearer")),
         "http" => {
-            let scheme = nested
-                .scheme
-                .as_ref()
-                .map_or_else(String::new, LitStr::value);
+            let scheme = text(nested.scheme.as_ref());
             quote!(::core::option::Option::Some(#scheme))
         }
         "basic" => quote! {
