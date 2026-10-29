@@ -210,10 +210,7 @@ impl<'doc> Visit<'doc> for Blockers<'_> {
         if !item.additional_operations.is_empty() {
             blockers.push(at.key("additionalOperations").pointer());
         }
-
-        // Path-level parameters can carry a 3.2 location too.
         collect_parameters_blockers(at, &item.parameters, blockers);
-
         collect_servers_blockers(at, &item.servers, blockers);
         true
     }
@@ -349,8 +346,6 @@ fn collect_media_type_blockers(at: At<'_>, content: &MediaType, blockers: &mut V
         }
     }
 
-    // The fields above are the Media Type Object's; below, its nested
-    // Encoding, Example and Schema Objects carry 3.2 fields of their own.
     let encodings = at.key("encoding");
     for (property, encoding) in &content.encoding {
         collect_encoding_blockers(encodings.key(property), encoding, blockers);
