@@ -763,7 +763,6 @@ The budget, which may only shrink:
 - `crates/kynos-openapi/src/annotation/mod.rs`
 - `crates/kynos-openapi/src/emit/downgrade/unrecognised.rs`
 - `crates/kynos-openapi/src/emit/downgrade/walk.rs`
-- `crates/kynos-openapi/src/model/parameter/mod.rs`
 - `crates/kynos-openapi/src/model/schema/object.rs`
 - `crates/kynos-openapi/src/pattern.rs`
 - `crates/kynos-openapi/src/validate/violation.rs`

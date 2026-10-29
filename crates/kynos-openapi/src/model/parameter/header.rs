@@ -7,9 +7,9 @@ use crate::{
     Map,
     model::{
         body::media_type::MediaType,
-        example::{Example, Examples, examples_from, examples_into, examples_with_named},
+        example::{Example, Examples, examples_with_named},
         extensions::Extensions,
-        parameter::{ParameterConflict, shape_from, style::HeaderStyle},
+        parameter::style::HeaderStyle,
         reference::{Ref, RefOr},
         schema::Schema,
     },
@@ -55,7 +55,7 @@ pub fn is_ignored_header(name: &str) -> bool {
 /// `allowEmptyValue`, which the specification refuses a header. Like a
 /// parameter it holds one [`HeaderShape`] and one [`Examples`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "RawHeader", into = "RawHeader")]
+#[serde(try_from = "super::wire::RawHeader", into = "super::wire::RawHeader")]
 pub struct Header {
     /// A description of the header. [CommonMark] syntax may be used.
     ///
@@ -68,9 +68,9 @@ pub struct Header {
     /// Whether the header is deprecated.
     pub deprecated: Option<bool>,
 
-    shape: HeaderShape,
+    pub(super) shape: HeaderShape,
 
-    examples: Option<Examples>,
+    pub(super) examples: Option<Examples>,
 
     /// Specification extensions.
     pub extensions: Extensions,
@@ -259,100 +259,5 @@ impl Header {
     pub fn required(mut self, required: bool) -> Self {
         self.required = Some(required);
         self
-    }
-}
-
-/// The wire shape: the value fields flat, as the specification writes them.
-#[derive(Serialize, Deserialize)]
-struct RawHeader {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    required: Option<bool>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    deprecated: Option<bool>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    style: Option<HeaderStyle>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    explode: Option<bool>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    schema: Option<Schema>,
-
-    #[serde(
-        default,
-        deserialize_with = "crate::model::nullable::some",
-        skip_serializing_if = "Option::is_none"
-    )]
-    example: Option<Value>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    examples: Option<Map<RefOr<Example>>>,
-
-    #[serde(default, skip_serializing_if = "Map::is_empty")]
-    content: Map<RefOr<MediaType>>,
-
-    #[serde(flatten)]
-    extensions: Extensions,
-}
-
-impl TryFrom<RawHeader> for Header {
-    type Error = ParameterConflict;
-
-    fn try_from(raw: RawHeader) -> Result<Self, Self::Error> {
-        let shape = match shape_from(raw.schema, raw.content)? {
-            (_, Some((media_type, value))) => HeaderShape::Content {
-                media_type,
-                value: Box::new(value),
-            },
-            (schema, None) => HeaderShape::Schema {
-                schema,
-                style: raw.style,
-                explode: raw.explode,
-            },
-        };
-
-        Ok(Self {
-            description: raw.description,
-            required: raw.required,
-            deprecated: raw.deprecated,
-            shape,
-            examples: examples_from(raw.example, raw.examples)?,
-            extensions: raw.extensions,
-        })
-    }
-}
-
-impl From<Header> for RawHeader {
-    fn from(header: Header) -> Self {
-        let (schema, style, explode, content) = match header.shape {
-            HeaderShape::Schema {
-                schema,
-                style,
-                explode,
-            } => (Some(schema), style, explode, Map::new()),
-            HeaderShape::Content { media_type, value } => {
-                (None, None, None, Map::from_iter([(media_type, *value)]))
-            }
-        };
-
-        let (example, examples) = examples_into(header.examples);
-
-        Self {
-            description: header.description,
-            required: header.required,
-            deprecated: header.deprecated,
-            style,
-            explode,
-            schema,
-            example,
-            examples,
-            content,
-            extensions: header.extensions,
-        }
     }
 }
