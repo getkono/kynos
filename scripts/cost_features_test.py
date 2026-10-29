@@ -782,26 +782,29 @@ class SinceRelease(unittest.TestCase):
                 self.assertEqual(self.released(Path(root)), (None, {}))
 
 
-#: Per `--kind`: the sweep `main` calls, the baseline it reads and records, the
-#: table every run writes beside the report, the section that reports it, and
-#: how this file records a baseline of that kind.
+#: Per `--kind`: the sweep `main` runs for it -- the kind, and for a `.text`
+#: kind the example it builds and the point its deltas are taken against -- the
+#: baseline it reads and records, the table every run writes beside the report,
+#: the section that reports it, and how this file records a baseline of that
+#: kind.
 Kind = namedtuple("Kind", ("sweep", "baseline", "table", "title", "record"))
 KINDS = {
     "binary": Kind(
-        "sweep_binary", cost.BINARY_TSV, "cost-binary.tsv", "### Binary delta",
-        recorded_binary,
+        ("binary", "cost_fixture", "openapi31"),
+        cost.BINARY_TSV, "cost-binary.tsv", "### Binary delta", recorded_binary,
     ),
     "codegen": Kind(
-        "sweep_codegen", cost.CODEGEN_TSV, "cost-codegen.tsv", "### Codegen delta",
-        recorded_codegen,
+        ("codegen", None, None),
+        cost.CODEGEN_TSV, "cost-codegen.tsv", "### Codegen delta", recorded_codegen,
     ),
     "codec": Kind(
-        "sweep_codec", cost.CODEC_TSV, "cost-codec.tsv", "### Codec delta",
-        recorded_codec,
+        ("codec", "cost_codec", "(no codec)"),
+        cost.CODEC_TSV, "cost-codec.tsv", "### Codec delta", recorded_codec,
     ),
 }
 
-#: What `main` did, and what it left behind under `ROOT` and `COST`.
+#: What `main` did, and what it left behind under `ROOT` and `COST`. `sweeps`
+#: is each sweep `main` ran, in order, as `Kind.sweep` spells one.
 Ran = namedtuple("Ran", ("code", "said", "report", "sweeps", "tables", "baselines"))
 
 
@@ -819,15 +822,20 @@ def run_main(kind, mode, measured, recorded=None):
         measured, recorded = {kind: measured}, {kind: recorded}
     recorded = recorded or {}
 
-    def swept(name):
-        rows = measured[name]
-        return (rows, codegen_functions(rows)) if name == "codegen" else rows
+    # Each call is recorded with what it was asked to build. An unselected
+    # kind's sweep returns nothing usable: `main` must not call it.
+    calls = []
 
-    # An unselected kind's sweep returns nothing usable: `main` must not call it.
-    sweeps = {
-        k.sweep: mock.Mock(return_value=swept(name) if name in measured else None)
-        for name, k in KINDS.items()
-    }
+    def sweep_text(name, _points, example, baseline, _env, _host):
+        calls.append((name, example, baseline))
+        return measured.get(name)
+
+    def sweep_codegen(_env):
+        calls.append(("codegen", None, None))
+        rows = measured.get("codegen")
+        return (rows, codegen_functions(rows)) if rows is not None else None
+
+    sweeps = (("sweep_text", sweep_text), ("sweep_codegen", sweep_codegen))
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         was = {
@@ -847,7 +855,7 @@ def run_main(kind, mode, measured, recorded=None):
                 ("read_recorded", mock.Mock(side_effect=lambda path: (
                     was.get(path.name)
                 ))),
-                *sweeps.items(),
+                *sweeps,
             ):
                 stack.enter_context(mock.patch.object(cost, name, value))
             stack.enter_context(mock.patch.object(sys, "argv", argv))
@@ -864,7 +872,7 @@ def run_main(kind, mode, measured, recorded=None):
             code,
             said.getvalue(),
             report.read_text() if report.is_file() else None,
-            [name for name, sweep in sweeps.items() if sweep.called],
+            calls,
             {k.table: cost.read_recorded(root / k.table) for k in KINDS.values()},
             {
                 k.baseline: cost.read_recorded(root / "cost" / k.baseline)
