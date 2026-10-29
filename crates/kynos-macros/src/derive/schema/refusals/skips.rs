@@ -7,12 +7,14 @@ use syn::{Data, DeriveInput, Field, Fields, punctuated::Punctuated, token::Comma
 use crate::derive::{
     common::wrapped,
     schema::{
-        Container, Visitor,
         attributes::{
             is_described, is_flattened, is_open, is_required, is_unit_like, serde_flag,
             serde_key_span,
         },
-        described_variants, is_written, one_way_skip_span, positional_members, written_groups,
+        container::{Container, Visitor},
+        members::{
+            described_variants, is_written, one_way_skip_span, positional_members, written_groups,
+        },
     },
 };
 
@@ -21,16 +23,15 @@ use crate::derive::{
 ///
 /// An identifier enum is left alone: serde's identifier visitor reads every
 /// variant whatever it skips, and serde never writes one.
-pub(super) fn reject_unread_variant(input: &DeriveInput) -> syn::Result<()> {
+pub(super) fn reject_unread_variant(input: &DeriveInput, container: &Container) -> syn::Result<()> {
     let Data::Enum(data) = &input.data else {
         return Ok(());
     };
-    let container = Container::read(input);
     if container.visitor == Visitor::Identifier {
         return Ok(());
     }
 
-    for variant in described_variants(data, &container) {
+    for variant in described_variants(data, container) {
         if let Some((_, span)) = serde_key_span(&variant.attrs, &["skip_deserializing"]) {
             return Err(syn::Error::new(
                 span,
@@ -49,12 +50,14 @@ pub(super) fn reject_unread_variant(input: &DeriveInput) -> syn::Result<()> {
 /// skipped both ways, would be a `oneOf` with no branch, which JSON Schema
 /// 2020-12 requires to be non-empty. An enum without a tag is the compact
 /// `enum`, whose empty form nothing satisfies, and is left alone.
-pub(super) fn reject_empty_tagged_enum(input: &DeriveInput) -> syn::Result<()> {
+pub(super) fn reject_empty_tagged_enum(
+    input: &DeriveInput,
+    container: &Container,
+) -> syn::Result<()> {
     let Data::Enum(data) = &input.data else {
         return Ok(());
     };
-    let container = Container::read(input);
-    if container.tag.is_none() || !described_variants(data, &container).is_empty() {
+    if container.tag.is_none() || !described_variants(data, container).is_empty() {
         return Ok(());
     }
     Err(syn::Error::new(
@@ -71,8 +74,10 @@ pub(super) fn reject_empty_tagged_enum(input: &DeriveInput) -> syn::Result<()> {
 ///
 /// Reads [`is_required`] so the two cannot disagree. Only named fields of
 /// written objects are checked; a transparent struct has no `required` list.
-pub(super) fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> {
-    let container = Container::read(input);
+pub(super) fn reject_read_required_skip(
+    input: &DeriveInput,
+    container: &Container,
+) -> syn::Result<()> {
     if container.transparent {
         return Ok(());
     }
@@ -110,7 +115,7 @@ pub(super) fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> 
             ));
         }
 
-        if !is_required(field, &container) {
+        if !is_required(field, container) {
             continue;
         }
         return Err(syn::Error::new(
@@ -130,10 +135,12 @@ pub(super) fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> 
 /// describe.
 ///
 /// `skip_serializing_if` is allowed only on the last position beside a default,
-/// which [`min_items`](crate::derive::schema::min_items) leaves out of the
+/// which [`min_items`](crate::derive::schema::members::min_items) leaves out of the
 /// bound. serde ignores all three on a newtype struct.
-pub(super) fn reject_one_way_member_skip(input: &DeriveInput) -> syn::Result<()> {
-    let container = Container::read(input);
+pub(super) fn reject_one_way_member_skip(
+    input: &DeriveInput,
+    container: &Container,
+) -> syn::Result<()> {
     if container.transparent {
         return Ok(());
     }
@@ -145,7 +152,7 @@ pub(super) fn reject_one_way_member_skip(input: &DeriveInput) -> syn::Result<()>
             }
             Fields::Named(_) | Fields::Unnamed(_) | Fields::Unit => Vec::new(),
         },
-        Data::Enum(data) => described_variants(data, &container)
+        Data::Enum(data) => described_variants(data, container)
             .into_iter()
             .filter_map(|variant| match &variant.fields {
                 Fields::Unnamed(unnamed) => Some((&unnamed.unnamed, is_written(variant))),
@@ -207,16 +214,18 @@ pub(super) fn reject_one_way_member_skip(input: &DeriveInput) -> syn::Result<()>
 ///
 /// serde writes the tag alone but reads the newtype style, demanding the
 /// content; an `Option` member reads it absent as `None`.
-pub(super) fn reject_skipped_adjacent_payload(input: &DeriveInput) -> syn::Result<()> {
+pub(super) fn reject_skipped_adjacent_payload(
+    input: &DeriveInput,
+    container: &Container,
+) -> syn::Result<()> {
     let Data::Enum(data) = &input.data else {
         return Ok(());
     };
-    let container = Container::read(input);
     let (Some(_), Some(_)) = (&container.tag, &container.content) else {
         return Ok(());
     };
 
-    for variant in described_variants(data, &container) {
+    for variant in described_variants(data, container) {
         let Fields::Unnamed(unnamed) = &variant.fields else {
             continue;
         };

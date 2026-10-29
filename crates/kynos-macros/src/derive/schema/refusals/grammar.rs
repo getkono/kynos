@@ -8,10 +8,11 @@ use syn::{DeriveInput, Field, Fields, Lit, LitStr, Type, spanned::Spanned};
 use crate::derive::attribute::{Keys, key_name};
 use crate::derive::common::non_token_message;
 use crate::derive::schema::{
-    COUNTS, Container, NUMERIC,
+    COUNTS, NUMERIC,
     attributes::{described_as_keys, is_flattened, is_phantom, open_span},
-    field_groups,
+    container::Container,
     flatten::internally_tagged_payloads,
+    members::field_groups,
 };
 
 /// Keys written alone, with no value.
@@ -19,8 +20,8 @@ const FLAGS: &[&str] = &["unique_items", "open"];
 
 /// Validates every `#[schema(...)]` in the input, before any code is emitted,
 /// so [`constraints`](crate::derive::schema::attributes::constraints) need not.
-pub(super) fn check_constraints(input: &DeriveInput) -> syn::Result<()> {
-    let payloads = internally_tagged_payloads(input, &Container::read(input));
+pub(super) fn check_constraints(input: &DeriveInput, container: &Container) -> syn::Result<()> {
+    let payloads = internally_tagged_payloads(input, container);
     for group in field_groups(input) {
         let named = match group {
             Fields::Named(named) => &named.named,

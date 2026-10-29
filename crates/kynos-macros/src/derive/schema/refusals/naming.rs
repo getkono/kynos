@@ -4,13 +4,14 @@
 use syn::{Data, DeriveInput, Fields, Variant};
 
 use crate::derive::schema::{
-    Container, Visitor, aliases,
+    aliases,
     aliases::shadowed_variant,
     attributes::{
-        field_name, field_read_name, is_flattened, rename_all_fields, serde_flag, serde_key_span,
-        variant_name, variant_read_name, variant_rename_all,
+        field_name, field_read_name, is_flattened, serde_flag, serde_key_span, variant_name,
+        variant_read_name, variant_rename_all,
     },
-    described_variants, is_written, split_rule,
+    container::{Container, Visitor},
+    members::{described_variants, is_written, split_rule},
 };
 
 /// A variant whose own name serde reads as an earlier variant has no schema
@@ -20,17 +21,18 @@ use crate::derive::schema::{
 ///
 /// An identifier enum is never written, so the shared name only reads as the
 /// earlier variant and `variants_read_names` lists it once.
-pub(super) fn reject_shadowed_variant(input: &DeriveInput) -> syn::Result<()> {
+pub(super) fn reject_shadowed_variant(
+    input: &DeriveInput,
+    container: &Container,
+) -> syn::Result<()> {
     let Data::Enum(data) = &input.data else {
         return Ok(());
     };
 
-    let container = Container::read(input);
     if container.visitor == Visitor::Identifier {
         return Ok(());
     }
-    let Some((later, earlier)) =
-        shadowed_variant(&described_variants(data, &container), &container)
+    let Some((later, earlier)) = shadowed_variant(&described_variants(data, container), container)
     else {
         return Ok(());
     };
@@ -41,7 +43,7 @@ pub(super) fn reject_shadowed_variant(input: &DeriveInput) -> syn::Result<()> {
              that also claims it, so `{later}` goes on the wire under a name that reads back as \
              `{earlier}`, and no schema describing `{later}` is true in both directions. Drop \
              the `rename` or `alias` that gives both variants the name",
-            name = variant_read_name(later, &container),
+            name = variant_read_name(later, container),
             earlier = earlier.ident,
             later = later.ident,
         ),
@@ -56,8 +58,7 @@ pub(super) fn reject_shadowed_variant(input: &DeriveInput) -> syn::Result<()> {
 /// flattened and transparent fields, whose own names are not on the wire. An
 /// identifier enum's variants are all read-only: serde never writes the enum,
 /// so [`variant_name`] gives each the name it is read under.
-pub(super) fn reject_split_rename(input: &DeriveInput) -> syn::Result<()> {
-    let container = Container::read(input);
+pub(super) fn reject_split_rename(input: &DeriveInput, container: &Container) -> syn::Result<()> {
     // Each group of fields serde writes, under the container naming them.
     let groups = match &input.data {
         Data::Struct(data) if !container.transparent => vec![(&data.fields, container.clone())],
@@ -91,15 +92,15 @@ pub(super) fn reject_split_rename(input: &DeriveInput) -> syn::Result<()> {
         });
     let variant = match &input.data {
         Data::Enum(data) => {
-            let variants = described_variants(data, &container);
-            let read_names = aliases::variants_read_names(&variants, &container);
+            let variants = described_variants(data, container);
+            let read_names = aliases::variants_read_names(&variants, container);
             variants
                 .into_iter()
                 .zip(read_names)
                 .filter(|(variant, _)| is_written(variant))
                 .find_map(|(variant, read_names)| {
-                    let written = variant_name(variant, &container);
-                    let read = variant_read_name(variant, &container);
+                    let written = variant_name(variant, container);
+                    let read = variant_read_name(variant, container);
                     // An unsplit name an earlier variant claims is
                     // `reject_shadowed_variant`'s to refuse.
                     let unread = written != read && !read_names.contains(&written);
@@ -148,13 +149,16 @@ pub(super) fn reject_split_rename(input: &DeriveInput) -> syn::Result<()> {
 /// that resolve to one style is not refused.
 /// Runs before any check that reads a [`Container`]'s `rename_all`; the
 /// refusals ahead of it read no rename rule.
-pub(super) fn reject_split_rename_all(input: &DeriveInput) -> syn::Result<()> {
-    let identifier = Container::read(input).visitor == Visitor::Identifier;
+pub(super) fn reject_split_rename_all(
+    input: &DeriveInput,
+    container: &Container,
+) -> syn::Result<()> {
+    let identifier = container.visitor == Visitor::Identifier;
     let variants = match &input.data {
         Data::Enum(data) => data.variants.iter().collect(),
         _ => Vec::new(),
     };
-    let fields_rule = rename_all_fields(input);
+    let fields_rule = &container.rename_all_fields;
     // Each struct variant serde writes whose sides differ once filled, and the
     // rules that give it them: `rename_all_fields` only where the variant's
     // own rule leaves it a side.

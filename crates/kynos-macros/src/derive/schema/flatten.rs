@@ -1,14 +1,16 @@
 //! What `#[serde(flatten)]` asks of a type: the witnesses bounding each field
 //! it flattens, and whether the type may itself be flattened.
 
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{Ident, TokenStream as TokenStream2};
 use quote::{quote, quote_spanned};
 use syn::{Data, DeriveInput, Field, Fields, spanned::Spanned};
 
 use super::{
-    Container,
     attributes::{described_members, is_flattened, is_open, is_unit_like, serde_flag},
-    described_groups, described_variants, is_written, unread_field_span, written_groups,
+    container::Container,
+    members::{
+        described_groups, described_variants, is_written, unread_field_span, written_groups,
+    },
 };
 
 /// The flatten witnesses, then the `Flatten` and `ClosedFlatten` claims the
@@ -69,59 +71,67 @@ fn witnesses(input: &DeriveInput, container: &Container, generics: &syn::Generic
         .map(|field| (field, false));
     let witnesses = flattened.chain(payloads).map(|(field, closed)| {
         let ty = &field.ty;
-        // Spanned at the field's type, so the refusal points at what was written.
+        let witness = |rule: &str, check: &str, bound: &str| {
+            witness(ty, &impl_generics, where_clause, rule, check, bound)
+        };
         if admitting.iter().any(|open| std::ptr::eq(*open, field)) {
-            quote_spanned! {ty.span()=>
-                const _: () = {
-                    #[allow(dead_code, deprecated)]
-                    fn open_fields_beside_unread_fields_admit_any_member #impl_generics ()
-                        #where_clause
-                    {
-                        fn admits_any<T: ::kynos::schema::flatten::AdmitsAny + ?::core::marker::Sized>() {}
-                        admits_any::<#ty>();
-                    }
-                };
-            }
+            witness(
+                "open_fields_beside_unread_fields_admit_any_member",
+                "admits_any",
+                "AdmitsAny",
+            )
         } else if is_open(field) {
-            quote_spanned! {ty.span()=>
-                const _: () = {
-                    #[allow(dead_code, deprecated)]
-                    fn open_fields_are_maps_described_in_place #impl_generics () #where_clause {
-                        fn is_open_map<T: ::kynos::schema::flatten::OpenMap + ?::core::marker::Sized>() {}
-                        is_open_map::<#ty>();
-                    }
-                };
-            }
+            witness(
+                "open_fields_are_maps_described_in_place",
+                "is_open_map",
+                "OpenMap",
+            )
         } else {
+            let flattenable = witness(
+                "flattened_fields_name_their_members",
+                "is_flattenable",
+                "Flatten",
+            );
             let read_by_name = closed.then(|| {
-                quote_spanned! {ty.span()=>
-                    const _: () = {
-                        #[allow(dead_code, deprecated)]
-                        fn closed_objects_flatten_what_serde_reads_by_name #impl_generics ()
-                            #where_clause
-                        {
-                            fn is_closed_flattenable<
-                                T: ::kynos::schema::flatten::ClosedFlatten + ?::core::marker::Sized,
-                            >() {}
-                            is_closed_flattenable::<#ty>();
-                        }
-                    };
-                }
+                witness(
+                    "closed_objects_flatten_what_serde_reads_by_name",
+                    "is_closed_flattenable",
+                    "ClosedFlatten",
+                )
             });
-            quote_spanned! {ty.span()=>
-                const _: () = {
-                    #[allow(dead_code, deprecated)]
-                    fn flattened_fields_name_their_members #impl_generics () #where_clause {
-                        fn is_flattenable<T: ::kynos::schema::flatten::Flatten + ?::core::marker::Sized>() {}
-                        is_flattenable::<#ty>();
-                    }
-                };
-                #read_by_name
-            }
+            quote!(#flattenable #read_by_name)
         }
     });
 
     quote!(#(#witnesses)*)
+}
+
+/// One witness: a `const _` holding the function `rule`, named for the rule
+/// a refusal breaks since rustc's diagnostic names it, calling `check` to
+/// require `ty: kynos::schema::flatten::<bound>`.
+///
+/// Spanned at the field's type, so the refusal points at what was written.
+fn witness(
+    ty: &syn::Type,
+    impl_generics: &syn::ImplGenerics<'_>,
+    where_clause: Option<&syn::WhereClause>,
+    rule: &str,
+    check: &str,
+    bound: &str,
+) -> TokenStream2 {
+    let span = ty.span();
+    let rule = Ident::new(rule, span);
+    let check = Ident::new(check, span);
+    let bound = Ident::new(bound, span);
+    quote_spanned! {span=>
+        const _: () = {
+            #[allow(dead_code, deprecated)]
+            fn #rule #impl_generics () #where_clause {
+                fn #check<T: ::kynos::schema::flatten::#bound + ?::core::marker::Sized>() {}
+                #check::<#ty>();
+            }
+        };
+    }
 }
 
 /// The payload of each described newtype variant of an internally tagged enum:

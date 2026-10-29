@@ -10,7 +10,10 @@ use syn::{
     PathArguments, Type, spanned::Spanned,
 };
 
-use crate::derive::{attribute::field_args, schema::property_names};
+use crate::derive::{
+    attribute::field_args,
+    schema::{attributes::serde_key_span, members::property_names},
+};
 
 /// The named fields of a struct, or a diagnostic naming what was found instead.
 pub(crate) fn named_fields<'a>(
@@ -134,22 +137,14 @@ fn reject_split_rename_all(input: &DeriveInput) -> syn::Result<()> {
 /// Refuses a field's `#[serde(alias = "...")]`, even under a Kynos `rename`:
 /// serde would read a name the description cannot carry.
 fn reject_alias(field: &Field) -> syn::Result<()> {
-    for attr in &field.attrs {
-        if !attr.path().is_ident("serde") {
-            continue;
-        }
-        attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("alias") {
-                return Err(meta.error(
-                    "an `alias` gives this field a second wire name, and a parameter has \
-                     exactly one. Drop the `alias`, or make the name it carries the field's \
-                     `rename`",
-                ));
-            }
-            skip_value(&meta)
-        })?;
+    match serde_key_span(&field.attrs, &["alias"]) {
+        Some((_, span)) => Err(syn::Error::new(
+            span,
+            "an `alias` gives this field a second wire name, and a parameter has exactly one. \
+             Drop the `alias`, or make the name it carries the field's `rename`",
+        )),
+        None => Ok(()),
     }
-    Ok(())
 }
 
 /// Refuses a field's `#[serde(rename(serialize = ..., deserialize = ...))]`,

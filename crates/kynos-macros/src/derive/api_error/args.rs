@@ -3,40 +3,20 @@
 use proc_macro2::Span;
 use syn::{Attribute, Expr, ExprLit, ExprPath, Fields, Lit, LitStr, spanned::Spanned};
 
-use crate::derive::{
-    attribute::{Keys, status, unknown},
-    common::skip_value,
-};
+use crate::derive::attribute::{Keys, status, unknown};
 
 /// The range a problem detail's status may fall in: RFC 9457 errors, 4xx and
 /// 5xx.
 const STATUS_RANGE: std::ops::RangeInclusive<u16> = 400..=599;
 
-/// Whether one attribute is `#[problem(extension)]`.
-pub(super) fn is_extension(attr: &Attribute) -> bool {
-    marks(attr, "extension")
-}
-
-/// Whether one attribute is `#[problem(headers)]`.
-pub(super) fn is_headers(attr: &Attribute) -> bool {
-    marks(attr, "headers")
-}
-
-/// Whether one attribute is a `#[problem(...)]` list naming the field marker
-/// `key`.
-fn marks(attr: &Attribute, key: &str) -> bool {
-    if !attr.path().is_ident("problem") {
-        return false;
-    }
-    let mut found = false;
-    let _ = attr.parse_nested_meta(|meta| {
-        if meta.path.is_ident(key) {
-            found = true;
-            return Ok(());
-        }
-        skip_value(&meta)
-    });
-    found
+/// The markers one field's `#[problem(...)]` lists carry, each at the span of
+/// the attribute naming it.
+#[derive(Clone, Copy, Default)]
+pub(super) struct Markers {
+    /// `#[problem(extension)]`: publish the field as an extension member.
+    pub(super) extension: Option<Span>,
+    /// `#[problem(headers)]`: the field holds the failure's header group.
+    pub(super) headers: Option<Span>,
 }
 
 /// Where a `#[problem(...)]` list is written, which decides its legal members.
@@ -152,13 +132,16 @@ pub(super) fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Res
 
 /// Checks each field's `#[problem(...)]` markers: `extension` or `headers`,
 /// each once, and `extension` only on a named field, which has a member name.
-pub(super) fn check_field_markers(fields: &Fields) -> syn::Result<()> {
+/// Returns what each field carries, in declaration order.
+pub(super) fn check_field_markers(fields: &Fields) -> syn::Result<Vec<Markers>> {
     let named = matches!(fields, Fields::Named(_));
+    let mut marked = Vec::with_capacity(fields.len());
 
     for field in fields {
         // Across every list on the field, as on the item.
         let mut keys =
             Keys::new("is already set, and a field's `#[problem(...)]` takes each marker once");
+        let mut markers = Markers::default();
         for attr in &field.attrs {
             if !attr.path().is_ident("problem") {
                 continue;
@@ -187,7 +170,8 @@ pub(super) fn check_field_markers(fields: &Fields) -> syn::Result<()> {
                             ),
                         ));
                     }
-                    "extension" | "headers" => {}
+                    "extension" => markers.extension = Some(attr.span()),
+                    "headers" => markers.headers = Some(attr.span()),
                     other => {
                         return Err(unknown(
                             &meta.path,
@@ -200,7 +184,8 @@ pub(super) fn check_field_markers(fields: &Fields) -> syn::Result<()> {
                 Ok(())
             })?;
         }
+        marked.push(markers);
     }
 
-    Ok(())
+    Ok(marked)
 }

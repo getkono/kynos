@@ -6,8 +6,11 @@
 //! name two variants claim is read as the first alone.
 
 use super::{
-    Container, Field, TokenStream2, Variant, close, field_read_name, is_required, quote,
-    shape::member_schema, skip_value, string_value, variant_read_name,
+    Field, TokenStream2, Variant, close,
+    container::{Container, string_value},
+    field_read_name, is_required, quote,
+    shape::{member_schema, typed},
+    skip_value, variant_read_name,
 };
 
 /// Every name serde reads a named field under: its read name first, then each
@@ -137,15 +140,10 @@ pub(crate) fn named_string(names: &[String]) -> TokenStream2 {
             ]);
         }
     };
+    let constant = typed("constant", "String");
     quote! {
         {
-            let mut constant =
-                <::kynos::openapi::SchemaObject as ::core::default::Default>::default();
-            constant.ty = ::core::option::Option::Some(
-                ::kynos::openapi::model::schema::types::TypeSet::One(
-                    ::kynos::openapi::model::schema::types::SchemaType::String,
-                ),
-            );
+            #constant
             #value
             ::kynos::openapi::Schema::Object(::std::boxed::Box::new(constant))
         }
@@ -166,15 +164,10 @@ pub(super) fn keyed(names: &[String], payload: &TokenStream2) -> TokenStream2 {
         let exactly = exactly_one(names);
         quote!(keywords.all_of = ::core::option::Option::Some(::std::vec![#exactly]);)
     };
+    let keywords = typed("keywords", "Object");
     close(&quote! {
         {
-            let mut keywords =
-                <::kynos::openapi::SchemaObject as ::core::default::Default>::default();
-            keywords.ty = ::core::option::Option::Some(
-                ::kynos::openapi::model::schema::types::TypeSet::One(
-                    ::kynos::openapi::model::schema::types::SchemaType::Object,
-                ),
-            );
+            #keywords
             let payload = #payload;
             #(
                 keywords.properties.insert(

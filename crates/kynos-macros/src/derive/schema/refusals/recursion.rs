@@ -4,9 +4,7 @@ use proc_macro2::Span;
 use syn::{DeriveInput, GenericArgument, Ident, Path, PathArguments, Type};
 
 use crate::derive::schema::{
-    Container,
-    attributes::{described_type, is_described, is_phantom},
-    described_groups,
+    attributes::described_type, check::is_checked, container::Container, members::described_groups,
 };
 
 /// A generic type naming itself in a member its schema describes, through the
@@ -16,15 +14,18 @@ use crate::derive::schema::{
 /// cannot see, and is otherwise inlined, where it would recurse without end;
 /// so every instantiation is refused. Only the direct case (bare identifier or
 /// `Self`) is visible here; indirect cycles are refused by `Registry::resolve`.
-pub(super) fn reject_recursive_generic(input: &DeriveInput) -> syn::Result<()> {
+pub(super) fn reject_recursive_generic(
+    input: &DeriveInput,
+    container: &Container,
+) -> syn::Result<()> {
     if input.generics.type_params().next().is_none() {
         return Ok(());
     }
 
-    let site = described_groups(input, &Container::read(input))
+    let site = described_groups(input, container)
         .into_iter()
         .flatten()
-        .filter(|field| is_described(field) && !is_phantom(&field.ty))
+        .filter(|field| is_checked(field))
         .find_map(|field| self_reference(&described_type(field), &input.ident));
     let Some(span) = site else {
         return Ok(());
