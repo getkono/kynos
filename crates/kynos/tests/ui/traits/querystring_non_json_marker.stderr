@@ -6,13 +6,12 @@ error[E0080]: evaluation panicked: a `QueryString` marker names neither `applica
   |
  ::: src/extract/params/querystring.rs
   |
-  |       const JSON: () = assert!(
-  |  ______________________-
-  | |         is_json(M::MEDIA_TYPE),
-  | |         "a `QueryString` marker names neither `application/json` nor a `+json` type, and only \
-  | |          JSON has a decoder"
-  | |     );
-  | |_____- in this macro invocation
+  | /         assert!(
+  | |             is_json(M::MEDIA_TYPE),
+  | |             "a `QueryString` marker names neither `application/json` nor a `+json` type, and \
+  | |              only JSON has a decoder"
+  | |         );
+  | |_________- in this macro invocation
 
 note: erroneous constant encountered
  --> src/extract/params/querystring.rs

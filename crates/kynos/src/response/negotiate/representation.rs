@@ -19,7 +19,7 @@ use crate::{
     },
     http::{
         Response, eq_ignore_ascii_case,
-        media::{MediaType, split_essence},
+        media::{MediaType, WellFormed, split_essence},
     },
     response::{IntoResponse, Responses},
     schema::registry::Registry,
@@ -119,7 +119,10 @@ impl<C: BodyCodec<T>, T> sealed::SealedRepresentation for Encoded<C, T> {
 impl<C: BodyCodec<T>, T: crate::schema::Schema> Representation for Encoded<C, T> {}
 
 impl<M: MediaType> sealed::SealedRepresentation for Binary<M> {
-    const MEDIA_TYPE: &'static str = M::MEDIA_TYPE;
+    const MEDIA_TYPE: &'static str = {
+        let () = <M as WellFormed>::WELL_FORMED;
+        M::MEDIA_TYPE
+    };
 }
 
 impl<M: MediaType> Representation for Binary<M> {}

@@ -11,7 +11,7 @@ use crate::{
     http::{
         Parts,
         body::Body,
-        media::{MediaType, is_json},
+        media::{MediaType, WellFormed, is_json},
     },
     router::operation::OperationCx,
     schema::{Schema, constraints::Pointer, registry::Registry},
@@ -192,13 +192,16 @@ impl<M, T> JsonAs<M, T> {
 }
 
 impl<M: MediaType, T> JsonAs<M, T> {
-    /// Refuses, in the constant evaluation reading it, a marker that does not
-    /// name JSON.
-    pub(crate) const JSON: () = assert!(
-        is_json(M::MEDIA_TYPE),
-        "a `JsonAs` marker names neither `application/json` nor a `+json` type, and its body \
-         is decoded as JSON"
-    );
+    /// Refuses, in the constant evaluation reading it, a marker that is not
+    /// [`WellFormed`] or does not name JSON.
+    pub(crate) const JSON: () = {
+        let () = <M as WellFormed>::WELL_FORMED;
+        assert!(
+            is_json(M::MEDIA_TYPE),
+            "a `JsonAs` marker names neither `application/json` nor a `+json` type, and its \
+             body is decoded as JSON"
+        );
+    };
 }
 
 /// `T: Schema` because the bounds a derived field declares are checked once `T`

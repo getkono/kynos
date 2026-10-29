@@ -2,13 +2,20 @@
 
 use crate::{
     extract::body::binary::Binary,
-    http::{HeaderValue, Response, body::Body, header, media::MediaType},
+    http::{
+        HeaderValue, Response,
+        body::Body,
+        header,
+        media::{MediaType, WellFormed},
+    },
     response::{IntoResponse, Responses},
     schema::registry::Registry,
 };
 
 impl<M: MediaType> IntoResponse for Binary<M> {
     fn into_response(self) -> Response {
+        let () = <M as WellFormed>::WELL_FORMED;
+
         let mut response = Response::new(Body::from_bytes(self.bytes));
         response.headers_mut().insert(
             header::CONTENT_TYPE,
@@ -22,6 +29,7 @@ impl<M: MediaType> Responses for Binary<M> {
     // The empty Schema Object: raw bytes are outside what JSON Schema describes,
     // and `contentMediaType` would only repeat the content key.
     fn responses(_registry: &mut Registry) -> kynos_openapi::Responses {
+        let () = <M as WellFormed>::WELL_FORMED;
         kynos_openapi::Responses::new().with(
             200,
             kynos_openapi::Response::with_content(

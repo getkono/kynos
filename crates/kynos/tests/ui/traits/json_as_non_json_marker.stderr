@@ -6,13 +6,12 @@ error[E0080]: evaluation panicked: a `JsonAs` marker names neither `application/
   |
  ::: src/extract/body/json_as.rs
   |
-  |       pub(crate) const JSON: () = assert!(
-  |  _________________________________-
-  | |         is_json(M::MEDIA_TYPE),
-  | |         "a `JsonAs` marker names neither `application/json` nor a `+json` type, and its body \
-  | |          is decoded as JSON"
-  | |     );
-  | |_____- in this macro invocation
+  | /         assert!(
+  | |             is_json(M::MEDIA_TYPE),
+  | |             "a `JsonAs` marker names neither `application/json` nor a `+json` type, and its \
+  | |              body is decoded as JSON"
+  | |         );
+  | |_________- in this macro invocation
 
 note: erroneous constant encountered
  --> src/extract/body/json_as.rs
