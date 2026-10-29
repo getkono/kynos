@@ -27,3 +27,9 @@ error: an `exclude` entry is a file name or an extension beginning with a dot, a
    |
 32 |     exclude = [""],
    |                ^^
+
+error: `dir` is already set, and `assets!` takes each key once
+  --> tests/ui/macros/assets_grammar_refusals.rs:38:5
+   |
+38 |     dir = "another-directory",
+   |     ^^^
