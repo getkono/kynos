@@ -1,6 +1,5 @@
 amends "package://github.com/jdx/hk/releases/download/v1.53.0/hk@1.53.0#/Config.pkl"
 
-min_hk_version = "1.53.0"
 default_branch = "master"
 
 hooks {
