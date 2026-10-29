@@ -250,38 +250,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
             Ok(param.fixed(value))
         })
         .collect::<syn::Result<Vec<_>>>()?;
-    let rejection = quote!(::kynos::error::rejection::HeaderRejection);
 
-    // Only the first value of a repeated field is read: a field is one value.
-    let reads = params.iter().map(|param| {
-        let wire = param.name();
-        let found = quote! {
-            match headers.get(#wire) {
-                ::core::option::Option::Some(value) => match value.to_str() {
-                    ::core::result::Result::Ok(text) => ::core::option::Option::Some(text),
-                    ::core::result::Result::Err(_) => {
-                        return ::core::result::Result::Err(
-                            ::kynos::error::rejection::HeaderRejection::Invalid {
-                                name: ::std::string::String::from(#wire),
-                                detail: ::std::string::String::from(
-                                    "the value is not printable ASCII",
-                                ),
-                            },
-                        );
-                    }
-                },
-                ::core::option::Option::None => ::core::option::Option::None,
-            }
-        };
-        if let Some(fixed) = param.fixed_value() {
-            return decode_fixed(param, fixed, &found);
-        }
-        let decoded = decode_field(param, &rejection, &found, MISSING);
-        let checked = check_field(param, &rejection);
-        quote!(#decoded #checked)
-    });
-    let value = construct(&params);
-
+    let decode = decode_body(&params);
     let parameters = parameters_body(
         &params,
         &quote!(::kynos::openapi::ParameterIn::Header),
@@ -298,8 +268,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
             fn decode(
                 headers: &::kynos::http::HeaderMap,
             ) -> ::core::result::Result<Self, ::kynos::error::rejection::HeaderRejection> {
-                #(#reads)*
-                #value
+                #decode
             }
         }
 
@@ -335,4 +304,44 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
             }
         }
     })
+}
+
+/// The `DecodeHeaders::decode` body, reading `headers`.
+///
+/// Only the first value of a repeated field is read: a field is one value.
+fn decode_body(params: &[Param<'_>]) -> TokenStream2 {
+    let rejection = quote!(::kynos::error::rejection::HeaderRejection);
+    let reads = params.iter().map(|param| {
+        let wire = param.name();
+        let found = quote! {
+            match headers.get(#wire) {
+                ::core::option::Option::Some(value) => match value.to_str() {
+                    ::core::result::Result::Ok(text) => ::core::option::Option::Some(text),
+                    ::core::result::Result::Err(_) => {
+                        return ::core::result::Result::Err(
+                            ::kynos::error::rejection::HeaderRejection::Invalid {
+                                name: ::std::string::String::from(#wire),
+                                detail: ::std::string::String::from(
+                                    "the value is not printable ASCII",
+                                ),
+                            },
+                        );
+                    }
+                },
+                ::core::option::Option::None => ::core::option::Option::None,
+            }
+        };
+        if let Some(fixed) = param.fixed_value() {
+            return decode_fixed(param, fixed, &found);
+        }
+        let decoded = decode_field(param, &rejection, &found, MISSING);
+        let checked = check_field(param, &rejection);
+        quote!(#decoded #checked)
+    });
+    let value = construct(params);
+
+    quote! {
+        #(#reads)*
+        #value
+    }
 }
