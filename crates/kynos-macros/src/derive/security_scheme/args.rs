@@ -10,13 +10,10 @@ use crate::derive::{
     common::non_token_message,
 };
 
-/// Locations an API key may travel in; not `path` or 3.2's `querystring`.
-const API_KEY_LOCATIONS: &[&str] = &["header", "query", "cookie"];
-
 /// What the attribute said, before it becomes a description.
 #[derive(Default)]
 pub(super) struct SchemeArgs {
-    pub(super) kind: Option<Ident>,
+    pub(super) kind: Option<Kind>,
     pub(super) name: Option<LitStr>,
     pub(super) credential: Option<Type>,
     /// `scope = Type`: the scheme's `SecurityScheme::Scope`.
@@ -35,6 +32,41 @@ pub(super) struct SchemeArgs {
     /// The scheme-level `scopes(..)`: values of `scope`.
     pub(super) scopes: Vec<Expr>,
     pub(super) nested: Nested,
+}
+
+/// The kind `#[security(<kind>)]` names, resolved once its options are read.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Kind {
+    Bearer,
+    Basic,
+    Http,
+    ApiKey(KeyLocation),
+    MutualTls,
+    OpenIdConnect,
+    OAuth2,
+}
+
+impl Kind {
+    /// How the attribute spells it.
+    fn name(self) -> &'static str {
+        match self {
+            Self::Bearer => "bearer",
+            Self::Basic => "basic",
+            Self::Http => "http",
+            Self::ApiKey(_) => "api_key",
+            Self::MutualTls => "mutual_tls",
+            Self::OpenIdConnect => "openid_connect",
+            Self::OAuth2 => "oauth2",
+        }
+    }
+}
+
+/// Where an API key travels; not `path` or 3.2's `querystring`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum KeyLocation {
+    Header,
+    Query,
+    Cookie,
 }
 
 /// What `carrier = ...` asks of the derived `Carries`.
@@ -125,18 +157,18 @@ pub(super) fn parse_args(input: &DeriveInput) -> syn::Result<SchemeArgs> {
                     );
                 }
                 kind if is_kind(kind) => {
-                    if let Some(existing) = &args.kind {
+                    if let Some(existing) = args.kind {
                         return Err(syn::Error::new(
                             span,
                             format!(
                                 "a security scheme has exactly one kind, and this one is already \
-                                 `{existing}`"
+                                 `{}`",
+                                existing.name()
                             ),
                         ));
                     }
                     let kind = meta.path.require_ident()?;
-                    check_kind(kind, &meta, &mut args.nested)?;
-                    args.kind = Some(kind.clone());
+                    args.kind = Some(check_kind(kind, &meta, &mut args.nested)?);
                 }
                 other => {
                     return Err(unknown(&meta.path, other, "the `#[security(...)]` grammar"));
@@ -169,14 +201,14 @@ fn is_kind(name: &str) -> bool {
     )
 }
 
-/// Reads the options nested inside one kind, and checks the ones that are
-/// checkable; `api_key` and `http` are checked in full here, where the spans
-/// are.
+/// Reads the options nested inside one kind, checks the ones that are
+/// checkable, and resolves the [`Kind`]; `api_key` and `http` are checked in
+/// full here, where the spans are.
 fn check_kind(
     kind: &Ident,
     meta: &syn::meta::ParseNestedMeta<'_>,
     nested: &mut Nested,
-) -> syn::Result<()> {
+) -> syn::Result<Kind> {
     if meta.input.peek(syn::token::Paren) {
         let kind_name = kind.to_string();
         let mut keys = Keys::new(format!(
@@ -222,33 +254,49 @@ fn check_kind(
         return Err(syn::Error::new(meta.path.span(), message));
     }
 
-    if kind == "oauth2" {
-        return check_oauth2(kind, nested);
-    }
+    Ok(match kind.to_string().as_str() {
+        "bearer" => Kind::Bearer,
+        "basic" => Kind::Basic,
+        "http" => {
+            check_http(kind, nested)?;
+            Kind::Http
+        }
+        "api_key" => Kind::ApiKey(check_api_key(kind, nested)?),
+        "mutual_tls" => Kind::MutualTls,
+        "openid_connect" => Kind::OpenIdConnect,
+        "oauth2" => {
+            check_oauth2(kind, nested)?;
+            Kind::OAuth2
+        }
+        // `parse_args` passes only a name `is_kind` holds.
+        other => {
+            return Err(unknown(&meta.path, other, "the `#[security(...)]` grammar"));
+        }
+    })
+}
 
-    if kind == "http" {
-        return check_http(kind, nested);
-    }
-
-    if kind != "api_key" {
-        return Ok(());
-    }
-
+/// An `api_key` kind's `in` and `name`, checked in full: where the key
+/// travels, and a field name that location can carry.
+fn check_api_key(kind: &Ident, nested: &Nested) -> syn::Result<KeyLocation> {
     let Some(location) = nested.location.clone() else {
         return Err(syn::Error::new(
             kind.span(),
             "an API key must say where it travels: `in = \"header\"`, `\"query\"` or `\"cookie\"`",
         ));
     };
-    if !API_KEY_LOCATIONS.contains(&location.value().as_str()) {
-        return Err(syn::Error::new(
-            location.span(),
-            format!(
-                "an API key travels in a header, a query parameter or a cookie, not `{}`",
-                location.value()
-            ),
-        ));
-    }
+    let travels = match location.value().as_str() {
+        "header" => KeyLocation::Header,
+        "query" => KeyLocation::Query,
+        "cookie" => KeyLocation::Cookie,
+        other => {
+            return Err(syn::Error::new(
+                location.span(),
+                format!(
+                    "an API key travels in a header, a query parameter or a cookie, not `{other}`"
+                ),
+            ));
+        }
+    };
 
     let Some(field) = nested.field.clone() else {
         return Err(syn::Error::new(
@@ -257,10 +305,10 @@ fn check_kind(
         ));
     };
     // Header and cookie names must be tokens; a query name may be any string.
-    let grammar = match location.value().as_str() {
-        "header" => Some("an RFC 9110 field name"),
-        "cookie" => Some("an RFC 6265 cookie name"),
-        _ => None,
+    let grammar = match travels {
+        KeyLocation::Header => Some("an RFC 9110 field name"),
+        KeyLocation::Cookie => Some("an RFC 6265 cookie name"),
+        KeyLocation::Query => None,
     };
     if let Some(message) =
         grammar.and_then(|grammar| non_token_message(&field.value(), &location.value(), grammar))
@@ -268,7 +316,7 @@ fn check_kind(
         return Err(syn::Error::new(field.span(), message));
     }
     // The OpenAPI Parameter Object says such a definition shall be ignored.
-    if location.value() == "header" && is_ignored_header_parameter(&field.value()) {
+    if travels == KeyLocation::Header && is_ignored_header_parameter(&field.value()) {
         return Err(syn::Error::new(
             field.span(),
             format!(
@@ -280,7 +328,7 @@ fn check_kind(
         ));
     }
 
-    Ok(())
+    Ok(travels)
 }
 
 /// An `http` kind's `scheme` is the Security Scheme Object's REQUIRED field

@@ -48,11 +48,11 @@ mod args;
 mod flow;
 
 use quote::quote;
-use syn::{DeriveInput, Ident, LitStr, Type, parse_quote};
+use syn::{DeriveInput, LitStr, Type, parse_quote};
 
 use crate::derive::common::{optional, unit_struct};
 use crate::doc::doc_string;
-use args::{Carrier, Nested, SchemeArgs, parse_args};
+use args::{Carrier, KeyLocation, Kind, Nested, SchemeArgs, parse_args};
 use flow::build_flow;
 
 pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
@@ -60,7 +60,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     unit_struct(input, "SecurityScheme", "names a way of authenticating")?;
 
     let args = parse_args(input)?;
-    let Some(kind) = &args.kind else {
+    let Some(kind) = args.kind else {
         return Err(syn::Error::new(
             input.ident.span(),
             "a security scheme must say what kind it is: `#[security(bearer)]`, \
@@ -167,19 +167,16 @@ fn text(value: Option<&LitStr>) -> String {
 
 /// Where this kind's credential travels, and the type it reads back as; read
 /// from the same `Nested` as `of_kind`.
-fn carrier_of(
-    nested: &Nested,
-    kind: &Ident,
-) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
+fn carrier_of(nested: &Nested, kind: Kind) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
     let carrier = quote!(::kynos::security::carrier);
 
-    match kind.to_string().as_str() {
-        "basic" => (
+    match kind {
+        Kind::Basic => (
             quote!(#carrier::Credentials),
             quote!(#carrier::basic(parts)),
         ),
 
-        "http" => {
+        Kind::Http => {
             let scheme = text(nested.scheme.as_ref());
             (
                 quote!(#carrier::SchemeCredentials),
@@ -187,12 +184,12 @@ fn carrier_of(
             )
         }
 
-        "api_key" => {
+        Kind::ApiKey(location) => {
             let field = text(nested.field.as_ref());
-            let location = match nested.location.as_ref().map(LitStr::value).as_deref() {
-                Some("query") => quote!(#carrier::KeyLocation::Query),
-                Some("cookie") => quote!(#carrier::KeyLocation::Cookie),
-                _ => quote!(#carrier::KeyLocation::Header),
+            let location = match location {
+                KeyLocation::Header => quote!(#carrier::KeyLocation::Header),
+                KeyLocation::Query => quote!(#carrier::KeyLocation::Query),
+                KeyLocation::Cookie => quote!(#carrier::KeyLocation::Cookie),
             };
             (
                 quote!(#carrier::ApiKey),
@@ -200,13 +197,13 @@ fn carrier_of(
             )
         }
 
-        "mutual_tls" => (
+        Kind::MutualTls => (
             quote!(#carrier::PeerCertificates),
             quote!(#carrier::peer_certificates(parts)),
         ),
 
-        // `bearer`, `oauth2` and `openid_connect`: an RFC 6750 bearer token.
-        _ => (
+        // An RFC 6750 bearer token.
+        Kind::Bearer | Kind::OAuth2 | Kind::OpenIdConnect => (
             quote!(#carrier::BearerToken),
             quote!(#carrier::bearer(parts)),
         ),
@@ -215,7 +212,7 @@ fn carrier_of(
 
 /// The `describe` body: the kind, then the prose and the deprecation every kind
 /// shares, the latter applied once by matching.
-fn describe(args: &SchemeArgs, kind: &Ident, input: &DeriveInput) -> proc_macro2::TokenStream {
+fn describe(args: &SchemeArgs, kind: Kind, input: &DeriveInput) -> proc_macro2::TokenStream {
     let built = of_kind(args, kind);
 
     let described = args
@@ -268,16 +265,16 @@ fn describe(args: &SchemeArgs, kind: &Ident, input: &DeriveInput) -> proc_macro2
 
 /// One scheme of the declared kind, with nothing shared filled in yet; built
 /// through the model's constructors so no 3.2-only field is named here.
-fn of_kind(args: &SchemeArgs, kind: &Ident) -> proc_macro2::TokenStream {
+fn of_kind(args: &SchemeArgs, kind: Kind) -> proc_macro2::TokenStream {
     let owned = |value: Option<&LitStr>| {
         let from = quote!(<::std::string::String as ::core::convert::From<_>>::from);
         optional(value.map(|value| quote!(#from(#value))))
     };
 
-    match kind.to_string().as_str() {
-        "basic" => quote!(::kynos::openapi::SecurityScheme::basic()),
+    match kind {
+        Kind::Basic => quote!(::kynos::openapi::SecurityScheme::basic()),
 
-        "http" => {
+        Kind::Http => {
             let format = owned(args.nested.format.as_ref());
             let scheme = text(args.nested.scheme.as_ref());
             quote! {
@@ -293,23 +290,29 @@ fn of_kind(args: &SchemeArgs, kind: &Ident) -> proc_macro2::TokenStream {
             }
         }
 
-        "api_key" => {
+        Kind::ApiKey(location) => {
             let field = text(args.nested.field.as_ref());
-            match args.nested.location.as_ref().map(LitStr::value).as_deref() {
-                Some("query") => quote!(::kynos::openapi::SecurityScheme::api_key_query(#field)),
-                Some("cookie") => quote!(::kynos::openapi::SecurityScheme::api_key_cookie(#field)),
-                _ => quote!(::kynos::openapi::SecurityScheme::api_key_header(#field)),
+            match location {
+                KeyLocation::Header => {
+                    quote!(::kynos::openapi::SecurityScheme::api_key_header(#field))
+                }
+                KeyLocation::Query => {
+                    quote!(::kynos::openapi::SecurityScheme::api_key_query(#field))
+                }
+                KeyLocation::Cookie => {
+                    quote!(::kynos::openapi::SecurityScheme::api_key_cookie(#field))
+                }
             }
         }
 
-        "mutual_tls" => quote!(::kynos::openapi::SecurityScheme::mutual_tls()),
+        Kind::MutualTls => quote!(::kynos::openapi::SecurityScheme::mutual_tls()),
 
-        "openid_connect" => {
+        Kind::OpenIdConnect => {
             let url = text(args.nested.url.as_ref());
             quote!(::kynos::openapi::SecurityScheme::open_id_connect(#url))
         }
 
-        "oauth2" => {
+        Kind::OAuth2 => {
             let flows = args.nested.flows.iter().map(|(name, row, flow)| {
                 let builder = syn::Ident::new(row.builder, name.span());
                 let built = build_flow(flow);
@@ -333,8 +336,7 @@ fn of_kind(args: &SchemeArgs, kind: &Ident) -> proc_macro2::TokenStream {
             }
         }
 
-        // `bearer`, and the safe fallback for any kind this match has not learned.
-        _ => {
+        Kind::Bearer => {
             let format = owned(args.nested.format.as_ref());
             quote!(::kynos::openapi::SecurityScheme::bearer(#format))
         }
@@ -353,21 +355,22 @@ fn of_kind(args: &SchemeArgs, kind: &Ident) -> proc_macro2::TokenStream {
 /// its own `scheme` token bare, since a challenge may carry no parameters; the
 /// ones its scheme needs, such as Digest's `realm` and `nonce`, are the
 /// application's to add through `challenge = "..."`.
-fn default_challenge(kind: &Ident, nested: &Nested) -> proc_macro2::TokenStream {
-    match kind.to_string().as_str() {
-        "bearer" | "oauth2" | "openid_connect" => quote!(::core::option::Option::Some("Bearer")),
-        "http" => {
+fn default_challenge(kind: Kind, nested: &Nested) -> proc_macro2::TokenStream {
+    match kind {
+        Kind::Bearer | Kind::OAuth2 | Kind::OpenIdConnect => {
+            quote!(::core::option::Option::Some("Bearer"))
+        }
+        Kind::Http => {
             let scheme = text(nested.scheme.as_ref());
             quote!(::core::option::Option::Some(#scheme))
         }
-        "basic" => quote! {
+        Kind::Basic => quote! {
             <::kynos::security::schemes::Basic as ::kynos::security::SecurityScheme>::challenge()
         },
-        "api_key" => quote!(::core::option::Option::Some("ApiKey")),
-        "mutual_tls" => quote! {
+        Kind::ApiKey(_) => quote!(::core::option::Option::Some("ApiKey")),
+        Kind::MutualTls => quote! {
             <::kynos::security::schemes::MutualTls as ::kynos::security::SecurityScheme>::challenge()
         },
-        _ => quote!(::core::option::Option::None),
     }
 }
 
@@ -377,11 +380,13 @@ fn default_challenge(kind: &Ident, nested: &Nested) -> proc_macro2::TokenStream 
 /// `kynos::security::schemes::Bearer` does, `Bearer error="insufficient_scope"`
 /// (RFC 6750 section 3.1), so the two cannot drift. The other kinds have no
 /// registered error to send. `challenge = "..."` replaces only the 401's.
-fn default_insufficient_scope_challenge(kind: &Ident) -> proc_macro2::TokenStream {
-    match kind.to_string().as_str() {
-        "bearer" | "oauth2" | "openid_connect" => quote! {
+fn default_insufficient_scope_challenge(kind: Kind) -> proc_macro2::TokenStream {
+    match kind {
+        Kind::Bearer | Kind::OAuth2 | Kind::OpenIdConnect => quote! {
             <::kynos::security::schemes::Bearer as ::kynos::security::SecurityScheme>::insufficient_scope_challenge()
         },
-        _ => quote!(::core::option::Option::None),
+        Kind::Basic | Kind::Http | Kind::ApiKey(_) | Kind::MutualTls => {
+            quote!(::core::option::Option::None)
+        }
     }
 }
