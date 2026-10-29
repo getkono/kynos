@@ -795,7 +795,7 @@ mod blockers {
                 (
                     with_security_scheme(SecurityScheme::ApiKey {
                         name: "X-Api-Key".to_owned(),
-                        location: ParameterIn::Header,
+                        location: crate::model::security::ApiKeyLocation::Header,
                         description: None,
                         deprecated: Some(true),
                         extensions: crate::model::extensions::Extensions::new(),
@@ -840,19 +840,6 @@ mod blockers {
                     in_security_scheme("deprecated"),
                 ),
             ],
-            // `querystring` is a 3.2 location, illegal on an `apiKey` in either
-            // version; validation reports it, and a 3.1 emit must refuse it
-            // rather than write a value 3.1 does not define.
-            vec![(
-                with_security_scheme(SecurityScheme::ApiKey {
-                    name: "q".to_owned(),
-                    location: ParameterIn::Querystring,
-                    description: None,
-                    deprecated: None,
-                    extensions: crate::model::extensions::Extensions::new(),
-                }),
-                in_security_scheme("in"),
-            )],
             vec![(
                 with_security_scheme(SecurityScheme::OAuth2 {
                     flows: Box::new(OAuthFlows::default()),

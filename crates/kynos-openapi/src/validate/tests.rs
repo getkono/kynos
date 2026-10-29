@@ -2957,95 +2957,6 @@ fn the_device_authorization_flow_must_declare_its_required_urls() {
     assert_eq!(missing_flow_urls(complete, SpecVersion::V3_2), []);
 }
 
-/// A document declaring one `apiKey` scheme, `Key`, carried `in` `location`.
-///
-/// Parsed rather than constructed, as a description that names an illegal
-/// location arrives.
-fn api_key_document(location: crate::model::parameter::ParameterIn) -> Document {
-    let mut document = document_with(&[]);
-    document.components.security_schemes.insert(
-        "Key".to_owned(),
-        crate::RefOr::Item(
-            serde_json::from_value(serde_json::json!({
-                "type": "apiKey",
-                "name": "k",
-                "in": location.as_str(),
-            }))
-            .expect("an apiKey scheme parses whatever its location"),
-        ),
-    );
-    document
-}
-
-/// Every error `version` reports for [`api_key_document`], with its location.
-fn api_key_location_errors(
-    location: crate::model::parameter::ParameterIn,
-    version: SpecVersion,
-) -> Vec<(String, SpecError)> {
-    Validator::new(version)
-        .validate(&api_key_document(location))
-        .into_iter()
-        .filter(|v| v.severity == super::Severity::Error)
-        .map(|v| (v.location, v.error))
-        .collect()
-}
-
-/// `references/3.1.2.md:3958` and `references/3.2.0.md:4577` allow an `apiKey`
-/// scheme only `"query"`, `"header"` or `"cookie"`. A path parameter is
-/// excluded in both versions, and so is 3.2's `querystring`, which names the
-/// whole query string rather than one key in it.
-#[test]
-fn an_api_key_is_carried_only_in_a_query_header_or_cookie() {
-    use crate::model::parameter::ParameterIn;
-
-    let cases = [
-        (ParameterIn::Query, SpecVersion::V3_1, false),
-        (ParameterIn::Header, SpecVersion::V3_1, false),
-        (ParameterIn::Cookie, SpecVersion::V3_1, false),
-        (ParameterIn::Path, SpecVersion::V3_1, true),
-        #[cfg(feature = "openapi32")]
-        (ParameterIn::Query, SpecVersion::V3_2, false),
-        #[cfg(feature = "openapi32")]
-        (ParameterIn::Path, SpecVersion::V3_2, true),
-        #[cfg(feature = "openapi32")]
-        (ParameterIn::Querystring, SpecVersion::V3_2, true),
-    ];
-    let at = "#/components/securitySchemes/Key/in";
-    let illegal_at = |location: ParameterIn| {
-        (
-            at.to_owned(),
-            SpecError::IllegalApiKeyLocation {
-                location: location.as_str(),
-            },
-        )
-    };
-    for (location, version, illegal) in cases {
-        assert_eq!(
-            api_key_location_errors(location, version),
-            Vec::from_iter(illegal.then(|| illegal_at(location))),
-            "an apiKey `in` `{}` under {version:?}",
-            location.as_str(),
-        );
-    }
-
-    // Under 3.1 the location is also one 3.1 cannot spell, so the document
-    // is refused at `#` for it beside the location rule.
-    #[cfg(feature = "openapi32")]
-    assert_eq!(
-        api_key_location_errors(ParameterIn::Querystring, SpecVersion::V3_1),
-        [
-            (
-                "#".to_owned(),
-                SpecError::RequiresV3_2 {
-                    blockers: vec![at.to_owned()],
-                },
-            ),
-            illegal_at(ParameterIn::Querystring),
-        ],
-        "an apiKey `in` `querystring` under V3_1"
-    );
-}
-
 #[test]
 fn an_unconstrained_schema_is_a_warning_not_an_error() {
     let mut operation = Operation::new("ingest").with_responses(ok_responses());
@@ -3861,7 +3772,6 @@ fn variant_name(error: &SpecError) -> &'static str {
         SpecError::UnknownLinkOperationId { .. } => "UnknownLinkOperationId",
         SpecError::UnresolvedLinkOperationRef { .. } => "UnresolvedLinkOperationRef",
         SpecError::MissingOAuthFlowUrl { .. } => "MissingOAuthFlowUrl",
-        SpecError::IllegalApiKeyLocation { .. } => "IllegalApiKeyLocation",
         SpecError::UndocumentedTag { .. } => "UndocumentedTag",
         SpecError::EmptyServerVariableEnum { .. } => "EmptyServerVariableEnum",
         SpecError::ServerVariableDefaultNotInEnum { .. } => "ServerVariableDefaultNotInEnum",
@@ -4168,7 +4078,6 @@ fn ledger_querystring() -> Vec<(&'static str, SpecVersion, Document)> {
 /// Cases for the whole-document rules: components, tags, servers, security.
 fn ledger_document() -> Vec<(&'static str, SpecVersion, Document)> {
     use crate::model::{
-        parameter::ParameterIn,
         schema::Schema,
         server::{Server, ServerVariable},
         tag::Tag,
@@ -4226,7 +4135,6 @@ fn ledger_document() -> Vec<(&'static str, SpecVersion, Document)> {
         );
         document
     });
-    push("IllegalApiKeyLocation", api_key_document(ParameterIn::Path));
     push(
         "UndocumentedTag",
         document_with(&[("/users", get(operation().with_tag("orders")))]),

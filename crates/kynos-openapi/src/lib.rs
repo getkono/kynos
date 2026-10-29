@@ -96,7 +96,7 @@ pub use crate::{
             xml::{Xml, XmlNode},
         },
         security::{
-            SecurityScheme,
+            ApiKeyLocation, SecurityScheme,
             oauth::{OAuthFlow, OAuthFlows},
             requirement::SecurityRequirement,
         },

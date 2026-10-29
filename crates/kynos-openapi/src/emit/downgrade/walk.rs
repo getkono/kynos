@@ -54,8 +54,7 @@ pub(super) fn collect_three_two_fields(document: &Document, blockers: &mut Vec<S
     visit::routes(document, &mut Blockers { blockers });
 }
 
-/// The 3.2-only fields one security scheme can carry, and an `apiKey`'s
-/// 3.2-only `querystring` location.
+/// The 3.2-only fields one security scheme can carry.
 ///
 /// `deprecated` is read through a match so that a sixth [`SecurityScheme`]
 /// variant is a compile error here.
@@ -65,19 +64,8 @@ fn collect_security_scheme_blockers(
     blockers: &mut Vec<String>,
 ) {
     let deprecated = match scheme {
-        SecurityScheme::ApiKey {
-            deprecated,
-            location,
-            ..
-        } => {
-            // Illegal on an `apiKey` in 3.2 too, which validation reports;
-            // 3.1 has no such location at all.
-            if *location == ParameterIn::Querystring {
-                blockers.push(at.key("in").pointer());
-            }
-            deprecated
-        }
-        SecurityScheme::Http { deprecated, .. }
+        SecurityScheme::ApiKey { deprecated, .. }
+        | SecurityScheme::Http { deprecated, .. }
         | SecurityScheme::MutualTls { deprecated, .. }
         | SecurityScheme::OpenIdConnect { deprecated, .. } => deprecated,
         SecurityScheme::OAuth2 {

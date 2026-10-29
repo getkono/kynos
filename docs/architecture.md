@@ -647,7 +647,8 @@ type's. A Header Object's `style` is the extreme version: the specification
 gives it exactly one legal value, `simple`. This is the same argument with one
 field instead of two — the illegal values are illegal unconditionally, so a rule
 checking for them is dead the moment the type stops admitting them. `HeaderStyle`
-and `EncodingStyle` are `Style` narrowed this way.
+and `EncodingStyle` are `Style` narrowed this way, and `ApiKeyLocation` is
+`ParameterIn` narrowed to the three places a key may be carried.
 
 A *pairing* is two fields that constrain each other while both stay settable,
 and it stays a rule. A Parameter Object's `style` is legal or not depending on
