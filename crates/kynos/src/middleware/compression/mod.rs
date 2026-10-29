@@ -461,12 +461,7 @@ impl Compression<()> {
     /// bodies of at least 2 KiB — see [`min_size`](Self::min_size).
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            min_size: DEFAULT_MIN_SIZE,
-            levels: Levels::default(),
-            latency: LatencyMode::default(),
-            problem_type: PhantomData,
-        }
+        Self::default()
     }
 
     /// Names the RFC 9457 problem type this interceptor's 406 carries.
