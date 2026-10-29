@@ -101,9 +101,10 @@ impl EncodeHeaders for ContentEncoding {
         // 8.6); restated rather than removed so it stays right if the body stops
         // being buffered.
         if let Some(length) = self.length {
-            if let Ok(value) = http::HeaderValue::from_str(&length.to_string()) {
-                fields.push((http::header::CONTENT_LENGTH, value));
-            }
+            fields.push((
+                http::header::CONTENT_LENGTH,
+                http::HeaderValue::from(length),
+            ));
         }
 
         Ok(fields)

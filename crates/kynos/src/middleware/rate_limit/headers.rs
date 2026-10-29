@@ -110,11 +110,11 @@ impl EncodeHeaders for RateLimitHeaders {
             ("x-ratelimit-reset", whole_seconds(self.reset)),
         ]
         .into_iter()
-        .filter_map(|(name, value)| {
-            Some((
+        .map(|(name, value)| {
+            (
                 http::HeaderName::from_static(name),
-                http::HeaderValue::from_str(&value.to_string()).ok()?,
-            ))
+                http::HeaderValue::from(value),
+            )
         })
         .collect())
     }
