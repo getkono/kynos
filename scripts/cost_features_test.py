@@ -3,9 +3,9 @@
 Everything under test here reads text and returns a number or a string. The
 half that shells out to `cargo` is deliberately absent: a sweep is fifty builds
 and testing it would test cargo, while a parser regression is silent -- it
-yields a plausible wrong attribution and exits zero -- and `DISAMBIGUATOR` has
-already regressed once, in `1cf9bd6`, where a pattern meant for a crate id also
-ate a float slice and collapsed two functions onto one key.
+yields a plausible wrong attribution and exits zero. `DISAMBIGUATOR` is the
+sharpest case: a pattern for a crate id that also matches a float slice
+collapses two functions onto one key.
 
 `LLVM_LINES_SAMPLE` is captured output rather than invented: `cargo llvm-lines
 --package kynos --example cost_fixture --color never --sort lines
@@ -1150,9 +1150,12 @@ class Exclusions(unittest.TestCase):
     `docs/testing.md#cross-cutting` holds that a set with names is asserted
     against those names rather than intended. The three are not identical and
     this states exactly how they differ, so that a feature added to one of
-    them cannot quietly go missing from another: `features:check` needs no
-    exclusion for `full` because a powerset that carries every feature is
-    excluded by `--exclude-all-features` already, and the sweep excludes
+    them cannot quietly go missing from another: `features:check` keeps
+    `full`, so its powerset lints `--features full` (`--exclude-all-features`
+    drops only the build naming every feature, which `full` is not), while
+    `features:targets` excludes it, since `full` gates no target of its own
+    and is only the union of the features that run already visits, and the
+    sweep excludes
     `openapi31` on top because it is the pinned baseline every other point is
     measured against rather than a point of its own.
     """

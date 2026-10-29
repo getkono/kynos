@@ -517,17 +517,16 @@ def read_recorded(path):
     `None` when nothing is recorded. The two header lines `write_tsv` emits for
     provenance are kept rather than dropped with the rest of the `#` prose. A
     drift is a difference against these rows, and a difference measured by a
-    different rustc is not the same claim as one measured by this one; while
-    they were dropped the report could not tell a reader which it was holding.
+    different rustc is not the same claim as one measured by this one, so the
+    report has to be able to tell a reader which it is holding.
 
     `None` also when the file parses but holds nothing to compare against. A
     baseline is unusable two ways short of being absent: a column header with
     no row under it, and a row whose cells do not line up with that header --
     which is what a conflicted file looks like, since `<<<<<<< HEAD` splits
-    into a single cell and lands beside the real rows. Both were accepted, and
-    an accepted-but-empty baseline is worse than no baseline: the report stops
-    saying it has nothing to compare against and starts printing a drift
-    verdict for a comparison it never made.
+    into a single cell and lands beside the real rows. Either would be worse
+    than no baseline: the report would stop saying it has nothing to compare
+    against and print a drift verdict for a comparison it never made.
     """
     if not path.is_file():
         return None
@@ -621,10 +620,8 @@ def table(rows, recorded, value, delta, unit, versions, baseline=BASELINE):
     row for has no drift: there is nothing for it to have drifted from, and
     ranking it beside the points that did drift would put two different
     quantities in one list. It is collected as `fresh` and ranked by what it
-    costs instead. Collecting it nowhere is what made the run that first
-    measures a new feature the one run that ranks and attributes nothing --
-    the row was in the table, and the separately headed sections below it were
-    empty.
+    costs instead, so the run that first measures a new feature still ranks
+    and attributes it rather than leaving it in the table alone.
 
     The baseline row is the exception to comparing deltas. Its delta is zero by
     construction, so its drift is its absolute instead: the floor every other
@@ -743,9 +740,8 @@ def provenance(recorded, versions):
 
     A drift is a fact about Kynos only when both measurements came from the
     same rustc; across a toolchain bump it is a fact about rustc, and the two
-    render identically in a table of numbers. `write_tsv` has always written
-    the recording toolchain into the baseline's header -- this is the half that
-    reads it back and says so.
+    render identically in a table of numbers. `write_tsv` writes the recording
+    toolchain into the baseline's header; this reads it back and says so.
     """
     if recorded is None:
         return []
