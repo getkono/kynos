@@ -256,6 +256,15 @@ pub(crate) fn join_names<'a>(names: impl IntoIterator<Item = &'a str>) -> Option
     HeaderValue::from_str(&joined).ok()
 }
 
+/// The description of a response with status `code`: its RFC 9110 reason
+/// phrase, or ``a `{code}` response`` for a code with none.
+pub(crate) fn describe_code(code: u16) -> String {
+    StatusCode::from_u16(code)
+        .ok()
+        .and_then(|status| status.canonical_reason())
+        .map_or_else(|| format!("a `{code}` response"), str::to_owned)
+}
+
 /// A delay in whole seconds, rounded *up*.
 ///
 /// Truncating a sub-second wait to zero would tell a client to retry

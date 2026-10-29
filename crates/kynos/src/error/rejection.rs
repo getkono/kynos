@@ -900,12 +900,7 @@ fn forbidden(
     named: Option<&'static str>,
 ) -> kynos_openapi::Response {
     let Some(named) = named else {
-        let description = status.canonical_reason().map_or_else(
-            || format!("a `{}` response", status.as_u16()),
-            str::to_owned,
-        );
-
-        return problem_response(registry, description);
+        return problem_response(registry, crate::http::describe_code(status.as_u16()));
     };
 
     let problem = registry.resolve::<Problem>();

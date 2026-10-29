@@ -2,7 +2,7 @@
 
 use kynos_openapi::{ComponentName, Method, RefOr, Response, StatusPattern};
 
-use crate::{http::StatusCode, schema::registry::Registry};
+use crate::{http::describe_code, schema::registry::Registry};
 
 /// The operation a request matched.
 ///
@@ -310,16 +310,6 @@ fn declare_header(
             .entry(name.to_owned())
             .or_insert_with(|| RefOr::Item(header.clone()));
     }
-}
-
-/// The description given to a response entry created only to carry a header:
-/// the code's RFC 9110 reason phrase. A range never mints an entry, so only an
-/// exact code is described.
-fn describe_code(code: u16) -> String {
-    StatusCode::from_u16(code)
-        .ok()
-        .and_then(|status| status.canonical_reason())
-        .map_or_else(|| format!("a `{code}` response"), str::to_owned)
 }
 
 /// A tag, as a type.
