@@ -51,11 +51,39 @@ use crate::{
 ///     report.month.as_bytes().to_vec()
 /// }
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Accept<T> {
     preferences: Vec<Preference>,
     representations: std::marker::PhantomData<fn() -> T>,
 }
+
+// By hand, so none is bounded on `T`: the offer is held at the type level
+// only, and a derive would ask every representation in it to be `Clone`,
+// `Debug` or `Eq` too.
+impl<T> Clone for Accept<T> {
+    fn clone(&self) -> Self {
+        Self {
+            preferences: self.preferences.clone(),
+            representations: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<T> std::fmt::Debug for Accept<T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Accept")
+            .field("preferences", &self.preferences)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<T> PartialEq for Accept<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.preferences == other.preferences
+    }
+}
+
+impl<T> Eq for Accept<T> {}
 
 impl<T> Accept<T> {
     /// Parses an `Accept` field value for tests and non-server integrations.
@@ -296,12 +324,22 @@ impl<T> Describe for Accept<T> {
 ///     .expect("a valid Accept field")
 ///     .respond_with(&(), (|(): &()| Text(String::new()), |(): &()| Text(String::new())));
 /// ```
-#[derive(Debug)]
 pub struct Negotiated<T> {
     response: Response,
 
     /// The offer, kept so `Responses` describes every alternative.
     offer: std::marker::PhantomData<fn() -> T>,
+}
+
+// By hand, so it is not bounded on the offer, which a derive would ask to be
+// `Debug` too.
+impl<T> std::fmt::Debug for Negotiated<T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Negotiated")
+            .field("response", &self.response)
+            .finish_non_exhaustive()
+    }
 }
 
 /// The request field every negotiated response was selected by.

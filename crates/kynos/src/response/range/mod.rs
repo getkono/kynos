@@ -113,7 +113,6 @@ impl Selection {
 ///     range.apply(Binary::new(recording()))
 /// }
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Range<T> {
     /// The `range-set`, or why the field is not applied.
     requested: Result<Vec<spec::Spec>, Ignored>,
@@ -121,6 +120,31 @@ pub struct Range<T> {
     /// The representation, kept at the type level.
     representation: std::marker::PhantomData<fn() -> T>,
 }
+
+// By hand, so none is bounded on `T`: the representation is held at the type
+// level only, and a derive would ask it to be `Clone`, `Debug` or `Eq` too.
+impl<T> Clone for Range<T> {
+    fn clone(&self) -> Self {
+        Self::read(self.requested.clone())
+    }
+}
+
+impl<T> std::fmt::Debug for Range<T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Range")
+            .field("requested", &self.requested)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<T> PartialEq for Range<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.requested == other.requested
+    }
+}
+
+impl<T> Eq for Range<T> {}
 
 impl<T> Range<T> {
     /// The one constructor.
