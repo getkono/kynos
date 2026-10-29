@@ -21,17 +21,11 @@ Run as `mise run commits:test`, or directly.
 import os
 import re
 import subprocess
-import sys
 import tempfile
 import tomllib
 import unittest
 from pathlib import Path
 from unittest import mock
-
-# Nothing here imports from `scripts/`, so no `.pyc` lands beside it today.
-# The flag, like the task's `-B`, keeps this file matching its sibling tests
-# and keeps a later import from `scripts/` writing nothing.
-sys.dont_write_bytecode = True
 
 ROOT = Path(__file__).resolve().parent.parent
 

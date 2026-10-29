@@ -23,8 +23,8 @@ import sys
 import unittest
 from pathlib import Path
 
-# Before the import below: a run writes no `.pyc` into the tree it reads. The
-# task passes `-B` for the same reason; this covers a direct `python3` run.
+# Before the import below: a run, through the task or directly, writes no
+# `.pyc` into the tree it reads.
 sys.dont_write_bytecode = True
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -434,8 +434,8 @@ class Main(unittest.TestCase):
         pin = 'tools = { python = "3.11.16" }\n'
         broken = self.rewriting(
             gate.MISE_CONFIG.read_text(),
-            pin + 'run = "python3 -B scripts/commits_test.py"',
-            'run = "python3 -B scripts/commits_test.py"',
+            pin + 'run = "python3 scripts/commits_test.py"',
+            'run = "python3 scripts/commits_test.py"',
         )
         status, failures = self.report(mise=broken)
         self.assertEqual(status, 1)

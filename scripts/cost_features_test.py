@@ -52,10 +52,9 @@ from collections import namedtuple
 from pathlib import Path
 from unittest import mock
 
-# Before the import below, and before anything else can trigger one: a run
-# writes no `.pyc` into the tree it reads, and `.gitignore` covers the imports
-# no task controls. The task passes `-B` for the same reason; this covers a
-# direct `python3` run.
+# Before the import below, and before anything else can trigger one: a run,
+# through the task or directly, writes no `.pyc` into the tree it reads, and
+# `.gitignore` covers the imports no task controls.
 sys.dont_write_bytecode = True
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
