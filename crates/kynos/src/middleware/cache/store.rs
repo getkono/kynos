@@ -193,11 +193,7 @@ impl StoredResponse {
             .vary
             .iter()
             .zip(&self.0.selecting)
-            .all(|(name, stored)| {
-                let received = headers.get_all(name.as_str());
-                received.iter().next().is_none() == stored.is_empty()
-                    && combined(stored.iter()).eq(combined(received.iter()))
-            })
+            .all(|(name, stored)| same_lines(stored.iter(), headers.get_all(name.as_str()).iter()))
     }
 
     /// Whether `other` is the same variant of a resource as this one, so that
@@ -217,11 +213,19 @@ impl StoredResponse {
                 .selecting
                 .iter()
                 .zip(&other.0.selecting)
-                .all(|(mine, theirs)| {
-                    mine.is_empty() == theirs.is_empty()
-                        && combined(mine.iter()).eq(combined(theirs.iter()))
-                })
+                .all(|(mine, theirs)| same_lines(mine.iter(), theirs.iter()))
     }
+}
+
+/// Whether two sets of one field's lines are the same field: both absent, or
+/// both present and combining into the same value.
+fn same_lines<'a, 'b>(
+    mine: impl Iterator<Item = &'a HeaderValue>,
+    theirs: impl Iterator<Item = &'b HeaderValue>,
+) -> bool {
+    let (mut mine, mut theirs) = (mine.peekable(), theirs.peekable());
+
+    mine.peek().is_none() == theirs.peek().is_none() && combined(mine).eq(combined(theirs))
 }
 
 /// The octets of `lines` combined into one field value, as RFC 9110 section
