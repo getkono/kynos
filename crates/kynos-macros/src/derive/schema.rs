@@ -502,7 +502,9 @@ fn described(schema: TokenStream2, doc: Option<&str>) -> TokenStream2 {
 }
 
 /// The names this derive would describe a struct's fields under, in order.
-/// Shared with [`multipart`](super::multipart) so part and property names agree.
+/// Shared with [`multipart`](super::multipart) so part and property names
+/// agree, and with [`common::wire_names`](super::common::wire_names) so a
+/// parameter's name falls back to the property name.
 pub(super) fn property_names(input: &DeriveInput, fields: &syn::FieldsNamed) -> Vec<String> {
     let container = Container::read(input);
     fields

@@ -251,7 +251,6 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let response_headers = response_headers_body(&params);
     let encode = encode_body(&params);
 
-    // Three implementations, one per direction plus the description.
     Ok(quote! {
         impl #impl_generics ::kynos::extract::params::header::DecodeHeaders
             for #name #ty_generics #where_clause

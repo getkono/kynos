@@ -146,7 +146,8 @@ pub(super) fn reject_split_rename(input: &DeriveInput) -> syn::Result<()> {
 /// refused only where it reaches a struct variant serde writes: one reaching
 /// only variants serde skips or only reads, unit or tuple variants, or sides
 /// that resolve to one style is not refused.
-/// Runs before any other check that reads a [`Container`].
+/// Runs before any check that reads a [`Container`]'s `rename_all`; the
+/// refusals ahead of it read no rename rule.
 pub(super) fn reject_split_rename_all(input: &DeriveInput) -> syn::Result<()> {
     let identifier = Container::read(input).visitor == Visitor::Identifier;
     let variants = match &input.data {

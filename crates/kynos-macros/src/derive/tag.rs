@@ -50,7 +50,6 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         .name
         .unwrap_or_else(|| LitStr::new(&name.to_string(), name.span()));
 
-    // Falls back to the doc comment.
     let described = args
         .description
         .map(|text| text.value())

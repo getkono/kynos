@@ -58,7 +58,6 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     );
     let encode = encode_body(&params);
 
-    // Three implementations, one per direction plus the description.
     Ok(quote! {
         impl #impl_generics ::kynos::extract::params::query::QueryParams
             for #name #ty_generics #where_clause
