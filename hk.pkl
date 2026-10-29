@@ -17,9 +17,16 @@ hooks {
             }
             // `.cargo/config.toml` decides how the workspace builds, as
             // `Cargo.toml` does; `tooling:check` catches a misspelled key. A
-            // bare `Cargo.toml` names only the root's: `**/` reaches members.
+            // bare `Cargo.toml` names only the root's, so members are listed;
+            // `**/` would also reach `fuzz/`, a workspace Clippy never reads.
             ["lint"] {
-                glob = List("*.rs", "**/Cargo.toml", "Cargo.lock", ".cargo/config.toml")
+                glob = List(
+                    "*.rs",
+                    "Cargo.toml",
+                    "crates/*/Cargo.toml",
+                    "Cargo.lock",
+                    ".cargo/config.toml",
+                )
                 check_first = true
                 check = "mise run lint"
                 fix = "mise run lint:fix"
