@@ -31,17 +31,18 @@ use crate::{
 /// — so attaching authentication to a group documents it on every operation
 /// underneath.
 pub struct Group<C, P = Propagate, I = (), S = ()> {
-    prefix: String,
-    endpoints: Vec<Arc<dyn DynEndpoint<C>>>,
-    interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
-    short_circuit_checks: Vec<ShortCircuitCheck>,
-    tags: Vec<DeclaredTag>,
+    // `pub(super)`: the router mounting a group destructures it.
+    pub(super) prefix: String,
+    pub(super) endpoints: Vec<Arc<dyn DynEndpoint<C>>>,
+    pub(super) interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
+    pub(super) short_circuit_checks: Vec<ShortCircuitCheck>,
+    pub(super) tags: Vec<DeclaredTag>,
     /// Kept beside `tags`, as on `Router`, so a tag covering nothing is still
     /// documented.
-    tag_metadata: Vec<kynos_openapi::Tag>,
+    pub(super) tag_metadata: Vec<kynos_openapi::Tag>,
     /// Problems found while the group was assembled, which the fluent methods
     /// cannot return.
-    violations: Vec<Violation<RouterError>>,
+    pub(super) violations: Vec<Violation<RouterError>>,
     /// Layers of undeclared effect covering this group's operations, outermost
     /// first. `pub(crate)` because `unchecked` mounts them.
     #[cfg(feature = "unchecked")]
@@ -50,7 +51,7 @@ pub struct Group<C, P = Propagate, I = (), S = ()> {
     // As on `Router`: `I` is this group's interceptor list, `S` what its
     // endpoints brought.
     #[allow(clippy::type_complexity)]
-    _private: PhantomData<fn() -> (C, P, I, S)>,
+    pub(super) _private: PhantomData<fn() -> (C, P, I, S)>,
 }
 
 impl<C, P, I, S> std::fmt::Debug for Group<C, P, I, S> {
@@ -62,19 +63,6 @@ impl<C, P, I, S> std::fmt::Debug for Group<C, P, I, S> {
             .field("interceptors", &self.interceptors.len())
             .finish_non_exhaustive()
     }
-}
-
-/// Everything a group holds, once a router has taken it over.
-pub(crate) struct GroupParts<C> {
-    pub(crate) prefix: String,
-    pub(crate) endpoints: Vec<Arc<dyn DynEndpoint<C>>>,
-    pub(crate) interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
-    pub(crate) short_circuit_checks: Vec<ShortCircuitCheck>,
-    pub(crate) tags: Vec<DeclaredTag>,
-    pub(crate) tag_metadata: Vec<kynos_openapi::Tag>,
-    pub(crate) violations: Vec<Violation<RouterError>>,
-    #[cfg(feature = "unchecked")]
-    pub(crate) unchecked_layers: Vec<Arc<dyn crate::unchecked::ErasedLayer>>,
 }
 
 impl<C> Group<C, Propagate, ()> {
@@ -116,21 +104,6 @@ impl<C, P, I, S> Group<C, P, I, S> {
             #[cfg(feature = "unchecked")]
             unchecked_layers: self.unchecked_layers,
             _private: PhantomData,
-        }
-    }
-
-    /// Hands everything this group holds to the router mounting it.
-    pub(crate) fn into_parts(self) -> GroupParts<C> {
-        GroupParts {
-            prefix: self.prefix,
-            endpoints: self.endpoints,
-            interceptors: self.interceptors,
-            short_circuit_checks: self.short_circuit_checks,
-            tags: self.tags,
-            tag_metadata: self.tag_metadata,
-            violations: self.violations,
-            #[cfg(feature = "unchecked")]
-            unchecked_layers: self.unchecked_layers,
         }
     }
 }

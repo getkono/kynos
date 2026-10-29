@@ -16,7 +16,7 @@ use crate::{
     error::problem::{Problem, problem_response},
     http::{Response, StatusCode},
     response::IntoResponse,
-    schema::registry::Registry,
+    router::operation::OperationCx,
 };
 
 /// Runs `future` with a panic recovery branch installed.
@@ -73,13 +73,14 @@ pub(super) fn take_recovered(response: &mut Response) -> Option<Box<dyn Any + Se
         .take()
 }
 
-/// The 500 a recovery branch contributes to every operation it covers.
-pub(crate) fn panic_responses(registry: &mut Registry) -> kynos_openapi::Responses {
-    kynos_openapi::Responses::new().with(
+/// Declares the 500 a recovery branch contributes to every operation it covers.
+pub(crate) fn describe(operation: &mut OperationCx<'_>) {
+    let responses = kynos_openapi::Responses::new().with(
         500,
         problem_response(
-            registry,
+            operation.registry(),
             "the operation failed unexpectedly and was recovered",
         ),
-    )
+    );
+    operation.add_responses(&responses);
 }

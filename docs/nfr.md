@@ -311,7 +311,7 @@ means resolving on first read, which the decision on the origin above refuses.
 
 **A path's first 405 allocates once more than its later ones, and that is
 `bytes`, not Kynos.** The `Allow` value is built once per path at
-[`Router::build`](../crates/kynos/src/router/describe.rs) with
+[`Router::build`](../crates/kynos/src/router/build.rs) with
 `HeaderValue::from_str`, which copies into a `Vec`-backed `Bytes`. The first
 clone of such a `Bytes` promotes it by boxing a shared header, and every later
 clone is a reference count. So the one-time block is per path rather than per
@@ -623,7 +623,10 @@ sit in any module of the crate. That is why `router/`, `emit/downgrade/`,
 the `tower` bridge, and the `impl` blocks registering a waiver sit in a private
 `unchecked/route.rs`. Its other child, `unchecked/describe.rs`, left for a
 different reason: `docs/testing.md`'s off-path table allows a `Document` per
-file, and `unchecked.rs` serves requests. `derive/api_error/` and
+file, and `unchecked.rs` serves requests. `router/describe.rs` left the list the first
+way: `Router::build` and the match table it fills sit in a private
+`router/build.rs`, so describing a router and building one are two files.
+`derive/api_error/` and
 `derive/security_scheme/` were split because each held two concerns, a derive's
 attribute grammar and the code that expands it, and since nothing in
 `kynos-macros` is public but the derives, the split cost no path. The rest were
@@ -778,7 +781,6 @@ The budget, which may only shrink:
 - `crates/kynos/src/response/range/served.rs`
 - `crates/kynos/src/response/status.rs`
 - `crates/kynos/src/response/stream/sse.rs`
-- `crates/kynos/src/router/describe.rs`
 - `crates/kynos/src/router/dispatch.rs`
 - `crates/kynos/src/router/mod.rs`
 - `crates/kynos/src/schema/constraints.rs`

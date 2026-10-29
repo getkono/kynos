@@ -62,7 +62,7 @@ use bytes::Bytes;
 use kynos_openapi::{PathTemplate, validate::violation::Violation};
 
 use crate::router::{
-    docs::endpoint::{DocsDescription, DocsPage},
+    docs::endpoint::{DocsEndpoint, Half},
     endpoint::{DynEndpoint, operation_id},
     error::RouterError,
 };
@@ -293,7 +293,8 @@ impl<M> Docs<M> {
         });
 
         let mut halves: Vec<(Arc<dyn DynEndpoint<C>>, Role)> = vec![(
-            Arc::new(DocsDescription::new(
+            Arc::new(DocsEndpoint::new(
+                Half::Description,
                 self.description_at,
                 description_id,
                 Arc::clone(&state),
@@ -303,7 +304,10 @@ impl<M> Docs<M> {
 
         if let Some(at) = at {
             let page_id = operation_id(&self.operation_id_prefix, at.as_str());
-            halves.push((Arc::new(DocsPage::new(at, page_id, state)), Role::Page));
+            halves.push((
+                Arc::new(DocsEndpoint::new(Half::Page, at, page_id, state)),
+                Role::Page,
+            ));
         }
 
         halves

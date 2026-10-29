@@ -23,14 +23,18 @@ use crate::{
     extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http::{HeaderValue, Request, Response, StatusCode, header},
     middleware::catch_panic::PanicPolicy,
-    response::range::{
-        Selection,
-        source::{ByteSource, Spans},
-        spec,
+    response::{
+        IntoResponse,
+        range::{
+            Selection,
+            source::{ByteSource, Spans},
+            spec,
+        },
     },
     router::{
         Router,
         assets::{media, range},
+        install::error_at,
     },
 };
 
@@ -263,7 +267,8 @@ async fn serve(directory: &Directory, request: &Request) -> Response {
     // Decided from `stat`'s length, so an unsatisfiable range costs no read.
     let selection = match crate::response::range::select(&range_set, metadata.len()) {
         Ok(selection) => selection,
-        Err(rejection) => return range::unsatisfiable(rejection),
+        // Section 15.5.17's 416, with the `Content-Range` it owes.
+        Err(rejection) => return rejection.into_response(),
     };
 
     // Opened here, so a file that cannot be opened is still a 404 rather than
@@ -358,14 +363,12 @@ impl<C: Send + Sync + 'static, P: PanicPolicy, I, S> Router<C, P, I, S> {
     pub fn assets_directory(mut self, prefix: &str, directory: Directory) -> Self {
         let prefix = prefix.trim_end_matches('/');
         if prefix.contains('{') {
-            self.violations.push(kynos_openapi::Violation {
-                location: "#/paths".to_owned(),
-                severity: kynos_openapi::Severity::Error,
-                error: kynos_openapi::SpecError::OpaqueRoute {
+            self.violations.push(error_at(
+                "#/paths",
+                kynos_openapi::SpecError::OpaqueRoute {
                     pattern: format!("{prefix}/{{*path}}"),
-                }
-                .into(),
-            });
+                },
+            ));
             return self;
         }
 

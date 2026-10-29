@@ -59,11 +59,6 @@ impl<C> Endpoints<C> {
         self.endpoints.is_empty()
     }
 
-    /// Moves every operation out of `other` into this set.
-    pub(crate) fn absorb(&mut self, other: Self) {
-        self.endpoints.extend(other.endpoints);
-    }
-
     /// Hands the collected operations to whatever is mounting them.
     pub(crate) fn into_inner(self) -> Vec<Arc<dyn DynEndpoint<C>>> {
         self.endpoints
@@ -103,7 +98,7 @@ impl<C> IntoEndpoints<C> for Endpoints<C> {
     type Stacks = ();
 
     fn into_endpoints(self, sink: &mut Endpoints<C>) {
-        sink.absorb(self);
+        sink.endpoints.extend(self.endpoints);
     }
 }
 

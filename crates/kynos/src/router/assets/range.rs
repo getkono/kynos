@@ -53,7 +53,8 @@ pub(super) fn respond<H: EncodeHeaders>(
 
     let selection = match range::select(requested, complete_length) {
         Ok(selection) => selection,
-        Err(rejection) => return unsatisfiable(rejection),
+        // Section 15.5.17's 416, with the `Content-Range` it owes.
+        Err(rejection) => return rejection.into_response(),
     };
 
     let body = match selection {
@@ -91,11 +92,6 @@ pub(super) fn assembled<H: EncodeHeaders>(
     }
 
     response
-}
-
-/// Section 15.5.17's 416, with the `Content-Range` it owes.
-pub(super) fn unsatisfiable(rejection: RangeRejection) -> Response {
-    rejection.into_response()
 }
 
 /// Declares the two statuses, two parameters and two fields a ranged file adds.

@@ -283,8 +283,7 @@ where
         operation.set_deprecated(self.deprecated);
 
         if install::catches::<P>() {
-            let responses = dispatch::recovery::panic_responses(operation.registry());
-            operation.add_responses(&responses);
+            dispatch::recovery::describe(operation);
         }
     }
 

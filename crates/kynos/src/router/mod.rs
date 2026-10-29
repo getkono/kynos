@@ -8,6 +8,7 @@
 //! the same names, `assets` the files a router serves and `docs` the API
 //! reference page it publishes.
 
+mod build;
 mod describe;
 mod install;
 
@@ -315,21 +316,11 @@ impl<C, P, I, S> Router<C, P, I, S> {
             mounted.path = path;
 
             // The absorbed router's interceptors and tags covered only these
-            // operations, so each carries them.
-            let mut interceptors = other.interceptors.clone();
-            interceptors.append(&mut mounted.interceptors);
-            mounted.interceptors = interceptors;
-
-            let mut tags = other.tags.clone();
-            tags.append(&mut mounted.tags);
-            mounted.tags = tags;
-
+            // operations, so each carries them, outermost first.
+            prepend(&mut mounted.interceptors, &other.interceptors);
+            prepend(&mut mounted.tags, &other.tags);
             #[cfg(feature = "unchecked")]
-            {
-                let mut layers = other.unchecked.layers.clone();
-                layers.append(&mut mounted.unchecked_layers);
-                mounted.unchecked_layers = layers;
-            }
+            prepend(&mut mounted.unchecked_layers, &other.unchecked.layers);
 
             mounted.catch_panics |= catch_panics;
             self.mounted.push(mounted);
@@ -520,26 +511,31 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         let () = <GI as CompatibleStack<I, C>>::CHECK;
         let () = <GS as CompatibleStack<I, C>>::CHECK;
 
-        let group = group.into_parts();
-        self.violations.extend(group.violations);
-        self.tag_metadata.extend(group.tag_metadata);
-        self.short_circuit_checks.extend(group.short_circuit_checks);
+        let Group {
+            prefix,
+            endpoints,
+            interceptors,
+            short_circuit_checks,
+            tags,
+            tag_metadata,
+            violations,
+            #[cfg(feature = "unchecked")]
+            unchecked_layers,
+            _private: _,
+        } = group;
+        self.violations.extend(violations);
+        self.tag_metadata.extend(tag_metadata);
+        self.short_circuit_checks.extend(short_circuit_checks);
 
         #[cfg(feature = "unchecked")]
         let first = self.mounted.len();
 
-        self.absorb(
-            group.endpoints,
-            &group.prefix,
-            &group.tags,
-            &group.interceptors,
-            catches::<GP>(),
-        );
+        self.absorb(endpoints, &prefix, &tags, &interceptors, catches::<GP>());
 
         // A group's layers cover only its operations, so they land per endpoint.
         #[cfg(feature = "unchecked")]
         for mounted in &mut self.mounted[first..] {
-            mounted.unchecked_layers.clone_from(&group.unchecked_layers);
+            mounted.unchecked_layers.clone_from(&unchecked_layers);
         }
 
         self.retype()
@@ -734,6 +730,11 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         self.deny_unchecked_schemas = true;
         self
     }
+}
+
+/// Puts what an enclosing scope contributed ahead of `inner`'s own.
+fn prepend<T: Clone>(inner: &mut Vec<T>, outer: &[T]) {
+    inner.splice(0..0, outer.iter().cloned());
 }
 
 #[cfg(test)]
