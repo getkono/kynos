@@ -44,22 +44,15 @@ impl<T> RateLimited<T> {
 
 impl<T: ProblemType> IntoResponse for RateLimited<T> {
     fn into_response(self) -> http::Response {
-        let mut response = refusal_problem::<T>(http::StatusCode::TOO_MANY_REQUESTS)
-            .with_detail("the client has exceeded its request rate")
-            .into_response();
-        set_retry_after(&mut response, self.retry_after);
-
         // A denial's reset is its retry delay.
-        write_group(
-            &mut response,
+        refusal::<T, _>(
+            self.retry_after,
             &RateLimitHeaders {
                 limit: self.limit,
                 remaining: 0,
                 reset: self.retry_after,
             },
-        );
-
-        response
+        )
     }
 }
 
@@ -107,18 +100,13 @@ impl<T> RateLimitedFields<T> {
 
 impl<T: ProblemType> IntoResponse for RateLimitedFields<T> {
     fn into_response(self) -> http::Response {
-        let mut response = refusal_problem::<T>(http::StatusCode::TOO_MANY_REQUESTS)
-            .with_detail("the client has exceeded its request rate")
-            .into_response();
-        set_retry_after(&mut response, self.retry_after);
-        write_group(
-            &mut response,
+        refusal::<T, _>(
+            self.retry_after,
             &RateLimitFields {
                 limits: self.limits,
                 policies: self.policies,
             },
-        );
-        response
+        )
     }
 }
 
@@ -152,10 +140,16 @@ fn described_refusal<T: ProblemType>(
     kynos_openapi::Responses::new().with(429, response)
 }
 
-/// Writes a group onto a short-circuit response, through the same writer a
-/// forwarded response uses.
-fn write_group<G: EncodeHeaders>(response: &mut http::Response, group: &G) {
-    crate::extract::params::header::write_or_refuse(response, group);
+/// The 429 in either spelling: the problem, `Retry-After`, and `group` written
+/// through the same writer a forwarded response uses.
+fn refusal<T: ProblemType, G: EncodeHeaders>(retry_after: Duration, group: &G) -> http::Response {
+    let mut response = refusal_problem::<T>(http::StatusCode::TOO_MANY_REQUESTS)
+        .with_detail("the client has exceeded its request rate")
+        .into_response();
+    set_retry_after(&mut response, retry_after);
+    crate::extract::params::header::write_or_refuse(&mut response, group);
+
+    response
 }
 
 // Written out because `#[derive]` would bound the phantom marker `T`.
