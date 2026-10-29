@@ -729,17 +729,17 @@ fn redirect(path: &str, query: Option<&str>) -> Response {
 /// right after it.
 pub(crate) fn allow_header(methods: &[Method]) -> HeaderValue {
     let derives_head = !methods.contains(&Method::Head);
-    let joined = methods
-        .iter()
-        .flat_map(|method| {
-            let head = (derives_head && *method == Method::Get).then_some(Method::Head);
-            std::iter::once(*method).chain(head)
-        })
-        .map(Method::as_wire_str)
-        .collect::<Vec<_>>()
-        .join(", ");
+    let joined = crate::http::join_names(
+        methods
+            .iter()
+            .flat_map(|method| {
+                let head = (derives_head && *method == Method::Get).then_some(Method::Head);
+                std::iter::once(*method).chain(head)
+            })
+            .map(Method::as_wire_str),
+    );
 
-    HeaderValue::from_str(&joined).unwrap_or_else(|_| HeaderValue::from_static(""))
+    joined.unwrap_or_else(|| HeaderValue::from_static(""))
 }
 
 /// Every method some operation in `paths` answers: each declared one, and

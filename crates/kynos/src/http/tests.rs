@@ -1,10 +1,22 @@
-use super::{HeaderMap, HeaderValue, header, header_name_eq, unquoted_str, vary_on};
+use super::{HeaderMap, HeaderValue, header, header_name_eq, join_names, unquoted_str, vary_on};
 
 #[test]
 fn header_names_compare_without_regard_to_case() {
     assert!(header_name_eq("X-Request-Id", "x-request-id"));
     assert!(!header_name_eq("x-request-id", "x-request-ids"));
     assert!(!header_name_eq("x-a", "x-b"));
+}
+
+/// A list field is one comma-joined value, and an empty list is no field at
+/// all rather than an empty one.
+#[test]
+fn a_list_field_joins_its_names_and_an_empty_list_sends_none() {
+    assert_eq!(join_names([]), None);
+    assert_eq!(join_names(["x-a"]), Some(HeaderValue::from_static("x-a")));
+    assert_eq!(
+        join_names(["x-a", "x-b"]),
+        Some(HeaderValue::from_static("x-a, x-b"))
+    );
 }
 
 /// One pair of quotes comes off text, and a lone quote is no pair.

@@ -195,9 +195,7 @@ fn render_limits(limits: &[ServiceLimit]) -> Option<http::HeaderValue> {
         })
         .collect();
 
-    (!rendered.is_empty())
-        .then(|| http::HeaderValue::from_str(&rendered.join(", ")).ok())
-        .flatten()
+    http::join_names(rendered.iter().map(String::as_str))
 }
 
 /// Renders the `RateLimit-Policy` field: one member per advertised quota.
@@ -236,9 +234,7 @@ fn render_policies(policies: &[QuotaPolicy]) -> Option<http::HeaderValue> {
         })
         .collect();
 
-    (!rendered.is_empty())
-        .then(|| http::HeaderValue::from_str(&rendered.join(", ")).ok())
-        .flatten()
+    http::join_names(rendered.iter().map(String::as_str))
 }
 
 /// RFC 9651 section 3.3.1's largest `sf-integer`; a parser rejects the whole

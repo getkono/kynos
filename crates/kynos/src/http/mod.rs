@@ -195,6 +195,22 @@ pub(crate) fn own_authority<'a>(
         })
 }
 
+/// `names` as one comma-separated field value.
+///
+/// `None` when there is no name, or when the joined names are not a field
+/// value.
+pub(crate) fn join_names<'a>(names: impl IntoIterator<Item = &'a str>) -> Option<HeaderValue> {
+    let mut names = names.into_iter();
+    let mut joined = names.next()?.to_owned();
+
+    for name in names {
+        joined.push_str(", ");
+        joined.push_str(name);
+    }
+
+    HeaderValue::from_str(&joined).ok()
+}
+
 /// A delay in whole seconds, rounded *up*.
 ///
 /// Truncating a sub-second wait to zero would tell a client to retry
