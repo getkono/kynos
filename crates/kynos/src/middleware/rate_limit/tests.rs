@@ -1017,12 +1017,60 @@ fn a_window_is_never_advertised_shorter_than_enforced() {
         (Duration::from_millis(1_500), r#""p";q=5;w=2"#),
         (Duration::from_secs(2), r#""p";q=5;w=2"#),
         (Duration::ZERO, r#""p";q=5"#),
-        (Duration::MAX, &format!(r#""p";q=5;w={}"#, u64::MAX)),
+        (
+            Duration::from_secs(SF_INTEGER_MAX),
+            r#""p";q=5;w=999999999999999"#,
+        ),
+        // Past the sf-integer range a capped `w` would advertise a shorter
+        // window than the one enforced, so it is omitted instead.
+        (Duration::from_secs(SF_INTEGER_MAX + 1), r#""p";q=5"#),
+        (Duration::MAX, r#""p";q=5"#),
     ] {
         assert_eq!(
             rendered(&policy(window)),
             [("ratelimit-policy".to_owned(), expected.to_owned())],
             "{window:?}"
+        );
+    }
+}
+
+/// RFC 9651 section 3.3.1's largest `sf-integer`.
+const SF_INTEGER_MAX: u64 = 999_999_999_999_999;
+
+/// Every structured-field Integer stays inside RFC 9651's range.
+///
+/// Section 3.3.1 bounds an Integer at 999,999,999,999,999, and a parser
+/// rejects the whole field past it. The required `q` and `r` cap there, which
+/// understates what the client may send; the optional `t` is omitted, since a
+/// capped reset would tell the client to retry before the quota replenishes.
+#[test]
+fn structured_field_integers_stay_inside_the_sf_integer_range() {
+    let fields = |count, reset| RateLimitFields {
+        limits: vec![ServiceLimit::new("p", count, count, reset)],
+        policies: vec![QuotaPolicy::new("p", count, None, QuotaUnit::Requests)],
+    };
+    let expected = |r: &str, q: &str| {
+        [
+            ("ratelimit".to_owned(), r.to_owned()),
+            ("ratelimit-policy".to_owned(), q.to_owned()),
+        ]
+    };
+
+    assert_eq!(
+        rendered(&fields(SF_INTEGER_MAX, Duration::from_secs(SF_INTEGER_MAX))),
+        expected(
+            r#""p";r=999999999999999;t=999999999999999"#,
+            r#""p";q=999999999999999"#
+        )
+    );
+    for (count, reset) in [
+        (SF_INTEGER_MAX + 1, Duration::from_secs(SF_INTEGER_MAX + 1)),
+        (u64::MAX, Duration::MAX),
+    ] {
+        assert_eq!(
+            rendered(&fields(count, reset)),
+            expected(r#""p";r=999999999999999"#, r#""p";q=999999999999999"#),
+            "{count} {reset:?}"
         );
     }
 }
