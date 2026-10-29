@@ -3,8 +3,9 @@ name = "kynos-profile"
 description = "Instruction and heap counts over Kynos's in-process request path."
 version = "0.0.0"
 edition.workspace = true
-# No `rust-version`: gungraun needs 1.88, and stating it would conflict with
-# `clippy.toml`'s `msrv`. `msrv:check` excludes this unpublished package.
+# gungraun's floor, above the workspace's; `msrv:check` excludes this
+# unpublished package.
+rust-version = "1.88"
 license.workspace = true
 repository.workspace = true
 # Keeps gungraun out of `kynos`'s dev-dependencies and tarball.

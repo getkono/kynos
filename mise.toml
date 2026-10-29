@@ -344,10 +344,17 @@ grep -F 'Kynos panic recovery requires `panic = "unwind"`' "$panic_check_output"
 
 [tasks."msrv:check"]
 description = "Verify the crate still builds on the declared MSRV"
-# `kynos-profile` is unpublished and needs gungraun's 1.88 floor.
+# The toolchain is the workspace's `rust-version`, read from `Cargo.toml`.
+# `kynos-profile` is unpublished and declares gungraun's higher floor.
 run = '''
-rustup toolchain install 1.85 --profile minimal --no-self-update
-cargo +1.85 check --workspace --all-features --exclude kynos-profile
+set -eu
+msrv="$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)"
+if [ -z "$msrv" ]; then
+  echo "Cargo.toml declares no rust-version" >&2
+  exit 1
+fi
+rustup toolchain install "$msrv" --profile minimal --no-self-update
+cargo +"$msrv" check --workspace --all-features --exclude kynos-profile
 '''
 
 [tasks."minimal-versions:check"]
