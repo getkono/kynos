@@ -307,7 +307,7 @@ fn a_status_resolves_to_the_most_specific_key_declaring_it() {
 }
 
 /// One `content` map, from the media types it declares.
-fn content(declared: &[&str]) -> kynos_openapi::Map<RefOr<kynos_openapi::MediaType>> {
+pub(super) fn content(declared: &[&str]) -> kynos_openapi::Map<RefOr<kynos_openapi::MediaType>> {
     declared
         .iter()
         .map(|name| {
@@ -317,41 +317,6 @@ fn content(declared: &[&str]) -> kynos_openapi::Map<RefOr<kynos_openapi::MediaTy
             )
         })
         .collect()
-}
-
-/// A `Content-Type` is compared with its parameters already stripped, so a
-/// declared media type carrying one has to match the bare form -- or every
-/// parameterized entry in a document reads as undeclared. `text/html` and
-/// `text/css` both reach the document that way through `router::assets`.
-#[test]
-fn a_declared_media_type_matches_despite_its_parameters() {
-    let declared = content(&["text/html; charset=utf-8"]);
-
-    assert!(super::declared_representation(&declared, "text/html").is_some());
-}
-
-/// The exact match is tried first, so two representations differing only by
-/// parameter resolve to the one actually named rather than to whichever the
-/// map happened to hold first.
-#[test]
-fn an_exact_declaration_wins_over_a_parameter_stripped_one() {
-    let declared = content(&["text/plain; charset=iso-8859-1", "text/plain"]);
-
-    let chosen = super::declared_representation(&declared, "text/plain");
-    assert!(chosen.is_some());
-    assert!(std::ptr::eq(
-        chosen.expect("a representation").1,
-        declared.get("text/plain").expect("the exact entry"),
-    ));
-}
-
-/// The control: relaxing the parameter comparison must not make an
-/// unrelated media type match.
-#[test]
-fn an_undeclared_media_type_still_does_not_match() {
-    let declared = content(&["text/html; charset=utf-8"]);
-
-    assert!(super::declared_representation(&declared, "application/json").is_none());
 }
 
 /// A document declaring one `GET /thing` operation with `responses`.
@@ -615,6 +580,25 @@ fn only_a_json_based_body_is_validated_against_its_schema() {
 
     let reasons = conformance(&document, &observed(200, Some("text/plain"), "{}"));
     assert!(reasons.is_empty(), "{reasons:?}");
+}
+
+/// A response under a media-range key conforms, and is held to that key's
+/// schema: whether a body is validated follows the media type actually sent,
+/// not the range that declared it.
+#[test]
+fn a_body_under_a_media_range_key_is_checked_against_that_key() {
+    let document = document_declaring(refusing_ok(&["image/*", "*/*"]));
+
+    let reasons = conformance(&document, &observed(200, Some("image/png"), "\u{89}PNG"));
+    assert!(reasons.is_empty(), "{reasons:?}");
+
+    let reasons = conformance(&document, &observed(200, Some("application/json"), "{}"));
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    assert!(
+        reasons[0].contains("the body does not match the declared schema"),
+        "{}",
+        reasons[0]
+    );
 }
 
 /// A representation given by a `#/components/mediaTypes` `$ref` is held to the

@@ -1,6 +1,10 @@
 //! Checking one observed response against what the description promised.
 //!
 //! `jsonschema` is named here and nowhere else, per `docs/architecture.md`.
+//! [`representation`] decides which `content` key declares the media type a
+//! response sent.
+
+mod representation;
 
 use kynos_openapi::{
     Document, Method, RefOr, Responses, StatusPattern,
@@ -118,7 +122,9 @@ fn body_conformance(
             declared()
         )];
     };
-    let Some((key, entry)) = declared_representation(&response.content, &media_type) else {
+    let Some((key, entry)) =
+        representation::declared_representation(&response.content, &media_type)
+    else {
         return vec![format!(
             "`{media_type}` is not a declared representation; the description declares {}",
             declared()
@@ -345,27 +351,6 @@ fn resolve_response<'d>(
             .and_then(|name| document.components.responses.get(name))
             .and_then(RefOr::as_item),
     }
-}
-
-/// The representation declared for `media_type`, if one is.
-///
-/// An exact match first, so two keys differing only by parameter stay
-/// distinct, then one ignoring the declared key's parameters, since
-/// `media_type` arrives with its own already stripped.
-fn declared_representation<'a>(
-    content: &'a kynos_openapi::Map<RefOr<kynos_openapi::MediaType>>,
-    media_type: &str,
-) -> Option<(&'a str, &'a RefOr<kynos_openapi::MediaType>)> {
-    content
-        .iter()
-        .find(|(name, _)| name.eq_ignore_ascii_case(media_type))
-        .or_else(|| {
-            content.iter().find(|(name, _)| {
-                let (base, _) = name.split_once(';').unwrap_or((name.as_str(), ""));
-                base.trim().eq_ignore_ascii_case(media_type)
-            })
-        })
-        .map(|(name, representation)| (name.as_str(), representation))
 }
 
 /// The media type an entry names, following one `#/components/mediaTypes`
