@@ -1216,3 +1216,19 @@ async fn a_marker_deriving_nothing_leaves_served_and_delivery_debug() {
     );
     assert!(printed.ends_with(", .. }"), "{printed}");
 }
+
+/// The representation sits only in a `PhantomData`, so `Range` is bounded on
+/// nothing and prints the `range-set` alone.
+#[test]
+fn a_representation_deriving_nothing_leaves_range_its_traits() {
+    fn is_eq<T: Eq>() {}
+
+    let range = Range::<Bare>::parse("bytes=0-1");
+    assert_eq!(range.clone(), range);
+    assert_ne!(range, Range::<Bare>::parse("bytes=1-2"));
+    assert_eq!(
+        format!("{range:?}"),
+        "Range { requested: Ok([Offsets { first: 0, last: Some(1) }]), .. }"
+    );
+    is_eq::<Range<Bare>>();
+}
