@@ -232,7 +232,7 @@ fn owned_text(part: Part) -> Result<String, BodyRejection> {
 ///
 /// Read by the parameter rule [`offers`](super::offers) accepted the media type
 /// by, so optional whitespace around each `;` (RFC 9110 section 5.6.6) is
-/// skipped here as it is there. An unacceptable media type is the 415; an
+/// skipped here as it is there, and a `;` inside a quoted value ends nothing. An unacceptable media type is the 415; an
 /// accepted one without a `boundary`, or with an empty one, is a 400, since no
 /// parser can find the parts.
 fn boundary(headers: &HeaderMap) -> Result<String, BodyRejection> {
@@ -242,8 +242,7 @@ fn boundary(headers: &HeaderMap) -> Result<String, BodyRejection> {
 
     super::content_type(headers)
         .and_then(|(_, parameters)| {
-            parameters
-                .split(';')
+            crate::http::unquoted_split(parameters, b';')
                 .filter_map(super::parameter)
                 .find(|(name, _)| name.eq_ignore_ascii_case(BOUNDARY))
         })
