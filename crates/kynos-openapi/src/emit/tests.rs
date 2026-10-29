@@ -1733,7 +1733,10 @@ mod serialized_schema {
             (
                 json!({"properties": {
                     "default": {"xml": {"nodeType": "element"}},
-                    "enum": {"discriminator": {"defaultMapping": "x"}}
+                    "enum": {"discriminator": {
+                        "propertyName": "kind",
+                        "defaultMapping": "x"
+                    }}
                 }}),
                 vec![
                     "properties/default/xml/nodeType",
