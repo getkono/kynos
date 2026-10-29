@@ -1543,6 +1543,44 @@ mod reach {
         }
     }
 
+    /// A response key the validator refuses is still located escaped, per
+    /// RFC 6901, at the spelling `InvalidResponseKey` reports it under.
+    #[test]
+    fn a_refused_response_key_is_escaped_in_the_blocker() {
+        let mut responses = Responses::new();
+        responses
+            .responses
+            .insert("2/0".to_owned(), RefOr::Item(summarised()));
+        let mut document = document();
+        document.paths.insert(
+            &PathTemplate::parse("/a").expect("a valid template"),
+            PathItem::new().with_operation(
+                Method::Get,
+                Operation {
+                    responses,
+                    ..Operation::default()
+                },
+            ),
+        );
+
+        let key = crate::validate::Validator::new(SpecVersion::V3_1)
+            .validate(&document)
+            .into_iter()
+            .find(|violation| {
+                matches!(
+                    violation.error,
+                    crate::validate::violation::SpecError::InvalidResponseKey { .. }
+                )
+            })
+            .expect("the key is refused")
+            .location;
+        assert_eq!(key, "#/paths/~1a/get/responses/2~10");
+        assert_eq!(
+            crate::emit::downgrade::three_two_only_constructs(&document),
+            vec![format!("{key}/summary")]
+        );
+    }
+
     #[test]
     fn a_construct_in_any_container_refuses_to_emit_as_three_one() {
         for (container, document, _) in cases() {
