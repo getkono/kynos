@@ -7,7 +7,7 @@ use quote::quote;
 use syn::{DeriveInput, Field, Type, parse_macro_input, spanned::Spanned};
 
 use crate::derive::{
-    attribute::field_args,
+    attribute::{field_args, group_args},
     common::{
         NameCase, named_fields, names_const, reject_duplicate_names, reject_non_token_names,
         wire_names,
@@ -220,6 +220,10 @@ pub(crate) fn expand(item: TokenStream) -> TokenStream {
 
 pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = named_fields(input, "Headers")?;
+    // Only a written `described` overrides the trait's default.
+    let described = group_args(input)?
+        .described
+        .map(|flag| quote!(const DESCRIBED: bool = #flag;));
 
     let names = wire_names(input, fields, "header")?;
     reject_non_token_names(fields, &names, "header", "an RFC 9110 field name")?;
@@ -246,9 +250,67 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
             Ok(param.fixed(value))
         })
         .collect::<syn::Result<Vec<_>>>()?;
-    let rejection = quote!(::kynos::error::rejection::HeaderRejection);
 
-    // Only the first value of a repeated field is read: a field is one value.
+    let decode = decode_body(&params);
+    let parameters = parameters_body(
+        &params,
+        &quote!(::kynos::openapi::ParameterIn::Header),
+        false,
+    );
+    let response_headers = response_headers_body(&params);
+    let encode = encode_body(&params);
+
+    // Three implementations, one per direction plus the description.
+    Ok(quote! {
+        impl #impl_generics ::kynos::extract::params::header::DecodeHeaders
+            for #name #ty_generics #where_clause
+        {
+            fn decode(
+                headers: &::kynos::http::HeaderMap,
+            ) -> ::core::result::Result<Self, ::kynos::error::rejection::HeaderRejection> {
+                #decode
+            }
+        }
+
+        impl #impl_generics ::kynos::extract::params::header::EncodeHeaders
+            for #name #ty_generics #where_clause
+        {
+            fn encode(
+                &self,
+            ) -> ::core::result::Result<
+                ::std::vec::Vec<(::kynos::http::HeaderName, ::kynos::http::HeaderValue)>,
+                ::kynos::extract::params::header::UnencodableHeader,
+            > {
+                #encode
+            }
+        }
+
+        impl #impl_generics ::kynos::extract::params::header::HeaderParams
+            for #name #ty_generics #where_clause
+        {
+            #names_item
+            #described
+
+            fn parameters(
+                registry: &mut ::kynos::schema::registry::Registry,
+            ) -> ::std::vec::Vec<::kynos::openapi::Parameter> {
+                #parameters
+            }
+
+            fn response_headers(
+                registry: &mut ::kynos::schema::registry::Registry,
+            ) -> ::kynos::openapi::Map<::kynos::openapi::RefOr<::kynos::openapi::Header>> {
+                #response_headers
+            }
+        }
+    })
+}
+
+/// The `DecodeHeaders::decode` body, reading `headers`.
+///
+/// Only the first value of a repeated field is read: a field is one value.
+fn decode_body(params: &[Param<'_>]) -> TokenStream2 {
+    let rejection = quote!(::kynos::error::rejection::HeaderRejection);
     let reads = params.iter().map(|param| {
         let wire = param.name();
         let found = quote! {
@@ -276,58 +338,10 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         let checked = check_field(param, &rejection);
         quote!(#decoded #checked)
     });
-    let value = construct(&params);
+    let value = construct(params);
 
-    let parameters = parameters_body(
-        &params,
-        &quote!(::kynos::openapi::ParameterIn::Header),
-        false,
-    );
-    let response_headers = response_headers_body(&params);
-    let encode = encode_body(&params);
-
-    // Three implementations, one per direction plus the description.
-    Ok(quote! {
-        impl #impl_generics ::kynos::extract::params::header::DecodeHeaders
-            for #name #ty_generics #where_clause
-        {
-            fn decode(
-                headers: &::kynos::http::HeaderMap,
-            ) -> ::core::result::Result<Self, ::kynos::error::rejection::HeaderRejection> {
-                #(#reads)*
-                #value
-            }
-        }
-
-        impl #impl_generics ::kynos::extract::params::header::EncodeHeaders
-            for #name #ty_generics #where_clause
-        {
-            fn encode(
-                &self,
-            ) -> ::core::result::Result<
-                ::std::vec::Vec<(::kynos::http::HeaderName, ::kynos::http::HeaderValue)>,
-                ::kynos::extract::params::header::UnencodableHeader,
-            > {
-                #encode
-            }
-        }
-
-        impl #impl_generics ::kynos::extract::params::header::HeaderParams
-            for #name #ty_generics #where_clause
-        {
-            #names_item
-
-            fn parameters(
-                registry: &mut ::kynos::schema::registry::Registry,
-            ) -> ::std::vec::Vec<::kynos::openapi::Parameter> {
-                #parameters
-            }
-
-            fn response_headers(
-                registry: &mut ::kynos::schema::registry::Registry,
-            ) -> ::kynos::openapi::Map<::kynos::openapi::RefOr<::kynos::openapi::Header>> {
-                #response_headers
-            }
-        }
-    })
+    quote! {
+        #(#reads)*
+        #value
+    }
 }

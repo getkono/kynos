@@ -83,6 +83,17 @@ struct Conditional {
     if_none_match: String,
 }
 
+/// A transport concern rather than an API input: decoded, and left out of the
+/// description.
+#[derive(HeaderParams)]
+#[header(described = false)]
+struct Provenance {
+    #[header(rename = "Origin")]
+    origin: Option<String>,
+    #[header(rename = "Referer")]
+    referer: Option<String>,
+}
+
 #[cfg(feature = "cookie")]
 #[derive(kynos::CookieParams)]
 struct Session {
@@ -275,6 +286,11 @@ fn each_scheme_kind_presents_its_own_credential() {
 fn declared_names_reach_the_trait_constants() {
     assert_eq!(<UserPath as PathParamsTrait>::NAMES, ["user_id"]);
     assert_eq!(<Conditional as HeaderParams>::NAMES, ["If-None-Match"]);
+    const { assert!(<Conditional as HeaderParams>::DESCRIBED) };
+    // `described = false` changes the description alone: the names, and so
+    // the conflict check, stay as derived.
+    const { assert!(!<Provenance as HeaderParams>::DESCRIBED) };
+    assert_eq!(<Provenance as HeaderParams>::NAMES, ["Origin", "Referer"]);
     #[cfg(feature = "cookie")]
     assert_eq!(
         <Session as kynos::extract::params::cookie::CookieParams>::NAMES,
