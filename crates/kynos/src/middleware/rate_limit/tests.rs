@@ -390,10 +390,8 @@ fn the_longest_delay_saturates_rather_than_wrapping() {
         policies: Vec::new(),
     };
 
-    assert_eq!(
-        rendered(&fields)[0].1,
-        format!(r#""never";r=0;t={}"#, u64::MAX)
-    );
+    // Past the sf-integer range the structured field omits `t` instead.
+    assert_eq!(rendered(&fields)[0].1, r#""never";r=0"#);
 
     assert_eq!(
         rendered(&RateLimitHeaders {
