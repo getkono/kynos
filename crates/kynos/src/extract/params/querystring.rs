@@ -5,7 +5,7 @@ use crate::{
     extract::{FromRequestParts, describe::Describe},
     http::{
         Parts,
-        media::{MediaType, is_json},
+        media::{MediaType, WellFormed, is_json},
     },
     router::operation::OperationCx,
     schema::{
@@ -61,13 +61,17 @@ impl<T, M> QueryString<T, M> {
 const QUERYSTRING_NAME: &str = "querystring";
 
 impl<T, M: MediaType> QueryString<T, M> {
-    /// Refuses, in the constant evaluation reading it, a marker that does not
-    /// name JSON, the only media type a query string is decoded as.
-    const JSON: () = assert!(
-        is_json(M::MEDIA_TYPE),
-        "a `QueryString` marker names neither `application/json` nor a `+json` type, and only \
-         JSON has a decoder"
-    );
+    /// Refuses, in the constant evaluation reading it, a marker that is not
+    /// [`WellFormed`] or does not name JSON, the only media type a query
+    /// string is decoded as.
+    const JSON: () = {
+        let () = <M as WellFormed>::WELL_FORMED;
+        assert!(
+            is_json(M::MEDIA_TYPE),
+            "a `QueryString` marker names neither `application/json` nor a `+json` type, and \
+             only JSON has a decoder"
+        );
+    };
 }
 
 /// The whole query string is decoded as the document `M` names.

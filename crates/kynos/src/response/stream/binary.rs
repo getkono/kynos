@@ -1,7 +1,11 @@
 //! Streamed binary content with a declared media type.
 
 use crate::{
-    http::{HeaderValue, Response, body::Body, media::MediaType},
+    http::{
+        HeaderValue, Response,
+        body::Body,
+        media::{MediaType, WellFormed},
+    },
     response::{
         IntoResponse, Responses,
         codec::{ok, unconstrained, with_content_type},
@@ -47,6 +51,8 @@ where
     E: Into<Box<dyn std::error::Error + Send + Sync>> + 'static,
 {
     fn into_response(self) -> Response {
+        let () = <M as WellFormed>::WELL_FORMED;
+
         with_content_type(
             Body::from_stream(self.stream),
             HeaderValue::from_static(M::MEDIA_TYPE),
@@ -63,6 +69,7 @@ where
     // outside what JSON Schema describes, and `itemSchema` is defined only for
     // sequential media types, which an arbitrary `M` is not.
     fn responses(_registry: &mut Registry) -> kynos_openapi::Responses {
+        let () = <M as WellFormed>::WELL_FORMED;
         ok(M::MEDIA_TYPE, unconstrained())
     }
 }

@@ -239,7 +239,7 @@ fn render_policies(policies: &[QuotaPolicy]) -> Option<http::HeaderValue> {
 
 /// RFC 9651 section 3.3.1's largest `sf-integer`; a parser rejects the whole
 /// field past it.
-const SF_INTEGER_MAX: u64 = 999_999_999_999_999;
+pub(super) const SF_INTEGER_MAX: u64 = 999_999_999_999_999;
 
 /// `value` as a structured-field Integer, or `None` past its range.
 fn sf_integer(value: u64) -> Option<u64> {

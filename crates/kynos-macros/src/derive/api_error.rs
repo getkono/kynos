@@ -117,13 +117,13 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
                     ::std::vec::Vec<::kynos::http::StatusCode>
                 > = ::std::sync::LazyLock::new(|| {
                     let codes: &'static [u16] = #codes;
-                    codes
-                        .iter()
-                        .map(|code| {
+                    ::core::iter::Iterator::collect(::core::iter::Iterator::map(
+                        codes.iter(),
+                        |code| {
                             ::kynos::http::StatusCode::from_u16(*code)
                                 .expect("the derive checked this code")
-                        })
-                        .collect()
+                        },
+                    ))
                 });
                 &STATUSES
             }

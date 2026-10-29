@@ -41,8 +41,10 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                     ::core::result::Result::Err(_) => {
                         return ::core::result::Result::Err(
                             #rejection::Invalid {
-                                name: ::std::string::String::from(#wire),
-                                detail: ::std::string::String::from(
+                                name: <::std::string::String as ::core::convert::From<_>>::from(
+                                    #wire,
+                                ),
+                                detail: <::std::string::String as ::core::convert::From<_>>::from(
                                     "the percent-decoded value is not UTF-8",
                                 ),
                             },

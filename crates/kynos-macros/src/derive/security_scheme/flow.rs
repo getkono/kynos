@@ -88,7 +88,10 @@ pub(super) fn build_flow(flow: &FlowArgs) -> proc_macro2::TokenStream {
     let scopes = flow.scopes.iter().map(|(name, described)| {
         // An undescribed scope maps to the empty string, as the spec's examples do.
         let text = described.as_ref().map_or_else(String::new, LitStr::value);
-        quote!((::std::string::String::from(#name), ::std::string::String::from(#text)))
+        quote! {(
+            <::std::string::String as ::core::convert::From<_>>::from(#name),
+            <::std::string::String as ::core::convert::From<_>>::from(#text),
+        )}
     });
 
     let mut built = quote! {

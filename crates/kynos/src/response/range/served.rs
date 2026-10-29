@@ -15,7 +15,7 @@ use std::{sync::Arc, time::SystemTime};
 
 use crate::{
     http::etag::ETag,
-    http::media::MediaType,
+    http::media::{MediaType, WellFormed},
     http::{HeaderValue, Method, Parts, Response, StatusCode, body::bodiless, header},
     response::{
         IntoResponse,
@@ -69,6 +69,8 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
     /// statically.
     #[must_use]
     pub fn new(source: S) -> Self {
+        let () = <M as WellFormed>::WELL_FORMED;
+
         Self {
             source: Arc::new(source),
             media_type: std::marker::PhantomData,
@@ -232,17 +234,13 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
         let fields = response.headers_mut();
 
         if selection.is_some() {
-            // Static where `from_static` takes it, so it costs no allocation;
-            // anything else is copied, and a marker that is no field value is
-            // omitted.
-            let content_type = if const { crate::http::is_field_value(M::MEDIA_TYPE.as_bytes()) } {
-                Some(HeaderValue::from_static(M::MEDIA_TYPE))
-            } else {
-                HeaderValue::from_str(M::MEDIA_TYPE).ok()
-            };
-            if let Some(value) = content_type {
-                fields.insert(header::CONTENT_TYPE, value);
-            }
+            // Static, so it costs no allocation: `WELL_FORMED` refused a
+            // marker `from_static` would not take.
+            let () = <M as WellFormed>::WELL_FORMED;
+            fields.insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static(M::MEDIA_TYPE),
+            );
             if let Some(disposition) = &self.disposition {
                 if crate::response::headers::write(fields, disposition).is_err() {
                     return None;
@@ -409,6 +407,7 @@ impl<M: MediaType> IntoResponse for Delivery<M> {
 
 impl<M: MediaType> crate::response::Responses for Delivery<M> {
     fn responses(registry: &mut crate::schema::registry::Registry) -> kynos_openapi::Responses {
+        let () = <M as WellFormed>::WELL_FORMED;
         delivery::responses(registry, M::MEDIA_TYPE)
     }
 }

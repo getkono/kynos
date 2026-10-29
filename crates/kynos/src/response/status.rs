@@ -314,26 +314,28 @@ pub(crate) fn body_response(
 
     let key = kynos_openapi::StatusPattern::Code(BODY_STATUS).to_string();
 
-    Some(match body.responses.shift_remove(&key) {
-        Some(kynos_openapi::RefOr::Item(mut response)) => {
-            response.description = Some(description.to_owned());
-            response
-        }
-        Some(reference) => {
-            body.responses.insert(key, reference);
-            kynos_openapi::Response::new(description)
-        }
-        None => {
-            let mut response = kynos_openapi::Response::new(description);
-            if let Some(sole) = sole_representation(body) {
-                // All three, as the re-key arm above carries.
-                response.content.clone_from(&sole.content);
-                response.headers.clone_from(&sole.headers);
-                response.links.clone_from(&sole.links);
-            }
-            response
-        }
-    })
+    // Read before removing, so a `$ref` 200 is never taken out of its place.
+    if body
+        .responses
+        .get(&key)
+        .is_some_and(kynos_openapi::RefOr::is_ref)
+    {
+        return Some(kynos_openapi::Response::new(description));
+    }
+
+    if let Some(kynos_openapi::RefOr::Item(mut response)) = body.responses.shift_remove(&key) {
+        response.description = Some(description.to_owned());
+        return Some(response);
+    }
+
+    let mut response = kynos_openapi::Response::new(description);
+    if let Some(sole) = sole_representation(body) {
+        // All three, as the re-key above carries.
+        response.content.clone_from(&sole.content);
+        response.headers.clone_from(&sole.headers);
+        response.links.clone_from(&sole.links);
+    }
+    Some(response)
 }
 
 /// The representations of the one response a body declares outside 4xx and

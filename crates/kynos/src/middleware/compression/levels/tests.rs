@@ -1,5 +1,5 @@
 use super::{BrotliLevel, GzipLevel, ZstdLevel};
-use crate::middleware::compression::{Compression, Levels};
+use crate::middleware::compression::{Compression, codec::Levels};
 
 /// Every boundary of every range, swept rather than sampled: the failure a
 /// range check has is off-by-one at exactly one end, and a sample of the

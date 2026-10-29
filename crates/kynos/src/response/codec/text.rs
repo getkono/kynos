@@ -100,8 +100,7 @@ impl<M: MediaType> IntoResponse for TextAs<M> {
         let content_type = match Self::CONTENT_TYPE {
             Some(content_type) => HeaderValue::from_static(content_type),
             None => HeaderValue::try_from(format!("{}{UTF_8}", M::MEDIA_TYPE))
-                // Not a field value: refused as `from_static` refuses `Binary`'s.
-                .unwrap_or_else(|_| HeaderValue::from_static(M::MEDIA_TYPE)),
+                .expect("`TEXT` refused a marker that is no field value, and the suffix is one"),
         };
         text_response(self.text, content_type)
     }

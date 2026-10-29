@@ -9,17 +9,14 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use async_compression::{
-    Level,
-    tokio::write::{BrotliEncoder, GzipEncoder, ZstdEncoder},
-};
+use async_compression::tokio::write::{BrotliEncoder, GzipEncoder, ZstdEncoder};
 use bytes::{Buf, Bytes};
 use http_body::{Body as HttpBody, Frame, SizeHint};
 use tokio::io::AsyncWrite;
 
 use crate::{
     http::body::BoxError,
-    middleware::compression::{Coding, Levels, as_level, zstd_window},
+    middleware::compression::codec::{Coding, Levels, zstd_window},
 };
 
 /// How eagerly encoded bytes are handed to the client.
@@ -61,18 +58,16 @@ enum Encoder {
 impl Encoder {
     /// An encoder for `coding` at the level `levels` sets for it.
     fn new(coding: Coding, levels: Levels) -> Self {
+        let level = levels.for_coding(coding);
+
         match coding {
-            Coding::Gzip => Self::Gzip(Box::new(GzipEncoder::with_quality(
-                Vec::new(),
-                Level::Precise(as_level(levels.gzip.get())),
-            ))),
-            Coding::Brotli => Self::Brotli(Box::new(BrotliEncoder::with_quality(
-                Vec::new(),
-                Level::Precise(as_level(levels.brotli.get())),
-            ))),
+            Coding::Gzip => Self::Gzip(Box::new(GzipEncoder::with_quality(Vec::new(), level))),
+            Coding::Brotli => {
+                Self::Brotli(Box::new(BrotliEncoder::with_quality(Vec::new(), level)))
+            }
             Coding::Zstd => Self::Zstd(Box::new(ZstdEncoder::with_quality_and_params(
                 Vec::new(),
-                Level::Precise(levels.zstd.get()),
+                level,
                 zstd_window(levels.zstd).as_slice(),
             ))),
         }

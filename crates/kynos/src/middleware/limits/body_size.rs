@@ -1,6 +1,6 @@
 //! A cap on the size of a request body, and the 413 it answers with.
 
-use std::{fmt, marker::PhantomData};
+use std::marker::PhantomData;
 
 use crate::{
     error::problem::{ProblemType, refusal_problem, refusal_response},
@@ -204,62 +204,6 @@ where
     }
 }
 
-// Not derived: a derive would bound each on the marker. Each destructures
-// `self`, so a new field is a compile error here.
-
-impl<T> Clone for BodySizeExceeded<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> Copy for BodySizeExceeded<T> {}
-
-impl<T> fmt::Debug for BodySizeExceeded<T> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self {
-            limit,
-            problem_type: _,
-        } = self;
-
-        formatter
-            .debug_struct("BodySizeExceeded")
-            .field("limit", limit)
-            .finish()
-    }
-}
-
-impl<T> PartialEq for BodySizeExceeded<T> {
-    fn eq(&self, other: &Self) -> bool {
-        let Self {
-            limit,
-            problem_type: _,
-        } = self;
-
-        *limit == other.limit
-    }
-}
-
-impl<T> Eq for BodySizeExceeded<T> {}
-
-impl<T> Clone for BodySize<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> Copy for BodySize<T> {}
-
-impl<T> fmt::Debug for BodySize<T> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self {
-            limit,
-            problem_type: _,
-        } = self;
-
-        formatter
-            .debug_struct("BodySize")
-            .field("limit", limit)
-            .finish()
-    }
-}
+// Not derived: a derive would bound each on the marker.
+marker_traits!(BodySizeExceeded<T> { problem_type: _, limit }: Copy, Debug, PartialEq);
+marker_traits!(BodySize<T> { problem_type: _, limit }: Copy, Debug);

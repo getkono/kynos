@@ -996,7 +996,10 @@ that does not.
 Three of them are supplied rather than merely accepted, because the alternative
 is a cookie the service believes it set and the client silently discarded:
 `SameSite=None` implies `Secure`, `__Secure-` implies `Secure`, and `__Host-`
-implies both `Secure` and `Path=/`.
+implies both `Secure` and `Path=/`. Both prefixes match in any case, so
+`__host-` is completed and refused on the same terms as `__Host-`: RFC 6265bis
+§5.4 has user agents match them case-insensitively, and §4.1.3's case-sensitive
+wording only says what a server may rely on when reading a name.
 
 **`Expires` is deliberately absent.** RFC 6265bis §4.1.2.2 gives `Max-Age`
 precedence wherever both appear, so a cookie carrying both is one attribute

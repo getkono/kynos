@@ -48,9 +48,9 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let reads = params.iter().map(|param| {
         let wire = param.name();
         let found = quote! {
-            values
-                .iter()
-                .find_map(|&(name, value)| (name == #wire).then_some(value))
+            ::core::iter::Iterator::find_map(&mut values.iter(),|&(name, value)| {
+                (name == #wire).then_some(value)
+            })
         };
         let decoded = decode_field(
             param,

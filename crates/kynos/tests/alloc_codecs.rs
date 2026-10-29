@@ -1766,7 +1766,7 @@ mod compression {
     }
 
     /// The chunk `encode`'s drain reads an encoder in, mirroring
-    /// `middleware/compression/mod.rs`'s `DRAIN_CHUNK`.
+    /// `middleware/compression/codec.rs`'s `DRAIN_CHUNK`.
     ///
     /// A copy rather than the constant itself: it is `pub(crate)` and this is
     /// an integration target, so the only thing tying the two together is that

@@ -63,8 +63,8 @@ fn decode_fixed(param: &Param<'_>, value: &str, found: &TokenStream2) -> TokenSt
         quote! {
             return ::core::result::Result::Err(
                 ::kynos::error::rejection::HeaderRejection::Invalid {
-                    name: ::std::string::String::from(#name),
-                    detail: ::std::string::String::from(#detail),
+                    name: <::std::string::String as ::core::convert::From<_>>::from(#name),
+                    detail: <::std::string::String as ::core::convert::From<_>>::from(#detail),
                 },
             );
         }
@@ -320,8 +320,10 @@ fn decode_body(params: &[Param<'_>]) -> TokenStream2 {
                     ::core::result::Result::Err(_) => {
                         return ::core::result::Result::Err(
                             ::kynos::error::rejection::HeaderRejection::Invalid {
-                                name: ::std::string::String::from(#wire),
-                                detail: ::std::string::String::from(
+                                name: <::std::string::String as ::core::convert::From<_>>::from(
+                                    #wire,
+                                ),
+                                detail: <::std::string::String as ::core::convert::From<_>>::from(
                                     "the value is not printable ASCII",
                                 ),
                             },

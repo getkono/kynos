@@ -25,8 +25,6 @@ mod freshness;
 
 use std::{borrow::Cow, convert::Infallible, marker::PhantomData, time::Duration};
 
-use kynos_openapi::model::schema::types::SchemaType;
-
 use crate::middleware::cache::store::{CacheStore, PrimaryKey, StoredResponse};
 use crate::{
     extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
@@ -96,9 +94,8 @@ impl<const TAGGED: bool> CacheHeaders<TAGGED> {
             0 => HeaderValue::from_static("0"),
             seconds => HeaderValue::from(seconds),
         };
-        let etag = self.etag.filter(|_| TAGGED);
-
-        std::iter::once((header::AGE, age)).chain(etag.map(|etag| (header::ETAG, etag)))
+        // `Plain::headers` already left a plain group without its tag.
+        std::iter::once((header::AGE, age)).chain(self.etag.map(|etag| (header::ETAG, etag)))
     }
 }
 
@@ -113,22 +110,16 @@ impl<const TAGGED: bool> sealed::Written for CacheHeaders<TAGGED> {
 impl<const TAGGED: bool> HeaderParams for CacheHeaders<TAGGED> {
     const NAMES: &'static [&'static str] = if TAGGED { &["age", "etag"] } else { &["age"] };
     const DESCRIBED: bool = TAGGED;
-    /// Only `ETag`, and only where one is derived.
+    /// Only `ETag`, described as [`ETag`](crate::http::etag::ETag) describes
+    /// it, and only where one is derived.
     fn response_headers(
         registry: &mut Registry,
     ) -> kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>> {
-        let _ = registry;
-        let mut headers = kynos_openapi::Map::new();
         if TAGGED {
-            headers.insert(
-                "ETag".to_owned(),
-                kynos_openapi::RefOr::Item(
-                    kynos_openapi::Header::new(kynos_openapi::Schema::of_type(SchemaType::String))
-                        .with_description("The entity tag of this representation"),
-                ),
-            );
+            <crate::http::etag::ETag as HeaderParams>::response_headers(registry)
+        } else {
+            kynos_openapi::Map::new()
         }
-        headers
     }
 }
 
@@ -369,7 +360,7 @@ where
             let Some(selecting) = selecting.as_ref() else {
                 return Ok(added::<D>(continued, Duration::ZERO, None));
             };
-            let Ok(freshness) = freshness::storable(
+            let Ok((freshness, vary)) = freshness::storable(
                 &method,
                 continued.status(),
                 requested,
@@ -395,12 +386,11 @@ where
 
             let etag = tag::<D>(&headers, &bytes);
 
-            if refuses_cross_origin(&headers) {
+            if refuses_cross_origin(&headers, &vary) {
                 continued.set_body(crate::http::body::Body::from_bytes(bytes));
                 return Ok(added::<D>(continued, Duration::ZERO, etag));
             }
 
-            let vary = freshness::vary(&headers);
             let stored = StoredResponse::new(
                 continued.status(),
                 headers,
@@ -515,13 +505,13 @@ fn derived_etag(body: &bytes::Bytes) -> String {
 }
 
 /// Whether storing this response would risk serving one origin's answer to
-/// another.
-fn refuses_cross_origin(headers: &HeaderMap) -> bool {
+/// another, given the names [`freshness::vary`] read from its `headers`.
+fn refuses_cross_origin(headers: &HeaderMap, vary: &[String]) -> bool {
     let cross_origin = headers
         .keys()
         .any(|name| name.as_str().starts_with("access-control-"));
 
-    cross_origin && !freshness::vary(headers).iter().any(|name| name == "origin")
+    cross_origin && !vary.iter().any(|name| name == "origin")
 }
 
 /// Reads a body whole, or hands it back unread where its length is unknown or

@@ -3,7 +3,7 @@ use std::{fmt, marker::PhantomData, time::Duration};
 use super::{
     Legacy, RateLimit, RateLimitSpelling, Structured,
     decision::{Decision, Denial, QuotaPolicy, QuotaUnit, RateLimitPolicy, ServiceLimit},
-    headers::{RateLimitFields, RateLimitHeaders},
+    headers::{RateLimitFields, RateLimitHeaders, SF_INTEGER_MAX},
     key::Shared,
     quota::{Quota, Quotas, estimate, recovers_in},
     refusal::{RateLimited, RateLimitedFields},
@@ -1033,9 +1033,6 @@ fn a_window_is_never_advertised_shorter_than_enforced() {
         );
     }
 }
-
-/// RFC 9651 section 3.3.1's largest `sf-integer`.
-const SF_INTEGER_MAX: u64 = 999_999_999_999_999;
 
 /// Every structured-field Integer stays inside RFC 9651's range.
 ///
