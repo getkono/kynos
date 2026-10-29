@@ -1041,8 +1041,7 @@ def main():
     env = sweep_env()
     versions = toolchain()
     recorded = {
-        kind.baseline_tsv: read_recorded(COST / kind.baseline_tsv)
-        for kind in KINDS.values()
+        k.baseline_tsv: read_recorded(COST / k.baseline_tsv) for k in KINDS.values()
     }
 
     selected = set(KINDS) if kind == "all" else {kind}
