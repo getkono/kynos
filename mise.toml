@@ -382,28 +382,26 @@ description = "Package every crate exactly as crates.io will receive it"
 # archive omits. `--workspace` resolves siblings from the staged archives, as
 # `cargo publish` will (Cargo 1.90+; the MSRV is for building, not publishing).
 # No `--allow-dirty`: an artifact must match a commit. The `--list` loop checks
-# `LICENSE`, which no manifest key references.
+# `LICENSE`, which no manifest key references. Both read the one set of
+# packages `scripts/publishable.py` derives from the manifests.
+tools = { python = "3.11.16" }
 run = '''
 set -eu
 
 # An assignment carries the listing's status to `set -e`; a `for` list would
-# not. A failed `cargo metadata` still fails the pipe, as `json.load` refuses
-# its empty output.
-packages="$(cargo metadata --no-deps --format-version 1 \
-  | python3 -c 'import json,sys; print(" ".join(p["name"] for p in json.load(sys.stdin)["packages"] if p["publish"] != []))')"
-if [ -z "$packages" ]; then
-  echo "cargo metadata listed no publishable package" >&2
-  exit 1
-fi
+# not.
+packages="$(python3 scripts/publishable.py)"
 
+set --
 for package in $packages; do
   if ! cargo package --list --quiet -p "$package" | grep -qx LICENSE; then
     echo "$package would be published without LICENSE" >&2
     exit 1
   fi
+  set -- "$@" -p "$package"
 done
 
-cargo package --workspace --all-features --exclude kynos-profile
+cargo package "$@" --all-features
 '''
 
 [tasks."semver:check"]
