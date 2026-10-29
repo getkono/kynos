@@ -446,6 +446,321 @@ fn a_derived_scheme_names_its_scope_type_and_demands_its_defaults_by_name() {
     );
 }
 
+// --- A derived scheme describes itself as its kind ---------------------------
+//
+// `describe` is the Security Scheme Object the document's `components` carry,
+// so each kind is pinned against the JSON the specification gives it: the
+// kind's own fields, then the prose and the deprecation every kind shares.
+
+/// The Security Scheme Object `S` describes itself as, as JSON.
+fn described_scheme<S: SecuritySchemeTrait>() -> serde_json::Value {
+    serde_json::to_value(S::describe()).expect("a security scheme serializes")
+}
+
+#[derive(SecurityScheme)]
+#[security(bearer(format = "JWT"))]
+struct SignedBearer;
+
+#[derive(SecurityScheme)]
+#[security(api_key(in = "header", name = "X-Api-Key"))]
+struct KeyInHeader;
+
+#[derive(SecurityScheme)]
+#[security(api_key(in = "query", name = "key"))]
+struct KeyInQuery;
+
+#[derive(SecurityScheme)]
+#[security(api_key(in = "cookie", name = "session"))]
+struct KeyInCookie;
+
+#[derive(SecurityScheme)]
+#[security(oauth2(
+    authorization_code(
+        authorization_url = "https://auth.example.com/authorize",
+        token_url = "https://auth.example.com/token",
+        refresh_url = "https://auth.example.com/refresh",
+        scopes("read" = "Read your records", "write"),
+    ),
+    client_credentials(token_url = "https://auth.example.com/token"),
+    implicit(authorization_url = "https://auth.example.com/authorize"),
+    password(token_url = "https://auth.example.com/token", scopes("admin")),
+))]
+struct EveryFlow;
+
+/// Each kind describes the fields the specification gives it and nothing
+/// shared: a scheme with no prose of its own carries no `description`.
+#[test]
+fn a_derived_scheme_describes_the_fields_of_its_kind() {
+    for (described, expected) in [
+        (
+            described_scheme::<BearerAuth>(),
+            serde_json::json!({"type": "http", "scheme": "bearer"}),
+        ),
+        (
+            described_scheme::<SignedBearer>(),
+            serde_json::json!({"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}),
+        ),
+        (
+            described_scheme::<BasicLogin>(),
+            serde_json::json!({"type": "http", "scheme": "basic"}),
+        ),
+        (
+            described_scheme::<DigestLogin>(),
+            serde_json::json!({"type": "http", "scheme": "Digest"}),
+        ),
+        (
+            described_scheme::<KeyInHeader>(),
+            serde_json::json!({"type": "apiKey", "name": "X-Api-Key", "in": "header"}),
+        ),
+        (
+            described_scheme::<KeyInQuery>(),
+            serde_json::json!({"type": "apiKey", "name": "key", "in": "query"}),
+        ),
+        (
+            described_scheme::<KeyInCookie>(),
+            serde_json::json!({"type": "apiKey", "name": "session", "in": "cookie"}),
+        ),
+        (
+            described_scheme::<PartnerCertificate>(),
+            serde_json::json!({"type": "mutualTLS"}),
+        ),
+        (
+            described_scheme::<Federated>(),
+            serde_json::json!({
+                "type": "openIdConnect",
+                "openIdConnectUrl": "https://auth.example.com/.well-known/openid-configuration",
+            }),
+        ),
+        (
+            described_scheme::<Delegated>(),
+            serde_json::json!({
+                "type": "oauth2",
+                "flows": {
+                    "clientCredentials": {
+                        "tokenUrl": "https://auth.example.com/token",
+                        "scopes": {},
+                    },
+                },
+            }),
+        ),
+    ] {
+        assert_eq!(described, expected);
+    }
+}
+
+/// Every flow a 3.1 scheme can declare is described under its own key with
+/// the URLs it was given, and a scope declared without prose maps to the
+/// empty string.
+#[test]
+fn a_derived_oauth2_scheme_describes_every_flow_it_declares() {
+    assert_eq!(
+        described_scheme::<EveryFlow>(),
+        serde_json::json!({
+            "type": "oauth2",
+            "flows": {
+                "implicit": {
+                    "authorizationUrl": "https://auth.example.com/authorize",
+                    "scopes": {},
+                },
+                "password": {
+                    "tokenUrl": "https://auth.example.com/token",
+                    "scopes": {"admin": ""},
+                },
+                "clientCredentials": {
+                    "tokenUrl": "https://auth.example.com/token",
+                    "scopes": {},
+                },
+                "authorizationCode": {
+                    "authorizationUrl": "https://auth.example.com/authorize",
+                    "tokenUrl": "https://auth.example.com/token",
+                    "refreshUrl": "https://auth.example.com/refresh",
+                    "scopes": {"read": "Read your records", "write": ""},
+                },
+            },
+        })
+    );
+}
+
+/// Prose a scheme was given, from its doc comment.
+#[derive(SecurityScheme)]
+#[security(mutual_tls)]
+struct DocumentedCertificate;
+
+/// Prose the attribute overrides.
+#[derive(SecurityScheme)]
+#[security(
+    api_key(in = "query", name = "key"),
+    description = "From the attribute."
+)]
+struct OverriddenKey;
+
+#[derive(SecurityScheme)]
+#[security(
+    oauth2(client_credentials(token_url = "https://auth.example.com/token")),
+    description = "Delegated access."
+)]
+struct DescribedDelegated;
+
+#[derive(SecurityScheme)]
+#[security(
+    openid_connect(url = "https://auth.example.com/.well-known/openid-configuration"),
+    description = "Federated sign-in."
+)]
+struct DescribedFederated;
+
+#[derive(SecurityScheme)]
+#[security(http(scheme = "Digest"), description = "A digest login.")]
+struct DescribedDigest;
+
+/// A scheme's `description` is its attribute's, else its doc comment, on every
+/// kind.
+#[test]
+fn a_derived_scheme_describes_its_prose_from_the_attribute_else_the_doc() {
+    for (described, expected) in [
+        (
+            described_scheme::<DocumentedCertificate>(),
+            serde_json::json!({
+                "type": "mutualTLS",
+                "description": "Prose a scheme was given, from its doc comment.",
+            }),
+        ),
+        (
+            described_scheme::<OverriddenKey>(),
+            serde_json::json!({
+                "type": "apiKey",
+                "name": "key",
+                "in": "query",
+                "description": "From the attribute.",
+            }),
+        ),
+        (
+            described_scheme::<DescribedDigest>(),
+            serde_json::json!({
+                "type": "http",
+                "scheme": "Digest",
+                "description": "A digest login.",
+            }),
+        ),
+        (
+            described_scheme::<DescribedDelegated>(),
+            serde_json::json!({
+                "type": "oauth2",
+                "flows": {
+                    "clientCredentials": {
+                        "tokenUrl": "https://auth.example.com/token",
+                        "scopes": {},
+                    },
+                },
+                "description": "Delegated access.",
+            }),
+        ),
+        (
+            described_scheme::<DescribedFederated>(),
+            serde_json::json!({
+                "type": "openIdConnect",
+                "openIdConnectUrl": "https://auth.example.com/.well-known/openid-configuration",
+                "description": "Federated sign-in.",
+            }),
+        ),
+    ] {
+        assert_eq!(described, expected);
+    }
+}
+
+/// The 3.2 additions a scheme can declare: its deprecation on every kind, the
+/// device authorization flow, and the authorization server's metadata URL.
+#[cfg(feature = "openapi32")]
+mod three_two_schemes {
+    use super::{SecurityScheme, described_scheme};
+
+    #[derive(SecurityScheme)]
+    #[security(bearer, deprecated)]
+    struct RetiredBearer;
+
+    #[derive(SecurityScheme)]
+    #[security(api_key(in = "header", name = "X-Api-Key"), deprecated)]
+    struct RetiredKey;
+
+    #[derive(SecurityScheme)]
+    #[security(mutual_tls, deprecated, description = "Retired certificates.")]
+    struct RetiredCertificate;
+
+    #[derive(SecurityScheme)]
+    #[security(
+        openid_connect(url = "https://auth.example.com/.well-known/openid-configuration"),
+        deprecated
+    )]
+    struct RetiredFederated;
+
+    #[derive(SecurityScheme)]
+    #[security(
+        oauth2(
+            device_authorization(
+                device_authorization_url = "https://auth.example.com/device",
+                token_url = "https://auth.example.com/token",
+                scopes("read"),
+            ),
+            metadata_url = "https://auth.example.com/.well-known/oauth-authorization-server",
+        ),
+        deprecated
+    )]
+    struct RetiredDevice;
+
+    /// `deprecated` marks every kind, beside the prose it shares; the device
+    /// flow and `oauth2MetadataUrl` are described where only 3.2 has them.
+    #[test]
+    fn a_derived_scheme_describes_what_only_3_2_expresses() {
+        for (described, expected) in [
+            (
+                described_scheme::<RetiredBearer>(),
+                serde_json::json!({"type": "http", "scheme": "bearer", "deprecated": true}),
+            ),
+            (
+                described_scheme::<RetiredKey>(),
+                serde_json::json!({
+                    "type": "apiKey",
+                    "name": "X-Api-Key",
+                    "in": "header",
+                    "deprecated": true,
+                }),
+            ),
+            (
+                described_scheme::<RetiredCertificate>(),
+                serde_json::json!({
+                    "type": "mutualTLS",
+                    "description": "Retired certificates.",
+                    "deprecated": true,
+                }),
+            ),
+            (
+                described_scheme::<RetiredFederated>(),
+                serde_json::json!({
+                    "type": "openIdConnect",
+                    "openIdConnectUrl": "https://auth.example.com/.well-known/openid-configuration",
+                    "deprecated": true,
+                }),
+            ),
+            (
+                described_scheme::<RetiredDevice>(),
+                serde_json::json!({
+                    "type": "oauth2",
+                    "flows": {
+                        "deviceAuthorization": {
+                            "deviceAuthorizationUrl": "https://auth.example.com/device",
+                            "tokenUrl": "https://auth.example.com/token",
+                            "scopes": {"read": ""},
+                        },
+                    },
+                    "oauth2MetadataUrl": "https://auth.example.com/.well-known/oauth-authorization-server",
+                    "deprecated": true,
+                }),
+            ),
+        ] {
+            assert_eq!(described, expected);
+        }
+    }
+}
+
 // The count that ties the witnesses above to the macros `kynos-macros`
 // actually declares lives in `ledger.rs`, which reads the sibling crate's
 // source. That read leaves this package, so the target carrying it is excluded
@@ -4128,6 +4443,43 @@ fn untyped_variants_sharing_a_status_are_each_named() {
     );
 }
 
+/// One failure per source of a status's description.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum DescribedError {
+    /// From the doc comment.
+    #[error("titled")]
+    #[problem(status = 400, title = "From the title")]
+    Titled,
+
+    /// From the doc comment.
+    #[error("documented")]
+    #[problem(status = 409)]
+    Documented,
+
+    #[error("bare")]
+    #[problem(status = 410)]
+    Bare,
+}
+
+/// A status's description is its failure's `title`, else its doc comment,
+/// else the status's reason phrase.
+#[test]
+fn an_error_description_falls_back_from_title_to_doc_to_reason_phrase() {
+    let responses = emitted_responses::<DescribedError>();
+
+    for (status, description) in [
+        ("400", "From the title"),
+        ("409", "From the doc comment."),
+        ("410", "Gone"),
+    ] {
+        assert_eq!(
+            responses[status]["description"],
+            serde_json::json!(description),
+            "{status}: {responses}"
+        );
+    }
+}
+
 // --- A derived reply and a derived problem answer as they declare ----------
 //
 // The runtime half of `Reply` and `ApiError`: the response each variant writes.
@@ -4851,6 +5203,54 @@ fn a_transparent_variant_answers_as_the_error_it_holds() {
     let own = PauseError::AlreadyPaused.into_problem();
     assert_eq!(own.status, 409);
     assert_eq!(own.detail.as_deref(), Some("the torrent is already paused"));
+}
+
+/// A transparent variant's response is the held error's, through a tuple field
+/// and a named one, in an enum declaring failures of its own and in one
+/// declaring none; a failure the enum declares still answers with its own
+/// `Display` as `detail`.
+#[tokio::test]
+async fn a_transparent_variant_responds_as_the_error_it_holds() {
+    let invalid = || ValidationFailed {
+        field: "name".to_owned(),
+    };
+
+    for (error, held) in [
+        (
+            PauseError::from(LookupError::TenantUnknown).into_response(),
+            LookupError::TenantUnknown.into_response(),
+        ),
+        (
+            PauseError::from(invalid()).into_response(),
+            invalid().into_response(),
+        ),
+        (
+            SharedOnly::<0>::Lookup(LookupError::UserUnknown).into_response(),
+            LookupError::UserUnknown.into_response(),
+        ),
+        (
+            SharedOnly::<0>::Invalid(invalid()).into_response(),
+            invalid().into_response(),
+        ),
+    ] {
+        let (error, held) = (answered(error).await, answered(held).await);
+        assert_eq!(error.status, held.status);
+        assert_eq!(error.headers, held.headers);
+        assert_eq!(error.body, held.body);
+    }
+
+    let own = answered(PauseError::ProfileUnknown.into_response()).await;
+    assert_eq!(own.status, 404);
+    let body: serde_json::Value = serde_json::from_slice(&own.body).expect("a JSON body");
+    assert_eq!(
+        body,
+        serde_json::json!({
+            "type": "https://errors.example.com/profile-unknown",
+            "title": "Profile unknown",
+            "status": 404,
+            "detail": "no profile with that name",
+        })
+    );
 }
 
 /// A status met both in the enum and in a held error is one response naming
