@@ -8,7 +8,8 @@
 //! guard is needed.
 //!
 //! Pointers are [`At`] chains on the stack, so a visitor that reports nothing
-//! allocates nothing.
+//! allocates nothing. [`inline_items`] reaches each inline entry of any
+//! `RefOr` map the same way, for every walk below a Path Item and beside one.
 
 use crate::{
     Map,
