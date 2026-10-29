@@ -50,6 +50,9 @@ fn a_raw_binary_body_states_no_type_and_repeats_no_media_type() {
 /// A media type marker written as the docs write it, deriving nothing.
 struct Bare;
 
+/// Compiles only where `T: Eq`, which `assert_eq!` alone does not require.
+fn is_eq<T: Eq>() {}
+
 /// The marker sits only in a `PhantomData`, so no trait the bodies carry may be
 /// bounded on it: each holds over `Bare`, and compares the content alone.
 #[test]
@@ -61,6 +64,7 @@ fn a_marker_deriving_nothing_leaves_binary_and_text_as_their_traits() {
     assert_ne!(bytes, Binary::<Bare>::new(&b"ba"[..]));
     assert_eq!(Binary::<Bare>::default(), Binary::<Bare>::new(&b""[..]));
     assert_eq!(format!("{bytes:?}"), r#"Binary { bytes: b"ab", .. }"#);
+    is_eq::<Binary<Bare>>();
 
     let text = TextAs::<Bare>::new("a");
     assert_eq!(text.clone(), text);
@@ -87,6 +91,7 @@ fn a_marker_deriving_nothing_leaves_json_as_its_traits() {
     assert_ne!(document, JsonAs::<Bare, u64>::new(8));
     assert_eq!(JsonAs::<Bare, u64>::default(), JsonAs::<Bare, u64>::new(0));
     assert_eq!(format!("{document:?}"), "JsonAs { value: 7, .. }");
+    is_eq::<JsonAs<Bare, u64>>();
 }
 
 /// The media type reaches the description from the marker, so two markers
