@@ -211,7 +211,7 @@ mod zstd_window {
     use crate::{
         http::body::Body,
         middleware::compression::{
-            Coding, Levels, encode,
+            codec::{Coding, Levels, encode},
             levels::ZstdLevel,
             streaming::{LatencyMode, Streamed},
         },
@@ -416,7 +416,8 @@ mod wire {
         middleware::{
             Continued, Interceptor, Next,
             compression::{
-                Coding, Compression, Levels, encode,
+                Compression,
+                codec::{Coding, Levels, encode},
                 streaming::{LatencyMode, Streamed},
             },
         },

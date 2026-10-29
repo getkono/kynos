@@ -18,7 +18,7 @@ pub mod quota;
 pub mod refusal;
 pub mod store;
 
-use std::{fmt, marker::PhantomData};
+use std::marker::PhantomData;
 
 use crate::middleware::rate_limit::{
     decision::{Decision, QuotaPolicy, RateLimitPolicy, ServiceLimit},
@@ -295,30 +295,7 @@ where
 }
 
 // Written out because `#[derive]` would bound the phantom `D` and `T`.
-
-impl<P: Clone, D, T> Clone for RateLimit<P, D, T> {
-    fn clone(&self) -> Self {
-        Self {
-            policy: self.policy.clone(),
-            _spelling: PhantomData,
-        }
-    }
-}
-
-impl<P: fmt::Debug, D, T> fmt::Debug for RateLimit<P, D, T> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Destructured, so a new field is a compile error here.
-        let Self {
-            policy,
-            _spelling: _,
-        } = self;
-
-        formatter
-            .debug_struct("RateLimit")
-            .field("policy", policy)
-            .finish()
-    }
-}
+marker_traits!(RateLimit<P, D, T> where P { _spelling: _, policy }: Clone, Debug);
 
 #[cfg(test)]
 mod tests;

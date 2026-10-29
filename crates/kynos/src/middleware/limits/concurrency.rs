@@ -1,6 +1,6 @@
 //! A cap on concurrent in-flight requests, and the 503 it answers with.
 
-use std::{fmt, marker::PhantomData, num::NonZeroUsize, sync::Arc, time::Duration};
+use std::{marker::PhantomData, num::NonZeroUsize, sync::Arc, time::Duration};
 
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
@@ -222,80 +222,9 @@ where
     }
 }
 
-// Not derived: a derive would bound each on the marker.
-
-impl<T> Clone for AtCapacity<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> Copy for AtCapacity<T> {}
-
-impl<T> fmt::Debug for AtCapacity<T> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self {
-            retry_after,
-            problem_type: _,
-        } = self;
-
-        formatter
-            .debug_struct("AtCapacity")
-            .field("retry_after", retry_after)
-            .finish()
-    }
-}
-
-impl<T> PartialEq for AtCapacity<T> {
-    fn eq(&self, other: &Self) -> bool {
-        let Self {
-            retry_after,
-            problem_type: _,
-        } = self;
-
-        *retry_after == other.retry_after
-    }
-}
-
-impl<T> Eq for AtCapacity<T> {}
-
-impl<T> Clone for Concurrency<T> {
-    fn clone(&self) -> Self {
-        let Self {
-            limit,
-            slots,
-            queue_for,
-            retry_after,
-            problem_type: _,
-        } = self;
-
-        Self {
-            limit: *limit,
-            // Shared: one limit across every copy.
-            slots: Arc::clone(slots),
-            queue_for: *queue_for,
-            retry_after: *retry_after,
-            problem_type: PhantomData,
-        }
-    }
-}
-
-impl<T> fmt::Debug for Concurrency<T> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self {
-            limit,
-            slots,
-            queue_for,
-            retry_after,
-            problem_type: _,
-        } = self;
-
-        formatter
-            .debug_struct("Concurrency")
-            .field("limit", limit)
-            .field("slots", slots)
-            .field("queue_for", queue_for)
-            .field("retry_after", retry_after)
-            .finish()
-    }
-}
+// Not derived: a derive would bound each on the marker. A clone shares `slots`,
+// so one limit holds across every copy.
+marker_traits!(AtCapacity<T> { problem_type: _, retry_after }: Copy, Debug, PartialEq);
+marker_traits!(
+    Concurrency<T> { problem_type: _, limit, slots, queue_for, retry_after }: Clone, Debug
+);

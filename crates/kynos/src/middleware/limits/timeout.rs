@@ -1,6 +1,6 @@
 //! A cap on how long a handler may run, and the 408 it answers with.
 
-use std::{fmt, marker::PhantomData, time::Duration};
+use std::{marker::PhantomData, time::Duration};
 
 use crate::{
     error::problem::{ProblemType, refusal_problem, refusal_response},
@@ -190,22 +190,7 @@ impl<R> Timeout<R> {
 }
 
 // Not derived: a derive would bound `R: Clone` and `R: Debug`.
-impl<R> Clone for Timeout<R> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<R> Copy for Timeout<R> {}
-
-impl<R> fmt::Debug for Timeout<R> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("Timeout")
-            .field("limit", &self.limit)
-            .finish_non_exhaustive()
-    }
-}
+marker_traits!(Timeout<R> { _response: _, limit }: Copy, Debug(..));
 
 impl<C, R> Interceptor<C> for Timeout<R>
 where
@@ -240,38 +225,4 @@ impl<T> From<Duration> for TimedOut<T> {
 }
 
 // Not derived: a derive would bound each on the marker.
-
-impl<T> Clone for TimedOut<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> Copy for TimedOut<T> {}
-
-impl<T> fmt::Debug for TimedOut<T> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self {
-            after,
-            problem_type: _,
-        } = self;
-
-        formatter
-            .debug_struct("TimedOut")
-            .field("after", after)
-            .finish()
-    }
-}
-
-impl<T> PartialEq for TimedOut<T> {
-    fn eq(&self, other: &Self) -> bool {
-        let Self {
-            after,
-            problem_type: _,
-        } = self;
-
-        *after == other.after
-    }
-}
-
-impl<T> Eq for TimedOut<T> {}
+marker_traits!(TimedOut<T> { problem_type: _, after }: Copy, Debug, PartialEq);

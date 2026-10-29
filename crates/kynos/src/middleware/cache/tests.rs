@@ -28,6 +28,7 @@ fn storable(request: &[(&str, &str)], response: &[(&str, &str)]) -> Result<Durat
         false,
         None,
     )
+    .map(|(lifetime, _)| lifetime)
 }
 
 /// The same GET, to an operation declaring a security requirement.
@@ -43,6 +44,7 @@ fn storable_when_secured(
         true,
         None,
     )
+    .map(|(lifetime, _)| lifetime)
 }
 
 /// The baseline: a plain, explicitly cacheable response is stored.
@@ -70,7 +72,8 @@ fn every_refusal_has_a_case() {
                 &map(&[("cache-control", "max-age=60")]),
                 false,
                 None,
-            ),
+            )
+            .map(|(lifetime, _)| lifetime),
         ),
         (
             Unstorable::Status,
@@ -81,7 +84,8 @@ fn every_refusal_has_a_case() {
                 &map(&[("cache-control", "max-age=60")]),
                 false,
                 None,
-            ),
+            )
+            .map(|(lifetime, _)| lifetime),
         ),
         (
             Unstorable::RequestNoStore,
@@ -301,7 +305,7 @@ fn a_response_that_said_nothing_is_not_reused_unless_a_default_was_set() {
             false,
             Some(Duration::from_secs(30)),
         ),
-        Ok(Duration::from_secs(30))
+        Ok((Duration::from_secs(30), Vec::new()))
     );
 }
 
@@ -315,6 +319,7 @@ fn storable_by_default(response: &[(&str, &str)]) -> Result<Duration, Unstorable
         false,
         Some(Duration::from_secs(30)),
     )
+    .map(|(lifetime, _)| lifetime)
 }
 
 /// RFC 9111 section 4.2.1's third source: `Expires` minus `Date`.
@@ -529,19 +534,24 @@ fn the_vary_names_are_a_set() {
 /// the check entirely.
 #[test]
 fn a_cross_origin_response_that_does_not_vary_on_origin_is_refused() {
-    assert!(refuses_cross_origin(&map(&[(
+    let refuses = |fields: &[(&str, &str)]| {
+        let headers = map(fields);
+        refuses_cross_origin(&headers, &freshness::vary(&headers))
+    };
+
+    assert!(refuses(&[(
         "access-control-allow-origin",
         "https://app.example.com"
-    )])));
+    )]));
 
     // The control: the same response, varying correctly.
-    assert!(!refuses_cross_origin(&map(&[
+    assert!(!refuses(&[
         ("access-control-allow-origin", "https://app.example.com"),
         ("vary", "origin"),
-    ])));
+    ]));
 
     // And a response with no CORS headers at all is not refused for this.
-    assert!(!refuses_cross_origin(&map(&[("etag", "\"abc\"")])));
+    assert!(!refuses(&[("etag", "\"abc\"")]));
 }
 
 /// RFC 9111 section 4.4: "A non-error response is one with a 2xx (Successful)

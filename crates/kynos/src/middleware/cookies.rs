@@ -147,7 +147,6 @@ where
     ) -> impl Future<Output = Result<Continued<SetCookieHeaders>, Infallible>> + Send {
         let () = reads;
 
-        // Before the chain runs, since the chain consumes the request.
         let cookies = self.source.cookies(&request, context);
         let run = next.run(request);
 

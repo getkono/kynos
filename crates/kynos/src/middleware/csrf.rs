@@ -6,7 +6,7 @@
 //! that says it came from another site can be refused on that alone. It needs
 //! no token, session, randomness or HMAC.
 
-use std::{borrow::Cow, fmt, marker::PhantomData};
+use std::{borrow::Cow, marker::PhantomData};
 
 use crate::{
     error::problem::{ProblemType, refusal_problem, refusal_response},
@@ -189,22 +189,6 @@ pub struct CrossSite<T = ()> {
     problem_type: PhantomData<fn() -> T>,
 }
 
-impl<T> CrossSite<T> {
-    /// The refusal itself, which carries nothing but its type.
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            problem_type: PhantomData,
-        }
-    }
-}
-
-impl<T> Default for CrossSite<T> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl<T: ProblemType> IntoResponse for CrossSite<T> {
     fn into_response(self) -> http::Response {
         refusal_problem::<T>(http::StatusCode::FORBIDDEN)
@@ -260,63 +244,9 @@ where
     }
 }
 
-// Not derived: a derive would bound each on the marker. Destructured, so a new
-// field is a compile error here.
-
-impl<T> Clone for CrossSite<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> Copy for CrossSite<T> {}
-
-impl<T> fmt::Debug for CrossSite<T> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self { problem_type: _ } = self;
-
-        formatter.debug_struct("CrossSite").finish()
-    }
-}
-
-impl<T> PartialEq for CrossSite<T> {
-    fn eq(&self, other: &Self) -> bool {
-        let Self { problem_type: _ } = self;
-        let Self { problem_type: _ } = other;
-
-        true
-    }
-}
-
-impl<T> Eq for CrossSite<T> {}
-
-impl<T> Clone for Csrf<T> {
-    fn clone(&self) -> Self {
-        let Self {
-            trusted,
-            problem_type: _,
-        } = self;
-
-        Self {
-            trusted: trusted.clone(),
-            problem_type: PhantomData,
-        }
-    }
-}
-
-impl<T> fmt::Debug for Csrf<T> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self {
-            trusted,
-            problem_type: _,
-        } = self;
-
-        formatter
-            .debug_struct("Csrf")
-            .field("trusted", trusted)
-            .finish()
-    }
-}
+// Not derived: a derive would bound each on the marker.
+marker_traits!(CrossSite<T> { problem_type: _ }: new, Copy, Debug, PartialEq);
+marker_traits!(Csrf<T> { problem_type: _, trusted }: Clone, Debug);
 
 impl<T> Default for Csrf<T> {
     fn default() -> Self {

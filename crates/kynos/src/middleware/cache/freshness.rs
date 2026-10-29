@@ -111,7 +111,8 @@ pub(super) fn storable_method(method: &crate::http::Method) -> bool {
     )
 }
 
-/// Whether a response may be stored, and for how long.
+/// Whether a response may be stored, for how long, and the field names it
+/// varied on, which deciding reads and storing keeps.
 ///
 /// `secured` is whether the operation declares a security requirement, as
 /// routing recorded it for the request.
@@ -122,7 +123,7 @@ pub(super) fn storable(
     response: &HeaderMap,
     secured: bool,
     default_freshness: Option<Duration>,
-) -> Result<Duration, Unstorable> {
+) -> Result<(Duration, Vec<String>), Unstorable> {
     if !storable_method(method) {
         return Err(Unstorable::Method);
     }
@@ -145,14 +146,15 @@ pub(super) fn storable(
         // this cache cannot store part of a response.
         if response_control
             .iter()
-            .any(|value| value == directive || value.starts_with(&format!("{directive}=")))
+            .any(|value| argument(value, directive).is_some())
         {
             return Err(refusal);
         }
     }
 
     // Every line, as `vary` reads them: a split list carries `*` on any of them.
-    if vary(response).iter().any(|name| name == "*") {
+    let varied = vary(response);
+    if varied.iter().any(|name| name == "*") {
         return Err(Unstorable::VaryWildcard);
     }
 
@@ -168,7 +170,9 @@ pub(super) fn storable(
         return Err(Unstorable::Authorized);
     }
 
-    freshness(&response_control, response, default_freshness).ok_or(Unstorable::NoFreshness)
+    freshness(&response_control, response, default_freshness)
+        .map(|lifetime| (lifetime, varied))
+        .ok_or(Unstorable::NoFreshness)
 }
 
 /// Whether a stored response may be served for an operation declaring a
