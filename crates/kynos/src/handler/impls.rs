@@ -15,59 +15,34 @@ use crate::{
     security::Guard,
 };
 
-/// Runs the guard, short-circuiting into its rejection's response.
-macro_rules! guard {
-    ($ty:ident, $parts:expr, $context:expr) => {
-        match <$ty as Guard<C>>::guard($parts, $context).await {
+/// Awaits a guard or extractor, short-circuiting into its rejection's response.
+macro_rules! or_respond {
+    ($future:expr) => {
+        match $future.await {
             Ok(value) => value,
             Err(rejection) => return rejection.into_response(),
         }
     };
 }
 
-/// Writes the guard's description, which declares its refusals itself: only
-/// the guard knows its schemes, so its rejection's `Responses` would add a 403
-/// a scheme that never forbids leaves out.
-macro_rules! describe_guard {
-    ($ty:ident, $operation:expr) => {
-        <$ty as Describe>::describe($operation)
-    };
-}
-
-/// Runs one head extractor, short-circuiting into its rejection's response.
-macro_rules! extract_parts {
-    ($ty:ident, $parts:expr, $context:expr) => {
-        match <$ty as FromRequestParts<C>>::from_request_parts($parts, $context).await {
-            Ok(value) => value,
-            Err(rejection) => return rejection.into_response(),
-        }
-    };
-}
-
-/// Runs the body extractor over the head the others read, short-circuiting
-/// into its rejection's response.
-macro_rules! extract_body {
-    ($ty:ident, $parts:expr, $body:expr, $context:expr) => {
-        match <$ty as FromRequest<C>>::from_request($parts, $body, $context).await {
-            Ok(value) => value,
-            Err(rejection) => return rejection.into_response(),
-        }
-    };
-}
-
-/// Merges one head argument's description and its rejection's responses.
-macro_rules! describe_parts {
-    ($ty:ident, $operation:expr) => {{
+/// Merges one argument's description and the responses of the rejection it
+/// raises as `$extractor`.
+macro_rules! describe_argument {
+    ($ty:ident as $extractor:ident, $operation:expr) => {{
         <$ty as Describe>::describe($operation);
-        let rejected = <<$ty as FromRequestParts<C>>::Rejection as Responses>::responses(
-            $operation.registry(),
-        );
+        let rejected =
+            <<$ty as $extractor<C>>::Rejection as Responses>::responses($operation.registry());
         $operation.add_responses(&rejected);
     }};
 }
 
 /// Emits the four implementations for one arity: with or without a guard, and
 /// with the last argument consuming the body or reading the head only.
+///
+/// A guard's description declares its refusals itself, so its rejection's
+/// responses are not merged: only the guard knows its schemes, and its
+/// rejection's `Responses` would add a 403 a scheme that never forbids leaves
+/// out.
 macro_rules! impl_handler {
     ( $($head:ident),* ; $last:ident ) => {
         // --- the last argument consumes the body ---------------------------
@@ -83,19 +58,14 @@ macro_rules! impl_handler {
         {
             #[allow(non_snake_case, unused_variables)]
             async fn call(self, parts: &mut Parts, body: Body, context: &C) -> Response {
-                $( let $head = extract_parts!($head, parts, context); )*
-                let $last = extract_body!($last, parts, body, context);
+                $( let $head = or_respond!($head::from_request_parts(parts, context)); )*
+                let $last = or_respond!($last::from_request(parts, body, context));
                 self($($head,)* $last).await.into_response()
             }
 
             fn describe(operation: &mut OperationCx<'_>) {
-                $( describe_parts!($head, operation); )*
-                <$last as Describe>::describe(operation);
-                let rejected =
-                    <<$last as FromRequest<C>>::Rejection as Responses>::responses(
-                        operation.registry(),
-                    );
-                operation.add_responses(&rejected);
+                $( describe_argument!($head as FromRequestParts, operation); )*
+                describe_argument!($last as FromRequest, operation);
                 let returned = <Res as Responses>::responses(operation.registry());
                 operation.add_responses(&returned);
             }
@@ -114,14 +84,14 @@ macro_rules! impl_handler {
         {
             #[allow(non_snake_case, unused_variables)]
             async fn call(self, parts: &mut Parts, _body: Body, context: &C) -> Response {
-                $( let $head = extract_parts!($head, parts, context); )*
-                let $last = extract_parts!($last, parts, context);
+                $( let $head = or_respond!($head::from_request_parts(parts, context)); )*
+                let $last = or_respond!($last::from_request_parts(parts, context));
                 self($($head,)* $last).await.into_response()
             }
 
             fn describe(operation: &mut OperationCx<'_>) {
-                $( describe_parts!($head, operation); )*
-                describe_parts!($last, operation);
+                $( describe_argument!($head as FromRequestParts, operation); )*
+                describe_argument!($last as FromRequestParts, operation);
                 let returned = <Res as Responses>::responses(operation.registry());
                 operation.add_responses(&returned);
             }
@@ -141,21 +111,16 @@ macro_rules! impl_handler {
         {
             #[allow(non_snake_case, unused_variables)]
             async fn call(self, parts: &mut Parts, body: Body, context: &C) -> Response {
-                let G = guard!(G, parts, context);
-                $( let $head = extract_parts!($head, parts, context); )*
-                let $last = extract_body!($last, parts, body, context);
+                let G = or_respond!(G::guard(parts, context));
+                $( let $head = or_respond!($head::from_request_parts(parts, context)); )*
+                let $last = or_respond!($last::from_request(parts, body, context));
                 self(G, $($head,)* $last).await.into_response()
             }
 
             fn describe(operation: &mut OperationCx<'_>) {
-                describe_guard!(G, operation);
-                $( describe_parts!($head, operation); )*
-                <$last as Describe>::describe(operation);
-                let rejected =
-                    <<$last as FromRequest<C>>::Rejection as Responses>::responses(
-                        operation.registry(),
-                    );
-                operation.add_responses(&rejected);
+                <G as Describe>::describe(operation);
+                $( describe_argument!($head as FromRequestParts, operation); )*
+                describe_argument!($last as FromRequest, operation);
                 let returned = <Res as Responses>::responses(operation.registry());
                 operation.add_responses(&returned);
             }
@@ -175,16 +140,16 @@ macro_rules! impl_handler {
         {
             #[allow(non_snake_case, unused_variables)]
             async fn call(self, parts: &mut Parts, _body: Body, context: &C) -> Response {
-                let G = guard!(G, parts, context);
-                $( let $head = extract_parts!($head, parts, context); )*
-                let $last = extract_parts!($last, parts, context);
+                let G = or_respond!(G::guard(parts, context));
+                $( let $head = or_respond!($head::from_request_parts(parts, context)); )*
+                let $last = or_respond!($last::from_request_parts(parts, context));
                 self(G, $($head,)* $last).await.into_response()
             }
 
             fn describe(operation: &mut OperationCx<'_>) {
-                describe_guard!(G, operation);
-                $( describe_parts!($head, operation); )*
-                describe_parts!($last, operation);
+                <G as Describe>::describe(operation);
+                $( describe_argument!($head as FromRequestParts, operation); )*
+                describe_argument!($last as FromRequestParts, operation);
                 let returned = <Res as Responses>::responses(operation.registry());
                 operation.add_responses(&returned);
             }
@@ -224,12 +189,13 @@ where
 {
     #[allow(non_snake_case)]
     async fn call(self, parts: &mut Parts, _body: Body, context: &C) -> Response {
-        let G = guard!(G, parts, context);
+        let G = or_respond!(G::guard(parts, context));
         self(G).await.into_response()
     }
 
+    /// The guard declares its refusals itself, as in `impl_handler!`.
     fn describe(operation: &mut OperationCx<'_>) {
-        describe_guard!(G, operation);
+        <G as Describe>::describe(operation);
         let returned = <Res as Responses>::responses(operation.registry());
         operation.add_responses(&returned);
     }

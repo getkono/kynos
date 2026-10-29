@@ -28,7 +28,7 @@ note: the above error was encountered while instantiating `fn <QueryString<Optio
   | impl_handler!(; T1);
   | ------------------- in this macro invocation
   |
-  = note: this note originates in the macro `describe_parts` which comes from the expansion of the macro `impl_handler` (in Nightly builds, run with -Z macro-backtrace for more info)
+  = note: this note originates in the macro `describe_argument` which comes from the expansion of the macro `impl_handler` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 note: erroneous constant encountered
  --> src/extract/params/querystring.rs
