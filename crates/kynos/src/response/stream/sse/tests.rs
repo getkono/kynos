@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use super::{Event, heartbeat_record};
-use crate::{http::body::BoxError, response::stream::RecordBuffer};
+use crate::{http::body::BoxError, response::stream::records::RecordBuffer};
 
 /// One event, written as the first record of a stream of its own.
 fn encode<T: serde::Serialize>(event: &Event<T>) -> Result<bytes::Bytes, BoxError> {

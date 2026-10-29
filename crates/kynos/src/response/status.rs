@@ -306,10 +306,7 @@ pub(crate) fn body_response(
     body: &mut kynos_openapi::Responses,
 ) -> Option<kynos_openapi::Response> {
     // Read rather than remove, so the emitted order the body chose survives.
-    match body
-        .responses
-        .get(&kynos_openapi::StatusPattern::Code(status).to_string())
-    {
+    match body.get(status) {
         Some(kynos_openapi::RefOr::Item(declared)) => return Some(declared.clone()),
         Some(kynos_openapi::RefOr::Ref(_)) => return None,
         None => {}

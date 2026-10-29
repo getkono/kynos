@@ -14,7 +14,7 @@ use crate::{
     response::{
         IntoResponse, Responses,
         codec::{ok, with_content_type},
-        stream::RecordBuffer,
+        stream::records::RecordBuffer,
     },
     schema::{Schema, registry::Registry},
 };

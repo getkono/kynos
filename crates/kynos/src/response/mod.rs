@@ -107,59 +107,6 @@ pub trait ShortCircuit: IntoResponse + Responses {
     const STATUSES: &'static [u16];
 }
 
-/// The statuses a [`kynos_openapi::Responses`] value declares as exact codes.
-///
-/// Wildcard patterns and `default` are skipped: they name no one status.
-#[must_use]
-pub(crate) fn described_statuses(responses: &kynos_openapi::Responses) -> Vec<u16> {
-    responses
-        .responses
-        .keys()
-        .filter_map(|key| key.parse::<u16>().ok())
-        .collect()
-}
-
-/// Checks that a [`ShortCircuit`]'s const and its responses agree.
-///
-/// Returns the violation when they do not. Called while the router is built,
-/// where a [`Registry`] exists.
-#[must_use]
-pub(crate) fn short_circuit_mismatch<S: ShortCircuit>(
-    registry: &mut Registry,
-) -> Option<crate::router::error::RouterError> {
-    mismatch_between(
-        std::any::type_name::<S>(),
-        S::STATUSES,
-        &S::responses(registry),
-    )
-}
-
-/// The comparison itself, without the type parameter, for testing.
-fn mismatch_between(
-    name: &str,
-    statuses: &[u16],
-    responses: &kynos_openapi::Responses,
-) -> Option<crate::router::error::RouterError> {
-    let normalize = |mut codes: Vec<u16>| {
-        codes.sort_unstable();
-        codes.dedup();
-        codes
-    };
-
-    let declared = normalize(statuses.to_vec());
-    let described = normalize(described_statuses(responses));
-
-    if declared == described {
-        return None;
-    }
-
-    Some(crate::router::error::RouterError::ShortCircuitMismatch {
-        name: name.to_owned(),
-        declared,
-        described,
-    })
-}
-
 /// The empty body, which is 200 like every other bare body type.
 ///
 /// Return [`NoContent`](status::NoContent) for a 204.
@@ -239,6 +186,3 @@ where
         }
     }
 }
-
-#[cfg(test)]
-mod tests;
