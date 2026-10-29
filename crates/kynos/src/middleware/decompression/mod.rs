@@ -590,9 +590,10 @@ where
                 parts.headers.remove(stale);
             }
 
-            if let Ok(length) = http::HeaderValue::from_str(&bytes.len().to_string()) {
-                parts.headers.insert(http::header::CONTENT_LENGTH, length);
-            }
+            parts.headers.insert(
+                http::header::CONTENT_LENGTH,
+                http::HeaderValue::from(bytes.len()),
+            );
         }
 
         let request = http::Request::from_parts(parts, Body::from_bytes(bytes));

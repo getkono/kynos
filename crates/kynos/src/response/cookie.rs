@@ -183,7 +183,7 @@ impl Cookie {
     /// `__Host-` cookie names a `Domain` or a `Path` other than `/`.
     #[must_use]
     pub fn encode(&self) -> Option<HeaderValue> {
-        if !crate::http::is_token(&self.name) || !is_cookie_value(&self.value) {
+        if !crate::http::is_token(self.name.as_bytes()) || !is_cookie_value(&self.value) {
             return None;
         }
 
@@ -228,7 +228,7 @@ impl Cookie {
         }
         if let Some(age) = self.max_age {
             rendered.push_str("; Max-Age=");
-            rendered.push_str(&crate::middleware::whole_seconds(age).to_string());
+            rendered.push_str(&crate::http::whole_seconds(age).to_string());
         }
         // `SameSite=None`, `Partitioned` (CHIPS, draft-cutler-httpbis-
         // partitioned-cookies section 2.1) and both name prefixes are silently

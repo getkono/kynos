@@ -28,8 +28,7 @@ use serde_json::json;
 
 use crate::{
     error::problem::{IntoProblem, Member, Problem, narrowed_response, problem_response},
-    http::{HeaderValue, StatusCode, header},
-    middleware::{retry_after_header, set_retry_after},
+    http::{HeaderValue, StatusCode, header, retry_after_header, set_retry_after},
     response::{IntoResponse, Responses},
     schema::registry::Registry,
     security::{SecurityScheme, auth::Scopes},
@@ -901,12 +900,7 @@ fn forbidden(
     named: Option<&'static str>,
 ) -> kynos_openapi::Response {
     let Some(named) = named else {
-        let description = status.canonical_reason().map_or_else(
-            || format!("a `{}` response", status.as_u16()),
-            str::to_owned,
-        );
-
-        return problem_response(registry, description);
+        return problem_response(registry, crate::http::describe_code(status.as_u16()));
     };
 
     let problem = registry.resolve::<Problem>();

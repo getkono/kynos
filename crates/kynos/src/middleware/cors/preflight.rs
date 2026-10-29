@@ -3,13 +3,11 @@
 //! Out-of-document by construction: a [`Preflight`] is assembled after the
 //! description has been emitted.
 
-use std::time::Duration;
-
 use kynos_openapi::Method;
 
-use super::{CorsConfig, join_names};
+use super::CorsConfig;
 use crate::{
-    http::{self, HeaderValue, Request, Response, StatusCode, header},
+    http::{self, HeaderValue, Request, Response, StatusCode, header, join_names},
     router::policy::FallbackPolicy,
 };
 
@@ -148,8 +146,7 @@ impl Preflight {
             return self.not_a_preflight();
         };
 
-        let mut response = Response::new(crate::http::body::Body::empty());
-        *response.status_mut() = StatusCode::NO_CONTENT;
+        let mut response = crate::http::body::bodiless(StatusCode::NO_CONTENT);
 
         // On every answer: a cached refusal must not be reused either.
         crate::http::vary_on(response.headers_mut(), PREFLIGHT_VARIES);
@@ -186,8 +183,13 @@ impl Preflight {
             fields.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, allowed);
         }
 
-        if let Some(max_age) = config.max_age.as_ref().and_then(seconds) {
-            fields.insert(header::ACCESS_CONTROL_MAX_AGE, max_age);
+        // Rounded up, since truncating a sub-second lifetime to `0` would
+        // disable caching; an explicit zero stays zero.
+        if let Some(max_age) = config.max_age {
+            fields.insert(
+                header::ACCESS_CONTROL_MAX_AGE,
+                HeaderValue::from(http::whole_seconds(max_age)),
+            );
         }
 
         // No `Access-Control-Expose-Headers`: only the actual response's is read.
@@ -221,20 +223,6 @@ fn advertised_headers(config: &CorsConfig, request: &http::HeaderMap) -> Option<
     }
 
     join_names(config.headers.iter().map(std::borrow::Cow::as_ref))
-}
-
-/// A cache lifetime as the whole seconds `Access-Control-Max-Age` carries.
-///
-/// Rounded up, since truncating a sub-second lifetime to `0` would disable
-/// caching; an explicit zero stays zero.
-fn seconds(age: &Duration) -> Option<HeaderValue> {
-    let whole = if age.subsec_nanos() > 0 {
-        age.as_secs().saturating_add(1)
-    } else {
-        age.as_secs()
-    };
-
-    HeaderValue::from_str(&whole.to_string()).ok()
 }
 
 #[cfg(test)]

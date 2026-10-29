@@ -14,7 +14,7 @@ use crate::{
     extract::params::path::PathCaptures,
     http::{
         HeaderValue, Request, Response, StatusCode,
-        body::{Body, Delivery},
+        body::{Body, Delivery, bodiless},
         header,
     },
     middleware::{
@@ -661,11 +661,7 @@ pub(crate) fn flip_trailing_slash(path: &str) -> Option<String> {
 fn fallback(status: StatusCode, policy: &FallbackPolicy) -> Response {
     match policy {
         FallbackPolicy::Problem => Problem::new(status).into_response(),
-        FallbackPolicy::Empty => {
-            let mut response = Response::new(Body::empty());
-            *response.status_mut() = status;
-            response
-        }
+        FallbackPolicy::Empty => bodiless(status),
     }
 }
 
@@ -714,8 +710,7 @@ fn redirect(path: &str, query: Option<&str>) -> Response {
         None => path.to_owned(),
     };
 
-    let mut response = Response::new(Body::empty());
-    *response.status_mut() = StatusCode::PERMANENT_REDIRECT;
+    let mut response = bodiless(StatusCode::PERMANENT_REDIRECT);
     if let Ok(location) = HeaderValue::from_str(&target) {
         response.headers_mut().insert(header::LOCATION, location);
     }
@@ -729,17 +724,17 @@ fn redirect(path: &str, query: Option<&str>) -> Response {
 /// right after it.
 pub(crate) fn allow_header(methods: &[Method]) -> HeaderValue {
     let derives_head = !methods.contains(&Method::Head);
-    let joined = methods
-        .iter()
-        .flat_map(|method| {
-            let head = (derives_head && *method == Method::Get).then_some(Method::Head);
-            std::iter::once(*method).chain(head)
-        })
-        .map(Method::as_wire_str)
-        .collect::<Vec<_>>()
-        .join(", ");
+    let joined = crate::http::join_names(
+        methods
+            .iter()
+            .flat_map(|method| {
+                let head = (derives_head && *method == Method::Get).then_some(Method::Head);
+                std::iter::once(*method).chain(head)
+            })
+            .map(Method::as_wire_str),
+    );
 
-    HeaderValue::from_str(&joined).unwrap_or_else(|_| HeaderValue::from_static(""))
+    joined.unwrap_or_else(|| HeaderValue::from_static(""))
 }
 
 /// Every method some operation in `paths` answers: each declared one, and

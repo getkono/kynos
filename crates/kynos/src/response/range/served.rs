@@ -16,7 +16,7 @@ use std::{sync::Arc, time::SystemTime};
 use crate::{
     http::etag::ETag,
     http::media::MediaType,
-    http::{HeaderValue, Method, Parts, Response, StatusCode, header},
+    http::{HeaderValue, Method, Parts, Response, StatusCode, body::bodiless, header},
     response::{
         IntoResponse,
         disposition::ContentDisposition,
@@ -158,9 +158,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
 
         // Section 13.2.2 steps 1 and 2: the lost-update preconditions first.
         if self.precondition_failed(conditions, current) {
-            let mut response = Response::new(crate::http::body::Body::empty());
-            *response.status_mut() = StatusCode::PRECONDITION_FAILED;
-            return Ok(Delivery::new(response));
+            return Ok(Delivery::new(bodiless(StatusCode::PRECONDITION_FAILED)));
         }
 
         // Steps 3 and 4: the cache validations.
@@ -169,9 +167,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
             // HEAD alone, and a 412 for any other method. Only it can hold
             // here for one, since the date applies to GET and HEAD alone.
             if conditions.method != Method::GET && conditions.method != Method::HEAD {
-                let mut response = Response::new(crate::http::body::Body::empty());
-                *response.status_mut() = StatusCode::PRECONDITION_FAILED;
-                return Ok(Delivery::new(response));
+                return Ok(Delivery::new(bodiless(StatusCode::PRECONDITION_FAILED)));
             }
             let response = self
                 .head(None, complete_length, tag)
@@ -238,7 +234,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
             // Static where `from_static` takes it, so it costs no allocation;
             // anything else is copied, and a marker that is no field value is
             // omitted.
-            let content_type = if const { visible_ascii(M::MEDIA_TYPE) } {
+            let content_type = if const { crate::http::is_field_value(M::MEDIA_TYPE.as_bytes()) } {
                 Some(HeaderValue::from_static(M::MEDIA_TYPE))
             } else {
                 HeaderValue::from_str(M::MEDIA_TYPE).ok()
@@ -344,21 +340,6 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
         // At the field's one-second resolution.
         seconds(modified) <= seconds(since)
     }
-}
-
-/// Whether [`HeaderValue::from_static`] takes `text` without panicking: tab or
-/// visible ASCII throughout.
-const fn visible_ascii(text: &str) -> bool {
-    let bytes = text.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if !(byte == b'\t' || (byte >= 0x20 && byte < 0x7f)) {
-            return false;
-        }
-        index += 1;
-    }
-    true
 }
 
 /// `length` as a `Content-Length` value, in the one allocation the value

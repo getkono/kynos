@@ -12,13 +12,15 @@ use kynos_openapi::model::body::mime_names;
 
 use crate::{
     extract::body::{
-        alternative::{eq_ignore_ascii_case, split_essence},
         binary::Binary,
         codec::{BodyCodec, Encoded},
         text::Text,
         text_as::TextAs,
     },
-    http::{Response, media::MediaType},
+    http::{
+        Response, eq_ignore_ascii_case,
+        media::{MediaType, split_essence},
+    },
     response::{IntoResponse, Responses},
     schema::registry::Registry,
 };

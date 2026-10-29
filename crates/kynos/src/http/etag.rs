@@ -79,11 +79,7 @@ impl ETag {
         // RFC 9110 section 8.8.3's `etagc` without `obs-text`: `value` is a
         // `str`, whose non-ASCII bytes are UTF-8 rather than the opaque octets
         // `obs-text` names.
-        if !self
-            .value
-            .bytes()
-            .all(|byte| (0x21..=0x7e).contains(&byte) && byte != b'"')
-        {
+        if !self.value.bytes().all(is_etagc) {
             return None;
         }
 
@@ -184,7 +180,12 @@ pub(crate) fn is_strong(tag: &str) -> bool {
         && tag.ends_with('"')
         && tag.as_bytes()[1..tag.len() - 1]
             .iter()
-            .all(|&byte| byte == 0x21 || (0x23..=0x7e).contains(&byte))
+            .all(|&byte| is_etagc(byte))
+}
+
+/// Whether `byte` is an RFC 9110 section 8.8.3 `etagc` other than `obs-text`.
+fn is_etagc(byte: u8) -> bool {
+    byte == 0x21 || (0x23..=0x7e).contains(&byte)
 }
 
 /// Whether `tag` carries the weakness marker.

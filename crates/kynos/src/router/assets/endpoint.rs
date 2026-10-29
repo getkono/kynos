@@ -124,7 +124,7 @@ impl AssetEndpoint {
             return identity;
         }
 
-        let Some(accept) = crate::http::coding::accept_encoding(headers) else {
+        let Some(accept) = crate::http::field_lines(headers, header::ACCEPT_ENCODING) else {
             // No field (RFC 9110 section 12.5.3): identity, which every client reads.
             return identity;
         };
@@ -290,8 +290,7 @@ impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
         // request would receive, not one the client may no longer decode, and
         // over every field line, since section 5.3 makes them one list.
         if etag::if_none_match(request.headers(), || Some(chosen.etag)) == Some(true) {
-            let mut response = Response::new(crate::http::body::Body::empty());
-            *response.status_mut() = StatusCode::NOT_MODIFIED;
+            let mut response = crate::http::body::bodiless(StatusCode::NOT_MODIFIED);
             crate::extract::params::header::write_or_refuse(
                 &mut response,
                 &self.headers(&chosen).not_modified(),

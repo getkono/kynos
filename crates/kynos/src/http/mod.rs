@@ -43,13 +43,74 @@ pub type Parts = http::request::Parts;
 /// An outgoing response.
 pub type Response = http::Response<Body>;
 
-/// RFC 9110 section 5.6.2 `token`, shared by `cookie`, `assets` and `multipart`.
-#[cfg(any(feature = "cookie", feature = "assets", feature = "multipart"))]
-pub(crate) fn is_token(text: &str) -> bool {
-    !text.is_empty()
-        && text
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
+/// Whether `bytes` is a non-empty RFC 9110 section 5.6.2 `token`: visible
+/// octets, none of them a delimiter; usable in a constant.
+pub(crate) const fn is_token(bytes: &[u8]) -> bool {
+    const DELIMITERS: &[u8] = b"\"(),/:;<=>?@[\\]{}";
+
+    let mut at = 0;
+    while at < bytes.len() {
+        let mut delimiter = 0;
+        while delimiter < DELIMITERS.len() && DELIMITERS[delimiter] != bytes[at] {
+            delimiter += 1;
+        }
+        if !bytes[at].is_ascii_graphic() || delimiter < DELIMITERS.len() {
+            return false;
+        }
+        at += 1;
+    }
+    !bytes.is_empty()
+}
+
+/// `value` without one pair of surrounding double quotes; usable in a
+/// constant.
+///
+/// The quoting alone: a `\` escape inside is left as it is.
+pub(crate) const fn unquoted(value: &[u8]) -> &[u8] {
+    match value {
+        [b'"', inner @ .., b'"'] => inner,
+        _ => value,
+    }
+}
+
+/// [`unquoted`] over text.
+pub(crate) fn unquoted_str(text: &str) -> &str {
+    let inner = unquoted(text.as_bytes()).len();
+    // Either nothing or one ASCII quote was cut from each end.
+    let start = (text.len() - inner) / 2;
+    &text[start..start + inner]
+}
+
+/// Whether every octet of `bytes` is one a field value may hold, tab or
+/// visible ASCII: what [`HeaderValue::from_static`] takes without panicking;
+/// usable in a constant.
+///
+/// RFC 9110 section 5.5 without `obs-text`.
+pub(crate) const fn is_field_value(bytes: &[u8]) -> bool {
+    let mut at = 0;
+    while at < bytes.len() {
+        if !matches!(bytes[at], b'\t' | b' '..=b'~') {
+            return false;
+        }
+        at += 1;
+    }
+    true
+}
+
+/// Copies `bytes` into `out` from `at`, returning where the copy ends; usable
+/// in a constant, where a field value is assembled into a fixed buffer.
+///
+/// # Panics
+///
+/// Where `bytes` runs past `out`'s end: each caller checks the room first, by
+/// its own policy.
+pub(crate) const fn copy_into(out: &mut [u8], at: usize, bytes: &[u8]) -> usize {
+    let mut index = 0;
+    while index < bytes.len() {
+        out[at + index] = bytes[index];
+        index += 1;
+    }
+    at + bytes.len()
 }
 
 /// `text`'s pieces between `delimiter`s outside any `quoted-string`, left to
@@ -90,21 +151,35 @@ pub(crate) fn unquoted_split(text: &str, delimiter: u8) -> impl Iterator<Item = 
 /// Header names are case-insensitive per RFC 9110 section 5.1.
 #[must_use]
 pub(crate) const fn header_name_eq(left: &str, right: &str) -> bool {
-    let (left, right) = (left.as_bytes(), right.as_bytes());
+    eq_ignore_ascii_case(left.as_bytes(), right.as_bytes())
+}
 
+/// Byte-wise ASCII case-insensitive equality, usable in a constant.
+pub(crate) const fn eq_ignore_ascii_case(left: &[u8], right: &[u8]) -> bool {
     if left.len() != right.len() {
         return false;
     }
-
-    let mut index = 0;
-    while index < left.len() {
-        if !left[index].eq_ignore_ascii_case(&right[index]) {
+    let mut at = 0;
+    while at < left.len() {
+        if !left[at].eq_ignore_ascii_case(&right[at]) {
             return false;
         }
-        index += 1;
+        at += 1;
     }
-
     true
+}
+
+/// The bytes before the first `byte`, and those after it.
+pub(crate) const fn split_at_byte(bytes: &[u8], byte: u8) -> (&[u8], &[u8]) {
+    let mut end = 0;
+    while end < bytes.len() && bytes[end] != byte {
+        end += 1;
+    }
+    let (before, after) = bytes.split_at(end);
+    match after {
+        [_, rest @ ..] => (before, rest),
+        [] => (before, after),
+    }
 }
 
 /// The request's own authority, from the target or from `Host`.
@@ -134,6 +209,89 @@ pub(crate) fn own_authority<'a>(
                 std::borrow::Cow::Borrowed(host)
             }
         })
+}
+
+/// The field `name` in `headers`: every line, comma-joined.
+///
+/// RFC 9110 section 5.3. A line that is not visible ASCII is skipped, and
+/// `None` means no line was left, which reads as no field at all. A single
+/// line, the usual case, is borrowed.
+#[must_use]
+pub(crate) fn field_lines(
+    headers: &HeaderMap,
+    name: HeaderName,
+) -> Option<std::borrow::Cow<'_, str>> {
+    let mut lines = headers
+        .get_all(name)
+        .iter()
+        .filter_map(|line| line.to_str().ok());
+
+    let first = lines.next()?;
+    let Some(second) = lines.next() else {
+        return Some(std::borrow::Cow::Borrowed(first));
+    };
+
+    let mut field = format!("{first},{second}");
+    for line in lines {
+        field.push(',');
+        field.push_str(line);
+    }
+
+    Some(std::borrow::Cow::Owned(field))
+}
+
+/// `names` as one comma-separated field value.
+///
+/// `None` when there is no name, or when the joined names are not a field
+/// value.
+pub(crate) fn join_names<'a>(names: impl IntoIterator<Item = &'a str>) -> Option<HeaderValue> {
+    let mut names = names.into_iter();
+    let mut joined = names.next()?.to_owned();
+
+    for name in names {
+        joined.push_str(", ");
+        joined.push_str(name);
+    }
+
+    HeaderValue::from_str(&joined).ok()
+}
+
+/// The description of a response with status `code`: its RFC 9110 reason
+/// phrase, or ``a `{code}` response`` for a code with none.
+pub(crate) fn describe_code(code: u16) -> String {
+    StatusCode::from_u16(code)
+        .ok()
+        .and_then(|status| status.canonical_reason())
+        .map_or_else(|| format!("a `{code}` response"), str::to_owned)
+}
+
+/// A delay in whole seconds, rounded *up*.
+///
+/// Truncating a sub-second wait to zero would tell a client to retry
+/// immediately into the refusal it just received. Saturates at `u64::MAX`
+/// rather than overflowing within the last second of
+/// [`Duration::MAX`](std::time::Duration::MAX).
+pub(crate) fn whole_seconds(delay: std::time::Duration) -> u64 {
+    delay
+        .as_secs()
+        .saturating_add(u64::from(delay.subsec_nanos() > 0))
+}
+
+/// Describes `Retry-After`, which is a delta-seconds count or an HTTP-date.
+///
+/// A string, since an integer schema would be wrong for the HTTP-date form.
+pub(crate) fn retry_after_header() -> kynos_openapi::Header {
+    kynos_openapi::Header::new(kynos_openapi::Schema::of_type(
+        kynos_openapi::model::schema::types::SchemaType::String,
+    ))
+    .with_description("How long to wait before retrying, in seconds or as an HTTP-date")
+}
+
+/// Sets `Retry-After` on `response` to `delay` in [`whole_seconds`].
+pub(crate) fn set_retry_after(response: &mut Response, delay: std::time::Duration) {
+    response
+        .headers_mut()
+        .insert(header::RETRY_AFTER, HeaderValue::from(whole_seconds(delay)));
 }
 
 /// Merges `names` into whatever `Vary` a response already carries.

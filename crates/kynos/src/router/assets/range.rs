@@ -36,9 +36,7 @@ pub(super) fn precondition_failed(
         return None;
     }
 
-    let mut response = Response::new(crate::http::body::Body::empty());
-    *response.status_mut() = StatusCode::PRECONDITION_FAILED;
-    Some(response)
+    Some(crate::http::body::bodiless(StatusCode::PRECONDITION_FAILED))
 }
 
 /// The whole representation, the part a `Range` asked for, or a 416.

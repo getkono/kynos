@@ -6,8 +6,8 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::{
     error::problem::{ProblemType, refusal_problem, refusal_response},
-    http,
-    middleware::{Continued, Interceptor, Next, retry_after_header, set_retry_after},
+    http::{self, retry_after_header, set_retry_after},
+    middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
     schema::registry::Registry,
 };

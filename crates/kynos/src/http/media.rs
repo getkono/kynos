@@ -29,6 +29,12 @@ pub trait MediaType {
     const MEDIA_TYPE: &'static str;
 }
 
+/// A media type's trimmed type and subtype, and the parameters after them.
+pub(crate) const fn split_essence(media_type: &[u8]) -> (&[u8], &[u8]) {
+    let (essence, parameters) = super::split_at_byte(media_type, b';');
+    (essence.trim_ascii(), parameters)
+}
+
 /// Whether a media type carries a JSON document, usable in a constant.
 ///
 /// True for `application/json` and any RFC 6839 `+json` suffix type, compared
@@ -38,7 +44,7 @@ pub trait MediaType {
 /// Gated to its two readers, `JsonAs` and `QueryString`.
 #[cfg(any(feature = "json", feature = "openapi32"))]
 pub(crate) const fn is_json(media_type: &str) -> bool {
-    use crate::extract::body::alternative::{eq_ignore_ascii_case, split_essence};
+    use super::eq_ignore_ascii_case;
 
     const SUFFIX: &[u8] = b"+json";
 
@@ -52,7 +58,7 @@ pub(crate) const fn is_json(media_type: &str) -> bool {
 ///
 /// Compared on the trimmed type in any ASCII case, whatever parameters follow.
 pub(crate) const fn is_text(media_type: &str) -> bool {
-    use crate::extract::body::alternative::{eq_ignore_ascii_case, split_at_byte, split_essence};
+    use super::{eq_ignore_ascii_case, split_at_byte};
 
     let (type_, subtype) = split_at_byte(split_essence(media_type.as_bytes()).0, b'/');
     eq_ignore_ascii_case(type_.trim_ascii(), b"text") && !subtype.trim_ascii().is_empty()
@@ -62,7 +68,7 @@ pub(crate) const fn is_text(media_type: &str) -> bool {
 /// in any ASCII case, quoted or not; usable in a constant.
 pub(crate) const fn is_utf8_or_unstated(media_type: &str) -> bool {
     match charset(media_type) {
-        Some(charset) => crate::extract::body::alternative::eq_ignore_ascii_case(charset, b"utf-8"),
+        Some(charset) => super::eq_ignore_ascii_case(charset, b"utf-8"),
         None => true,
     }
 }
@@ -70,7 +76,7 @@ pub(crate) const fn is_utf8_or_unstated(media_type: &str) -> bool {
 /// The value of the first `charset` parameter a media type declares, trimmed
 /// and unquoted; `None` when it declares none.
 pub(crate) const fn charset(media_type: &str) -> Option<&[u8]> {
-    use crate::extract::body::alternative::{eq_ignore_ascii_case, split_at_byte, split_essence};
+    use super::{eq_ignore_ascii_case, split_at_byte, unquoted};
 
     let mut parameters = split_essence(media_type.as_bytes()).1;
     while !parameters.is_empty() {
@@ -91,46 +97,15 @@ pub(crate) const fn charset(media_type: &str) -> Option<&[u8]> {
 /// The `MEDIA_TYPE` check of a `BodyCodec`, whose second half is what
 /// `HeaderValue::from_static` would otherwise panic on at the first response.
 pub(crate) const fn is_media_type(media_type: &str) -> bool {
-    use crate::extract::body::alternative::{split_at_byte, split_essence};
+    use super::{is_field_value, is_token, split_at_byte};
 
     let bytes = media_type.as_bytes();
-    let mut at = 0;
-    while at < bytes.len() {
-        if !matches!(bytes[at], b'\t' | b' '..=b'~') {
-            return false;
-        }
-        at += 1;
+    if !is_field_value(bytes) {
+        return false;
     }
 
     let (type_, subtype) = split_at_byte(split_essence(bytes).0, b'/');
     is_token(type_) && is_token(subtype)
-}
-
-/// Whether `bytes` is a non-empty RFC 9110 section 5.6.2 token: visible
-/// octets, none of them a delimiter.
-const fn is_token(bytes: &[u8]) -> bool {
-    const DELIMITERS: &[u8] = b"\"(),/:;<=>?@[\\]{}";
-
-    let mut at = 0;
-    while at < bytes.len() {
-        let mut delimiter = 0;
-        while delimiter < DELIMITERS.len() && DELIMITERS[delimiter] != bytes[at] {
-            delimiter += 1;
-        }
-        if !bytes[at].is_ascii_graphic() || delimiter < DELIMITERS.len() {
-            return false;
-        }
-        at += 1;
-    }
-    !bytes.is_empty()
-}
-
-/// `value` without one pair of surrounding double quotes.
-const fn unquoted(value: &[u8]) -> &[u8] {
-    match value {
-        [b'"', inner @ .., b'"'] => inner,
-        _ => value,
-    }
 }
 
 /// `application/octet-stream`.

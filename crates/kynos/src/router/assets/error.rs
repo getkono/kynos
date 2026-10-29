@@ -101,7 +101,7 @@ impl Asset {
             return Err(InvalidAsset::ETag { etag });
         }
         for encoded in encodings {
-            if !crate::http::is_token(encoded.coding)
+            if !crate::http::is_token(encoded.coding.as_bytes())
                 || encoded.coding.eq_ignore_ascii_case("identity")
             {
                 return Err(InvalidAsset::Coding {

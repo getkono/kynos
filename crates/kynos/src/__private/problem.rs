@@ -67,15 +67,8 @@ pub const fn join<const N: usize>(base: &str, slug: &str) -> [u8; N] {
     assert!(base.len() + slug.len() == N, "`N` is the joined length");
     let (base, slug) = (base.as_bytes(), slug.as_bytes());
     let mut joined = [0; N];
-    let mut index = 0;
-    while index < base.len() {
-        joined[index] = base[index];
-        index += 1;
-    }
-    while index < N {
-        joined[index] = slug[index - base.len()];
-        index += 1;
-    }
+    let at = crate::http::copy_into(&mut joined, 0, base);
+    crate::http::copy_into(&mut joined, at, slug);
     joined
 }
 

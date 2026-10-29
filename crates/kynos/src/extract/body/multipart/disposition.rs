@@ -44,14 +44,14 @@ pub(crate) fn parse(field: &str) -> Result<Disposition, String> {
 
         let (parameter, after) = token(rest);
         let after = (skip_ows(after).strip_prefix('=').map(skip_ows))
-            .filter(|_| crate::http::is_token(parameter))
+            .filter(|_| crate::http::is_token(parameter.as_bytes()))
             .ok_or_else(malformed)?;
         let value;
         (value, rest) = if after.starts_with('"') {
             quoted_string(after)
         } else {
             let (value, after) = token(after);
-            crate::http::is_token(value).then(|| (value.to_owned(), after))
+            crate::http::is_token(value.as_bytes()).then(|| (value.to_owned(), after))
         }
         .ok_or_else(malformed)?;
 

@@ -6,7 +6,7 @@ use bytes::Bytes;
 use kynos_openapi::model::schema::types::SchemaType;
 
 use crate::{
-    http::{HeaderValue, Response, StatusCode, body::Body, header},
+    http::{HeaderValue, Response, StatusCode, body::bodiless, header},
     response::{IntoResponse, Responses},
     schema::registry::Registry,
 };
@@ -387,9 +387,7 @@ fn redirect_description(code: u16) -> &'static str {
 
 impl IntoResponse for NoContent {
     fn into_response(self) -> Response {
-        let mut response = Response::new(Body::empty());
-        *response.status_mut() = StatusCode::NO_CONTENT;
-        response
+        bodiless(StatusCode::NO_CONTENT)
     }
 }
 
@@ -464,10 +462,10 @@ where
     (): ValidRedirectCode<CODE>,
 {
     fn into_response(self) -> Response {
-        let mut response = Response::new(Body::empty());
         // The witness admits only valid status codes.
-        *response.status_mut() =
-            StatusCode::from_u16(CODE).expect("a witnessed redirect code is a status code");
+        let mut response = bodiless(
+            StatusCode::from_u16(CODE).expect("a witnessed redirect code is a status code"),
+        );
         set_location(&mut response, self.location);
         response
     }

@@ -101,9 +101,10 @@ impl EncodeHeaders for ContentEncoding {
         // 8.6); restated rather than removed so it stays right if the body stops
         // being buffered.
         if let Some(length) = self.length {
-            if let Ok(value) = http::HeaderValue::from_str(&length.to_string()) {
-                fields.push((http::header::CONTENT_LENGTH, value));
-            }
+            fields.push((
+                http::header::CONTENT_LENGTH,
+                http::HeaderValue::from(length),
+            ));
         }
 
         Ok(fields)
@@ -223,7 +224,7 @@ enum Negotiated {
 
 /// The coding to apply, per RFC 9110 section 12.5.3.
 fn negotiate(headers: &http::HeaderMap) -> Negotiated {
-    let Some(accept) = crate::http::coding::accept_encoding(headers) else {
+    let Some(accept) = crate::http::field_lines(headers, http::header::ACCEPT_ENCODING) else {
         // Rule 1: "If no Accept-Encoding header field is in the request, any
         // content coding is considered acceptable by the user agent."
         return Negotiated::Unstated;
@@ -758,7 +759,10 @@ impl<T: ProblemType> Compression<T> {
                 }
             }
             Err(error) => {
-                continued.set_body(crate::http::body::Body::failed(error));
+                continued.set_body(crate::http::body::Body::failed_after(
+                    bytes::Bytes::new(),
+                    error,
+                ));
                 None
             }
         };

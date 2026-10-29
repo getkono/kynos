@@ -415,7 +415,7 @@ impl CorsConfig {
             return Some(http::HeaderValue::from_static("*"));
         }
 
-        join_names(self.expose.iter().map(Cow::as_ref))
+        http::join_names(self.expose.iter().map(Cow::as_ref))
     }
 
     /// The `Access-Control-Allow-Origin` value answering a permitted `origin`.
@@ -430,24 +430,6 @@ impl CorsConfig {
             origin.clone()
         }
     }
-}
-
-/// `names` as one comma-separated field value.
-///
-/// `None` when there is no name, or when the joined names are not a field
-/// value.
-pub(crate) fn join_names<'a>(
-    names: impl IntoIterator<Item = &'a str>,
-) -> Option<http::HeaderValue> {
-    let mut names = names.into_iter();
-    let mut joined = names.next()?.to_owned();
-
-    for name in names {
-        joined.push_str(", ");
-        joined.push_str(name);
-    }
-
-    http::HeaderValue::from_str(&joined).ok()
 }
 
 impl Cors<Undocumented> {

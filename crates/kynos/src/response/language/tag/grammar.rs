@@ -5,6 +5,7 @@
 //! walk serves both it and `parse`.
 
 use super::TagDefect;
+use crate::http::eq_ignore_ascii_case;
 
 /// The seventeen tags RFC 5646 section 2.1 calls `irregular`. The `regular`
 /// grandfathered tags match `langtag` and need no list.
@@ -37,27 +38,10 @@ const fn subtag_end(bytes: &[u8], from: usize) -> usize {
     end
 }
 
-const fn is_alpha(byte: u8) -> bool {
-    byte.is_ascii_alphabetic()
-}
-
-/// ASCII lowercase folding, written out because a tag is ASCII by construction.
-const fn folded(byte: u8) -> u8 {
-    if byte.is_ascii_uppercase() {
-        byte + (b'a' - b'A')
-    } else {
-        byte
-    }
-}
-
-const fn is_digit(byte: u8) -> bool {
-    byte.is_ascii_digit()
-}
-
 const fn all_alpha(bytes: &[u8], from: usize, to: usize) -> bool {
     let mut index = from;
     while index < to {
-        if !is_alpha(bytes[index]) {
+        if !bytes[index].is_ascii_alphabetic() {
             return false;
         }
         index += 1;
@@ -68,7 +52,7 @@ const fn all_alpha(bytes: &[u8], from: usize, to: usize) -> bool {
 const fn all_digit(bytes: &[u8], from: usize, to: usize) -> bool {
     let mut index = from;
     while index < to {
-        if !is_digit(bytes[index]) {
+        if !bytes[index].is_ascii_digit() {
             return false;
         }
         index += 1;
@@ -89,22 +73,7 @@ const fn all_alphanum(bytes: &[u8], from: usize, to: usize) -> bool {
 
 /// Whether the subtag spanning `from..to` equals `other`, ignoring ASCII case.
 const fn subtag_matches(bytes: &[u8], from: usize, to: usize, other: &[u8]) -> bool {
-    if to - from != other.len() {
-        return false;
-    }
-    let mut index = 0;
-    while index < other.len() {
-        if folded(bytes[from + index]) != folded(other[index]) {
-            return false;
-        }
-        index += 1;
-    }
-    true
-}
-
-/// Whether the whole string equals `other`, ignoring ASCII case.
-const fn whole_matches(bytes: &[u8], other: &[u8]) -> bool {
-    subtag_matches(bytes, 0, bytes.len(), other)
+    eq_ignore_ascii_case(bytes.split_at(to).0.split_at(from).1, other)
 }
 
 /// The `Language-Tag` production: `langtag / privateuse / grandfathered`.
@@ -118,7 +87,7 @@ pub(super) const fn check(value: &str) -> Result<(), TagDefect> {
     // Irregular grandfathered tags first: the grammar below rejects them.
     let mut index = 0;
     while index < IRREGULAR.len() {
-        if whole_matches(bytes, IRREGULAR[index].as_bytes()) {
+        if eq_ignore_ascii_case(bytes, IRREGULAR[index].as_bytes()) {
             return Ok(());
         }
         index += 1;
@@ -228,7 +197,7 @@ const fn langtag(bytes: &[u8], mut cursor: usize, extlang_allowed: bool) -> Resu
         }
 
         // `variant = 5*8alphanum / (DIGIT 3alphanum)`
-        if length >= 5 || (length == 4 && is_digit(bytes[start])) {
+        if length >= 5 || (length == 4 && bytes[start].is_ascii_digit()) {
             // A variant closes both earlier positions.
             seen_script = true;
             seen_region = true;

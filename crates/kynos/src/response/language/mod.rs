@@ -101,18 +101,9 @@ impl<C: Sync, L: Languages> FromRequestParts<C> for AcceptLanguage<L> {
     async fn from_request_parts(parts: &mut Parts, _context: &C) -> Result<Self, Self::Rejection> {
         // Repeated field lines are one comma-separated list; an absent field
         // takes the default (RFC 9110 section 12.5.4).
-        let mut field = String::new();
-        for value in parts.headers.get_all(header::ACCEPT_LANGUAGE) {
-            let Ok(value) = value.to_str() else {
-                continue;
-            };
-            if !field.is_empty() {
-                field.push(',');
-            }
-            field.push_str(value);
-        }
+        let field = crate::http::field_lines(&parts.headers, header::ACCEPT_LANGUAGE);
 
-        Ok(Self::parse(&field))
+        Ok(Self::parse(field.as_deref().unwrap_or_default()))
     }
 }
 

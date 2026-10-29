@@ -29,5 +29,20 @@ pub(crate) fn parse(value: &str) -> Option<u16> {
     }
 }
 
+/// The weight a list element's `parameters` state, in thousandths: the last
+/// `q`'s, or `1` where none is `q`.
+///
+/// `None` when a parameter has no `=` or a `q` is not a qvalue.
+pub(crate) fn weight<'a>(parameters: impl IntoIterator<Item = &'a str>) -> Option<u16> {
+    let mut quality = 1_000;
+    for parameter in parameters {
+        let (name, value) = parameter.trim().split_once('=')?;
+        if name.trim().eq_ignore_ascii_case("q") {
+            quality = parse(value.trim())?;
+        }
+    }
+    Some(quality)
+}
+
 #[cfg(test)]
 mod tests;

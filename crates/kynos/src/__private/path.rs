@@ -89,12 +89,7 @@ impl Message {
                 end -= 1;
             }
         }
-        let mut index = 0;
-        while index < end {
-            self.bytes[self.len + index] = text[index];
-            index += 1;
-        }
-        self.len += end;
+        self.len = crate::http::copy_into(&mut self.bytes, self.len, text.split_at(end).0);
     }
 
     /// The message composed so far.

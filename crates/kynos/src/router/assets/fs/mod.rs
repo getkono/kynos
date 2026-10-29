@@ -231,11 +231,11 @@ impl EncodeHeaders for FileHeaders {
 /// is a 404 rather than the empty path, which is the root and its index.
 async fn serve(directory: &Directory, request: &Request) -> Response {
     let Some(requested) = crate::unchecked::captured(request, "path") else {
-        return refused(StatusCode::NOT_FOUND);
+        return crate::http::body::bodiless(StatusCode::NOT_FOUND);
     };
 
     let Some((path, metadata)) = directory.locate(&requested).await else {
-        return refused(StatusCode::NOT_FOUND);
+        return crate::http::body::bodiless(StatusCode::NOT_FOUND);
     };
 
     let headers = FileHeaders {
@@ -252,8 +252,7 @@ async fn serve(directory: &Directory, request: &Request) -> Response {
     // tagless one is still named by `*`.
     if crate::http::etag::if_none_match(request.headers(), || headers.etag.as_deref()) == Some(true)
     {
-        let mut response = Response::new(crate::http::body::Body::empty());
-        *response.status_mut() = StatusCode::NOT_MODIFIED;
+        let mut response = crate::http::body::bodiless(StatusCode::NOT_MODIFIED);
         crate::extract::params::header::write_or_refuse(&mut response, &headers);
         return response;
     }
@@ -272,7 +271,7 @@ async fn serve(directory: &Directory, request: &Request) -> Response {
     // once polled, so a HEAD, whose body is dropped (section 9.3.2), reads
     // none of the file. Just opened, so its cursor is at 0.
     let Ok(file) = tokio::fs::File::open(&path).await else {
-        return refused(StatusCode::NOT_FOUND);
+        return crate::http::body::bodiless(StatusCode::NOT_FOUND);
     };
     let source = std::sync::Arc::new(Opened(tokio::sync::Mutex::new((file, 0))));
 
@@ -330,13 +329,6 @@ impl ByteSource for Opened {
 
         Ok(buffer.freeze())
     }
-}
-
-/// An empty response with `status`.
-fn refused(status: StatusCode) -> Response {
-    let mut response = Response::new(crate::http::body::Body::empty());
-    *response.status_mut() = status;
-    response
 }
 
 impl<C: Send + Sync + 'static, P: PanicPolicy, I, S> Router<C, P, I, S> {

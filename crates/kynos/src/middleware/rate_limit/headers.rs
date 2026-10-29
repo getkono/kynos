@@ -9,11 +9,8 @@ use kynos_openapi::model::schema::types::SchemaType;
 
 use crate::{
     extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
-    http,
-    middleware::{
-        rate_limit::decision::{QuotaPolicy, ServiceLimit},
-        whole_seconds,
-    },
+    http::{self, whole_seconds},
+    middleware::rate_limit::decision::{QuotaPolicy, ServiceLimit},
     schema::registry::Registry,
 };
 
@@ -113,11 +110,11 @@ impl EncodeHeaders for RateLimitHeaders {
             ("x-ratelimit-reset", whole_seconds(self.reset)),
         ]
         .into_iter()
-        .filter_map(|(name, value)| {
-            Some((
+        .map(|(name, value)| {
+            (
                 http::HeaderName::from_static(name),
-                http::HeaderValue::from_str(&value.to_string()).ok()?,
-            ))
+                http::HeaderValue::from(value),
+            )
         })
         .collect())
     }
@@ -198,9 +195,7 @@ fn render_limits(limits: &[ServiceLimit]) -> Option<http::HeaderValue> {
         })
         .collect();
 
-    (!rendered.is_empty())
-        .then(|| http::HeaderValue::from_str(&rendered.join(", ")).ok())
-        .flatten()
+    http::join_names(rendered.iter().map(String::as_str))
 }
 
 /// Renders the `RateLimit-Policy` field: one member per advertised quota.
@@ -239,9 +234,7 @@ fn render_policies(policies: &[QuotaPolicy]) -> Option<http::HeaderValue> {
         })
         .collect();
 
-    (!rendered.is_empty())
-        .then(|| http::HeaderValue::from_str(&rendered.join(", ")).ok())
-        .flatten()
+    http::join_names(rendered.iter().map(String::as_str))
 }
 
 /// RFC 9651 section 3.3.1's largest `sf-integer`; a parser rejects the whole
