@@ -6549,7 +6549,7 @@ mod no_prelude {
     }
 
     #[derive(::kynos::CookieParams)]
-    struct Session {
+    struct Jar {
         session: String,
         theme: Option<String>,
         #[cfg(feature = "openapi32")]
