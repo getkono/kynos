@@ -24,6 +24,29 @@ kynos::assets! {
     exclude = [".map"],
 }
 
+/// A set declared in a module with no prelude, where `Clone` names another
+/// derive: an expansion naming a prelude item unqualified resolves against the
+/// user's scope, and here that holds nothing or the wrong thing.
+#[no_implicit_prelude]
+mod prelude_free {
+    #[allow(unused_imports)]
+    use ::kynos::Tag as Clone;
+
+    ::kynos::assets! {
+        pub(super) struct Fixture;
+        dir = "tests/assets",
+        exclude = [".map"],
+    }
+}
+
+/// Its type is the standard library's `Clone` and `Copy` nonetheless.
+#[test]
+fn a_set_declared_without_a_prelude_derives_the_standard_traits() {
+    fn is_standard<T: Clone + Copy + std::fmt::Debug + Default + Eq>() {}
+
+    is_standard::<prelude_free::Fixture>();
+}
+
 /// A router serving the fixture under `/static`.
 fn served() -> Router<()> {
     Router::<()>::new().group(Group::new("/static").mount(Fixture::assets()))

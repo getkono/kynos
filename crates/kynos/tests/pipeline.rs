@@ -67,6 +67,28 @@ async fn create_user(Inject(pool): Inject<Pool>, Json(user): Json<User>) -> Crea
     Created::at(get_user::relative_uri(UserPath { id: user.id }), Json(user))
 }
 
+/// A route in a module with no prelude, where `Clone` names another derive:
+/// an expansion naming a prelude item unqualified resolves against the user's
+/// scope, and here that holds nothing or the wrong thing.
+#[no_implicit_prelude]
+mod prelude_free {
+    #[allow(unused_imports)]
+    use ::kynos::Tag as Clone;
+
+    #[::kynos::get("/ping", catch_panics)]
+    pub(super) async fn ping() -> ::kynos::response::status::NoContent {
+        ::kynos::response::status::NoContent
+    }
+}
+
+/// Its endpoint is the standard library's `Clone` and `Copy` nonetheless.
+#[test]
+fn a_route_declared_without_a_prelude_derives_the_standard_traits() {
+    fn is_standard<T: Clone + Copy + std::fmt::Debug + Default>() {}
+
+    is_standard::<prelude_free::ping>();
+}
+
 fn is_handler<C, A, H: Handler<C, A>>(_: H) {}
 
 #[test]

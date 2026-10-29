@@ -5756,3 +5756,103 @@ fn a_read_only_variants_fields_are_named_as_serde_reads_them() {
         }
     }
 }
+
+/// Every derive, in a module with no prelude: an expansion naming `None`,
+/// `String` or `Sized` unqualified resolves against whatever the user's scope
+/// holds under that name, and here that is nothing, so it fails to compile.
+#[cfg(all(feature = "json", feature = "cookie", feature = "multipart"))]
+#[no_implicit_prelude]
+mod prelude_free {
+    use ::kynos::{extract::body::json::Json, response::status::Created};
+    use ::std::{collections::BTreeMap, option::Option, string::String};
+
+    #[derive(::kynos::Schema, ::serde::Serialize, ::serde::Deserialize)]
+    pub(super) struct Item {
+        id: u64,
+        note: Option<String>,
+        #[serde(flatten)]
+        #[schema(open)]
+        extra: BTreeMap<String, String>,
+    }
+
+    #[derive(::kynos::Schema, ::serde::Serialize)]
+    #[serde(tag = "kind")]
+    enum Shape {
+        Circle { radius: f64 },
+        Square { side: f64 },
+    }
+
+    #[derive(::kynos::Reply)]
+    enum Made {
+        #[reply(status = 201, response)]
+        Made(Created<Json<Item>>),
+        #[reply(status = 200)]
+        Found(Item),
+        #[reply(status = 404)]
+        Missing,
+    }
+
+    #[derive(::core::fmt::Debug, ::thiserror::Error, ::kynos::ApiError)]
+    enum Failure {
+        #[error("not found")]
+        #[problem(status = 404)]
+        NotFound,
+    }
+
+    /// No `credential`, so the default one.
+    #[derive(::kynos::SecurityScheme)]
+    #[security(bearer)]
+    pub(super) struct Bearer;
+
+    #[derive(::kynos::PathParams)]
+    struct ItemPath {
+        id: u64,
+    }
+
+    #[derive(::kynos::Schema, ::kynos::QueryParams)]
+    struct Listing {
+        page: u32,
+        per: Option<u32>,
+    }
+
+    #[derive(::kynos::HeaderParams)]
+    struct Conditional {
+        #[header(rename = "If-None-Match")]
+        if_none_match: Option<String>,
+    }
+
+    #[derive(::kynos::CookieParams)]
+    struct Session {
+        session: String,
+    }
+
+    #[derive(::kynos::Schema, ::kynos::MultipartForm)]
+    struct Upload {
+        name: String,
+    }
+
+    #[derive(::kynos::Schema, ::kynos::ParamValue, ::serde::Serialize, ::serde::Deserialize)]
+    enum Order {
+        Ascending,
+        Descending,
+    }
+
+    #[derive(::kynos::Tag)]
+    #[tag(name = "items")]
+    struct Items;
+
+    #[derive(::kynos::Provider)]
+    struct App {
+        limit: u32,
+    }
+}
+
+/// A scheme naming no `credential` reads its credential as the standard
+/// library's `String`, not as a type the user's scope happens to call that.
+#[cfg(all(feature = "json", feature = "cookie", feature = "multipart"))]
+#[test]
+fn a_default_credential_is_the_standard_string() {
+    fn reads_a_string<S: SecuritySchemeTrait<Credential = std::string::String>>() {}
+
+    reads_a_string::<prelude_free::Bearer>();
+}
