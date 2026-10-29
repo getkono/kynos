@@ -241,7 +241,10 @@ pub(in crate::validate) fn check_link_targets(
 
     for (location, operation) in &targets.operations {
         for (key, response) in operation.responses.entries() {
-            check(format!("{location}/responses/{key}"), &response.links);
+            check(
+                format!("{location}/responses/{}", pointer_token(key)),
+                &response.links,
+            );
         }
     }
     let components = At::ROOT.key("components");
@@ -298,9 +301,8 @@ fn check_operation_content(
         check_request_body(at.key("requestBody"), body, components, violations);
     }
 
-    // A status key as written, as these rules have always located it.
     let responses = at.key("responses");
     for (key, response) in operation.responses.entries() {
-        check_response(responses.verbatim(key), response, components, violations);
+        check_response(responses.key(key), response, components, violations);
     }
 }

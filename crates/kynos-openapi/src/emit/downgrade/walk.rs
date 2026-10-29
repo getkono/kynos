@@ -228,13 +228,13 @@ impl<'doc> Visit<'doc> for Blockers<'_> {
     }
 }
 
-/// The keyed responses, each at its status key as written, *and* the
+/// The keyed responses, each at its escaped status key, *and* the
 /// `default` beside them, last.
 fn collect_responses_blockers(at: At<'_>, responses: &Responses, blockers: &mut Vec<String>) {
     // `entries` yields an inline `default` first; this walk lists it last.
     let default = responses.default_response.as_ref().and_then(RefOr::as_item);
     for (status, response) in responses.entries().skip(usize::from(default.is_some())) {
-        collect_response_blockers(at.verbatim(status), response, blockers);
+        collect_response_blockers(at.key(status), response, blockers);
     }
 
     if let Some(default) = default {
