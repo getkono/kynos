@@ -2405,6 +2405,78 @@ fn an_interceptor_whose_reads_can_fail_declares_its_rejection() {
     assert_eq!(declaring(&document, "400"), paths(&["/tenanted/beta"]));
 }
 
+/// A derived group saying `described = false`: read on every covered request,
+/// and declared on none.
+#[derive(kynos::HeaderParams)]
+#[header(described = false)]
+struct ProvenanceHeaders {
+    #[header(rename = "Origin")]
+    origin: Option<String>,
+    #[header(rename = "Referer")]
+    referer: Option<String>,
+}
+
+/// Reads [`ProvenanceHeaders`], as a same-origin check would.
+struct SameOrigin;
+
+impl kynos::middleware::Interceptor<()> for SameOrigin {
+    type Reads = ProvenanceHeaders;
+    type Adds = ();
+    type Short = std::convert::Infallible;
+
+    async fn intercept(
+        &self,
+        request: kynos::http::Request,
+        reads: ProvenanceHeaders,
+        context: &(),
+        next: kynos::middleware::Next<'_, ()>,
+    ) -> Result<kynos::middleware::Continued<()>, std::convert::Infallible> {
+        let _ = (context, reads.origin, reads.referer);
+        Ok(next.run(request).await)
+    }
+}
+
+#[kynos::get("/provenance")]
+async fn provenance(
+    _read: kynos::extract::params::header::Headers<ProvenanceHeaders>,
+) -> NoContent {
+    NoContent
+}
+
+/// `#[header(described = false)]` keeps a derived group out of both
+/// description paths, an interceptor's `Reads` and a handler's `Headers`,
+/// while a described group beside it is still declared.
+#[test]
+fn an_undescribed_derived_group_declares_no_parameter() {
+    let document = Router::<()>::new()
+        .intercept(SameOrigin)
+        .mount(kynos::routes![provenance])
+        .group(
+            Group::<()>::new("/tenanted")
+                .intercept(Tenant)
+                .mount(kynos::routes![beta]),
+        )
+        .openapi()
+        .expect("a describable router");
+
+    let parameters = |path: &str| -> Vec<String> {
+        operation(&document, path)
+            .parameters
+            .iter()
+            .filter_map(|parameter| match parameter {
+                kynos::openapi::RefOr::Item(item) => Some(item.name.clone()),
+                kynos::openapi::RefOr::Ref(_) => None,
+            })
+            .collect()
+    };
+
+    assert_eq!(parameters("/provenance"), Vec::<String>::new());
+    // The control: the described group reaches the same router's description,
+    // so the case above is about `described` rather than a pass that declares
+    // no header at all.
+    assert_eq!(parameters("/tenanted/beta"), ["X-Tenant"]);
+}
+
 /// A `Reads` whose decode never fails declares no 400: `()` reads nothing, and
 /// `Preconditions` drops a condition it cannot parse rather than refusing it.
 #[test]

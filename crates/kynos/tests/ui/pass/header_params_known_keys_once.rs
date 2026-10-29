@@ -15,4 +15,25 @@ struct Hardened {
     nosniff: (),
 }
 
+#[derive(kynos::HeaderParams)]
+#[header(described = false)]
+struct Provenance {
+    #[header(rename = "Origin")]
+    origin: Option<String>,
+}
+
+#[derive(kynos::HeaderParams)]
+#[header(described = false)]
+struct Referral {
+    #[header(rename = "Referer")]
+    referer: Option<String>,
+}
+
+#[derive(kynos::HeaderParams)]
+#[header(described = false)]
+struct Agent {
+    #[header(rename = "User-Agent")]
+    user_agent: Option<String>,
+}
+
 fn main() {}
