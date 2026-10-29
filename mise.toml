@@ -174,7 +174,8 @@ description = "Measure what each feature costs a linked artifact and monomorphiz
 # `.text` at `--release`, the shipped artifact; IR at the dev profile, since
 # fat LTO deletes the monomorphizations `llvm-lines` counts. The script drives
 # the loop because every build overwrites the fixture. Runs in `full.yml`, not
-# per pull request (docs/releasing.md).
+# per pull request (docs/releasing.md). Arguments reach the script, so the
+# variants below delegate here rather than restating the pins.
 #
 # Task-scoped pins stay out of every other job, and `mise lock` does not lock
 # them. `cargo-llvm-lines` has no release binaries. `python` matches
@@ -184,8 +185,7 @@ run = "python3 scripts/cost_features.py"
 
 [tasks."cost:codegen"]
 description = "The codegen half of the sweep alone"
-tools = { "cargo:cargo-llvm-lines" = "0.4.48", python = "3.11.16" }
-run = "python3 scripts/cost_features.py --kind codegen"
+run = "mise run cost:features --kind codegen"
 
 [tasks."cost:codecs"]
 description = "The codec half of the sweep alone: what mounting each codec costs"
@@ -196,11 +196,10 @@ run = "python3 scripts/cost_features.py --kind codec"
 [tasks."cost:record"]
 description = "Record the measured deltas as the committed baseline"
 # Writes all three baselines under `crates/kynos/cost/`, which a release pull
-# request must match (docs/releasing.md). One alone: `--kind` with
-# `KYNOS_COST=overwrite`.
-tools = { "cargo:cargo-llvm-lines" = "0.4.48", python = "3.11.16" }
+# request must match (docs/releasing.md). One alone: `--kind`, which reaches
+# `cost:features`.
 env = { KYNOS_COST = "overwrite" }
-run = "python3 scripts/cost_features.py"
+run = "mise run cost:features"
 
 [tasks."cost:test"]
 description = "Test the cost sweep's parsers and its report"
@@ -249,10 +248,8 @@ run = "python3 scripts/profile_report.py --run"
 [tasks."profile:record"]
 description = "Record the request-path profile as the committed baseline"
 # Runs the whole profile first, so the baseline records this build.
-tools = { "github:gungraun/gungraun" = "0.20.0", python = "3.11.16" }
-depends = ["profile:valgrind"]
 env = { KYNOS_PROFILE = "overwrite" }
-run = "python3 scripts/profile_report.py --run"
+run = "mise run profile:requests"
 
 [tasks."profile:test"]
 description = "Test the request-path profile's parsers and its report"
@@ -464,6 +461,7 @@ env = { PROPTEST_RNG_SEED = "220" }
 usage = '''
 arg "[package]" help="kynos, kynos-openapi or kynos-macros; every crate when omitted"
 flag "--shard <shard>" help="Run one shard, as k/n with k counting from 0"
+flag "--in-diff <diff>" help="Mutate only the lines this diff file changes"
 '''
 run = '''
 set -eu
@@ -482,6 +480,9 @@ esac
 if [ -n "${usage_shard:-}" ]; then
   set -- "$@" --shard "$usage_shard"
 fi
+if [ -n "${usage_in_diff:-}" ]; then
+  set -- "$@" --in-diff "$usage_in_diff"
+fi
 
 cargo mutants "$@"
 '''
@@ -489,24 +490,20 @@ cargo mutants "$@"
 [tasks."mutants:diff"]
 description = "Mutation-test the lines changed since the base branch"
 # Diffed against the working tree, which is what cargo-mutants copies.
-# `MUTANTS_BASE` is CI's base commit.
-tools = { "github:sourcefrog/cargo-mutants" = "27.1.0" }
-env = { PROPTEST_RNG_SEED = "220" }
+# `MUTANTS_BASE` is CI's base commit. `mutants` runs it, with its pins.
 usage = '''
 flag "--shard <shard>" help="Run one shard, as k/n with k counting from 0"
 '''
 run = '''
 set -eu
-unset CARGO_TARGET_DIR
-
-set -- --workspace --in-diff target/mutants.diff
+set -- --in-diff target/mutants.diff
 if [ -n "${usage_shard:-}" ]; then
   set -- "$@" --shard "$usage_shard"
 fi
 
 mkdir -p target
 git diff "$(git merge-base "${MUTANTS_BASE:-origin/master}" HEAD)" >target/mutants.diff
-cargo mutants "$@"
+mise run mutants "$@"
 '''
 
 [tasks.fuzz]
