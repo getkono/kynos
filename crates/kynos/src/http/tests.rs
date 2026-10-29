@@ -1,10 +1,21 @@
-use super::{HeaderMap, HeaderValue, header, header_name_eq, vary_on};
+use super::{HeaderMap, HeaderValue, header, header_name_eq, unquoted_str, vary_on};
 
 #[test]
 fn header_names_compare_without_regard_to_case() {
     assert!(header_name_eq("X-Request-Id", "x-request-id"));
     assert!(!header_name_eq("x-request-id", "x-request-ids"));
     assert!(!header_name_eq("x-a", "x-b"));
+}
+
+/// One pair of quotes comes off text, and a lone quote is no pair.
+#[test]
+fn text_loses_one_pair_of_surrounding_quotes() {
+    assert_eq!(unquoted_str("\"\"a\"\""), "\"a\"");
+    assert_eq!(unquoted_str("\"é\""), "é");
+    assert_eq!(unquoted_str("\"\""), "");
+    assert_eq!(unquoted_str("\""), "\"");
+    assert_eq!(unquoted_str("\"a"), "\"a");
+    assert_eq!(unquoted_str("a"), "a");
 }
 
 /// Every `Vary` line a response carries after `names` merge into `lines`.

@@ -75,12 +75,7 @@ fn pairs(headers: &HeaderMap) -> impl Iterator<Item = (&[u8], &[u8])> + '_ {
                 Some(at) => (&entry[..at], &entry[at + 1..]),
                 None => (&[][..], entry),
             };
-            let value = value.trim_ascii();
-            let value = value
-                .strip_prefix(b"\"")
-                .and_then(|value| value.strip_suffix(b"\""))
-                .unwrap_or(value);
-            Some((name.trim_ascii(), value))
+            Some((name.trim_ascii(), super::unquoted(value.trim_ascii())))
         })
 }
 

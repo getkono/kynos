@@ -636,7 +636,7 @@ fn forwarded_elements(headers: &HeaderMap) -> Vec<Hop<'_>> {
                 let value = std::str::from_utf8(&pair[at + 1..]).ok();
                 Some((
                     pair[..at].trim_ascii(),
-                    value.map(|raw| unquote(raw.trim())),
+                    value.map(|raw| super::unquoted_str(raw.trim())),
                 ))
             });
             for (name, raw) in pairs {
@@ -712,13 +712,6 @@ fn unquoted_rsplit(bytes: &[u8], delimiter: u8) -> impl Iterator<Item = &[u8]> {
         Some(&bytes[end.map_or(0, |at| at + 1)..stop])
     });
     pieces.filter(|piece| !piece.trim_ascii().is_empty())
-}
-
-/// Strips one layer of `quoted-string` quoting.
-fn unquote(text: &str) -> &str {
-    text.strip_prefix('"')
-        .and_then(|text| text.strip_suffix('"'))
-        .unwrap_or(text)
 }
 
 /// The address a `node` identifier names, where it names one.

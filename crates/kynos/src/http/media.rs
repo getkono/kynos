@@ -76,7 +76,7 @@ pub(crate) const fn is_utf8_or_unstated(media_type: &str) -> bool {
 /// The value of the first `charset` parameter a media type declares, trimmed
 /// and unquoted; `None` when it declares none.
 pub(crate) const fn charset(media_type: &str) -> Option<&[u8]> {
-    use super::{eq_ignore_ascii_case, split_at_byte};
+    use super::{eq_ignore_ascii_case, split_at_byte, unquoted};
 
     let mut parameters = split_essence(media_type.as_bytes()).1;
     while !parameters.is_empty() {
@@ -97,27 +97,15 @@ pub(crate) const fn charset(media_type: &str) -> Option<&[u8]> {
 /// The `MEDIA_TYPE` check of a `BodyCodec`, whose second half is what
 /// `HeaderValue::from_static` would otherwise panic on at the first response.
 pub(crate) const fn is_media_type(media_type: &str) -> bool {
-    use super::{is_token, split_at_byte};
+    use super::{is_field_value, is_token, split_at_byte};
 
     let bytes = media_type.as_bytes();
-    let mut at = 0;
-    while at < bytes.len() {
-        if !matches!(bytes[at], b'\t' | b' '..=b'~') {
-            return false;
-        }
-        at += 1;
+    if !is_field_value(bytes) {
+        return false;
     }
 
     let (type_, subtype) = split_at_byte(split_essence(bytes).0, b'/');
     is_token(type_) && is_token(subtype)
-}
-
-/// `value` without one pair of surrounding double quotes.
-const fn unquoted(value: &[u8]) -> &[u8] {
-    match value {
-        [b'"', inner @ .., b'"'] => inner,
-        _ => value,
-    }
 }
 
 /// `application/octet-stream`.

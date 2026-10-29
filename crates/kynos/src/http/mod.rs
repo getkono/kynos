@@ -62,6 +62,41 @@ pub(crate) const fn is_token(bytes: &[u8]) -> bool {
     !bytes.is_empty()
 }
 
+/// `value` without one pair of surrounding double quotes; usable in a
+/// constant.
+///
+/// The quoting alone: a `\` escape inside is left as it is.
+pub(crate) const fn unquoted(value: &[u8]) -> &[u8] {
+    match value {
+        [b'"', inner @ .., b'"'] => inner,
+        _ => value,
+    }
+}
+
+/// [`unquoted`] over text.
+pub(crate) fn unquoted_str(text: &str) -> &str {
+    let inner = unquoted(text.as_bytes()).len();
+    // Either nothing or one ASCII quote was cut from each end.
+    let start = (text.len() - inner) / 2;
+    &text[start..start + inner]
+}
+
+/// Whether every octet of `bytes` is one a field value may hold, tab or
+/// visible ASCII: what [`HeaderValue::from_static`] takes without panicking;
+/// usable in a constant.
+///
+/// RFC 9110 section 5.5 without `obs-text`.
+pub(crate) const fn is_field_value(bytes: &[u8]) -> bool {
+    let mut at = 0;
+    while at < bytes.len() {
+        if !matches!(bytes[at], b'\t' | b' '..=b'~') {
+            return false;
+        }
+        at += 1;
+    }
+    true
+}
+
 /// `text`'s pieces between `delimiter`s outside any `quoted-string`, left to
 /// right: RFC 9110 section 5.6.6 lets a parameter value be one, and a `,` or
 /// `;` inside it separates nothing. A `\` inside quotes escapes the octet

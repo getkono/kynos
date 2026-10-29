@@ -257,10 +257,7 @@ fn argument<'a>(directive: &'a str, name: &str) -> Option<&'a str> {
 /// A `delta-seconds` argument, in the token form or the quoted-string form
 /// section 5.2 has a recipient accept; [`SATURATED`] past `u64`.
 fn delta_seconds(argument: &str) -> Option<u64> {
-    let digits = argument
-        .strip_prefix('"')
-        .and_then(|quoted| quoted.strip_suffix('"'))
-        .unwrap_or(argument);
+    let digits = crate::http::unquoted_str(argument);
 
     (!digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit()))
         .then(|| digits.parse().unwrap_or(SATURATED))

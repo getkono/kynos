@@ -238,7 +238,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
             // Static where `from_static` takes it, so it costs no allocation;
             // anything else is copied, and a marker that is no field value is
             // omitted.
-            let content_type = if const { visible_ascii(M::MEDIA_TYPE) } {
+            let content_type = if const { crate::http::is_field_value(M::MEDIA_TYPE.as_bytes()) } {
                 Some(HeaderValue::from_static(M::MEDIA_TYPE))
             } else {
                 HeaderValue::from_str(M::MEDIA_TYPE).ok()
@@ -344,21 +344,6 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
         // At the field's one-second resolution.
         seconds(modified) <= seconds(since)
     }
-}
-
-/// Whether [`HeaderValue::from_static`] takes `text` without panicking: tab or
-/// visible ASCII throughout.
-const fn visible_ascii(text: &str) -> bool {
-    let bytes = text.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if !(byte == b'\t' || (byte >= 0x20 && byte < 0x7f)) {
-            return false;
-        }
-        index += 1;
-    }
-    true
 }
 
 /// `length` as a `Content-Length` value, in the one allocation the value
