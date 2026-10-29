@@ -5757,22 +5757,46 @@ fn a_read_only_variants_fields_are_named_as_serde_reads_them() {
     }
 }
 
-/// Every derive, in a module with no prelude: an expansion naming `None`,
-/// `String` or `Sized` unqualified resolves against whatever the user's scope
-/// holds under that name, and here that is nothing, so it fails to compile.
+/// Every derive, in a module whose own items shadow the prelude's names: an
+/// expansion naming `None`, `String` or `Sized` unqualified resolves to the
+/// user's item rather than the standard library's. Shadowing rather than
+/// `no_implicit_prelude`, which also takes the prelude's traits out of method
+/// resolution: a derive may call `String::from` the way any user code does.
 #[cfg(all(feature = "json", feature = "cookie", feature = "multipart"))]
-#[no_implicit_prelude]
-mod prelude_free {
+mod shadowed_prelude {
     use ::kynos::{extract::body::json::Json, response::status::Created};
-    use ::std::{collections::BTreeMap, option::Option, string::String};
+    use ::std::collections::BTreeMap;
+    #[allow(unused_imports)]
+    use Pick::*;
+
+    pub(super) enum Pick {
+        Some,
+        None,
+        Ok,
+        Err,
+    }
+    pub(super) struct String;
+    pub(super) struct Vec;
+    pub(super) struct Box;
+    pub(super) struct Option;
+    pub(super) struct Result;
+    pub(super) trait Sized {}
+    pub(super) trait Send {}
+    pub(super) trait Sync {}
+    pub(super) trait Copy {}
+    pub(super) trait Clone {}
+    pub(super) trait Default {}
+    pub(super) trait From {}
+    pub(super) trait Into {}
+    pub(super) trait Iterator {}
 
     #[derive(::kynos::Schema, ::serde::Serialize, ::serde::Deserialize)]
     pub(super) struct Item {
         id: u64,
-        note: Option<String>,
+        note: ::core::option::Option<::std::string::String>,
         #[serde(flatten)]
         #[schema(open)]
-        extra: BTreeMap<String, String>,
+        extra: BTreeMap<::std::string::String, ::std::string::String>,
     }
 
     #[derive(::kynos::Schema, ::serde::Serialize)]
@@ -5812,23 +5836,23 @@ mod prelude_free {
     #[derive(::kynos::Schema, ::kynos::QueryParams)]
     struct Listing {
         page: u32,
-        per: Option<u32>,
+        per: ::core::option::Option<u32>,
     }
 
     #[derive(::kynos::HeaderParams)]
     struct Conditional {
         #[header(rename = "If-None-Match")]
-        if_none_match: Option<String>,
+        if_none_match: ::core::option::Option<::std::string::String>,
     }
 
     #[derive(::kynos::CookieParams)]
     struct Session {
-        session: String,
+        session: ::std::string::String,
     }
 
     #[derive(::kynos::Schema, ::kynos::MultipartForm)]
     struct Upload {
-        name: String,
+        name: ::std::string::String,
     }
 
     #[derive(::kynos::Schema, ::kynos::ParamValue, ::serde::Serialize, ::serde::Deserialize)]
@@ -5854,5 +5878,5 @@ mod prelude_free {
 fn a_default_credential_is_the_standard_string() {
     fn reads_a_string<S: SecuritySchemeTrait<Credential = std::string::String>>() {}
 
-    reads_a_string::<prelude_free::Bearer>();
+    reads_a_string::<shadowed_prelude::Bearer>();
 }
