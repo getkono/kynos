@@ -1,6 +1,10 @@
 //! Checking one observed response against what the description promised.
 //!
 //! `jsonschema` is named here and nowhere else, per `docs/architecture.md`.
+//! [`representation`] decides which `content` key declares the media type a
+//! response sent.
+
+mod representation;
 
 use kynos_openapi::{
     Document, Method, RefOr, Responses, StatusPattern,
@@ -118,7 +122,9 @@ fn body_conformance(
             declared()
         )];
     };
-    let Some((key, entry)) = declared_representation(&response.content, &media_type) else {
+    let Some((key, entry)) =
+        representation::declared_representation(&response.content, &media_type)
+    else {
         return vec![format!(
             "`{media_type}` is not a declared representation; the description declares {}",
             declared()
@@ -345,56 +351,6 @@ fn resolve_response<'d>(
             .and_then(|name| document.components.responses.get(name))
             .and_then(RefOr::as_item),
     }
-}
-
-/// The representation declared for `media_type`, if one is.
-///
-/// A key may be a media range, and only the most specific matching key
-/// applies: the exact key, so two keys differing only by parameter stay
-/// distinct, then one ignoring the key's parameters, since `media_type`
-/// arrives with its own already stripped, then `type/*`, then `*/*`. Keys
-/// equally specific resolve to the first the map holds.
-fn declared_representation<'a>(
-    content: &'a kynos_openapi::Map<RefOr<kynos_openapi::MediaType>>,
-    media_type: &str,
-) -> Option<(&'a str, &'a RefOr<kynos_openapi::MediaType>)> {
-    content
-        .iter()
-        .enumerate()
-        .filter_map(|(index, (name, entry))| {
-            Some((
-                specificity(name, media_type)?,
-                index,
-                (name.as_str(), entry),
-            ))
-        })
-        .max_by_key(|&(rank, index, _)| (rank, std::cmp::Reverse(index)))
-        .map(|(_, _, declared)| declared)
-}
-
-/// How specifically the `content` key `name` matches `media_type`, if at all.
-fn specificity(name: &str, media_type: &str) -> Option<u8> {
-    if name.eq_ignore_ascii_case(media_type) {
-        return Some(3);
-    }
-
-    let (range, _) = name.split_once(';').unwrap_or((name, ""));
-    let range = range.trim();
-    if range.eq_ignore_ascii_case(media_type) {
-        return Some(2);
-    }
-
-    // A range covers only a `type/subtype` value (RFC 9110 section 8.3.1).
-    let (observed_type, observed_subtype) = media_type.split_once('/')?;
-    if observed_type.is_empty() || observed_subtype.is_empty() {
-        return None;
-    }
-    if range == "*/*" {
-        return Some(0);
-    }
-
-    let (range_type, subtype) = range.split_once('/')?;
-    (subtype == "*" && range_type.eq_ignore_ascii_case(observed_type)).then_some(1)
 }
 
 /// The media type an entry names, following one `#/components/mediaTypes`
