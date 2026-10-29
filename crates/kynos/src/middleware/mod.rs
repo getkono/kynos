@@ -318,11 +318,7 @@ impl Continued<()> {
     #[allow(clippy::needless_pass_by_value)]
     pub fn with_headers<G: EncodeHeaders>(mut self, headers: G) -> Continued<G> {
         crate::extract::params::header::write_or_refuse(&mut self.response, &headers);
-
-        Continued {
-            response: self.response,
-            _headers: std::marker::PhantomData,
-        }
+        self.retag()
     }
 
     /// Attaches group `G` from the fields it already encoded, as
@@ -333,11 +329,7 @@ impl Continued<()> {
         encoded: Vec<(crate::http::HeaderName, crate::http::HeaderValue)>,
     ) -> Continued<G> {
         crate::extract::params::header::write_encoded::<G>(self.response.headers_mut(), encoded);
-
-        Continued {
-            response: self.response,
-            _headers: std::marker::PhantomData,
-        }
+        self.retag()
     }
 
     /// Attaches group `G` by having `write` insert its fields onto the
@@ -355,11 +347,7 @@ impl Continued<()> {
     ) -> Continued<G> {
         write(self.response.headers_mut());
         crate::http::vary_on(self.response.headers_mut(), G::VARIES);
-
-        Continued {
-            response: self.response,
-            _headers: std::marker::PhantomData,
-        }
+        self.retag()
     }
 }
 
@@ -441,6 +429,12 @@ impl<H> Continued<H> {
     /// Only for a request no operation matched ([`Next::route`] is `None`):
     /// nothing describes that response, so no declaration goes unkept.
     pub(crate) fn unrouted<G>(self) -> Continued<G> {
+        self.retag()
+    }
+
+    /// The same response under group `G`, for a caller that has written the
+    /// group or need not write one.
+    fn retag<G>(self) -> Continued<G> {
         Continued {
             response: self.response,
             _headers: std::marker::PhantomData,
