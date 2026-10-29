@@ -98,16 +98,18 @@ impl<'doc> Visit<'doc> for Items<'doc, '_> {
                 }
             };
 
-            if let Some(existing) = self.normalized_paths.insert(template.normalized(), raw) {
-                if existing != raw {
-                    self.violations.push(Violation::error(
-                        &location,
-                        SpecError::DuplicatePathTemplate {
-                            template: raw.to_owned(),
-                            existing: existing.to_owned(),
-                        },
-                    ));
-                }
+            let existing = *self
+                .normalized_paths
+                .entry(template.normalized())
+                .or_insert(raw);
+            if existing != raw {
+                self.violations.push(Violation::error(
+                    &location,
+                    SpecError::DuplicatePathTemplate {
+                        template: raw.to_owned(),
+                        existing: existing.to_owned(),
+                    },
+                ));
             }
 
             self.template = Some((item, template));
