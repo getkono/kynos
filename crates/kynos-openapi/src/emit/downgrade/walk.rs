@@ -140,7 +140,7 @@ pub(super) fn collect_components_blockers(
         &components.request_bodies,
         |at, body| {
             for (media_type, content) in &body.content {
-                collect_media_type_blockers(
+                collect_content_entry_blockers(
                     &format!("{at}/content/{}", pointer_token(media_type)),
                     content,
                     blockers,
@@ -204,7 +204,7 @@ impl<'doc> Visit<'doc> for Blockers<'_> {
 
         if let Some(RefOr::Item(body)) = &operation.request_body {
             for (media_type, content) in &body.content {
-                collect_media_type_blockers(
+                collect_content_entry_blockers(
                     &format!(
                         "{location}/requestBody/content/{}",
                         pointer_token(media_type)
@@ -253,7 +253,7 @@ pub(super) fn collect_response_blockers(
     }
 
     for (media_type, content) in &response.content {
-        collect_media_type_blockers(
+        collect_content_entry_blockers(
             &format!("{location}/content/{}", pointer_token(media_type)),
             content,
             blockers,
@@ -311,7 +311,7 @@ pub(super) fn collect_parameter_blockers(
     }
 
     if let Some((media_type, content)) = parameter.content() {
-        collect_media_type_blockers(
+        collect_content_entry_blockers(
             &format!("{location}/content/{}", pointer_token(media_type)),
             content,
             blockers,
@@ -327,7 +327,7 @@ pub(super) fn collect_parameter_blockers(
 
 pub(super) fn collect_header_blockers(location: &str, header: &Header, blockers: &mut Vec<String>) {
     if let Some((media_type, content)) = header.content() {
-        collect_media_type_blockers(
+        collect_content_entry_blockers(
             &format!("{location}/content/{}", pointer_token(media_type)),
             content,
             blockers,
@@ -339,6 +339,20 @@ pub(super) fn collect_header_blockers(location: &str, header: &Header, blockers:
     }
 
     collect_named_example_blockers(location, header.named_examples(), blockers);
+}
+
+/// One `content` entry, located at the pointer the caller built for it.
+///
+/// A reference is skipped: every build reports one as a blocker in itself, and
+/// what it names is walked where it is defined.
+fn collect_content_entry_blockers(
+    location: &str,
+    entry: &RefOr<MediaType>,
+    blockers: &mut Vec<String>,
+) {
+    if let RefOr::Item(content) = entry {
+        collect_media_type_blockers(location, content, blockers);
+    }
 }
 
 pub(super) fn collect_media_type_blockers(

@@ -28,6 +28,7 @@ fn a_raw_binary_body_states_no_type_and_repeats_no_media_type() {
     let content = body
         .content
         .get("image/png")
+        .and_then(kynos_openapi::RefOr::as_item)
         .expect("the body is keyed by its own media type");
 
     let Some(OpenApiSchema::Object(schema)) = &content.schema else {
@@ -283,7 +284,10 @@ mod a_body_describes_the_media_type_it_reads {
             body.content.keys().map(String::as_str).collect::<Vec<_>>(),
             [media_type]
         );
-        assert_eq!(body.content[media_type].schema, Some(schema));
+        assert_eq!(
+            body.content[media_type].as_item().expect("inline").schema,
+            Some(schema)
+        );
     }
 
     #[test]
@@ -865,6 +869,34 @@ mod a_form_body_decodes_what_it_describes {
         assert_eq!(tags.tag, ["a"]);
     }
 
+    /// A form that does not fit `T` is one failure keyed at the root, whose
+    /// detail is the decoder's own message, unchanged.
+    #[tokio::test]
+    async fn a_misfit_form_is_the_decoders_message_at_the_root() {
+        #[derive(Debug, serde::Deserialize)]
+        #[allow(dead_code)]
+        struct Page {
+            page: u32,
+        }
+        unbounded!(Page);
+
+        let decoder = serde_html_form::from_str::<Page>("page=first")
+            .expect_err("`first` is not a `u32`")
+            .to_string();
+        let rejection = read::<Page>(b"page=first")
+            .await
+            .expect_err("`first` is not a `u32`");
+
+        assert_eq!(rejection.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let BodyRejection::Schema { failures } = rejection else {
+            panic!("expected a schema failure, got {rejection:?}");
+        };
+        assert_eq!(
+            failures.into_iter().collect::<Vec<_>>(),
+            [(String::new(), decoder)]
+        );
+    }
+
     /// The items are parsed as the item type, not only collected as text.
     #[tokio::test]
     async fn the_items_are_read_as_the_item_type() {
@@ -1145,6 +1177,28 @@ mod an_undecoded_content_coding_is_refused {
             ),
             "{rejection:?}"
         );
+    }
+
+    /// The same order holds for a streamed body, which enforces both 415s
+    /// before it takes the body rather than before it buffers one.
+    #[cfg(all(feature = "json", feature = "openapi32"))]
+    #[tokio::test]
+    async fn the_media_type_is_enforced_first_by_a_streamed_body() {
+        use crate::extract::body::json_lines::{JsonLines, JsonSeq, records::Records};
+
+        for rejection in [
+            refusal::<JsonLines<Records<u32>>>("text/plain", &[b"gzip"], b"1\n").await,
+            refusal::<JsonSeq<Records<u32>>>("text/plain", &[b"gzip"], b"\x1e1\n").await,
+        ] {
+            assert!(
+                matches!(
+                    rejection,
+                    Some(BodyRejection::UnsupportedMediaType { received: Some(ref received) })
+                        if received == "text/plain"
+                ),
+                "{rejection:?}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1432,6 +1486,54 @@ mod an_optional_body_without_a_content_type {
             "{rejection:?}"
         );
     }
+
+    /// What an empty body declaring `values`, one `Content-Length` line each,
+    /// is read as.
+    async fn declared(values: &[&'static [u8]]) -> Result<Option<Text>, BodyRejection> {
+        let mut request = Request::new(Body::empty());
+        for value in values {
+            request.headers_mut().append(
+                crate::http::header::CONTENT_LENGTH,
+                crate::http::HeaderValue::from_bytes(value).expect("a field value"),
+            );
+        }
+        super::extract::<Option<Text>>(request).await
+    }
+
+    /// A declared zero is read past surrounding whitespace, on every line; any
+    /// line that is not a decimal zero declares content, the 415 naming no
+    /// type, before the body is read at all. `+0` is a zero as `u64`'s parser
+    /// reads it, which is more lenient than RFC 9110 section 8.6's `1*DIGIT`
+    /// and pinned as it stands, for the reason `limit`'s case gives.
+    #[tokio::test]
+    async fn a_declared_zero_is_read_past_whitespace_on_every_line() {
+        for values in [
+            &[&b" 0 "[..]][..],
+            &[&b"\t0"[..]][..],
+            &[&b"+0"[..]][..],
+            &[&b"0"[..], &b" 0"[..]][..],
+        ] {
+            assert_eq!(declared(values).await.expect("absent"), None, "{values:?}");
+        }
+
+        for values in [
+            &[&b""[..]][..],
+            &[&b"-0"[..]][..],
+            &[&b"0x0"[..]][..],
+            &[&b"0 0"[..]][..],
+            &[&b"\xff"[..]][..],
+            &[&b" 0"[..], &b"1"[..]][..],
+        ] {
+            let rejection = declared(values).await.expect_err("declared content");
+            assert!(
+                matches!(
+                    rejection,
+                    BodyRejection::UnsupportedMediaType { received: None }
+                ),
+                "{values:?}: {rejection:?}"
+            );
+        }
+    }
 }
 
 /// `limit::read`, the read under every buffering codec: a lone data frame is
@@ -1565,6 +1667,70 @@ mod a_body_is_read_whole_under_its_limit {
         assert!(
             matches!(&rejection, BodyRejection::Syntax { detail } if detail == "reset"),
             "{rejection:?}"
+        );
+    }
+
+    /// A head carrying one `Content-Length` line per entry of `values`.
+    fn declaring(values: &[&'static [u8]]) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        for value in values {
+            headers.append(
+                crate::http::header::CONTENT_LENGTH,
+                crate::http::HeaderValue::from_bytes(value).expect("a field value"),
+            );
+        }
+        headers
+    }
+
+    /// The length a head declares is its first `Content-Length` line, read
+    /// past surrounding whitespace as an unsigned decimal; a line that is not
+    /// one declares nothing, so the limit falls to the read.
+    ///
+    /// Two readings here are more lenient than RFC 9110 section 8.6's
+    /// `1*DIGIT`, and are pinned as they stand so a change to either is made
+    /// on purpose: a leading `+`, which `u64`'s parser accepts, and a second
+    /// line, which is never read. HTTP/1.1 framing refuses both before a
+    /// request reaches an extractor.
+    #[test]
+    fn the_declared_length_is_the_first_line_read_as_a_decimal() {
+        for (values, expected) in [
+            (&[][..], None),
+            (&[&b"5"[..]][..], Some(5)),
+            (&[&b" 5 "[..]][..], Some(5)),
+            (&[&b"\t5\t"[..]][..], Some(5)),
+            (&[&b"0"[..]][..], Some(0)),
+            (&[&b"+5"[..]][..], Some(5)),
+            (&[&b"5"[..], &b"7"[..]][..], Some(5)),
+            (&[&b""[..]][..], None),
+            (&[&b"abc"[..]][..], None),
+            (&[&b"-1"[..]][..], None),
+            (&[&b"0x5"[..]][..], None),
+            (&[&b"5 5"[..]][..], None),
+            (&[&b"5, 5"[..]][..], None),
+            (&[&b"18446744073709551616"[..]][..], None),
+            (&[&b"\xff5"[..]][..], None),
+        ] {
+            assert_eq!(
+                limit::declared_length(&declaring(values)),
+                expected,
+                "{values:?}"
+            );
+        }
+    }
+
+    /// A declared length refuses from the head only past the limit, and one
+    /// that declares nothing is left to the read.
+    #[test]
+    fn a_declared_length_is_refused_only_past_the_limit() {
+        assert!(limit::refuse_declared(&declaring(&[b" 5 "]), 5).is_ok());
+        assert!(limit::refuse_declared(&declaring(&[b"abc"]), 5).is_ok());
+        assert!(limit::refuse_declared(&declaring(&[]), 5).is_ok());
+
+        let refused = limit::refuse_declared(&declaring(&[b"\t6"]), 5)
+            .expect_err("six octets declared past a five-octet limit");
+        assert!(
+            matches!(refused, BodyRejection::TooLarge { limit: 5 }),
+            "{refused:?}"
         );
     }
 }
@@ -1780,7 +1946,10 @@ mod a_json_body_under_a_declared_media_type {
             [Order::MEDIA_TYPE]
         );
         assert_eq!(
-            body.content[Order::MEDIA_TYPE].schema,
+            body.content[Order::MEDIA_TYPE]
+                .as_item()
+                .expect("inline")
+                .schema,
             Some(Registry::default().resolve::<u32>())
         );
         assert_eq!(body.required, Some(true));
@@ -2367,7 +2536,10 @@ mod a_text_body_under_a_declared_media_type {
             [Csv::MEDIA_TYPE]
         );
         assert_eq!(
-            body.content[Csv::MEDIA_TYPE].schema,
+            body.content[Csv::MEDIA_TYPE]
+                .as_item()
+                .expect("inline")
+                .schema,
             Some(Registry::default().resolve::<String>())
         );
         assert_eq!(body.required, Some(true));
@@ -2637,7 +2809,7 @@ mod a_body_in_an_outside_format {
             [media_type]
         );
         assert_eq!(
-            body.content[media_type].schema,
+            body.content[media_type].as_item().expect("inline").schema,
             Some(Registry::default().resolve::<u64>())
         );
         assert_eq!(body.required, Some(true));

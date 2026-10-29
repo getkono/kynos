@@ -17,6 +17,7 @@ use crate::{
         body::{RequestBody, encoding::Encoding, media_type::MediaType},
         components::Components,
         document::Document,
+        reference::RefOr,
         response::Response,
         schema::{Schema, object::SchemaObject},
     },
@@ -76,13 +77,26 @@ pub(in crate::validate) fn check_request_body(
     components: &Components,
     violations: &mut Vec<Violation>,
 ) {
-    for (media_type, content) in &body.content {
-        check_media_type(
-            &format!("{location}/content/{}", pointer_token(media_type)),
-            content,
-            components,
-            violations,
-        );
+    check_content(location, &body.content, components, violations);
+}
+
+/// Checks each inline entry of a `content` map; one that is a `$ref` is
+/// checked where it leads.
+fn check_content(
+    location: &str,
+    content: &crate::Map<RefOr<MediaType>>,
+    components: &Components,
+    violations: &mut Vec<Violation>,
+) {
+    for (media_type, content) in content {
+        if let Some(content) = content.as_item() {
+            check_media_type(
+                &format!("{location}/content/{}", pointer_token(media_type)),
+                content,
+                components,
+                violations,
+            );
+        }
     }
 }
 
@@ -92,14 +106,7 @@ pub(in crate::validate) fn check_response(
     components: &Components,
     violations: &mut Vec<Violation>,
 ) {
-    for (media_type, content) in &response.content {
-        check_media_type(
-            &format!("{location}/content/{}", pointer_token(media_type)),
-            content,
-            components,
-            violations,
-        );
-    }
+    check_content(location, &response.content, components, violations);
     // An inline link's server; a referenced one is checked at its component.
     for (name, link) in &response.links {
         if let Some(link) = link.as_item() {

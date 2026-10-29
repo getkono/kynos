@@ -16,7 +16,7 @@ hooks {
                 fix = "mise run format"
             }
             // `.cargo/config.toml` decides how the workspace builds, as
-            // `Cargo.toml` does; `containment:check` catches a misspelled key.
+            // `Cargo.toml` does; `tooling:check` catches a misspelled key.
             ["lint"] {
                 glob = List("*.rs", "Cargo.toml", "Cargo.lock", ".cargo/config.toml")
                 check_first = true
@@ -39,6 +39,12 @@ hooks {
                     "scripts/containment_test.py",
                 )
                 check = "mise run containment:check && mise run containment:test"
+            }
+            // Check-only, for containment's reason. Every script is held to the
+            // Python floor, and `mise.toml` carries the pins that floor is half of.
+            ["tooling"] {
+                glob = List(".cargo/config.toml", "mise.toml", "scripts/*.py")
+                check = "mise run tooling:check && mise run tooling:test"
             }
         }
     }

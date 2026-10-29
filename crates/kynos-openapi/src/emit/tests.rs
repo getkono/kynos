@@ -43,10 +43,11 @@ fn a_document_using_no_three_two_construct_has_no_blockers() {
 ///
 /// A flattened `extensions` absorbs every key its object leaves unclaimed, so a
 /// field the build does not model lands there rather than failing to parse. In
-/// a build without `openapi32` that is every 3.2 field, and in every build it
-/// is a `$ref` written as a `content` entry. Neither is an extension -- its name
-/// lacks the `x-` prefix -- and 3.1 cannot read either, so both stand in the way
-/// of a 3.1 emission.
+/// a build without `openapi32` that is every 3.2 field. None is an extension --
+/// its name lacks the `x-` prefix -- and 3.1 cannot read one, so each stands in
+/// the way of a 3.1 emission. A `content` entry written as a `$ref` stands
+/// there too, at the entry itself: every build reads it as the Reference
+/// Object 3.2 admits there and 3.1 does not.
 ///
 /// Ungated on purpose: the build without `openapi32` is the one the defect
 /// lives in, and every expected location here is the same in both builds,
@@ -99,7 +100,7 @@ mod unrecognised {
             "#/$self",
             "#/components/examples/Order/dataValue",
             "#/components/schemas/Order/xml/nodeType",
-            "#/paths/~1orders/get/responses/200/content/application~1json/$ref",
+            "#/paths/~1orders/get/responses/200/content/application~1json",
             "#/paths/~1orders/query",
             "#/servers/0/name",
             "#/tags/0/kind",

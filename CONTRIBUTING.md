@@ -38,6 +38,7 @@ feature flag, a `#[cfg]` or a platform-specific path.
 | `mise run features:check` | a feature flag or a `#[cfg]` changed; nothing else catches a broken combination |
 | `mise run docs:check` | a public item changed; `missing_docs` is denied |
 | `mise run containment:check` | a dependency or module moved; it enforces where each crate may be named |
+| `mise run tooling:check` | a script, `mise.toml` or `.cargo/config.toml` changed; it holds the Python floor and the dev build profile |
 
 ## What binds a change
 

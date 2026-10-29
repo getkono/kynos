@@ -251,8 +251,11 @@ pub struct Response {
     pub headers: Map<RefOr<Header>>,
 
     /// The response body's representations, keyed by media type.
+    ///
+    /// A [`RefOr::Ref`] entry is 3.2's alone: 3.1 admits only a Media Type
+    /// Object here, so emitting or validating as 3.1 refuses one.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
-    pub content: Map<MediaType>,
+    pub content: Map<RefOr<MediaType>>,
 
     /// Design-time links to other operations.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
@@ -276,10 +279,10 @@ impl Response {
     pub fn with_content(
         description: impl Into<String>,
         media_type: impl Into<String>,
-        content: MediaType,
+        content: impl Into<RefOr<MediaType>>,
     ) -> Self {
         let mut response = Self::new(description);
-        response.content.insert(media_type.into(), content);
+        response.content.insert(media_type.into(), content.into());
         response
     }
 

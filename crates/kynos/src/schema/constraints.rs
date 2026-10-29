@@ -358,9 +358,14 @@ pub trait Items {
 ///
 /// A sequence's items are compared through their `PartialOrd`, by sorting
 /// references to them, so a request body cannot force the pairwise `O(n²)`
-/// check an equality alone allows. That relies on the order being total over
-/// the values compared, which a derived `PartialOrd` is for every value JSON
-/// can carry.
+/// check an equality alone allows. An item that is not equal to itself, such
+/// as a NaN a form or multipart body can carry, equals no other item, so it is
+/// set aside first: it is never a repeat and never hides one. That relies on
+/// the order being total over the items left, which a derived `PartialOrd`
+/// is over the standard library's types, since there only a value unordered
+/// against itself is unordered against another; a hand-written `PartialOrd`
+/// that leaves two self-equal items unordered breaks that contract, and the
+/// check may then miss a repeat or panic, as `slice::sort_unstable_by` may.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot say whether its items are unique",
     label = "no uniqueness check",
@@ -398,8 +403,14 @@ impl Textual for String {
 }
 
 /// Whether the items `iter` yields are pairwise distinct.
+///
+/// An item that does not compare equal to itself, such as a NaN or a value
+/// holding one, equals nothing, so it is set aside before the sort rather
+/// than sorted as equal to its neighbours, where it would hide a repeat.
 fn distinct<'a, T: PartialOrd + 'a>(iter: impl Iterator<Item = &'a T>) -> bool {
-    let mut items: Vec<&T> = iter.collect();
+    let mut items: Vec<&T> = iter
+        .filter(|item| item.partial_cmp(item) == Some(std::cmp::Ordering::Equal))
+        .collect();
     items.sort_unstable_by(|left, right| {
         left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal)
     });

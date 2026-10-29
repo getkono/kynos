@@ -2,7 +2,7 @@
 //! security, the content of a request body and every response, and the
 //! operation each link names.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, hash_map::Entry};
 
 use crate::{
     Map,
@@ -66,14 +66,17 @@ impl Validator {
         violations: &mut Vec<Violation>,
     ) {
         if let Some(id) = operation.operation_id.as_deref() {
-            if let Some(first) = operation_ids.insert(id, location.to_owned()) {
-                violations.push(Violation::error(
+            match operation_ids.entry(id) {
+                Entry::Occupied(first) => violations.push(Violation::error(
                     location,
                     SpecError::DuplicateOperationId {
                         operation_id: id.to_owned(),
-                        first,
+                        first: first.get().clone(),
                     },
-                ));
+                )),
+                Entry::Vacant(slot) => {
+                    slot.insert(location.to_owned());
+                }
             }
         }
 
