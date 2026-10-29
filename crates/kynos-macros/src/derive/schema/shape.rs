@@ -1,3 +1,5 @@
+use proc_macro2::{Ident, Span};
+
 use super::{
     Comma, DataEnum, Field, Fields, Punctuated, TokenStream2, Variant,
     aliases::{keyed, named_string, property, variants_read_names},
@@ -9,6 +11,22 @@ use super::{
     members::{described_variants, min_items, positional_members},
     quote, transparent_member,
 };
+
+/// The statements binding `binding` to an empty schema object whose `type` is
+/// `kind`, a `SchemaType` variant: the start of every typed schema built here.
+pub(super) fn typed(binding: &str, kind: &str) -> TokenStream2 {
+    let binding = Ident::new(binding, Span::call_site());
+    let kind = Ident::new(kind, Span::call_site());
+    quote! {
+        let mut #binding =
+            <::kynos::openapi::SchemaObject as ::core::default::Default>::default();
+        #binding.ty = ::core::option::Option::Some(
+            ::kynos::openapi::model::schema::types::TypeSet::One(
+                ::kynos::openapi::model::schema::types::SchemaType::#kind,
+            ),
+        );
+    }
+}
 
 /// A struct's schema, which its fields decide.
 ///
@@ -56,16 +74,11 @@ pub(super) fn tuple_body(fields: &Punctuated<Field, Comma>, defaulted: bool) -> 
     });
     let bound =
         (fewest > 0).then(|| quote!(keywords.min_items = ::core::option::Option::Some(#fewest);));
+    let keywords = typed("keywords", "Array");
 
     quote! {
         {
-            let mut keywords =
-                <::kynos::openapi::SchemaObject as ::core::default::Default>::default();
-            keywords.ty = ::core::option::Option::Some(
-                ::kynos::openapi::model::schema::types::TypeSet::One(
-                    ::kynos::openapi::model::schema::types::SchemaType::Array,
-                ),
-            );
+            #keywords
             #prefix
             // Closed, because a tuple has exactly as many members as it has.
             keywords.items = ::core::option::Option::Some(
@@ -139,15 +152,10 @@ pub(super) fn object_body(
             property(field, container)
         });
 
+    let keywords = typed("keywords", "Object");
     let object = quote! {
         {
-            let mut keywords =
-                <::kynos::openapi::SchemaObject as ::core::default::Default>::default();
-            keywords.ty = ::core::option::Option::Some(
-                ::kynos::openapi::model::schema::types::TypeSet::One(
-                    ::kynos::openapi::model::schema::types::SchemaType::Object,
-                ),
-            );
+            #keywords
             let mut required: ::std::vec::Vec<::std::string::String> =
                 ::std::vec::Vec::new();
             #tagged
@@ -206,15 +214,10 @@ pub(super) fn enum_body(data: &DataEnum, container: &Container) -> TokenStream2 
         let names = variants_read_names(&variants, container)
             .into_iter()
             .flatten();
+        let keywords = typed("keywords", "String");
         return quote! {
             {
-                let mut keywords =
-                    <::kynos::openapi::SchemaObject as ::core::default::Default>::default();
-                keywords.ty = ::core::option::Option::Some(
-                    ::kynos::openapi::model::schema::types::TypeSet::One(
-                        ::kynos::openapi::model::schema::types::SchemaType::String,
-                    ),
-                );
+                #keywords
                 keywords.enumeration = ::core::option::Option::Some(::std::vec![
                     #(::core::convert::Into::into(#names)),*
                 ]);
@@ -279,15 +282,10 @@ pub(super) fn branch(variant: &Variant, read: &[String], container: &Container) 
                     );
                 }
             });
+            let keywords = typed("keywords", "Object");
             let object = quote! {
                 {
-                    let mut keywords =
-                        <::kynos::openapi::SchemaObject as ::core::default::Default>::default();
-                    keywords.ty = ::core::option::Option::Some(
-                        ::kynos::openapi::model::schema::types::TypeSet::One(
-                            ::kynos::openapi::model::schema::types::SchemaType::Object,
-                        ),
-                    );
+                    #keywords
                     let mut required: ::std::vec::Vec<::std::string::String> =
                         ::std::vec::Vec::new();
                     keywords.properties.insert(
