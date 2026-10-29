@@ -1731,6 +1731,27 @@ mod serialized_schema {
                 vec!["xml/nodeType"],
             ),
             (
+                json!({
+                    "enum": [{"xml": {"nodeType": "element"}}],
+                    "xml": {"nodeType": "element"}
+                }),
+                vec!["xml/nodeType"],
+            ),
+            (
+                json!({
+                    "examples": [{"xml": {"nodeType": "element"}}],
+                    "xml": {"nodeType": "element"}
+                }),
+                vec!["xml/nodeType"],
+            ),
+            (
+                json!({
+                    "example": {"xml": {"nodeType": "element"}},
+                    "xml": {"nodeType": "element"}
+                }),
+                vec!["xml/nodeType"],
+            ),
+            (
                 json!({"properties": {
                     "default": {"xml": {"nodeType": "element"}},
                     "enum": {"discriminator": {
