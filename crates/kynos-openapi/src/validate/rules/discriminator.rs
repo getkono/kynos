@@ -13,7 +13,10 @@ use crate::{
         document::SpecVersion,
         schema::{Schema, object::SchemaObject},
     },
-    validate::violation::{SpecError, Violation},
+    validate::{
+        rules::component_name,
+        violation::{SpecError, Violation},
+    },
 };
 
 /// What the discriminator rules gather over one walk.
@@ -132,8 +135,7 @@ fn requires<'doc>(
         return true;
     }
     if let Some(reference) = &object.reference {
-        let Some((name, target)) = reference
-            .strip_prefix("#/components/schemas/")
+        let Some((name, target)) = component_name(reference, "schemas")
             .and_then(|name| components.schemas.get_key_value(name))
         else {
             return true;

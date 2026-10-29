@@ -11,6 +11,7 @@
 //! allocates nothing.
 
 use crate::{
+    Map,
     model::{
         callback::Callback,
         document::Document,
@@ -90,6 +91,21 @@ pub(crate) fn callback<'doc>(at: At<'_>, callback: &'doc Callback, visit: &mut i
         match entry {
             RefOr::Item(item) => walk_path_item(at, item, None, visit),
             RefOr::Ref(reference) => visit.reference(at, &reference.location),
+        }
+    }
+}
+
+/// Each inline item of `entries`, at its key under `at`.
+///
+/// A `RefOr::Ref` is skipped: what it names is visited where it is defined.
+pub(crate) fn inline_items<'doc, T>(
+    at: At<'_>,
+    entries: &'doc Map<RefOr<T>>,
+    mut visit: impl FnMut(At<'_>, &'doc T),
+) {
+    for (name, entry) in entries {
+        if let RefOr::Item(item) = entry {
+            visit(at.key(name), item);
         }
     }
 }
