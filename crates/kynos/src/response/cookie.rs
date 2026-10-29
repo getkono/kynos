@@ -228,7 +228,7 @@ impl Cookie {
         }
         if let Some(age) = self.max_age {
             rendered.push_str("; Max-Age=");
-            rendered.push_str(&crate::middleware::whole_seconds(age).to_string());
+            rendered.push_str(&crate::http::whole_seconds(age).to_string());
         }
         // `SameSite=None`, `Partitioned` (CHIPS, draft-cutler-httpbis-
         // partitioned-cookies section 2.1) and both name prefixes are silently

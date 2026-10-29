@@ -9,11 +9,8 @@ use kynos_openapi::model::schema::types::SchemaType;
 
 use crate::{
     extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
-    http,
-    middleware::{
-        rate_limit::decision::{QuotaPolicy, ServiceLimit},
-        whole_seconds,
-    },
+    http::{self, whole_seconds},
+    middleware::rate_limit::decision::{QuotaPolicy, ServiceLimit},
     schema::registry::Registry,
 };
 

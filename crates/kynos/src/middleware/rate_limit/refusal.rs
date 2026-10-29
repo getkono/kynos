@@ -9,13 +9,10 @@ use std::{fmt, marker::PhantomData, time::Duration};
 use crate::{
     error::problem::{ProblemType, refusal_problem, refusal_response},
     extract::params::header::{EncodeHeaders, HeaderParams},
-    http,
-    middleware::{
-        rate_limit::{
-            decision::{QuotaPolicy, ServiceLimit},
-            headers::{RateLimitFields, RateLimitHeaders},
-        },
-        retry_after_header, set_retry_after,
+    http::{self, retry_after_header, set_retry_after},
+    middleware::rate_limit::{
+        decision::{QuotaPolicy, ServiceLimit},
+        headers::{RateLimitFields, RateLimitHeaders},
     },
     response::{IntoResponse, Responses, ShortCircuit},
     schema::registry::Registry,

@@ -28,8 +28,7 @@ use serde_json::json;
 
 use crate::{
     error::problem::{IntoProblem, Member, Problem, narrowed_response, problem_response},
-    http::{HeaderValue, StatusCode, header},
-    middleware::{retry_after_header, set_retry_after},
+    http::{HeaderValue, StatusCode, header, retry_after_header, set_retry_after},
     response::{IntoResponse, Responses},
     schema::registry::Registry,
     security::{SecurityScheme, auth::Scopes},

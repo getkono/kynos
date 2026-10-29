@@ -195,6 +195,35 @@ pub(crate) fn own_authority<'a>(
         })
 }
 
+/// A delay in whole seconds, rounded *up*.
+///
+/// Truncating a sub-second wait to zero would tell a client to retry
+/// immediately into the refusal it just received. Saturates at `u64::MAX`
+/// rather than overflowing within the last second of
+/// [`Duration::MAX`](std::time::Duration::MAX).
+pub(crate) fn whole_seconds(delay: std::time::Duration) -> u64 {
+    delay
+        .as_secs()
+        .saturating_add(u64::from(delay.subsec_nanos() > 0))
+}
+
+/// Describes `Retry-After`, which is a delta-seconds count or an HTTP-date.
+///
+/// A string, since an integer schema would be wrong for the HTTP-date form.
+pub(crate) fn retry_after_header() -> kynos_openapi::Header {
+    kynos_openapi::Header::new(kynos_openapi::Schema::of_type(
+        kynos_openapi::model::schema::types::SchemaType::String,
+    ))
+    .with_description("How long to wait before retrying, in seconds or as an HTTP-date")
+}
+
+/// Sets `Retry-After` on `response` to `delay` in [`whole_seconds`].
+pub(crate) fn set_retry_after(response: &mut Response, delay: std::time::Duration) {
+    response
+        .headers_mut()
+        .insert(header::RETRY_AFTER, HeaderValue::from(whole_seconds(delay)));
+}
+
 /// Merges `names` into whatever `Vary` a response already carries.
 ///
 /// A union, since `Vary` is a set several interceptors contribute to (RFC 9110
