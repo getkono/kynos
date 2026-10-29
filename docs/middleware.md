@@ -455,7 +455,12 @@ A name that cannot be an `sf-string` drops its member rather than producing a
 field a parser will reject: one unnameable policy must not cost the client the
 others. `w` is whole seconds rounded *up*, since a shorter window advertises a
 faster rate than the one enforced; a zero window, which no non-zero integer
-states, omits `w` rather than its member.
+states, omits `w` rather than its member. Every integer stays inside RFC 9651's
+`sf-integer` range, since a parser rejects the whole field past
+999,999,999,999,999: the required `q` and `r` are capped there, understating
+the allowance, and the optional `t` and `w` are left out past it, since a
+capped one would invite a retry before the quota replenishes or advertise a
+faster rate than the one enforced.
 
 ### What the framework computes and what it does not
 
