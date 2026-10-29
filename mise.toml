@@ -380,11 +380,12 @@ cargo +"$KYNOS_NIGHTLY" check --workspace --all-features --exclude kynos-profile
 [tasks."publish:check"]
 description = "Package every crate exactly as crates.io will receive it"
 # Rebuilds each crate from its tarball, the only check that sees a file the
-# archive omits. `--workspace` resolves siblings from the staged archives, as
-# `cargo publish` will (Cargo 1.90+; the MSRV is for building, not publishing).
-# No `--allow-dirty`: an artifact must match a commit. The `--list` loop checks
-# `LICENSE`, which no manifest key references. Both read the one set of
-# packages `scripts/publishable.py` derives from the manifests.
+# archive omits. One `cargo package` over a `-p` per publishable member
+# resolves each sibling from its staged archive, as `cargo publish` will
+# (Cargo 1.90+; the MSRV is for building, not publishing). No `--allow-dirty`:
+# an artifact must match a commit. The `--list` loop checks `LICENSE`, which no
+# manifest key references. Both read the one set of packages
+# `scripts/publishable.py` derives from the manifests.
 tools = { python = "3.11.16" }
 run = '''
 set -eu
