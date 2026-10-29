@@ -1,10 +1,11 @@
 //! The bodies of the four implementations, from the failures read.
 
 use proc_macro2::{Span, TokenStream as TokenStream2};
-use quote::{ToTokens, quote, quote_spanned};
+use quote::{quote, quote_spanned};
 use syn::{Ident, spanned::Spanned};
 
 use super::{Extension, Failure, HEADERS_BINDING, Outcome, Transparent};
+use crate::derive::common::optional;
 
 /// The statuses as a `&'static [u16]` expression, in declaration order without
 /// repeats.
@@ -290,15 +291,6 @@ fn member(extension: &Extension) -> TokenStream2 {
     // named.
     let schema = quote_spanned!(ty.span()=> registry.resolve::<#ty>());
     quote!((#name, #schema, #sent))
-}
-
-/// A string the declaration may not have given, as the `Option` the helper
-/// reads it as.
-fn optional(value: Option<impl ToTokens>) -> TokenStream2 {
-    value.map_or_else(
-        || quote!(::core::option::Option::None),
-        |value| quote!(::core::option::Option::Some(#value)),
-    )
 }
 
 /// The statuses in declaration order, without repeats; two variants may share

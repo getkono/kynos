@@ -89,7 +89,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
         const _: () = {
             #[allow(dead_code)]
             fn detail_comes_from_display #impl_generics () #where_clause {
-                fn is_display<T: ::core::fmt::Display + ?Sized>() {}
+                fn is_display<T: ::core::fmt::Display + ?::core::marker::Sized>() {}
                 is_display::<#name #ty_generics>();
             }
         };

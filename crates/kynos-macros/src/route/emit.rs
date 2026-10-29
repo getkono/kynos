@@ -46,7 +46,7 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> syn::Re
     let panic_strategy_check = args.catch_panics.then(|| {
         quote! {
             #[cfg(panic = "abort")]
-            compile_error!(
+            ::core::compile_error!(
                 "Kynos panic recovery requires `panic = \"unwind\"`; remove `catch_panics` or enable unwinding"
             );
         }
@@ -63,7 +63,7 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> syn::Re
 
         #[doc(hidden)]
         #[allow(non_camel_case_types)]
-        #[derive(Clone, Copy, Debug, Default)]
+        #[derive(::core::clone::Clone, ::core::marker::Copy, ::core::fmt::Debug, ::core::default::Default)]
         #visibility struct #endpoint {}
 
         impl ::kynos::router::endpoint::meta::EndpointMeta for #endpoint {

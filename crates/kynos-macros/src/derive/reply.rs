@@ -34,7 +34,8 @@ use syn::{
     spanned::Spanned,
 };
 
-use crate::derive::{attribute::key_name, common::doc_string};
+use crate::derive::attribute::key_name;
+use crate::derive::common::{doc_string, optional};
 
 /// The range a reply's status may fall in: final responses only, never 1xx.
 const STATUS_RANGE: std::ops::RangeInclusive<u16> = 200..=599;
@@ -228,7 +229,7 @@ fn response(variant: &Variant, status: u16, description: Option<&str>, held: boo
 
     if let (true, Fields::Unnamed(fields)) = (held, &variant.fields) {
         let ty = &fields.unnamed[0].ty;
-        let description = description.map_or_else(|| quote!(None), |text| quote!(Some(#text)));
+        let description = optional(description);
         // Spanned on the held type, so one lacking `Responses` is reported
         // against the variant a user wrote.
         return quote_spanned! {ty.span()=>

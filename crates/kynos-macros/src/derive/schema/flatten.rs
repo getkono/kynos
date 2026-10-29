@@ -77,7 +77,7 @@ fn witnesses(input: &DeriveInput, container: &Container, generics: &syn::Generic
                     fn open_fields_beside_unread_fields_admit_any_member #impl_generics ()
                         #where_clause
                     {
-                        fn admits_any<T: ::kynos::schema::flatten::AdmitsAny + ?Sized>() {}
+                        fn admits_any<T: ::kynos::schema::flatten::AdmitsAny + ?::core::marker::Sized>() {}
                         admits_any::<#ty>();
                     }
                 };
@@ -87,7 +87,7 @@ fn witnesses(input: &DeriveInput, container: &Container, generics: &syn::Generic
                 const _: () = {
                     #[allow(dead_code, deprecated)]
                     fn open_fields_are_maps_described_in_place #impl_generics () #where_clause {
-                        fn is_open_map<T: ::kynos::schema::flatten::OpenMap + ?Sized>() {}
+                        fn is_open_map<T: ::kynos::schema::flatten::OpenMap + ?::core::marker::Sized>() {}
                         is_open_map::<#ty>();
                     }
                 };
@@ -101,7 +101,7 @@ fn witnesses(input: &DeriveInput, container: &Container, generics: &syn::Generic
                             #where_clause
                         {
                             fn is_closed_flattenable<
-                                T: ::kynos::schema::flatten::ClosedFlatten + ?Sized,
+                                T: ::kynos::schema::flatten::ClosedFlatten + ?::core::marker::Sized,
                             >() {}
                             is_closed_flattenable::<#ty>();
                         }
@@ -112,7 +112,7 @@ fn witnesses(input: &DeriveInput, container: &Container, generics: &syn::Generic
                 const _: () = {
                     #[allow(dead_code, deprecated)]
                     fn flattened_fields_name_their_members #impl_generics () #where_clause {
-                        fn is_flattenable<T: ::kynos::schema::flatten::Flatten + ?Sized>() {}
+                        fn is_flattenable<T: ::kynos::schema::flatten::Flatten + ?::core::marker::Sized>() {}
                         is_flattenable::<#ty>();
                     }
                 };

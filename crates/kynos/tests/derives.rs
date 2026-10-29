@@ -6156,3 +6156,127 @@ fn a_read_only_variants_fields_are_named_as_serde_reads_them() {
         }
     }
 }
+
+/// Every derive, in a module whose own items shadow the prelude's names: an
+/// expansion naming `None`, `String` or `Sized` unqualified resolves to the
+/// user's item rather than the standard library's. Shadowing rather than
+/// `no_implicit_prelude`, which also takes the prelude's traits out of method
+/// resolution: a derive may call `String::from` the way any user code does.
+#[cfg(all(feature = "json", feature = "cookie", feature = "multipart"))]
+mod shadowed_prelude {
+    use ::kynos::{extract::body::json::Json, response::status::Created};
+    use ::std::collections::BTreeMap;
+    #[allow(unused_imports)]
+    use Pick::*;
+
+    pub(super) enum Pick {
+        Some,
+        None,
+        Ok,
+        Err,
+    }
+    pub(super) struct String;
+    pub(super) struct Vec;
+    pub(super) struct Box;
+    pub(super) struct Option;
+    pub(super) struct Result;
+    pub(super) trait Sized {}
+    pub(super) trait Send {}
+    pub(super) trait Sync {}
+    pub(super) trait Copy {}
+    pub(super) trait Clone {}
+    pub(super) trait Default {}
+    pub(super) trait From {}
+    pub(super) trait Into {}
+    pub(super) trait Iterator {}
+
+    #[derive(::kynos::Schema, ::serde::Serialize, ::serde::Deserialize)]
+    pub(super) struct Item {
+        id: u64,
+        note: ::core::option::Option<::std::string::String>,
+        #[serde(flatten)]
+        #[schema(open)]
+        extra: BTreeMap<::std::string::String, ::std::string::String>,
+    }
+
+    #[derive(::kynos::Schema, ::serde::Serialize)]
+    #[serde(tag = "kind")]
+    enum Shape {
+        Circle { radius: f64 },
+        Square { side: f64 },
+    }
+
+    #[derive(::kynos::Reply)]
+    enum Outcome {
+        #[reply(status = 201, response)]
+        Made(Created<Json<Item>>),
+        #[reply(status = 200)]
+        Found(Item),
+        #[reply(status = 404)]
+        Missing,
+    }
+
+    #[derive(::core::fmt::Debug, ::thiserror::Error, ::kynos::ApiError)]
+    enum Failure {
+        #[error("not found")]
+        #[problem(status = 404)]
+        NotFound,
+    }
+
+    /// No `credential`, so the default one.
+    #[derive(::kynos::SecurityScheme)]
+    #[security(bearer)]
+    pub(super) struct Bearer;
+
+    #[derive(::kynos::PathParams)]
+    struct ItemPath {
+        id: u64,
+    }
+
+    #[derive(::kynos::Schema, ::kynos::QueryParams)]
+    struct Listing {
+        page: u32,
+        per: ::core::option::Option<u32>,
+    }
+
+    #[derive(::kynos::HeaderParams)]
+    struct Conditional {
+        #[header(rename = "If-None-Match")]
+        if_none_match: ::core::option::Option<::std::string::String>,
+    }
+
+    #[derive(::kynos::CookieParams)]
+    struct Session {
+        session: ::std::string::String,
+    }
+
+    #[derive(::kynos::Schema, ::kynos::MultipartForm)]
+    struct Upload {
+        name: ::std::string::String,
+    }
+
+    #[derive(::kynos::Schema, ::kynos::ParamValue, ::serde::Serialize, ::serde::Deserialize)]
+    enum Order {
+        Ascending,
+        Descending,
+    }
+
+    #[derive(::kynos::Tag)]
+    #[tag(name = "items")]
+    struct Items;
+
+    #[derive(::kynos::Provider)]
+    struct App {
+        limit: u32,
+    }
+}
+
+/// A scheme naming no `credential` reads its credential as the standard
+/// library's `String`, not as a type the user's scope happens to call that.
+#[cfg(all(feature = "json", feature = "cookie", feature = "multipart"))]
+#[test]
+fn a_default_credential_is_the_standard_string() {
+    fn reads_a_string<S: SecuritySchemeTrait<Credential = std::string::String>>() {}
+
+    reads_a_string::<shadowed_prelude::Bearer>();
+}
