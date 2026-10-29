@@ -123,16 +123,11 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send, M: MediaType + Sen
         let value: T = crate::extract::strict_json::from_slice(decoded.as_bytes())
             .map_err(|failure| invalid(undecoded(&failure)))?;
 
-        let mut violations = Violations::new();
-        value.check_constraints(Pointer::root(), &mut violations);
-        if violations.is_empty() {
-            Ok(Self::new(value))
-        } else {
-            Err(QueryRejection::Schema {
-                name: QUERYSTRING_NAME.to_owned(),
-                failures: violations.into_failures(),
-            })
-        }
+        Violations::of(&value, Pointer::root()).map_err(|failures| QueryRejection::Schema {
+            name: QUERYSTRING_NAME.to_owned(),
+            failures,
+        })?;
+        Ok(Self::new(value))
     }
 }
 
@@ -141,9 +136,10 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send, M: MediaType + Sen
 fn undecoded(failure: &crate::extract::strict_json::Failure) -> String {
     let error = &failure.error;
     let at = failure.pointer(Pointer::root());
-    match error.classify() {
-        serde_json::error::Category::Data if !at.is_empty() => format!("at `{at}`: {error}"),
-        _ => error.to_string(),
+    if failure.is_schema_failure() && !at.is_empty() {
+        format!("at `{at}`: {error}")
+    } else {
+        error.to_string()
     }
 }
 

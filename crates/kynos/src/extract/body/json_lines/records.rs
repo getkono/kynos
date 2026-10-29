@@ -1,7 +1,6 @@
 //! Framing a streamed JSON request body into the records it carries.
 
 use std::{
-    collections::BTreeMap,
     fmt,
     marker::PhantomData,
     pin::Pin,
@@ -291,26 +290,15 @@ impl<T: serde::de::DeserializeOwned + Schema> Records<T> {
 
         // A struct is read only from an object, as a `Json` body is.
         let value = crate::extract::strict_json::from_slice(record).map_err(|failure| {
-            let error = &failure.error;
-            if crate::extract::body::json::is_schema_failure(error) {
+            if failure.is_schema_failure() {
                 // Only the shape was wrong; the boundaries held, so reading
                 // continues.
-                let root = Pointer::root();
-                BodyRejection::Schema {
-                    failures: BTreeMap::from([(
-                        failure.pointer(root.index(index)),
-                        error.to_string(),
-                    )]),
-                }
+                let at = failure.pointer(Pointer::root().index(index));
+                BodyRejection::schema_at(at, failure.error.to_string())
             } else {
-                // Fail-fast by policy: the separator framed this record, so
-                // the next boundary is known. For NDJSON, a body that is not
-                // JSON where it claims to be is rejected rather than
-                // salvaged; for json-seq this departs from RFC 7464 §2.1,
-                // which says to keep reading (see the type's docs).
                 self.state = State::Fused;
                 BodyRejection::Syntax {
-                    detail: format!("record {index}: {error}"),
+                    detail: format!("record {index}: {}", failure.error),
                 }
             }
         })?;

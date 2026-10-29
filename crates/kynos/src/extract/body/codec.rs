@@ -7,7 +7,7 @@
 //! [`Negotiated`](crate::response::negotiate::Negotiated) offer. The codec
 //! turns bytes into a value and back; every check around that stays Kynos's.
 
-use std::{collections::BTreeMap, fmt, marker::PhantomData};
+use std::{fmt, marker::PhantomData};
 
 use bytes::Bytes;
 
@@ -151,9 +151,7 @@ pub enum DecodeError {
 fn rejection(error: DecodeError) -> BodyRejection {
     match error {
         DecodeError::Syntax(detail) => BodyRejection::Syntax { detail },
-        DecodeError::Data(detail) => BodyRejection::Schema {
-            failures: BTreeMap::from([(String::new(), detail)]),
-        },
+        DecodeError::Data(detail) => BodyRejection::schema_at(String::new(), detail),
     }
 }
 

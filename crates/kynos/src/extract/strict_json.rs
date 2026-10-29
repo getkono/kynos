@@ -84,6 +84,18 @@ impl Failure {
 
         render(base, &self.path)
     }
+
+    /// Whether the document was well-formed JSON that did not fit the type:
+    /// serde's `Data` category, where every JSON input draws its 400/422 line.
+    /// The rest are bytes that are not JSON.
+    pub(crate) fn is_schema_failure(&self) -> bool {
+        match self.error.classify() {
+            serde_json::error::Category::Data => true,
+            serde_json::error::Category::Io
+            | serde_json::error::Category::Syntax
+            | serde_json::error::Category::Eof => false,
+        }
+    }
 }
 
 /// One step of a failure's path.
@@ -178,7 +190,7 @@ macro_rules! forward {
     )*};
     (@visitor raw $visitor:ident $state:expr) => { $visitor };
     (@visitor wrap $visitor:ident $state:expr) => {
-        Visit { visitor: $visitor, state: $state, object: false, entered: None }
+        Visit::new($visitor, $state, false, None)
     };
 }
 
@@ -223,12 +235,7 @@ impl<'de, D: Deserializer<'de>> Deserializer<'de> for Strict<'_, D> {
         fields: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, Self::Error> {
-        let visitor = Visit {
-            visitor,
-            state: self.state,
-            object: true,
-            entered: None,
-        };
+        let visitor = Visit::new(visitor, self.state, true, None);
         self.inner.deserialize_struct(name, fields, visitor)
     }
 
@@ -242,12 +249,7 @@ impl<'de, D: Deserializer<'de>> Deserializer<'de> for Strict<'_, D> {
         if name.starts_with("$serde_json::") {
             self.inner.deserialize_newtype_struct(name, visitor)
         } else {
-            let visitor = Visit {
-                visitor,
-                state: self.state,
-                object: false,
-                entered: None,
-            };
+            let visitor = Visit::new(visitor, self.state, false, None);
             self.inner.deserialize_newtype_struct(name, visitor)
         }
     }
@@ -271,7 +273,17 @@ struct Visit<'a, V> {
     entered: Option<&'a Cell<bool>>,
 }
 
-impl<V> Visit<'_, V> {
+impl<'a, V> Visit<'a, V> {
+    /// Wraps `visitor`, asked for a struct where `object` says so.
+    fn new(visitor: V, state: &'a State, object: bool, entered: Option<&'a Cell<bool>>) -> Self {
+        Self {
+            visitor,
+            state,
+            object,
+            entered,
+        }
+    }
+
     /// Notes that the content was reached.
     fn enter(&self) {
         if let Some(entered) = self.entered {

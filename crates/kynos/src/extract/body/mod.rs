@@ -41,7 +41,10 @@ use crate::{
     },
     http::{HeaderMap, Parts, body::Body, header, unquoted_split},
     router::operation::OperationCx,
-    schema::registry::Registry,
+    schema::{
+        constraints::{Pointer, Violations},
+        registry::Registry,
+    },
 };
 
 /// The media type a request declares, split from its parameters; `None`, which
@@ -183,19 +186,10 @@ async fn read_body(parts: &Parts, body: Body, media_type: &str) -> Result<Bytes,
 
 /// Holds a decoded body, or the record of one sitting at `at`, to the bounds
 /// its schema declares: a broken bound is a 422 keyed by where it broke.
-fn checked<T: crate::schema::Schema>(
-    value: T,
-    at: crate::schema::constraints::Pointer<'_>,
-) -> Result<T, BodyRejection> {
-    use crate::schema::constraints::Violations;
-    let mut violations = Violations::new();
-    value.check_constraints(at, &mut violations);
-    if violations.is_empty() {
-        Ok(value)
-    } else {
-        Err(BodyRejection::Schema {
-            failures: violations.into_failures(),
-        })
+fn checked<T: crate::schema::Schema>(value: T, at: Pointer<'_>) -> Result<T, BodyRejection> {
+    match Violations::of(&value, at) {
+        Ok(()) => Ok(value),
+        Err(failures) => Err(BodyRejection::Schema { failures }),
     }
 }
 

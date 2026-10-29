@@ -375,6 +375,14 @@ impl BodyRejection {
             Self::TooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
         }
     }
+
+    /// The 422 for one failure, keyed at `pointer`; the empty pointer for a
+    /// decoder that names no location.
+    pub(crate) fn schema_at(pointer: String, detail: String) -> Self {
+        Self::Schema {
+            failures: BTreeMap::from([(pointer, detail)]),
+        }
+    }
 }
 
 impl IntoProblem for BodyRejection {

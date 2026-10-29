@@ -186,12 +186,7 @@ impl<'de, A: VariantAccess<'de>> VariantAccess<'de> for Variant<'_, 'de, A> {
     ) -> Result<V::Value, Self::Error> {
         self.state.begin();
         let entered = Cell::new(false);
-        let visitor = Visit {
-            visitor,
-            state: self.state,
-            object: false,
-            entered: Some(&entered),
-        };
+        let visitor = Visit::new(visitor, self.state, false, Some(&entered));
         let result = self.inner.tuple_variant(len, visitor);
         self.state.within(&self.name, &entered, result)
     }
@@ -203,12 +198,7 @@ impl<'de, A: VariantAccess<'de>> VariantAccess<'de> for Variant<'_, 'de, A> {
     ) -> Result<V::Value, Self::Error> {
         self.state.begin();
         let entered = Cell::new(false);
-        let visitor = Visit {
-            visitor,
-            state: self.state,
-            object: true,
-            entered: Some(&entered),
-        };
+        let visitor = Visit::new(visitor, self.state, true, Some(&entered));
         let result = self.inner.struct_variant(fields, visitor);
         self.state.within(&self.name, &entered, result)
     }

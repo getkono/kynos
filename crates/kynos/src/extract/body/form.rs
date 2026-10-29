@@ -1,7 +1,5 @@
 //! The `application/x-www-form-urlencoded` body codec.
 
-use std::collections::BTreeMap;
-
 use kynos_openapi::model::body::mime_names;
 
 use crate::{
@@ -73,9 +71,8 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send> FromRequest<C> for
 
         // Form syntax has no malformed input, so any failure is a 422. Keyed
         // at the root: serde names the field only inside its message.
-        let value = serde_html_form::from_str(text).map_err(|error| BodyRejection::Schema {
-            failures: BTreeMap::from([(String::new(), error.to_string())]),
-        })?;
+        let value = serde_html_form::from_str(text)
+            .map_err(|error| BodyRejection::schema_at(String::new(), error.to_string()))?;
         super::checked(value, Pointer::root()).map(Self)
     }
 }
