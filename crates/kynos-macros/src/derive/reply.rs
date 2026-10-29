@@ -31,7 +31,8 @@ use quote::{quote, quote_spanned};
 use syn::{Attribute, Data, DeriveInput, Fields, LitStr, Variant, spanned::Spanned};
 
 use crate::derive::attribute::{key_name, status};
-use crate::derive::common::{doc_string, optional};
+use crate::derive::common::optional;
+use crate::doc::doc_string;
 
 /// The range a reply's status may fall in: final responses only, never 1xx.
 const STATUS_RANGE: std::ops::RangeInclusive<u16> = 200..=599;

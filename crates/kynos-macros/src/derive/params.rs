@@ -11,9 +11,12 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
 use syn::{Field, FieldsNamed, Ident, Type, spanned::Spanned};
 
-use crate::derive::{
-    common::{doc_string, wrapped},
-    schema::{aliases::named_string, attributes::constraints, check::value_checks},
+use crate::{
+    derive::{
+        common::wrapped,
+        schema::{aliases::named_string, attributes::constraints, check::value_checks},
+    },
+    doc::doc_string,
 };
 
 /// One field of a parameter group, paired with the wire name it occupies.

@@ -55,7 +55,8 @@ use syn::{
     ext::IdentExt, punctuated::Punctuated, spanned::Spanned, token::Comma,
 };
 
-use crate::derive::common::{doc_string, is_deprecated, skip_value};
+use crate::derive::common::skip_value;
+use crate::doc::{doc_string, is_deprecated};
 
 /// Keys taking a number, which may be written as an integer or a float.
 const NUMERIC: &[&str] = &[

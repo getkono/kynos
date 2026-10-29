@@ -19,9 +19,12 @@
 use quote::quote;
 use syn::{DeriveInput, LitStr, Type};
 
-use crate::derive::{
-    attribute::{Keys, unknown},
-    common::{doc_string, unit_struct},
+use crate::{
+    derive::{
+        attribute::{Keys, unknown},
+        common::unit_struct,
+    },
+    doc::doc_string,
 };
 
 /// What the attribute said, before it becomes a tag.

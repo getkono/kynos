@@ -50,7 +50,8 @@ mod flow;
 use quote::quote;
 use syn::{DeriveInput, Ident, LitStr, Type, parse_quote};
 
-use crate::derive::common::{doc_string, optional, unit_struct};
+use crate::derive::common::{optional, unit_struct};
+use crate::doc::doc_string;
 use args::{Carrier, Nested, SchemeArgs, parse_args};
 use flow::{build_flow, flow_named};
 

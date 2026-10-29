@@ -4,10 +4,9 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{ItemFn, LitStr};
 
-use crate::route::{
-    args::RouteArgs,
-    attrs::{doc_lines, is_deprecated, split_doc},
-    uri::endpoint_uri_impl,
+use crate::{
+    doc::{doc_texts, is_deprecated},
+    route::{args::RouteArgs, attrs::split_doc, uri::endpoint_uri_impl},
 };
 
 /// Emits the endpoint type alongside the original handler.
@@ -22,8 +21,9 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> syn::Re
 
     let name = &function.sig.ident;
     let visibility = &function.vis;
-    let (summary, description) = split_doc(&doc_lines(function));
-    let deprecated = is_deprecated(function);
+    let (summary, description) = split_doc(&doc_texts(&function.attrs));
+    // `Operation.deprecated`, read as a schema reads it.
+    let deprecated = is_deprecated(&function.attrs);
 
     let operation_id = args
         .operation_id

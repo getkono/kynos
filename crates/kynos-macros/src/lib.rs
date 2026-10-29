@@ -18,6 +18,7 @@
 #[cfg(feature = "assets")]
 mod assets;
 mod derive;
+mod doc;
 mod route;
 
 use proc_macro::TokenStream;
