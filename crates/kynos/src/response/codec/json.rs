@@ -8,6 +8,7 @@ use crate::{
     response::{
         IntoResponse, Responses,
         codec::{json_bytes, ok, unserializable, with_content_type},
+        negotiate::representation::{Representation, sealed::SealedRepresentation},
     },
     schema::{Schema, registry::Registry},
 };
@@ -67,3 +68,18 @@ impl<M: MediaType, T: Schema> Responses for JsonAs<M, T> {
         json_responses::<T>(registry, M::MEDIA_TYPE)
     }
 }
+
+impl<T> SealedRepresentation for Json<T> {
+    const MEDIA_TYPE: &'static str = mime_names::APPLICATION_JSON;
+}
+
+impl<T: serde::Serialize + Schema> Representation for Json<T> {}
+
+impl<M: MediaType, T> SealedRepresentation for JsonAs<M, T> {
+    const MEDIA_TYPE: &'static str = {
+        let () = Self::JSON;
+        M::MEDIA_TYPE
+    };
+}
+
+impl<M: MediaType, T: serde::Serialize + Schema> Representation for JsonAs<M, T> {}

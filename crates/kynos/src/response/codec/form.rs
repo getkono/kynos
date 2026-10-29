@@ -8,6 +8,7 @@ use crate::{
     response::{
         IntoResponse, Responses,
         codec::{ok, unserializable, with_content_type},
+        negotiate::representation::{Representation, sealed::SealedRepresentation},
     },
     schema::{Schema, registry::Registry},
 };
@@ -34,3 +35,9 @@ impl<T: Schema> Responses for Form<T> {
         )
     }
 }
+
+impl<T> SealedRepresentation for Form<T> {
+    const MEDIA_TYPE: &'static str = mime_names::APPLICATION_FORM_URLENCODED;
+}
+
+impl<T: serde::Serialize + Schema> Representation for Form<T> {}

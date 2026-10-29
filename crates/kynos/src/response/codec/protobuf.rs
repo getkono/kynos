@@ -6,6 +6,7 @@ use crate::{
     response::{
         IntoResponse, Responses,
         codec::{ok, with_content_type},
+        negotiate::representation::{Representation, sealed::SealedRepresentation},
     },
     schema::{Schema, registry::Registry},
 };
@@ -30,3 +31,11 @@ impl<T: Schema> Responses for Protobuf<T> {
         )
     }
 }
+
+impl<T> SealedRepresentation for Protobuf<T> {
+    const MEDIA_TYPE: &'static str = MEDIA_TYPE;
+}
+
+// Bound through the codec so the protobuf crate stays named only where
+// `containment:check` allows it.
+impl<T> Representation for Protobuf<T> where Protobuf<T>: IntoResponse + Responses {}

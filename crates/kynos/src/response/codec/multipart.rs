@@ -23,6 +23,7 @@ use crate::{
         IntoResponse, Responses,
         codec::with_content_type,
         framing::{self, Encapsulation, Sink},
+        negotiate::representation::{Representation, sealed::SealedRepresentation},
     },
     schema::{ParamValue, Schema, registry::Registry},
 };
@@ -203,6 +204,12 @@ impl<T: Schema> Responses for MultipartForm<T> {
         kynos_openapi::Responses::new().with(200, response)
     }
 }
+
+impl<T> SealedRepresentation for MultipartForm<T> {
+    const MEDIA_TYPE: &'static str = mime_names::MULTIPART_FORM_DATA;
+}
+
+impl<T: IntoMultipart + Schema> Representation for MultipartForm<T> {}
 
 #[cfg(test)]
 mod tests;
