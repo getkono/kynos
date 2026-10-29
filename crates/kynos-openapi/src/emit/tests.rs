@@ -1697,14 +1697,18 @@ mod positions {
 /// `defaultMapping`, typed or not, and in the order it reports them.
 ///
 /// Pinned exactly, order included, because the walk reads the serialized
-/// schema: instance data, unknown keywords, extensions and a property named
-/// `xml` all count (#1042 questions the instance-data rows), and the members of
-/// an object are read in key order, a schema's own before its subschemas'.
+/// schema: unknown keywords, extensions and a property named `xml` all count,
+/// and the members of an object are read in key order, a schema's own before
+/// its subschemas'. Instance data is the exception: what `default`, `const`,
+/// `enum`, `examples` and `example` hold is any JSON in 3.1 too.
 #[cfg(feature = "openapi32")]
 mod serialized_schema {
     use serde_json::{Value, json};
 
-    use crate::{emit::downgrade::three_two_only_constructs, model::document::Document};
+    use crate::{
+        emit::downgrade::three_two_only_constructs,
+        model::document::{Document, SpecVersion},
+    };
 
     /// A document whose one component schema is `schema`.
     fn with_schema(schema: &Value) -> Document {
@@ -1720,24 +1724,28 @@ mod serialized_schema {
     fn cases() -> Vec<(Value, Vec<&'static str>)> {
         vec![
             (
-                json!({"default": {"xml": {"nodeType": "element"}}}),
-                vec!["default/xml/nodeType"],
+                json!({
+                    "default": {"xml": {"nodeType": "element"}},
+                    "xml": {"nodeType": "element"}
+                }),
+                vec!["xml/nodeType"],
             ),
             (
-                json!({"enum": [{"discriminator": {"defaultMapping": "x"}}]}),
-                vec!["enum/0/discriminator/defaultMapping"],
+                json!({"properties": {
+                    "default": {"xml": {"nodeType": "element"}},
+                    "enum": {"discriminator": {"defaultMapping": "x"}}
+                }}),
+                vec![
+                    "properties/default/xml/nodeType",
+                    "properties/enum/discriminator/defaultMapping",
+                ],
             ),
             (
-                json!({"examples": [{"xml": {"nodeType": "text"}}]}),
-                vec!["examples/0/xml/nodeType"],
-            ),
-            (
-                json!({"const": {"a": {"xml": {"nodeType": 1}}}}),
-                vec!["const/a/xml/nodeType"],
-            ),
-            (
-                json!({"example": {"xml": {"nodeType": "attribute"}}}),
-                vec!["example/xml/nodeType"],
+                json!({"allOf": [{
+                    "const": {"xml": {"nodeType": "text"}},
+                    "items": {"xml": {"nodeType": "text"}}
+                }]}),
+                vec!["allOf/0/items/xml/nodeType"],
             ),
             (
                 json!({"x-vendor": {"xml": {"nodeType": "x"}}}),
@@ -1798,6 +1806,42 @@ mod serialized_schema {
                 expected,
                 "{schema}"
             );
+        }
+    }
+
+    /// Each instance-data keyword holding both members at every depth, on the
+    /// schema itself and on a subschema.
+    fn instance_data() -> Vec<Value> {
+        let held = json!({
+            "xml": {"nodeType": "element"},
+            "discriminator": {"defaultMapping": "x"},
+            "properties": {"a": {"xml": {"nodeType": "text"}}}
+        });
+        let mut schemas: Vec<Value> = ["default", "const", "example"]
+            .into_iter()
+            .map(|keyword| json!({ keyword: held }))
+            .chain(
+                ["enum", "examples"]
+                    .into_iter()
+                    .map(|keyword| json!({ keyword: [held] })),
+            )
+            .collect();
+        schemas.push(json!({"items": {"default": held}}));
+        schemas
+    }
+
+    /// 3.1 reads what an instance-data keyword holds as any JSON, so nothing
+    /// in it is a 3.2 construct and the document emits as 3.1.
+    #[test]
+    fn instance_data_holding_either_member_emits_as_three_one() {
+        for schema in instance_data() {
+            let document = with_schema(&schema);
+            assert_eq!(
+                three_two_only_constructs(&document),
+                Vec::<String>::new(),
+                "{schema}"
+            );
+            assert!(document.emit(SpecVersion::V3_1).is_ok(), "{schema}");
         }
     }
 
