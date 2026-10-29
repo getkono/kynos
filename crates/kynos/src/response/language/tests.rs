@@ -839,3 +839,50 @@ fn the_content_language_an_offer_declares_is_a_string_enumerating_the_offer() {
         serde_json::json!({ "type": "string", "enum": ["en", "fr"] })
     );
 }
+
+/// Both language fields, whole: `Content-Language` in its enumerated and its
+/// unconstrained shape, and `Accept-Language`'s full description, since the
+/// cases above read one member or one clause of each.
+#[test]
+fn each_language_field_is_described_exactly() {
+    use crate::{extract::params::header::HeaderParams, schema::registry::Registry};
+
+    const CONTENT_LANGUAGE: &str = "The natural language of this representation, per RFC 9110 \
+        section 8.5. Stated on every response that negotiated one, including a response served \
+        in a language the request did not ask for.";
+    let content_language = |schema: serde_json::Value| {
+        serde_json::json!({
+            "description": CONTENT_LANGUAGE,
+            "required": true,
+            "content": { "text/plain": { "schema": schema } },
+        })
+    };
+
+    assert_eq!(
+        serde_json::to_value(headers::header(&["en", "fr"])).expect("JSON"),
+        content_language(serde_json::json!({ "type": "string", "enum": ["en", "fr"] }))
+    );
+    assert_eq!(
+        serde_json::to_value(ContentLanguage::response_headers(&mut Registry::default()))
+            .expect("JSON"),
+        serde_json::json!({
+            "Content-Language": content_language(serde_json::json!({ "type": "string" })),
+        })
+    );
+
+    assert_eq!(
+        serde_json::to_value(headers::parameter(&["en", "fr"])).expect("JSON"),
+        serde_json::json!({
+            "name": "Accept-Language",
+            "in": "header",
+            "description": "The natural languages preferred in the response, per RFC 9110 \
+                section 12.5.4. A comma-separated priority list of RFC 4647 language ranges, \
+                each optionally weighted with `;q=`. This operation answers in `en` and `fr`, \
+                and states which on `Content-Language`. A request whose preferences match none \
+                of them is served en rather than refused, and a range this field cannot \
+                parse is ignored rather than refusing the request.",
+            "schema": { "type": "string" },
+            "example": "da, en-gb;q=0.8, en;q=0.7",
+        })
+    );
+}

@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Map,
-    model::{body::media_type::MediaType, extensions::Extensions, schema::Schema},
+    model::{
+        body::media_type::MediaType, extensions::Extensions, reference::RefOr, schema::Schema,
+    },
 };
 
 /// A request body.
@@ -23,8 +25,9 @@ pub struct RequestBody {
     /// The body's representations, keyed by media type or media type range.
     ///
     /// More than one entry describes a body the server accepts in several
-    /// encodings.
-    pub content: Map<MediaType>,
+    /// encodings. A [`RefOr::Ref`] entry is 3.2's alone: 3.1 admits only a
+    /// Media Type Object here, so emitting or validating as 3.1 refuses one.
+    pub content: Map<RefOr<MediaType>>,
 
     /// Whether the body is mandatory. Defaults to `false`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -37,9 +40,9 @@ pub struct RequestBody {
 
 impl RequestBody {
     /// Creates a required body with a single media type.
-    pub fn new(media_type: impl Into<String>, content: MediaType) -> Self {
+    pub fn new(media_type: impl Into<String>, content: impl Into<RefOr<MediaType>>) -> Self {
         let mut map = Map::new();
-        map.insert(media_type.into(), content);
+        map.insert(media_type.into(), content.into());
         Self {
             content: map,
             required: Some(true),
@@ -55,8 +58,12 @@ impl RequestBody {
 
     /// Adds another representation of the same body.
     #[must_use]
-    pub fn with_media_type(mut self, media_type: impl Into<String>, content: MediaType) -> Self {
-        self.content.insert(media_type.into(), content);
+    pub fn with_media_type(
+        mut self,
+        media_type: impl Into<String>,
+        content: impl Into<RefOr<MediaType>>,
+    ) -> Self {
+        self.content.insert(media_type.into(), content.into());
         self
     }
 

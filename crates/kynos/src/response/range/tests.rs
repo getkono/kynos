@@ -669,6 +669,7 @@ fn pattern(header: &kynos_openapi::Header) -> String {
     assert_eq!(media_type, "text/plain");
     assert_eq!(header.required, Some(true));
 
+    let content = content.as_item().expect("an inline media type");
     let kynos_openapi::Schema::Object(schema) = content.schema.clone().expect("a schema") else {
         panic!("described by a boolean schema");
     };
@@ -708,6 +709,44 @@ fn both_groups_describe_the_fields_they_send() {
     );
 
     assert_eq!(pattern(&accept_ranges_header()), "^bytes$");
+}
+
+/// Each range field's Header Object, whole: the three share one shape and
+/// differ in pattern and description, so a description moved onto the wrong
+/// field reads as well-formed to every case above.
+#[test]
+fn each_range_field_is_described_exactly() {
+    let described = |pattern: &str, description: &str| {
+        serde_json::json!({
+            "description": description,
+            "required": true,
+            "content": { "text/plain": { "schema": { "type": "string", "pattern": pattern } } },
+        })
+    };
+    let json = |header: kynos_openapi::Header| serde_json::to_value(header).expect("JSON");
+
+    assert_eq!(
+        json(accept_ranges_header()),
+        described(
+            "^bytes$",
+            "The range units this operation serves, per RFC 9110 section 14.3."
+        )
+    );
+    assert_eq!(
+        json(ContentRange::satisfied_header()),
+        described(
+            r"^bytes \d+-\d+/\d+$",
+            "The part of the representation enclosed, and its complete length, per RFC 9110 \
+             section 14.4."
+        )
+    );
+    assert_eq!(
+        json(ContentRange::unsatisfied_header()),
+        described(
+            r"^bytes \*/\d+$",
+            "The complete length of the selected representation, per RFC 9110 section 15.5.17."
+        )
+    );
 }
 
 /// The field each group writes matches the pattern it declares.
@@ -912,6 +951,67 @@ async fn a_false_if_none_match_on_an_unsafe_method_answers_412() {
             assert_eq!(status, expected, "{method} with If-None-Match: {named}");
         }
     }
+}
+
+/// What a ten-octet [`Served`] tagged `"b"` and last modified at [`MODIFIED`]
+/// answers `method` carrying `fields` with: its status, its field names in
+/// order, and whether its body is known to be empty.
+async fn delivered_head(
+    method: Method,
+    fields: &[(HeaderName, &'static str)],
+) -> (StatusCode, Vec<String>, bool) {
+    let mut headers = HeaderMap::new();
+    for (name, value) in fields {
+        headers.append(name, HeaderValue::from_static(value));
+    }
+    let conditions = Conditions {
+        method,
+        fields: headers,
+    };
+
+    let response = Served::<_, OctetStream>::new(InMemory::new(Bytes::from_static(b"0123456789")))
+        .etag(crate::http::etag::ETag::strong("b"))
+        .last_modified(std::time::SystemTime::UNIX_EPOCH + MODIFIED)
+        .deliver(&conditions)
+        .await
+        .expect("an in-memory source cannot fail")
+        .into_response();
+
+    let names = response
+        .headers()
+        .keys()
+        .map(|name| name.as_str().to_owned())
+        .collect();
+    let empty = http_body::Body::is_end_stream(response.body())
+        && http_body::Body::size_hint(response.body()).exact() == Some(0);
+    (response.status(), names, empty)
+}
+
+/// Both 412s a delivery answers with carry nothing but their status, and its
+/// 304 carries its two validators and no content. Each of the three is built
+/// at its own site, so each is held to its whole head.
+#[tokio::test]
+async fn a_refused_delivery_is_bare_and_a_304_carries_its_validators() {
+    let bare = (StatusCode::PRECONDITION_FAILED, Vec::<String>::new(), true);
+
+    assert_eq!(
+        delivered_head(Method::GET, &[(header::IF_MATCH, "\"a\"")]).await,
+        bare,
+        "a failed If-Match"
+    );
+    assert_eq!(
+        delivered_head(Method::PUT, &[(header::IF_NONE_MATCH, "\"b\"")]).await,
+        bare,
+        "a false If-None-Match on an unsafe method"
+    );
+    assert_eq!(
+        delivered_head(Method::GET, &[(header::IF_NONE_MATCH, "\"b\"")]).await,
+        (
+            StatusCode::NOT_MODIFIED,
+            vec!["etag".to_owned(), "last-modified".to_owned()],
+            true
+        ),
+    );
 }
 
 /// A `*` line beside a tag line matches by itself, so an untagged

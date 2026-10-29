@@ -308,7 +308,7 @@ fn header_from(parameter: &Parameter) -> Header {
     let mut header = match parameter.shape() {
         ParameterShape::Schema { schema, .. } => Header::new(schema.clone()),
         ParameterShape::Content { media_type, value } => {
-            Header::with_content(media_type.clone(), (**value).clone())
+            Header::with_content(media_type.clone(), RefOr::clone(value))
         }
     };
 

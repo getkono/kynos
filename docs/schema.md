@@ -737,7 +737,9 @@ no response body is.
   `Textual` and nothing else ([Binary content](#binary-content)).
 - **Lengths count code points**, not bytes, as JSON Schema does.
 - **`unique_items` sorts** through `PartialOrd`, so the check is `O(n log n)`
-  rather than a pairwise scan a request could make quadratic.
+  rather than a pairwise scan a request could make quadratic. An item not
+  equal to itself, a NaN a form can carry, equals nothing and is set aside
+  before the sort, so it can neither repeat nor hide a repeat.
 - **A set's member is reported at the set**, since its iteration order is not
   the document's; so is a map value whose key type does not say its member
   name through `MapKey::as_member`.

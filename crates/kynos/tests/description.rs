@@ -527,6 +527,46 @@ fn a_deprecated_handler_marks_its_operation() {
     assert_eq!(operation(&document, "/alpha").deprecated, None);
 }
 
+// --- A handler's doc comment ------------------------------------------------
+
+/// Summarizes the operation.
+///
+/// Describes it at length.
+#[kynos::get("/summarized-and-described")]
+async fn summarized_and_described() -> NoContent {
+    NoContent
+}
+
+/// Summarizes the operation alone.
+#[kynos::get("/summarized")]
+async fn summarized() -> NoContent {
+    NoContent
+}
+
+/// A handler's doc comment is its operation's `summary`, then its
+/// `description`, each absent where the comment says nothing for it.
+#[test]
+fn a_handlers_doc_comment_is_its_operations_summary_and_description() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![summarized_and_described, summarized, alpha])
+        .openapi()
+        .expect("the fixture describes itself");
+
+    for (path, summary, description) in [
+        (
+            "/summarized-and-described",
+            Some("Summarizes the operation."),
+            Some("Describes it at length."),
+        ),
+        ("/summarized", Some("Summarizes the operation alone."), None),
+        ("/alpha", None, None),
+    ] {
+        let operation = operation(&document, path);
+        assert_eq!(operation.summary.as_deref(), summary, "{path}");
+        assert_eq!(operation.description.as_deref(), description, "{path}");
+    }
+}
+
 // -- language negotiation, and the statuses it reaches ------------------------
 
 /// Three languages, which is enough for an enumeration to be worth reading.
@@ -637,6 +677,7 @@ fn a_localized_operation_enumerates_its_offer_on_the_language_it_answers_in() {
     assert_eq!(field.required, Some(true));
 
     let (_, media) = field.content().expect("a content-described header");
+    let media = media.as_item().expect("an inline media type");
     let kynos::openapi::Schema::Object(schema) = media.schema.clone().expect("a schema") else {
         panic!("described by a boolean schema");
     };
@@ -759,6 +800,7 @@ fn a_catalogue_no_const_can_name_still_declares_the_field_without_its_offer() {
     };
 
     let (_, media) = field.content().expect("a content-described header");
+    let media = media.as_item().expect("an inline media type");
     let kynos::openapi::Schema::Object(schema) = media.schema.clone().expect("a schema") else {
         panic!("described by a boolean schema");
     };

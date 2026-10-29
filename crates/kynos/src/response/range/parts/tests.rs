@@ -362,7 +362,9 @@ fn the_content_range_is_required_where_it_travels_and_not_where_it_cannot() {
         .expect("an inline header");
     assert_eq!(top_level.required, Some(false));
 
-    let content = &partial.content[MEDIA_TYPE];
+    let content = partial.content[MEDIA_TYPE]
+        .as_item()
+        .expect("an inline media type");
     assert!(
         content.item_schema.is_some(),
         "a request-determined number of parts is `itemSchema`, not `schema`"

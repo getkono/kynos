@@ -268,6 +268,44 @@ async fn if_none_match_reads_every_field_line() {
     assert!(reply.body.is_empty());
 }
 
+/// The names of the fields `reply` carries, sorted, asserting it has no
+/// content: what a bodiless answer is, beyond its status.
+fn bodiless_fields(reply: &support::Reply) -> Vec<String> {
+    assert!(reply.body.is_empty(), "{:?}", reply.text());
+    let mut names: Vec<String> = reply
+        .headers
+        .keys()
+        .map(|name| name.as_str().to_owned())
+        .collect();
+    names.sort_unstable();
+    names
+}
+
+/// A 304 carries exactly the fields a 200 would describe the representation
+/// with, and a 412 carries none: each is built by hand at its own site, so
+/// each is held to its whole head.
+#[tokio::test]
+async fn a_304_and_a_412_carry_exactly_their_fields() {
+    let service = served().build(()).expect("a describable router");
+
+    let not_modified = get(&service, "/static/css/app.css")
+        .header("if-none-match", "*")
+        .call()
+        .await;
+    assert_eq!(not_modified.status, StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        bodiless_fields(&not_modified),
+        ["cache-control", "etag", "vary"]
+    );
+
+    let failed = get(&service, "/static/css/app.css")
+        .header("if-match", "\"before-the-deployment\"")
+        .call()
+        .await;
+    assert_eq!(failed.status, StatusCode::PRECONDITION_FAILED);
+    assert_eq!(bodiless_fields(&failed), Vec::<String>::new());
+}
+
 // --- Byte ranges ----------------------------------------------------------
 
 /// The stylesheet, whole. Every range case below is an offset into this.
@@ -347,6 +385,40 @@ async fn an_unsatisfiable_range_states_the_complete_length() {
     assert_eq!(
         reply.field(header::CONTENT_RANGE.as_str()).as_deref(),
         Some("bytes */19")
+    );
+}
+
+/// The 416, whole: the `Content-Range` stating the length beside the problem
+/// document, and no other field.
+#[tokio::test]
+async fn an_unsatisfiable_range_carries_exactly_its_fields() {
+    let service = served().build(()).expect("a describable router");
+
+    let reply = get(&service, "/static/css/app.css")
+        .header("range", "bytes=100-200")
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::RANGE_NOT_SATISFIABLE);
+    let mut names: Vec<&str> = reply
+        .headers
+        .keys()
+        .map(kynos::http::HeaderName::as_str)
+        .collect();
+    names.sort_unstable();
+    assert_eq!(names, ["content-range", "content-type"]);
+    assert_eq!(
+        reply.field(header::CONTENT_TYPE.as_str()).as_deref(),
+        Some("application/problem+json")
+    );
+    assert_eq!(
+        reply.json(),
+        serde_json::json!({
+            "type": "about:blank",
+            "title": "Range Not Satisfiable",
+            "status": 416,
+            "detail": "no requested range is satisfiable",
+        })
     );
 }
 
@@ -1136,6 +1208,35 @@ mod directory {
             .await;
 
         assert_eq!(reply.status, StatusCode::PRECONDITION_FAILED);
+    }
+
+    /// A served file's 304 carries exactly the fields its 200 describes the
+    /// representation with, and its 412 and a missing file's 404 carry none,
+    /// as the embedded set's do.
+    #[tokio::test]
+    async fn a_304_a_412_and_a_404_carry_exactly_their_fields() {
+        let service = served().build(()).expect("a buildable router");
+
+        let not_modified = get(&service, "/files/css/app.css")
+            .header("if-none-match", "*")
+            .call()
+            .await;
+        assert_eq!(not_modified.status, StatusCode::NOT_MODIFIED);
+        assert_eq!(
+            super::bodiless_fields(&not_modified),
+            ["cache-control", "etag"]
+        );
+
+        let failed = get(&service, "/files/css/app.css")
+            .header("if-match", "\"before-the-deployment\"")
+            .call()
+            .await;
+        assert_eq!(failed.status, StatusCode::PRECONDITION_FAILED);
+        assert_eq!(super::bodiless_fields(&failed), Vec::<String>::new());
+
+        let missing = get(&service, "/files/css/missing.css").call().await;
+        assert_eq!(missing.status, StatusCode::NOT_FOUND);
+        assert_eq!(super::bodiless_fields(&missing), Vec::<String>::new());
     }
 
     // --- What the document says ------------------------------------------

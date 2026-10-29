@@ -148,11 +148,15 @@ fn check_parameter(location: &str, parameter: &Parameter, walk: &mut Walk<'_>) {
         ParameterShape::Schema { schema, .. } => {
             check_schema(&format!("{location}/schema"), schema, walk);
         }
-        ParameterShape::Content { media_type, value } => check_media_type(
-            &format!("{location}/content/{}", pointer_token(media_type)),
-            value,
-            walk,
-        ),
+        ParameterShape::Content { media_type, value } => {
+            if let RefOr::Item(value) = &**value {
+                check_media_type(
+                    &format!("{location}/content/{}", pointer_token(media_type)),
+                    value,
+                    walk,
+                );
+            }
+        }
     }
 }
 
@@ -161,11 +165,15 @@ fn check_header(location: &str, header: &Header, walk: &mut Walk<'_>) {
         HeaderShape::Schema { schema, .. } => {
             check_schema(&format!("{location}/schema"), schema, walk);
         }
-        HeaderShape::Content { media_type, value } => check_media_type(
-            &format!("{location}/content/{}", pointer_token(media_type)),
-            value,
-            walk,
-        ),
+        HeaderShape::Content { media_type, value } => {
+            if let RefOr::Item(value) = &**value {
+                check_media_type(
+                    &format!("{location}/content/{}", pointer_token(media_type)),
+                    value,
+                    walk,
+                );
+            }
+        }
     }
 }
 
@@ -180,13 +188,9 @@ fn check_response(location: &str, response: &Response, walk: &mut Walk<'_>) {
     check_content(location, &response.content, walk);
 }
 
-fn check_content(location: &str, content: &Map<MediaType>, walk: &mut Walk<'_>) {
-    for (name, media_type) in content {
-        check_media_type(
-            &format!("{location}/content/{}", pointer_token(name)),
-            media_type,
-            walk,
-        );
+fn check_content(location: &str, content: &Map<RefOr<MediaType>>, walk: &mut Walk<'_>) {
+    for (location, media_type) in items(&format!("{location}/content"), content) {
+        check_media_type(&location, media_type, walk);
     }
 }
 

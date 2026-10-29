@@ -734,6 +734,7 @@ fn a_streamed_body_describes_its_item_and_not_the_whole() {
         let content = body
             .content
             .get(media_type)
+            .and_then(kynos_openapi::RefOr::as_item)
             .unwrap_or_else(|| panic!("the body is keyed by {media_type}"));
 
         assert!(
