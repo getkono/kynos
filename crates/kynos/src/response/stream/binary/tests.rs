@@ -93,3 +93,16 @@ fn a_binary_stream_is_described_as_a_binary_body() {
         "a streamed binary body is described differently from a buffered one"
     );
 }
+
+/// A media type marker written as the docs write it, deriving nothing.
+struct Bare;
+
+/// The marker sits only in a `PhantomData`, so `Debug` is bounded on the stream
+/// alone and prints it, leaving the marker out.
+#[test]
+fn a_marker_deriving_nothing_leaves_a_binary_stream_debug() {
+    assert_eq!(
+        format!("{:?}", BinaryStream::<_, Bare>::new(7_u8)),
+        "BinaryStream { stream: 7, .. }"
+    );
+}
