@@ -208,6 +208,17 @@ impl Cors<Undocumented> {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Also declares the CORS response headers in the description.
+    ///
+    /// Changes the type, because it changes what every covered operation says.
+    #[must_use]
+    pub fn document_response_headers(self) -> Cors<Documented> {
+        Cors {
+            config: self.config,
+            _documented: PhantomData,
+        }
+    }
 }
 
 impl<D> Cors<D> {
@@ -428,19 +439,6 @@ impl CorsConfig {
             http::HeaderValue::from_static("*")
         } else {
             origin.clone()
-        }
-    }
-}
-
-impl Cors<Undocumented> {
-    /// Also declares the CORS response headers in the description.
-    ///
-    /// Changes the type, because it changes what every covered operation says.
-    #[must_use]
-    pub fn document_response_headers(self) -> Cors<Documented> {
-        Cors {
-            config: self.config,
-            _documented: PhantomData,
         }
     }
 }
