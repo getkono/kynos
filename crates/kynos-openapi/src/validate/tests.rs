@@ -842,7 +842,8 @@ fn a_reserved_extension_name_is_a_warning_wherever_it_is_written() {
 }
 
 /// A description with a reserved name planted in each object beyond the root,
-/// parameters, headers and operations that holds `extensions`.
+/// parameters, headers and operations that holds `extensions`, and among two
+/// Schema Objects' own keywords, at the top and nested.
 fn reserved_names_everywhere() -> Document {
     serde_json::from_value(serde_json::json!({
         "openapi": "3.1.2",
@@ -884,8 +885,9 @@ fn reserved_names_everywhere() -> Document {
         "components": {
             "x-oai-components": 1,
             "schemas": {"Order": {
+                "x-oas-schema": 1,
                 "discriminator": {"propertyName": "kind", "x-oai-discriminator": 1},
-                "properties": {"lines": {"xml": {"x-oai-xml": 1}}}
+                "properties": {"lines": {"x-oai-property": 1, "xml": {"x-oai-xml": 1}}}
             }},
             "securitySchemes": {"oauth": {
                 "type": "oauth2", "x-oai-scheme": 1,
@@ -930,6 +932,11 @@ fn a_reserved_extension_name_is_a_warning_on_every_object_that_holds_extensions(
         (&response, "x-oai-response"),
         (&format!("{response}/links/next"), "x-oai-link"),
         ("#/components", "x-oai-components"),
+        ("#/components/schemas/Order", "x-oas-schema"),
+        (
+            "#/components/schemas/Order/properties/lines",
+            "x-oai-property",
+        ),
         (
             "#/components/schemas/Order/discriminator",
             "x-oai-discriminator",
