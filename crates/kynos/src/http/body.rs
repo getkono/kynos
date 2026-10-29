@@ -149,6 +149,14 @@ impl Body {
     }
 }
 
+/// A response with `status` and no content.
+#[must_use]
+pub(crate) fn bodiless(status: super::StatusCode) -> super::Response {
+    let mut response = super::Response::new(Body::empty());
+    *response.status_mut() = status;
+    response
+}
+
 /// How a body ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Delivery {

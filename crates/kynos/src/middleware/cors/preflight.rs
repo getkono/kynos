@@ -148,8 +148,7 @@ impl Preflight {
             return self.not_a_preflight();
         };
 
-        let mut response = Response::new(crate::http::body::Body::empty());
-        *response.status_mut() = StatusCode::NO_CONTENT;
+        let mut response = crate::http::body::bodiless(StatusCode::NO_CONTENT);
 
         // On every answer: a cached refusal must not be reused either.
         crate::http::vary_on(response.headers_mut(), PREFLIGHT_VARIES);

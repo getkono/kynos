@@ -290,8 +290,7 @@ impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
         // request would receive, not one the client may no longer decode, and
         // over every field line, since section 5.3 makes them one list.
         if etag::if_none_match(request.headers(), || Some(chosen.etag)) == Some(true) {
-            let mut response = Response::new(crate::http::body::Body::empty());
-            *response.status_mut() = StatusCode::NOT_MODIFIED;
+            let mut response = crate::http::body::bodiless(StatusCode::NOT_MODIFIED);
             crate::extract::params::header::write_or_refuse(
                 &mut response,
                 &self.headers(&chosen).not_modified(),

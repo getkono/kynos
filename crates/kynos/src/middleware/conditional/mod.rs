@@ -144,8 +144,7 @@ impl NotModified {
 
 impl IntoResponse for NotModified {
     fn into_response(self) -> http::Response {
-        let mut response = http::Response::new(crate::http::body::Body::empty());
-        *response.status_mut() = http::StatusCode::NOT_MODIFIED;
+        let mut response = crate::http::body::bodiless(http::StatusCode::NOT_MODIFIED);
         *response.headers_mut() = self.replayed;
         response
     }

@@ -16,7 +16,7 @@ use std::{sync::Arc, time::SystemTime};
 use crate::{
     http::etag::ETag,
     http::media::MediaType,
-    http::{HeaderValue, Method, Parts, Response, StatusCode, header},
+    http::{HeaderValue, Method, Parts, Response, StatusCode, body::bodiless, header},
     response::{
         IntoResponse,
         disposition::ContentDisposition,
@@ -158,9 +158,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
 
         // Section 13.2.2 steps 1 and 2: the lost-update preconditions first.
         if self.precondition_failed(conditions, current) {
-            let mut response = Response::new(crate::http::body::Body::empty());
-            *response.status_mut() = StatusCode::PRECONDITION_FAILED;
-            return Ok(Delivery::new(response));
+            return Ok(Delivery::new(bodiless(StatusCode::PRECONDITION_FAILED)));
         }
 
         // Steps 3 and 4: the cache validations.
@@ -169,9 +167,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
             // HEAD alone, and a 412 for any other method. Only it can hold
             // here for one, since the date applies to GET and HEAD alone.
             if conditions.method != Method::GET && conditions.method != Method::HEAD {
-                let mut response = Response::new(crate::http::body::Body::empty());
-                *response.status_mut() = StatusCode::PRECONDITION_FAILED;
-                return Ok(Delivery::new(response));
+                return Ok(Delivery::new(bodiless(StatusCode::PRECONDITION_FAILED)));
             }
             let response = self
                 .head(None, complete_length, tag)

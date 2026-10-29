@@ -20,9 +20,7 @@ fn status_code(status: u16) -> StatusCode {
 /// A variant carrying no body: the declared status and nothing else.
 #[must_use]
 pub fn empty(status: u16) -> Response {
-    let mut response = Response::new(Body::empty());
-    *response.status_mut() = status_code(status);
-    response
+    crate::http::body::bodiless(status_code(status))
 }
 
 /// A variant carrying a body, as the `application/json` the derive described it
