@@ -20,8 +20,8 @@ const FLAGS: &[&str] = &["unique_items", "open"];
 
 /// Validates every `#[schema(...)]` in the input, before any code is emitted,
 /// so [`constraints`](crate::derive::schema::attributes::constraints) need not.
-pub(super) fn check_constraints(input: &DeriveInput) -> syn::Result<()> {
-    let payloads = internally_tagged_payloads(input, &Container::read(input));
+pub(super) fn check_constraints(input: &DeriveInput, container: &Container) -> syn::Result<()> {
+    let payloads = internally_tagged_payloads(input, container);
     for group in field_groups(input) {
         let named = match group {
             Fields::Named(named) => &named.named,

@@ -8,10 +8,13 @@ use syn::{
 };
 
 use super::{
+    aliases::variants_read_names,
     attributes::{
         field_name, field_read_name, is_skipped_both_ways, serde_flag, serde_key_span, sides,
+        variant_name,
     },
     container::{Container, Visitor},
+    refusals,
 };
 use crate::derive::common::skip_value;
 
@@ -183,4 +186,23 @@ pub(crate) fn split_rule(attrs: &[syn::Attribute], key: &str) -> Option<Span> {
         });
     }
     found
+}
+
+/// Each of an enum's `variants` with the name serde writes it under and every
+/// name serde reads as it, as the `Schema` derive names them, in declaration
+/// order: the text form the `ParamValue` derive gives a field-less enum.
+///
+/// The `Schema` derive's refusals run first, over the same reading of the
+/// container, so no name they refuse is returned.
+pub(crate) fn variant_wire_names<'a>(
+    input: &DeriveInput,
+    variants: &[&'a Variant],
+) -> syn::Result<Vec<(&'a Variant, String, Vec<String>)>> {
+    let container = Container::read(input);
+    refusals::check(input, &container)?;
+    Ok(variants
+        .iter()
+        .zip(variants_read_names(variants, &container))
+        .map(|(variant, read)| (*variant, variant_name(variant, &container), read))
+        .collect())
 }

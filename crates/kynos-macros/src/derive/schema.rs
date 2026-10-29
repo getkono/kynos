@@ -40,7 +40,7 @@ mod kinds;
 pub(crate) mod members;
 #[cfg(feature = "pattern")]
 mod pattern;
-pub(crate) mod refusals;
+mod refusals;
 mod shape;
 
 use attributes::{
@@ -84,7 +84,8 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
             "`Schema` cannot describe a union: no JSON value corresponds to one",
         ));
     }
-    refusals::check(input)?;
+    let container = Container::read(input);
+    refusals::check(input, &container)?;
 
     let name = &input.ident;
     let generics = schema_bounded_generics(input);
@@ -128,7 +129,6 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         }
     };
 
-    let container = Container::read(input);
     let body = body(input, &container);
     let check = check::body(input, &container);
     let kinds = kinds::newtype(input, &container, &generics);

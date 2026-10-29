@@ -10,10 +10,7 @@
 use quote::quote;
 use syn::{Data, DeriveInput, Fields, LitStr, spanned::Spanned};
 
-use crate::derive::schema::{
-    attributes::{serde_key_span, variant_wire_names},
-    refusals,
-};
+use crate::derive::schema::{attributes::serde_key_span, members::variant_wire_names};
 
 pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let data = match &input.data {
@@ -71,13 +68,11 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         ));
     }
 
-    refusals::check(input)?;
+    let variants: Vec<_> = data.variants.iter().collect();
+    let names = variant_wire_names(input, &variants)?;
 
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
-
-    let variants: Vec<_> = data.variants.iter().collect();
-    let names = variant_wire_names(input, &variants);
 
     let written = names.iter().map(|(variant, wire, _)| {
         let ident = &variant.ident;

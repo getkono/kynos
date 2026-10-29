@@ -16,12 +16,15 @@ use crate::derive::schema::{
 /// cannot see, and is otherwise inlined, where it would recurse without end;
 /// so every instantiation is refused. Only the direct case (bare identifier or
 /// `Self`) is visible here; indirect cycles are refused by `Registry::resolve`.
-pub(super) fn reject_recursive_generic(input: &DeriveInput) -> syn::Result<()> {
+pub(super) fn reject_recursive_generic(
+    input: &DeriveInput,
+    container: &Container,
+) -> syn::Result<()> {
     if input.generics.type_params().next().is_none() {
         return Ok(());
     }
 
-    let site = described_groups(input, &Container::read(input))
+    let site = described_groups(input, container)
         .into_iter()
         .flatten()
         .filter(|field| is_described(field) && !is_phantom(&field.ty))

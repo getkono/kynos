@@ -16,13 +16,15 @@ use crate::derive::schema::{
 /// An object `#[serde(deny_unknown_fields)]` closes has no schema true of a
 /// flattened open map: serde refuses unnamed keys before the map sees them, so
 /// it reads empty while serde writes its members.
-pub(super) fn reject_contradicted_closure(input: &DeriveInput) -> syn::Result<()> {
-    let container = Container::read(input);
+pub(super) fn reject_contradicted_closure(
+    input: &DeriveInput,
+    container: &Container,
+) -> syn::Result<()> {
     if !container.deny_unknown_fields || container.transparent {
         return Ok(());
     }
 
-    let named = described_groups(input, &container)
+    let named = described_groups(input, container)
         .into_iter()
         .filter(|fields| matches!(fields, Fields::Named(_)))
         .flat_map(described_members);
@@ -56,9 +58,11 @@ fn struct_tag<'a>(input: &DeriveInput, container: &'a Container) -> Option<&'a s
 
 /// A tagged struct `#[serde(deny_unknown_fields)]` closes has no true schema.
 /// The closed struct refuses the tag it writes.
-pub(super) fn reject_closed_tagged_struct(input: &DeriveInput) -> syn::Result<()> {
-    let container = Container::read(input);
-    if struct_tag(input, &container).is_none() || !container.deny_unknown_fields {
+pub(super) fn reject_closed_tagged_struct(
+    input: &DeriveInput,
+    container: &Container,
+) -> syn::Result<()> {
+    if struct_tag(input, container).is_none() || !container.deny_unknown_fields {
         return Ok(());
     }
     let span = serde_key_span(&input.attrs, &["deny_unknown_fields"])
@@ -75,9 +79,11 @@ pub(super) fn reject_closed_tagged_struct(input: &DeriveInput) -> syn::Result<()
 /// A named field serde writes or reads under its struct's own tag is refused.
 /// serde does not check this for a struct, so it writes the key twice. A
 /// flattened field's keys are invisible here, as they are to serde's own check.
-pub(super) fn reject_field_named_as_tag(input: &DeriveInput) -> syn::Result<()> {
-    let container = Container::read(input);
-    let (Some(tag), Data::Struct(data)) = (struct_tag(input, &container), &input.data) else {
+pub(super) fn reject_field_named_as_tag(
+    input: &DeriveInput,
+    container: &Container,
+) -> syn::Result<()> {
+    let (Some(tag), Data::Struct(data)) = (struct_tag(input, container), &input.data) else {
         return Ok(());
     };
 
@@ -85,10 +91,10 @@ pub(super) fn reject_field_named_as_tag(input: &DeriveInput) -> syn::Result<()> 
         if is_flattened(field) || is_skipped_both_ways(&field.attrs) {
             return false;
         }
-        let written = !serde_flag(&field.attrs, &["skip_serializing"])
-            && field_name(field, &container) == tag;
+        let written =
+            !serde_flag(&field.attrs, &["skip_serializing"]) && field_name(field, container) == tag;
         let read = !serde_flag(&field.attrs, &["skip_deserializing"])
-            && aliases::read_names(field, &container)
+            && aliases::read_names(field, container)
                 .iter()
                 .any(|name| name == tag);
         written || read
@@ -113,8 +119,10 @@ pub(super) fn reject_field_named_as_tag(input: &DeriveInput) -> syn::Result<()> 
 /// The schema omits the field, and the closed object then refuses what serde
 /// writes of it. The open-map case is a bound instead
 /// ([`open_fields_beside_unread_fields`](crate::derive::schema::flatten::open_fields_beside_unread_fields)).
-pub(super) fn reject_unread_field_in_closed_object(input: &DeriveInput) -> syn::Result<()> {
-    let container = Container::read(input);
+pub(super) fn reject_unread_field_in_closed_object(
+    input: &DeriveInput,
+    container: &Container,
+) -> syn::Result<()> {
     if container.transparent || !container.deny_unknown_fields {
         return Ok(());
     }

@@ -51,7 +51,7 @@ pub(super) fn reject_container_conversions(input: &DeriveInput) -> syn::Result<(
 ///
 /// serde's first-match tie-break is not expressible in JSON Schema; the same
 /// holds for a single untagged variant.
-pub(super) fn reject_untagged(input: &DeriveInput) -> syn::Result<()> {
+pub(super) fn reject_untagged(input: &DeriveInput, container: &Container) -> syn::Result<()> {
     // Only an enum can be untagged; serde refuses it elsewhere itself.
     let Data::Enum(data) = &input.data else {
         return Ok(());
@@ -66,7 +66,7 @@ pub(super) fn reject_untagged(input: &DeriveInput) -> syn::Result<()> {
         ));
     }
 
-    for variant in described_variants(data, &Container::read(input)) {
+    for variant in described_variants(data, container) {
         if let Some((_, span)) = serde_key_span(&variant.attrs, &["untagged"]) {
             return Err(syn::Error::new(
                 span,
@@ -87,7 +87,10 @@ pub(super) fn reject_untagged(input: &DeriveInput) -> syn::Result<()> {
 /// function still writes members), only [`READ_OVERRIDES`] where serde never
 /// writes, and a transparent struct's [`transparent_picks`] per direction. A
 /// newtype struct's member is always scanned, as serde writes it regardless.
-pub(super) fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()> {
+pub(super) fn reject_wire_form_overrides(
+    input: &DeriveInput,
+    container: &Container,
+) -> syn::Result<()> {
     type Scanned<'a> = (&'a [syn::Attribute], &'static str, &'static [&'static str]);
 
     fn fields<'a>(
@@ -131,9 +134,9 @@ pub(super) fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()>
     }
 
     let described = match &input.data {
-        Data::Struct(data) if Container::read(input).transparent => picked(&data.fields),
+        Data::Struct(data) if container.transparent => picked(&data.fields),
         Data::Struct(data) => fields(&data.fields, data.fields.len() == 1, WIRE_FORM_OVERRIDES),
-        Data::Enum(data) => described_variants(data, &Container::read(input))
+        Data::Enum(data) => described_variants(data, container)
             .into_iter()
             .flat_map(|variant| {
                 let keys = if is_written(variant) {
@@ -174,7 +177,7 @@ pub(super) fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()>
 /// identifier it does not name as its last variant where that is a newtype or
 /// carries `other`, and its identifier visitor reads no `skip`, so the last
 /// variant is judged whatever serde skips.
-pub(super) fn reject_catch_all(input: &DeriveInput) -> syn::Result<()> {
+pub(super) fn reject_catch_all(input: &DeriveInput, container: &Container) -> syn::Result<()> {
     let Data::Enum(data) = &input.data else {
         return Ok(());
     };
@@ -198,7 +201,7 @@ pub(super) fn reject_catch_all(input: &DeriveInput) -> syn::Result<()> {
         ));
     }
 
-    for variant in described_variants(data, &Container::read(input)) {
+    for variant in described_variants(data, container) {
         if let Some((_, span)) = serde_key_span(&variant.attrs, &["other"]) {
             return Err(syn::Error::new(
                 span,
