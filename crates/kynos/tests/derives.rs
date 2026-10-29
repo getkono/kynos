@@ -6316,7 +6316,8 @@ mod no_prelude {
         /// The item's identifier.
         #[schema(minimum = 1, maximum = 1000, multiple_of = 1)]
         id: u64,
-        #[schema(min_length = 1, max_length = 10, pattern = "^[a-z]+$")]
+        #[schema(min_length = 1, max_length = 10)]
+        #[cfg_attr(feature = "pattern", schema(pattern = "^[a-z]+$"))]
         #[serde(alias = "label")]
         name: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -6459,8 +6460,13 @@ mod no_prelude {
     struct Bearer;
 
     #[derive(::kynos::SecurityScheme)]
-    #[security(bearer(format = "JWT"), name = "BearerAuth", deprecated)]
+    #[security(bearer(format = "JWT"), name = "BearerAuth")]
     struct SignedBearer;
+
+    #[cfg(feature = "openapi32")]
+    #[derive(::kynos::SecurityScheme)]
+    #[security(bearer, deprecated)]
+    struct RetiredBearer;
 
     #[derive(::kynos::SecurityScheme)]
     #[security(bearer, carrier = optional)]
