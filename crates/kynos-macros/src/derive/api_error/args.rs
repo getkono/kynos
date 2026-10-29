@@ -1,10 +1,10 @@
 //! The `#[problem(...)]` grammar: what one item's or one field's lists said.
 
 use proc_macro2::Span;
-use syn::{Attribute, Expr, ExprLit, ExprPath, Fields, Lit, LitInt, LitStr, spanned::Spanned};
+use syn::{Attribute, Expr, ExprLit, ExprPath, Fields, Lit, LitStr, spanned::Spanned};
 
 use crate::derive::{
-    attribute::{Keys, unknown},
+    attribute::{Keys, status, unknown},
     common::skip_value,
 };
 
@@ -79,28 +79,12 @@ pub(super) fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Res
             let span = meta.path.span();
 
             match key.as_str() {
-                "status" => {
-                    let literal: LitInt = meta.value()?.parse()?;
-                    let code: u16 = literal.base10_parse()?;
-                    if !STATUS_RANGE.contains(&code) {
-                        return Err(syn::Error::new(
-                            literal.span(),
-                            format!(
-                                "a problem detail describes a failure, so its status is between \
-                                 {} and {}; `{code}` is not",
-                                STATUS_RANGE.start(),
-                                STATUS_RANGE.end()
-                            ),
-                        ));
-                    }
-                    if args.status.is_some() {
-                        return Err(syn::Error::new(
-                            literal.span(),
-                            "this already declares a status, and a response has one",
-                        ));
-                    }
-                    args.status = Some((code, literal.span()));
-                }
+                "status" => status(
+                    &meta,
+                    STATUS_RANGE,
+                    "a problem detail describes a failure",
+                    &mut args.status,
+                )?,
                 "title" => args.title = Some(meta.value()?.parse::<LitStr>()?.value()),
                 "type" => args.type_uri = Some(meta.value()?.parse::<LitStr>()?.value()),
                 "base" if position == Position::Type => {

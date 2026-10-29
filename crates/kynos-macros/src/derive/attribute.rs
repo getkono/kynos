@@ -4,8 +4,14 @@
 //! skipping the one or keeping the last of the other: either way the item
 //! would silently say less than what was written.
 
+use std::ops::RangeInclusive;
+
+use proc_macro2::Span;
 use quote::{ToTokens, quote};
-use syn::{DeriveInput, Expr, ExprLit, Field, Lit, LitBool, LitStr, spanned::Spanned};
+use syn::{
+    DeriveInput, Expr, ExprLit, Field, Lit, LitBool, LitInt, LitStr, meta::ParseNestedMeta,
+    spanned::Spanned,
+};
 
 /// Tokens as written with every space dropped, normalized enough to compare
 /// two spellings or name one in a diagnostic.
@@ -65,6 +71,39 @@ impl Keys {
 /// grammar".
 pub(crate) fn unknown(path: &syn::Path, key: &str, grammar: &str) -> syn::Error {
     syn::Error::new(path.span(), format!("`{key}` is not part of {grammar}"))
+}
+
+/// Reads the `status = <code>` `meta` holds into `declared`, refusing a code
+/// outside `range` and a second status.
+///
+/// `sentence` says why the range is what it is, e.g. "a handler returns the
+/// final response".
+pub(crate) fn status(
+    meta: &ParseNestedMeta<'_>,
+    range: RangeInclusive<u16>,
+    sentence: &str,
+    declared: &mut Option<(u16, Span)>,
+) -> syn::Result<()> {
+    let literal: LitInt = meta.value()?.parse()?;
+    let code: u16 = literal.base10_parse()?;
+    if !range.contains(&code) {
+        return Err(syn::Error::new(
+            literal.span(),
+            format!(
+                "{sentence}, so its status is between {} and {}; `{code}` is not",
+                range.start(),
+                range.end()
+            ),
+        ));
+    }
+    if declared.is_some() {
+        return Err(syn::Error::new(
+            literal.span(),
+            "this already declares a status, and a response has one",
+        ));
+    }
+    *declared = Some((code, literal.span()));
+    Ok(())
 }
 
 /// What a parameter field's own attribute said.

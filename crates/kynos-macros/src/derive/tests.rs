@@ -62,10 +62,11 @@ fn every_diagnostic_has_a_case(file: &str, source: &str, cases: usize) {
 }
 
 // A grammar refuses a key read twice and a key outside it through
-// `attribute::Keys::read` and `attribute::unknown`, whose sites the
-// `attribute` ledger counts. A grammar's own ledger keeps the rows that reach
-// them, since each grammar words both refusals itself, and leaves them out of
-// its file's count as its `IN_ATTRIBUTE`.
+// `attribute::Keys::read` and `attribute::unknown`, and reads a status through
+// `attribute::status`, whose sites the `attribute` ledger counts. A grammar's
+// own ledger keeps the rows that reach them, since each grammar words those
+// refusals itself, and leaves them out of its file's count as its
+// `IN_ATTRIBUTE`.
 
 mod schema {
     use super::{
@@ -4739,12 +4740,16 @@ mod attribute {
     /// sites every grammar shares, so four rows meet two sites.
     const SHARED_TWICE: usize = 2;
 
+    /// The two refusals of `status`, a code out of range and a second
+    /// status, whose rows the `reply` and `api_error` ledgers keep.
+    const STATUS_SITES: usize = 2;
+
     #[test]
     fn every_attribute_diagnostic_has_a_case() {
         every_diagnostic_has_a_case(
             "attribute.rs",
             include_str!("attribute.rs"),
-            ledger().len() + group_ledger().len() - SHARED_TWICE,
+            ledger().len() + group_ledger().len() - SHARED_TWICE + STATUS_SITES,
         );
     }
 }
@@ -5203,8 +5208,9 @@ mod api_error {
 
     /// The rows refusing a key written twice and a key outside the grammar,
     /// for the item and for a field, which `attribute::Keys::read` and
-    /// `attribute::unknown` raise.
-    const IN_ATTRIBUTE: usize = 4;
+    /// `attribute::unknown` raise, and a status out of range and a second
+    /// one, which `attribute::status` raises.
+    const IN_ATTRIBUTE: usize = 6;
 
     #[test]
     fn every_api_error_diagnostic_has_a_case() {
@@ -5420,9 +5426,17 @@ mod reply {
         );
     }
 
+    /// The rows refusing a status out of range and a second one, which
+    /// `attribute::status` raises.
+    const IN_ATTRIBUTE: usize = 2;
+
     #[test]
     fn every_reply_diagnostic_has_a_case() {
-        every_diagnostic_has_a_case("reply.rs", include_str!("reply.rs"), ledger().len());
+        every_diagnostic_has_a_case(
+            "reply.rs",
+            include_str!("reply.rs"),
+            ledger().len() - IN_ATTRIBUTE,
+        );
     }
 }
 

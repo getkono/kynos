@@ -28,9 +28,9 @@
 
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{quote, quote_spanned};
-use syn::{Attribute, Data, DeriveInput, Fields, LitInt, LitStr, Variant, spanned::Spanned};
+use syn::{Attribute, Data, DeriveInput, Fields, LitStr, Variant, spanned::Spanned};
 
-use crate::derive::attribute::key_name;
+use crate::derive::attribute::{key_name, status};
 use crate::derive::common::{doc_string, optional};
 
 /// The range a reply's status may fall in: final responses only, never 1xx.
@@ -311,28 +311,12 @@ fn parse_reply(attrs: &[Attribute]) -> syn::Result<ReplyArgs> {
         attr.parse_nested_meta(|meta| {
             let key = key_name(&meta.path);
             match key.as_str() {
-                "status" => {
-                    let literal: LitInt = meta.value()?.parse()?;
-                    let code: u16 = literal.base10_parse()?;
-                    if !STATUS_RANGE.contains(&code) {
-                        return Err(syn::Error::new(
-                            literal.span(),
-                            format!(
-                                "a handler returns the final response, so its status is between {} \
-                                 and {}; `{code}` is not",
-                                STATUS_RANGE.start(),
-                                STATUS_RANGE.end()
-                            ),
-                        ));
-                    }
-                    if args.status.is_some() {
-                        return Err(syn::Error::new(
-                            literal.span(),
-                            "this already declares a status, and a response has one",
-                        ));
-                    }
-                    args.status = Some((code, literal.span()));
-                }
+                "status" => status(
+                    &meta,
+                    STATUS_RANGE,
+                    "a handler returns the final response",
+                    &mut args.status,
+                )?,
                 "description" => {
                     let literal = meta.value()?.parse::<LitStr>()?;
                     if args.description.is_some() {
