@@ -5,6 +5,7 @@ use quote::{format_ident, quote};
 use syn::{ItemFn, LitStr};
 
 use crate::{
+    derive::common::optional,
     doc::{doc_texts, is_deprecated},
     route::{args::RouteArgs, attrs::split_doc, uri::endpoint_uri_impl},
 };
@@ -30,8 +31,8 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> syn::Re
         .as_ref()
         .map_or_else(|| name.to_string(), LitStr::value);
 
-    let summary = option_str(summary.as_deref());
-    let description = option_str(description.as_deref());
+    let summary = optional(summary.as_deref());
+    let description = optional(description.as_deref());
     let uri_impl = endpoint_uri_impl(function, &raw_path, &variables)?;
     let variables = variables.iter().map(String::as_str);
 
@@ -83,11 +84,4 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> syn::Re
 
         #panic_strategy_check
     })
-}
-
-fn option_str(value: Option<&str>) -> TokenStream2 {
-    value.map_or_else(
-        || quote!(::core::option::Option::None),
-        |text| quote!(::core::option::Option::Some(#text)),
-    )
 }
