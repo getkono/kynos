@@ -219,7 +219,9 @@ impl<T> Records<T> {
 
             let _ = frame.split_to(prefix.min(frame.len()));
 
-            let record = trimmed(&frame.freeze());
+            // Absorbs a `\r\n` line ending and RFC 7464's trailing newline.
+            let frame = frame.freeze();
+            let record = frame.slice_ref(frame.trim_ascii());
             if record.is_empty() {
                 continue;
             }
@@ -303,22 +305,6 @@ impl<T: serde::de::DeserializeOwned + Schema> Records<T> {
         // A broken bound is a shape failure too, so reading continues past it.
         crate::extract::body::checked(value, Pointer::root().index(index))
     }
-}
-
-/// The record inside a frame, without the whitespace around it.
-///
-/// Absorbs a `\r\n` line ending and RFC 7464's trailing newline.
-fn trimmed(frame: &Bytes) -> Bytes {
-    let start = frame
-        .iter()
-        .position(|byte| !byte.is_ascii_whitespace())
-        .unwrap_or(frame.len());
-    let end = frame
-        .iter()
-        .rposition(|byte| !byte.is_ascii_whitespace())
-        .map_or(start, |position| position + 1);
-
-    frame.slice(start..end)
 }
 
 /// Every field is `Unpin`, so this needs no projection and no `unsafe`.

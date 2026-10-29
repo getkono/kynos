@@ -88,8 +88,6 @@ impl<M: MediaType> RequestContent for Binary<M> {
         vec![M::MEDIA_TYPE]
     }
 
-    // A raw binary body is the empty schema: no `type` (outside JSON Schema),
-    // no `contentMediaType` (the content key already states it).
     fn request_body(registry: &mut Registry) -> kynos_openapi::RequestBody {
         let _ = registry;
         let () = <M as WellFormed>::WELL_FORMED;

@@ -50,9 +50,6 @@ impl<C: Sync, T: prost::Message + Default + Schema + Send> FromRequest<C> for Pr
         _context: &C,
     ) -> Result<Self, Self::Rejection> {
         let bytes = super::read_body(parts, body, MEDIA_TYPE).await?;
-
-        // Bytes protobuf cannot decode are a 400; a decoded message that
-        // breaks a bound is a 422.
         let value = T::decode(bytes).map_err(|error| BodyRejection::Syntax {
             detail: error.to_string(),
         })?;

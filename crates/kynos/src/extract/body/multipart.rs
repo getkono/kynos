@@ -312,8 +312,6 @@ impl<C: Sync, T: FromMultipart + Schema + Send> FromRequest<C> for MultipartForm
 
         let mut parts = Vec::new();
         while let Some(field) = fields.next_field().await.map_err(|e| malformed_body(&e))? {
-            // Read here rather than through multer's `name()`, whose scan is
-            // not quote-aware and never checks the disposition type.
             let disposition::Disposition { name, file_name } = field
                 .headers()
                 .get(header::CONTENT_DISPOSITION)
@@ -353,8 +351,6 @@ impl<T: Schema> RequestContent for MultipartForm<T> {
         vec![MEDIA_TYPE]
     }
 
-    // No Encoding Object: the specification's per-property default derived
-    // from the schema is exactly what Kynos would emit.
     fn request_body(registry: &mut Registry) -> kynos_openapi::RequestBody {
         kynos_openapi::RequestBody::new(
             MEDIA_TYPE,
