@@ -81,7 +81,14 @@ pub(crate) fn expand_inner(args: &AssetArgs) -> syn::Result<proc_macro2::TokenSt
 
     Ok(quote! {
         #(#docs)*
-        #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+        #[derive(
+            ::core::clone::Clone,
+            ::core::marker::Copy,
+            ::core::fmt::Debug,
+            ::core::default::Default,
+            ::core::cmp::PartialEq,
+            ::core::cmp::Eq,
+        )]
         #visibility struct #name;
 
         impl #name {

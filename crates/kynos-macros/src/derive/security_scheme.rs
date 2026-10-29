@@ -97,7 +97,9 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let declared = args
         .name
         .unwrap_or_else(|| LitStr::new(&name.to_string(), name.span()));
-    let credential: Type = args.credential.unwrap_or_else(|| parse_quote!(String));
+    let credential: Type = args
+        .credential
+        .unwrap_or_else(|| parse_quote!(::std::string::String));
 
     let challenge = args.challenge.map_or_else(
         || default_challenge(kind, &args.nested),

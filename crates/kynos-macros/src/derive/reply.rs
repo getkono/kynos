@@ -228,7 +228,10 @@ fn response(variant: &Variant, status: u16, description: Option<&str>, held: boo
 
     if let (true, Fields::Unnamed(fields)) = (held, &variant.fields) {
         let ty = &fields.unnamed[0].ty;
-        let description = description.map_or_else(|| quote!(None), |text| quote!(Some(#text)));
+        let description = description.map_or_else(
+            || quote!(::core::option::Option::None),
+            |text| quote!(::core::option::Option::Some(#text)),
+        );
         // Spanned on the held type, so one lacking `Responses` is reported
         // against the variant a user wrote.
         return quote_spanned! {ty.span()=>
