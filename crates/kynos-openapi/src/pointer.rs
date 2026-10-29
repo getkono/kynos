@@ -70,7 +70,7 @@ impl<'a> At<'a> {
     /// Only for a response's status key, which the 3.2 walk and the content
     /// rules have always written as given. A status that parses holds neither
     /// `/` nor `~`, so this differs from [`key`](Self::key) only for a key the
-    /// validator refuses.
+    /// validator refuses; #1078 is whether those should be escaped too.
     pub(crate) fn verbatim(&'a self, key: &'a str) -> Self {
         Self {
             parent: Some(self),
