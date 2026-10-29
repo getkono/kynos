@@ -758,7 +758,10 @@ impl<T: ProblemType> Compression<T> {
                 }
             }
             Err(error) => {
-                continued.set_body(crate::http::body::Body::failed(error));
+                continued.set_body(crate::http::body::Body::failed_after(
+                    bytes::Bytes::new(),
+                    error,
+                ));
                 None
             }
         };

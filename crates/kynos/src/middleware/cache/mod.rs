@@ -541,7 +541,7 @@ async fn bounded(
     http_body_util::BodyExt::collect(body)
         .await
         .map(http_body_util::Collected::to_bytes)
-        .map_err(crate::http::body::Body::failed)
+        .map_err(|error| crate::http::body::Body::failed_after(bytes::Bytes::new(), error))
 }
 
 #[cfg(test)]

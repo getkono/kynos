@@ -28,21 +28,13 @@ impl Body {
     /// An empty body.
     #[must_use]
     pub fn empty() -> Self {
-        Self {
-            inner: Mutex::new(Empty::new().map_err(|never| match never {}).boxed_unsync()),
-        }
+        Self::from_body(Empty::new().map_err(|never| match never {}))
     }
 
     /// A body holding exactly these bytes.
     #[must_use]
     pub fn from_bytes(bytes: Bytes) -> Self {
-        Self {
-            inner: Mutex::new(
-                Full::new(bytes)
-                    .map_err(|never| match never {})
-                    .boxed_unsync(),
-            ),
-        }
+        Self::from_body(Full::new(bytes).map_err(|never| match never {}))
     }
 
     /// The exact length the body states, read without locking it.
@@ -76,14 +68,9 @@ impl Body {
         S: futures_core::Stream<Item = Result<Bytes, E>> + Send + 'static,
         E: Into<BoxError> + 'static,
     {
-        Self {
-            inner: Mutex::new(
-                Streamed {
-                    chunks: Box::pin(stream),
-                }
-                .boxed_unsync(),
-            ),
-        }
+        Self::from_body(Streamed {
+            chunks: Box::pin(stream),
+        })
     }
 
     /// A body whose bytes arrive as `chunks`, each one frame, for a fuzz
@@ -104,22 +91,9 @@ impl Body {
         }
     }
 
-    /// A body whose read fails with `error`, having yielded nothing.
-    ///
-    /// For a buffering interceptor whose read failed, so the connection driver
-    /// aborts the message rather than framing a short one as complete.
-    #[cfg(any(feature = "cache", feature = "compression"))]
-    pub(crate) fn failed(error: BoxError) -> Self {
-        Self {
-            inner: Mutex::new(Failed { error: Some(error) }.boxed_unsync()),
-        }
-    }
-
     #[cfg(feature = "server")]
     pub(crate) fn from_incoming(body: hyper::body::Incoming) -> Self {
-        Self {
-            inner: Mutex::new(body.map_err(Into::into).boxed_unsync()),
-        }
+        Self::from_body(body.map_err(Into::into))
     }
 
     /// Reports how this body ends, exactly once.
@@ -137,15 +111,10 @@ impl Body {
             .into_inner()
             .expect("an owned body mutex cannot be poisoned");
 
-        Self {
-            inner: Mutex::new(
-                watched::Watched {
-                    inner,
-                    report: Some(report),
-                }
-                .boxed_unsync(),
-            ),
-        }
+        Self::from_body(watched::Watched {
+            inner,
+            report: Some(report),
+        })
     }
 }
 
@@ -166,28 +135,6 @@ pub(crate) enum Delivery {
     ///
     /// A peer that went away mid-response, or a stream that failed part-way.
     Interrupted,
-}
-
-/// A body that fails once and yields nothing else.
-///
-/// Never reports its end, or [`Watched`](watched::Watched) would read it as
-/// complete.
-#[cfg(any(feature = "cache", feature = "compression"))]
-struct Failed {
-    error: Option<BoxError>,
-}
-
-#[cfg(any(feature = "cache", feature = "compression"))]
-impl HttpBody for Failed {
-    type Data = Bytes;
-    type Error = BoxError;
-
-    fn poll_frame(
-        self: Pin<&mut Self>,
-        _: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-        Poll::Ready(self.get_mut().error.take().map(Err))
-    }
 }
 
 /// A stream of chunks, seen as a body: one data frame per chunk.

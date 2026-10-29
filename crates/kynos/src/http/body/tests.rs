@@ -260,12 +260,15 @@ fn a_watched_body_whose_release_panics_still_reports_once() {
 }
 
 /// A body handed on because its read failed was not delivered, and must not
-/// say it was: `Failed` never states its end, even once its error is out.
-#[cfg(any(feature = "cache", feature = "compression"))]
+/// say it was: one that fails having yielded nothing never states its end,
+/// even once its error is out.
 #[tokio::test]
 async fn a_watched_failed_body_reports_an_interruption() {
     let reports = Reports::default();
-    let body = reports.watching(Body::failed("upstream went away".into()));
+    let body = reports.watching(Body::failed_after(
+        Bytes::new(),
+        "upstream went away".into(),
+    ));
 
     assert!(body.collect().await.is_err());
     assert_eq!(reports.taken(), vec![Delivery::Interrupted]);
