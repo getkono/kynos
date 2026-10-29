@@ -20,7 +20,7 @@ use crate::{
         paths::{item::PathItem, operation::Operation},
         reference::RefOr,
         response::Response,
-        schema::{Schema, object::SchemaObject},
+        schema::Schema,
     },
     pointer::At,
     validate::{
@@ -221,59 +221,5 @@ fn check_schema(at: At<'_>, schema: &Schema, walk: &mut Walk<'_>) {
         walk.version,
         &mut walk.violations,
     );
-    check_subschemas(at, object, walk);
-}
-
-/// Every JSON Schema 2020-12 keyword whose value holds a schema, in the order
-/// [`SchemaObject`] declares them.
-fn check_subschemas(at: At<'_>, object: &SchemaObject, walk: &mut Walk<'_>) {
-    let keyed = |keyword: &str, schemas: &Map<Schema>, walk: &mut Walk<'_>| {
-        let at = at.key(keyword);
-        for (key, schema) in schemas {
-            check_schema(at.key(key), schema, walk);
-        }
-    };
-    let listed = |keyword: &str, schemas: Option<&[Schema]>, walk: &mut Walk<'_>| {
-        let at = at.key(keyword);
-        for (index, schema) in schemas.into_iter().flatten().enumerate() {
-            check_schema(at.index(index), schema, walk);
-        }
-    };
-    let single = |keyword: &str, schema: Option<&Schema>, walk: &mut Walk<'_>| {
-        if let Some(schema) = schema {
-            check_schema(at.key(keyword), schema, walk);
-        }
-    };
-
-    keyed("$defs", &object.defs, walk);
-    listed("allOf", object.all_of.as_deref(), walk);
-    listed("anyOf", object.any_of.as_deref(), walk);
-    listed("oneOf", object.one_of.as_deref(), walk);
-    single("not", object.not.as_deref(), walk);
-    single("if", object.if_schema.as_deref(), walk);
-    single("then", object.then_schema.as_deref(), walk);
-    single("else", object.else_schema.as_deref(), walk);
-    keyed("dependentSchemas", &object.dependent_schemas, walk);
-    listed("prefixItems", object.prefix_items.as_deref(), walk);
-    single("items", object.items.as_deref(), walk);
-    single("contains", object.contains.as_deref(), walk);
-    keyed("properties", &object.properties, walk);
-    keyed("patternProperties", &object.pattern_properties, walk);
-    single(
-        "additionalProperties",
-        object.additional_properties.as_deref(),
-        walk,
-    );
-    single("propertyNames", object.property_names.as_deref(), walk);
-    single(
-        "unevaluatedItems",
-        object.unevaluated_items.as_deref(),
-        walk,
-    );
-    single(
-        "unevaluatedProperties",
-        object.unevaluated_properties.as_deref(),
-        walk,
-    );
-    single("contentSchema", object.content_schema.as_deref(), walk);
+    object.for_each_subschema(at, |at, subschema| check_schema(at, subschema, walk));
 }

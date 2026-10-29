@@ -9,6 +9,7 @@ use crate::{
         external_docs::ExternalDocumentation,
         schema::{Schema, discriminator::Discriminator, types::TypeSet, xml::Xml},
     },
+    pointer::At,
 };
 
 /// A schema with keywords.
@@ -422,4 +423,143 @@ pub struct SchemaObject {
     /// specification-extension container.
     #[serde(flatten)]
     pub unknown_keywords: Map<Value>,
+}
+
+impl SchemaObject {
+    /// Visits each subschema this schema holds directly, at its pointer below
+    /// `at`, in the order the keywords are declared.
+    ///
+    /// Destructured without `..`, so a keyword added to the model is a
+    /// compile error here until it is classified.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the length is the exhaustive list of a Schema Object's keywords"
+    )]
+    pub(crate) fn for_each_subschema<'s>(
+        &'s self,
+        at: At<'_>,
+        mut visit: impl FnMut(At<'_>, &'s Schema),
+    ) {
+        #[expect(
+            deprecated,
+            reason = "`example` is named so that the destructuring stays exhaustive"
+        )]
+        let Self {
+            schema_dialect: _,
+            id: _,
+            reference: _,
+            anchor: _,
+            dynamic_ref: _,
+            dynamic_anchor: _,
+            comment: _,
+            defs,
+            all_of,
+            any_of,
+            one_of,
+            not,
+            if_schema,
+            then_schema,
+            else_schema,
+            dependent_schemas,
+            prefix_items,
+            items,
+            contains,
+            properties,
+            pattern_properties,
+            additional_properties,
+            property_names,
+            unevaluated_items,
+            unevaluated_properties,
+            ty: _,
+            const_value: _,
+            enumeration: _,
+            multiple_of: _,
+            maximum: _,
+            exclusive_maximum: _,
+            minimum: _,
+            exclusive_minimum: _,
+            max_length: _,
+            min_length: _,
+            pattern: _,
+            max_items: _,
+            min_items: _,
+            unique_items: _,
+            max_contains: _,
+            min_contains: _,
+            max_properties: _,
+            min_properties: _,
+            required: _,
+            dependent_required: _,
+            format: _,
+            content_encoding: _,
+            content_media_type: _,
+            content_schema,
+            title: _,
+            description: _,
+            default: _,
+            deprecated: _,
+            read_only: _,
+            write_only: _,
+            examples: _,
+            discriminator: _,
+            xml: _,
+            external_docs: _,
+            example: _,
+            unknown_keywords: _,
+        } = self;
+
+        for (keyword, held) in [
+            ("$defs", Held::Keyed(defs)),
+            ("allOf", Held::Listed(all_of)),
+            ("anyOf", Held::Listed(any_of)),
+            ("oneOf", Held::Listed(one_of)),
+            ("not", Held::Single(not)),
+            ("if", Held::Single(if_schema)),
+            ("then", Held::Single(then_schema)),
+            ("else", Held::Single(else_schema)),
+            ("dependentSchemas", Held::Keyed(dependent_schemas)),
+            ("prefixItems", Held::Listed(prefix_items)),
+            ("items", Held::Single(items)),
+            ("contains", Held::Single(contains)),
+            ("properties", Held::Keyed(properties)),
+            ("patternProperties", Held::Keyed(pattern_properties)),
+            ("additionalProperties", Held::Single(additional_properties)),
+            ("propertyNames", Held::Single(property_names)),
+            ("unevaluatedItems", Held::Single(unevaluated_items)),
+            (
+                "unevaluatedProperties",
+                Held::Single(unevaluated_properties),
+            ),
+            ("contentSchema", Held::Single(content_schema)),
+        ] {
+            let at = at.key(keyword);
+            match held {
+                Held::Keyed(schemas) => {
+                    for (key, schema) in schemas {
+                        visit(at.key(key), schema);
+                    }
+                }
+                Held::Listed(schemas) => {
+                    for (index, schema) in schemas.iter().flatten().enumerate() {
+                        visit(at.index(index), schema);
+                    }
+                }
+                Held::Single(schema) => {
+                    if let Some(schema) = schema {
+                        visit(at, schema);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// How a keyword holds its subschemas.
+enum Held<'s> {
+    /// By name, as `properties` does.
+    Keyed(&'s Map<Schema>),
+    /// By position, as `allOf` does.
+    Listed(&'s Option<Vec<Schema>>),
+    /// One, as `not` does.
+    Single(&'s Option<Box<Schema>>),
 }

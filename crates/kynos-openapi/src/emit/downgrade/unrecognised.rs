@@ -624,10 +624,6 @@ fn oauth_flows_fields(at: At<'_>, flows: &OAuthFlows, found: &mut Found<'_>) {
 ///
 /// Its own [`SchemaObject::unknown_keywords`] are not reported: a Schema Object
 /// alone may hold fields without the `x-` prefix.
-#[expect(
-    clippy::too_many_lines,
-    reason = "the length is the exhaustive list of a Schema Object's keywords"
-)]
 fn schema_fields(at: At<'_>, schema: &Schema, found: &mut Found<'_>) {
     let Schema::Object(object) = schema else {
         return;
@@ -645,24 +641,24 @@ fn schema_fields(at: At<'_>, schema: &Schema, found: &mut Found<'_>) {
         dynamic_ref: _,
         dynamic_anchor: _,
         comment: _,
-        defs,
-        all_of,
-        any_of,
-        one_of,
-        not,
-        if_schema,
-        then_schema,
-        else_schema,
-        dependent_schemas,
-        prefix_items,
-        items,
-        contains,
-        properties,
-        pattern_properties,
-        additional_properties,
-        property_names,
-        unevaluated_items,
-        unevaluated_properties,
+        defs: _,
+        all_of: _,
+        any_of: _,
+        one_of: _,
+        not: _,
+        if_schema: _,
+        then_schema: _,
+        else_schema: _,
+        dependent_schemas: _,
+        prefix_items: _,
+        items: _,
+        contains: _,
+        properties: _,
+        pattern_properties: _,
+        additional_properties: _,
+        property_names: _,
+        unevaluated_items: _,
+        unevaluated_properties: _,
         ty: _,
         const_value: _,
         enumeration: _,
@@ -686,7 +682,7 @@ fn schema_fields(at: At<'_>, schema: &Schema, found: &mut Found<'_>) {
         format: _,
         content_encoding: _,
         content_media_type: _,
-        content_schema,
+        content_schema: _,
         title: _,
         description: _,
         default: _,
@@ -725,45 +721,5 @@ fn schema_fields(at: At<'_>, schema: &Schema, found: &mut Found<'_>) {
         external_docs_fields(at.key("externalDocs"), docs, found);
     }
 
-    for (keyword, subschemas) in [
-        ("$defs", defs),
-        ("dependentSchemas", dependent_schemas),
-        ("properties", properties),
-        ("patternProperties", pattern_properties),
-    ] {
-        let section = at.key(keyword);
-        for (name, subschema) in subschemas {
-            schema_fields(section.key(name), subschema, found);
-        }
-    }
-
-    for (keyword, subschemas) in [
-        ("allOf", all_of),
-        ("anyOf", any_of),
-        ("oneOf", one_of),
-        ("prefixItems", prefix_items),
-    ] {
-        let section = at.key(keyword);
-        for (index, subschema) in subschemas.iter().flatten().enumerate() {
-            schema_fields(section.index(index), subschema, found);
-        }
-    }
-
-    for (keyword, subschema) in [
-        ("not", not),
-        ("if", if_schema),
-        ("then", then_schema),
-        ("else", else_schema),
-        ("items", items),
-        ("contains", contains),
-        ("additionalProperties", additional_properties),
-        ("propertyNames", property_names),
-        ("unevaluatedItems", unevaluated_items),
-        ("unevaluatedProperties", unevaluated_properties),
-        ("contentSchema", content_schema),
-    ] {
-        if let Some(subschema) = subschema {
-            schema_fields(at.key(keyword), subschema, found);
-        }
-    }
+    object.for_each_subschema(at, |at, subschema| schema_fields(at, subschema, found));
 }
