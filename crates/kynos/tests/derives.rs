@@ -286,10 +286,10 @@ fn each_scheme_kind_presents_its_own_credential() {
 fn declared_names_reach_the_trait_constants() {
     assert_eq!(<UserPath as PathParamsTrait>::NAMES, ["user_id"]);
     assert_eq!(<Conditional as HeaderParams>::NAMES, ["If-None-Match"]);
-    assert!(<Conditional as HeaderParams>::DESCRIBED);
+    const { assert!(<Conditional as HeaderParams>::DESCRIBED) };
     // `described = false` changes the description alone: the names, and so
     // the conflict check, stay as derived.
-    assert!(!<Provenance as HeaderParams>::DESCRIBED);
+    const { assert!(!<Provenance as HeaderParams>::DESCRIBED) };
     assert_eq!(<Provenance as HeaderParams>::NAMES, ["Origin", "Referer"]);
     #[cfg(feature = "cookie")]
     assert_eq!(
