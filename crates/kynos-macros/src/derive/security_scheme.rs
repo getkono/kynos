@@ -273,7 +273,7 @@ fn describe(args: &SchemeArgs, kind: &Ident, input: &DeriveInput) -> proc_macro2
 /// One scheme of the declared kind, with nothing shared filled in yet; built
 /// through the model's constructors so no 3.2-only field is named here.
 fn of_kind(args: &SchemeArgs, kind: &Ident) -> proc_macro2::TokenStream {
-    let optional = |value: Option<&LitStr>| {
+    let owned = |value: Option<&LitStr>| {
         optional(value.map(|value| quote!(::std::string::String::from(#value))))
     };
     let text = |value: Option<&LitStr>| value.map_or_else(String::new, LitStr::value);
@@ -282,7 +282,7 @@ fn of_kind(args: &SchemeArgs, kind: &Ident) -> proc_macro2::TokenStream {
         "basic" => quote!(::kynos::openapi::SecurityScheme::basic()),
 
         "http" => {
-            let format = optional(args.nested.format.as_ref());
+            let format = owned(args.nested.format.as_ref());
             let scheme = text(args.nested.scheme.as_ref());
             quote! {
                 {
@@ -344,7 +344,7 @@ fn of_kind(args: &SchemeArgs, kind: &Ident) -> proc_macro2::TokenStream {
 
         // `bearer`, and the safe fallback for any kind this match has not learned.
         _ => {
-            let format = optional(args.nested.format.as_ref());
+            let format = owned(args.nested.format.as_ref());
             quote!(::kynos::openapi::SecurityScheme::bearer(#format))
         }
     }
