@@ -211,7 +211,7 @@ fn carrier_of(nested: &Nested, kind: Kind) -> (proc_macro2::TokenStream, proc_ma
 }
 
 /// The `describe` body: the kind, then the prose and the deprecation every kind
-/// shares, the latter applied once by matching.
+/// shares, each set through the model's own builder.
 fn describe(args: &SchemeArgs, kind: Kind, input: &DeriveInput) -> proc_macro2::TokenStream {
     let built = of_kind(args, kind);
 
@@ -220,46 +220,18 @@ fn describe(args: &SchemeArgs, kind: Kind, input: &DeriveInput) -> proc_macro2::
         .as_ref()
         .map(LitStr::value)
         .or_else(|| doc_string(&input.attrs))
-        .map(|text| {
-            quote! {
-                match &mut scheme {
-                    ::kynos::openapi::SecurityScheme::ApiKey { description, .. }
-                    | ::kynos::openapi::SecurityScheme::Http { description, .. }
-                    | ::kynos::openapi::SecurityScheme::MutualTls { description, .. }
-                    | ::kynos::openapi::SecurityScheme::OAuth2 { description, .. }
-                    | ::kynos::openapi::SecurityScheme::OpenIdConnect { description, .. } => {
-                        *description = ::core::option::Option::Some(
-                            <::std::string::String as ::core::convert::From<_>>::from(#text),
-                        );
-                    }
-                    // Unreachable today; `SecurityScheme` is `#[non_exhaustive]`.
-                    _ => {}
-                }
-            }
-        });
+        .map(|text| quote!(.with_description(#text)));
 
-    // The `cfg!` keeps the arm out of a 3.1 expansion, where the field does not
-    // exist; an emitted `#[cfg]` would read the application's features instead.
-    let deprecated = (args.deprecated && cfg!(feature = "openapi32")).then(|| {
-        quote! {
-            match &mut scheme {
-                ::kynos::openapi::SecurityScheme::ApiKey { deprecated, .. }
-                | ::kynos::openapi::SecurityScheme::Http { deprecated, .. }
-                | ::kynos::openapi::SecurityScheme::MutualTls { deprecated, .. }
-                | ::kynos::openapi::SecurityScheme::OAuth2 { deprecated, .. }
-                | ::kynos::openapi::SecurityScheme::OpenIdConnect { deprecated, .. } => {
-                    *deprecated = ::core::option::Option::Some(true);
-                }
-                _ => {}
-            }
-        }
-    });
+    // The `cfg!` keeps the call out of a 3.1 expansion, where the builder does
+    // not exist; an emitted `#[cfg]` would read the application's features
+    // instead.
+    let deprecated =
+        (args.deprecated && cfg!(feature = "openapi32")).then(|| quote!(.deprecated()));
 
     quote! {
-        let mut scheme = #built;
+        #built
         #described
         #deprecated
-        scheme
     }
 }
 
@@ -277,17 +249,7 @@ fn of_kind(args: &SchemeArgs, kind: Kind) -> proc_macro2::TokenStream {
         Kind::Http => {
             let format = owned(args.nested.format.as_ref());
             let scheme = text(args.nested.scheme.as_ref());
-            quote! {
-                {
-                    let mut scheme = ::kynos::openapi::SecurityScheme::bearer(#format);
-                    if let ::kynos::openapi::SecurityScheme::Http { scheme: name, .. } =
-                        &mut scheme
-                    {
-                        *name = <::std::string::String as ::core::convert::From<_>>::from(#scheme);
-                    }
-                    scheme
-                }
-            }
+            quote!(::kynos::openapi::SecurityScheme::http(#scheme, #format))
         }
 
         Kind::ApiKey(location) => {
