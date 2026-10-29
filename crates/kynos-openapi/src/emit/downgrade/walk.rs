@@ -420,9 +420,15 @@ fn collect_example_blockers(at: At<'_>, example: &Example, blockers: &mut Vec<St
 /// Reported over the serialized schema, so a subschema keyword added later
 /// cannot be missed, and in the order its members serialize in. Both names
 /// are matched directly beneath any `xml` or `discriminator` member, so one
-/// in instance data, in an unknown keyword, under an extension or in a
-/// `properties` entry spelled `xml` is refused too, which is the safe way to
-/// be wrong.
+/// in an unknown keyword, under an extension or in a `properties` entry
+/// spelled `xml` is refused too, which is the safe way to be wrong.
+///
+/// Instance data is not descended into: what an [`INSTANCE_KEYWORDS`] member
+/// holds is any JSON in 3.1 as well, so a holder in it is no 3.2 construct.
+/// One is skipped wherever an object's members are keywords, an extension's
+/// included, which errs the other way only for arbitrary JSON. A
+/// [`NAME_MAPS`] entry is named, not a keyword, so one spelled like an
+/// instance keyword is still a schema and still walked.
 ///
 /// [`may_hold_blocker`] reads the typed schema first and rules out, without
 /// serializing it, every schema that holds neither.
@@ -433,10 +439,26 @@ fn collect_schema_blockers(at: At<'_>, schema: &Schema, blockers: &mut Vec<Strin
     let Ok(value) = serde_json::to_value(schema) else {
         return;
     };
-    collect_schema_value_blockers(&at.pointer(), &value, blockers);
+    collect_schema_value_blockers(&at.pointer(), &value, Members::Keywords, blockers);
 }
 
-fn collect_schema_value_blockers(location: &str, value: &Value, blockers: &mut Vec<String>) {
+/// What the members of an object [`collect_schema_value_blockers`] reaches
+/// are.
+#[derive(Clone, Copy)]
+enum Members {
+    /// Keywords, as a schema's own members are; an instance keyword among
+    /// them is skipped.
+    Keywords,
+    /// Names, as a [`NAME_MAPS`] member's are, each naming a schema.
+    Names,
+}
+
+fn collect_schema_value_blockers(
+    location: &str,
+    value: &Value,
+    members: Members,
+    blockers: &mut Vec<String>,
+) {
     match value {
         Value::Object(fields) => {
             for (holder, field) in HOLDERS {
@@ -450,16 +472,31 @@ fn collect_schema_value_blockers(location: &str, value: &Value, blockers: &mut V
             }
 
             for (key, nested) in fields {
+                let keyword = matches!(members, Members::Keywords);
+                if keyword && INSTANCE_KEYWORDS.contains(&key.as_str()) {
+                    continue;
+                }
+                let nested_members = if keyword && NAME_MAPS.contains(&key.as_str()) {
+                    Members::Names
+                } else {
+                    Members::Keywords
+                };
                 collect_schema_value_blockers(
                     &format!("{location}/{}", pointer_token(key)),
                     nested,
+                    nested_members,
                     blockers,
                 );
             }
         }
         Value::Array(items) => {
             for (index, item) in items.iter().enumerate() {
-                collect_schema_value_blockers(&format!("{location}/{index}"), item, blockers);
+                collect_schema_value_blockers(
+                    &format!("{location}/{index}"),
+                    item,
+                    Members::Keywords,
+                    blockers,
+                );
             }
         }
         _ => {}
@@ -470,15 +507,28 @@ fn collect_schema_value_blockers(location: &str, value: &Value, blockers: &mut V
 /// member it reports there.
 const HOLDERS: [(&str, &str); 2] = [("xml", "nodeType"), ("discriminator", "defaultMapping")];
 
+/// The Schema Object keywords whose values are instance data: JSON Schema
+/// 2020-12's `default`, `const`, `enum` and `examples`, and the OpenAPI
+/// `example` it deprecates.
+const INSTANCE_KEYWORDS: [&str; 5] = ["default", "const", "enum", "examples", "example"];
+
+/// The Schema Object keywords whose values map names to schemas.
+const NAME_MAPS: [&str; 4] = [
+    "$defs",
+    "dependentSchemas",
+    "properties",
+    "patternProperties",
+];
+
 /// Whether `schema`, serialized, may hold a member of [`HOLDERS`] carrying
 /// its field, at any depth.
 ///
 /// Errs only toward `true`, so a schema it rules out is one
 /// [`collect_schema_value_blockers`] reports nothing in. A Schema Object
 /// serializes as its typed keywords and its unknown ones; of the typed, only
-/// `xml` and `discriminator` write either field, a `$defs`, `properties`,
-/// `patternProperties` or `dependentSchemas` entry may be named for a holder,
-/// and instance data, unknown keywords and extensions are arbitrary JSON.
+/// `xml` and `discriminator` write either field, a [`NAME_MAPS`] entry may be
+/// named for a holder, and unknown keywords and extensions are arbitrary
+/// JSON. Instance data is not read, since the walk skips it.
 fn may_hold_blocker(schema: &Schema) -> bool {
     let Schema::Object(object) = schema else {
         return false;
@@ -498,21 +548,6 @@ fn may_hold_blocker(schema: &Schema) -> bool {
         .external_docs
         .as_ref()
         .is_some_and(|docs| members_may_hold(&docs.extensions.0));
-    #[expect(
-        deprecated,
-        reason = "`example` is instance data the serialized schema holds"
-    )]
-    let example = object.example.as_ref();
-    let instances = [
-        object.const_value.as_ref(),
-        object.default.as_ref(),
-        example,
-    ]
-    .into_iter()
-    .flatten()
-    .chain(object.enumeration.iter().flatten())
-    .chain(object.examples.iter().flatten())
-    .any(value_may_hold);
     let named = [
         &object.defs,
         &object.dependent_schemas,
@@ -529,12 +564,7 @@ fn may_hold_blocker(schema: &Schema) -> bool {
         })
     });
 
-    if xml
-        || discriminator
-        || external_docs
-        || instances
-        || named
-        || members_may_hold(&object.unknown_keywords)
+    if xml || discriminator || external_docs || named || members_may_hold(&object.unknown_keywords)
     {
         return true;
     }
