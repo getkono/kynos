@@ -828,6 +828,27 @@ pub fn derive_query_params(item: TokenStream) -> TokenStream {
 /// `()` field without one, a `value` on any other type, and a
 /// `#[schema(...)]` bound beside one are refused.
 ///
+/// # Undescribed groups
+///
+/// A group that is a transport concern rather than an API input says
+/// `#[header(described = false)]` on the struct, which sets
+/// `HeaderParams::DESCRIBED` to `false`:
+///
+/// ```ignore
+/// #[derive(HeaderParams)]
+/// #[header(described = false)]
+/// struct Provenance {
+///     #[header(rename = "Origin")]
+///     origin: Option<String>,
+///     #[header(rename = "Referer")]
+///     referer: Option<String>,
+/// }
+/// ```
+///
+/// Its fields are decoded, encoded and checked against other groups' names as
+/// before; only the description leaves them out. `described` is the one key
+/// the struct takes, a `true` or `false` literal written once.
+///
 /// # Rejected, because a parameter has one name
 ///
 /// - `#[serde(alias = "...")]` on any field: serde would read the field under

@@ -7,7 +7,7 @@ use quote::quote;
 use syn::{DeriveInput, Field, Type, parse_macro_input, spanned::Spanned};
 
 use crate::derive::{
-    attribute::field_args,
+    attribute::{field_args, group_args},
     common::{
         NameCase, named_fields, names_const, reject_duplicate_names, reject_non_token_names,
         wire_names,
@@ -220,6 +220,10 @@ pub(crate) fn expand(item: TokenStream) -> TokenStream {
 
 pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = named_fields(input, "Headers")?;
+    // Only a written `described` overrides the trait's default.
+    let described = group_args(input)?
+        .described
+        .map(|flag| quote!(const DESCRIBED: bool = #flag;));
 
     let names = wire_names(input, fields, "header")?;
     reject_non_token_names(fields, &names, "header", "an RFC 9110 field name")?;
@@ -316,6 +320,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
             for #name #ty_generics #where_clause
         {
             #names_item
+            #described
 
             fn parameters(
                 registry: &mut ::kynos::schema::registry::Registry,
