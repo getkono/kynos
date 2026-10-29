@@ -1001,3 +1001,104 @@ fn a_policy_with_no_window_renders_no_w_parameter() {
         [("ratelimit-policy".to_owned(), r#""open";q=5"#.to_owned())]
     );
 }
+
+// --- The whole 429 ---------------------------------------------------------
+
+/// Every field a refusal's response carries, in the order it carries them,
+/// and its problem document.
+async fn sent<S: ShortCircuit>(refusal: S) -> (Vec<(String, String)>, serde_json::Value) {
+    use http_body_util::BodyExt as _;
+
+    let response = refusal.into_response();
+    assert_eq!(
+        response.status(),
+        crate::http::StatusCode::TOO_MANY_REQUESTS
+    );
+
+    let fields = response
+        .headers()
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.as_str().to_owned(),
+                value.to_str().expect("a printable field").to_owned(),
+            )
+        })
+        .collect();
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("a readable body")
+        .to_bytes();
+
+    (
+        fields,
+        serde_json::from_slice(&body).expect("a problem document"),
+    )
+}
+
+/// Both spellings' 429, whole: the problem document, `Retry-After`, and the
+/// group each spelling reports — the `X-` triple at zero remaining with the
+/// retry delay as its reset, or the draft's two fields over every quota.
+///
+/// The two are built by separate, near-identical code, so each is held to the
+/// whole response rather than to the fields another test happened to read.
+#[tokio::test]
+async fn each_spelling_sends_its_whole_429() {
+    let pairs = |fields: &[(&str, &str)]| -> Vec<(String, String)> {
+        fields
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect()
+    };
+
+    let (fields, document) = sent(RateLimited::<()>::new(Duration::from_secs(30), 100)).await;
+    assert_eq!(
+        fields,
+        pairs(&[
+            ("content-type", "application/problem+json"),
+            ("retry-after", "30"),
+            ("x-ratelimit-limit", "100"),
+            ("x-ratelimit-remaining", "0"),
+            ("x-ratelimit-reset", "30"),
+        ])
+    );
+    assert_eq!(
+        document,
+        serde_json::json!({
+            "type": "about:blank",
+            "title": "Too Many Requests",
+            "status": 429,
+            "detail": "the client has exceeded its request rate",
+        })
+    );
+
+    let (fields, document) = sent(RateLimitedFields::<Throttled>::new(
+        Duration::from_secs(30),
+        limits(),
+        policies(),
+    ))
+    .await;
+    assert_eq!(
+        fields,
+        pairs(&[
+            ("content-type", "application/problem+json"),
+            ("retry-after", "30"),
+            ("ratelimit", r#""burst";r=12;t=1, "daily";r=9998;t=3600"#),
+            (
+                "ratelimit-policy",
+                r#""burst";q=15;w=1, "daily";q=10000;w=86400;qu="content-bytes""#,
+            ),
+        ])
+    );
+    assert_eq!(
+        document,
+        serde_json::json!({
+            "type": "https://errors.example.com/rate-limited",
+            "title": "Too Many Requests",
+            "status": 429,
+            "detail": "the client has exceeded its request rate",
+        })
+    );
+}
