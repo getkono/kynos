@@ -316,21 +316,11 @@ impl<C, P, I, S> Router<C, P, I, S> {
             mounted.path = path;
 
             // The absorbed router's interceptors and tags covered only these
-            // operations, so each carries them.
-            let mut interceptors = other.interceptors.clone();
-            interceptors.append(&mut mounted.interceptors);
-            mounted.interceptors = interceptors;
-
-            let mut tags = other.tags.clone();
-            tags.append(&mut mounted.tags);
-            mounted.tags = tags;
-
+            // operations, so each carries them, outermost first.
+            prepend(&mut mounted.interceptors, &other.interceptors);
+            prepend(&mut mounted.tags, &other.tags);
             #[cfg(feature = "unchecked")]
-            {
-                let mut layers = other.unchecked.layers.clone();
-                layers.append(&mut mounted.unchecked_layers);
-                mounted.unchecked_layers = layers;
-            }
+            prepend(&mut mounted.unchecked_layers, &other.unchecked.layers);
 
             mounted.catch_panics |= catch_panics;
             self.mounted.push(mounted);
@@ -740,6 +730,11 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         self.deny_unchecked_schemas = true;
         self
     }
+}
+
+/// Puts what an enclosing scope contributed ahead of `inner`'s own.
+fn prepend<T: Clone>(inner: &mut Vec<T>, outer: &[T]) {
+    inner.splice(0..0, outer.iter().cloned());
 }
 
 #[cfg(test)]
