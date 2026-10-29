@@ -67,12 +67,11 @@ impl<C> Unchecked<C> {
 
         for mut route in routes {
             route.reprefix(prefix);
-            let mut covering = layers.clone();
-            covering.append(&mut route.layers);
-            route.layers = covering;
-            let mut covering = interceptors.to_vec();
-            covering.append(&mut route.interceptors);
-            route.interceptors = covering;
+            // The enclosing scope's covering, outermost, before the route's own.
+            route.layers.splice(0..0, layers.iter().cloned());
+            route
+                .interceptors
+                .splice(0..0, interceptors.iter().cloned());
             route.catch_panics |= catch_panics;
             self.routes.push(route);
         }
@@ -86,9 +85,7 @@ fn anchor(pattern: &str) -> Option<String> {
         .take_while(|segment| !segment.contains('{'))
         .collect();
 
-    (literal.len() < pattern.split('/').count() && literal.len() > 1)
-        .then(|| literal.join("/"))
-        .filter(|prefix| !prefix.is_empty())
+    (literal.len() < pattern.split('/').count() && literal.len() > 1).then(|| literal.join("/"))
 }
 
 /// The record of a route under `pattern`, with the prefix it is anchored at.
