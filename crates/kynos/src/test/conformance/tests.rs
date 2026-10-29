@@ -390,6 +390,21 @@ fn a_media_range_key_does_not_cover_another_type() {
     }
 }
 
+/// A range covers media types, so a `Content-Type` not shaped `type/subtype`
+/// (RFC 9110 section 8.3.1) is covered by none, not even `*/*`.
+#[test]
+fn a_media_range_key_does_not_cover_a_value_that_is_not_a_media_type() {
+    for range in ["*/*", "text/*"] {
+        for media_type in ["", "garbage", "text", "text/", "/plain", "/"] {
+            let declared = content(&[range]);
+            assert!(
+                super::declared_representation(&declared, media_type).is_none(),
+                "{range} should not cover {media_type:?}"
+            );
+        }
+    }
+}
+
 /// Only the most specific matching key applies (`text/plain` overrides
 /// `text/*`), whatever order the map holds them in.
 #[test]
