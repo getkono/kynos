@@ -24,6 +24,12 @@ hk = "1.53.0"
 "github:obi1kenobi/cargo-semver-checks" = "0.50.0"
 "github:EmbarkStudios/cargo-deny" = "0.20.2"
 
+[env]
+# The nightly every task needing one installs and runs: `fuzz` and
+# `minimal-versions:check`. Dated, since an undated nightly moves under a job
+# between two nights, and a failure should be Kynos's own.
+KYNOS_NIGHTLY = "nightly-2026-06-10"
+
 [tasks.format]
 description = "Format the Rust workspace"
 run = "cargo fmt --all"
@@ -373,20 +379,18 @@ description = "Build the workspace with every direct dependency at its declared 
 # `kynos-profile` is excluded for `msrv:check`'s reason: it is published
 # nowhere, so its bounds are nobody's promise.
 #
-# `-Z` needs nightly, and a dated one for `fuzz`'s reason: an undated nightly
-# moves under the job between two nights. The resolution rewrites Cargo.lock,
-# so the committed one is put back however the task exits.
-env = { MINIMAL_VERSIONS_TOOLCHAIN = "nightly-2026-06-10" }
+# `-Z` needs nightly, `KYNOS_NIGHTLY`. The resolution rewrites Cargo.lock, so
+# the committed one is put back however the task exits.
 run = '''
 set -eu
-rustup toolchain install "$MINIMAL_VERSIONS_TOOLCHAIN" --profile minimal --no-self-update
+rustup toolchain install "$KYNOS_NIGHTLY" --profile minimal --no-self-update
 
 lock="$(mktemp)"
 cp Cargo.lock "$lock"
 trap 'cp "$lock" Cargo.lock; rm -f "$lock"' EXIT
 
-cargo +"$MINIMAL_VERSIONS_TOOLCHAIN" update -Z direct-minimal-versions
-cargo +"$MINIMAL_VERSIONS_TOOLCHAIN" check --workspace --all-features --exclude kynos-profile
+cargo +"$KYNOS_NIGHTLY" update -Z direct-minimal-versions
+cargo +"$KYNOS_NIGHTLY" check --workspace --all-features --exclude kynos-profile
 '''
 
 [tasks."publish:check"]
@@ -507,25 +511,26 @@ cargo mutants "$@"
 
 [tasks.fuzz]
 description = "Fuzz one parser target, or every one, for a bounded time each"
-# See docs/testing.md#fuzzing. A dated nightly, so a failure is Kynos's own.
+# See docs/testing.md#fuzzing. On `KYNOS_NIGHTLY`, which `cargo fuzz` needs.
 # Discoveries go to the ignored `fuzz/target/`; committed seeds are only read.
 # `--target` is the host: the musl-linked cargo-fuzz defaults to musl.
 tools = { "github:rust-fuzz/cargo-fuzz" = "0.13.2" }
-env = { FUZZ_TOOLCHAIN = "nightly-2026-06-10" }
 usage = '''
 arg "[target]" help="One target under fuzz/fuzz_targets; every target when omitted"
 flag "--seconds <seconds>" help="How long each target runs" default="60"
+flag "--replay" help="Replay each committed corpus once instead of searching"
+flag "--list" help="Print the targets, one per line, and run none"
 '''
 run = '''
 set -eu
-rustup toolchain install "$FUZZ_TOOLCHAIN" --profile minimal --no-self-update
-host="$(rustc +"$FUZZ_TOOLCHAIN" -vV | sed -n 's/^host: //p')"
+# Its report goes to stderr, so `--list` prints the targets alone.
+rustup toolchain install "$KYNOS_NIGHTLY" --profile minimal --no-self-update >&2
 
 if [ -n "${usage_target:-}" ]; then
   set -- "$usage_target"
 else
   # An assignment carries the listing's status to `set -e`; `set --` would not.
-  targets="$(cargo +"$FUZZ_TOOLCHAIN" fuzz list --fuzz-dir fuzz)"
+  targets="$(cargo +"$KYNOS_NIGHTLY" fuzz list --fuzz-dir fuzz)"
   if [ -z "$targets" ]; then
     echo "cargo fuzz list found no target under fuzz/fuzz_targets" >&2
     exit 1
@@ -533,36 +538,29 @@ else
   set -- $targets
 fi
 
+if [ "${usage_list:-false}" = true ]; then
+  printf '%s\n' "$@"
+  exit 0
+fi
+
+host="$(rustc +"$KYNOS_NIGHTLY" -vV | sed -n 's/^host: //p')"
 for target in "$@"; do
-  mkdir -p "fuzz/target/corpus/$target"
-  cargo +"$FUZZ_TOOLCHAIN" fuzz run --fuzz-dir fuzz --target "$host" "$target" \
-    "fuzz/target/corpus/$target" "fuzz/corpus/$target" \
-    -- -max_total_time="$usage_seconds"
+  if [ "${usage_replay:-false}" = true ]; then
+    cargo +"$KYNOS_NIGHTLY" fuzz run --fuzz-dir fuzz --target "$host" "$target" \
+      "fuzz/corpus/$target" -- -runs=0
+  else
+    mkdir -p "fuzz/target/corpus/$target"
+    cargo +"$KYNOS_NIGHTLY" fuzz run --fuzz-dir fuzz --target "$host" "$target" \
+      "fuzz/target/corpus/$target" "fuzz/corpus/$target" \
+      -- -max_total_time="$usage_seconds"
+  fi
 done
 '''
 
 [tasks."fuzz:check"]
 description = "Build every fuzz target and replay its committed corpus"
 # The only build of `fuzz/`; `-runs=0` replays the committed corpus only.
-tools = { "github:rust-fuzz/cargo-fuzz" = "0.13.2" }
-env = { FUZZ_TOOLCHAIN = "nightly-2026-06-10" }
-run = '''
-set -eu
-rustup toolchain install "$FUZZ_TOOLCHAIN" --profile minimal --no-self-update
-host="$(rustc +"$FUZZ_TOOLCHAIN" -vV | sed -n 's/^host: //p')"
-
-# An assignment carries the listing's status to `set -e`; a `for` list would not.
-targets="$(cargo +"$FUZZ_TOOLCHAIN" fuzz list --fuzz-dir fuzz)"
-if [ -z "$targets" ]; then
-  echo "cargo fuzz list found no target under fuzz/fuzz_targets" >&2
-  exit 1
-fi
-
-for target in $targets; do
-  cargo +"$FUZZ_TOOLCHAIN" fuzz run --fuzz-dir fuzz --target "$host" "$target" \
-    "fuzz/corpus/$target" -- -runs=0
-done
-'''
+run = "mise run fuzz --replay"
 
 [tasks.check]
 description = "Run formatting, linting, and tests"

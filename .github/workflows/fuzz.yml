@@ -23,29 +23,33 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The listing `fuzz:check` replays, so the search covers the same targets.
+  targets:
+    name: Fuzz targets
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.list.outputs.targets }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Set up
+        uses: ./.github/actions/setup
+      - name: List the targets
+        id: list
+        run: |
+          targets="$(mise run fuzz --list | jq -Rnc '[inputs]')"
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+
   search:
     name: Fuzz, nightly search
+    needs: targets
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      # One job per target. Keep in step with `fuzz/Cargo.toml`'s `[[bin]]`
-      # list, which `fuzz:check` replays.
+      # One job per target.
       matrix:
-        target:
-          - accept
-          - basic
-          - cookie
-          - date
-          - decompression
-          - disposition
-          - etag
-          - forwarded
-          - json_lines
-          - language
-          - media_type
-          - query
-          - range
+        target: ${{ fromJSON(needs.targets.outputs.targets) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
