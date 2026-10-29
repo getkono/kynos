@@ -14,7 +14,7 @@ use crate::{
     model::{
         callback::Callback,
         document::Document,
-        paths::{item::PathItem, method::Method, operation::Operation},
+        paths::{item::PathItem, operation::Operation},
         reference::RefOr,
     },
     pointer::At,
@@ -23,7 +23,7 @@ use crate::{
 /// What a walk does at each object it reaches. Every hook defaults to nothing.
 ///
 /// The order is fixed: a Path Item, then each operation it holds in
-/// [`Method::all`] order, then each of its 3.2 `additionalOperations` in
+/// [`Method::all`](crate::model::paths::method::Method::all) order, then each of its 3.2 `additionalOperations` in
 /// insertion order. Each operation's hooks bracket the callbacks it declares.
 pub(crate) trait Visit<'doc> {
     /// A Path Item, before its operations.
@@ -116,7 +116,7 @@ fn walk_path_item<'doc>(
     }
 
     for (method, operation) in item.operations() {
-        walk_operation(at.key(field_name(method)), item, operation, visit);
+        walk_operation(at.key(method.field_name()), item, operation, visit);
     }
 
     #[cfg(feature = "openapi32")]
@@ -142,22 +142,6 @@ fn walk_operation<'doc>(
     }
 
     visit.operation_walked(at, operation);
-}
-
-/// The Path Item field `method` is held in: its wire name, lowercased.
-fn field_name(method: Method) -> &'static str {
-    match method {
-        Method::Get => "get",
-        Method::Put => "put",
-        Method::Post => "post",
-        Method::Delete => "delete",
-        Method::Options => "options",
-        Method::Head => "head",
-        Method::Patch => "patch",
-        Method::Trace => "trace",
-        #[cfg(feature = "openapi32")]
-        Method::Query => "query",
-    }
 }
 
 #[cfg(test)]
