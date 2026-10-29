@@ -23,8 +23,9 @@
 //! [`Service`](crate::router::service::Service) owns the `Document` and hands
 //! the request to a `dyn ErasedService` built where that document is in scope,
 //! so no field of the three types below witnesses it. What holds it is the
-//! document row's own site list, which admits `router/describe.rs` and
-//! `router/service.rs` and argues why neither is reachable from a request.
+//! document row's own site list, which admits `router/service.rs` and argues
+//! why it is not reachable from a request, and leaves out `router/build.rs`,
+//! where that service is built.
 //!
 //! Each pattern is exhaustive, so a new field is a `missing field in pattern`
 //! error here until whoever added it writes it into the pattern -- which is the

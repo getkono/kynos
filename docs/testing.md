@@ -465,7 +465,7 @@ halve.
 
 | Element | Named by | Named only in | Why a request cannot reach it |
 | --- | --- | --- | --- |
-| the emitted document | `Document` | `router/describe.rs`, `router/docs/render.rs`, `router/install.rs`, `router/mod.rs`, `router/service.rs`, `server/describe.rs`, `server/tls/document.rs`, `test/conformance.rs`, `test/mod.rs`, `unchecked/describe.rs` | every site builds it, annotates it, hands it back to the application, or takes it from a test to assert against. `docs::render::render` serializes it while the router is built, and `Published::publish` again after each `openapi_mut` edit, so the endpoint serving a description holds finished bytes rather than a `Document`. Two sites also serve a request, so for them the reason is an argument the rule does not check: `router/describe.rs` builds the per-request closure where the document is in scope and moves only the dispatch table into it, and `router/service.rs`'s `Service` owns the document, hands it to the application only through `Service::openapi`, and edits it only through `openapi_mut` -- at bind and at the tower conversion, both of which take the service by value, so no request is in flight |
+| the emitted document | `Document` | `router/describe.rs`, `router/docs/render.rs`, `router/install.rs`, `router/mod.rs`, `router/service.rs`, `server/describe.rs`, `server/tls/document.rs`, `test/conformance.rs`, `test/mod.rs`, `unchecked/describe.rs` | every site builds it, annotates it, hands it back to the application, or takes it from a test to assert against. `docs::render::render` serializes it while the router is built, and `Published::publish` again after each `openapi_mut` edit, so the endpoint serving a description holds finished bytes rather than a `Document`. `router/build.rs` builds the per-request closure where the document is in scope and moves only the dispatch table into it, and is not a site: it never names the type, only moving the value `describe` returned into `Service`. One site also serves a request, so for it the reason is an argument the rule does not check: `router/service.rs`'s `Service` owns the document, hands it to the application only through `Service::openapi`, and edits it only through `openapi_mut` -- at bind and at the tower conversion, both of which take the service by value, so no request is in flight |
 | the schema registry | `owned Registry` | `router/describe.rs`, `schema/registry.rs` | the one registry a build mints is consumed by `describe`, which has finished before a service exists to accept a request. `schema/registry.rs` defines the type and its two constructors, `new` and the derived `Default`, and holds no registry of its own |
 | the document validators | `Validator` | `router/describe.rs` | a description is validated where it is built. The build either fails or drops the validator, and nothing on the request path holds one to run |
 | the JSON Schema interpreter | `jsonschema` | `test/conformance.rs` | it is behind `test-util` and exists to check an observed response against the description. The request parser is the other projection of the same declaration and interprets no schema |
@@ -563,15 +563,16 @@ needs the rule to parse Rust rather than grep it. Read the two together as what
 they are: a per-file naming rule that fails every file in its scope that names
 an element without being one of that element's allowed sites, plus a ratchet on
 the dispatch table's fields. The allowed sites are not all files that describe
-and do not serve — the `Document` row names two that also serve a request, and
-argues each in its reason.
+and do not serve — the `Document` row names one that also serves a request, and
+argues it in its reason.
 
 That is narrower than "nothing reaches an erased callee", and deliberately.
 `Service` is above the table: it owns the `Document` and hands the request to a
 `dyn ErasedService` built where the document is in scope, so no field of the
 three types witnesses it. That seam is held by the document row instead —
-`router/describe.rs` and `router/service.rs` are two of the sites it allows, and
-the row's reason is the argument for both. The two halves meet there: a witness
+`router/service.rs` is one of the sites it allows, `router/build.rs`, which
+builds that callee, is not, and the row's reason is the argument for both. The
+two halves meet there: a witness
 where a field carries something to an erased callee, a row where a file names
 something the witness cannot see.
 

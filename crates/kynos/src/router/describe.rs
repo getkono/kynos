@@ -1,26 +1,22 @@
-//! Turning an assembled router into a description, or into a service.
+//! Turning an assembled router into a description.
 //!
 //! The other half of [`Router`](super::Router): everything in `mod.rs` puts a
 //! router together, and everything here reads the result. `validate` and
-//! `openapi` describe it, `build` turns it into something that serves, and
-//! `describe` is the one walk both go through.
+//! `openapi` describe it, `build` (in `build.rs`) turns it into something that
+//! serves, and `describe` is the one walk both go through.
 
+#[cfg(feature = "unchecked")]
 use std::collections::HashSet;
 
+use super::build::TrialTable;
 use super::install::{
-    catches, cors_conflict, error_at, highest_version, install_preflight, invalid, lift,
-    lowest_expressing, path_entry, path_location, placeholder_info, unique_tags,
+    catches, cors_conflict, error_at, highest_version, invalid, lift, lowest_expressing,
+    path_location, placeholder_info, unique_tags,
 };
 use super::{
-    Arc, DeclaredTag, Dispatch, Document, EndpointTerminal, Error, HashMap, OperationCx,
-    PanicPolicy, PathEntry, PathItem, Paths, Registry, Result, Router, RouterError, Service,
-    Severity, SpecError, SpecVersion, TrailingSlashPolicy, Violation, dispatch,
+    DeclaredTag, Document, Error, OperationCx, PanicPolicy, PathItem, Paths, Registry, Result,
+    Router, RouterError, Severity, SpecError, SpecVersion, Violation, dispatch,
 };
-
-#[cfg(feature = "docs")]
-use super::docs;
-#[cfg(feature = "unchecked")]
-use super::install::install_unchecked;
 
 impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// Checks the router without building it.
@@ -90,135 +86,6 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         let described = self.describe()?;
         described.errors()?;
         described.document.emit(version).map_err(invalid)
-    }
-
-    /// Finalizes the router into something servable.
-    ///
-    /// This is where the structural checks run, so an API that cannot be
-    /// described correctly fails at startup rather than at documentation time.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::Invalid`] with every violation found.
-    ///
-    /// Before any of that, returns what
-    /// [describing a router refuses first](Error#what-describing-a-router-refuses-first).
-    pub fn build(self, context: C) -> Result<Service<C>>
-    where
-        C: Send + Sync + 'static,
-    {
-        let described = self.describe()?;
-        let linked = described.linked;
-        let document = described.into_document()?;
-
-        // After the document and every violation: the reference describes its
-        // own routes, and a dropped half has already failed the build.
-        #[cfg(feature = "docs")]
-        let published = docs::render::render(&self.mounted, &document)?;
-
-        let mut matcher = matchit::Router::new();
-        let mut paths: Vec<PathEntry<C>> = Vec::new();
-        let mut index_of: HashMap<String, usize> = HashMap::new();
-
-        for mounted in self.mounted {
-            let key = mounted.path.as_str().to_owned();
-            // `TrialTable` already reported any refusal, failing the build.
-            let index = path_entry(
-                &key,
-                || {
-                    mounted
-                        .path
-                        .variables()
-                        .iter()
-                        .map(|name| dispatch::intern(name))
-                        .collect()
-                },
-                &mut matcher,
-                &mut paths,
-                &mut index_of,
-            )?;
-
-            let method = mounted.endpoint.method();
-            let described = document
-                .paths
-                .items
-                .get(&key)
-                .and_then(|item| item.operation(method));
-            let operation_id = described
-                .and_then(|operation| operation.operation_id.clone())
-                .unwrap_or_default();
-            let secured = described.is_some_and(declares_security);
-
-            let mut interceptors = self.interceptors.clone();
-            interceptors.extend(mounted.interceptors);
-
-            #[cfg(feature = "unchecked")]
-            let unchecked_layers = {
-                let mut layers = self.unchecked.layers.clone();
-                layers.extend(mounted.unchecked_layers);
-                layers
-            };
-
-            paths[index].operations.push(dispatch::Served {
-                method,
-                operation_id,
-                terminal: Arc::new(EndpointTerminal::new(mounted.endpoint)),
-                interceptors,
-                catch_panics: mounted.catch_panics || catches::<P>(),
-                secured,
-                #[cfg(feature = "unchecked")]
-                unchecked_layers,
-            });
-        }
-
-        #[cfg(feature = "unchecked")]
-        install_unchecked(
-            &self.unchecked,
-            &self.interceptors,
-            catches::<P>(),
-            &mut matcher,
-            &mut paths,
-            &mut index_of,
-        )?;
-
-        if self.trailing_slashes.unwrap_or_default() == TrailingSlashPolicy::Lenient {
-            register_flipped_spellings(&mut matcher, &paths);
-        }
-
-        for entry in &mut paths {
-            entry.derive_allow();
-        }
-
-        // Last, so the synthesized `OPTIONS` is in no `Allow`, implemented set
-        // or `paths` key.
-        let implemented = dispatch::implemented(&paths);
-        let method_not_allowed = self.method_not_allowed.unwrap_or_default();
-        install_preflight(&mut paths, &method_not_allowed, &implemented);
-
-        let dispatch = Arc::new(Dispatch {
-            matcher,
-            // Before `paths`, which moves into the dispatch.
-            links: linked.then(|| Arc::new(mounted_links(&paths))),
-            paths,
-            context,
-            observers: self.observers,
-            interceptors: self.interceptors,
-            catch_panics: catches::<P>(),
-            not_found: self.not_found.unwrap_or_default(),
-            method_not_allowed,
-            trailing_slashes: self.trailing_slashes.unwrap_or_default(),
-            trusted_proxies: self.trusted_proxies.unwrap_or_default(),
-            implemented,
-        });
-
-        // `serve`'s own future, not one awaiting it: a wrapper would box a
-        // second copy of the request beside the first.
-        let service = Service::new(document, move |request| {
-            Arc::clone(&dispatch).serve(request)
-        });
-        #[cfg(feature = "docs")]
-        let service = service.with_published(published);
-        Ok(service)
     }
 
     /// Registers every declared security scheme under `components`; an illegal
@@ -348,7 +215,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     }
 
     /// Assembles the description, plus every violation found on the way.
-    fn describe(&self) -> Result<Described>
+    pub(super) fn describe(&self) -> Result<Described>
     where
         C: 'static,
     {
@@ -489,12 +356,12 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 }
 
 /// A described router: the document it produces, and everything wrong with it.
-struct Described {
+pub(super) struct Described {
     document: Document,
     violations: Vec<Violation<RouterError>>,
     /// Whether any operation extracts a `Link`, so the service records where
     /// each operation is mounted.
-    linked: bool,
+    pub(super) linked: bool,
 }
 
 impl Described {
@@ -515,100 +382,8 @@ impl Described {
         }
     }
 
-    fn into_document(self) -> Result<Document> {
+    pub(super) fn into_document(self) -> Result<Document> {
         self.errors()?;
         Ok(self.document)
     }
-}
-
-/// Registers the other spelling of every declared path against the entry that
-/// declared it, for [`TrailingSlashPolicy::Lenient`].
-///
-/// A pass after every declared path, so a declared spelling always wins.
-/// Catch-alls (only `route_unchecked` makes one) are skipped as redundant.
-fn register_flipped_spellings<C>(matcher: &mut matchit::Router<usize>, paths: &[PathEntry<C>]) {
-    let flipped: Vec<(String, usize)> = paths
-        .iter()
-        .enumerate()
-        .filter(|(_, entry)| !entry.template.contains("{*"))
-        .filter_map(|(index, entry)| {
-            dispatch::flip_trailing_slash(&entry.template).map(|spelling| (spelling, index))
-        })
-        .collect();
-
-    for (spelling, index) in flipped {
-        // A collision means the application declared that spelling itself, and
-        // what it declared stands.
-        let _ = matcher.insert(spelling, index);
-    }
-}
-
-/// A dry run of the match table `build` fills, in `build`'s insertion order,
-/// which decides which of two conflicting routes is reported.
-#[derive(Default)]
-struct TrialTable {
-    table: matchit::Router<()>,
-    held: HashSet<String>,
-    shapes: HashSet<String>,
-}
-
-impl TrialTable {
-    /// Tries a described key, skipping a shape already held (the validator
-    /// reports that as `DuplicatePathTemplate`).
-    fn insert_template(&mut self, template: &kynos_openapi::PathTemplate) -> Option<RouterError> {
-        if self.held.contains(template.as_str()) || !self.shapes.insert(template.normalized()) {
-            return None;
-        }
-        self.insert(template.as_str())
-    }
-
-    /// Tries a matching pattern, as `build` inserts it; a pattern already held
-    /// is not tried again.
-    fn insert(&mut self, pattern: &str) -> Option<RouterError> {
-        if !self.held.insert(pattern.to_owned()) {
-            return None;
-        }
-        self.table
-            .insert(pattern, ())
-            .err()
-            .map(|error| match_table_refusal(pattern, error))
-    }
-}
-
-/// What the match table refusing `pattern` means.
-pub(super) fn match_table_refusal(pattern: &str, error: matchit::InsertError) -> RouterError {
-    match error {
-        matchit::InsertError::Conflict { with } => RouterError::RouteConflict {
-            pattern: pattern.to_owned(),
-            existing: with,
-        },
-        _ => RouterError::InvalidRoutePattern {
-            pattern: pattern.to_owned(),
-        },
-    }
-}
-
-/// Where each described operation is served, by `operationId`.
-///
-/// An operation without one, such as a synthesized preflight, is nothing a
-/// `Link` can name.
-fn mounted_links<C>(paths: &[PathEntry<C>]) -> crate::extract::link::Links {
-    let mut links = crate::extract::link::Links::default();
-    for entry in paths {
-        for operation in &entry.operations {
-            if !operation.operation_id.is_empty() {
-                links.insert(&operation.operation_id, entry.matched.0);
-            }
-        }
-    }
-    links
-}
-
-/// Whether `operation` declares a security requirement: a non-empty list does,
-/// even one holding the empty (anonymous) requirement beside a scheme.
-fn declares_security(operation: &kynos_openapi::Operation) -> bool {
-    operation
-        .security
-        .as_ref()
-        .is_some_and(|requirements| !requirements.is_empty())
 }

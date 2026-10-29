@@ -1,111 +1,12 @@
-//! The private machinery the builder methods call: installing unchecked routes
-//! and preflights, and the small functions that shape an emitted document.
+//! The private machinery the builder methods, `describe.rs` and `build.rs`
+//! share: installing preflights, and the small functions that shape an
+//! emitted document.
 
 use super::{
-    Arc, Catch, Document, ErasedInterceptor, Error, FallbackPolicy, HashMap, Info, PanicPolicy,
-    PathEntry, Result, RouterError, Severity, SpecError, SpecVersion, Violation,
-    describe::match_table_refusal, dispatch,
+    Arc, Catch, Document, ErasedInterceptor, Error, FallbackPolicy, Info, PanicPolicy, PathEntry,
+    Result, RouterError, Severity, SpecError, SpecVersion, Violation, dispatch,
 };
 use crate::schema::constraints::Pointer;
-
-/// Adds the routes no path template expresses to the match table.
-///
-/// # Errors
-///
-/// Returns [`Error::Invalid`] when the table refuses a pattern, which
-/// `describe` has already reported by then.
-#[cfg(feature = "unchecked")]
-pub(super) fn install_unchecked<C>(
-    unchecked: &crate::unchecked::Unchecked<C>,
-    interceptors: &[Arc<dyn ErasedInterceptor<C>>],
-    catch_panics: bool,
-    matcher: &mut matchit::Router<usize>,
-    paths: &mut Vec<PathEntry<C>>,
-    index_of: &mut HashMap<String, usize>,
-) -> Result<()> {
-    for route in &unchecked.routes {
-        // Variables from the pattern, since a catch-all is no `PathTemplate`.
-        let index = path_entry(
-            &route.pattern,
-            || matcher_variables(&route.pattern),
-            matcher,
-            paths,
-            index_of,
-        )?;
-
-        let mut unchecked_layers = unchecked.layers.clone();
-        unchecked_layers.extend(route.layers.iter().cloned());
-
-        // The root's own, then those of the routers the route was nested in.
-        let mut covering = interceptors.to_vec();
-        covering.extend(route.interceptors.iter().cloned());
-
-        for method in &route.methods {
-            paths[index].operations.push(dispatch::Served {
-                // Distinct per route and method, since interceptors key on it;
-                // `unchecked:` marks it as synthesized.
-                operation_id: format!("unchecked:{} {}", method.as_wire_str(), route.pattern),
-                method: *method,
-                terminal: Arc::clone(&route.terminal),
-                interceptors: covering.clone(),
-                catch_panics: catch_panics || route.catch_panics,
-                // Undescribed; an `Authorization` it checks itself still keeps
-                // its response out of a cache.
-                secured: false,
-                unchecked_layers: unchecked_layers.clone(),
-            });
-        }
-    }
-
-    Ok(())
-}
-
-/// The index of the entry serving `key`, adding it to the match table first
-/// when no earlier operation did, with the variable names `variables` gives.
-///
-/// # Errors
-///
-/// Returns [`Error::Invalid`] when the match table refuses `key`.
-pub(super) fn path_entry<C>(
-    key: &str,
-    variables: impl FnOnce() -> Vec<&'static str>,
-    matcher: &mut matchit::Router<usize>,
-    paths: &mut Vec<PathEntry<C>>,
-    index_of: &mut HashMap<String, usize>,
-) -> Result<usize> {
-    if let Some(index) = index_of.get(key) {
-        return Ok(*index);
-    }
-
-    let index = paths.len();
-    matcher
-        .insert(key, index)
-        .map_err(|error| invalid(match_table_refusal(key, error)))?;
-    paths.push(PathEntry {
-        template: key.to_owned(),
-        matched: crate::extract::connection::MatchedPath(dispatch::intern(key)),
-        // Interned as the names are: leaked once per path a router builds.
-        variables: Box::leak(variables().into_boxed_slice()),
-        allow: dispatch::allow_header(&[]),
-        operations: Vec::new(),
-    });
-    index_of.insert(key.to_owned(), index);
-    Ok(index)
-}
-
-/// The variable names a matching pattern captures; `{*name}` captures `name`,
-/// as matchit reports it.
-#[cfg(feature = "unchecked")]
-pub(super) fn matcher_variables(pattern: &str) -> Vec<&'static str> {
-    pattern
-        .split('/')
-        .filter_map(|segment| {
-            let name = segment.strip_prefix('{')?.strip_suffix('}')?;
-            let name = name.strip_prefix('*').unwrap_or(name);
-            (!name.is_empty()).then(|| dispatch::intern(name))
-        })
-        .collect()
-}
 
 /// Whether `P` selected recovery, by type identity.
 pub(super) fn catches<P: PanicPolicy>() -> bool {
