@@ -179,6 +179,37 @@ fn a_declared_parameter_governs_the_value_a_request_carries() {
             "application/vnd.x; version=3",
             false,
         ),
+        // A `;` inside a quoted value separates nothing (RFC 9110 section 5.6.6).
+        (
+            "application/vnd.x+json; profile=\"a;b\"",
+            "application/vnd.x+json; profile=\"a;b\"",
+            true,
+        ),
+        (
+            "application/vnd.x+json; profile=\"a;b\"",
+            "application/vnd.x+json",
+            true,
+        ),
+        (
+            "application/vnd.x+json; profile=\"a;b\"",
+            "application/vnd.x+json; profile=\"a;b\"; charset=utf-8",
+            true,
+        ),
+        (
+            "application/vnd.x+json; profile=\"a;b\"",
+            "application/vnd.x+json; profile=\"a\"",
+            false,
+        ),
+        (
+            "application/vnd.x+json; profile=\"a\"",
+            "application/vnd.x+json; profile=\"a;b\"",
+            false,
+        ),
+        (
+            "application/vnd.x+json; profile=\"a;version=2\"",
+            "application/vnd.x+json; version=2",
+            false,
+        ),
     ] {
         let mut headers = HeaderMap::new();
         headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
@@ -495,6 +526,32 @@ mod a_multipart_boundary_is_read_past_optional_whitespace {
     async fn every_spelling_decodes_the_parts() {
         for content_type in SPELLINGS {
             let parts = read(content_type)
+                .await
+                .unwrap_or_else(|rejection| panic!("`{content_type}`: {rejection:?}"));
+            assert_eq!(
+                parts,
+                Parts(vec![("a".to_owned(), bytes::Bytes::from_static(b"b"))]),
+                "`{content_type}`"
+            );
+        }
+    }
+
+    /// A `;` inside a quoted `boundary` is part of the delimiter, not the end of
+    /// the parameter (RFC 9110 section 5.6.6), alone or after another quoted
+    /// parameter.
+    #[tokio::test]
+    async fn a_quoted_semicolon_is_part_of_the_value() {
+        for content_type in [
+            "multipart/form-data; boundary=\"x;y\"",
+            "multipart/form-data; charset=\"utf-8\"; boundary=\"x;y\" ",
+        ] {
+            let mut request = Request::new(Body::from_bytes(bytes::Bytes::from_static(
+                b"--x;y\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nb\r\n--x;y--\r\n",
+            )));
+            request
+                .headers_mut()
+                .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+            let MultipartForm(parts) = super::extract::<MultipartForm<Parts>>(request)
                 .await
                 .unwrap_or_else(|rejection| panic!("`{content_type}`: {rejection:?}"));
             assert_eq!(
