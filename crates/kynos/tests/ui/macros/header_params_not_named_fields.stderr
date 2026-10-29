@@ -1,0 +1,17 @@
+error: `HeaderParams` describes a group of named values, so it needs a struct with named fields
+ --> tests/ui/macros/header_params_not_named_fields.rs:9:18
+  |
+9 | struct Positional(String);
+  |                  ^^^^^^^^
+
+error: `HeaderParams` describes a group of named values, which an enum is not
+  --> tests/ui/macros/header_params_not_named_fields.rs:12:1
+   |
+12 | enum Choice {
+   | ^^^^
+
+error: `HeaderParams` cannot describe a union
+  --> tests/ui/macros/header_params_not_named_fields.rs:17:1
+   |
+17 | union Overlaid {
+   | ^^^^^
