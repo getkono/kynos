@@ -5,9 +5,10 @@
 //! including every 3.2 field in a build without `openapi32`. A key lacking the
 //! `x-` prefix is no extension and 3.1 cannot read it, so each is reported.
 //!
-//! The model holds the two relaxations in every build: a response without a
-//! `description`, which 3.1 requires, and a security requirement naming a
-//! scheme by URI, which 3.1 does not admit.
+//! The model holds the three relaxations in every build: a response without a
+//! `description`, which 3.1 requires; a security requirement naming a scheme
+//! by URI, which 3.1 does not admit; and a `content` entry given by reference,
+//! where 3.1 admits only a Media Type Object.
 //!
 //! Each struct whose fields are all visible here is destructured without `..`,
 //! so a field added to the model is a compile error in this file.
@@ -48,6 +49,8 @@ pub(super) struct Found<'d> {
     pub(super) undescribed_responses: Vec<String>,
     /// Each security requirement name that is a scheme URI, at the name.
     pub(super) scheme_uris: Vec<String>,
+    /// Each `content` entry given by reference, at the entry.
+    pub(super) media_type_refs: Vec<String>,
     /// The document's declared scheme names, which no URI reading displaces.
     schemes: &'d Map<RefOr<SecurityScheme>>,
 }
@@ -78,6 +81,7 @@ pub(super) fn walk(document: &Document) -> Found<'_> {
         fields: Vec::new(),
         undescribed_responses: Vec::new(),
         scheme_uris: Vec::new(),
+        media_type_refs: Vec::new(),
         schemes: &document.components.security_schemes,
     };
     document_fields(document, &mut found);
@@ -392,11 +396,20 @@ fn request_body_fields(at: At<'_>, body: &RequestBody, found: &mut Found<'_>) {
 
 fn content_fields<'a>(
     at: At<'_>,
-    content: impl IntoIterator<Item = (&'a String, &'a MediaType)>,
+    content: impl IntoIterator<Item = (&'a String, &'a RefOr<MediaType>)>,
     found: &mut Found<'_>,
 ) {
     for (media_type, value) in content {
-        media_type_fields(at.key(media_type), value, found);
+        content_entry_fields(at.key(media_type), value, found);
+    }
+}
+
+/// One `content` entry: a reference is itself what 3.1 cannot read, and what
+/// it names is walked where it is defined.
+fn content_entry_fields(at: At<'_>, entry: &RefOr<MediaType>, found: &mut Found<'_>) {
+    match entry {
+        RefOr::Item(media_type) => media_type_fields(at, media_type, found),
+        RefOr::Ref(_) => found.media_type_refs.push(at.pointer()),
     }
 }
 
@@ -467,7 +480,7 @@ fn parameter_fields(at: At<'_>, parameter: &Parameter, found: &mut Found<'_>) {
         schema_fields(at.key("schema"), schema, found);
     }
     if let Some((media_type, value)) = parameter.content() {
-        media_type_fields(at.key("content").key(media_type), value, found);
+        content_entry_fields(at.key("content").key(media_type), value, found);
     }
     examples_fields(at, parameter.examples(), found);
 }
@@ -479,7 +492,7 @@ fn header_fields(at: At<'_>, header: &Header, found: &mut Found<'_>) {
         schema_fields(at.key("schema"), schema, found);
     }
     if let Some((media_type, value)) = header.content() {
-        media_type_fields(at.key("content").key(media_type), value, found);
+        content_entry_fields(at.key("content").key(media_type), value, found);
     }
     examples_fields(at, header.examples(), found);
 }

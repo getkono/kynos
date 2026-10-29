@@ -501,6 +501,7 @@ fn declared_type(response: &kynos_openapi::Response) -> String {
     let schema = response
         .content
         .get(APPLICATION_PROBLEM_JSON)
+        .and_then(RefOr::as_item)
         .and_then(|media_type| media_type.schema.as_ref())
         .expect("a declared problem document carries a schema");
 
@@ -557,6 +558,7 @@ async fn the_narrowing_fixes_the_one_member_the_wire_cannot_vary() {
             response
                 .content
                 .get(kynos_openapi::model::body::mime_names::APPLICATION_PROBLEM_JSON)
+                .and_then(RefOr::as_item)
                 .and_then(|media_type| media_type.schema.as_ref())
                 .expect("a declared problem document carries a schema"),
         )

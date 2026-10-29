@@ -572,7 +572,7 @@ mod a_json_body_under_a_declared_media_type {
 
         assert_eq!(ok.content.keys().collect::<Vec<_>>(), [V1::MEDIA_TYPE]);
         assert_eq!(
-            ok.content[V1::MEDIA_TYPE].schema,
+            ok.content[V1::MEDIA_TYPE].as_item().expect("inline").schema,
             Some(Registry::default().resolve::<u32>())
         );
     }
@@ -663,7 +663,7 @@ mod a_body_in_an_outside_format {
         let media_type = <Tally as BodyCodec<u64>>::MEDIA_TYPE;
         assert_eq!(ok.content.keys().collect::<Vec<_>>(), [media_type]);
         assert_eq!(
-            ok.content[media_type].schema,
+            ok.content[media_type].as_item().expect("inline").schema,
             Some(Registry::default().resolve::<u64>())
         );
     }

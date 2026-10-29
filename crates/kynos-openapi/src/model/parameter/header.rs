@@ -102,8 +102,10 @@ pub enum HeaderShape {
         /// The media type the value is carried as.
         media_type: String,
 
-        /// What that media type describes.
-        value: Box<MediaType>,
+        /// What that media type describes, inline or by reference.
+        ///
+        /// A reference is 3.2's alone: 3.1 admits only a Media Type Object here.
+        value: Box<RefOr<MediaType>>,
     },
 }
 
@@ -119,10 +121,10 @@ impl Header {
     }
 
     /// Creates a header described by one media type.
-    pub fn with_content(media_type: impl Into<String>, value: MediaType) -> Self {
+    pub fn with_content(media_type: impl Into<String>, value: impl Into<RefOr<MediaType>>) -> Self {
         Self::shaped(HeaderShape::Content {
             media_type: media_type.into(),
-            value: Box::new(value),
+            value: Box::new(value.into()),
         })
     }
 
@@ -157,9 +159,10 @@ impl Header {
         }
     }
 
-    /// The media type and its description, when this header uses `content`.
+    /// The media type and its description, inline or by reference, when this
+    /// header uses `content`.
     #[must_use]
-    pub fn content(&self) -> Option<(&str, &MediaType)> {
+    pub fn content(&self) -> Option<(&str, &RefOr<MediaType>)> {
         match &self.shape {
             HeaderShape::Content { media_type, value } => Some((media_type, &**value)),
             HeaderShape::Schema { .. } => None,
@@ -291,7 +294,7 @@ struct RawHeader {
     examples: Option<Map<RefOr<Example>>>,
 
     #[serde(default, skip_serializing_if = "Map::is_empty")]
-    content: Map<MediaType>,
+    content: Map<RefOr<MediaType>>,
 
     #[serde(flatten)]
     extensions: Extensions,

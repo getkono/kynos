@@ -677,6 +677,7 @@ fn a_localized_operation_enumerates_its_offer_on_the_language_it_answers_in() {
     assert_eq!(field.required, Some(true));
 
     let (_, media) = field.content().expect("a content-described header");
+    let media = media.as_item().expect("an inline media type");
     let kynos::openapi::Schema::Object(schema) = media.schema.clone().expect("a schema") else {
         panic!("described by a boolean schema");
     };
@@ -799,6 +800,7 @@ fn a_catalogue_no_const_can_name_still_declares_the_field_without_its_offer() {
     };
 
     let (_, media) = field.content().expect("a content-described header");
+    let media = media.as_item().expect("an inline media type");
     let kynos::openapi::Schema::Object(schema) = media.schema.clone().expect("a schema") else {
         panic!("described by a boolean schema");
     };

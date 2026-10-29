@@ -669,6 +669,7 @@ fn pattern(header: &kynos_openapi::Header) -> String {
     assert_eq!(media_type, "text/plain");
     assert_eq!(header.required, Some(true));
 
+    let content = content.as_item().expect("an inline media type");
     let kynos_openapi::Schema::Object(schema) = content.schema.clone().expect("a schema") else {
         panic!("described by a boolean schema");
     };

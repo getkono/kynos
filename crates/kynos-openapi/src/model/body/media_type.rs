@@ -164,6 +164,14 @@ impl MediaType {
     }
 }
 
+/// An inline `content` entry, so each constructor taking one takes a
+/// [`MediaType`] or, for 3.2, a [`Ref`] to one.
+impl From<MediaType> for RefOr<MediaType> {
+    fn from(media_type: MediaType) -> Self {
+        Self::Item(media_type)
+    }
+}
+
 /// The wire shape: the example fields flat, as the specification writes them.
 #[derive(Serialize, Deserialize)]
 struct RawMediaType {

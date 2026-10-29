@@ -1603,6 +1603,71 @@ fn a_reusable_media_type_is_checked_at_its_definition() {
     );
 }
 
+/// A description whose every `content` map holds a Reference Object, as
+/// `version` writes it, with what each names defined only where `version` has
+/// a section for it.
+fn with_media_type_refs(version: &str) -> Document {
+    let reference = serde_json::json!({"$ref": "#/components/mediaTypes/Json"});
+    let content = serde_json::json!({"application/json": reference});
+    let mut description = serde_json::json!({
+        "openapi": version,
+        "info": {"title": "Test", "version": "1.0.0"},
+        "paths": {
+            "/users": {
+                "get": {
+                    "operationId": "getUsers",
+                    "parameters": [{"name": "filter", "in": "query", "content": content}],
+                    "requestBody": {"content": content},
+                    "responses": {
+                        "200": {
+                            "description": "ok",
+                            "headers": {"X-Rate": {"content": content}},
+                            "content": content
+                        }
+                    }
+                }
+            }
+        }
+    });
+    if version.starts_with("3.2") {
+        description["components"] =
+            serde_json::json!({"mediaTypes": {"Json": {"schema": {"type": "object"}}}});
+    }
+    serde_json::from_value(description).expect("a well-formed description")
+}
+
+/// The four `content` entries [`with_media_type_refs`] writes, in walk order.
+const MEDIA_TYPE_REF_ENTRIES: [&str; 4] = [
+    "#/paths/~1users/get/parameters/0/content/application~1json",
+    "#/paths/~1users/get/requestBody/content/application~1json",
+    "#/paths/~1users/get/responses/200/headers/X-Rate/content/application~1json",
+    "#/paths/~1users/get/responses/200/content/application~1json",
+];
+
+/// 3.2 types every `content` map as "Media Type Object | Reference Object"
+/// (`references/3.2.0.md:832,1210,2163,2705`), so a `$ref` there is a
+/// reference, never a field the Media Type Object fails to recognise.
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_media_type_reference_in_any_content_map_is_clean_under_3_2() {
+    assert_eq!(located_errors_3_2(&with_media_type_refs("3.2.0")), vec![]);
+}
+
+/// 3.1 types each `content` map as Media Type Objects alone
+/// (`references/3.1.0.md:1048,1257,1729`), so validating as 3.1 refuses each
+/// reference as a 3.2 construct, at the entry holding it, in every build.
+#[test]
+fn a_media_type_reference_in_any_content_map_requires_3_2() {
+    let mut blockers = match errors(&with_media_type_refs("3.1.2")).as_slice() {
+        [SpecError::RequiresV3_2 { blockers }] => blockers.clone(),
+        other => panic!("expected one downgrade refusal, got {other:?}"),
+    };
+    blockers.sort();
+    let mut expected = MEDIA_TYPE_REF_ENTRIES.map(str::to_owned).to_vec();
+    expected.sort();
+    assert_eq!(blockers, expected);
+}
+
 /// `encoding` "MUST NOT be present if `prefixEncoding` or `itemEncoding` are
 /// present" (`references/3.2.0.md:1265-1267`), and nothing else is excluded:
 /// each row sets `encoding`, `prefixEncoding` and `itemEncoding` or not, on a
