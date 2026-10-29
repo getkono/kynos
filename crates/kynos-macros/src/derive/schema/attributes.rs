@@ -1,8 +1,8 @@
 use proc_macro2::Span;
 
 use super::{
-    ANNOTATIONS, COUNTS, DeriveInput, Field, Fields, IdentExt, Lit, LitFloat, LitInt, LitStr,
-    NUMERIC, Spanned, TokenStream2, Type, Variant,
+    ANNOTATIONS, COUNTS, Field, Fields, IdentExt, Lit, LitFloat, LitInt, LitStr, NUMERIC, Spanned,
+    TokenStream2, Type, Variant,
     container::{Container, Visitor, string_value},
     quote, skip_value,
 };
@@ -110,12 +110,6 @@ fn serde_renames(attrs: &[syn::Attribute]) -> Sides {
 /// ahead of the enum's `rename_all_fields`.
 pub(super) fn variant_rename_all(variant: &Variant) -> Sides {
     serde_sides(&variant.attrs, "rename_all")
-}
-
-/// An enum's `rename_all_fields` style on each side, which names a variant's
-/// fields on each side the variant's own `rename_all` leaves.
-pub(super) fn rename_all_fields(input: &DeriveInput) -> Sides {
-    serde_sides(&input.attrs, "rename_all_fields")
 }
 
 /// The [`sides`] of `key` in `#[serde(...)]` lists, the last one written.
@@ -383,23 +377,7 @@ pub(super) fn is_required(field: &Field, container: &Container) -> bool {
 /// Whether any `#[serde(...)]` list names one of `keys`, with or without a
 /// value.
 pub(super) fn serde_flag(attrs: &[syn::Attribute], keys: &[&str]) -> bool {
-    let mut found = false;
-    for attr in attrs {
-        if !attr.path().is_ident("serde") {
-            continue;
-        }
-        let _ = attr.parse_nested_meta(|meta| {
-            if meta
-                .path
-                .get_ident()
-                .is_some_and(|key| keys.contains(&key.to_string().as_str()))
-            {
-                found = true;
-            }
-            skip_value(&meta)
-        });
-    }
-    found
+    serde_key_span(attrs, keys).is_some()
 }
 
 /// Where serde takes the value it fills a missing member with.

@@ -7,8 +7,8 @@ use crate::derive::schema::{
     aliases,
     aliases::shadowed_variant,
     attributes::{
-        field_name, field_read_name, is_flattened, rename_all_fields, serde_flag, serde_key_span,
-        variant_name, variant_read_name, variant_rename_all,
+        field_name, field_read_name, is_flattened, serde_flag, serde_key_span, variant_name,
+        variant_read_name, variant_rename_all,
     },
     container::{Container, Visitor},
     members::{described_variants, is_written, split_rule},
@@ -158,7 +158,7 @@ pub(super) fn reject_split_rename_all(
         Data::Enum(data) => data.variants.iter().collect(),
         _ => Vec::new(),
     };
-    let fields_rule = rename_all_fields(input);
+    let fields_rule = &container.rename_all_fields;
     // Each struct variant serde writes whose sides differ once filled, and the
     // rules that give it them: `rename_all_fields` only where the variant's
     // own rule leaves it a side.
