@@ -208,6 +208,35 @@ mod a_wrapper_produces_and_declares_one_status {
         assert_eq!(representations::<Accepted<Text>>(202), ["text/plain"]);
     }
 
+    /// A `$ref` 200 beside a 404, the 200 first.
+    struct AReferenced200BeforeA404;
+
+    impl Responses for AReferenced200BeforeA404 {
+        fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+            let _ = registry;
+            kynos_openapi::Responses::new()
+                .with_pattern(
+                    kynos_openapi::StatusPattern::Code(200),
+                    kynos_openapi::Ref::new("#/components/responses/Found").into(),
+                )
+                .with(404, kynos_openapi::Response::new("no such thing"))
+        }
+    }
+
+    /// A `$ref` 200 the wrapper cannot re-key stays where the body put it;
+    /// only the wrapper's own status is appended.
+    #[test]
+    fn a_referenced_200_keeps_its_place() {
+        assert_eq!(
+            declared::<Created<AReferenced200BeforeA404>>(),
+            ["200", "404", "201"]
+        );
+        assert_eq!(
+            declared::<Accepted<AReferenced200BeforeA404>>(),
+            ["200", "404", "202"]
+        );
+    }
+
     /// Every code the witness admits, over the whole set.
     ///
     /// A closed enumeration, so all five rather than a sample: the ones a
