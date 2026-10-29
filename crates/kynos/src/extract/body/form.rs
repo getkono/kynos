@@ -79,8 +79,7 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send> FromRequest<C> for
 
 impl<T: Schema> Describe for Form<T> {
     fn describe(operation: &mut OperationCx<'_>) {
-        let body = <Self as RequestContent>::request_body(operation.registry());
-        operation.set_request_body(body);
+        super::describe_body::<Self>(operation);
     }
 }
 

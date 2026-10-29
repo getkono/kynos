@@ -28,8 +28,8 @@ note: erroneous constant encountered
 note: the above error was encountered while instantiating `fn <OneOf<kynos::extract::body::codec::Encoded<Tally, u64>, kynos::extract::body::codec::Encoded<SignedTally, i64>> as RequestContent>::request_body`
  --> src/extract/body/mod.rs
   |
-  |         let body = <Self as RequestContent>::request_body(operation.registry());
-  |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |     let body = T::request_body(operation.registry());
+  |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/extract/body/mod.rs

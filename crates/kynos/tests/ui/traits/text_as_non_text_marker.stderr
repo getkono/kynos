@@ -19,10 +19,10 @@ note: erroneous constant encountered
   |                  ^^^^^^^^^^
 
 note: the above error was encountered while instantiating `fn <TextAs<Csv> as RequestContent>::request_body`
- --> src/extract/body/text_as.rs
+ --> src/extract/body/mod.rs
   |
-  |         let body = <Self as RequestContent>::request_body(operation.registry());
-  |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |     let body = T::request_body(operation.registry());
+  |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/extract/body/text_as.rs

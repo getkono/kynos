@@ -267,10 +267,7 @@ fn decode_captures<'v, 'p: 'v>(
 
 impl<T: PathParams> Describe for Path<T> {
     fn describe(operation: &mut OperationCx<'_>) {
-        let parameters = T::parameters(operation.registry());
-        for parameter in parameters {
-            operation.add_parameter(parameter);
-        }
+        super::describe_parameters(operation, T::parameters);
     }
 }
 

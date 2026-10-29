@@ -113,10 +113,7 @@ impl<C: Sync, T: DecodeQuery + Send> FromRequestParts<C> for Query<T> {
 
 impl<T: QueryParams> Describe for Query<T> {
     fn describe(operation: &mut OperationCx<'_>) {
-        let parameters = T::parameters(operation.registry());
-        for parameter in parameters {
-            operation.add_parameter(parameter);
-        }
+        super::describe_parameters(operation, T::parameters);
     }
 }
 

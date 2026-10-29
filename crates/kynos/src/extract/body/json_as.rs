@@ -229,8 +229,7 @@ where
 
 impl<M: MediaType, T: Schema> Describe for JsonAs<M, T> {
     fn describe(operation: &mut OperationCx<'_>) {
-        let body = <Self as RequestContent>::request_body(operation.registry());
-        operation.set_request_body(body);
+        super::describe_body::<Self>(operation);
     }
 }
 

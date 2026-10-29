@@ -21,10 +21,10 @@ note: erroneous constant encountered
   |                  ^^^^^^^^^^^^^^^^^
 
 note: the above error was encountered while instantiating `fn <kynos::extract::body::codec::Encoded<Tally, u64> as RequestContent>::request_body`
- --> src/extract/body/codec.rs
+ --> src/extract/body/mod.rs
   |
-  |         let body = <Self as RequestContent>::request_body(operation.registry());
-  |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |     let body = T::request_body(operation.registry());
+  |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/extract/body/codec.rs

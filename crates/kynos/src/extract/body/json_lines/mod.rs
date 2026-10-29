@@ -127,8 +127,7 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema> FromRequest<C> for JsonLi
 
 impl<T: Schema> Describe for JsonLines<Records<T>> {
     fn describe(operation: &mut OperationCx<'_>) {
-        let body = <Self as RequestContent>::request_body(operation.registry());
-        operation.set_request_body(body);
+        super::describe_body::<Self>(operation);
     }
 }
 
@@ -161,8 +160,7 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema> FromRequest<C> for JsonSe
 
 impl<T: Schema> Describe for JsonSeq<Records<T>> {
     fn describe(operation: &mut OperationCx<'_>) {
-        let body = <Self as RequestContent>::request_body(operation.registry());
-        operation.set_request_body(body);
+        super::describe_body::<Self>(operation);
     }
 }
 

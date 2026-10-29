@@ -144,10 +144,7 @@ impl<T> Records<T> {
         media_type: &str,
         framing: Framing,
     ) -> Result<Self, BodyRejection> {
-        if !crate::extract::body::offers(&parts.headers, media_type) {
-            return Err(crate::extract::body::unsupported_media_type(&parts.headers));
-        }
-        crate::extract::body::refuse_undecoded(&parts.headers)?;
+        crate::extract::body::admit(&parts.headers, media_type)?;
 
         Ok(Self {
             limit: crate::extract::body::limit::of(parts),
