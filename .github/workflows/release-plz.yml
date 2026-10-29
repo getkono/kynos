@@ -8,10 +8,6 @@ on:
 # Nothing is granted by default; each job asks for exactly what it needs.
 permissions: {}
 
-env:
-  CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: 0
-
 jobs:
   # Publish unpublished versions, tag them, and cut the GitHub release; a no-op
   # unless the commit is a release-PR merge (`release_always = false`).

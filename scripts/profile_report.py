@@ -76,10 +76,9 @@ RUN = ROOT / "profile-requests.tsv"
 # Under the target directory, beside the output it is read from.
 ATTRIBUTION = Path("gungraun/profile-attribution.md")
 
-# Where `profile:valgrind` installs, unless `KYNOS_VALGRIND` says otherwise.
-VALGRIND = Path(
-    os.environ.get("KYNOS_VALGRIND", Path.home() / ".local/share/kynos-valgrind")
-)
+# Where `profile:valgrind` installs, which mise.toml's `[env]` decides; the
+# script runs under `mise run`.
+VALGRIND = Path(os.environ["KYNOS_VALGRIND"])
 
 MEASURED, NOTHING, DISAGREE, INEXACT = 0, 1, 2, 3
 

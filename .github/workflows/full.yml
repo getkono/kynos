@@ -36,12 +36,6 @@ concurrency:
     && github.ref || github.run_id }}
   cancel-in-progress: true
 
-env:
-  CARGO_TERM_COLOR: always
-  # No working tree persists across edits, so incremental is dead weight.
-  CARGO_INCREMENTAL: 0
-  NEXTEST_PROFILE: ci
-
 jobs:
   # The one place that decides whether the tier runs.
   gate:
@@ -171,8 +165,8 @@ jobs:
     if: needs.gate.outputs.full == 'true'
     runs-on: ubuntu-latest
     # Advisory before 1.0 (docs/nfr.md): a break goes to the job summary and
-    # passes; no verdict at all fails. Not `continue-on-error`, which still
-    # marks the check run red.
+    # passes; no verdict at all fails, which `semver:check` decides. Not
+    # `continue-on-error`, which still marks the check run red.
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -181,40 +175,10 @@ jobs:
         with:
           cargo-cache-key: semver
       - name: Compare the public API against the last published release
-        run: |
-          set -o pipefail
-          mise run semver:check 2>&1 | tee semver.log || true
-
-          # `CARGO_TERM_COLOR: always` puts escapes inside the verdict line.
-          sed -r 's/\x1b\[[0-9;]*m//g' semver.log > semver.txt
-
-          if grep -q 'Summary semver requires new major version' semver.txt; then
-            verdict=broken
-          elif grep -q 'Summary no semver update required' semver.txt; then
-            verdict=clean
-          else
-            echo "::error::cargo-semver-checks produced no verdict; treating as a job failure"
-            exit 1
-          fi
-
-          {
-            echo "## API compatibility against the last published release"
-            echo
-            if [ "$verdict" = clean ]; then
-              echo "No break against the published baseline."
-            else
-              echo "Breaks against the published baseline, listed below."
-              echo
-              echo "Pre-1.0, a minor bump is how a break is declared, so this is"
-              echo "evidence for the release review rather than a failure of this"
-              echo "pull request."
-            fi
-            echo
-            echo '```'
-            grep -E '^(--- failure|Failed in:|  [a-z]|[[:space:]]+Summary )' semver.txt \
-              | sed "s#$GITHUB_WORKSPACE/##g"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: mise run semver:check --advisory
+      - name: Add API compatibility summary
+        if: ${{ !cancelled() && hashFiles('semver-summary.md') != '' }}
+        run: cat semver-summary.md >> "$GITHUB_STEP_SUMMARY"
 
   package:
     name: Package
@@ -301,13 +265,18 @@ jobs:
         uses: actions/checkout@v7
       - name: Set up
         uses: ./.github/actions/setup
-      # Pinned to `profile:valgrind`'s version: the CPU features Valgrind
+      # `profile:valgrind`'s version, from mise.toml: the CPU features Valgrind
       # reports decide which routines a dependency picks.
+      - name: Read the pinned Valgrind version
+        id: valgrind
+        run: |
+          version="$(mise env --json | jq -er .KYNOS_VALGRIND_VERSION)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Install Valgrind
         uses: gungraun/setup-gungraun@v1
         with:
           runner-strategy: none
-          valgrind-version: 3.27.1
+          valgrind-version: ${{ steps.valgrind.outputs.version }}
           # Never the distribution's, which is a different version.
           valgrind-strategy: builder,source
       - name: Count instructions and heap blocks over the request path

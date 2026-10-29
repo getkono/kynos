@@ -10,10 +10,31 @@ inputs:
       build lands outside the target directory this caches.
     required: false
     default: ""
+  incremental:
+    description: >-
+      Keeps Cargo's incremental compilation on, for a job that rebuilds one
+      small edit after another. Off otherwise: no working tree persists across
+      edits, so incremental is dead weight.
+    required: false
+    default: "false"
 
 runs:
   using: composite
   steps:
+    # First, so the steps below and the cache key read it too.
+    - name: Set the Cargo environment
+      shell: bash
+      env:
+        INCREMENTAL: ${{ inputs.incremental }}
+      run: |
+        {
+          echo "CARGO_TERM_COLOR=always"
+          echo "NEXTEST_PROFILE=ci"
+          if [ "$INCREMENTAL" != true ]; then
+            echo "CARGO_INCREMENTAL=0"
+          fi
+        } >> "$GITHUB_ENV"
+
     - name: Install tools
       uses: jdx/mise-action@v4
       with:

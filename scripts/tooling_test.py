@@ -249,10 +249,8 @@ class PythonPins(unittest.TestCase):
             blocks.append(block + f'run = "{run}"\n')
         return "\n".join(blocks)
 
-    def failures(self, *tasks, scripts=("probe.py",), floor=(3, 11), exempt=()):
-        return gate.python_pin_failures(
-            self.config(*tasks), set(scripts), floor, frozenset(exempt)
-        )
+    def failures(self, *tasks, scripts=("probe.py",), floor=(3, 11)):
+        return gate.python_pin_failures(self.config(*tasks), set(scripts), floor)
 
     def test_a_pinned_task_running_a_script_holds(self):
         self.assertEqual(
@@ -293,23 +291,11 @@ class PythonPins(unittest.TestCase):
         self.assertEqual(len(failures), 1)
         self.assertIn("runs no file from scripts/", failures[0])
 
-    def test_an_inline_interpreter_no_exemption_names_is_named(self):
+    def test_an_inline_interpreter_is_named(self):
         failures = self.failures(("probe", "python3 -c 'print(1)'", None))
         self.assertEqual(len(failures), 1)
         self.assertIn("something other than a file in scripts/", failures[0])
-
-    def test_an_exempted_inline_interpreter_is_not_named(self):
-        # The presence pair for the case above: an exemption that silenced
-        # nothing would leave that one green whether it worked or not.
-        self.assertEqual(
-            self.failures(("probe", "python3 -c 'print(1)'", None), exempt=("probe",)),
-            [],
-        )
-
-    def test_an_exemption_naming_a_task_that_runs_no_interpreter_is_named(self):
-        failures = self.failures(("probe", "cargo test", None), exempt=("probe",))
-        self.assertEqual(len(failures), 1)
-        self.assertIn("outlived its argument", failures[0])
+        self.assertIn("probe", failures[0])
 
     def test_a_script_a_task_runs_that_the_floor_rule_never_read_is_named(self):
         # What holds the floor rule's own file set, which nothing else can. The

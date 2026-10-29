@@ -433,13 +433,10 @@ uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
 # A dev-dependency adding a crate to the graph can reword the `ui` `.stderr`
-# snapshots' "other types implement" lists; these add none.
+# snapshots' "other types implement" lists, so adding one means rerunning `ui:check`.
 jsonwebtoken = { workspace = true }
 moka = { workspace = true }
-bytes = { workspace = true }
-http-body-util = { workspace = true }
 hyper = { workspace = true, features = ["client", "http1", "http2"] }
-serde = { workspace = true, features = ["derive"] }
 alloc_counter = { workspace = true }
 # `test-util` pauses the clock for exact timeouts; `io-util` has `duplex`, the
 # in-memory stream `Server::serve_io` is shown and tested over.

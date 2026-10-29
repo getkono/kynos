@@ -91,8 +91,6 @@ def cargo_config_failures(text):
 PYTHON_FLOOR = (3, 11)
 SCRIPTS = ROOT / "scripts"
 MISE_CONFIG = ROOT / "mise.toml"
-# Tasks running inline `python3` rather than a `scripts/` file, exempt by name.
-PYTHON_UNPINNED = {"publish:check"}
 
 
 def refused_at(source, path, version):
@@ -148,11 +146,11 @@ def python_floor_failures(scripts, floor=PYTHON_FLOOR):
     return problems
 
 
-def python_pin_failures(text, scripts, floor=PYTHON_FLOOR, exempt=PYTHON_UNPINNED):
+def python_pin_failures(text, scripts, floor=PYTHON_FLOOR):
     """What `mise.toml`'s `python` pins do not hold, `text` being that file.
 
     Every task running a `scripts/` file must pin one `python` equal to
-    `floor`; only `exempt` tasks may run inline `python3`. `scripts` is the
+    `floor`; no task may run inline `python3`. `scripts` is the
     paths (relative to `scripts/`) the floor rule read, so a task running a
     file outside that set fails. A script no task runs is allowed. Unparseable
     TOML is reported rather than raised.
@@ -163,7 +161,7 @@ def python_pin_failures(text, scripts, floor=PYTHON_FLOOR, exempt=PYTHON_UNPINNE
         return [f"mise.toml is not readable TOML: {error}"]
 
     stated = f"3.{floor[1]}"
-    problems, run_by, pinned, unpinned, inline = [], {}, {}, [], set()
+    problems, run_by, pinned, unpinned, inline = [], {}, {}, [], []
     for name, task in sorted(config.get("tasks", {}).items()):
         run = task.get("run")
         body = "\n".join(
@@ -187,7 +185,7 @@ def python_pin_failures(text, scripts, floor=PYTHON_FLOOR, exempt=PYTHON_UNPINNE
                 "pin, or give the task the script it was added for"
             )
         elif "python3" in body:
-            inline.add(name)
+            inline.append(name)
 
     if unpinned:
         problems.append(
@@ -243,24 +241,12 @@ def python_pin_failures(text, scripts, floor=PYTHON_FLOOR, exempt=PYTHON_UNPINNE
             )
         )
 
-    if stale := sorted(set(exempt) - inline):
-        problems.append(
-            "mise.toml no longer holds a task `PYTHON_UNPINNED` exempts from the "
-            "`python` pin. That exemption is for an inline `python3` running no "
-            "file in scripts/, and so held to no floor; naming a task that has "
-            "gone, or that has stopped running python3, is an exemption that "
-            "outlived its argument and now hides the next one:\n    "
-            + "\n    ".join(stale)
-        )
-
-    if unexempt := sorted(inline - set(exempt)):
+    if inline:
         problems.append(
             "a mise task runs `python3` over something other than a file in "
             "scripts/, so it is held to no declared floor and nothing here can say "
             "what it should be pinned to. Move the code into scripts/ where the "
-            "floor rule reads it, or name the task in `PYTHON_UNPINNED` and say "
-            "there why an inline interpreter is the right trade:\n    "
-            + "\n    ".join(unexempt)
+            "floor rule reads it:\n    " + "\n    ".join(inline)
         )
 
     return problems

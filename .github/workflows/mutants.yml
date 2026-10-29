@@ -27,11 +27,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Incremental stays on: each mutant is a one-function edit of the last build.
-env:
-  CARGO_TERM_COLOR: always
-  NEXTEST_PROFILE: ci
-
 jobs:
   diff:
     name: Mutants on changed lines
@@ -53,8 +48,12 @@ jobs:
           # The diff is taken from the merge base, which a shallow clone lacks.
           fetch-depth: 0
       # No `cargo-cache-key`: cargo-mutants builds in a copy without `target/`.
+      # Incremental stays on: each mutant is a one-function edit of the last
+      # build.
       - name: Set up
         uses: ./.github/actions/setup
+        with:
+          incremental: true
       - name: Test the mutants on changed lines
         # Under the job's bound, so the report is still uploaded.
         timeout-minutes: 280
@@ -83,8 +82,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+      # Incremental as `diff`.
       - name: Set up
         uses: ./.github/actions/setup
+        with:
+          incremental: true
       - name: Test this night's shard
         # Under the job's bound, so the report is still uploaded.
         timeout-minutes: 330

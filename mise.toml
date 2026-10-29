@@ -24,6 +24,17 @@ hk = "1.53.0"
 "github:obi1kenobi/cargo-semver-checks" = "0.50.0"
 "github:EmbarkStudios/cargo-deny" = "0.20.2"
 
+[env]
+# The nightly every task needing one installs and runs: `fuzz` and
+# `minimal-versions:check`. Dated, since an undated nightly moves under a job
+# between two nights, and a failure should be Kynos's own.
+KYNOS_NIGHTLY = "nightly-2026-06-10"
+# The Valgrind the request-path profile runs under, which `profile:valgrind`
+# builds and `full.yml` installs, and where `profile:valgrind` puts it unless
+# the caller exported one.
+KYNOS_VALGRIND_VERSION = "3.27.1"
+KYNOS_VALGRIND = "{{ get_env(name='KYNOS_VALGRIND', default=env.HOME ~ '/.local/share/kynos-valgrind') }}"
+
 [tasks.format]
 description = "Format the Rust workspace"
 run = "cargo fmt --all"
@@ -48,7 +59,8 @@ description = "Lint every kynos target at each codec's own feature set"
 # `openapi31 + macros (+ codec)`: the only builds that compile one codec's test
 # and example gates alone (docs/testing.md#cross-cutting). Clippy, since what
 # they catch is a dead or mis-gated item. Incremental stays on: the same six
-# sets recur on every push. Written out, not looped, so each can be rerun alone.
+# sets recur on every push. The sets are spelled out rather than derived, so
+# each one's command can be copied and rerun alone.
 run = '''
 set -eu
 
@@ -120,35 +132,20 @@ cargo hack clippy -p kynos --feature-powerset --depth 2 --no-dev-deps \
   --at-least-one-of http1,http2 \
   -- -D warnings
 
-invalid_server_output="$(mktemp)"
-trap 'rm -f "$invalid_server_output"' EXIT
-if cargo check -p kynos --no-default-features --features openapi31,server \
-    >"$invalid_server_output" 2>&1; then
-  echo "server unexpectedly compiled without an HTTP protocol" >&2
-  exit 1
-fi
-grep -F 'the `server` feature requires at least one of `http1` or `http2`' \
-  "$invalid_server_output"
+sh scripts/refuses.sh \
+  "server unexpectedly compiled without an HTTP protocol" \
+  'the `server` feature requires at least one of `http1` or `http2`' \
+  cargo check -p kynos --no-default-features --features openapi31,server
 
-invalid_time_output="$(mktemp)"
-trap 'rm -f "$invalid_server_output" "$invalid_time_output"' EXIT
-if cargo check -p kynos --no-default-features --features openapi31,time \
-    >"$invalid_time_output" 2>&1; then
-  echo "the time umbrella unexpectedly compiled without a backend" >&2
-  exit 1
-fi
-grep -F 'the `time` feature carries no types of its own' "$invalid_time_output"
+sh scripts/refuses.sh \
+  "the time umbrella unexpectedly compiled without a backend" \
+  'the `time` feature carries no types of its own' \
+  cargo check -p kynos --no-default-features --features openapi31,time
 
-invalid_decimal_output="$(mktemp)"
-trap 'rm -f "$invalid_server_output" "$invalid_time_output" \
-  "$invalid_decimal_output"' EXIT
-if cargo check -p kynos --no-default-features --features openapi31,decimal \
-    >"$invalid_decimal_output" 2>&1; then
-  echo "the decimal umbrella unexpectedly compiled without a backend" >&2
-  exit 1
-fi
-grep -F 'the `decimal` feature carries no types of its own' \
-  "$invalid_decimal_output"
+sh scripts/refuses.sh \
+  "the decimal umbrella unexpectedly compiled without a backend" \
+  'the `decimal` feature carries no types of its own' \
+  cargo check -p kynos --no-default-features --features openapi31,decimal
 '''
 
 [tasks."features:targets"]
@@ -168,7 +165,8 @@ description = "Measure what each feature costs a linked artifact and monomorphiz
 # `.text` at `--release`, the shipped artifact; IR at the dev profile, since
 # fat LTO deletes the monomorphizations `llvm-lines` counts. The script drives
 # the loop because every build overwrites the fixture. Runs in `full.yml`, not
-# per pull request (docs/releasing.md).
+# per pull request (docs/releasing.md). Arguments reach the script, so the
+# variants below delegate here rather than restating the pins.
 #
 # Task-scoped pins stay out of every other job, and `mise lock` does not lock
 # them. `cargo-llvm-lines` has no release binaries. `python` matches
@@ -178,8 +176,7 @@ run = "python3 scripts/cost_features.py"
 
 [tasks."cost:codegen"]
 description = "The codegen half of the sweep alone"
-tools = { "cargo:cargo-llvm-lines" = "0.4.48", python = "3.11.16" }
-run = "python3 scripts/cost_features.py --kind codegen"
+run = "mise run cost:features --kind codegen"
 
 [tasks."cost:codecs"]
 description = "The codec half of the sweep alone: what mounting each codec costs"
@@ -190,11 +187,10 @@ run = "python3 scripts/cost_features.py --kind codec"
 [tasks."cost:record"]
 description = "Record the measured deltas as the committed baseline"
 # Writes all three baselines under `crates/kynos/cost/`, which a release pull
-# request must match (docs/releasing.md). One alone: `--kind` with
-# `KYNOS_COST=overwrite`.
-tools = { "cargo:cargo-llvm-lines" = "0.4.48", python = "3.11.16" }
+# request must match (docs/releasing.md). One alone: `--kind`, which reaches
+# `cost:features`.
 env = { KYNOS_COST = "overwrite" }
-run = "python3 scripts/cost_features.py"
+run = "mise run cost:features"
 
 [tasks."cost:test"]
 description = "Test the cost sweep's parsers and its report"
@@ -206,11 +202,12 @@ run = "python3 scripts/cost_features_test.py"
 [tasks."profile:valgrind"]
 description = "Build the Valgrind the request-path profile runs under"
 # From source into a user prefix, needing no root; CI installs it with
-# `gungraun/setup-gungraun`. The digest is the reviewed tarball's. Idempotent.
+# `gungraun/setup-gungraun`. The digest is the reviewed tarball's, so it moves
+# with `KYNOS_VALGRIND_VERSION`. Idempotent.
 run = '''
 set -eu
-prefix="${KYNOS_VALGRIND:-$HOME/.local/share/kynos-valgrind}"
-version=3.27.1
+prefix="$KYNOS_VALGRIND"
+version="$KYNOS_VALGRIND_VERSION"
 digest=5d589152eb8071c02feab8ce6ab719e431a1fbc3e2b1700f5432632a8b9264dc
 if "$prefix/bin/valgrind" --version 2>/dev/null | grep -qx "valgrind-$version"; then
   exit 0
@@ -243,10 +240,8 @@ run = "python3 scripts/profile_report.py --run"
 [tasks."profile:record"]
 description = "Record the request-path profile as the committed baseline"
 # Runs the whole profile first, so the baseline records this build.
-tools = { "github:gungraun/gungraun" = "0.20.0", python = "3.11.16" }
-depends = ["profile:valgrind"]
 env = { KYNOS_PROFILE = "overwrite" }
-run = "python3 scripts/profile_report.py --run"
+run = "mise run profile:requests"
 
 [tasks."profile:test"]
 description = "Test the request-path profile's parsers and its report"
@@ -329,25 +324,27 @@ env = { RUSTDOCFLAGS = "-D warnings" }
 description = "Verify panic recovery rejects aborting builds only when selected"
 run = '''
 set -eu
-panic_check_output="$(mktemp)"
-trap 'rm -f "$panic_check_output"' EXIT
-
 RUSTFLAGS="-C panic=abort" cargo check -p kynos --lib
 
-if RUSTFLAGS="-C panic=abort" cargo build -p kynos --test panic-recovery-check >"$panic_check_output" 2>&1; then
-  echo "panic recovery unexpectedly compiled with panic=abort" >&2
-  exit 1
-fi
-
-grep -F 'Kynos panic recovery requires `panic = "unwind"`' "$panic_check_output"
+RUSTFLAGS="-C panic=abort" sh scripts/refuses.sh \
+  "panic recovery unexpectedly compiled with panic=abort" \
+  'Kynos panic recovery requires `panic = "unwind"`' \
+  cargo build -p kynos --test panic-recovery-check
 '''
 
 [tasks."msrv:check"]
 description = "Verify the crate still builds on the declared MSRV"
-# `kynos-profile` is unpublished and needs gungraun's 1.88 floor.
+# The toolchain is the workspace's `rust-version`, read from `Cargo.toml`.
+# `kynos-profile` is unpublished and declares gungraun's higher floor.
 run = '''
-rustup toolchain install 1.85 --profile minimal --no-self-update
-cargo +1.85 check --workspace --all-features --exclude kynos-profile
+set -eu
+msrv="$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)"
+if [ -z "$msrv" ]; then
+  echo "Cargo.toml declares no rust-version" >&2
+  exit 1
+fi
+rustup toolchain install "$msrv" --profile minimal --no-self-update
+cargo +"$msrv" check --workspace --all-features --exclude kynos-profile
 '''
 
 [tasks."minimal-versions:check"]
@@ -366,58 +363,105 @@ description = "Build the workspace with every direct dependency at its declared 
 # `kynos-profile` is excluded for `msrv:check`'s reason: it is published
 # nowhere, so its bounds are nobody's promise.
 #
-# `-Z` needs nightly, and a dated one for `fuzz`'s reason: an undated nightly
-# moves under the job between two nights. The resolution rewrites Cargo.lock,
-# so the committed one is put back however the task exits.
-env = { MINIMAL_VERSIONS_TOOLCHAIN = "nightly-2026-06-10" }
+# `-Z` needs nightly, `KYNOS_NIGHTLY`. The resolution rewrites Cargo.lock, so
+# the committed one is put back however the task exits.
 run = '''
 set -eu
-rustup toolchain install "$MINIMAL_VERSIONS_TOOLCHAIN" --profile minimal --no-self-update
+rustup toolchain install "$KYNOS_NIGHTLY" --profile minimal --no-self-update
 
 lock="$(mktemp)"
 cp Cargo.lock "$lock"
 trap 'cp "$lock" Cargo.lock; rm -f "$lock"' EXIT
 
-cargo +"$MINIMAL_VERSIONS_TOOLCHAIN" update -Z direct-minimal-versions
-cargo +"$MINIMAL_VERSIONS_TOOLCHAIN" check --workspace --all-features --exclude kynos-profile
+cargo +"$KYNOS_NIGHTLY" update -Z direct-minimal-versions
+cargo +"$KYNOS_NIGHTLY" check --workspace --all-features --exclude kynos-profile
 '''
 
 [tasks."publish:check"]
 description = "Package every crate exactly as crates.io will receive it"
 # Rebuilds each crate from its tarball, the only check that sees a file the
-# archive omits. `--workspace` resolves siblings from the staged archives, as
-# `cargo publish` will (Cargo 1.90+; the MSRV is for building, not publishing).
-# No `--allow-dirty`: an artifact must match a commit. The `--list` loop checks
-# `LICENSE`, which no manifest key references.
+# archive omits. One `cargo package` over a `-p` per publishable member
+# resolves each sibling from its staged archive, as `cargo publish` will
+# (Cargo 1.90+; the MSRV is for building, not publishing). No `--allow-dirty`:
+# an artifact must match a commit. The `--list` loop checks `LICENSE`, which no
+# manifest key references. Both read the one set of packages
+# `scripts/publishable.py` derives from the manifests.
+tools = { python = "3.11.16" }
 run = '''
 set -eu
 
 # An assignment carries the listing's status to `set -e`; a `for` list would
-# not. A failed `cargo metadata` still fails the pipe, as `json.load` refuses
-# its empty output.
-packages="$(cargo metadata --no-deps --format-version 1 \
-  | python3 -c 'import json,sys; print(" ".join(p["name"] for p in json.load(sys.stdin)["packages"] if p["publish"] != []))')"
-if [ -z "$packages" ]; then
-  echo "cargo metadata listed no publishable package" >&2
-  exit 1
-fi
+# not.
+packages="$(python3 scripts/publishable.py)"
 
+set --
 for package in $packages; do
   if ! cargo package --list --quiet -p "$package" | grep -qx LICENSE; then
     echo "$package would be published without LICENSE" >&2
     exit 1
   fi
+  set -- "$@" -p "$package"
 done
 
-cargo package --workspace --all-features --exclude kynos-profile
+cargo package "$@" --all-features
 '''
 
 [tasks."semver:check"]
 description = "Compare the public API against the last published release"
 # release-plz's own semver check compares default features only, so a break
 # behind a flag would surface at release; this compares `--all-features` on
-# `master` against the last published version. CI reports rather than blocks.
-run = "cargo semver-checks check-release --workspace --all-features"
+# `master` against the last published version. The report's verdict decides
+# the exit: a break fails unless `--advisory`, which is how CI reports rather
+# than blocks, and no verdict at all always fails. `semver-summary.md` records
+# the verdict for CI's job summary.
+usage = '''
+flag "--advisory" help="Pass on a break; still fail when there is no verdict"
+'''
+run = '''
+set -eu
+raw="$(mktemp)"
+log="$(mktemp)"
+trap 'rm -f "$raw" "$log"' EXIT
+
+# The verdict decides, not the tool's own exit status.
+cargo semver-checks check-release --workspace --all-features 2>&1 | tee "$raw" || true
+
+# `CARGO_TERM_COLOR=always` puts escapes inside the verdict line. A second
+# file rather than `sed -i`, whose argument BSD sed reads differently.
+sed -E 's/\x1b\[[0-9;]*m//g' "$raw" >"$log"
+
+if grep -q 'Summary semver requires new major version' "$log"; then
+  verdict=broken
+elif grep -q 'Summary no semver update required' "$log"; then
+  verdict=clean
+else
+  echo "cargo-semver-checks produced no verdict" >&2
+  exit 1
+fi
+
+{
+  echo "## API compatibility against the last published release"
+  echo
+  if [ "$verdict" = clean ]; then
+    echo "No break against the published baseline."
+  else
+    echo "Breaks against the published baseline, listed below."
+    echo
+    echo "Pre-1.0, a minor bump is how a break is declared, so this is"
+    echo "evidence for the release review rather than a failure of this"
+    echo "pull request."
+  fi
+  echo
+  echo '```'
+  grep -E '^(--- failure|Failed in:|  [a-z]|[[:space:]]+Summary )' "$log" \
+    | sed "s#$PWD/##g"
+  echo '```'
+} >semver-summary.md
+
+if [ "$verdict" = broken ] && [ "${usage_advisory:-false}" != true ]; then
+  exit 1
+fi
+'''
 
 [tasks."deny:check"]
 description = "Check dependencies for advisories, licences, bans and sources"
@@ -427,8 +471,9 @@ run = "cargo deny --locked check"
 
 [tasks.coverage]
 description = "Run tests with LLVM coverage"
-# `ui` is excluded here and in `coverage:ci` for `ui:check`'s reason.
-run = "cargo llvm-cov nextest --workspace --all-targets --all-features -E 'not binary(ui)'"
+# `ui` is excluded for `ui:check`'s reason. Arguments reach `cargo llvm-cov`,
+# which is how `coverage:ci` runs this.
+run ="cargo llvm-cov nextest --workspace --all-targets --all-features -E 'not binary(ui)'"
 
 [tasks."ui:check"]
 description = "Run the compile-fail suite"
@@ -439,7 +484,7 @@ run = "cargo nextest run -p kynos --test ui --all-features"
 [tasks."coverage:ci"]
 description = "Generate CI coverage reports"
 run = [
-  "cargo llvm-cov nextest --workspace --all-targets --all-features --lcov --output-path lcov.info -E 'not binary(ui)'",
+  "mise run coverage --lcov --output-path lcov.info",
   "cargo llvm-cov report --summary-only | tee coverage-summary.txt",
 ]
 
@@ -453,6 +498,7 @@ env = { PROPTEST_RNG_SEED = "220" }
 usage = '''
 arg "[package]" help="kynos, kynos-openapi or kynos-macros; every crate when omitted"
 flag "--shard <shard>" help="Run one shard, as k/n with k counting from 0"
+flag "--in-diff <diff>" help="Mutate only the lines this diff file changes"
 '''
 run = '''
 set -eu
@@ -471,6 +517,9 @@ esac
 if [ -n "${usage_shard:-}" ]; then
   set -- "$@" --shard "$usage_shard"
 fi
+if [ -n "${usage_in_diff:-}" ]; then
+  set -- "$@" --in-diff "$usage_in_diff"
+fi
 
 cargo mutants "$@"
 '''
@@ -478,47 +527,44 @@ cargo mutants "$@"
 [tasks."mutants:diff"]
 description = "Mutation-test the lines changed since the base branch"
 # Diffed against the working tree, which is what cargo-mutants copies.
-# `MUTANTS_BASE` is CI's base commit.
-tools = { "github:sourcefrog/cargo-mutants" = "27.1.0" }
-env = { PROPTEST_RNG_SEED = "220" }
+# `MUTANTS_BASE` is CI's base commit. `mutants` runs it, with its pins.
 usage = '''
 flag "--shard <shard>" help="Run one shard, as k/n with k counting from 0"
 '''
 run = '''
 set -eu
-unset CARGO_TARGET_DIR
-
-set -- --workspace --in-diff target/mutants.diff
+set -- --in-diff target/mutants.diff
 if [ -n "${usage_shard:-}" ]; then
   set -- "$@" --shard "$usage_shard"
 fi
 
 mkdir -p target
 git diff "$(git merge-base "${MUTANTS_BASE:-origin/master}" HEAD)" >target/mutants.diff
-cargo mutants "$@"
+mise run mutants "$@"
 '''
 
 [tasks.fuzz]
 description = "Fuzz one parser target, or every one, for a bounded time each"
-# See docs/testing.md#fuzzing. A dated nightly, so a failure is Kynos's own.
+# See docs/testing.md#fuzzing. On `KYNOS_NIGHTLY`, which `cargo fuzz` needs.
 # Discoveries go to the ignored `fuzz/target/`; committed seeds are only read.
 # `--target` is the host: the musl-linked cargo-fuzz defaults to musl.
 tools = { "github:rust-fuzz/cargo-fuzz" = "0.13.2" }
-env = { FUZZ_TOOLCHAIN = "nightly-2026-06-10" }
 usage = '''
 arg "[target]" help="One target under fuzz/fuzz_targets; every target when omitted"
 flag "--seconds <seconds>" help="How long each target runs" default="60"
+flag "--replay" help="Replay each committed corpus once instead of searching"
+flag "--list" help="Print the targets, one per line, and run none"
 '''
 run = '''
 set -eu
-rustup toolchain install "$FUZZ_TOOLCHAIN" --profile minimal --no-self-update
-host="$(rustc +"$FUZZ_TOOLCHAIN" -vV | sed -n 's/^host: //p')"
+# Its report goes to stderr, so `--list` prints the targets alone.
+rustup toolchain install "$KYNOS_NIGHTLY" --profile minimal --no-self-update >&2
 
 if [ -n "${usage_target:-}" ]; then
   set -- "$usage_target"
 else
   # An assignment carries the listing's status to `set -e`; `set --` would not.
-  targets="$(cargo +"$FUZZ_TOOLCHAIN" fuzz list --fuzz-dir fuzz)"
+  targets="$(cargo +"$KYNOS_NIGHTLY" fuzz list --fuzz-dir fuzz)"
   if [ -z "$targets" ]; then
     echo "cargo fuzz list found no target under fuzz/fuzz_targets" >&2
     exit 1
@@ -526,36 +572,29 @@ else
   set -- $targets
 fi
 
+if [ "${usage_list:-false}" = true ]; then
+  printf '%s\n' "$@"
+  exit 0
+fi
+
+host="$(rustc +"$KYNOS_NIGHTLY" -vV | sed -n 's/^host: //p')"
 for target in "$@"; do
-  mkdir -p "fuzz/target/corpus/$target"
-  cargo +"$FUZZ_TOOLCHAIN" fuzz run --fuzz-dir fuzz --target "$host" "$target" \
-    "fuzz/target/corpus/$target" "fuzz/corpus/$target" \
-    -- -max_total_time="$usage_seconds"
+  if [ "${usage_replay:-false}" = true ]; then
+    cargo +"$KYNOS_NIGHTLY" fuzz run --fuzz-dir fuzz --target "$host" "$target" \
+      "fuzz/corpus/$target" -- -runs=0
+  else
+    mkdir -p "fuzz/target/corpus/$target"
+    cargo +"$KYNOS_NIGHTLY" fuzz run --fuzz-dir fuzz --target "$host" "$target" \
+      "fuzz/target/corpus/$target" "fuzz/corpus/$target" \
+      -- -max_total_time="$usage_seconds"
+  fi
 done
 '''
 
 [tasks."fuzz:check"]
 description = "Build every fuzz target and replay its committed corpus"
 # The only build of `fuzz/`; `-runs=0` replays the committed corpus only.
-tools = { "github:rust-fuzz/cargo-fuzz" = "0.13.2" }
-env = { FUZZ_TOOLCHAIN = "nightly-2026-06-10" }
-run = '''
-set -eu
-rustup toolchain install "$FUZZ_TOOLCHAIN" --profile minimal --no-self-update
-host="$(rustc +"$FUZZ_TOOLCHAIN" -vV | sed -n 's/^host: //p')"
-
-# An assignment carries the listing's status to `set -e`; a `for` list would not.
-targets="$(cargo +"$FUZZ_TOOLCHAIN" fuzz list --fuzz-dir fuzz)"
-if [ -z "$targets" ]; then
-  echo "cargo fuzz list found no target under fuzz/fuzz_targets" >&2
-  exit 1
-fi
-
-for target in $targets; do
-  cargo +"$FUZZ_TOOLCHAIN" fuzz run --fuzz-dir fuzz --target "$host" "$target" \
-    "fuzz/corpus/$target" -- -runs=0
-done
-'''
+run = "mise run fuzz --replay"
 
 [tasks.check]
 description = "Run formatting, linting, and tests"
@@ -622,7 +661,9 @@ run = "python3 scripts/commits_test.py"
 
 [tasks."hooks:pre-push"]
 description = "Run all pre-push checks"
-# The cheap gates; each `*:test` follows the gate whose instrument it tests.
+# Formatting, the lints, the suite under coverage, the docs build and the
+# repository's own gates; each `*:test` follows the gate whose instrument it
+# tests.
 run = [
   { task = "format:check" },
   { task = "lint" },
