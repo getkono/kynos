@@ -97,7 +97,9 @@ fn every_constructor_builds_what_it_names() {
 
     // Counted against the source, so a ninth constructor without a row fails
     // the build rather than joining a silent majority.
-    let declared = SOURCE.matches("\n    pub fn ").count() - SOURCE.matches("(mut self").count();
+    let declared = SOURCE.matches("\n    pub fn ").count()
+        - SOURCE.matches("(mut self").count()
+        - SOURCE.matches("(self)").count();
     assert_eq!(
         cases.len(),
         declared,

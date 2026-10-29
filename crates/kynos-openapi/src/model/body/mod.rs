@@ -41,10 +41,8 @@ pub struct RequestBody {
 impl RequestBody {
     /// Creates a required body with a single media type.
     pub fn new(media_type: impl Into<String>, content: impl Into<RefOr<MediaType>>) -> Self {
-        let mut map = Map::new();
-        map.insert(media_type.into(), content.into());
         Self {
-            content: map,
+            content: Map::from_iter([(media_type.into(), content.into())]),
             required: Some(true),
             ..Self::default()
         }
