@@ -219,7 +219,7 @@ fn multipart<T: Rangeable>(
         HeaderValue::try_from(format!("{MEDIA_TYPE}; boundary={boundary}"))
             .expect("a generated boundary is printable ASCII"),
     );
-    crate::extract::params::header::write_or_refuse(&mut response, &AcceptRanges);
+    crate::response::headers::write_or_refuse(&mut response, &AcceptRanges);
 
     response
 }

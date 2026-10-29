@@ -517,7 +517,7 @@ impl IntoResponse for RangeRejection {
     fn into_response(self) -> crate::http::Response {
         let field = self.content_range();
         let mut response = IntoProblem::into_problem(self).into_response();
-        crate::extract::params::header::write_or_refuse(&mut response, &field);
+        crate::response::headers::write_or_refuse(&mut response, &field);
         response
     }
 }

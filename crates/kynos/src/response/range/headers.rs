@@ -22,24 +22,16 @@
 //! download exists.
 
 use kynos_openapi::{
-    Header, MediaType, RefOr, Schema, SchemaObject,
-    model::{
-        body::mime_names,
-        schema::types::{SchemaType, TypeSet},
-    },
+    Header, RefOr, Schema, SchemaObject,
+    model::schema::types::{SchemaType, TypeSet},
 };
 
 use crate::{
     extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http::{HeaderName, HeaderValue, header},
+    response::headers::text_header,
     schema::registry::Registry,
 };
-
-/// The media type a header value is described under.
-///
-/// `text/plain`, as OpenAPI 3.2's `multipart/byteranges` example describes
-/// `Content-Range` (Appendix D).
-const AS_TEXT: &str = mime_names::TEXT_PLAIN;
 
 /// `^bytes$`, the only `acceptable-ranges` Kynos sends.
 const ACCEPT_RANGES_PATTERN: &str = "^bytes$";
@@ -59,9 +51,10 @@ pub(crate) fn constrained(pattern: &str) -> Schema {
     }))
 }
 
-/// A `text/plain` header value constrained to `pattern`.
+/// A `text/plain` header value constrained to `pattern`, as OpenAPI 3.2's
+/// `multipart/byteranges` example describes `Content-Range` (Appendix D).
 fn described(pattern: &str, description: &str) -> Header {
-    Header::with_content(AS_TEXT, MediaType::new(constrained(pattern)))
+    text_header(constrained(pattern))
         .with_description(description)
         .required(true)
 }

@@ -50,7 +50,7 @@ pub(crate) const EXTENSIONS: &[(&str, &str)] = &[
 
 /// What an extension the table does not name serves as: an opaque stream
 /// rather than a guess (RFC 9110 section 8.3).
-pub(crate) const FALLBACK: &str = kynos_openapi::model::body::mime_names::APPLICATION_OCTET_STREAM;
+pub(crate) const FALLBACK: &str = mime_names::APPLICATION_OCTET_STREAM;
 
 /// The media type `path`'s extension names, or `None`.
 ///

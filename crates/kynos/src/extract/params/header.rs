@@ -186,69 +186,6 @@ impl UnencodableHeader {
     }
 }
 
-/// The 500 a writer answers with in place of a response whose header group
-/// refused to encode.
-pub(crate) fn refused() -> crate::http::Response {
-    use crate::response::IntoResponse;
-
-    crate::error::problem::Problem::new(crate::http::StatusCode::INTERNAL_SERVER_ERROR)
-        .with_detail("a response header could not be encoded")
-        .into_response()
-}
-
-/// Writes `group` onto `fields`, honouring [`REPEATABLE`](HeaderParams::REPEATABLE)
-/// and merging [`VARIES`](HeaderParams::VARIES).
-///
-/// The one writer for both `Continued::with_headers` and `WithHeaders`, so the
-/// two cannot disagree. A refused group writes nothing, `VARIES` included; the
-/// caller answers with [`refused`] instead.
-pub(crate) fn write<G: EncodeHeaders>(
-    fields: &mut crate::http::HeaderMap,
-    group: &G,
-) -> Result<(), UnencodableHeader> {
-    write_encoded::<G>(fields, group.encode()?);
-    Ok(())
-}
-
-/// Writes what group `G` already [`encode`](EncodeHeaders::encode)d onto
-/// `fields`, as [`write`] does, for a writer that encoded it once to use twice.
-pub(crate) fn write_encoded<G: EncodeHeaders>(
-    fields: &mut crate::http::HeaderMap,
-    encoded: Vec<(HeaderName, HeaderValue)>,
-) {
-    for (name, value) in encoded {
-        // Encoded fields must be a subset of `NAMES`, which the conflict check
-        // compares. Debug-only: the response path does not panic.
-        debug_assert!(
-            G::NAMES
-                .iter()
-                .any(|declared| crate::http::header_name_eq(declared, name.as_str())),
-            "`{}` encodes `{}`, which its `NAMES` does not declare",
-            std::any::type_name::<G>(),
-            name.as_str(),
-        );
-
-        if G::REPEATABLE {
-            fields.append(name, value);
-        } else {
-            fields.insert(name, value);
-        }
-    }
-
-    // `VARIES` names are not in `NAMES`, so they skip the check above.
-    crate::http::vary_on(fields, G::VARIES);
-}
-
-/// Writes `group` onto `response`, or replaces `response` with [`refused`]
-/// where the group refuses to encode.
-///
-/// For a writer that has nothing left to add once the group is written.
-pub(crate) fn write_or_refuse<G: EncodeHeaders>(response: &mut crate::http::Response, group: &G) {
-    if write(response.headers_mut(), group).is_err() {
-        *response = refused();
-    }
-}
-
 /// The empty group: no headers read, none added, nothing declared.
 ///
 /// What an interceptor names when it reads no header, or adds none.

@@ -84,10 +84,10 @@ pub(super) fn assembled<H: EncodeHeaders>(
     if let Ok(value) = HeaderValue::from_str(media_type) {
         response.headers_mut().insert(header::CONTENT_TYPE, value);
     }
-    let written = crate::extract::params::header::write(response.headers_mut(), headers)
+    let written = crate::response::headers::write(response.headers_mut(), headers)
         .and_then(|()| range::write_selection(&mut response, selection));
     if written.is_err() {
-        return crate::extract::params::header::refused();
+        return crate::response::headers::refused();
     }
 
     response

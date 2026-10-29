@@ -202,7 +202,7 @@ impl<T, L: Languages> Localized<T, L> {
 impl<T: IntoResponse, L: Languages> IntoResponse for Localized<T, L> {
     fn into_response(self) -> Response {
         let mut response = self.body.into_response();
-        crate::extract::params::header::write_or_refuse(
+        crate::response::headers::write_or_refuse(
             &mut response,
             &headers::ContentLanguage::offered(self.language),
         );
@@ -218,24 +218,11 @@ impl<T: IntoResponse, L: Languages> IntoResponse for Localized<T, L> {
 impl<T: Responses, L: Languages> Responses for Localized<T, L> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         let mut responses = T::responses(registry);
-        let declared = headers::header(L::TAGS);
-
-        let described = responses
-            .default_response
-            .iter_mut()
-            .chain(responses.responses.values_mut());
-
-        for response in described {
-            // A `$ref` names a response the document holds elsewhere, and
-            // declaring a field on it would declare it on every other use.
-            if let kynos_openapi::RefOr::Item(response) = response {
-                response
-                    .headers
-                    .entry("Content-Language".to_owned())
-                    .or_insert_with(|| kynos_openapi::RefOr::Item(declared.clone()));
-            }
-        }
-
+        let declared = kynos_openapi::Map::from_iter([(
+            "Content-Language".to_owned(),
+            kynos_openapi::RefOr::Item(headers::header(L::TAGS)),
+        )]);
+        crate::response::headers::declare_on_each(&mut responses, &declared, false);
         responses
     }
 }

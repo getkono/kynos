@@ -58,10 +58,7 @@ impl LanguageTag {
     /// Returns the first way `value` misses the grammar in RFC 5646 section
     /// 2.1.
     pub fn parse(value: &str) -> Result<Self, TagDefect> {
-        match grammar::check(value) {
-            Ok(()) => Ok(Self(normalize(value))),
-            Err(defect) => Err(defect),
-        }
+        grammar::check(value).map(|()| Self(normalize(value)))
     }
 
     /// The tag, in the casing section 2.1.1 recommends.

@@ -291,7 +291,7 @@ impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
         // over every field line, since section 5.3 makes them one list.
         if etag::if_none_match(request.headers(), || Some(chosen.etag)) == Some(true) {
             let mut response = crate::http::body::bodiless(StatusCode::NOT_MODIFIED);
-            crate::extract::params::header::write_or_refuse(
+            crate::response::headers::write_or_refuse(
                 &mut response,
                 &self.headers(&chosen).not_modified(),
             );

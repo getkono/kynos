@@ -365,7 +365,7 @@ impl<T: Rangeable> IntoResponse for Ranged<T> {
         let mut response = self.body.into_response();
 
         if write_selection(&mut response, self.selection).is_err() {
-            return crate::extract::params::header::refused();
+            return crate::response::headers::refused();
         }
 
         response
@@ -383,7 +383,7 @@ pub(crate) fn write_selection(
     selection: Selection,
 ) -> Result<(), crate::extract::params::header::UnencodableHeader> {
     let fields = response.headers_mut();
-    crate::extract::params::header::write(fields, &AcceptRanges)?;
+    crate::response::headers::write(fields, &AcceptRanges)?;
 
     if let Selection::Part {
         first,
@@ -391,7 +391,7 @@ pub(crate) fn write_selection(
         complete_length,
     } = selection
     {
-        crate::extract::params::header::write(
+        crate::response::headers::write(
             fields,
             &ContentRange::Satisfied {
                 first,

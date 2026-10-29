@@ -253,7 +253,7 @@ async fn serve(directory: &Directory, request: &Request) -> Response {
     if crate::http::etag::if_none_match(request.headers(), || headers.etag.as_deref()) == Some(true)
     {
         let mut response = crate::http::body::bodiless(StatusCode::NOT_MODIFIED);
-        crate::extract::params::header::write_or_refuse(&mut response, &headers);
+        crate::response::headers::write_or_refuse(&mut response, &headers);
         return response;
     }
 

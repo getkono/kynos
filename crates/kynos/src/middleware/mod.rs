@@ -205,7 +205,7 @@ impl Continued<()> {
     // By value so the call reads `.with_headers(Group { .. })`.
     #[allow(clippy::needless_pass_by_value)]
     pub fn with_headers<G: EncodeHeaders>(mut self, headers: G) -> Continued<G> {
-        crate::extract::params::header::write_or_refuse(&mut self.response, &headers);
+        crate::response::headers::write_or_refuse(&mut self.response, &headers);
 
         Continued {
             response: self.response,
@@ -220,7 +220,7 @@ impl Continued<()> {
         mut self,
         encoded: Vec<(crate::http::HeaderName, crate::http::HeaderValue)>,
     ) -> Continued<G> {
-        crate::extract::params::header::write_encoded::<G>(self.response.headers_mut(), encoded);
+        crate::response::headers::write_encoded::<G>(self.response.headers_mut(), encoded);
 
         Continued {
             response: self.response,

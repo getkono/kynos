@@ -147,7 +147,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
         // be spelled would otherwise be evaluated as no tag at all. Before the
         // source is read too, since no answer it gives changes this one.
         let tag = match self.etag.as_ref().map(ETag::encode) {
-            Some(None) => return Ok(Delivery::new(crate::extract::params::header::refused())),
+            Some(None) => return Ok(Delivery::new(crate::response::headers::refused())),
             Some(Some(tag)) => Some(tag),
             None => None,
         };
@@ -171,7 +171,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
             }
             let response = self
                 .head(None, complete_length, tag)
-                .unwrap_or_else(crate::extract::params::header::refused);
+                .unwrap_or_else(crate::response::headers::refused);
             return Ok(Delivery::new(response));
         }
 
@@ -190,7 +190,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
         // A refused head is answered as it is: the content goes only under
         // the fields that describe it.
         let Some(mut response) = self.head(Some(selection), complete_length, tag) else {
-            return Ok(Delivery::new(crate::extract::params::header::refused()));
+            return Ok(Delivery::new(crate::response::headers::refused()));
         };
 
         // Section 9.3.2: a HEAD sends every field above but no content.
@@ -243,7 +243,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
                 fields.insert(header::CONTENT_TYPE, value);
             }
             if let Some(disposition) = &self.disposition {
-                if crate::extract::params::header::write(fields, disposition).is_err() {
+                if crate::response::headers::write(fields, disposition).is_err() {
                     return None;
                 }
             }
