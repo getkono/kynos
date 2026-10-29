@@ -185,6 +185,22 @@ pub fn decode_query_component(raw: &str) -> std::borrow::Cow<'_, [u8]> {
     }
 }
 
+/// One name or value of a query pair, encoded for [`decode_query_component`]
+/// to read back: every octet outside RFC 3986's `unreserved` set becomes an
+/// uppercase percent triplet, so a space and a literal `+` both survive the
+/// form decoding; borrowed when nothing needed escaping.
+#[must_use]
+pub fn encode_query_component(raw: &str) -> std::borrow::Cow<'_, str> {
+    percent_encoding::utf8_percent_encode(raw, QUERY_COMPONENT_ENCODE_SET).into()
+}
+
+/// Everything but RFC 3986 `unreserved`: ALPHA, DIGIT, `-`, `.`, `_`, `~`.
+const QUERY_COMPONENT_ENCODE_SET: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
 /// Builds a URI for a generated endpoint without dynamic parameters.
 #[must_use]
 pub fn endpoint_uri(template: &str) -> Uri {
