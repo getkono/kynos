@@ -2,10 +2,7 @@
 
 pub(crate) mod disposition;
 
-use std::{
-    any::{Any, TypeId},
-    collections::BTreeMap,
-};
+use std::any::{Any, TypeId};
 
 use bytes::Bytes;
 use http_body_util::BodyExt;
@@ -169,9 +166,7 @@ pub trait FromPart: Sized {
 /// The 422 a part that cannot become its field produces, keyed by the field's
 /// name as a JSON Pointer into the body.
 fn malformed_part(name: &str, detail: &str) -> BodyRejection {
-    BodyRejection::Schema {
-        failures: BTreeMap::from([(Pointer::root().member(name).to_string(), detail.to_owned())]),
-    }
+    BodyRejection::schema_at(Pointer::root().member(name).to_string(), detail.to_owned())
 }
 
 impl FromPart for FilePart {
