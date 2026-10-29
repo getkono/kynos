@@ -17,9 +17,12 @@ use crate::{
     http::{
         HeaderValue, Response,
         body::{Body, BoxError},
-        header,
     },
-    response::{IntoResponse, Responses, stream::RecordBuffer},
+    response::{
+        IntoResponse, Responses,
+        codec::{ok, with_content_type},
+        stream::RecordBuffer,
+    },
     schema::{Schema, registry::Registry},
 };
 
@@ -385,12 +388,10 @@ where
             data: Vec::new(),
         };
 
-        let mut response = Response::new(Body::from_stream(records));
-        response.headers_mut().insert(
-            header::CONTENT_TYPE,
+        with_content_type(
+            Body::from_stream(records),
             HeaderValue::from_static(mime_names::TEXT_EVENT_STREAM),
-        );
-        response
+        )
     }
 }
 
@@ -425,8 +426,15 @@ where
                 "data".to_owned(),
                 kynos_openapi::Schema::Object(Box::new(data)),
             ),
-            ("event".to_owned(), text()),
-            ("id".to_owned(), text()),
+            // The format gives no type to any field but `retry`.
+            (
+                "event".to_owned(),
+                kynos_openapi::Schema::of_type(SchemaType::String),
+            ),
+            (
+                "id".to_owned(),
+                kynos_openapi::Schema::of_type(SchemaType::String),
+            ),
             (
                 "retry".to_owned(),
                 kynos_openapi::Schema::Object(Box::new(retry)),
@@ -435,26 +443,11 @@ where
         .into_iter()
         .collect();
 
-        kynos_openapi::Responses::new().with(
-            200,
-            kynos_openapi::Response::with_content(
-                "OK",
-                mime_names::TEXT_EVENT_STREAM,
-                kynos_openapi::MediaType::sequential(kynos_openapi::Schema::Object(Box::new(
-                    event,
-                ))),
-            ),
+        ok(
+            mime_names::TEXT_EVENT_STREAM,
+            kynos_openapi::MediaType::sequential(kynos_openapi::Schema::Object(Box::new(event))),
         )
     }
-}
-
-/// The schema of a field the format gives no type to, which is every field but
-/// `retry`.
-fn text() -> kynos_openapi::Schema {
-    kynos_openapi::Schema::Object(Box::new(SchemaObject {
-        ty: Some(TypeSet::One(SchemaType::String)),
-        ..SchemaObject::default()
-    }))
 }
 
 #[cfg(test)]

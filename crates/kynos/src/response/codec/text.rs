@@ -7,10 +7,12 @@ use crate::{
     http::{
         HeaderValue, Response,
         body::Body,
-        header,
         media::{MediaType, charset},
     },
-    response::{IntoResponse, Responses},
+    response::{
+        IntoResponse, Responses,
+        codec::{ok, with_content_type},
+    },
     schema::registry::Registry,
 };
 
@@ -44,23 +46,15 @@ const fn with_charset(media_type: &str) -> ([u8; CAPACITY], usize) {
 
 /// The one 200 a text body describes: a `string` under `media_type`.
 fn text_responses(registry: &mut Registry, media_type: &'static str) -> kynos_openapi::Responses {
-    kynos_openapi::Responses::new().with(
-        200,
-        kynos_openapi::Response::with_content(
-            "OK",
-            media_type,
-            kynos_openapi::MediaType::new(registry.resolve::<String>()),
-        ),
+    ok(
+        media_type,
+        kynos_openapi::MediaType::new(registry.resolve::<String>()),
     )
 }
 
 /// `text` as a body under `content_type`.
 fn text_response(text: String, content_type: HeaderValue) -> Response {
-    let mut response = Response::new(Body::from_bytes(bytes::Bytes::from(text)));
-    response
-        .headers_mut()
-        .insert(header::CONTENT_TYPE, content_type);
-    response
+    with_content_type(Body::from_bytes(bytes::Bytes::from(text)), content_type)
 }
 
 impl IntoResponse for Text {

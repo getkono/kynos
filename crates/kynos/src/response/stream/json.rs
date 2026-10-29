@@ -10,9 +10,12 @@ use crate::{
     http::{
         HeaderValue, Response,
         body::{Body, BoxError},
-        header,
     },
-    response::{IntoResponse, Responses, stream::RecordBuffer},
+    response::{
+        IntoResponse, Responses,
+        codec::{ok, with_content_type},
+        stream::RecordBuffer,
+    },
     schema::{Schema, registry::Registry},
 };
 
@@ -35,14 +38,10 @@ where
     S::Item: serde::Serialize,
 {
     fn into_response(self) -> Response {
-        let mut response = Response::new(Body::from_stream(Framed::new(
-            self.items, NO_PREFIX, NEWLINE,
-        )));
-        response.headers_mut().insert(
-            header::CONTENT_TYPE,
+        with_content_type(
+            Body::from_stream(Framed::new(self.items, NO_PREFIX, NEWLINE)),
             HeaderValue::from_static(LINES_MEDIA_TYPE),
-        );
-        response
+        )
     }
 }
 
@@ -52,13 +51,9 @@ where
     S::Item: Schema,
 {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        kynos_openapi::Responses::new().with(
-            200,
-            kynos_openapi::Response::with_content(
-                "OK",
-                LINES_MEDIA_TYPE,
-                kynos_openapi::MediaType::sequential(registry.resolve::<S::Item>()),
-            ),
+        ok(
+            LINES_MEDIA_TYPE,
+            kynos_openapi::MediaType::sequential(registry.resolve::<S::Item>()),
         )
     }
 }
@@ -70,16 +65,10 @@ where
     S::Item: serde::Serialize,
 {
     fn into_response(self) -> Response {
-        let mut response = Response::new(Body::from_stream(Framed::new(
-            self.items,
-            SEQUENCE_PREFIX,
-            NEWLINE,
-        )));
-        response.headers_mut().insert(
-            header::CONTENT_TYPE,
+        with_content_type(
+            Body::from_stream(Framed::new(self.items, SEQUENCE_PREFIX, NEWLINE)),
             HeaderValue::from_static(SEQUENCE_MEDIA_TYPE),
-        );
-        response
+        )
     }
 }
 
@@ -89,13 +78,9 @@ where
     S::Item: Schema,
 {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        kynos_openapi::Responses::new().with(
-            200,
-            kynos_openapi::Response::with_content(
-                "OK",
-                SEQUENCE_MEDIA_TYPE,
-                kynos_openapi::MediaType::sequential(registry.resolve::<S::Item>()),
-            ),
+        ok(
+            SEQUENCE_MEDIA_TYPE,
+            kynos_openapi::MediaType::sequential(registry.resolve::<S::Item>()),
         )
     }
 }
