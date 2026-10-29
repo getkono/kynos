@@ -23,10 +23,13 @@ use crate::{
     extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http::{HeaderValue, Request, Response, StatusCode, header},
     middleware::catch_panic::PanicPolicy,
-    response::range::{
-        Selection,
-        source::{ByteSource, Spans},
-        spec,
+    response::{
+        IntoResponse,
+        range::{
+            Selection,
+            source::{ByteSource, Spans},
+            spec,
+        },
     },
     router::{
         Router,
@@ -264,7 +267,8 @@ async fn serve(directory: &Directory, request: &Request) -> Response {
     // Decided from `stat`'s length, so an unsatisfiable range costs no read.
     let selection = match crate::response::range::select(&range_set, metadata.len()) {
         Ok(selection) => selection,
-        Err(rejection) => return range::unsatisfiable(rejection),
+        // Section 15.5.17's 416, with the `Content-Range` it owes.
+        Err(rejection) => return rejection.into_response(),
     };
 
     // Opened here, so a file that cannot be opened is still a 404 rather than
