@@ -17,7 +17,7 @@ struct Hardened {
 }
 
 #[derive(kynos::HeaderParams)]
-#[header(describd = false)]
+#[header(rename = "Origin")]
 struct Provenance {
     #[header(rename = "Origin")]
     origin: Option<String>,

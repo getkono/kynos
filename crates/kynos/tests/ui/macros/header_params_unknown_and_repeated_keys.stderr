@@ -10,11 +10,11 @@ error: `value` is already set, and `#[header(...)]` takes each key once
 15 |     #[header(value = "sniff")]
    |              ^^^^^
 
-error: `describd` is not part of the `#[header(...)]` grammar on a struct, which takes `described` alone; a field's keys go on that field
+error: `rename` is not part of the `#[header(...)]` grammar on a struct, which takes `described` alone; a field's keys go on that field
   --> tests/ui/macros/header_params_unknown_and_repeated_keys.rs:20:10
    |
-20 | #[header(describd = false)]
-   |          ^^^^^^^^
+20 | #[header(rename = "Origin")]
+   |          ^^^^^^
 
 error: `described` is already set, and `#[header(...)]` takes each key once
   --> tests/ui/macros/header_params_unknown_and_repeated_keys.rs:28:10
