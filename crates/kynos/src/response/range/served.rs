@@ -51,7 +51,6 @@ use crate::{
 ///         .expect("an in-memory source cannot fail")
 /// }
 /// ```
-#[derive(Debug)]
 pub struct Served<S: ByteSource, M: MediaType> {
     source: Arc<S>,
     media_type: std::marker::PhantomData<fn() -> M>,
@@ -59,6 +58,21 @@ pub struct Served<S: ByteSource, M: MediaType> {
     last_modified: Option<SystemTime>,
     cache_control: Option<String>,
     disposition: Option<ContentDisposition>,
+}
+
+// By hand, so it is bounded on `S` alone: a media type is a marker, and a
+// derive would ask it to be `Debug` too.
+impl<S: ByteSource + std::fmt::Debug, M: MediaType> std::fmt::Debug for Served<S, M> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Served")
+            .field("source", &self.source)
+            .field("etag", &self.etag)
+            .field("last_modified", &self.last_modified)
+            .field("cache_control", &self.cache_control)
+            .field("disposition", &self.disposition)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<S: ByteSource, M: MediaType> Served<S, M> {
@@ -391,10 +405,20 @@ fn seconds(time: SystemTime) -> u64 {
 /// calling [`deliver`](Served::deliver) is a compile error.
 ///
 /// [`Responses`]: crate::response::Responses
-#[derive(Debug)]
 pub struct Delivery<M: MediaType> {
     response: Response,
     media_type: std::marker::PhantomData<fn() -> M>,
+}
+
+// By hand, so it is not bounded on the marker, which a derive would ask to be
+// `Debug` too.
+impl<M: MediaType> std::fmt::Debug for Delivery<M> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Delivery")
+            .field("response", &self.response)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<M: MediaType> Delivery<M> {

@@ -19,11 +19,21 @@ use crate::{
 ///     BinaryStream::new(chunks)
 /// }
 /// ```
-#[derive(Debug)]
 pub struct BinaryStream<S, M> {
     /// The stream producing byte chunks.
     pub stream: S,
     media_type: std::marker::PhantomData<M>,
+}
+
+// By hand, so it is bounded on `S` alone: a media type is a marker, and a
+// derive would ask it to be `Debug` too.
+impl<S: std::fmt::Debug, M> std::fmt::Debug for BinaryStream<S, M> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("BinaryStream")
+            .field("stream", &self.stream)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<S, M> BinaryStream<S, M> {
