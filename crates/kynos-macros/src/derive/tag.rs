@@ -63,7 +63,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         .or_else(|| doc_string(&input.attrs))
         .map(|text| {
             quote!(tag.description = ::core::option::Option::Some(
-                ::std::string::String::from(#text)
+                <::std::string::String as ::core::convert::From<_>>::from(#text)
             );)
         });
 
@@ -95,18 +95,18 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
 
     let summary = args.summary.map(|text| {
         quote!(tag.summary = ::core::option::Option::Some(
-            ::std::string::String::from(#text)
+            <::std::string::String as ::core::convert::From<_>>::from(#text)
         );)
     });
     let kind = args.kind.map(|text| {
         quote!(tag.kind = ::core::option::Option::Some(
-            ::std::string::String::from(#text)
+            <::std::string::String as ::core::convert::From<_>>::from(#text)
         );)
     });
     let parent = args.parent.map(|parent| {
         quote! {
             tag.parent = ::core::option::Option::Some(
-                ::std::string::String::from(
+                <::std::string::String as ::core::convert::From<_>>::from(
                     <#parent as ::kynos::router::operation::Tag>::NAME,
                 ),
             );

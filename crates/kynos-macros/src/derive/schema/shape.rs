@@ -56,7 +56,8 @@ pub(super) fn tuple_body(fields: &Punctuated<Field, Comma>, defaulted: bool) -> 
 
     quote! {
         {
-            let mut keywords = ::kynos::openapi::SchemaObject::default();
+            let mut keywords =
+                <::kynos::openapi::SchemaObject as ::core::default::Default>::default();
             keywords.ty = ::core::option::Option::Some(
                 ::kynos::openapi::model::schema::types::TypeSet::One(
                     ::kynos::openapi::model::schema::types::SchemaType::Array,
@@ -85,8 +86,11 @@ pub(super) fn object_body(
     let tagged = tag.map(|(property, names)| {
         let constant = named_string(names);
         quote! {
-            keywords.properties.insert(::std::string::String::from(#property), #constant);
-            required.push(::std::string::String::from(#property));
+            keywords.properties.insert(
+                <::std::string::String as ::core::convert::From<_>>::from(#property),
+                #constant,
+            );
+            required.push(<::std::string::String as ::core::convert::From<_>>::from(#property));
         }
     });
 
@@ -134,7 +138,8 @@ pub(super) fn object_body(
 
     let object = quote! {
         {
-            let mut keywords = ::kynos::openapi::SchemaObject::default();
+            let mut keywords =
+                <::kynos::openapi::SchemaObject as ::core::default::Default>::default();
             keywords.ty = ::core::option::Option::Some(
                 ::kynos::openapi::model::schema::types::TypeSet::One(
                     ::kynos::openapi::model::schema::types::SchemaType::Object,
@@ -200,7 +205,8 @@ pub(super) fn enum_body(data: &DataEnum, container: &Container) -> TokenStream2 
             .flatten();
         return quote! {
             {
-                let mut keywords = ::kynos::openapi::SchemaObject::default();
+                let mut keywords =
+                    <::kynos::openapi::SchemaObject as ::core::default::Default>::default();
                 keywords.ty = ::core::option::Option::Some(
                     ::kynos::openapi::model::schema::types::TypeSet::One(
                         ::kynos::openapi::model::schema::types::SchemaType::String,
@@ -232,7 +238,8 @@ pub(super) fn enum_body(data: &DataEnum, container: &Container) -> TokenStream2 
 
     quote! {
         {
-            let mut keywords = ::kynos::openapi::SchemaObject::default();
+            let mut keywords =
+                <::kynos::openapi::SchemaObject as ::core::default::Default>::default();
             keywords.one_of = ::core::option::Option::Some(::std::vec![#(#branches),*]);
             #discriminator
             ::kynos::openapi::Schema::Object(::std::boxed::Box::new(keywords))
@@ -260,13 +267,19 @@ pub(super) fn branch(variant: &Variant, read: &[String], container: &Container) 
             let tagged = named_string(read);
             let payload = payload(&variant.fields, &fields).map(|payload| {
                 quote! {
-                    keywords.properties.insert(::std::string::String::from(#content), #payload);
-                    required.push(::std::string::String::from(#content));
+                    keywords.properties.insert(
+                        <::std::string::String as ::core::convert::From<_>>::from(#content),
+                        #payload,
+                    );
+                    required.push(
+                        <::std::string::String as ::core::convert::From<_>>::from(#content),
+                    );
                 }
             });
             let object = quote! {
                 {
-                    let mut keywords = ::kynos::openapi::SchemaObject::default();
+                    let mut keywords =
+                        <::kynos::openapi::SchemaObject as ::core::default::Default>::default();
                     keywords.ty = ::core::option::Option::Some(
                         ::kynos::openapi::model::schema::types::TypeSet::One(
                             ::kynos::openapi::model::schema::types::SchemaType::Object,
@@ -274,8 +287,11 @@ pub(super) fn branch(variant: &Variant, read: &[String], container: &Container) 
                     );
                     let mut required: ::std::vec::Vec<::std::string::String> =
                         ::std::vec::Vec::new();
-                    keywords.properties.insert(::std::string::String::from(#tag), #tagged);
-                    required.push(::std::string::String::from(#tag));
+                    keywords.properties.insert(
+                        <::std::string::String as ::core::convert::From<_>>::from(#tag),
+                        #tagged,
+                    );
+                    required.push(<::std::string::String as ::core::convert::From<_>>::from(#tag));
                     #payload
                     keywords.required = ::core::option::Option::Some(required);
                     ::kynos::openapi::Schema::Object(::std::boxed::Box::new(keywords))
@@ -298,7 +314,8 @@ pub(super) fn branch(variant: &Variant, read: &[String], container: &Container) 
                     None => described(marker),
                     Some(payload) => described(quote! {
                         {
-                            let mut keywords = ::kynos::openapi::SchemaObject::default();
+                            let mut keywords =
+                                <::kynos::openapi::SchemaObject as ::core::default::Default>::default();
                             keywords.all_of = ::core::option::Option::Some(
                                 ::std::vec![#marker, #payload],
                             );

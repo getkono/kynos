@@ -432,7 +432,7 @@ fn body(input: &DeriveInput, container: &Container) -> TokenStream2 {
         }
         Data::Enum(data) => described(enum_body(data, container), container.doc.as_deref()),
         // Refused at the top of `expand_inner`.
-        Data::Union(_) => quote!(::kynos::openapi::Schema::default()),
+        Data::Union(_) => quote!(<::kynos::openapi::Schema as ::core::default::Default>::default()),
     };
 
     deprecate(described, is_deprecated(&input.attrs))
@@ -500,7 +500,9 @@ fn described(schema: TokenStream2, doc: Option<&str>) -> TokenStream2 {
             let mut described = #schema;
             if let ::kynos::openapi::Schema::Object(keywords) = &mut described {
                 keywords.description =
-                    ::core::option::Option::Some(::std::string::String::from(#doc));
+                    ::core::option::Option::Some(
+                        <::std::string::String as ::core::convert::From<_>>::from(#doc),
+                    );
             }
             described
         }
