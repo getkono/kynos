@@ -23,24 +23,15 @@ pub(in crate::server) enum Drain {
 pub(in crate::server) async fn wait_until_stopping(
     lifecycle: &mut watch::Receiver<Lifecycle>,
 ) -> Lifecycle {
-    loop {
-        let current = *lifecycle.borrow();
-        if current != Lifecycle::Running {
-            return current;
-        }
-        if lifecycle.changed().await.is_err() {
-            return Lifecycle::Forced;
-        }
-    }
+    lifecycle
+        .wait_for(|state| *state != Lifecycle::Running)
+        .await
+        .map_or(Lifecycle::Forced, |state| *state)
 }
 
+/// Also returns once every sender is gone.
 pub(in crate::server) async fn wait_until_forced(lifecycle: &mut watch::Receiver<Lifecycle>) {
-    loop {
-        if *lifecycle.borrow() == Lifecycle::Forced {
-            return;
-        }
-        if lifecycle.changed().await.is_err() {
-            return;
-        }
-    }
+    let _ = lifecycle
+        .wait_for(|state| *state == Lifecycle::Forced)
+        .await;
 }
