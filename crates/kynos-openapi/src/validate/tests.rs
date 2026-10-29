@@ -1665,6 +1665,60 @@ fn an_unrecognised_field_is_an_error_under_3_2() {
     );
 }
 
+/// Extension-name violations come ordered by the pointer of the object holding
+/// each name, and within one object in the order its names were written, so
+/// the order is no artefact of the walk that finds them. The walk reaches a
+/// Path Item's servers and parameters before its operations; the order does
+/// not follow it, under either severity.
+#[cfg(feature = "openapi32")]
+#[test]
+fn extension_name_violations_are_ordered_by_their_holder() {
+    let mut operation = Operation::new("getUser").with_responses(ok_responses());
+    operation.extensions.insert("summry", "typo");
+    operation.extensions.insert("x-oai-operation", true);
+    let mut server = crate::model::server::Server::new("https://example.com");
+    server.extensions.insert("descripton", "typo");
+    server.extensions.insert("x-oas-server", true);
+    let mut parameter = Parameter::query("page", Schema::of_type(SchemaType::Integer));
+    parameter.extensions.insert("requird", true);
+    parameter.extensions.insert("exampel", 1);
+    let mut item = PathItem::new().with_operation(Method::Get, operation);
+    item.servers.push(server);
+    item.parameters.push(crate::RefOr::Item(parameter));
+    let document = document_with(&[("/users", item)]);
+
+    let named: Vec<(String, super::Severity, String)> = Validator::new(SpecVersion::V3_2)
+        .validate(&document)
+        .into_iter()
+        .filter_map(|violation| match violation.error {
+            SpecError::InvalidExtensionName { name } => {
+                Some((violation.location, violation.severity, name))
+            }
+            _ => None,
+        })
+        .collect();
+
+    let at = |location: &str, severity, name: &str| {
+        (
+            format!("#/paths/~1users{location}"),
+            severity,
+            name.to_owned(),
+        )
+    };
+    let (error, warning) = (super::Severity::Error, super::Severity::Warning);
+    assert_eq!(
+        named,
+        vec![
+            at("/get", error, "summry"),
+            at("/parameters/0", error, "requird"),
+            at("/parameters/0", error, "exampel"),
+            at("/servers/0", error, "descripton"),
+            at("/get", warning, "x-oai-operation"),
+            at("/servers/0", warning, "x-oas-server"),
+        ]
+    );
+}
+
 /// An `x-oai-` or `x-oas-` name is an extension the OpenAPI Initiative
 /// reserves: weaker than it could be, not unreadable, so it stays a warning
 /// under 3.2.
