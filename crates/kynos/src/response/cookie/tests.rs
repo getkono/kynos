@@ -429,15 +429,59 @@ fn a_host_prefixed_cookie_is_completed_rather_than_left_to_be_discarded() {
     assert!(!rendered.contains("Domain="), "{rendered}");
 }
 
-/// The prefixes are matched case-sensitively, per "a case-sensitive match for
-/// the string".
+/// Section 5.4: "UAs MUST match cookie name prefixes case-insensitively",
+/// and section 5.7 steps 20 and 21 apply both prefixes on "a case-insensitive
+/// match".
 ///
-/// `__host-` is an ordinary name and carries no requirement, so completing it
-/// would be inventing an attribute the caller did not ask for.
+/// Section 4.1.3's case-sensitive wording describes what a server may rely on
+/// when reading a name, not what a user agent discards. The encoder exists to
+/// keep a cookie from being discarded, so it follows the user agent: a
+/// `__secure-` cookie without `Secure` is dropped exactly as a `__Secure-` one
+/// is.
 #[test]
-fn a_prefix_in_the_wrong_case_is_an_ordinary_name() {
-    let rendered = rendered(&Cookie::new("__host-session", "abc")).expect("a legal cookie");
+fn a_secure_prefix_in_any_case_carries_secure() {
+    for name in ["__secure-session", "__SECURE-session", "__sEcUrE-session"] {
+        let rendered = rendered(&Cookie::new(name, "abc")).expect("a legal cookie");
+        assert!(rendered.contains("; Secure"), "{rendered}");
+    }
+}
 
-    assert!(!rendered.contains("Secure"), "{rendered}");
-    assert!(!rendered.contains("Path="), "{rendered}");
+/// The `__Host-` prefix in any case is completed with `Secure` and `Path=/`,
+/// as section 5.7 step 21 requires of it.
+#[test]
+fn a_host_prefix_in_any_case_is_completed() {
+    for name in ["__host-session", "__HOST-session", "__hOsT-session"] {
+        let rendered = rendered(&Cookie::new(name, "abc")).expect("a legal cookie");
+        assert!(rendered.contains("; Secure"), "{rendered}");
+        assert!(rendered.contains("; Path=/"), "{rendered}");
+    }
+}
+
+/// The `__Host-` refusals apply in any case, since a user agent discards a
+/// `__host-` cookie naming a `Domain` or a non-root `Path` all the same.
+#[test]
+fn a_host_prefix_in_any_case_refuses_a_domain_or_a_narrower_path() {
+    for name in ["__host-session", "__HOST-session"] {
+        assert_eq!(
+            rendered(&Cookie::new(name, "abc").domain("site.example")),
+            None,
+            "{name} with a Domain"
+        );
+        assert_eq!(
+            rendered(&Cookie::new(name, "abc").path("/admin")),
+            None,
+            "{name} with a narrower Path"
+        );
+    }
+}
+
+/// A name that only shares the prefix's letters short of its `-` is an
+/// ordinary name, in any case.
+#[test]
+fn a_name_short_of_a_prefix_is_an_ordinary_name() {
+    for name in ["__host", "__Hostname", "__secure", "__SECUREx"] {
+        let rendered = rendered(&Cookie::new(name, "abc")).expect("a legal cookie");
+        assert!(!rendered.contains("Secure"), "{rendered}");
+        assert!(!rendered.contains("Path="), "{rendered}");
+    }
 }

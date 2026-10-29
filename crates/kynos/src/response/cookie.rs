@@ -180,7 +180,8 @@ impl Cookie {
     /// deliberately, since the reading half unwraps the quotes and the value
     /// would not read back as written, where the name and the value exceed 4096
     /// octets together, where an attribute is unrepresentable, or where a
-    /// `__Host-` cookie names a `Domain` or a `Path` other than `/`.
+    /// `__Host-` cookie names a `Domain` or a `Path` other than `/`. Both
+    /// prefixes are matched in any case, as a user agent matches them.
     #[must_use]
     pub fn encode(&self) -> Option<HeaderValue> {
         if !crate::http::is_token(self.name.as_bytes()) || !is_cookie_value(&self.value) {
@@ -194,7 +195,7 @@ impl Cookie {
 
         // Sections 4.1.3.1 and 4.1.3.2: a user agent discards a cookie whose
         // prefix requirements are unmet, so they are enforced here.
-        let host_prefixed = self.name.starts_with(HOST_PREFIX);
+        let host_prefixed = has_prefix(&self.name, HOST_PREFIX);
         if host_prefixed {
             // Refused rather than corrected: dropping either would silently
             // widen the cookie's scope.
@@ -237,7 +238,7 @@ impl Cookie {
             || self.same_site == Some(SameSite::None)
             || self.partitioned
             || host_prefixed
-            || self.name.starts_with(SECURE_PREFIX)
+            || has_prefix(&self.name, SECURE_PREFIX)
         {
             rendered.push_str("; Secure");
         }
@@ -259,11 +260,22 @@ impl Cookie {
 /// The most a cookie's name and value may total, per RFC 6265bis section 5.6.
 const MAX_NAME_AND_VALUE: usize = 4096;
 
-/// RFC 6265bis section 4.1.3.2's prefix, matched case-sensitively.
+/// RFC 6265bis section 4.1.3.2's prefix.
 const HOST_PREFIX: &str = "__Host-";
 
-/// RFC 6265bis section 4.1.3.1's prefix, matched case-sensitively.
+/// RFC 6265bis section 4.1.3.1's prefix.
 const SECURE_PREFIX: &str = "__Secure-";
+
+/// Whether `name` begins with `prefix` in any case.
+///
+/// RFC 6265bis section 5.4: "UAs MUST match cookie name prefixes
+/// case-insensitively", so `__host-` is discarded on the same terms as
+/// `__Host-`.
+fn has_prefix(name: &str, prefix: &str) -> bool {
+    name.as_bytes()
+        .get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix.as_bytes()))
+}
 
 /// RFC 6265 section 4.1.1 `domain-value`, which is a `<subdomain>` per RFC 1034
 /// section 3.5 as updated by RFC 1123 section 2.1.
