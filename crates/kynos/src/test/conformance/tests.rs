@@ -431,6 +431,27 @@ fn the_most_specific_matching_key_applies() {
     }
 }
 
+/// Keys equally specific resolve to the first the map holds, so the choice
+/// stays deterministic whichever of them is declared first.
+#[test]
+fn the_first_of_equally_specific_keys_applies() {
+    for order in [
+        ["text/*", "text/*; charset=utf-8"],
+        ["text/*; charset=utf-8", "text/*"],
+    ] {
+        let declared = content(&order);
+        let chosen = super::declared_representation(&declared, "text/plain");
+        assert!(
+            chosen.is_some_and(|chosen| std::ptr::eq(
+                chosen,
+                declared.get(order[0]).expect("the first entry"),
+            )),
+            "{order:?}: text/plain should resolve to {}",
+            order[0]
+        );
+    }
+}
+
 /// A document declaring one `GET /thing` operation with `responses`.
 ///
 /// The sibling of [`document`] for the cases that are about what a response
