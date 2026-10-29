@@ -15,7 +15,7 @@ use crate::{
     },
     pointer::pointer_token,
     validate::{
-        rules::extensions::check_extensions,
+        rules::{extensions::check_extensions, literal_component_name},
         violation::{SpecError, Violation},
     },
 };
@@ -60,11 +60,7 @@ pub(in crate::validate) fn resolve_parameter<'doc>(
             RefOr::Item(parameter) => return Resolved::Found(parameter),
             RefOr::Ref(reference) => reference,
         };
-        let Some(name) = reference
-            .location
-            .strip_prefix("#/components/parameters/")
-            .filter(|name| !name.contains(['/', '~', '%']))
-        else {
+        let Some(name) = literal_component_name(&reference.location, "parameters") else {
             return Resolved::Elsewhere;
         };
         let Some(next) = components.parameters.get(name) else {

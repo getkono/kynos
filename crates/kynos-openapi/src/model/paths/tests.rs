@@ -395,6 +395,7 @@ fn every_method_carries_the_two_spellings_the_specification_gives_it() {
             method,
             "{field} read back"
         );
+        assert_eq!(method.field_name(), field, "{method:?}'s Path Item field");
     }
 }
 

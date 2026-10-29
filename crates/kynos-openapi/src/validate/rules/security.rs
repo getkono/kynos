@@ -1,7 +1,10 @@
-//! Security Scheme rules: each OAuth flow declares the URLs its flow requires.
+//! Security rules: each OAuth flow declares the URLs its flow requires, and
+//! each requirement names a scheme.
 //!
-//! The root requirements' names are checked with the document rules, by the
-//! predicate an operation's requirements share.
+//! The root requirements are checked here; an operation's are checked with
+//! the rest of its rules, by the same predicate.
+
+use std::collections::HashSet;
 
 use crate::{
     model::{
@@ -11,9 +14,57 @@ use crate::{
             oauth::{OAuthFlow, OAuthFlows},
         },
     },
-    pointer::pointer_token,
-    validate::violation::{SpecError, Violation},
+    pointer::At,
+    validate::{
+        Validator,
+        rules::literal_component_name,
+        violation::{SpecError, Violation},
+    },
+    visit,
 };
+
+impl Validator {
+    /// Whether the security requirement key `name` corresponds to a security
+    /// scheme, given the component names in `declared`.
+    ///
+    /// A declared component name takes precedence under either version. 3.2
+    /// also admits a scheme's URI, read by the predicate `Document::emit`
+    /// refuses 3.1 on; 3.1 admits only a component name. A same-document
+    /// pointer into the Security Schemes resolves here, so it must land on a
+    /// declared one; a URI into another document cannot be followed, and
+    /// passes. A pointer name escaped with `~` or `%` passes undecoded, since
+    /// no valid component name needs either.
+    pub(in crate::validate) fn names_a_scheme(self, name: &str, declared: &HashSet<&str>) -> bool {
+        if declared.contains(name) {
+            return true;
+        }
+        if !self.version.supports_3_2() || !crate::emit::downgrade::names_a_scheme_by_uri(name) {
+            return false;
+        }
+        literal_component_name(name, "securitySchemes")
+            .is_none_or(|component| declared.contains(component))
+    }
+
+    /// Checks that every name in the root `security` list resolves, by the
+    /// rule an operation's requirements are held to.
+    pub(in crate::validate) fn check_security(
+        self,
+        document: &Document,
+        declared: &HashSet<&str>,
+        violations: &mut Vec<Violation>,
+    ) {
+        for (index, requirement) in document.security.iter().enumerate() {
+            for name in requirement.0.keys() {
+                if !self.names_a_scheme(name, declared) {
+                    violations.push(Violation::error(
+                        format!("#/security/{index}"),
+                        SpecError::UnknownSecurityScheme { name: name.clone() },
+                    ));
+                }
+            }
+        }
+    }
+}
 
 /// Checks every OAuth flow of every Security Scheme defined in `components`.
 ///
@@ -23,15 +74,15 @@ pub(in crate::validate) fn check_security_schemes(
     document: &Document,
     violations: &mut Vec<Violation>,
 ) {
-    for (name, scheme) in &document.components.security_schemes {
-        if let Some(SecurityScheme::OAuth2 { flows, .. }) = scheme.as_item() {
-            check_flows(
-                &format!("#/components/securitySchemes/{}/flows", pointer_token(name)),
-                flows,
-                violations,
-            );
-        }
-    }
+    visit::inline_items(
+        At::ROOT.key("components").key("securitySchemes"),
+        &document.components.security_schemes,
+        |at, scheme| {
+            if let SecurityScheme::OAuth2 { flows, .. } = scheme {
+                check_flows(&at.key("flows").pointer(), flows, violations);
+            }
+        },
+    );
 }
 
 /// A URL field of the OAuth Flow Object: its wire name, and whether a flow

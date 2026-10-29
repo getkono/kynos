@@ -1691,3 +1691,131 @@ mod positions {
         }
     }
 }
+
+/// What the schema walk reports wherever a schema's serialization holds an
+/// `xml` member with `nodeType` or a `discriminator` member with
+/// `defaultMapping`, typed or not, and in the order it reports them.
+///
+/// Pinned exactly, order included, because the walk reads the serialized
+/// schema: instance data, unknown keywords, extensions and a property named
+/// `xml` all count (#1042 questions the instance-data rows), and the members of
+/// an object are read in key order, a schema's own before its subschemas'.
+#[cfg(feature = "openapi32")]
+mod serialized_schema {
+    use serde_json::{Value, json};
+
+    use crate::{emit::downgrade::three_two_only_constructs, model::document::Document};
+
+    /// A document whose one component schema is `schema`.
+    fn with_schema(schema: &Value) -> Document {
+        serde_json::from_value(json!({
+            "openapi": "3.1.2",
+            "info": {"title": "Orders", "version": "1.0.0"},
+            "paths": {},
+            "components": {"schemas": {"S": schema}}
+        }))
+        .expect("a schema the model reads")
+    }
+
+    fn cases() -> Vec<(Value, Vec<&'static str>)> {
+        vec![
+            (
+                json!({"default": {"xml": {"nodeType": "element"}}}),
+                vec!["default/xml/nodeType"],
+            ),
+            (
+                json!({"enum": [{"discriminator": {"defaultMapping": "x"}}]}),
+                vec!["enum/0/discriminator/defaultMapping"],
+            ),
+            (
+                json!({"examples": [{"xml": {"nodeType": "text"}}]}),
+                vec!["examples/0/xml/nodeType"],
+            ),
+            (
+                json!({"const": {"a": {"xml": {"nodeType": 1}}}}),
+                vec!["const/a/xml/nodeType"],
+            ),
+            (
+                json!({"example": {"xml": {"nodeType": "attribute"}}}),
+                vec!["example/xml/nodeType"],
+            ),
+            (
+                json!({"x-vendor": {"xml": {"nodeType": "x"}}}),
+                vec!["x-vendor/xml/nodeType"],
+            ),
+            (
+                json!({"$defs": {"discriminator": {"defaultMapping": "y"}}}),
+                vec!["$defs/discriminator/defaultMapping"],
+            ),
+            (
+                json!({"properties": {"xml": {"nodeType": "element"}}}),
+                vec!["properties/xml/nodeType"],
+            ),
+            (
+                json!({"xml": {"x-a": {"discriminator": {"defaultMapping": "y"}}}}),
+                vec!["xml/x-a/discriminator/defaultMapping"],
+            ),
+            (
+                json!({"externalDocs": {
+                    "url": "https://example.com",
+                    "x-a": {"xml": {"nodeType": "z"}}
+                }}),
+                vec!["externalDocs/x-a/xml/nodeType"],
+            ),
+            (
+                json!({"discriminator": {
+                    "propertyName": "kind",
+                    "x-a": {"xml": {"nodeType": "z"}}
+                }}),
+                vec!["discriminator/x-a/xml/nodeType"],
+            ),
+            (
+                json!({"properties": {
+                    "b": {"xml": {"nodeType": "element"}},
+                    "a": {"xml": {"nodeType": "element"}}
+                }}),
+                vec!["properties/a/xml/nodeType", "properties/b/xml/nodeType"],
+            ),
+            (
+                json!({
+                    "allOf": [{"xml": {"nodeType": "text"}}],
+                    "xml": {"nodeType": "element"}
+                }),
+                vec!["xml/nodeType", "allOf/0/xml/nodeType"],
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_serialized_construct_is_reported_where_and_in_the_order_it_was() {
+        for (schema, expected) in cases() {
+            let expected: Vec<String> = expected
+                .iter()
+                .map(|pointer| format!("#/components/schemas/S/{pointer}"))
+                .collect();
+            assert_eq!(
+                three_two_only_constructs(&with_schema(&schema)),
+                expected,
+                "{schema}"
+            );
+        }
+    }
+
+    /// A schema holding neither member anywhere reports nothing, however
+    /// much else it holds.
+    #[test]
+    fn a_schema_holding_neither_member_reports_nothing() {
+        let schema = json!({
+            "type": "object",
+            "default": {"xml": {"name": "a"}, "discriminator": "b"},
+            "properties": {"xml": {"type": "string"}, "kind": {"const": "a"}},
+            "xml": {"name": "order"},
+            "discriminator": {"propertyName": "kind", "mapping": {"a": "#/x"}},
+            "x-vendor": {"nodeType": "element"}
+        });
+        assert_eq!(
+            three_two_only_constructs(&with_schema(&schema)),
+            Vec::<String>::new()
+        );
+    }
+}

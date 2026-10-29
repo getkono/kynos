@@ -1,6 +1,6 @@
 //! Rules that apply to the document as a whole: servers, tags, component
-//! names, reusable parameters, the root security requirements. The Server
-//! Object rule is shared with every other scope a server is declared at.
+//! names, reusable parameters. The Server Object rule is shared with every
+//! other scope a server is declared at.
 
 use std::collections::HashSet;
 
@@ -9,40 +9,13 @@ use std::collections::HashMap;
 
 use crate::{
     model::{components::ComponentName, document::Document, link::Link, server::Server},
-    pointer::pointer_token,
+    pointer::{At, pointer_token},
     validate::{
-        Validator,
         rules::parameters::check_parameter,
         violation::{SpecError, Violation},
     },
+    visit,
 };
-
-impl Validator {
-    /// Checks that every name in the root `security` list resolves, by the
-    /// rule an operation's requirements are held to.
-    pub(in crate::validate) fn check_security(
-        self,
-        document: &Document,
-        violations: &mut Vec<Violation>,
-    ) {
-        let declared: HashSet<&str> = document
-            .components
-            .security_schemes
-            .keys()
-            .map(String::as_str)
-            .collect();
-        for (index, requirement) in document.security.iter().enumerate() {
-            for name in requirement.0.keys() {
-                if !self.names_a_scheme(name, &declared) {
-                    violations.push(Violation::error(
-                        format!("#/security/{index}"),
-                        SpecError::UnknownSecurityScheme { name: name.clone() },
-                    ));
-                }
-            }
-        }
-    }
-}
 
 /// Checks the root `servers`, and the server of each reusable link once, where
 /// it is defined.
@@ -51,15 +24,11 @@ impl Validator {
 /// the walk that reaches them.
 pub(in crate::validate) fn check_servers(document: &Document, violations: &mut Vec<Violation>) {
     check_server_list("#", &document.servers, violations);
-    for (name, link) in &document.components.links {
-        if let Some(link) = link.as_item() {
-            check_link(
-                &format!("#/components/links/{}", pointer_token(name)),
-                link,
-                violations,
-            );
-        }
-    }
+    visit::inline_items(
+        At::ROOT.key("components").key("links"),
+        &document.components.links,
+        |at, link| check_link(&at.pointer(), link, violations),
+    );
 }
 
 /// Checks each Server Object in the `servers` field of the object at
@@ -230,13 +199,9 @@ pub(in crate::validate) fn check_component_parameters(
     document: &Document,
     violations: &mut Vec<Violation>,
 ) {
-    for (name, parameter) in &document.components.parameters {
-        if let Some(parameter) = parameter.as_item() {
-            check_parameter(
-                &format!("#/components/parameters/{}", pointer_token(name)),
-                parameter,
-                violations,
-            );
-        }
-    }
+    visit::inline_items(
+        At::ROOT.key("components").key("parameters"),
+        &document.components.parameters,
+        |at, parameter| check_parameter(&at.pointer(), parameter, violations),
+    );
 }

@@ -8,13 +8,15 @@
 //! guard is needed.
 //!
 //! Pointers are [`At`] chains on the stack, so a visitor that reports nothing
-//! allocates nothing.
+//! allocates nothing. [`inline_items`] reaches each inline entry of any
+//! `RefOr` map the same way, for every walk below a Path Item and beside one.
 
 use crate::{
+    Map,
     model::{
         callback::Callback,
         document::Document,
-        paths::{item::PathItem, method::Method, operation::Operation},
+        paths::{item::PathItem, operation::Operation},
         reference::RefOr,
     },
     pointer::At,
@@ -23,7 +25,7 @@ use crate::{
 /// What a walk does at each object it reaches. Every hook defaults to nothing.
 ///
 /// The order is fixed: a Path Item, then each operation it holds in
-/// [`Method::all`] order, then each of its 3.2 `additionalOperations` in
+/// [`Method::all`](crate::model::paths::method::Method::all) order, then each of its 3.2 `additionalOperations` in
 /// insertion order. Each operation's hooks bracket the callbacks it declares.
 pub(crate) trait Visit<'doc> {
     /// A Path Item, before its operations.
@@ -39,6 +41,9 @@ pub(crate) trait Visit<'doc> {
 
     /// The same operation, once its callbacks are walked.
     fn operation_walked(&mut self, _at: At<'_>, _operation: &'doc Operation) {}
+
+    /// A callback given inline, before its entries.
+    fn callback(&mut self, _at: At<'_>, _callback: &'doc Callback) {}
 
     /// One entry of a callback, before the Path Item it holds, which is
     /// walked only where it is written inline.
@@ -84,12 +89,28 @@ pub(crate) fn path_item<'doc>(at: At<'_>, item: &'doc PathItem, visit: &mut impl
 
 /// One callback's Path Items, and everything below them.
 pub(crate) fn callback<'doc>(at: At<'_>, callback: &'doc Callback, visit: &mut impl Visit<'doc>) {
+    visit.callback(at, callback);
     for (expression, entry) in &callback.items {
         let at = at.key(expression);
         visit.callback_entry(at, expression);
         match entry {
             RefOr::Item(item) => walk_path_item(at, item, None, visit),
             RefOr::Ref(reference) => visit.reference(at, &reference.location),
+        }
+    }
+}
+
+/// Each inline item of `entries`, at its key under `at`.
+///
+/// A `RefOr::Ref` is skipped: what it names is visited where it is defined.
+pub(crate) fn inline_items<'doc, T>(
+    at: At<'_>,
+    entries: &'doc Map<RefOr<T>>,
+    mut visit: impl FnMut(At<'_>, &'doc T),
+) {
+    for (name, entry) in entries {
+        if let RefOr::Item(item) = entry {
+            visit(at.key(name), item);
         }
     }
 }
@@ -116,7 +137,7 @@ fn walk_path_item<'doc>(
     }
 
     for (method, operation) in item.operations() {
-        walk_operation(at.key(field_name(method)), item, operation, visit);
+        walk_operation(at.key(method.field_name()), item, operation, visit);
     }
 
     #[cfg(feature = "openapi32")]
@@ -142,22 +163,6 @@ fn walk_operation<'doc>(
     }
 
     visit.operation_walked(at, operation);
-}
-
-/// The Path Item field `method` is held in: its wire name, lowercased.
-fn field_name(method: Method) -> &'static str {
-    match method {
-        Method::Get => "get",
-        Method::Put => "put",
-        Method::Post => "post",
-        Method::Delete => "delete",
-        Method::Options => "options",
-        Method::Head => "head",
-        Method::Patch => "patch",
-        Method::Trace => "trace",
-        #[cfg(feature = "openapi32")]
-        Method::Query => "query",
-    }
 }
 
 #[cfg(test)]

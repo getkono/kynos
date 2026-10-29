@@ -106,6 +106,24 @@ impl Responses {
         self.responses.get(&StatusPattern::Code(status).to_string())
     }
 
+    /// Each response given inline, with the key it is written under:
+    /// `default` first, then each keyed response in insertion order.
+    ///
+    /// One given by reference is skipped, so a walk reaches it where it is
+    /// defined.
+    pub(crate) fn entries(&self) -> impl Iterator<Item = (&str, &Response)> {
+        let default = self
+            .default_response
+            .as_ref()
+            .and_then(RefOr::as_item)
+            .map(|response| ("default", response));
+        let keyed = self
+            .responses
+            .iter()
+            .filter_map(|(key, response)| Some((key.as_str(), response.as_item()?)));
+        default.into_iter().chain(keyed)
+    }
+
     /// Merges another set into this one, keeping existing entries on conflict.
     ///
     /// `other`'s `default` and each status it declares join only where this

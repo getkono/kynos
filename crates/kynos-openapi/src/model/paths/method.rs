@@ -79,19 +79,27 @@ impl Method {
     /// with no field; under `openapi32` those use `additionalOperations`.
     #[must_use]
     pub fn from_wire_str(name: &str) -> Option<Self> {
-        Some(match name {
-            "GET" => Self::Get,
-            "PUT" => Self::Put,
-            "POST" => Self::Post,
-            "DELETE" => Self::Delete,
-            "OPTIONS" => Self::Options,
-            "HEAD" => Self::Head,
-            "PATCH" => Self::Patch,
-            "TRACE" => Self::Trace,
+        Self::all()
+            .iter()
+            .copied()
+            .find(|method| method.as_wire_str() == name)
+    }
+
+    /// The Path Item field this method is held in: its wire name, lowercased,
+    /// as serde writes it.
+    pub(crate) fn field_name(self) -> &'static str {
+        match self {
+            Self::Get => "get",
+            Self::Put => "put",
+            Self::Post => "post",
+            Self::Delete => "delete",
+            Self::Options => "options",
+            Self::Head => "head",
+            Self::Patch => "patch",
+            Self::Trace => "trace",
             #[cfg(feature = "openapi32")]
-            "QUERY" => Self::Query,
-            _ => return None,
-        })
+            Self::Query => "query",
+        }
     }
 }
 
