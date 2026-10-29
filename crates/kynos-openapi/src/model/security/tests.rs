@@ -122,3 +122,37 @@ fn a_metadata_url_set_on_a_scheme_that_cannot_carry_one_changes_nothing() {
     let untouched = SecurityScheme::basic().with_oauth2_metadata_url("https://example.com/meta");
     assert_eq!(untouched, SecurityScheme::basic());
 }
+
+/// `references/3.1.2.md:3958` and `references/3.2.0.md:4577` allow an `apiKey`
+/// scheme only `"query"`, `"header"` or `"cookie"`, so `path`, and 3.2's
+/// `querystring`, which names the whole query string rather than one key in
+/// it, are not values to report but words the field cannot read.
+#[test]
+fn an_api_key_is_carried_only_in_a_query_header_or_cookie() {
+    for location in ["query", "header", "cookie"] {
+        let scheme: SecurityScheme = serde_json::from_value(serde_json::json!({
+            "type": "apiKey",
+            "name": "k",
+            "in": location,
+        }))
+        .unwrap_or_else(|error| panic!("an apiKey `in` `{location}` parses: {error}"));
+        assert_eq!(
+            serde_json::to_value(&scheme).expect("serializable")["in"],
+            location,
+            "an apiKey `in` `{location}` writes the location it read"
+        );
+    }
+
+    for location in ["path", "querystring"] {
+        let error = serde_json::from_value::<SecurityScheme>(serde_json::json!({
+            "type": "apiKey",
+            "name": "k",
+            "in": location,
+        }))
+        .expect_err("only query, header and cookie carry an apiKey");
+        assert!(
+            error.to_string().contains(&format!("`{location}`")),
+            "the error for `{location}` should name it, got: {error}"
+        );
+    }
+}
