@@ -6175,9 +6175,8 @@ fn a_read_only_variants_fields_are_named_as_serde_reads_them() {
 
 /// Every derive, in a module whose own items shadow the prelude's names: an
 /// expansion naming `None`, `String` or `Sized` unqualified resolves to the
-/// user's item rather than the standard library's. Shadowing rather than
-/// `no_implicit_prelude`, which also takes the prelude's traits out of method
-/// resolution: a derive may call `String::from` the way any user code does.
+/// user's item rather than the standard library's. `no_implicit_prelude`
+/// below removes the names instead of shadowing them.
 #[cfg(all(feature = "json", feature = "cookie", feature = "multipart"))]
 mod shadowed_prelude {
     use ::kynos::{extract::body::json::Json, response::status::Created};
@@ -6295,4 +6294,266 @@ fn a_default_credential_is_the_standard_string() {
     fn reads_a_string<S: SecuritySchemeTrait<Credential = std::string::String>>() {}
 
     reads_a_string::<shadowed_prelude::Bearer>();
+}
+
+/// Every derive, in a module with no prelude at all: neither its names nor its
+/// traits are in scope, so an expansion calling `Default::default`,
+/// `From::from` or an `Iterator` method by method syntax fails to resolve.
+/// Each derive's attribute forms that emit such a call are spelled out.
+#[cfg(all(feature = "json", feature = "cookie", feature = "multipart"))]
+#[no_implicit_prelude]
+mod no_prelude {
+    use ::kynos::{
+        extract::body::{json::Json, multipart::FilePart},
+        response::status::Created,
+    };
+    use ::std::{collections::BTreeMap, option::Option, string::String, vec::Vec};
+
+    #[derive(::kynos::Schema, ::serde::Serialize, ::serde::Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct Item {
+        #[schema(minimum = 1, maximum = 1000, multiple_of = 1)]
+        id: u64,
+        #[schema(min_length = 1, max_length = 10, pattern = "^[a-z]+$")]
+        #[serde(alias = "label")]
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+        #[schema(min_items = 1)]
+        tags: Vec<String>,
+        #[serde(skip)]
+        cache: u8,
+    }
+
+    #[derive(::kynos::Schema, ::serde::Serialize, ::serde::Deserialize)]
+    struct Open {
+        id: u64,
+        #[serde(flatten)]
+        #[schema(open)]
+        extra: BTreeMap<String, String>,
+    }
+
+    #[derive(::kynos::Schema, ::serde::Serialize, ::serde::Deserialize)]
+    struct Stamp {
+        created: u64,
+    }
+
+    #[derive(::kynos::Schema, ::serde::Serialize, ::serde::Deserialize)]
+    struct Flattened {
+        #[serde(flatten)]
+        stamp: Stamp,
+        #[deprecated]
+        old: bool,
+    }
+
+    #[derive(::kynos::Schema, ::serde::Serialize, ::serde::Deserialize)]
+    #[serde(transparent)]
+    struct Wrapper(#[schema(as = String, min_length = 4, max_length = 4)] String);
+
+    #[derive(::kynos::Schema, ::serde::Serialize, ::serde::Deserialize)]
+    struct Pair(u32, String);
+
+    #[derive(::kynos::Schema, ::serde::Serialize, ::serde::Deserialize)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    enum Internal {
+        Circle { radius: f64 },
+        Square { side: f64 },
+        Empty,
+    }
+
+    #[derive(::kynos::Schema, ::serde::Serialize, ::serde::Deserialize)]
+    #[serde(tag = "t", content = "c")]
+    enum Adjacent {
+        Number(u32),
+        Text { body: String },
+        Nothing,
+    }
+
+    #[derive(::kynos::Schema, ::serde::Serialize, ::serde::Deserialize)]
+    enum External {
+        Number(u32),
+        Pair(u32, String),
+        Text {
+            #[serde(alias = "content")]
+            body: String,
+        },
+        #[serde(alias = "none", alias = "nil")]
+        Nothing,
+    }
+
+    #[derive(::kynos::Schema, ::kynos::ParamValue, ::serde::Serialize, ::serde::Deserialize)]
+    #[serde(rename_all = "lowercase")]
+    enum Order {
+        #[serde(alias = "up")]
+        Ascending,
+        Descending,
+    }
+
+    #[derive(::kynos::Reply)]
+    enum Outcome {
+        #[reply(status = 201, response, description = "the item as stored")]
+        Made(Created<Json<Item>>),
+        #[reply(status = 200, description = "the item")]
+        Found(Item),
+        #[reply(status = 204)]
+        Gone,
+        #[reply(status = 404)]
+        Missing,
+    }
+
+    #[derive(::core::fmt::Debug, ::kynos::HeaderParams)]
+    struct RetryAfter {
+        #[header(rename = "Retry-After")]
+        retry_after: u64,
+    }
+
+    #[derive(::core::fmt::Debug, ::kynos::ApiError)]
+    #[problem(base = "https://errors.example.com/")]
+    enum Failure {
+        #[problem(status = 404, title = "Item not found")]
+        NotFound,
+        #[problem(status = 422, type = "https://errors.example.com/invalid")]
+        Invalid {
+            #[problem(extension)]
+            field: String,
+        },
+        #[problem(status = 429)]
+        Throttled {
+            #[problem(headers)]
+            retry: RetryAfter,
+        },
+        #[problem(status = 503)]
+        Paused(#[problem(headers)] RetryAfter),
+        #[problem(transparent)]
+        Inner(Inner),
+    }
+
+    #[derive(::core::fmt::Debug, ::kynos::ApiError)]
+    #[problem(status = 409)]
+    struct Inner {
+        #[problem(extension)]
+        limit: u32,
+    }
+
+    impl ::core::fmt::Display for Failure {
+        fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+            f.write_str("failure")
+        }
+    }
+
+    impl ::core::error::Error for Failure {}
+
+    impl ::core::fmt::Display for Inner {
+        fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+            f.write_str("inner")
+        }
+    }
+
+    impl ::core::error::Error for Inner {}
+
+    #[derive(::kynos::SecurityScheme)]
+    #[security(bearer)]
+    struct Bearer;
+
+    #[derive(::kynos::SecurityScheme)]
+    #[security(bearer(format = "JWT"), name = "BearerAuth", deprecated)]
+    struct SignedBearer;
+
+    #[derive(::kynos::SecurityScheme)]
+    #[security(basic, description = "A login.")]
+    struct Basic;
+
+    #[derive(::kynos::SecurityScheme)]
+    #[security(http(scheme = "Digest"))]
+    struct Digest;
+
+    #[derive(::kynos::SecurityScheme)]
+    #[security(api_key(in = "header", name = "X-Api-Key"))]
+    struct KeyInHeader;
+
+    #[derive(::kynos::SecurityScheme)]
+    #[security(api_key(in = "query", name = "key"))]
+    struct KeyInQuery;
+
+    #[derive(::kynos::SecurityScheme)]
+    #[security(api_key(in = "cookie", name = "session"), unavailable)]
+    struct KeyInCookie;
+
+    #[derive(::kynos::SecurityScheme)]
+    #[security(mutual_tls)]
+    struct Certificate;
+
+    #[derive(::kynos::SecurityScheme)]
+    #[security(openid_connect(url = "https://auth.example.com/.well-known/openid-configuration"))]
+    struct Federated;
+
+    #[derive(::kynos::SecurityScheme)]
+    #[security(oauth2(
+        authorization_code(
+            authorization_url = "https://auth.example.com/authorize",
+            token_url = "https://auth.example.com/token",
+            refresh_url = "https://auth.example.com/refresh",
+            scopes("read" = "Read your records", "write"),
+        ),
+        client_credentials(token_url = "https://auth.example.com/token"),
+        implicit(authorization_url = "https://auth.example.com/authorize"),
+        password(token_url = "https://auth.example.com/token", scopes("admin")),
+    ))]
+    struct EveryFlow;
+
+    #[derive(::kynos::PathParams)]
+    struct ItemPath {
+        id: u64,
+        order: Order,
+    }
+
+    #[derive(::kynos::Schema, ::kynos::QueryParams)]
+    struct Listing {
+        page: u32,
+        #[param(rename = "per_page")]
+        per: Option<u32>,
+        order: Option<Order>,
+    }
+
+    #[derive(::kynos::HeaderParams)]
+    struct Conditional {
+        #[header(rename = "If-None-Match")]
+        if_none_match: Option<String>,
+        #[header(rename = "X-Request-Id")]
+        request: String,
+    }
+
+    #[derive(::kynos::HeaderParams)]
+    #[header(described = false)]
+    struct Undescribed {
+        #[header(rename = "X-Tenant")]
+        tenant: String,
+    }
+
+    #[derive(::kynos::CookieParams)]
+    struct Session {
+        session: String,
+        theme: Option<String>,
+        #[cookie(style = "cookie")]
+        raw: Option<String>,
+    }
+
+    #[derive(::kynos::Schema, ::kynos::MultipartForm)]
+    struct Upload {
+        name: String,
+        caption: Option<String>,
+        #[serde(default)]
+        images: Vec<FilePart>,
+    }
+
+    #[derive(::kynos::Tag)]
+    #[tag(name = "items", description = "Managing items")]
+    struct Items;
+
+    #[derive(::kynos::Provider)]
+    struct App {
+        limit: u32,
+        #[provide(skip)]
+        name: String,
+    }
 }
