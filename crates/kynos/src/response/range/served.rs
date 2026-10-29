@@ -237,7 +237,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
         if selection.is_some() {
             // Static where `from_static` takes it, so it costs no allocation;
             // anything else is copied, and a marker that is no field value is
-            // omitted, as before.
+            // omitted.
             let content_type = if const { visible_ascii(M::MEDIA_TYPE) } {
                 Some(HeaderValue::from_static(M::MEDIA_TYPE))
             } else {
