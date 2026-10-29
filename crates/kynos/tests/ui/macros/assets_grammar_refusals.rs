@@ -32,4 +32,10 @@ kynos::assets! {
     exclude = [""],
 }
 
+kynos::assets! {
+    struct Twice;
+    dir = "no-such-directory",
+    dir = "another-directory",
+}
+
 fn main() {}
