@@ -4,9 +4,7 @@ use proc_macro2::Span;
 use syn::{DeriveInput, GenericArgument, Ident, Path, PathArguments, Type};
 
 use crate::derive::schema::{
-    attributes::{described_type, is_described, is_phantom},
-    container::Container,
-    members::described_groups,
+    attributes::described_type, check::is_checked, container::Container, members::described_groups,
 };
 
 /// A generic type naming itself in a member its schema describes, through the
@@ -27,7 +25,7 @@ pub(super) fn reject_recursive_generic(
     let site = described_groups(input, container)
         .into_iter()
         .flatten()
-        .filter(|field| is_described(field) && !is_phantom(&field.ty))
+        .filter(|field| is_checked(field))
         .find_map(|field| self_reference(&described_type(field), &input.ident));
     let Some(span) = site else {
         return Ok(());
