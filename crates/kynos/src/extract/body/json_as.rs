@@ -221,9 +221,8 @@ where
     ) -> Result<Self, Self::Rejection> {
         let () = Self::JSON;
 
-        super::json::decode(parts, body, M::MEDIA_TYPE)
-            .await
-            .map(Self::new)
+        let bytes = super::read_body(parts, body, M::MEDIA_TYPE).await?;
+        super::json::decode(&bytes).map(Self::new)
     }
 }
 

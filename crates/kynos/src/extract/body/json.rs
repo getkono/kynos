@@ -54,19 +54,17 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send> FromRequest<C> for
         body: Body,
         _context: &C,
     ) -> Result<Self, Self::Rejection> {
-        decode(parts, body, MEDIA_TYPE).await.map(Self)
+        let bytes = super::read_body(parts, body, MEDIA_TYPE).await?;
+        decode(&bytes).map(Self)
     }
 }
 
-/// Reads a body of `media_type`, decodes it as one JSON document and holds it
-/// to the bounds `T` declares: what `Json` and `JsonAs` share.
-pub(super) async fn decode<T: serde::de::DeserializeOwned + Schema>(
-    parts: &Parts,
-    body: Body,
-    media_type: &str,
+/// Decodes a body read whole as one JSON document and holds it to the bounds
+/// `T` declares: what `Json` and `JsonAs` share once the body is read.
+pub(super) fn decode<T: serde::de::DeserializeOwned + Schema>(
+    bytes: &[u8],
 ) -> Result<T, BodyRejection> {
-    let bytes = super::read_body(parts, body, media_type).await?;
-    let value = strict_json::from_slice(&bytes).map_err(rejection)?;
+    let value = strict_json::from_slice(bytes).map_err(rejection)?;
     super::checked(value, Pointer::root())
 }
 
