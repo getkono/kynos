@@ -467,8 +467,9 @@ run = "cargo deny --locked check"
 
 [tasks.coverage]
 description = "Run tests with LLVM coverage"
-# `ui` is excluded here and in `coverage:ci` for `ui:check`'s reason.
-run = "cargo llvm-cov nextest --workspace --all-targets --all-features -E 'not binary(ui)'"
+# `ui` is excluded for `ui:check`'s reason. Arguments reach `cargo llvm-cov`,
+# which is how `coverage:ci` runs this.
+run ="cargo llvm-cov nextest --workspace --all-targets --all-features -E 'not binary(ui)'"
 
 [tasks."ui:check"]
 description = "Run the compile-fail suite"
@@ -479,7 +480,7 @@ run = "cargo nextest run -p kynos --test ui --all-features"
 [tasks."coverage:ci"]
 description = "Generate CI coverage reports"
 run = [
-  "cargo llvm-cov nextest --workspace --all-targets --all-features --lcov --output-path lcov.info -E 'not binary(ui)'",
+  "mise run coverage --lcov --output-path lcov.info",
   "cargo llvm-cov report --summary-only | tee coverage-summary.txt",
 ]
 
