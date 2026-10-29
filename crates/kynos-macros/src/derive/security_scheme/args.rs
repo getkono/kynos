@@ -4,7 +4,7 @@
 use kynos_openapi::model::parameter::header::is_ignored_header_parameter;
 use syn::{DeriveInput, Expr, Ident, LitBool, LitStr, Token, Type, spanned::Spanned};
 
-use super::flow::{FlowArgs, check_oauth2, read_flow};
+use super::flow::{Flow, FlowArgs, check_oauth2, read_flow};
 use crate::derive::{
     attribute::{Keys, key_name, unknown},
     common::non_token_message,
@@ -57,8 +57,9 @@ pub(super) struct Nested {
     pub(super) format: Option<LitStr>,
     pub(super) url: Option<LitStr>,
     pub(super) metadata_url: Option<LitStr>,
-    /// The OAuth 2.0 flows declared, in order; a `Vec` so a repeat is caught.
-    pub(super) flows: Vec<(Ident, FlowArgs)>,
+    /// The OAuth 2.0 flows declared, in order, each with its row of the flow
+    /// table; a `Vec` so a repeat is caught.
+    pub(super) flows: Vec<(Ident, &'static Flow, FlowArgs)>,
 }
 
 /// Reads every `#[security(...)]` list on the type, refusing what the

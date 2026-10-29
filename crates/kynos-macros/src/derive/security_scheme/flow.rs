@@ -57,7 +57,7 @@ pub(super) struct Flow {
 }
 
 /// The row `name` names.
-pub(super) fn flow_named(name: &str) -> Option<&'static Flow> {
+fn flow_named(name: &str) -> Option<&'static Flow> {
     FLOWS.iter().find(|flow| flow.name == name)
 }
 
@@ -148,7 +148,7 @@ pub(super) fn read_flow(
         ));
     }
 
-    if let Some((existing, _)) = nested.flows.iter().find(|(declared, _)| declared == key) {
+    if let Some((existing, _, _)) = nested.flows.iter().find(|(declared, _, _)| declared == key) {
         return Err(syn::Error::new(
             key.span(),
             format!("the `{existing}` flow is already declared, and a scheme declares each once"),
@@ -209,7 +209,7 @@ pub(super) fn read_flow(
         })?;
     }
 
-    nested.flows.push((key.clone(), args));
+    nested.flows.push((key.clone(), flow, args));
     Ok(())
 }
 
@@ -245,9 +245,7 @@ pub(super) fn check_oauth2(kind: &Ident, nested: &Nested) -> syn::Result<()> {
         ));
     }
 
-    for (name, args) in &nested.flows {
-        let flow = flow_named(&name.to_string())
-            .expect("`read_flow` refuses a flow this table does not name");
+    for (name, flow, args) in &nested.flows {
         for required in flow.required {
             if args.url(required).is_none() {
                 return Err(syn::Error::new(

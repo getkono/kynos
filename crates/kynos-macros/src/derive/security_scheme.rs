@@ -53,7 +53,7 @@ use syn::{DeriveInput, Ident, LitStr, Type, parse_quote};
 use crate::derive::common::{optional, unit_struct};
 use crate::doc::doc_string;
 use args::{Carrier, Nested, SchemeArgs, parse_args};
-use flow::{build_flow, flow_named};
+use flow::build_flow;
 
 pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     // A scheme is a marker; the credential type carries the data.
@@ -310,13 +310,8 @@ fn of_kind(args: &SchemeArgs, kind: &Ident) -> proc_macro2::TokenStream {
         }
 
         "oauth2" => {
-            let flows = args.nested.flows.iter().map(|(name, flow)| {
-                let builder = syn::Ident::new(
-                    flow_named(&name.to_string())
-                        .expect("`check_kind` refuses a flow this table does not name")
-                        .builder,
-                    name.span(),
-                );
+            let flows = args.nested.flows.iter().map(|(name, row, flow)| {
+                let builder = syn::Ident::new(row.builder, name.span());
                 let built = build_flow(flow);
                 quote!(.#builder(#built))
             });
