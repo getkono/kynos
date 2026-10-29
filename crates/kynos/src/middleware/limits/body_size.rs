@@ -196,7 +196,7 @@ where
         let body = match collect_capped(body, self.limit).await {
             Capped::Whole(bytes) => Body::from_bytes(bytes),
             Capped::FailedPartWay { arrived, error } => Body::failed_after(arrived, error),
-            Capped::Exceeded => return Err(BodySizeExceeded::new(self.limit)),
+            Capped::Exceeded { limit } => return Err(BodySizeExceeded::new(limit)),
         };
 
         let request = http::Request::from_parts(parts, body);

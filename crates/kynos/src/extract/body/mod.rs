@@ -196,7 +196,7 @@ async fn read_body(parts: &Parts, body: Body, media_type: &str) -> Result<Bytes,
 
     let limit = limit::of(parts);
     limit::refuse_declared(&parts.headers, limit)?;
-    limit::read(body, limit).await
+    limit::collect_capped(body, limit).await.into_read()
 }
 
 /// Holds a decoded body, or the record of one sitting at `at`, to the bounds

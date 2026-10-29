@@ -498,8 +498,8 @@ where
         // Read even when uncoded: the limit applies either way.
         let arrived = match collect_capped(body, self.limit).await {
             Capped::Whole(bytes) => bytes,
-            Capped::Exceeded => {
-                return Err(Undecodable::of(Reason::TooLarge { limit: self.limit }));
+            Capped::Exceeded { limit } => {
+                return Err(Undecodable::of(Reason::TooLarge { limit }));
             }
             // Handed on as it failed, so the extractor refuses it as usual
             // rather than blaming the coding for a transport failure. A coded

@@ -8,7 +8,7 @@ use http_body_util::BodyExt;
 use crate::{
     error::rejection::BodyRejection,
     http::{
-        HeaderMap, Parts,
+        HeaderMap, HeaderValue, Parts,
         body::{Body, BoxError},
         header,
     },
@@ -67,13 +67,13 @@ pub(crate) fn of(parts: &Parts) -> u64 {
 
 /// The length the request declared, when it declared one.
 pub(crate) fn declared_length(headers: &HeaderMap) -> Option<u64> {
-    headers
-        .get(header::CONTENT_LENGTH)?
-        .to_str()
-        .ok()?
-        .trim()
-        .parse()
-        .ok()
+    parse_length(headers.get(header::CONTENT_LENGTH)?)
+}
+
+/// One `Content-Length` line as a count of octets, surrounding whitespace
+/// aside; `None` when it is not one.
+pub(crate) fn parse_length(value: &HeaderValue) -> Option<u64> {
+    value.to_str().ok()?.trim().parse().ok()
 }
 
 /// The 413 for a request whose declared length already passes `limit`, decided
@@ -96,8 +96,11 @@ pub(crate) enum Capped {
         /// The failure itself.
         error: BoxError,
     },
-    /// A frame would have taken the running total past the limit.
-    Exceeded,
+    /// A frame would have taken the running total past `limit`.
+    Exceeded {
+        /// The limit the body was read under.
+        limit: u64,
+    },
 }
 
 /// Reads `body` while the running total stays within `limit`.
@@ -105,50 +108,26 @@ pub(crate) enum Capped {
 /// For an interceptor that must decide a 413 before the extractor runs. A
 /// failed read comes back as it failed, for the extractor beneath to refuse;
 /// swallowing it would hand on a truncated payload.
+///
+/// A body arriving as one data frame comes back as that frame's `Bytes`,
+/// neither copied nor queued; only a second non-empty frame starts a buffer
+/// joining them. Frames that are not data, and empty ones, are skipped.
 pub(crate) async fn collect_capped(mut body: Body, limit: u64) -> Capped {
-    let mut collected = BytesMut::new();
+    let mut first = Bytes::new();
+    let mut joined: Option<BytesMut> = None;
+    let mut so_far = 0_u64;
+    let arrived = |first: Bytes, joined: Option<BytesMut>| joined.map_or(first, BytesMut::freeze);
 
     while let Some(frame) = body.frame().await {
         let frame = match frame {
             Ok(frame) => frame,
             Err(error) => {
                 return Capped::FailedPartWay {
-                    arrived: collected.freeze(),
+                    arrived: arrived(first, joined),
                     error,
                 };
             }
         };
-        let Ok(data) = frame.into_data() else {
-            continue;
-        };
-
-        let so_far = u64::try_from(collected.len()).unwrap_or(u64::MAX);
-        let arriving = u64::try_from(data.len()).unwrap_or(u64::MAX);
-        if so_far.saturating_add(arriving) > limit {
-            return Capped::Exceeded;
-        }
-
-        collected.extend_from_slice(&data);
-    }
-
-    Capped::Whole(collected.freeze())
-}
-
-/// Reads `body` whole, refusing it on the frame that passes `limit`. A
-/// transport failure part-way through is a 400.
-///
-/// A body arriving as one data frame comes back as that frame's `Bytes`,
-/// neither copied nor queued; only a second non-empty frame starts a buffer
-/// joining them. Frames that are not data, and empty ones, are skipped.
-pub(crate) async fn read(mut body: Body, limit: u64) -> Result<Bytes, BodyRejection> {
-    let mut first = Bytes::new();
-    let mut joined: Option<BytesMut> = None;
-    let mut so_far = 0_u64;
-
-    while let Some(frame) = body.frame().await {
-        let frame = frame.map_err(|error| BodyRejection::Syntax {
-            detail: error.to_string(),
-        })?;
         let Ok(data) = frame.into_data() else {
             continue;
         };
@@ -158,7 +137,7 @@ pub(crate) async fn read(mut body: Body, limit: u64) -> Result<Bytes, BodyReject
 
         so_far = so_far.saturating_add(u64::try_from(data.len()).unwrap_or(u64::MAX));
         if so_far > limit {
-            return Err(BodyRejection::TooLarge { limit });
+            return Capped::Exceeded { limit };
         }
 
         match &mut joined {
@@ -174,5 +153,23 @@ pub(crate) async fn read(mut body: Body, limit: u64) -> Result<Bytes, BodyReject
         }
     }
 
-    Ok(joined.map_or(first, BytesMut::freeze))
+    Capped::Whole(arrived(first, joined))
+}
+
+impl Capped {
+    /// A body read whole, or the rejection an extractor raises: the 413 past
+    /// the limit, and a 400 for a transport failure part-way.
+    ///
+    /// Applied to [`collect_capped`]'s result rather than wrapping it in an
+    /// `async fn`, whose future would keep a second slot for the body under
+    /// every buffering extractor.
+    pub(crate) fn into_read(self) -> Result<Bytes, BodyRejection> {
+        match self {
+            Self::Whole(bytes) => Ok(bytes),
+            Self::FailedPartWay { error, .. } => Err(BodyRejection::Syntax {
+                detail: error.to_string(),
+            }),
+            Self::Exceeded { limit } => Err(BodyRejection::TooLarge { limit }),
+        }
+    }
 }
