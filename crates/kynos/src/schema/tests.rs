@@ -1151,6 +1151,26 @@ mod checking {
         }
     }
 
+    /// A NaN equals nothing, itself included, so it neither is a repeat nor
+    /// hides one: sorting it among the other items once made `[1, NaN, 1]`
+    /// look unique.
+    #[test]
+    fn uniqueness_sees_past_a_value_that_equals_nothing() {
+        let nan = f64::NAN;
+        for (items, unique) in [
+            (vec![1.0, nan, 1.0], false),
+            (vec![nan, 1.0, nan, 2.0, 1.0], false),
+            (vec![2.0, nan, 1.0, nan, 3.0], true),
+            (vec![nan, nan], true),
+            (vec![nan], true),
+        ] {
+            assert_eq!(items.has_unique_items(), Some(unique), "{items:?}");
+        }
+
+        let pairs = [(1.0, nan), (2.0, 0.0), (1.0, nan), (2.0, 0.0)];
+        assert_eq!(pairs.has_unique_items(), Some(false));
+    }
+
     #[test]
     fn a_multiple_is_an_integral_quotient() {
         assert!(is_multiple(-15.0, 5.0));
