@@ -106,6 +106,24 @@ impl Responses {
         self.responses.get(&StatusPattern::Code(status).to_string())
     }
 
+    /// Each response given inline, with the key it is written under:
+    /// `default` first, then each keyed response in insertion order.
+    ///
+    /// One given by reference is skipped, so a walk reaches it where it is
+    /// defined.
+    pub(crate) fn entries(&self) -> impl Iterator<Item = (&str, &Response)> {
+        let default = self
+            .default_response
+            .as_ref()
+            .and_then(RefOr::as_item)
+            .map(|response| ("default", response));
+        let keyed = self
+            .responses
+            .iter()
+            .filter_map(|(key, response)| Some((key.as_str(), response.as_item()?)));
+        default.into_iter().chain(keyed)
+    }
+
     /// Merges another set into this one, keeping existing entries on conflict.
     ///
     /// `other`'s `default` and each status it declares join only where this
@@ -251,8 +269,11 @@ pub struct Response {
     pub headers: Map<RefOr<Header>>,
 
     /// The response body's representations, keyed by media type.
+    ///
+    /// A [`RefOr::Ref`] entry is 3.2's alone: 3.1 admits only a Media Type
+    /// Object here, so emitting or validating as 3.1 refuses one.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
-    pub content: Map<MediaType>,
+    pub content: Map<RefOr<MediaType>>,
 
     /// Design-time links to other operations.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
@@ -276,10 +297,10 @@ impl Response {
     pub fn with_content(
         description: impl Into<String>,
         media_type: impl Into<String>,
-        content: MediaType,
+        content: impl Into<RefOr<MediaType>>,
     ) -> Self {
         let mut response = Self::new(description);
-        response.content.insert(media_type.into(), content);
+        response.content.insert(media_type.into(), content.into());
         response
     }
 

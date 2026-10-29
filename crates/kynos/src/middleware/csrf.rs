@@ -158,9 +158,12 @@ impl<T> Csrf<T> {
     }
 }
 
-/// Whether the method is one RFC 9110 section 9.2.1 calls safe.
+/// Whether the method is `GET`, `HEAD` or `OPTIONS`, the set Go's
+/// cross-origin protection lets through unchecked.
 ///
-/// `OPTIONS` is included: refusing a preflight would break CORS on the path.
+/// RFC 9110 section 9.2.1 also calls `TRACE` safe; it is not in the set, so a
+/// cross-site `TRACE` is refused like any unsafe method. `OPTIONS` is in it:
+/// refusing a preflight would break CORS on the path.
 fn is_safe(method: &http::Method) -> bool {
     matches!(
         *method,

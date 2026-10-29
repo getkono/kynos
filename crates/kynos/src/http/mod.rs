@@ -52,6 +52,39 @@ pub(crate) fn is_token(text: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
 }
 
+/// `text`'s pieces between `delimiter`s outside any `quoted-string`, left to
+/// right: RFC 9110 section 5.6.6 lets a parameter value be one, and a `,` or
+/// `;` inside it separates nothing. A `\` inside quotes escapes the octet
+/// after it (section 5.6.4).
+///
+/// Shared by `Accept` and the body codecs' `Content-Type`.
+pub(crate) fn unquoted_split(text: &str, delimiter: u8) -> impl Iterator<Item = &str> {
+    let mut rest = Some(text);
+    std::iter::from_fn(move || {
+        let piece = rest?;
+        let (mut quoted, mut escaped) = (false, false);
+        let at = piece.bytes().position(|byte| {
+            if escaped {
+                escaped = false;
+            } else if quoted && byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                quoted = !quoted;
+            } else if !quoted && byte == delimiter {
+                return true;
+            }
+            false
+        });
+        match at {
+            Some(at) => {
+                rest = Some(&piece[at + 1..]);
+                Some(&piece[..at])
+            }
+            None => rest.take(),
+        }
+    })
+}
+
 /// Whether two ASCII strings match, ignoring case.
 ///
 /// Header names are case-insensitive per RFC 9110 section 5.1.

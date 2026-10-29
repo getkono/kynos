@@ -2,7 +2,7 @@
 //! security, the content of a request body and every response, and the
 //! operation each link names.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashSet, hash_map::Entry};
 
 use crate::{
     Map,
@@ -10,70 +10,65 @@ use crate::{
         components::Components,
         document::Document,
         link::{Link, LinkTarget},
-        paths::{item::PathItem, operation::Operation, template::PathTemplate},
+        paths::{item::PathItem, operation::Operation},
         reference::RefOr,
         response::status::StatusPattern,
     },
     pointer::{At, pointer_token},
     validate::{
-        Validator,
         rules::{
             content::{check_request_body, check_response},
             document::check_server_list,
             extensions::check_extensions,
             parameters::check_parameter_list,
-            paths::check_path_correspondence,
+            paths::{Items, check_path_correspondence},
         },
         violation::{SpecError, Violation},
     },
     visit::{self, Visit},
 };
 
-impl Validator {
-    /// Whether the security requirement key `name` corresponds to a security
-    /// scheme, given the component names in `declared`.
+impl<'doc> Items<'doc, '_> {
+    /// Checks one operation, held by `item`, at `at`.
     ///
-    /// A declared component name takes precedence under either version. 3.2
-    /// also admits a scheme's URI, read by the predicate `Document::emit`
-    /// refuses 3.1 on; 3.1 admits only a component name. A same-document
-    /// pointer into the Security Schemes resolves here, so it must land on a
-    /// declared one; a URI into another document cannot be followed, and
-    /// passes. A pointer name escaped with `~` or `%` passes undecoded, since
-    /// no valid component name needs either.
-    pub(in crate::validate) fn names_a_scheme(self, name: &str, declared: &HashSet<&str>) -> bool {
-        if declared.contains(name) {
-            return true;
-        }
-        if !self.version.supports_3_2() || !crate::emit::downgrade::names_a_scheme_by_uri(name) {
-            return false;
-        }
-        name.strip_prefix("#/components/securitySchemes/")
-            .filter(|component| !component.contains(['/', '~', '%']))
-            .is_none_or(|component| declared.contains(component))
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(in crate::validate) fn check_operation<'doc>(
-        self,
-        location: &str,
-        template: Option<&PathTemplate>,
+    /// Path correspondence is checked only where `item` is the `paths` entry
+    /// whose template is being walked.
+    pub(in crate::validate) fn check_operation(
+        &mut self,
+        at: At<'_>,
         item: &PathItem,
         operation: &'doc Operation,
-        components: &Components,
-        declared_schemes: &HashSet<&str>,
-        declared_tags: &HashSet<&str>,
-        operation_ids: &mut HashMap<&'doc str, String>,
-        violations: &mut Vec<Violation>,
     ) {
+        let Self {
+            validator,
+            components,
+            declared_schemes,
+            declared_tags,
+            operation_ids,
+            template,
+            violations,
+            ..
+        } = self;
+        let components: &Components = components;
+        let template = template
+            .as_ref()
+            .filter(|(holder, _)| std::ptr::eq(*holder, item))
+            .map(|(_, template)| template);
+        let location = at.pointer();
+        let location = location.as_str();
+
         if let Some(id) = operation.operation_id.as_deref() {
-            if let Some(first) = operation_ids.insert(id, location.to_owned()) {
-                violations.push(Violation::error(
+            match operation_ids.entry(id) {
+                Entry::Occupied(first) => violations.push(Violation::error(
                     location,
                     SpecError::DuplicateOperationId {
                         operation_id: id.to_owned(),
-                        first,
+                        first: first.get().clone(),
                     },
-                ));
+                )),
+                Entry::Vacant(slot) => {
+                    slot.insert(location.to_owned());
+                }
             }
         }
 
@@ -107,7 +102,7 @@ impl Validator {
 
         for requirement in operation.security.iter().flatten() {
             for name in requirement.0.keys() {
-                if !self.names_a_scheme(name, declared_schemes) {
+                if !validator.names_a_scheme(name, declared_schemes) {
                     violations.push(Violation::error(
                         location,
                         SpecError::UnknownSecurityScheme { name: name.clone() },
@@ -129,7 +124,7 @@ impl Validator {
         if let Some(template) = template {
             check_path_correspondence(location, template, item, operation, components, violations);
         }
-        check_operation_content(location, operation, components, violations);
+        check_operation_content(at, operation, components, violations);
 
         check_extensions(location, &operation.extensions, violations);
     }
@@ -248,23 +243,16 @@ pub(in crate::validate) fn check_link_targets(
     };
 
     for (location, operation) in &targets.operations {
-        if let Some(RefOr::Item(response)) = &operation.responses.default_response {
-            check(format!("{location}/responses/default"), &response.links);
-        }
-        for (status, response) in &operation.responses.responses {
-            if let Some(response) = response.as_item() {
-                check(format!("{location}/responses/{status}"), &response.links);
-            }
+        for (key, response) in operation.responses.entries() {
+            check(format!("{location}/responses/{key}"), &response.links);
         }
     }
-    for (name, response) in &document.components.responses {
-        if let Some(response) = response.as_item() {
-            check(
-                format!("#/components/responses/{}", pointer_token(name)),
-                &response.links,
-            );
-        }
-    }
+    let components = At::ROOT.key("components");
+    visit::inline_items(
+        components.key("responses"),
+        &document.components.responses,
+        |at, response| check(at.pointer(), &response.links),
+    );
     check("#/components".to_owned(), &document.components.links);
 }
 
@@ -303,37 +291,19 @@ fn check_link_target(
 ///
 /// A referenced one is checked where it is defined, by
 /// [`check_component_content`](super::content::check_component_content).
-pub(in crate::validate) fn check_operation_content(
-    location: &str,
+fn check_operation_content(
+    at: At<'_>,
     operation: &Operation,
     components: &Components,
     violations: &mut Vec<Violation>,
 ) {
     if let Some(RefOr::Item(body)) = &operation.request_body {
-        check_request_body(
-            &format!("{location}/requestBody"),
-            body,
-            components,
-            violations,
-        );
+        check_request_body(at.key("requestBody"), body, components, violations);
     }
 
-    if let Some(RefOr::Item(response)) = &operation.responses.default_response {
-        check_response(
-            &format!("{location}/responses/default"),
-            response,
-            components,
-            violations,
-        );
-    }
-    for (status, response) in &operation.responses.responses {
-        if let Some(response) = response.as_item() {
-            check_response(
-                &format!("{location}/responses/{status}"),
-                response,
-                components,
-                violations,
-            );
-        }
+    // A status key as written, as these rules have always located it.
+    let responses = at.key("responses");
+    for (key, response) in operation.responses.entries() {
+        check_response(responses.verbatim(key), response, components, violations);
     }
 }

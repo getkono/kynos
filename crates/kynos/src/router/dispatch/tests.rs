@@ -178,6 +178,8 @@ async fn an_endpoint_recovered_500_leaves_without_its_payload() {
 #[test]
 fn a_bodiless_status_states_no_length_on_a_head() {
     for status in [
+        ::http::StatusCode::CONTINUE,
+        ::http::StatusCode::from_u16(103).expect("103 is a status code"),
         ::http::StatusCode::NO_CONTENT,
         ::http::StatusCode::NOT_MODIFIED,
     ] {
@@ -217,6 +219,74 @@ fn a_head_keeps_the_length_the_response_states() {
     assert_eq!(
         head.headers().get(::http::header::CONTENT_LENGTH),
         Some(&::http::HeaderValue::from_static("11"))
+    );
+}
+
+/// The status of `response`, its fields as text in order, and whether its
+/// body is known to be empty.
+fn head_of(response: &crate::http::Response) -> (::http::StatusCode, Vec<(String, String)>, bool) {
+    let fields = response
+        .headers()
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.as_str().to_owned(),
+                value.to_str().expect("a printable field").to_owned(),
+            )
+        })
+        .collect();
+    let empty = http_body::Body::is_end_stream(response.body())
+        && http_body::Body::size_hint(response.body()).exact() == Some(0);
+    (response.status(), fields, empty)
+}
+
+/// Every bodiless answer the router writes itself, whole: an empty fallback
+/// is its status alone, a method refusal adds `Allow` only where it has one
+/// to state, and a trailing-slash redirect is a 308 carrying `Location` and
+/// nothing else.
+#[test]
+fn each_bodiless_router_answer_carries_exactly_its_fields() {
+    use crate::router::policy::FallbackPolicy;
+
+    let field = |name: &str, value: &str| vec![(name.to_owned(), value.to_owned())];
+
+    assert_eq!(
+        head_of(&super::fallback(
+            ::http::StatusCode::NOT_FOUND,
+            &FallbackPolicy::Empty
+        )),
+        (::http::StatusCode::NOT_FOUND, Vec::new(), true)
+    );
+    assert_eq!(
+        head_of(&super::method_refusal(
+            Some(&::http::HeaderValue::from_static("GET, HEAD")),
+            &FallbackPolicy::Empty
+        )),
+        (
+            ::http::StatusCode::METHOD_NOT_ALLOWED,
+            field("allow", "GET, HEAD"),
+            true
+        )
+    );
+    assert_eq!(
+        head_of(&super::method_refusal(None, &FallbackPolicy::Empty)),
+        (::http::StatusCode::NOT_IMPLEMENTED, Vec::new(), true)
+    );
+    assert_eq!(
+        head_of(&super::redirect("/users", Some("limit=2"))),
+        (
+            ::http::StatusCode::PERMANENT_REDIRECT,
+            field("location", "/users?limit=2"),
+            true
+        )
+    );
+    assert_eq!(
+        head_of(&super::redirect("/users", None)),
+        (
+            ::http::StatusCode::PERMANENT_REDIRECT,
+            field("location", "/users"),
+            true
+        )
     );
 }
 

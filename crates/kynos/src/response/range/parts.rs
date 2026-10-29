@@ -268,11 +268,11 @@ impl<T: Rangeable> Responses for RangedParts<T> {
         let mut partial = kynos_openapi::Response::new("the requested parts of the representation");
         partial.content.insert(
             T::media_type().to_owned(),
-            kynos_openapi::MediaType::new(Schema::Object(Box::default())),
+            kynos_openapi::MediaType::new(Schema::Object(Box::default())).into(),
         );
         partial
             .content
-            .insert(MEDIA_TYPE.to_owned(), byteranges(T::media_type()));
+            .insert(MEDIA_TYPE.to_owned(), byteranges(T::media_type()).into());
 
         declare(&mut partial, &advertised);
         partial.headers.insert(

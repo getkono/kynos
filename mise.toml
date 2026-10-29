@@ -172,7 +172,7 @@ description = "Measure what each feature costs a linked artifact and monomorphiz
 #
 # Task-scoped pins stay out of every other job, and `mise lock` does not lock
 # them. `cargo-llvm-lines` has no release binaries. `python` matches
-# `PYTHON_FLOOR` in `scripts/containment.py`; raise both in one commit.
+# `PYTHON_FLOOR` in `scripts/tooling.py`; raise both in one commit.
 tools = { "cargo:cargo-llvm-lines" = "0.4.48", python = "3.11.16" }
 run = "python3 scripts/cost_features.py"
 
@@ -199,9 +199,9 @@ run = "python3 scripts/cost_features.py"
 [tasks."cost:test"]
 description = "Test the cost sweep's parsers and its report"
 # The sweep's parsers and report, which regress silently; compiles nothing, so
-# it is in `check`. `-B` writes no bytecode into the tree.
+# it is in `check`.
 tools = { python = "3.11.16" }
-run = "python3 -B scripts/cost_features_test.py"
+run = "python3 scripts/cost_features_test.py"
 
 [tasks."profile:valgrind"]
 description = "Build the Valgrind the request-path profile runs under"
@@ -252,7 +252,7 @@ run = "python3 scripts/profile_report.py --run"
 description = "Test the request-path profile's parsers and its report"
 # As `cost:test`, for the profile report.
 tools = { python = "3.11.16" }
-run = "python3 -B scripts/profile_report_test.py"
+run = "python3 scripts/profile_report_test.py"
 
 [tasks."fixtures:generate"]
 description = "Regenerate the conformance-fixture corpus"
@@ -302,9 +302,22 @@ run = "python3 scripts/containment.py"
 [tasks."containment:test"]
 description = "Test what the containment gate reads its tables and its tree with"
 # A broken parser or a rule no longer reached leaves the gate green, so both
-# are tested here. `-B` as `cost:test`.
+# are tested here.
 tools = { python = "3.11.16" }
-run = "python3 -B scripts/containment_test.py"
+run = "python3 scripts/containment_test.py"
+
+[tasks."tooling:check"]
+description = "Verify the dev build profile and the Python floor scripts/ is held to"
+# `.cargo/config.toml`'s keys and tables, every script's grammar at the floor,
+# and the `python` pin on every task that runs one.
+tools = { python = "3.11.16" }
+run = "python3 scripts/tooling.py"
+
+[tasks."tooling:test"]
+description = "Test the rules the tooling gate holds the repository to"
+# A helper no longer called leaves the gate green.
+tools = { python = "3.11.16" }
+run = "python3 scripts/tooling_test.py"
 
 [tasks."docs:check"]
 description = "Build documentation with warnings denied"
@@ -537,6 +550,8 @@ run = [
   { task = "references:verify" },
   { task = "containment:check" },
   { task = "containment:test" },
+  { task = "tooling:check" },
+  { task = "tooling:test" },
   { task = "deny:check" },
   { task = "cost:test" },
   { task = "profile:test" },
@@ -581,7 +596,7 @@ description = "Test that both halves of the commit rule agree about a merge"
 # Two instruments state one rule and disagree silently, so each verdict is put
 # to both over real repositories, including a merge through hk's hook.
 tools = { python = "3.11.16" }
-run = "python3 -B scripts/commits_test.py"
+run = "python3 scripts/commits_test.py"
 
 [tasks."hooks:pre-push"]
 description = "Run all pre-push checks"
@@ -595,6 +610,8 @@ run = [
   { task = "docs:check" },
   { task = "containment:check" },
   { task = "containment:test" },
+  { task = "tooling:check" },
+  { task = "tooling:test" },
   { task = "commits:check" },
   { task = "commits:test" },
 ]

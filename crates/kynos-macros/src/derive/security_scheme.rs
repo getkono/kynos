@@ -51,7 +51,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, Ident, LitStr, Type, parse_macro_input, parse_quote};
 
-use crate::derive::common::{doc_string, unit_struct};
+use crate::derive::common::{doc_string, optional, unit_struct};
 use args::{Carrier, Nested, SchemeArgs, parse_args};
 use flow::{build_flow, flow_named};
 
@@ -97,7 +97,9 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let declared = args
         .name
         .unwrap_or_else(|| LitStr::new(&name.to_string(), name.span()));
-    let credential: Type = args.credential.unwrap_or_else(|| parse_quote!(String));
+    let credential = args
+        .credential
+        .unwrap_or_else(|| parse_quote!(::std::string::String));
 
     let challenge = args.challenge.map_or_else(
         || default_challenge(kind, &args.nested),
@@ -271,11 +273,8 @@ fn describe(args: &SchemeArgs, kind: &Ident, input: &DeriveInput) -> proc_macro2
 /// One scheme of the declared kind, with nothing shared filled in yet; built
 /// through the model's constructors so no 3.2-only field is named here.
 fn of_kind(args: &SchemeArgs, kind: &Ident) -> proc_macro2::TokenStream {
-    let optional = |value: Option<&LitStr>| {
-        value.map_or_else(
-            || quote!(::core::option::Option::None),
-            |value| quote!(::core::option::Option::Some(::std::string::String::from(#value))),
-        )
+    let owned = |value: Option<&LitStr>| {
+        optional(value.map(|value| quote!(::std::string::String::from(#value))))
     };
     let text = |value: Option<&LitStr>| value.map_or_else(String::new, LitStr::value);
 
@@ -283,7 +282,7 @@ fn of_kind(args: &SchemeArgs, kind: &Ident) -> proc_macro2::TokenStream {
         "basic" => quote!(::kynos::openapi::SecurityScheme::basic()),
 
         "http" => {
-            let format = optional(args.nested.format.as_ref());
+            let format = owned(args.nested.format.as_ref());
             let scheme = text(args.nested.scheme.as_ref());
             quote! {
                 {
@@ -345,7 +344,7 @@ fn of_kind(args: &SchemeArgs, kind: &Ident) -> proc_macro2::TokenStream {
 
         // `bearer`, and the safe fallback for any kind this match has not learned.
         _ => {
-            let format = optional(args.nested.format.as_ref());
+            let format = owned(args.nested.format.as_ref());
             quote!(::kynos::openapi::SecurityScheme::bearer(#format))
         }
     }

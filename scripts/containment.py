@@ -7,7 +7,6 @@ sibling files) removed, keeping only the literals that spell a path, such as
 literals, since a `#[cfg(feature = "x")]` flag name is a string.
 """
 
-import ast
 import os
 import re
 import sys
@@ -16,6 +15,8 @@ from pathlib import Path
 
 # Relative to the script, so a run from any directory checks the same tree.
 ROOT = Path(__file__).resolve().parent.parent
+#: The `kynos` crate's source tree, which a bare site in every table is relative to.
+KYNOS_SOURCE = "crates/kynos/src/"
 ARCHITECTURE = (ROOT / "docs/architecture.md").read_text()
 # Counts a document may state in words; an unlisted word fails loudly.
 NUMBERS = {
@@ -253,22 +254,26 @@ LOOKED_IN = {
 ROW_COUNT_CLAIM = r"\*\*(\w+) rows, and the count is the check\.\*\*"
 
 
-def claimed(text, sentence, failures):
-    """The number `text` writes into the count claim `sentence`, or `None`.
+def claimed(text, sentence, failures, document="architecture.md", gone=None, count="count"):
+    """The number `document`'s `text` writes into the count claim `sentence`, or `None`.
 
-    A missing or unreadable count is appended to `failures`.
+    A missing count is appended to `failures` as `document` no longer stating
+    `gone` (by default, a count matching `sentence`), and an unreadable one as
+    an unreadable `count`.
     """
     found = re.search(sentence, text)
     if found is None:
-        failures.append(
-            f"architecture.md no longer states a count matching /{sentence}/, so "
-            "the claim this gate exists to hold is gone"
-        )
+        if gone is None:
+            gone = (
+                f"a count matching /{sentence}/, so the claim this gate exists "
+                "to hold is gone"
+            )
+        failures.append(f"{document} no longer states {gone}")
         return None
     word = found.group(1)
     number = NUMBERS.get(word.capitalize())
     if number is None:
-        failures.append(f"architecture.md writes an unreadable count: {word!r}")
+        failures.append(f"{document} writes an unreadable {count}: {word!r}")
     return number
 
 
@@ -295,6 +300,18 @@ def section(text, start, failures, end=None, unrun=""):
         )
         return None
     return text[begin:stop]
+
+
+def table_rows(table):
+    """Each row of the Markdown table `table` opens at, as its raw line.
+
+    `table` starts on the header line; it and the separator below it are
+    skipped, and the first line not opening `|` ends the table.
+    """
+    for line in table.split("\n")[2:]:
+        if not line.startswith("|"):
+            return
+        yield line
 
 
 def expand(entry):
@@ -330,7 +347,7 @@ def allowed_at(path, sites):
 
 
 #: The runtime's own module: its row's *Names* cell is prose, and not enforced.
-HOME_SITE = "crates/kynos/src/server/"
+HOME_SITE = KYNOS_SOURCE + "server/"
 # A `use` statement, through to its `;`.
 USE_STATEMENT = re.compile(r"\buse\s+[^;]*;")
 # A path rooted at the `tokio` crate: not a segment of another path, such as
@@ -391,9 +408,6 @@ REQUIREMENT = re.compile(
 CRATE_RESIDUE = re.compile(r"(?:[\s,]|\band\b)*")
 SITE_RESIDUE = re.compile(r"(?:[\s,]|\b(?:and|in|under)\b)*")
 CRATE_TOKEN = re.compile(r"[\w-]+")
-# Bare sites are relative to this; one opening with a member's name is that
-# member's `src/`.
-DEPENDENCY_SCOPE = "crates/kynos/src/"
 #: Workspace members with a `src/` tree, by directory name.
 MEMBERS = frozenset(
     crate.name for crate in (ROOT / "crates").iterdir() if (crate / "src").is_dir()
@@ -406,7 +420,7 @@ def site_path(site, members=MEMBERS):
     head, _, rest = site.partition("/")
     if head in members:
         return f"crates/{head}/src/{rest}"
-    return DEPENDENCY_SCOPE + site.lstrip("/")
+    return KYNOS_SOURCE + site.lstrip("/")
 
 
 def confinement(requirement, members=MEMBERS):
@@ -460,9 +474,7 @@ def dependency_rules(nfr, failures, members=MEMBERS):
         )
         return []
     rules = []
-    for line in text[header:].split("\n")[2:]:
-        if not line.startswith("|"):
-            break
+    for line in table_rows(text[header:]):
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         if CONTAINMENT_METHOD not in line:
             continue
@@ -503,8 +515,6 @@ def listed(path, sites):
 # fails. A site that stopped naming its element is stale, not a failure.
 TESTING = (ROOT / "docs/testing.md").read_text()
 OFF_PATH_HEADER = "| Element | Named by | Named only in | Why a request cannot reach it |"
-# Bare sites are relative to this; a `crates/...` site widens its row's scope.
-OFF_PATH_SCOPE = "crates/kynos/src/"
 
 
 # A *Named by* spelling: an identifier or `::` path. Backticks separate several
@@ -711,7 +721,7 @@ def allowed_sites(cell):
     """The files one *Named only in* cell allows.
 
     A comma-separated list of backticked, brace-expandable paths, relative to
-    `OFF_PATH_SCOPE` unless they start at `crates/`. `None` when anything but
+    `KYNOS_SOURCE` unless they start at `crates/`. `None` when anything but
     commas sits outside the backticks.
     """
     entries = backticked(cell)
@@ -722,7 +732,7 @@ def allowed_sites(cell):
     for entry in entries:
         for path in expand(entry.strip()):
             path = path.strip()
-            sites.add(path if path.startswith("crates/") else OFF_PATH_SCOPE + path.lstrip("/"))
+            sites.add(path if path.startswith("crates/") else KYNOS_SOURCE + path.lstrip("/"))
     return sites
 
 
@@ -736,7 +746,7 @@ def scanned(allowance, exists=None):
     """
     if exists is None:
         exists = lambda tree: (ROOT / tree).is_dir()
-    trees = {OFF_PATH_SCOPE}
+    trees = {KYNOS_SOURCE}
     for site in allowance:
         parts = site.split("/")
         if len(parts) > 3 and parts[0] == "crates" and parts[2] == "src":
@@ -835,9 +845,7 @@ def taxonomy_failures(text):
         ]
 
     kinds = []
-    for line in text[header:].split("\n")[2:]:
-        if not line.startswith("|"):
-            break
+    for line in table_rows(text[header:]):
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         kinds.append((cells[0], cells[-1]))
 
@@ -849,20 +857,20 @@ def taxonomy_failures(text):
         ]
 
     problems = []
-    stated = re.search(TAXONOMY_CLAIM, text)
-    if stated is None:
-        problems.append(
-            "performance.md no longer states how many of the kinds below its "
-            "taxonomy run today, so a row can be added or dropped without "
-            "failing this gate. The sentence is held as written -- rewording it "
-            "means rewording TAXONOMY_CLAIM in the same commit"
-        )
-    elif (expected := NUMBERS.get(stated.group(1).capitalize())) is None:
-        problems.append(
-            "performance.md writes an unreadable count of measurement kinds: "
-            f"{stated.group(1)!r}"
-        )
-    elif expected != len(kinds):
+    expected = claimed(
+        text,
+        TAXONOMY_CLAIM,
+        problems,
+        "performance.md",
+        gone=(
+            "how many of the kinds below its taxonomy run today, so a row can "
+            "be added or dropped without failing this gate. The sentence is "
+            "held as written -- rewording it means rewording TAXONOMY_CLAIM in "
+            "the same commit"
+        ),
+        count="count of measurement kinds",
+    )
+    if expected is not None and expected != len(kinds):
         problems.append(
             f"performance.md claims {expected} kinds of measurement and its "
             f"taxonomy table has {len(kinds)}. Adding a kind means moving that "
@@ -1009,270 +1017,18 @@ def use_paths(tree):
 # No `todo!` or `unimplemented!` outside doc examples, which `strip()` removes.
 PLACEHOLDER = re.compile(r"\b(todo|unimplemented)\s*!")
 
-# --- The dev build profile ---------------------------------------------------
-# `.cargo/config.toml` holds the dev-profile keys behind `nfr.md`'s Workspace
-# footprint. Cargo only warns on a misspelt key and ignores a misspelt table, so
-# key presence is checked here; values are left to review.
-CARGO_CONFIG = ROOT / ".cargo/config.toml"
-# Each key as a path through the parsed document, with its display spelling.
-FOOTPRINT_KEYS = [
-    (("profile", "dev", "debug"), "profile.dev.debug"),
-    (("profile", "dev", "package", "*", "debug"), 'profile.dev.package."*".debug'),
-]
-# The only top-level tables allowed; tool settings belong in a mise task's `env`.
-CONFIG_TABLES = {"profile"}
+
+# --- The rules ---------------------------------------------------------------
+# One function per rule `main` runs, in the order it runs them. Each appends
+# what does not hold to `failures` and returns what the report or a later rule
+# reads.
 
 
-def declares(config, key):
-    """Whether the parsed `config` declares the whole of `key`."""
-    node = config
-    for part in key:
-        if not isinstance(node, dict) or part not in node:
-            return False
-        node = node[part]
-    return True
+def allowance_rule(architecture, corpus, failures):
+    """`architecture.md`'s runtime allowance table against every `tokio` site.
 
-
-def cargo_config_failures(text):
-    """What is wrong with `.cargo/config.toml`, whose contents are `text`.
-
-    `text` is `None` for a file that is not there. Unparseable TOML is
-    reported rather than raised.
+    Returns the table's rows, each as its *Site* cell's backticked entries.
     """
-    if text is None:
-        return [
-            ".cargo/config.toml is gone, and it is the whole of the dev build "
-            "profile: without it a worktree's `target/` returns to roughly four "
-            "times the size nfr.md's Workspace table records, with every other "
-            "gate here green. Restore it, or move that row in the same commit"
-        ]
-    try:
-        config = tomllib.loads(text)
-    except tomllib.TOMLDecodeError as error:
-        return [f".cargo/config.toml is not readable TOML: {error}"]
-
-    problems = [
-        f".cargo/config.toml no longer declares `{spelling}`, which is one of "
-        "the two keys the dev build footprint nfr.md's Workspace table records "
-        "rests on. Cargo will not say so: an unused key is a warning over a "
-        "build that exits zero, and a misspelled `[profile.<name>]` table is "
-        "not reported at all. Restore the key, or move that row in the same "
-        "commit"
-        for key, spelling in FOOTPRINT_KEYS
-        if not declares(config, key)
-    ]
-
-    if foreign := sorted(set(config) - CONFIG_TABLES):
-        problems.append(
-            "`.cargo/config.toml` declares something other than the dev build "
-            "profile it exists for. Cargo reads this file on every invocation "
-            "under the repository, so what is written here runs on every "
-            "machine and in every CI job and no gate reports it -- which is "
-            "why the file is held to one table rather than reviewed. Put the "
-            "setting in the `env` of the mise.toml task that needs it, or "
-            "widen this rule and say in the same commit what the table is "
-            "for:\n    " + "\n    ".join(foreign)
-        )
-    return problems
-
-
-# --- The Python floor --------------------------------------------------------
-# The grammar `scripts/` is held to, matched by every script task's `python`
-# pin in mise.toml (`python_pin_failures`). `import tomllib` at the head of this
-# file needs 3.11 whatever the grammar allows; that runtime floor is held only
-# by running the gate under the pin, so raise this by hand with the stdlib.
-PYTHON_FLOOR = (3, 11)
-SCRIPTS = ROOT / "scripts"
-MISE_CONFIG = ROOT / "mise.toml"
-# Tasks running inline `python3` rather than a `scripts/` file, exempt by name.
-PYTHON_UNPINNED = {"publish:check"}
-
-
-def refused_at(source, path, version):
-    """The `SyntaxError` parsing `source` at `version` raises, or `None`."""
-    try:
-        ast.parse(source, filename=path, feature_version=version)
-    except SyntaxError as error:
-        return error
-    return None
-
-
-def python_floor_failures(scripts, floor=PYTHON_FLOOR):
-    """Which of `scripts` stopped parsing at `floor`, and what each one needs.
-
-    `scripts` is `(path, source)` pairs. A failing file is reported with the
-    first minor version up to the running interpreter's that parses it, or as
-    unparseable at all of them.
-    """
-    stated, running = f"3.{floor[1]}", f"3.{sys.version_info.minor}"
-    problems = []
-    for path, source in scripts:
-        refused = refused_at(source, path, floor)
-        if refused is None:
-            continue
-        needs = next(
-            (
-                f"3.{minor}"
-                for minor in range(floor[1] + 1, sys.version_info.minor + 1)
-                if refused_at(source, path, (3, minor)) is None
-            ),
-            None,
-        )
-        stops = f"line {refused.lineno} is where it stops: {refused.msg}"
-        if needs is None:
-            problems.append(
-                f"{path} does not parse at Python {stated}, which is the floor "
-                "scripts/ is held to, and it parses at no version up to this "
-                f"interpreter's own ({running}) either -- {stops}. Either the "
-                "file is broken, or it is written in grammar newer than the "
-                "interpreter running this gate, which the `python` pin on the "
-                f"script tasks in mise.toml fixes at {stated}. Repair the line, "
-                "or raise the pin and this floor in the same commit"
-            )
-        else:
-            problems.append(
-                f"{path} does not parse at Python {stated}, which is the floor "
-                f"scripts/ is held to: it needs {needs} -- {stops}. Every task "
-                f"that runs this file pins {stated}, so the interpreter CI reads "
-                "it under is not the one that wrote it. Write the line in "
-                f"grammar {stated} accepts, or raise the pin on the script tasks "
-                "in mise.toml and this floor in the same commit"
-            )
-    return problems
-
-
-def python_pin_failures(text, scripts, floor=PYTHON_FLOOR, exempt=PYTHON_UNPINNED):
-    """What `mise.toml`'s `python` pins do not hold, `text` being that file.
-
-    Every task running a `scripts/` file must pin one `python` equal to
-    `floor`; only `exempt` tasks may run inline `python3`. `scripts` is the
-    paths (relative to `scripts/`) the floor rule read, so a task running a
-    file outside that set fails. A script no task runs is allowed. Unparseable
-    TOML is reported rather than raised.
-    """
-    try:
-        config = tomllib.loads(text)
-    except tomllib.TOMLDecodeError as error:
-        return [f"mise.toml is not readable TOML: {error}"]
-
-    stated = f"3.{floor[1]}"
-    problems, run_by, pinned, unpinned, inline = [], {}, {}, [], set()
-    for name, task in sorted(config.get("tasks", {}).items()):
-        run = task.get("run")
-        body = "\n".join(
-            part
-            for part in ([run] if isinstance(run, str) else run or [])
-            if isinstance(part, str)
-        )
-        named = set(re.findall(r"scripts/(\S+\.py)", body))
-        pin = task.get("tools", {}).get("python")
-        for script in named:
-            run_by.setdefault(script, []).append(name)
-        if named and pin is None:
-            unpinned.append(name)
-        elif named:
-            pinned.setdefault(pin, []).append(name)
-        elif pin is not None:
-            problems.append(
-                f"the mise task `{name}` pins a `python` and runs no file from "
-                "scripts/, so the pin installs an interpreter for a task that "
-                "opens none and repeats a floor it does not stand under. Drop the "
-                "pin, or give the task the script it was added for"
-            )
-        elif "python3" in body:
-            inline.add(name)
-
-    if unpinned:
-        problems.append(
-            "a mise task runs a file from scripts/ and pins no `python`, so what "
-            "it runs is whatever interpreter the machine has rather than the "
-            f"{stated} floor containment.py declares. The pin is the only half of "
-            "that number that is true of anything anybody runs; add "
-            "`tools = { python = ... }` at the version its siblings carry:\n    "
-            + "\n    ".join(unpinned)
-        )
-
-    if len(pinned) > 1:
-        problems.append(
-            "the mise tasks that run a file from scripts/ pin more than one "
-            "`python`, so which interpreter the floor names depends on which task "
-            "a reader opened. Raising the floor is one commit moving every pin and "
-            "`PYTHON_FLOOR` together, and this is what reports that it was not "
-            "one commit:\n    "
-            + "\n    ".join(
-                f"{version}: " + ", ".join(sorted(names))
-                for version, names in sorted(pinned.items())
-            )
-        )
-
-    for version, names in sorted(pinned.items()):
-        read = re.match(r"(\d+)\.(\d+)", version)
-        if read is None:
-            problems.append(
-                f'mise.toml pins `python = "{version}"` for the tasks that run '
-                "scripts/ and nothing here can read a minor version out of it, so "
-                "the pin cannot be compared against the floor it is half of. Pin a "
-                f"version, at {stated}:\n    " + "\n    ".join(sorted(names))
-            )
-        elif (int(read[1]), int(read[2])) != floor:
-            problems.append(
-                f"mise.toml pins python {version} for the tasks that run scripts/ "
-                f"and containment.py declares a floor of {stated}. These are one "
-                "number written twice: a floor nothing runs at is a claim nobody "
-                "keeps, and an interpreter nothing declares is what the floor rule "
-                "exists to refuse. Move both in the same commit:\n    "
-                + "\n    ".join(sorted(names))
-            )
-
-    if unread := sorted(set(run_by) - set(scripts)):
-        problems.append(
-            "a mise task runs a file under scripts/ that the floor rule never "
-            "read, so a file something runs is held to no grammar at all. Either "
-            "the task names a file that is not there, or the floor rule's own file "
-            "set has narrowed and this is the only thing that says so:\n    "
-            + "\n    ".join(
-                f"{script}: run by " + ", ".join(sorted(run_by[script]))
-                for script in unread
-            )
-        )
-
-    if stale := sorted(set(exempt) - inline):
-        problems.append(
-            "mise.toml no longer holds a task `PYTHON_UNPINNED` exempts from the "
-            "`python` pin. That exemption is for an inline `python3` running no "
-            "file in scripts/, and so held to no floor; naming a task that has "
-            "gone, or that has stopped running python3, is an exemption that "
-            "outlived its argument and now hides the next one:\n    "
-            + "\n    ".join(stale)
-        )
-
-    if unexempt := sorted(inline - set(exempt)):
-        problems.append(
-            "a mise task runs `python3` over something other than a file in "
-            "scripts/, so it is held to no declared floor and nothing here can say "
-            "what it should be pinned to. Move the code into scripts/ where the "
-            "floor rule reads it, or name the task in `PYTHON_UNPINNED` and say "
-            "there why an inline interpreter is the right trade:\n    "
-            + "\n    ".join(unexempt)
-        )
-
-    return problems
-
-
-def main(architecture=None, testing=None, performance=None, nfr=None, corpus=None):
-    """Run every rule over this repository, and report what does not hold.
-
-    Rules run here, never at import. Each argument defaults to this
-    repository's own document or `WORKSPACE`, and may be replaced by a test.
-    """
-    corpus = WORKSPACE if corpus is None else corpus
-    architecture = ARCHITECTURE if architecture is None else architecture
-    testing = TESTING if testing is None else testing
-    performance = PERFORMANCE if performance is None else performance
-    nfr = NFR if nfr is None else nfr
-    failures = []
-
-    # --- The runtime allowance table ------------------------------------------
     rows = []
     table = section(
         architecture,
@@ -1286,68 +1042,76 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
             "caused it"
         ),
     )
-    # `(sites, names)` per row whose *Names* cell this rule enforces.
-    named_rows = []
-    if table is not None:
-        for line in table.split("\n")[2:]:
-            if not line.startswith("|"):
-                break
-            cells = line.split("|")
-            row = re.findall(r"`([^`]+)`", cells[1])
-            rows.append(row)
-            sites = {f"crates/kynos/src/{site.lstrip('/')}" for entry in row for site in expand(entry)}
-            if sites == {HOME_SITE}:
-                continue
-            names = runtime_names(cells[2])
-            if names is None:
-                failures.append(
-                    f"architecture.md's allowance table lets {', '.join(sorted(sites))} "
-                    f"name {cells[2].strip()}, which this rule cannot read as "
-                    "backticked `tokio::` use trees. The row allows every tokio item "
-                    "until it can, so its sites go unchecked meanwhile"
-                )
-                continue
-            named_rows.append((sites, names))
-
-        stated = claimed(architecture, ROW_COUNT_CLAIM, failures)
-        if stated is not None and stated != len(rows):
+    if table is None:
+        return rows
+    # `(sites, names)` per row whose *Names* cell this rule enforces, and every
+    # row's sites together.
+    named_rows, allowed = [], set()
+    for line in table_rows(table):
+        cells = line.split("|")
+        row = re.findall(r"`([^`]+)`", cells[1])
+        rows.append(row)
+        sites = {KYNOS_SOURCE + site.lstrip("/") for entry in row for site in expand(entry)}
+        allowed |= sites
+        if sites == {HOME_SITE}:
+            continue
+        names = runtime_names(cells[2])
+        if names is None:
             failures.append(
-                f"architecture.md's allowance table claims {stated} rows and has {len(rows)}"
+                f"architecture.md's allowance table lets {', '.join(sorted(sites))} "
+                f"name {cells[2].strip()}, which this rule cannot read as "
+                "backticked `tokio::` use trees. The row allows every tokio item "
+                "until it can, so its sites go unchecked meanwhile"
             )
+            continue
+        named_rows.append((sites, names))
 
-        allowed = {f"crates/kynos/src/{site.lstrip('/')}" for row in rows for entry in row for site in expand(entry)}
+    stated = claimed(architecture, ROW_COUNT_CLAIM, failures)
+    if stated is not None and stated != len(rows):
+        failures.append(
+            f"architecture.md's allowance table claims {stated} rows and has {len(rows)}"
+        )
 
-        if offenders := sorted(p for p in corpus.naming("tokio") if not permitted(p, allowed)):
-            failures.append(
-                "`tokio` is named outside `server/` at a site the allowance table does "
-                "not list:\n    " + "\n    ".join(offenders)
-            )
+    if offenders := sorted(p for p in corpus.naming("tokio") if not permitted(p, allowed)):
+        failures.append(
+            "`tokio` is named outside `server/` at a site the allowance table does "
+            "not list:\n    " + "\n    ".join(offenders)
+        )
 
-        unlisted = []
-        texts = dict(corpus.files)
-        for path in sorted(corpus.naming("tokio")):
-            covering = [names for sites, names in named_rows if allowed_at(path, sites)]
-            if not covering:
-                continue
-            unlisted += [
-                f"{path}: {item}"
-                for item in runtime_paths(texts[path])
-                if not any(admits(names, item) for names in covering)
-            ]
-        if unlisted:
-            failures.append(
-                "a site the allowance table lists names a tokio item its row's Names "
-                "cell does not. The cell is the claim of what the site couples to the "
-                "runtime, so either it grows with the argument for the item, or the "
-                "site stops naming it:\n    " + "\n    ".join(unlisted)
-            )
+    unlisted = []
+    texts = dict(corpus.files)
+    for path in sorted(corpus.naming("tokio")):
+        covering = [names for sites, names in named_rows if allowed_at(path, sites)]
+        if not covering:
+            continue
+        unlisted += [
+            f"{path}: {item}"
+            for item in runtime_paths(texts[path])
+            if not any(admits(names, item) for names in covering)
+        ]
+    if unlisted:
+        failures.append(
+            "a site the allowance table lists names a tokio item its row's Names "
+            "cell does not. The cell is the claim of what the site couples to the "
+            "runtime, so either it grows with the argument for the item, or the "
+            "site stops naming it:\n    " + "\n    ".join(unlisted)
+        )
+    return rows
 
-    # --- The dependency graph ------------------------------------------------
+
+def dependency_rule(nfr, corpus, failures):
+    """Each confinement `nfr.md`'s Dependencies table states, over the corpus."""
     for crates, where, description in dependency_rules(nfr, failures):
         if stray := sorted(f for f in corpus.naming(*crates) if not listed(f, where)):
             failures.append(f"{description}, but it is also named in:\n    " + "\n    ".join(stray))
 
-    # --- The off-path elements -----------------------------------------------
+
+def off_path_rule(testing, corpus, failures):
+    """`testing.md`'s off-path table: each element named only at its row's sites.
+
+    Returns the count of rows read and the backticked tokens of every
+    *Element* cell, which the feature grading compares against.
+    """
     halves = testing.split(OFF_PATH_HEADER)
     if len(halves) != 2:
         failures.append(
@@ -1357,11 +1121,8 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
         )
 
     off_path_rows = 0
-    # Backticked tokens of every *Element* cell, for the feature grading below.
     off_path_elements = set()
-    for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
-        if not line.startswith("|"):
-            break
+    for line in table_rows(halves[1] if len(halves) == 2 else ""):
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         if len(cells) != 4:
             failures.append(f"testing.md's off-path table has a malformed row: {line.strip()}")
@@ -1386,7 +1147,7 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
             failures.append(
                 f"testing.md's off-path table allows {element} in a crate that "
                 "does not exist, so the tree derived from that site is scanned for "
-                "nothing and the row narrows back to " + OFF_PATH_SCOPE + " without "
+                "nothing and the row narrows back to " + KYNOS_SOURCE + " without "
                 "saying so. Either the crate was renamed and the cell was not, or "
                 "the site is a typo. The row's sites go unchecked meanwhile:\n    "
                 + "\n    ".join(missing)
@@ -1457,27 +1218,29 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
 
     # The stated row count catches a deleted row or a table cut short.
     elif len(halves) == 2:
-        stated = re.search(ROW_COUNT_CLAIM, testing)
-        if stated is None:
+        expected = claimed(
+            testing,
+            ROW_COUNT_CLAIM,
+            failures,
+            "testing.md",
+            gone=(
+                "how many rows its off-path table has, so a row can be dropped "
+                "without failing this gate"
+            ),
+            count="off-path row count",
+        )
+        if expected is not None and expected != off_path_rows:
             failures.append(
-                "testing.md no longer states how many rows its off-path table has, "
-                "so a row can be dropped without failing this gate"
+                f"testing.md claims {expected} off-path rows and the table has "
+                f"{off_path_rows}. Adding an element means saying so there; "
+                "losing one means a row was dropped or the table was cut short"
             )
-        else:
-            expected = NUMBERS.get(stated.group(1).capitalize())
-            if expected is None:
-                failures.append(
-                    f"testing.md writes an unreadable off-path row count: "
-                    f"{stated.group(1)!r}"
-                )
-            elif expected != off_path_rows:
-                failures.append(
-                    f"testing.md claims {expected} off-path rows and the table has "
-                    f"{off_path_rows}. Adding an element means saying so there; "
-                    "losing one means a row was dropped or the table was cut short"
-                )
+    return off_path_rows, off_path_elements
 
-    # --- Hand-rolled `Stream` implementations ---------------------------------
+
+def stream_rule(architecture, corpus, failures):
+    """Every hand-rolled `Stream` sits at a site `architecture.md` names, and
+    their count is the one it states."""
     # Only links in the section that enumerates them authorise a site.
     surface = section(
         architecture,
@@ -1512,7 +1275,9 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
                 + "\n    ".join(undeclared)
             )
 
-    # --- The module-size budget ----------------------------------------------
+
+def module_size_rule(nfr, corpus, failures):
+    """Every module past `MODULE_LINES` is on `nfr.md`'s budget list, and no other."""
     oversized = sorted(
         path
         for path, _ in corpus.files
@@ -1529,7 +1294,13 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
     if budget is not None:
         failures += budget_failures(BUDGETED.findall(budget), oversized)
 
-    # --- The feature grading -------------------------------------------------
+
+def grading_rule(performance, manifest, off_path_elements, failures):
+    """`performance.md`'s grading table against the features `manifest` declares.
+
+    `manifest` is `crates/kynos/Cargo.toml`, parsed; `off_path_elements` is what
+    `off_path_rule` read. Returns every flag the table grades, once per row.
+    """
     grading = section(
         performance,
         "| Grade | Owes | Flags |",
@@ -1544,57 +1315,59 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
     )
 
     graded, off_path_graded, grades = [], [], []
-    if grading is not None:
-        for line in grading.split("\n")[2:]:
-            if not line.startswith("|"):
-                break
-            cells = line.split("|")
-            flags = re.findall(r"`([^`]+)`", cells[3])
-            graded += flags
-            grades.append(cells[1].strip())
-            if cells[1].strip() == OFF_PATH_GRADE:
-                off_path_graded += flags
+    if grading is None:
+        return graded
+    for line in table_rows(grading):
+        cells = line.split("|")
+        flags = re.findall(r"`([^`]+)`", cells[3])
+        graded += flags
+        grades.append(cells[1].strip())
+        if cells[1].strip() == OFF_PATH_GRADE:
+            off_path_graded += flags
 
-        failures += off_path_coverage(off_path_graded, off_path_elements, grades)
+    failures += off_path_coverage(off_path_graded, off_path_elements, grades)
 
-    manifest = tomllib.loads((ROOT / "crates/kynos/Cargo.toml").read_text())
+    # `flags` is now the crate's feature set, not one row's.
     flags = set(manifest["features"])
+    if ungraded := sorted(flags - set(graded)):
+        failures.append(
+            "crates/kynos declares a feature that performance.md's grading table "
+            "does not grade. Grading it is the argument the table exists to force: "
+            "a full battery, an off-path proof, or an aggregate that owes nothing "
+            "of its own:\n    " + "\n    ".join(ungraded)
+        )
+
+    if undeclared := sorted(set(graded) - flags):
+        failures.append(
+            "performance.md grades a flag that crates/kynos does not "
+            "declare, so the row names a battery nothing can be enabled to "
+            "owe. Either the flag was renamed and the row was not, or the "
+            "row outlived the feature:\n    "
+            + "\n    ".join(undeclared)
+        )
+
+    if regraded := sorted({flag for flag in graded if graded.count(flag) > 1}):
+        failures.append(
+            "performance.md grades a flag in more than one row, where the table "
+            "says every flag appears in exactly one column. Two grades are two "
+            "different batteries owed and nothing decides between them:\n    "
+            + "\n    ".join(regraded)
+        )
+    return graded
+
+
+def implicit_feature_rule(manifest, failures):
+    """Every optional dependency `manifest` declares is named by a `dep:`.
+
+    One no `dep:` names gets an implicit feature that `[features]` does not
+    list, invisible to the grading comparisons.
+    """
     depended = {
         member[len("dep:") :]
         for members in manifest["features"].values()
         for member in members
         if member.startswith("dep:")
     }
-
-    # Separate guard: `flags` is now the crate's feature set, not one row's.
-    if grading is not None:
-        if ungraded := sorted(flags - set(graded)):
-            failures.append(
-                "crates/kynos declares a feature that performance.md's grading table "
-                "does not grade. Grading it is the argument the table exists to force: "
-                "a full battery, an off-path proof, or an aggregate that owes nothing "
-                "of its own:\n    " + "\n    ".join(ungraded)
-            )
-
-        if undeclared := sorted(set(graded) - flags):
-            failures.append(
-                "performance.md grades a flag that crates/kynos does not "
-                "declare, so the row names a battery nothing can be enabled to "
-                "owe. Either the flag was renamed and the row was not, or the "
-                "row outlived the feature:\n    "
-                + "\n    ".join(undeclared)
-            )
-
-        if regraded := sorted({flag for flag in graded if graded.count(flag) > 1}):
-            failures.append(
-                "performance.md grades a flag in more than one row, where the table "
-                "says every flag appears in exactly one column. Two grades are two "
-                "different batteries owed and nothing decides between them:\n    "
-                + "\n    ".join(regraded)
-            )
-
-    # An optional dependency no `dep:` names gets an implicit feature that
-    # `[features]` does not list, invisible to the comparisons above.
     if implicit := sorted(
         name
         for name, spec in manifest["dependencies"].items()
@@ -1607,10 +1380,12 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
             "needs it as `dep:`:\n    " + "\n    ".join(implicit)
         )
 
-    # --- The count of measurement kinds --------------------------------------
-    failures += taxonomy_failures(performance)
 
-    # --- Nothing a package compiles reaches outside the package --------------
+def package_escape_rule(failures):
+    """Nothing a package compiles reads a path outside that package.
+
+    Reads every published source from disk while it runs.
+    """
     for package in sorted((ROOT / "crates").iterdir()):
         if not (package / "Cargo.toml").is_file():
             continue
@@ -1633,7 +1408,9 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
                     "and say in the manifest why the assertion is the repository's"
                 )
 
-    # --- Parent re-exports ---------------------------------------------------
+
+def reexport_rule(corpus, failures):
+    """No `pub use` outside a crate root re-publishes one of our own items."""
     reexports = []
     for path, text in corpus.files:
         if path.endswith("/lib.rs"):
@@ -1652,28 +1429,42 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
             "where the layout rule allows exactly one:\n    " + "\n    ".join(sorted(reexports))
         )
 
-    # --- Placeholder bodies --------------------------------------------------
+
+def placeholder_rule(corpus, failures):
+    """No `todo!()` or `unimplemented!()` stands in for a body."""
     if placeholders := sorted(path for path, text in corpus.files if PLACEHOLDER.search(text)):
         failures.append(
-            "a `todo!()` or `unimplemented!()` stands in for a body, and the exception that allowed one "
-            "lapsed when the API-skeleton milestone ended:\n    " + "\n    ".join(placeholders)
+            "a `todo!()` or `unimplemented!()` stands in for a body, and no exception allows "
+            "one outside a doc example:\n    " + "\n    ".join(placeholders)
         )
 
-    # --- The dev build profile -----------------------------------------------
-    failures += cargo_config_failures(
-        CARGO_CONFIG.read_text() if CARGO_CONFIG.is_file() else None
-    )
 
-    # --- The Python floor -----------------------------------------------------
-    scripts = sorted(SCRIPTS.glob("*.py"))
-    failures += python_floor_failures(
-        (path.relative_to(ROOT).as_posix(), path.read_text()) for path in scripts
-    )
-    failures += python_pin_failures(
-        MISE_CONFIG.read_text(), {path.relative_to(SCRIPTS).as_posix() for path in scripts}
-    )
+def main(architecture=None, testing=None, performance=None, nfr=None, corpus=None):
+    """Run every rule over this repository, and report what does not hold.
 
-    # --- Report ---------------------------------------------------------------
+    Rules run here, never at import. Each argument defaults to this
+    repository's own document or `WORKSPACE`, and may be replaced by a test.
+    """
+    corpus = WORKSPACE if corpus is None else corpus
+    architecture = ARCHITECTURE if architecture is None else architecture
+    testing = TESTING if testing is None else testing
+    performance = PERFORMANCE if performance is None else performance
+    nfr = NFR if nfr is None else nfr
+    failures = []
+
+    rows = allowance_rule(architecture, corpus, failures)
+    dependency_rule(nfr, corpus, failures)
+    off_path_rows, off_path_elements = off_path_rule(testing, corpus, failures)
+    stream_rule(architecture, corpus, failures)
+    module_size_rule(nfr, corpus, failures)
+    manifest = tomllib.loads((ROOT / "crates/kynos/Cargo.toml").read_text())
+    graded = grading_rule(performance, manifest, off_path_elements, failures)
+    implicit_feature_rule(manifest, failures)
+    failures += taxonomy_failures(performance)
+    package_escape_rule(failures)
+    reexport_rule(corpus, failures)
+    placeholder_rule(corpus, failures)
+
     for failure in failures:
         print(f"containment: {failure}", file=sys.stderr)
     if failures:

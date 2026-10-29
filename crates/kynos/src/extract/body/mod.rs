@@ -39,7 +39,7 @@ use crate::{
         body::alternative::Alternative,
         describe::{Describe, RequestContent},
     },
-    http::{HeaderMap, Parts, body::Body, header},
+    http::{HeaderMap, Parts, body::Body, header, unquoted_split},
     router::operation::OperationCx,
     schema::registry::Registry,
 };
@@ -74,20 +74,20 @@ fn parameter(parameter: &str) -> Option<(&str, &str)> {
 /// Whether the parameters trailing `media_type` are ones its codec accepts: one
 /// `declared` names, at exactly its value (a charset's in any case, RFC 9110
 /// section 8.3.2); else `charset=utf-8` (every text format is decoded as UTF-8)
-/// and the parameters [`CODEC_PARAMETERS`] lists, at any value.
+/// and the parameters [`CODEC_PARAMETERS`] lists, at any value. Both lists
+/// split only at a `;` outside a quoted value (RFC 9110 section 5.6.6).
 fn parameters_are_acceptable(media_type: &str, declared: &str, parameters: &str) -> bool {
     let read = CODEC_PARAMETERS
         .iter()
         .find(|(codec, _)| codec.eq_ignore_ascii_case(media_type))
         .map_or(&[][..], |&(_, read)| read);
 
-    parameters
-        .split(';')
+    unquoted_split(parameters, b';')
         .filter(|parameter| !parameter.trim().is_empty())
         .all(|offered| {
             parameter(offered).is_some_and(|(name, value)| {
                 let charset = name.eq_ignore_ascii_case("charset");
-                let mut declared = declared.split(';').filter_map(parameter);
+                let mut declared = unquoted_split(declared, b';').filter_map(parameter);
                 match declared.find(|&(declared, _)| name.eq_ignore_ascii_case(declared)) {
                     Some((_, expected)) if charset => value.eq_ignore_ascii_case(expected),
                     Some((_, expected)) => value == expected,

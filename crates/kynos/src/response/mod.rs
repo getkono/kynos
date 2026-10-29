@@ -40,7 +40,6 @@ pub mod negotiate;
 pub mod range;
 pub mod status;
 
-// RFC 2046 delimiters, shared by both multipart subtypes Kynos writes.
 #[cfg(any(feature = "multipart", feature = "openapi32"))]
 mod framing;
 

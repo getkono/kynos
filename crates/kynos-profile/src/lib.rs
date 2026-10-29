@@ -92,6 +92,21 @@ pub struct Scenario {
     pub base: Option<&'static str>,
 }
 
+/// One scenario row: `$name`, served by `$service` and sent `$request`,
+/// answered `$expected` under `$driver`, and differing from `$base`.
+macro_rules! row {
+    ($name:literal, $service:expr, $request:expr, $expected:ident, $driver:ident, $base:expr) => {
+        Scenario {
+            name: $name,
+            service: $service,
+            request: $request,
+            expected: StatusCode::$expected,
+            driver: Driver::$driver,
+            base: $base,
+        }
+    };
+}
+
 /// kynos-bench's catalog, as far as it can be driven without a socket.
 ///
 /// `stream-sse` and `stream-ndjson` are [`STREAM`]'s `sse-16` and `ndjson-16`;
@@ -101,106 +116,64 @@ pub struct Scenario {
 /// `not-found`, `method-not-allowed` and `rejection` are not in the catalog;
 /// they are the three error paths a request reaches without a handler.
 pub(crate) const SCENARIOS: &[Scenario] = &[
-    Scenario {
-        name: "plaintext",
+    row!("plaintext", service, || get("/plaintext"), OK, Poll, None),
+    row!("json-small", service, || get("/json/small"), OK, Poll, None),
+    row!("json-large", service, || get("/json/large"), OK, Poll, None),
+    row!(
+        "echo-post",
         service,
-        request: || get("/plaintext"),
-        expected: StatusCode::OK,
-        driver: Driver::Poll,
-        base: None,
-    },
-    Scenario {
-        name: "json-small",
+        || post("/echo", echo_body()),
+        OK,
+        Poll,
+        None
+    ),
+    row!(
+        "path-params",
         service,
-        request: || get("/json/small"),
-        expected: StatusCode::OK,
-        driver: Driver::Poll,
-        base: None,
-    },
-    Scenario {
-        name: "json-large",
+        || get("/items/7/11/13?after=5&per_page=20"),
+        OK,
+        Poll,
+        None
+    ),
+    row!("headers", service, headers_request, OK, Poll, None),
+    row!("layers-0", service, || get("/json/small"), OK, Poll, None),
+    row!(
+        "layers-4",
+        layers_4,
+        || get("/json/small"),
+        OK,
+        Poll,
+        Some("layers-0")
+    ),
+    row!(
+        "layers-8",
+        layers_8,
+        || get("/json/small"),
+        OK,
+        Poll,
+        Some("layers-4")
+    ),
+    row!("not-found", service, || get("/nope"), NOT_FOUND, Poll, None),
+    // POST, which `/echo` implements: a method no operation implements is a
+    // 501, not the 405 this scenario measures. The base is the same target and
+    // route, asked with a method it does not have.
+    row!(
+        "method-not-allowed",
         service,
-        request: || get("/json/large"),
-        expected: StatusCode::OK,
-        driver: Driver::Poll,
-        base: None,
-    },
-    Scenario {
-        name: "echo-post",
+        || request(Method::POST, "/plaintext", None, Body::empty()),
+        METHOD_NOT_ALLOWED,
+        Poll,
+        Some("plaintext")
+    ),
+    // The same operation as its base, sent a body that does not parse.
+    row!(
+        "rejection",
         service,
-        request: || post("/echo", echo_body()),
-        expected: StatusCode::OK,
-        driver: Driver::Poll,
-        base: None,
-    },
-    Scenario {
-        name: "path-params",
-        service,
-        request: || get("/items/7/11/13?after=5&per_page=20"),
-        expected: StatusCode::OK,
-        driver: Driver::Poll,
-        base: None,
-    },
-    Scenario {
-        name: "headers",
-        service,
-        request: headers_request,
-        expected: StatusCode::OK,
-        driver: Driver::Poll,
-        base: None,
-    },
-    Scenario {
-        name: "layers-0",
-        service,
-        request: || get("/json/small"),
-        expected: StatusCode::OK,
-        driver: Driver::Poll,
-        base: None,
-    },
-    Scenario {
-        name: "layers-4",
-        service: layers_4,
-        request: || get("/json/small"),
-        expected: StatusCode::OK,
-        driver: Driver::Poll,
-        base: Some("layers-0"),
-    },
-    Scenario {
-        name: "layers-8",
-        service: layers_8,
-        request: || get("/json/small"),
-        expected: StatusCode::OK,
-        driver: Driver::Poll,
-        base: Some("layers-4"),
-    },
-    Scenario {
-        name: "not-found",
-        service,
-        request: || get("/nope"),
-        expected: StatusCode::NOT_FOUND,
-        driver: Driver::Poll,
-        base: None,
-    },
-    Scenario {
-        name: "method-not-allowed",
-        service,
-        // POST, which `/echo` implements: a method no operation implements is
-        // a 501, not the 405 this scenario measures.
-        request: || request(Method::POST, "/plaintext", None, Body::empty()),
-        expected: StatusCode::METHOD_NOT_ALLOWED,
-        driver: Driver::Poll,
-        // The same target and route, asked with a method it does not have.
-        base: Some("plaintext"),
-    },
-    Scenario {
-        name: "rejection",
-        service,
-        request: codecs::rejection_request,
-        expected: StatusCode::BAD_REQUEST,
-        driver: Driver::Poll,
-        // The same operation, sent a body that does not parse.
-        base: Some("echo-post"),
-    },
+        codecs::rejection_request,
+        BAD_REQUEST,
+        Poll,
+        Some("echo-post")
+    ),
 ];
 
 /// The shapes [`tests/alloc.rs`](../../kynos/tests/alloc.rs) records, over the
@@ -211,50 +184,50 @@ pub(crate) const SCENARIOS: &[Scenario] = &[
 /// stack depth, and reads the counts from those tables rather than repeating
 /// them here.
 pub(crate) const CALIBRATION: &[Scenario] = &[
-    Scenario {
-        name: "calibration-static",
+    row!(
+        "calibration-static",
         service,
-        request: || get("/ping"),
-        expected: StatusCode::NO_CONTENT,
-        driver: Driver::Poll,
-        base: None,
-    },
-    Scenario {
-        name: "calibration-capture",
+        || get("/ping"),
+        NO_CONTENT,
+        Poll,
+        None
+    ),
+    row!(
+        "calibration-capture",
         service,
-        request: || get("/users/7"),
-        expected: StatusCode::NO_CONTENT,
-        driver: Driver::Poll,
-        base: None,
-    },
-    Scenario {
-        name: "calibration-miss",
+        || get("/users/7"),
+        NO_CONTENT,
+        Poll,
+        None
+    ),
+    row!(
+        "calibration-miss",
         service,
-        request: || get("/nope"),
-        expected: StatusCode::NOT_FOUND,
-        driver: Driver::Poll,
-        base: None,
-    },
+        || get("/nope"),
+        NOT_FOUND,
+        Poll,
+        None
+    ),
     // Then that file's `STACKS` rows past depth 0: the static match behind
     // four and eight transparent layers. These are the rows that caught DHAT
     // dropping allocations whose backtrace no longer reached the benchmark
     // frame, which no shallow shape could have.
-    Scenario {
-        name: "calibration-stacked-4",
-        service: layers_4,
-        request: || get("/ping"),
-        expected: StatusCode::NO_CONTENT,
-        driver: Driver::Poll,
-        base: Some("calibration-static"),
-    },
-    Scenario {
-        name: "calibration-stacked-8",
-        service: layers_8,
-        request: || get("/ping"),
-        expected: StatusCode::NO_CONTENT,
-        driver: Driver::Poll,
-        base: Some("calibration-stacked-4"),
-    },
+    row!(
+        "calibration-stacked-4",
+        layers_4,
+        || get("/ping"),
+        NO_CONTENT,
+        Poll,
+        Some("calibration-static")
+    ),
+    row!(
+        "calibration-stacked-8",
+        layers_8,
+        || get("/ping"),
+        NO_CONTENT,
+        Poll,
+        Some("calibration-stacked-4")
+    ),
 ];
 
 /// One sweep row: `$name` asks `/json/$size` for `$coding`, and a coded row
@@ -267,14 +240,14 @@ macro_rules! sweep {
         sweep!($name, $size, $coding, Some($base))
     };
     ($name:literal, $size:literal, $coding:literal, $base:expr) => {
-        Scenario {
-            name: $name,
-            service: compressed,
-            request: || get_encoded(concat!("/json/", $size), $coding),
-            expected: StatusCode::OK,
-            driver: Driver::Poll,
-            base: $base,
-        }
+        row!(
+            $name,
+            compressed,
+            || get_encoded(concat!("/json/", $size), $coding),
+            OK,
+            Poll,
+            $base
+        )
     };
 }
 
@@ -349,29 +322,14 @@ pub(crate) const COMPRESSION: &[Scenario] = &[
 /// The row a `Runtime` scenario's own base subtracts first, since a scenario
 /// that needs the runtime has no `Poll` counterpart to differ from in one
 /// variable.
-pub(crate) const RUNTIME: &[Scenario] = &[Scenario {
-    name: "json-small-runtime",
+pub(crate) const RUNTIME: &[Scenario] = &[row!(
+    "json-small-runtime",
     service,
-    request: || get("/json/small"),
-    expected: StatusCode::OK,
-    driver: Driver::Runtime,
-    base: Some("json-small"),
-}];
-
-/// One ablation row: `$name`, served by `$service` and sent `$request`,
-/// answered `$expected` under `$driver`, and differing from `$base`.
-macro_rules! row {
-    ($name:literal, $service:expr, $request:expr, $expected:ident, $driver:ident, $base:expr) => {
-        Scenario {
-            name: $name,
-            service: $service,
-            request: $request,
-            expected: StatusCode::$expected,
-            driver: Driver::$driver,
-            base: $base,
-        }
-    };
-}
+    || get("/json/small"),
+    OK,
+    Runtime,
+    Some("json-small")
+)];
 
 /// Routing: a match past the captures held inline, and each answer the router
 /// gives where no operation does.

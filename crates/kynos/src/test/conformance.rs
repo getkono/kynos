@@ -1,6 +1,10 @@
 //! Checking one observed response against what the description promised.
 //!
 //! `jsonschema` is named here and nowhere else, per `docs/architecture.md`.
+//! [`representation`] decides which `content` key declares the media type a
+//! response sent.
+
+mod representation;
 
 use kynos_openapi::{
     Document, Method, RefOr, Responses, StatusPattern,
@@ -118,10 +122,17 @@ fn body_conformance(
             declared()
         )];
     };
-    let Some(representation) = declared_representation(&response.content, &media_type) else {
+    let Some((key, entry)) =
+        representation::declared_representation(&response.content, &media_type)
+    else {
         return vec![format!(
             "`{media_type}` is not a declared representation; the description declares {}",
             declared()
+        )];
+    };
+    let Some(representation) = resolve_media_type(document, entry) else {
+        return vec![format!(
+            "the `{key}` representation resolves to no component"
         )];
     };
 
@@ -342,25 +353,23 @@ fn resolve_response<'d>(
     }
 }
 
-/// The representation declared for `media_type`, if one is.
-///
-/// An exact match first, so two keys differing only by parameter stay
-/// distinct, then one ignoring the declared key's parameters, since
-/// `media_type` arrives with its own already stripped.
-fn declared_representation<'a>(
-    content: &'a kynos_openapi::Map<kynos_openapi::MediaType>,
-    media_type: &str,
-) -> Option<&'a kynos_openapi::MediaType> {
-    content
-        .iter()
-        .find(|(name, _)| name.eq_ignore_ascii_case(media_type))
-        .or_else(|| {
-            content.iter().find(|(name, _)| {
-                let (base, _) = name.split_once(';').unwrap_or((name.as_str(), ""));
-                base.trim().eq_ignore_ascii_case(media_type)
-            })
-        })
-        .map(|(_, representation)| representation)
+/// The media type an entry names, following one `#/components/mediaTypes`
+/// hop; a build without `openapi32` has no such section to follow.
+fn resolve_media_type<'d>(
+    #[cfg_attr(not(feature = "openapi32"), expect(unused_variables))] document: &'d Document,
+    entry: &'d RefOr<kynos_openapi::MediaType>,
+) -> Option<&'d kynos_openapi::MediaType> {
+    match entry {
+        RefOr::Item(media_type) => Some(media_type),
+        #[cfg(feature = "openapi32")]
+        RefOr::Ref(reference) => reference
+            .location
+            .strip_prefix("#/components/mediaTypes/")
+            .and_then(|name| document.components.media_types.get(name))
+            .and_then(RefOr::as_item),
+        #[cfg(not(feature = "openapi32"))]
+        RefOr::Ref(_) => None,
+    }
 }
 
 /// The media type a response stated, lowercased and without its parameters.

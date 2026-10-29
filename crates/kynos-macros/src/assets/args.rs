@@ -33,10 +33,21 @@ impl Parse for AssetArgs {
         let mut dir: Option<LitStr> = None;
         let mut exclude = Vec::new();
         let mut warn_over = Some(DEFAULT_WARN_OVER);
+        let mut seen: Vec<String> = Vec::new();
 
         while !input.is_empty() {
             let key: Ident = input.parse()?;
-            match key.to_string().as_str() {
+            let name = key.to_string();
+            // An unknown key is refused on its first use, so it never lands here.
+            if seen.contains(&name) {
+                return Err(syn::Error::new(
+                    key.span(),
+                    format!("`{name}` is already set, and `assets!` takes each key once"),
+                ));
+            }
+            seen.push(name.clone());
+
+            match name.as_str() {
                 "dir" => {
                     input.parse::<Token![=]>()?;
                     dir = Some(input.parse()?);

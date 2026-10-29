@@ -754,6 +754,31 @@ mod form {
             other => panic!("a form breaking two bounds was not refused at both: {other:?}"),
         }
     }
+
+    #[derive(Debug, Schema, Deserialize)]
+    struct Readings {
+        #[schema(unique_items)]
+        v: Vec<f64>,
+    }
+
+    /// A form carries a NaN no JSON document can, and one sitting between two
+    /// copies of a value must not hide the repeat.
+    #[tokio::test]
+    async fn a_repeat_is_refused_with_a_nan_between_its_copies() {
+        let mut request = Request::new(Body::from_bytes(bytes::Bytes::from_static(
+            b"v=1&v=NaN&v=1",
+        )));
+        request.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/x-www-form-urlencoded"),
+        );
+        match super::extract::<Form<Readings>>(request).await {
+            Err(BodyRejection::Schema { failures }) => {
+                assert_eq!(failures.into_keys().collect::<Vec<_>>(), ["/v"]);
+            }
+            other => panic!("a repeated reading was not refused at `/v`: {other:?}"),
+        }
+    }
 }
 
 /// `JsonLines<Records<T>>` and `JsonSeq<Records<T>>` run the same check on

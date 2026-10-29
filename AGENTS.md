@@ -46,6 +46,7 @@ mise run features:check # every reachable feature combination
 mise run docs:check    # rustdoc with warnings denied
 mise run msrv:check    # builds on the declared MSRV
 mise run containment:check # each crate is named only where it is allowed
+mise run tooling:check # the dev build profile and the Python floor hold
 mise run publish:check # every crate packages and rebuilds from its tarball
 ```
 

@@ -181,12 +181,20 @@ fn render_limits(limits: &[ServiceLimit]) -> Option<http::HeaderValue> {
     let rendered: Vec<String> = limits
         .iter()
         .filter_map(|limit| {
-            Some(format!(
-                "{};r={};t={}",
+            use std::fmt::Write as _;
+
+            // `r` is required, and a capped one understates what is left.
+            let mut member = format!(
+                "{};r={}",
                 sf_string(&limit.name)?,
-                limit.remaining,
-                whole_seconds(limit.reset)
-            ))
+                limit.remaining.min(SF_INTEGER_MAX)
+            );
+            // `t` is optional, and a capped one would invite a retry before
+            // the quota replenishes, so an unrepresentable one is omitted.
+            if let Some(reset) = sf_integer(whole_seconds(limit.reset)) {
+                let _ = write!(member, ";t={reset}");
+            }
+            Some(member)
         })
         .collect();
 
@@ -202,9 +210,23 @@ fn render_policies(policies: &[QuotaPolicy]) -> Option<http::HeaderValue> {
         .filter_map(|policy| {
             use std::fmt::Write as _;
 
-            let mut member = format!("{};q={}", sf_string(&policy.name)?, policy.quota);
-            if let Some(window) = policy.window {
-                let _ = write!(member, ";w={}", window.as_secs());
+            // `q` is required, and a capped one understates the allowance.
+            let mut member = format!(
+                "{};q={}",
+                sf_string(&policy.name)?,
+                policy.quota.min(SF_INTEGER_MAX)
+            );
+            // Section 3.1.3: "MUST be a non-negative, non-zero, Integer".
+            // Rounded up, since a shorter window advertises a faster rate
+            // than the one enforced; a zero window has no such integer, and
+            // a capped one would be shorter, so neither is written.
+            if let Some(window) = policy
+                .window
+                .map(whole_seconds)
+                .filter(|&w| w > 0)
+                .and_then(sf_integer)
+            {
+                let _ = write!(member, ";w={window}");
             }
             // `requests` is the draft's default. The draft's section 3.1.2 says
             // the value "MUST be a String", not a token.
@@ -220,6 +242,15 @@ fn render_policies(policies: &[QuotaPolicy]) -> Option<http::HeaderValue> {
     (!rendered.is_empty())
         .then(|| http::HeaderValue::from_str(&rendered.join(", ")).ok())
         .flatten()
+}
+
+/// RFC 9651 section 3.3.1's largest `sf-integer`; a parser rejects the whole
+/// field past it.
+const SF_INTEGER_MAX: u64 = 999_999_999_999_999;
+
+/// `value` as a structured-field Integer, or `None` past its range.
+fn sf_integer(value: u64) -> Option<u64> {
+    (value <= SF_INTEGER_MAX).then_some(value)
 }
 
 /// Renders `name` as a structured-field String, or `None` where it cannot be

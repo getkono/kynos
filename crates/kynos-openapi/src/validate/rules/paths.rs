@@ -23,17 +23,14 @@ use crate::{
 };
 
 impl Validator {
+    /// Checks every Path Item and operation, against the scheme names
+    /// `declared_schemes` holds.
     pub(in crate::validate) fn check_paths(
         self,
         document: &Document,
+        declared_schemes: &HashSet<&str>,
         violations: &mut Vec<Violation>,
     ) {
-        let declared_schemes: HashSet<&str> = document
-            .components
-            .security_schemes
-            .keys()
-            .map(String::as_str)
-            .collect();
         let declared_tags: HashSet<&str> =
             document.tags.iter().map(|tag| tag.name.as_str()).collect();
 
@@ -56,21 +53,23 @@ impl Validator {
 }
 
 /// What the walk over every Path Item and operation reads and gathers.
-struct Items<'doc, 'v> {
-    validator: Validator,
-    components: &'doc Components,
-    declared_schemes: HashSet<&'doc str>,
-    declared_tags: HashSet<&'doc str>,
+///
+/// [`Items::check_operation`] is the operation rules', beside them.
+pub(in crate::validate) struct Items<'doc, 'v> {
+    pub(in crate::validate) validator: Validator,
+    pub(in crate::validate) components: &'doc Components,
+    pub(in crate::validate) declared_schemes: &'v HashSet<&'v str>,
+    pub(in crate::validate) declared_tags: HashSet<&'doc str>,
     /// Where each `operationId` was first seen.
-    operation_ids: HashMap<&'doc str, String>,
+    pub(in crate::validate) operation_ids: HashMap<&'doc str, String>,
     /// The `paths` key each normalized template was first seen under.
     normalized_paths: HashMap<String, &'doc str>,
     /// The template of the `paths` entry being walked, with its Path Item.
     ///
     /// Only that item's own operations read it: webhook names and callback
     /// expressions, including those below it, are not paths.
-    template: Option<(&'doc PathItem, PathTemplate)>,
-    violations: &'v mut Vec<Violation>,
+    pub(in crate::validate) template: Option<(&'doc PathItem, PathTemplate)>,
+    pub(in crate::validate) violations: &'v mut Vec<Violation>,
 }
 
 impl<'doc> Visit<'doc> for Items<'doc, '_> {
@@ -98,16 +97,18 @@ impl<'doc> Visit<'doc> for Items<'doc, '_> {
                 }
             };
 
-            if let Some(existing) = self.normalized_paths.insert(template.normalized(), raw) {
-                if existing != raw {
-                    self.violations.push(Violation::error(
-                        &location,
-                        SpecError::DuplicatePathTemplate {
-                            template: raw.to_owned(),
-                            existing: existing.to_owned(),
-                        },
-                    ));
-                }
+            let existing = *self
+                .normalized_paths
+                .entry(template.normalized())
+                .or_insert(raw);
+            if existing != raw {
+                self.violations.push(Violation::error(
+                    &location,
+                    SpecError::DuplicatePathTemplate {
+                        template: raw.to_owned(),
+                        existing: existing.to_owned(),
+                    },
+                ));
             }
 
             self.template = Some((item, template));
@@ -149,22 +150,7 @@ impl<'doc> Visit<'doc> for Items<'doc, '_> {
     }
 
     fn operation(&mut self, at: At<'_>, item: &'doc PathItem, operation: &'doc Operation) {
-        let template = self
-            .template
-            .as_ref()
-            .filter(|(holder, _)| std::ptr::eq(*holder, item))
-            .map(|(_, template)| template);
-        self.validator.check_operation(
-            &at.pointer(),
-            template,
-            item,
-            operation,
-            self.components,
-            &self.declared_schemes,
-            &self.declared_tags,
-            &mut self.operation_ids,
-            self.violations,
-        );
+        self.check_operation(at, item, operation);
     }
 }
 

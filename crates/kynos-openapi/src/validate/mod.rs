@@ -15,6 +15,8 @@ pub mod violation;
 // Internal: a caller consumes [`Violation`]s, never a checking function.
 mod rules;
 
+use std::collections::HashSet;
+
 use crate::{
     model::document::{Document, SpecVersion},
     validate::{
@@ -58,11 +60,10 @@ impl Validator {
         // Validating as 3.2 refuses the walk's unrecognised fields alone, since
         // both versions require an extension's name to begin with `x-`.
         if self.version.supports_3_2() {
-            for field in crate::emit::downgrade::unrecognised_fields(document) {
-                let (location, name) = holder_and_key(&field);
+            for field in crate::emit::downgrade::unrecognised::walk(document).fields {
                 violations.push(Violation::error(
-                    location,
-                    SpecError::InvalidExtensionName { name },
+                    field.holder,
+                    SpecError::InvalidExtensionName { name: field.name },
                 ));
             }
         } else {
@@ -89,8 +90,14 @@ impl Validator {
         check_component_parameters(document, &mut violations);
         check_component_content(document, &mut violations);
         check_security_schemes(document, &mut violations);
-        self.check_security(document, &mut violations);
-        self.check_paths(document, &mut violations);
+        let declared_schemes: HashSet<&str> = document
+            .components
+            .security_schemes
+            .keys()
+            .map(String::as_str)
+            .collect();
+        self.check_security(document, &declared_schemes, &mut violations);
+        self.check_paths(document, &declared_schemes, &mut violations);
         check_link_targets(document, &mut violations);
         check_schemas(document, self.version, &mut violations);
         check_opaque(document, &mut violations);
@@ -98,13 +105,6 @@ impl Validator {
 
         violations
     }
-}
-
-/// Splits a field's pointer into its holding object's pointer and the field's
-/// name, unescaped: the location and name every extension-name violation uses.
-fn holder_and_key(pointer: &str) -> (&str, String) {
-    let (holder, token) = pointer.rsplit_once('/').unwrap_or(("#", pointer));
-    (holder, token.replace("~1", "/").replace("~0", "~"))
 }
 
 impl Document {

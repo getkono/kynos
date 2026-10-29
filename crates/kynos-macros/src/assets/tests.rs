@@ -300,6 +300,15 @@ fn grammar_cases() -> Vec<(&'static str, proc_macro2::TokenStream, &'static str)
             "an `exclude` entry is a file name or an extension beginning with a dot, and an \
              empty string is neither",
         ),
+        (
+            "a directory given twice",
+            quote! {
+                struct Fixture;
+                dir = #FIXTURE,
+                dir = #FIXTURE,
+            },
+            "`dir` is already set, and `assets!` takes each key once",
+        ),
     ]
 }
 
@@ -337,6 +346,29 @@ fn every_grammar_refusal_has_a_case() {
             MALFORMED_SIZE,
         );
     }
+
+    // The other two keys reach the repeated-key site `grammar_cases` reaches
+    // with `dir`; neither is merged with nor overwritten by its second use.
+    assert_refused(
+        "an exclusion list given twice",
+        &expand(quote! {
+            struct Fixture;
+            dir = #FIXTURE,
+            exclude = [".map"],
+            exclude = [".txt"],
+        }),
+        "`exclude` is already set, and `assets!` takes each key once",
+    );
+    assert_refused(
+        "a threshold given twice",
+        &expand(quote! {
+            struct Fixture;
+            dir = #FIXTURE,
+            warn_over = "4MiB",
+            warn_over = "none",
+        }),
+        "`warn_over` is already set, and `assets!` takes each key once",
+    );
 
     // The control: the same shape, legal.
     assert!(

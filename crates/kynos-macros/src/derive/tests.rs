@@ -4603,7 +4603,7 @@ mod schema {
 /// The parameter fields' shared grammar, `#[param]`, `#[header]` and
 /// `#[cookie]`, driven through the `CookieParams` derive.
 mod attribute {
-    use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
+    use super::{Case, DeriveInput, case, each_case_is_refused, every_diagnostic_has_a_case};
     use crate::derive::cookies::expand_inner;
 
     fn ledger() -> Vec<Case> {
@@ -4632,14 +4632,106 @@ mod attribute {
         ]
     }
 
+    /// The header group's own grammar, on the struct, driven through the
+    /// `HeaderParams` derive, its one reader.
+    fn group_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a field key on the struct, which would otherwise name no field",
+                quote::quote!(
+                    #[header(rename = "X-Request-Id")]
+                    struct Tracing {
+                        request_id: String,
+                    }
+                ),
+                "`rename` is not part of the `#[header(...)]` grammar on a struct",
+            ),
+            case(
+                "`described` written twice, across two lists",
+                quote::quote!(
+                    #[header(described = false)]
+                    #[header(described = true)]
+                    struct Provenance {
+                        origin: Option<String>,
+                    }
+                ),
+                "`described` is already set",
+            ),
+            case(
+                "`described` given a string rather than a `bool` literal",
+                quote::quote!(
+                    #[header(described = "false")]
+                    struct Provenance {
+                        origin: Option<String>,
+                    }
+                ),
+                "`described` is `true` or `false`, written as a literal",
+            ),
+        ]
+    }
+
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
+        each_case_is_refused(group_ledger(), crate::derive::headers::expand_inner);
+    }
+
+    /// A path is no literal, even one naming a `bool` constant: the derive
+    /// cannot read its value.
+    #[test]
+    fn described_refuses_a_path() {
+        each_case_is_refused(
+            vec![case(
+                "`described` naming a constant",
+                quote::quote!(
+                    #[header(described = UNDESCRIBED)]
+                    struct Provenance {
+                        origin: Option<String>,
+                    }
+                ),
+                "written as a literal",
+            )],
+            crate::derive::headers::expand_inner,
+        );
+    }
+
+    /// `described` sets the constant as written, and its absence leaves the
+    /// trait's default standing rather than restating it.
+    #[test]
+    fn described_sets_the_constant_only_where_written() {
+        let expanded = |input: DeriveInput| {
+            crate::derive::headers::expand_inner(&input)
+                .expect("a well-formed header group")
+                .to_string()
+        };
+        for (flag, written) in [
+            ("false", "const DESCRIBED : bool = false ;"),
+            ("true", "const DESCRIBED : bool = true ;"),
+        ] {
+            let flag: syn::LitBool = syn::parse_str(flag).expect("a bool literal");
+            let expansion = expanded(syn::parse_quote!(
+                #[header(described = #flag)]
+                struct Provenance {
+                    origin: Option<String>,
+                }
+            ));
+            assert!(expansion.contains(written), "{expansion}");
+        }
+        let expansion = expanded(syn::parse_quote!(
+            struct Provenance {
+                origin: Option<String>,
+            }
+        ));
+        assert!(!expansion.contains("DESCRIBED"), "{expansion}");
     }
 
     #[test]
     fn every_attribute_diagnostic_has_a_case() {
-        every_diagnostic_has_a_case("attribute.rs", include_str!("attribute.rs"), ledger().len());
+        every_diagnostic_has_a_case(
+            "attribute.rs",
+            include_str!("attribute.rs"),
+            ledger().len() + group_ledger().len(),
+        );
     }
 }
 

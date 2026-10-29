@@ -46,6 +46,7 @@ pub(crate) struct At<'a> {
 enum Token<'a> {
     Root,
     Key(&'a str),
+    Verbatim(&'a str),
     Index(usize),
 }
 
@@ -61,6 +62,19 @@ impl<'a> At<'a> {
         Self {
             parent: Some(self),
             token: Token::Key(key),
+        }
+    }
+
+    /// The member `key` of the object here, rendered unescaped.
+    ///
+    /// Only for a response's status key, which the 3.2 walk and the content
+    /// rules have always written as given. A status that parses holds neither
+    /// `/` nor `~`, so this differs from [`key`](Self::key) only for a key the
+    /// validator refuses; #1078 is whether those should be escaped too.
+    pub(crate) fn verbatim(&'a self, key: &'a str) -> Self {
+        Self {
+            parent: Some(self),
+            token: Token::Verbatim(key),
         }
     }
 
@@ -84,6 +98,7 @@ impl<'a> At<'a> {
         let own = match self.token {
             Token::Root => 1,
             Token::Key(key) => 1 + escaped_len(key),
+            Token::Verbatim(key) => 1 + key.len(),
             Token::Index(index) => 1 + digits(index),
         };
         own + self.parent.map_or(0, At::len)
@@ -98,6 +113,10 @@ impl<'a> At<'a> {
             Token::Key(key) => {
                 pointer.push('/');
                 push_escaped(pointer, key);
+            }
+            Token::Verbatim(key) => {
+                pointer.push('/');
+                pointer.push_str(key);
             }
             Token::Index(index) => {
                 // Writing to a `String` cannot fail.

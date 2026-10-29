@@ -1201,16 +1201,33 @@ mod templates {
     }
 
     /// The `compile_error!` invocations in an expansion, each with its
-    /// `#[cfg(..)]` predicates and its message.
+    /// `#[cfg(..)]` predicates and its message, each asserted to name the
+    /// macro by its absolute path, so no `compile_error` the user's scope
+    /// declares can stand in for it.
     fn guards(expansion: proc_macro2::TokenStream) -> Vec<(Vec<String>, String)> {
         let file: syn::File = syn::parse2(expansion).expect("the expansion parses as items");
         file.items
             .into_iter()
             .filter_map(|item| match item {
-                syn::Item::Macro(item) if item.mac.path.is_ident("compile_error") => Some(item),
+                syn::Item::Macro(item)
+                    if item
+                        .mac
+                        .path
+                        .segments
+                        .last()
+                        .is_some_and(|segment| segment.ident == "compile_error") =>
+                {
+                    Some(item)
+                }
                 _ => None,
             })
             .map(|item| {
+                let path = &item.mac.path;
+                assert_eq!(
+                    quote!(#path).to_string(),
+                    quote!(::core::compile_error).to_string(),
+                    "a guard names `compile_error!` by its absolute path"
+                );
                 let predicates = item
                     .attrs
                     .iter()

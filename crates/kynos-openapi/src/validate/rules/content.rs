@@ -17,14 +17,16 @@ use crate::{
         body::{RequestBody, encoding::Encoding, media_type::MediaType},
         components::Components,
         document::Document,
+        reference::RefOr,
         response::Response,
         schema::{Schema, object::SchemaObject},
     },
-    pointer::pointer_token,
+    pointer::At,
     validate::{
-        rules::{document::check_link, parameters::check_header_map},
+        rules::{component_name, document::check_link, parameters::check_header_map},
         violation::{SpecError, Violation},
     },
+    visit,
 };
 
 /// Checks each reusable response, request body and media type once, where it
@@ -37,88 +39,65 @@ pub(in crate::validate) fn check_component_content(
     violations: &mut Vec<Violation>,
 ) {
     let components = &document.components;
-    for (name, response) in &components.responses {
-        if let Some(response) = response.as_item() {
-            check_response(
-                &format!("#/components/responses/{}", pointer_token(name)),
-                response,
-                components,
-                violations,
-            );
-        }
-    }
-    for (name, body) in &components.request_bodies {
-        if let Some(body) = body.as_item() {
-            check_request_body(
-                &format!("#/components/requestBodies/{}", pointer_token(name)),
-                body,
-                components,
-                violations,
-            );
-        }
-    }
+    let at = At::ROOT.key("components");
+    visit::inline_items(
+        at.key("responses"),
+        &components.responses,
+        |at, response| {
+            check_response(at, response, components, violations);
+        },
+    );
+    visit::inline_items(
+        at.key("requestBodies"),
+        &components.request_bodies,
+        |at, body| check_request_body(at, body, components, violations),
+    );
     #[cfg(feature = "openapi32")]
-    for (name, media_type) in &components.media_types {
-        if let Some(media_type) = media_type.as_item() {
-            check_media_type(
-                &format!("#/components/mediaTypes/{}", pointer_token(name)),
-                media_type,
-                components,
-                violations,
-            );
-        }
-    }
+    visit::inline_items(
+        at.key("mediaTypes"),
+        &components.media_types,
+        |at, media_type| check_media_type(at, media_type, components, violations),
+    );
 }
 
 pub(in crate::validate) fn check_request_body(
-    location: &str,
+    at: At<'_>,
     body: &RequestBody,
     components: &Components,
     violations: &mut Vec<Violation>,
 ) {
-    for (media_type, content) in &body.content {
-        check_media_type(
-            &format!("{location}/content/{}", pointer_token(media_type)),
-            content,
-            components,
-            violations,
-        );
-    }
+    check_content(at, &body.content, components, violations);
+}
+
+/// Checks each inline entry of a `content` map; one that is a `$ref` is
+/// checked where it leads.
+fn check_content(
+    at: At<'_>,
+    content: &crate::Map<RefOr<MediaType>>,
+    components: &Components,
+    violations: &mut Vec<Violation>,
+) {
+    visit::inline_items(at.key("content"), content, |at, content| {
+        check_media_type(at, content, components, violations);
+    });
 }
 
 pub(in crate::validate) fn check_response(
-    location: &str,
+    at: At<'_>,
     response: &Response,
     components: &Components,
     violations: &mut Vec<Violation>,
 ) {
-    for (media_type, content) in &response.content {
-        check_media_type(
-            &format!("{location}/content/{}", pointer_token(media_type)),
-            content,
-            components,
-            violations,
-        );
-    }
+    check_content(at, &response.content, components, violations);
     // An inline link's server; a referenced one is checked at its component.
-    for (name, link) in &response.links {
-        if let Some(link) = link.as_item() {
-            check_link(
-                &format!("{location}/links/{}", pointer_token(name)),
-                link,
-                violations,
-            );
-        }
-    }
+    visit::inline_items(at.key("links"), &response.links, |at, link| {
+        check_link(&at.pointer(), link, violations);
+    });
     // That a link names exactly one target, and a header's shape, hold by
     // construction; whether the target resolves needs every operation, so
     // `check_link_targets` judges it. A header's name is a map key no type
     // reaches, so it is still checked.
-    check_header_map(
-        &format!("{location}/headers"),
-        &response.headers,
-        violations,
-    );
+    check_header_map(&at.key("headers").pointer(), &response.headers, violations);
 }
 
 /// Checks a media type's encodings against its schema, then each encoding.
@@ -127,7 +106,7 @@ pub(in crate::validate) fn check_response(
 /// applies to a part whose value the specification leaves to the part's own
 /// media type, so there is no schema to hold its keys against.
 pub(in crate::validate) fn check_media_type(
-    location: &str,
+    at: At<'_>,
     content: &MediaType,
     components: &Components,
     violations: &mut Vec<Violation>,
@@ -135,7 +114,7 @@ pub(in crate::validate) fn check_media_type(
     #[cfg(feature = "openapi32")]
     {
         check_exclusion(
-            location,
+            at,
             &content.encoding,
             content.prefix_encoding.as_ref(),
             content.item_encoding.as_deref(),
@@ -150,7 +129,7 @@ pub(in crate::validate) fn check_media_type(
                 .is_none_or(|schema| excludes_arrays(schema, components))
         {
             violations.push(Violation::error(
-                location,
+                at.pointer(),
                 SpecError::PositionalEncodingWithoutArray,
             ));
         }
@@ -161,13 +140,14 @@ pub(in crate::validate) fn check_media_type(
         Some(schema) => declared_properties(schema, components),
         None => Some(HashSet::new()),
     };
+    let encodings = at.key("encoding");
     for property in content.encoding.keys() {
         if properties
             .as_ref()
             .is_some_and(|properties| !properties.contains(property.as_str()))
         {
             violations.push(Violation::error(
-                format!("{location}/encoding/{}", pointer_token(property)),
+                encodings.key(property).pointer(),
                 SpecError::UnknownEncodingProperty {
                     property: property.clone(),
                 },
@@ -177,42 +157,35 @@ pub(in crate::validate) fn check_media_type(
     // Each encoded part's headers, and under 3.2 its own exclusion: nested
     // parts apply their fields "in the same manner" as a media type
     // (`references/3.2.0.md:1711-1713`).
-    for_each_encoding(location, content, &mut |location, encoding| {
+    for_each_encoding(at, content, &mut |at, encoding| {
         #[cfg(feature = "openapi32")]
         check_exclusion(
-            location,
+            at,
             &encoding.encoding,
             encoding.prefix_encoding.as_ref(),
             encoding.item_encoding.as_deref(),
             violations,
         );
-        check_header_map(
-            &format!("{location}/headers"),
-            &encoding.headers,
-            violations,
-        );
+        check_header_map(&at.key("headers").pointer(), &encoding.headers, violations);
     });
 }
 
-/// Visits every Encoding Object below `media_type` with its location, each
+/// Visits every Encoding Object below `media_type` at its pointer, each
 /// before the ones nested inside it: the `encoding` entries and, under 3.2,
 /// each `prefixEncoding` item and the `itemEncoding`, then the same fields of
 /// each of those, at every depth.
 pub(in crate::validate) fn for_each_encoding<'doc>(
-    location: &str,
+    at: At<'_>,
     media_type: &'doc MediaType,
-    visit: &mut impl FnMut(&str, &'doc Encoding),
+    visit: &mut impl FnMut(At<'_>, &'doc Encoding),
 ) {
+    let encodings = at.key("encoding");
     for (property, encoding) in &media_type.encoding {
-        walk_encoding(
-            &format!("{location}/encoding/{}", pointer_token(property)),
-            encoding,
-            visit,
-        );
+        walk_encoding(encodings.key(property), encoding, visit);
     }
     #[cfg(feature = "openapi32")]
     walk_positional(
-        location,
+        at,
         media_type.prefix_encoding.as_deref(),
         media_type.item_encoding.as_deref(),
         visit,
@@ -220,22 +193,19 @@ pub(in crate::validate) fn for_each_encoding<'doc>(
 }
 
 fn walk_encoding<'doc>(
-    location: &str,
+    at: At<'_>,
     encoding: &'doc Encoding,
-    visit: &mut impl FnMut(&str, &'doc Encoding),
+    visit: &mut impl FnMut(At<'_>, &'doc Encoding),
 ) {
-    visit(location, encoding);
+    visit(at, encoding);
     #[cfg(feature = "openapi32")]
     {
+        let encodings = at.key("encoding");
         for (property, nested) in &encoding.encoding {
-            walk_encoding(
-                &format!("{location}/encoding/{}", pointer_token(property)),
-                nested,
-                visit,
-            );
+            walk_encoding(encodings.key(property), nested, visit);
         }
         walk_positional(
-            location,
+            at,
             encoding.prefix_encoding.as_deref(),
             encoding.item_encoding.as_deref(),
             visit,
@@ -245,16 +215,17 @@ fn walk_encoding<'doc>(
 
 #[cfg(feature = "openapi32")]
 fn walk_positional<'doc>(
-    location: &str,
+    at: At<'_>,
     prefix_encoding: Option<&'doc [Encoding]>,
     item_encoding: Option<&'doc Encoding>,
-    visit: &mut impl FnMut(&str, &'doc Encoding),
+    visit: &mut impl FnMut(At<'_>, &'doc Encoding),
 ) {
+    let prefix = at.key("prefixEncoding");
     for (index, nested) in prefix_encoding.into_iter().flatten().enumerate() {
-        walk_encoding(&format!("{location}/prefixEncoding/{index}"), nested, visit);
+        walk_encoding(prefix.index(index), nested, visit);
     }
     if let Some(nested) = item_encoding {
-        walk_encoding(&format!("{location}/itemEncoding"), nested, visit);
+        walk_encoding(at.key("itemEncoding"), nested, visit);
     }
 }
 
@@ -263,14 +234,17 @@ fn walk_positional<'doc>(
 /// `openapi32` feature, breaking additivity.
 #[cfg(feature = "openapi32")]
 fn check_exclusion(
-    location: &str,
+    at: At<'_>,
     encoding: &Map<Encoding>,
     prefix_encoding: Option<&Vec<Encoding>>,
     item_encoding: Option<&Encoding>,
     violations: &mut Vec<Violation>,
 ) {
     if !encoding.is_empty() && (prefix_encoding.is_some() || item_encoding.is_some()) {
-        violations.push(Violation::error(location, SpecError::ConflictingEncoding));
+        violations.push(Violation::error(
+            at.pointer(),
+            SpecError::ConflictingEncoding,
+        ));
     }
 }
 
@@ -339,8 +313,7 @@ fn for_each_conjunct<'doc>(
         visit(object);
         pending.extend(object.all_of.iter().flatten());
         if let Some(reference) = &object.reference {
-            match reference
-                .strip_prefix("#/components/schemas/")
+            match component_name(reference, "schemas")
                 .and_then(|name| components.schemas.get_key_value(name))
             {
                 Some((name, target)) => {

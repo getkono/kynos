@@ -1,11 +1,29 @@
 error: `renmae` is not part of the `#[header(...)]` grammar
- --> tests/ui/macros/header_params_unknown_and_repeated_keys.rs:7:14
+ --> tests/ui/macros/header_params_unknown_and_repeated_keys.rs:8:14
   |
-7 |     #[header(renmae = "X-Request-Id")]
+8 |     #[header(renmae = "X-Request-Id")]
   |              ^^^^^^
 
 error: `value` is already set, and `#[header(...)]` takes each key once
-  --> tests/ui/macros/header_params_unknown_and_repeated_keys.rs:14:14
+  --> tests/ui/macros/header_params_unknown_and_repeated_keys.rs:15:14
    |
-14 |     #[header(value = "sniff")]
+15 |     #[header(value = "sniff")]
    |              ^^^^^
+
+error: `rename` is not part of the `#[header(...)]` grammar on a struct, which takes `described` alone; a field's keys go on that field
+  --> tests/ui/macros/header_params_unknown_and_repeated_keys.rs:20:10
+   |
+20 | #[header(rename = "Origin")]
+   |          ^^^^^^
+
+error: `described` is already set, and `#[header(...)]` takes each key once
+  --> tests/ui/macros/header_params_unknown_and_repeated_keys.rs:28:10
+   |
+28 | #[header(described = true)]
+   |          ^^^^^^^^^
+
+error: `described` is `true` or `false`, written as a literal: whether a group is described is settled at the derive
+  --> tests/ui/macros/header_params_unknown_and_repeated_keys.rs:35:22
+   |
+35 | #[header(described = "false")]
+   |                      ^^^^^^^
