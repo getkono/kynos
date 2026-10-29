@@ -194,7 +194,7 @@ pub fn path(input: TokenStream) -> TokenStream {
 #[cfg(feature = "assets")]
 #[proc_macro]
 pub fn assets(item: TokenStream) -> TokenStream {
-    assets::expand(item)
+    derive::run(item, assets::expand_inner)
 }
 
 /// Describes a type as JSON Schema.
@@ -517,7 +517,7 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   variant.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
-    derive::schema::expand(item)
+    derive::run(item, derive::schema::expand_inner)
 }
 
 /// Maps an error type to RFC 9457 problem details.
@@ -615,7 +615,7 @@ pub fn derive_schema(item: TokenStream) -> TokenStream {
 /// It is the only supported way to implement `IntoProblem`.
 #[proc_macro_derive(ApiError, attributes(problem))]
 pub fn derive_api_error(item: TokenStream) -> TokenStream {
-    derive::api_error::expand(item)
+    derive::run(item, derive::api_error::expand_inner)
 }
 
 /// Declares a closed set of responses, one variant per status.
@@ -668,7 +668,7 @@ pub fn derive_api_error(item: TokenStream) -> TokenStream {
 /// entry carries.
 #[proc_macro_derive(Reply, attributes(reply))]
 pub fn derive_reply(item: TokenStream) -> TokenStream {
-    derive::reply::expand(item)
+    derive::run(item, derive::reply::expand_inner)
 }
 
 /// Makes a field-less enum a `kynos::schema::ParamValue`, emitting its
@@ -706,7 +706,7 @@ pub fn derive_reply(item: TokenStream) -> TokenStream {
 ///   leaves `Display` nothing to write.
 #[proc_macro_derive(ParamValue)]
 pub fn derive_param_value(item: TokenStream) -> TokenStream {
-    derive::param_value::expand(item)
+    derive::run(item, derive::param_value::expand_inner)
 }
 
 /// Declares a group of path parameters.
@@ -737,7 +737,7 @@ pub fn derive_param_value(item: TokenStream) -> TokenStream {
 ///   deserialize = ...)` on the struct.
 #[proc_macro_derive(PathParams, attributes(param))]
 pub fn derive_path_params(item: TokenStream) -> TokenStream {
-    derive::path_params::expand(item)
+    derive::run(item, derive::path_params::expand_inner)
 }
 
 /// Declares a group of query parameters.
@@ -781,7 +781,7 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 ///   deserialize = ...)` on the struct.
 #[proc_macro_derive(QueryParams, attributes(param))]
 pub fn derive_query_params(item: TokenStream) -> TokenStream {
-    derive::query_params::expand(item)
+    derive::run(item, derive::query_params::expand_inner)
 }
 
 /// Declares a group of request or response headers.
@@ -858,7 +858,7 @@ pub fn derive_query_params(item: TokenStream) -> TokenStream {
 ///   deserialize = ...)` on the struct.
 #[proc_macro_derive(HeaderParams, attributes(header))]
 pub fn derive_headers(item: TokenStream) -> TokenStream {
-    derive::headers::expand(item)
+    derive::run(item, derive::headers::expand_inner)
 }
 
 /// Declares a group of request cookies.
@@ -899,7 +899,7 @@ pub fn derive_headers(item: TokenStream) -> TokenStream {
 ///   deserialize = ...)` on the struct.
 #[proc_macro_derive(CookieParams, attributes(cookie))]
 pub fn derive_cookies(item: TokenStream) -> TokenStream {
-    derive::cookies::expand(item)
+    derive::run(item, derive::cookies::expand_inner)
 }
 
 /// Declares the fields of a `multipart/form-data` body, in both directions.
@@ -949,7 +949,7 @@ pub fn derive_cookies(item: TokenStream) -> TokenStream {
 /// (described as the one field's schema, while that field is still a part).
 #[proc_macro_derive(MultipartForm, attributes(serde))]
 pub fn derive_multipart_form(item: TokenStream) -> TokenStream {
-    derive::multipart::expand(item)
+    derive::run(item, derive::multipart::expand_inner)
 }
 
 /// Declares a tag.
@@ -966,7 +966,7 @@ pub fn derive_multipart_form(item: TokenStream) -> TokenStream {
 /// one tag under another, which requires `openapi32`.
 #[proc_macro_derive(Tag, attributes(tag))]
 pub fn derive_tag(item: TokenStream) -> TokenStream {
-    derive::tag::expand(item)
+    derive::run(item, derive::tag::expand_inner)
 }
 
 /// Declares a security scheme.
@@ -978,7 +978,7 @@ pub fn derive_tag(item: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_derive(SecurityScheme, attributes(security))]
 pub fn derive_security_scheme(item: TokenStream) -> TokenStream {
-    derive::security_scheme::expand(item)
+    derive::run(item, derive::security_scheme::expand_inner)
 }
 
 /// Declares an application context, emitting one `Provides` implementation per
@@ -1001,7 +1001,7 @@ pub fn derive_security_scheme(item: TokenStream) -> TokenStream {
 /// Two provided fields of the same type are rejected, naming both.
 #[proc_macro_derive(Provider, attributes(provide))]
 pub fn derive_provider(item: TokenStream) -> TokenStream {
-    derive::provider::expand(item)
+    derive::run(item, derive::provider::expand_inner)
 }
 
 #[cfg(test)]

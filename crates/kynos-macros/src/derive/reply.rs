@@ -26,13 +26,9 @@
 //! own statuses, joining the entry of any variant declaring one. A description
 //! it carries stands unless the variant gives one.
 
-use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{quote, quote_spanned};
-use syn::{
-    Attribute, Data, DeriveInput, Fields, LitInt, LitStr, Variant, parse_macro_input,
-    spanned::Spanned,
-};
+use syn::{Attribute, Data, DeriveInput, Fields, LitInt, LitStr, Variant, spanned::Spanned};
 
 use crate::derive::attribute::key_name;
 use crate::derive::common::{doc_string, optional};
@@ -44,15 +40,7 @@ const STATUS_RANGE: std::ops::RangeInclusive<u16> = 200..=599;
 /// 9110 section saying so.
 const WITHOUT_CONTENT: [(u16, &str); 3] = [(204, "15.3.5"), (205, "15.3.6"), (304, "15.4.5")];
 
-pub(crate) fn expand(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as DeriveInput);
-    match expand_inner(&input) {
-        Ok(tokens) => tokens.into(),
-        Err(error) => error.to_compile_error().into(),
-    }
-}
-
-pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     // A closed set of responses needs an enum; one status is a status wrapper.
     let data = match &input.data {
         Data::Enum(data) => data,

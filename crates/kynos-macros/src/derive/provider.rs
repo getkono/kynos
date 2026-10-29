@@ -1,20 +1,11 @@
 //! `#[derive(Provider)]`.
 
-use proc_macro::TokenStream;
 use quote::quote;
-use syn::{DeriveInput, Field, Type, parse_macro_input, spanned::Spanned};
+use syn::{DeriveInput, Field, Type, spanned::Spanned};
 
 use crate::derive::{attribute::key_name, common::named_fields};
 
-pub(crate) fn expand(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as DeriveInput);
-    match expand_inner(&input) {
-        Ok(tokens) => tokens.into(),
-        Err(error) => error.to_compile_error().into(),
-    }
-}
-
-pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = named_fields(input, "Provider")?;
 
     let mut provided: Vec<&Field> = Vec::new();

@@ -16,19 +16,9 @@
 mod args;
 mod walk;
 
-use proc_macro::TokenStream;
 use quote::quote;
-use syn::parse_macro_input;
 
 use crate::assets::{args::AssetArgs, walk::Walked};
-
-pub(crate) fn expand(item: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(item as AssetArgs);
-    match expand_inner(&args) {
-        Ok(tokens) => tokens.into(),
-        Err(error) => error.to_compile_error().into(),
-    }
-}
 
 pub(crate) fn expand_inner(args: &AssetArgs) -> syn::Result<proc_macro2::TokenStream> {
     let walked = walk::walk(args)?;

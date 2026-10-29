@@ -1,10 +1,9 @@
 //! `#[derive(HeaderParams)]`.
 
 use kynos_openapi::model::parameter::header::is_ignored_header_parameter;
-use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{DeriveInput, Field, Type, parse_macro_input, spanned::Spanned};
+use syn::{DeriveInput, Field, Type, spanned::Spanned};
 
 use crate::derive::{
     attribute::{field_args, group_args},
@@ -210,15 +209,7 @@ fn non_field_value_message(value: &str) -> Option<String> {
     None
 }
 
-pub(crate) fn expand(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as DeriveInput);
-    match expand_inner(&input) {
-        Ok(tokens) => tokens.into(),
-        Err(error) => error.to_compile_error().into(),
-    }
-}
-
-pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = named_fields(input, "Headers")?;
     // Only a written `described` overrides the trait's default.
     let described = group_args(input)?

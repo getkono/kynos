@@ -1,23 +1,14 @@
 //! `#[derive(QueryParams)]`.
 
-use proc_macro::TokenStream;
 use quote::quote;
-use syn::{DeriveInput, Ident, parse_macro_input};
+use syn::{DeriveInput, Ident};
 
 use crate::derive::{
     common::{NameCase, named_fields, reject_duplicate_names, wire_names},
     params::{Param, check_field, construct, decode_field, parameters_body, query_encode_body},
 };
 
-pub(crate) fn expand(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as DeriveInput);
-    match expand_inner(&input) {
-        Ok(tokens) => tokens.into(),
-        Err(error) => error.to_compile_error().into(),
-    }
-}
-
-fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = named_fields(input, "QueryParams")?;
     let names = wire_names(input, fields, "param")?;
     reject_duplicate_names(fields, &names, "query parameter", NameCase::Sensitive)?;

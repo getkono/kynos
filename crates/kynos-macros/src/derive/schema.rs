@@ -48,12 +48,11 @@ use attributes::{
 };
 use shape::{enum_body, struct_body};
 
-use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{
     Data, DataEnum, DeriveInput, Field, Fields, Lit, LitFloat, LitInt, LitStr, Type, Variant,
-    ext::IdentExt, parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma,
+    ext::IdentExt, punctuated::Punctuated, spanned::Spanned, token::Comma,
 };
 
 use crate::derive::common::{doc_string, is_deprecated, skip_value};
@@ -74,15 +73,7 @@ const COUNTS: &[&str] = &["min_length", "max_length", "min_items", "max_items"];
 /// string field and asserted by nothing.
 const ANNOTATIONS: &[&str] = &["content_encoding", "content_media_type"];
 
-pub(crate) fn expand(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as DeriveInput);
-    match expand_inner(&input) {
-        Ok(tokens) => tokens.into(),
-        Err(error) => error.to_compile_error().into(),
-    }
-}
-
-pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     if let Data::Union(data) = &input.data {
         return Err(syn::Error::new(
             data.union_token.span(),

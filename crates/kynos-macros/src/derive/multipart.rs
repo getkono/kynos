@@ -17,10 +17,9 @@
 
 mod refusals;
 
-use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, quote_spanned};
-use syn::{DeriveInput, Field, Ident, Type, parse_macro_input, spanned::Spanned};
+use syn::{DeriveInput, Field, Ident, Type, spanned::Spanned};
 
 use crate::derive::{
     common::{NameCase, named_fields, reject_duplicate_names, wrapped},
@@ -30,15 +29,7 @@ use crate::derive::{
     },
 };
 
-pub(crate) fn expand(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as DeriveInput);
-    match expand_inner(&input) {
-        Ok(tokens) => tokens.into(),
-        Err(error) => error.to_compile_error().into(),
-    }
-}
-
-pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
+pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let fields = named_fields(input, "MultipartForm")?;
     refusals::check(input, fields)?;
     let names = property_names(input, fields);

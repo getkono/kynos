@@ -47,23 +47,14 @@
 mod args;
 mod flow;
 
-use proc_macro::TokenStream;
 use quote::quote;
-use syn::{DeriveInput, Ident, LitStr, Type, parse_macro_input, parse_quote};
+use syn::{DeriveInput, Ident, LitStr, Type, parse_quote};
 
 use crate::derive::common::{doc_string, optional, unit_struct};
 use args::{Carrier, Nested, SchemeArgs, parse_args};
 use flow::{build_flow, flow_named};
 
-pub(crate) fn expand(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as DeriveInput);
-    match expand_inner(&input) {
-        Ok(tokens) => tokens.into(),
-        Err(error) => error.to_compile_error().into(),
-    }
-}
-
-pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     // A scheme is a marker; the credential type carries the data.
     unit_struct(input, "SecurityScheme", "names a way of authenticating")?;
 

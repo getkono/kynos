@@ -16,9 +16,8 @@
 //! outside the grammar, and a member written twice, are refused for the same
 //! reason.
 
-use proc_macro::TokenStream;
 use quote::quote;
-use syn::{DeriveInput, LitStr, Type, parse_macro_input, spanned::Spanned};
+use syn::{DeriveInput, LitStr, Type, spanned::Spanned};
 
 use crate::derive::{
     attribute::key_name,
@@ -35,15 +34,7 @@ struct TagArgs {
     kind: Option<LitStr>,
 }
 
-pub(crate) fn expand(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as DeriveInput);
-    match expand_inner(&input) {
-        Ok(tokens) => tokens.into(),
-        Err(error) => error.to_compile_error().into(),
-    }
-}
-
-pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     unit_struct(input, "Tag", "names a group of operations")?;
 
     let name = &input.ident;

@@ -1,21 +1,12 @@
 //! `#[derive(PathParams)]`.
 
-use proc_macro::TokenStream;
 use quote::quote;
-use syn::{DeriveInput, parse_macro_input, spanned::Spanned};
+use syn::{DeriveInput, spanned::Spanned};
 
 use crate::derive::{
     common::{NameCase, named_fields, names_const, reject_duplicate_names, wire_names},
     params::{Param, check_field, construct, decode_field, parameters_body, path_encode_body},
 };
-
-pub(crate) fn expand(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as DeriveInput);
-    match expand_inner(&input) {
-        Ok(tokens) => tokens.into(),
-        Err(error) => error.to_compile_error().into(),
-    }
-}
 
 /// A path variable is always captured, and an absent one would render as an
 /// empty segment no route matches, so a path parameter cannot be optional.
@@ -30,7 +21,7 @@ fn reject_optional(params: &[Param<'_>]) -> syn::Result<()> {
     }
 }
 
-pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = named_fields(input, "PathParams")?;
     let names = wire_names(input, fields, "param")?;
     reject_duplicate_names(fields, &names, "path parameter", NameCase::Sensitive)?;

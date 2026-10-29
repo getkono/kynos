@@ -7,24 +7,15 @@
 //! `Schema` derive's refusals run first, so the names it would refuse never
 //! reach a decoder.
 
-use proc_macro::TokenStream;
 use quote::quote;
-use syn::{Data, DeriveInput, Fields, LitStr, parse_macro_input, spanned::Spanned};
+use syn::{Data, DeriveInput, Fields, LitStr, spanned::Spanned};
 
 use crate::derive::schema::{
     attributes::{serde_key_span, variant_wire_names},
     refusals,
 };
 
-pub(crate) fn expand(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as DeriveInput);
-    match expand_inner(&input) {
-        Ok(tokens) => tokens.into(),
-        Err(error) => error.to_compile_error().into(),
-    }
-}
-
-pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let data = match &input.data {
         Data::Enum(data) => data,
         Data::Struct(_) | Data::Union(_) => {
