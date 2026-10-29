@@ -63,7 +63,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
 
     nothing_on_the_enum(&input.attrs)?;
 
-    let mut seen: Vec<(u16, Span)> = Vec::new();
+    let mut seen: Vec<u16> = Vec::new();
     let mut declared: Vec<TokenStream2> = Vec::new();
     let mut written: Vec<TokenStream2> = Vec::new();
     let mut holds_a_response = false;
@@ -83,7 +83,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         };
 
         // Unlike an `ApiError`, a reply's variants are keyed by status alone.
-        if seen.iter().any(|(earlier, _)| *earlier == status) {
+        if seen.contains(&status) {
             return Err(syn::Error::new(
                 span,
                 format!(
@@ -93,7 +93,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
                 ),
             ));
         }
-        seen.push((status, span));
+        seen.push(status);
 
         // A body at a status without content would be described and written
         // anyway, so the variant answering with one is refused instead.
