@@ -90,21 +90,35 @@ pub(crate) fn unquoted_split(text: &str, delimiter: u8) -> impl Iterator<Item = 
 /// Header names are case-insensitive per RFC 9110 section 5.1.
 #[must_use]
 pub(crate) const fn header_name_eq(left: &str, right: &str) -> bool {
-    let (left, right) = (left.as_bytes(), right.as_bytes());
+    eq_ignore_ascii_case(left.as_bytes(), right.as_bytes())
+}
 
+/// Byte-wise ASCII case-insensitive equality, usable in a constant.
+pub(crate) const fn eq_ignore_ascii_case(left: &[u8], right: &[u8]) -> bool {
     if left.len() != right.len() {
         return false;
     }
-
-    let mut index = 0;
-    while index < left.len() {
-        if !left[index].eq_ignore_ascii_case(&right[index]) {
+    let mut at = 0;
+    while at < left.len() {
+        if !left[at].eq_ignore_ascii_case(&right[at]) {
             return false;
         }
-        index += 1;
+        at += 1;
     }
-
     true
+}
+
+/// The bytes before the first `byte`, and those after it.
+pub(crate) const fn split_at_byte(bytes: &[u8], byte: u8) -> (&[u8], &[u8]) {
+    let mut end = 0;
+    while end < bytes.len() && bytes[end] != byte {
+        end += 1;
+    }
+    let (before, after) = bytes.split_at(end);
+    match after {
+        [_, rest @ ..] => (before, rest),
+        [] => (before, after),
+    }
 }
 
 /// The request's own authority, from the target or from `Host`.

@@ -4,7 +4,10 @@
 //! the implementations, one per codec pair, in private submodules: `encoded`
 //! for an application's codec beside every body, `pairs` for the rest.
 
-use crate::extract::describe::RequestContent;
+use crate::{
+    extract::describe::RequestContent,
+    http::{eq_ignore_ascii_case, media::split_essence},
+};
 
 mod encoded;
 mod pairs;
@@ -185,38 +188,4 @@ pub(crate) const fn shares_requests(marker: &str, body: &str) -> bool {
         split_essence(marker.as_bytes()).0,
         split_essence(body.as_bytes()).0,
     )
-}
-
-/// A media type's trimmed type and subtype, and the parameters after them.
-pub(crate) const fn split_essence(media_type: &[u8]) -> (&[u8], &[u8]) {
-    let (essence, parameters) = split_at_byte(media_type, b';');
-    (essence.trim_ascii(), parameters)
-}
-
-/// The bytes before the first `byte`, and those after it.
-pub(crate) const fn split_at_byte(bytes: &[u8], byte: u8) -> (&[u8], &[u8]) {
-    let mut end = 0;
-    while end < bytes.len() && bytes[end] != byte {
-        end += 1;
-    }
-    let (before, after) = bytes.split_at(end);
-    match after {
-        [_, rest @ ..] => (before, rest),
-        [] => (before, after),
-    }
-}
-
-/// Byte-wise ASCII case-insensitive equality, usable in a constant.
-pub(crate) const fn eq_ignore_ascii_case(left: &[u8], right: &[u8]) -> bool {
-    if left.len() != right.len() {
-        return false;
-    }
-    let mut at = 0;
-    while at < left.len() {
-        if !left[at].eq_ignore_ascii_case(&right[at]) {
-            return false;
-        }
-        at += 1;
-    }
-    true
 }
