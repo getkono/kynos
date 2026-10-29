@@ -49,10 +49,16 @@ impl Validator {
     }
 
     /// Collects every violation in `document`, most structural first.
+    ///
+    /// [`SpecError::InvalidExtensionName`] errors and warnings are each ordered
+    /// by the location of the object holding the name, compared as text, and
+    /// within one object in the order its names were written.
     #[must_use]
     pub fn validate(&self, document: &Document) -> Vec<Violation> {
         let mut violations = Vec::new();
-        let found = crate::emit::downgrade::unrecognised::walk(document);
+        let mut found = crate::emit::downgrade::unrecognised::walk(document);
+        // Stable, so the names one object holds keep their written order.
+        found.reserved.sort_by(|a, b| a.holder.cmp(&b.holder));
 
         // Validating as 3.1 refuses what 3.1 cannot express by the same walk
         // `Document::emit` refuses on, so validating and emitting agree. A
@@ -61,6 +67,7 @@ impl Validator {
         // Validating as 3.2 refuses the walk's unrecognised fields alone, since
         // both versions require an extension's name to begin with `x-`.
         if self.version.supports_3_2() {
+            found.fields.sort_by(|a, b| a.holder.cmp(&b.holder));
             for field in found.fields {
                 violations.push(Violation::error(
                     field.holder,
