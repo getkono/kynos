@@ -6,38 +6,50 @@ use std::sync::Arc;
 use kynos_openapi::{Method, PathTemplate, model::body::mime_names};
 
 use crate::{
-    http::{HeaderMap, HeaderValue, Request, Response, body::Body, header},
+    http::{
+        HeaderMap, HeaderValue, Request, Response,
+        body::Body,
+        header,
+        media::{Html, MediaType},
+    },
     response::codec::{unconstrained, with_content_type},
     router::{docs::State, endpoint::Endpoint, operation::OperationCx},
 };
 
-/// HTML with an explicit charset, as [`media::Html`](crate::http::media::Html)
-/// sends.
-const HTML: &str = "text/html; charset=utf-8";
+/// HTML with an explicit charset, as [`Html`] sends.
+const HTML: &str = <Html as MediaType>::MEDIA_TYPE;
 
 /// From the ungated `mime_names`, so a reference does not require the `json`
 /// feature.
 const JSON: &str = mime_names::APPLICATION_JSON;
 
-/// The page a human opens.
+/// Which of a reference's two operations an endpoint is.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Half {
+    /// The page a human opens.
+    Page,
+    /// The description that page fetches.
+    Description,
+}
+
+/// One of the two operations a reference mounts.
 #[derive(Debug)]
-pub(super) struct DocsPage {
+pub(super) struct DocsEndpoint {
+    half: Half,
     template: PathTemplate,
     operation_id: String,
     state: Arc<State>,
 }
 
-/// The description that page fetches.
-#[derive(Debug)]
-pub(super) struct DocsDescription {
-    template: PathTemplate,
-    operation_id: String,
-    state: Arc<State>,
-}
-
-impl DocsPage {
-    pub(super) fn new(template: PathTemplate, operation_id: String, state: Arc<State>) -> Self {
+impl DocsEndpoint {
+    pub(super) fn new(
+        half: Half,
+        template: PathTemplate,
+        operation_id: String,
+        state: Arc<State>,
+    ) -> Self {
         Self {
+            half,
             template,
             operation_id,
             state,
@@ -45,17 +57,7 @@ impl DocsPage {
     }
 }
 
-impl DocsDescription {
-    pub(super) fn new(template: PathTemplate, operation_id: String, state: Arc<State>) -> Self {
-        Self {
-            template,
-            operation_id,
-            state,
-        }
-    }
-}
-
-impl<C: Send + Sync + 'static> Endpoint<C> for DocsPage {
+impl<C: Send + Sync + 'static> Endpoint<C> for DocsEndpoint {
     fn method(&self) -> Method {
         Method::Get
     }
@@ -66,68 +68,50 @@ impl<C: Send + Sync + 'static> Endpoint<C> for DocsPage {
 
     fn describe(&self, operation: &mut OperationCx<'_>) {
         operation.set_operation_id(&self.operation_id);
-        operation.set_summary("Serves the API reference");
-        operation.set_description(
-            "The page a human opens. It fetches this API's own description and renders it in \
-             the browser, so this operation sends the page and nothing else.",
-        );
 
-        operation.add_responses(&kynos_openapi::Responses::new().with(
-            200,
-            kynos_openapi::Response::with_content(
-                "the reference page",
-                HTML,
-                // Unconstrained, as every non-JSON payload is described.
-                unconstrained(),
-            ),
-        ));
+        // Each payload is unconstrained: the page as every non-JSON payload is
+        // described, and the description because the OpenAPI meta-schema is
+        // deliberately not modelled.
+        let response = match self.half {
+            Half::Page => {
+                operation.set_summary("Serves the API reference");
+                operation.set_description(
+                    "The page a human opens. It fetches this API's own description and renders \
+                     it in the browser, so this operation sends the page and nothing else.",
+                );
+                kynos_openapi::Response::with_content("the reference page", HTML, unconstrained())
+            }
+            Half::Description => {
+                operation.set_summary("Serves this API's own description");
+                operation.set_description(
+                    "The document `Router::openapi` produces, byte for byte. It includes this \
+                     operation, which is why it is serialized once the router is built rather \
+                     than on the way past.",
+                );
+                kynos_openapi::Response::with_content(
+                    "the OpenAPI description",
+                    JSON,
+                    unconstrained(),
+                )
+            }
+        };
+
+        operation.add_responses(&kynos_openapi::Responses::new().with(200, response));
     }
 
     async fn call(&self, request: Request, context: &C) -> Response {
         // Nothing reads the request, so no parameter is declared.
         let _ = (request, context);
-        let mut response = answer(self.state.page(), HTML);
-
-        if let Some(policy) = self.state.policy() {
-            secure(response.headers_mut(), policy);
+        match self.half {
+            Half::Page => {
+                let mut response = answer(self.state.page(), HTML);
+                if let Some(policy) = self.state.policy() {
+                    secure(response.headers_mut(), policy);
+                }
+                response
+            }
+            Half::Description => answer(self.state.description(), JSON),
         }
-
-        response
-    }
-}
-
-impl<C: Send + Sync + 'static> Endpoint<C> for DocsDescription {
-    fn method(&self) -> Method {
-        Method::Get
-    }
-
-    fn path(&self) -> &PathTemplate {
-        &self.template
-    }
-
-    fn describe(&self, operation: &mut OperationCx<'_>) {
-        operation.set_operation_id(&self.operation_id);
-        operation.set_summary("Serves this API's own description");
-        operation.set_description(
-            "The document `Router::openapi` produces, byte for byte. It includes this \
-             operation, which is why it is serialized once the router is built rather than \
-             on the way past.",
-        );
-
-        operation.add_responses(&kynos_openapi::Responses::new().with(
-            200,
-            kynos_openapi::Response::with_content(
-                "the OpenAPI description",
-                JSON,
-                // Unconstrained: the OpenAPI meta-schema is deliberately not modelled.
-                unconstrained(),
-            ),
-        ));
-    }
-
-    async fn call(&self, request: Request, context: &C) -> Response {
-        let _ = (request, context);
-        answer(self.state.description(), JSON)
     }
 }
 
