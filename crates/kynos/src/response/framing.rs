@@ -168,7 +168,7 @@ fn close(boundary: &str, sink: &mut impl Sink) {
 ///
 /// Dropped rather than escaped, so a value cannot inject a header. The
 /// oracle [`put_unfolded`] is tested against.
-#[cfg(test)]
+#[cfg(all(test, feature = "multipart"))]
 pub(crate) fn unfolded(value: &str) -> String {
     value.replace(['\r', '\n'], "")
 }
