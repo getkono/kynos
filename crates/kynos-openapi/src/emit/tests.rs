@@ -1707,7 +1707,7 @@ mod serialized_schema {
     use crate::{emit::downgrade::three_two_only_constructs, model::document::Document};
 
     /// A document whose one component schema is `schema`.
-    fn with_schema(schema: Value) -> Document {
+    fn with_schema(schema: &Value) -> Document {
         serde_json::from_value(json!({
             "openapi": "3.1.2",
             "info": {"title": "Orders", "version": "1.0.0"},
@@ -1786,7 +1786,7 @@ mod serialized_schema {
                 .map(|pointer| format!("#/components/schemas/S/{pointer}"))
                 .collect();
             assert_eq!(
-                three_two_only_constructs(&with_schema(schema.clone())),
+                three_two_only_constructs(&with_schema(&schema)),
                 expected,
                 "{schema}"
             );
@@ -1806,7 +1806,7 @@ mod serialized_schema {
             "x-vendor": {"nodeType": "element"}
         });
         assert_eq!(
-            three_two_only_constructs(&with_schema(schema)),
+            three_two_only_constructs(&with_schema(&schema)),
             Vec::<String>::new()
         );
     }
