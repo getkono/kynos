@@ -19,12 +19,12 @@ use std::collections::BTreeSet;
 #[cfg(feature = "openapi32")]
 use kynos_openapi::XmlNodeType;
 use kynos_openapi::{
-    Callback, ComponentName, Components, Contact, Discriminator, Document, Encoding, EncodingStyle,
-    Example, Extensions, ExternalDocumentation, Header, HeaderStyle, Info, License, Link, Map,
-    MediaType, Method, OAuthFlow, OAuthFlows, Operation, Parameter, ParameterIn, ParameterShape,
-    PathItem, PathTemplate, Paths, Ref, RefOr, RequestBody, Response, Responses, Schema,
-    SchemaObject, SecurityRequirement, SecurityScheme, Server, ServerVariable, SpecVersion, Style,
-    Tag, Xml, XmlNode,
+    ApiKeyLocation, Callback, ComponentName, Components, Contact, Discriminator, Document,
+    Encoding, EncodingStyle, Example, Extensions, ExternalDocumentation, Header, HeaderStyle, Info,
+    License, Link, Map, MediaType, Method, OAuthFlow, OAuthFlows, Operation, Parameter,
+    ParameterIn, ParameterShape, PathItem, PathTemplate, Paths, Ref, RefOr, RequestBody, Response,
+    Responses, Schema, SchemaObject, SecurityRequirement, SecurityScheme, Server, ServerVariable,
+    SpecVersion, Style, Tag, Xml, XmlNode,
     model::schema::types::{SchemaType, TypeSet},
 };
 use serde::Serialize;
@@ -389,6 +389,7 @@ fn security_cases() -> Vec<Case> {
             &SecurityScheme::api_key_header("X-Api-Key"),
             json!({ "type": "apiKey", "name": "X-Api-Key", "in": "header" }),
         ),
+        case("ApiKeyLocation", &ApiKeyLocation::Cookie, json!("cookie")),
         case(
             "SecurityRequirement",
             &SecurityRequirement::scoped("OAuth", ["read:orders"]),

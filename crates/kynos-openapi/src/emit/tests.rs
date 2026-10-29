@@ -795,7 +795,7 @@ mod blockers {
                 (
                     with_security_scheme(SecurityScheme::ApiKey {
                         name: "X-Api-Key".to_owned(),
-                        location: ParameterIn::Header,
+                        location: crate::model::security::ApiKeyLocation::Header,
                         description: None,
                         deprecated: Some(true),
                         extensions: crate::model::extensions::Extensions::new(),

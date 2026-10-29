@@ -6,7 +6,7 @@ pub mod requirement;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::model::{extensions::Extensions, parameter::ParameterIn, security::oauth::OAuthFlows};
+use crate::model::{extensions::Extensions, security::oauth::OAuthFlows};
 
 /// A security scheme the API can use.
 ///
@@ -62,9 +62,9 @@ pub enum SecurityScheme {
     ApiKey {
         /// The name of the header, query parameter or cookie.
         name: String,
-        /// Where the key is carried. Only query, header and cookie are legal.
+        /// Where the key is carried.
         #[serde(rename = "in")]
-        location: ParameterIn,
+        location: ApiKeyLocation,
         /// A description of the scheme. [CommonMark] syntax may be used.
         ///
         /// [CommonMark]: https://spec.commonmark.org/
@@ -181,6 +181,22 @@ pub enum SecurityScheme {
     },
 }
 
+/// Where an `apiKey` scheme's key is carried.
+///
+/// A [`ParameterIn`](crate::model::parameter::ParameterIn) narrowed to the locations the specification leaves legal
+/// for a key in either version; a description naming `path` or `querystring`
+/// does not parse.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ApiKeyLocation {
+    /// A query parameter.
+    Query,
+    /// A request header.
+    Header,
+    /// A cookie.
+    Cookie,
+}
+
 impl SecurityScheme {
     /// An HTTP authentication scheme, named by its RFC 7235 scheme token.
     ///
@@ -211,21 +227,21 @@ impl SecurityScheme {
 
     /// An API key carried in a header.
     pub fn api_key_header(name: impl Into<String>) -> Self {
-        Self::api_key(name.into(), ParameterIn::Header)
+        Self::api_key(name.into(), ApiKeyLocation::Header)
     }
 
     /// An API key carried in a query parameter.
     pub fn api_key_query(name: impl Into<String>) -> Self {
-        Self::api_key(name.into(), ParameterIn::Query)
+        Self::api_key(name.into(), ApiKeyLocation::Query)
     }
 
     /// An API key carried in a cookie.
     pub fn api_key_cookie(name: impl Into<String>) -> Self {
-        Self::api_key(name.into(), ParameterIn::Cookie)
+        Self::api_key(name.into(), ApiKeyLocation::Cookie)
     }
 
     /// An API key carried at `location`.
-    fn api_key(name: String, location: ParameterIn) -> Self {
+    fn api_key(name: String, location: ApiKeyLocation) -> Self {
         Self::ApiKey {
             name,
             location,
