@@ -36,12 +36,6 @@ concurrency:
     && github.ref || github.run_id }}
   cancel-in-progress: true
 
-env:
-  CARGO_TERM_COLOR: always
-  # No working tree persists across edits, so incremental is dead weight.
-  CARGO_INCREMENTAL: 0
-  NEXTEST_PROFILE: ci
-
 jobs:
   # The one place that decides whether the tier runs.
   gate:

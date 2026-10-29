@@ -15,12 +15,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  CARGO_TERM_COLOR: always
-  # No working tree persists across edits, so incremental is dead weight.
-  CARGO_INCREMENTAL: 0
-  NEXTEST_PROFILE: ci
-
 # What every pull request waits on, kept narrow. `full.yml` runs the rest of
 # `mise run check` and the slower checks; between the two, each task runs in
 # exactly one job.
