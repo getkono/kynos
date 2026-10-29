@@ -32,7 +32,8 @@ use crate::{
         codec::{unconstrained, with_content_type},
         framing,
         range::{
-            Range, Ranged, Selection, advertised, applicable, cut,
+            Range, Ranged, Selection, applicable, cut,
+            delivery::advertised,
             headers::{AcceptRanges, ContentRange},
             rangeable::{Rangeable, clamped},
             spec::{self, Spec},
