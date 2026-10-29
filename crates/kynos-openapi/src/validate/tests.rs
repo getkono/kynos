@@ -425,6 +425,54 @@ fn an_unreadable_response_key_is_refused_at_its_key() {
     }
 }
 
+/// Every rule under a refused response key locates it as `InvalidResponseKey`
+/// does: escaped, per RFC 6901, so `2/0` is one token rather than two.
+#[test]
+fn a_refused_response_key_is_escaped_in_every_pointer_under_it() {
+    use crate::model::link::Link;
+
+    let mut responses = ok_responses();
+    responses.responses.insert(
+        "2/0".to_owned(),
+        crate::RefOr::Item(
+            response_with_ignored_header().with_link("next", Link::to_operation("missing")),
+        ),
+    );
+    let document = document_with(&[(
+        "/a",
+        PathItem::new().with_operation(
+            Method::Get,
+            Operation::new("listUsers").with_responses(responses),
+        ),
+    )]);
+
+    let mut found = located_errors(&document);
+    found.sort_by(|left, right| left.0.cmp(&right.0));
+    assert_eq!(
+        found,
+        vec![
+            (
+                "#/paths/~1a/get/responses/2~10".to_owned(),
+                SpecError::InvalidResponseKey {
+                    key: "2/0".to_owned()
+                },
+            ),
+            (
+                "#/paths/~1a/get/responses/2~10/headers".to_owned(),
+                SpecError::IgnoredHeader {
+                    name: "Content-Type".to_owned()
+                },
+            ),
+            (
+                "#/paths/~1a/get/responses/2~10/links/next".to_owned(),
+                SpecError::UnknownLinkOperationId {
+                    operation_id: "missing".to_owned()
+                },
+            ),
+        ]
+    );
+}
+
 /// An operation with no responses is reported wherever it is written.
 ///
 /// The companion to the case above, and a different rule on purpose: it shows
