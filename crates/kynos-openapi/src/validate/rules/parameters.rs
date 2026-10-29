@@ -13,9 +13,8 @@ use crate::{
         },
         reference::RefOr,
     },
-    pointer::pointer_token,
     validate::{
-        rules::{extensions::check_extensions, literal_component_name},
+        rules::literal_component_name,
         violation::{SpecError, Violation},
     },
 };
@@ -154,8 +153,6 @@ pub(in crate::validate) fn check_parameter(
             ));
         }
     }
-
-    check_extensions(location, &parameter.extensions, violations);
 }
 
 /// Checks the two rules 3.2 states for `in: querystring` that compare
@@ -245,20 +242,12 @@ pub(in crate::validate) fn check_header_map(
     headers: &Map<RefOr<Header>>,
     violations: &mut Vec<Violation>,
 ) {
-    for (name, header) in headers {
+    for name in headers.keys() {
         if is_ignored_header(name) {
             violations.push(Violation::error(
                 location,
                 SpecError::IgnoredHeader { name: name.clone() },
             ));
-        }
-
-        if let Some(header) = header.as_item() {
-            check_extensions(
-                &format!("{location}/{}", pointer_token(name)),
-                &header.extensions,
-                violations,
-            );
         }
     }
 }

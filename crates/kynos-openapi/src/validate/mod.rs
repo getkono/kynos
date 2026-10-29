@@ -52,6 +52,7 @@ impl Validator {
     #[must_use]
     pub fn validate(&self, document: &Document) -> Vec<Violation> {
         let mut violations = Vec::new();
+        let found = crate::emit::downgrade::unrecognised::walk(document);
 
         // Validating as 3.1 refuses what 3.1 cannot express by the same walk
         // `Document::emit` refuses on, so validating and emitting agree. A
@@ -60,7 +61,7 @@ impl Validator {
         // Validating as 3.2 refuses the walk's unrecognised fields alone, since
         // both versions require an extension's name to begin with `x-`.
         if self.version.supports_3_2() {
-            for field in crate::emit::downgrade::unrecognised::walk(document).fields {
+            for field in found.fields {
                 violations.push(Violation::error(
                     field.holder,
                     SpecError::InvalidExtensionName { name: field.name },
@@ -101,7 +102,7 @@ impl Validator {
         check_link_targets(document, &mut violations);
         check_schemas(document, self.version, &mut violations);
         check_opaque(document, &mut violations);
-        check_extensions("#", &document.extensions, &mut violations);
+        check_extensions(found.reserved, &mut violations);
 
         violations
     }
