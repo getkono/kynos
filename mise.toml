@@ -418,14 +418,16 @@ flag "--advisory" help="Pass on a break; still fail when there is no verdict"
 '''
 run = '''
 set -eu
+raw="$(mktemp)"
 log="$(mktemp)"
-trap 'rm -f "$log"' EXIT
+trap 'rm -f "$raw" "$log"' EXIT
 
 # The verdict decides, not the tool's own exit status.
-cargo semver-checks check-release --workspace --all-features 2>&1 | tee "$log" || true
+cargo semver-checks check-release --workspace --all-features 2>&1 | tee "$raw" || true
 
-# `CARGO_TERM_COLOR=always` puts escapes inside the verdict line.
-sed -r -i 's/\x1b\[[0-9;]*m//g' "$log"
+# `CARGO_TERM_COLOR=always` puts escapes inside the verdict line. A second
+# file rather than `sed -i`, whose argument BSD sed reads differently.
+sed -E 's/\x1b\[[0-9;]*m//g' "$raw" >"$log"
 
 if grep -q 'Summary semver requires new major version' "$log"; then
   verdict=broken
