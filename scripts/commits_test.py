@@ -23,6 +23,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -85,26 +86,22 @@ def hermetic_environment():
     }
 
 
-# The one place this suite reads a declaration out of another file. It is safe
-# for a reason that does not generalise, so it is written down: both patterns
-# anchor to the start of a line where they require `[` or `r`, so a commented-out
-# `#[tasks."commits:message"]` or `# run = '''` cannot match, and the body they
-# capture is shell in which a `#` line means the same to mise and to the fixture.
 def declared_merge_guard():
     """The shell body `mise.toml` declares for `[tasks."commits:message"]`.
 
     Read rather than restated, because `LinkedWorktree` runs this body where
     `mise run` cannot put it -- cwd inside the repository under test, with no
-    `GIT_DIR` exported -- and a restatement there would hold nothing.
+    `GIT_DIR` exported -- and a restatement there would hold nothing. Parsed as
+    TOML, so what is read is the value mise reads.
     """
-    text = (ROOT / "mise.toml").read_text()
-    task = re.search(r'^\[tasks\."commits:message"\]\n(.*?)^\[', text, re.DOTALL | re.MULTILINE)
+    tasks = tomllib.loads((ROOT / "mise.toml").read_text())["tasks"]
+    task = tasks.get("commits:message")
     if task is None:
         raise AssertionError("mise.toml declares no `commits:message` task")
-    body = re.search(r"^run = '''\n(.*?)^'''", task.group(1), re.DOTALL | re.MULTILINE)
-    if body is None:
-        raise AssertionError("`commits:message` declares no multi-line `run` body")
-    return body.group(1)
+    body = task.get("run")
+    if not isinstance(body, str):
+        raise AssertionError("`commits:message` declares no single `run` body")
+    return body
 
 
 def convco_on_path():

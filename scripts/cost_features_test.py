@@ -46,6 +46,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from collections import namedtuple
 from pathlib import Path
@@ -1137,6 +1138,11 @@ class Main(unittest.TestCase):
         self.assertNotIn("no baseline recorded", ran.said)
 
 
+def task_run(name):
+    """The `run` body `mise.toml` declares for task `name`, as mise parses it."""
+    return tomllib.loads((cost.ROOT / "mise.toml").read_text())["tasks"][name]["run"]
+
+
 class Exclusions(unittest.TestCase):
     """One feature-exclusion set, written down in three places.
 
@@ -1154,11 +1160,9 @@ class Exclusions(unittest.TestCase):
 
     def excluded_by(self, task):
         """Every `--exclude-features` list `mise.toml`'s `task` spells."""
-        text = (cost.ROOT / "mise.toml").read_text()
-        body = text.split(f'[tasks."{task}"]', 1)[1].split("\n[tasks.", 1)[0]
         return [
             frozenset(names.split(","))
-            for names in re.findall(r"--exclude-features ([\w,-]+)", body)
+            for names in re.findall(r"--exclude-features ([\w,-]+)", task_run(task))
         ]
 
     def test_the_sweep_excludes_the_target_matrix_set_and_its_baseline(self):
@@ -1184,9 +1188,7 @@ class Codecs(unittest.TestCase):
 
     def linted_sets(self):
         """The feature sets `mise.toml`'s `lint:codecs` builds every target at."""
-        text = (cost.ROOT / "mise.toml").read_text()
-        body = text.split('[tasks."lint:codecs"]', 1)[1].split("\n[tasks.", 1)[0]
-        return set(re.findall(r"openapi31,macros(?:,[\w-]+)?", body))
+        return set(re.findall(r"openapi31,macros(?:,[\w-]+)?", task_run("lint:codecs")))
 
     def test_the_swept_sets_are_the_sets_lint_codecs_builds(self):
         swept = {flags[-1] for _, flags in cost.codec_points()}
