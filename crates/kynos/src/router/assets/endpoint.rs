@@ -157,46 +157,30 @@ impl AssetEndpoint {
     /// The response fields each status carries, declared only where they can
     /// be sent.
     fn declare_response_headers(&self, operation: &mut OperationCx<'_>) {
-        for (status, name, description) in [
-            (200, "ETag", "The entity tag of this representation"),
-            (206, "ETag", "The entity tag of this representation"),
-            (304, "ETag", "The entity tag of this representation"),
+        let fields: [(&str, &str, &[u16]); 4] = [
             (
-                200,
+                "ETag",
+                "The entity tag of this representation",
+                &[200, 206, 304],
+            ),
+            (
                 "Cache-Control",
                 "How long this representation may be reused",
+                &[200, 206],
             ),
             (
-                206,
-                "Cache-Control",
-                "How long this representation may be reused",
-            ),
-            (
-                200,
                 "Content-Encoding",
                 "The coding the stored representation is in, absent for identity",
+                &[200, 206],
             ),
             (
-                206,
-                "Content-Encoding",
-                "The coding the stored representation is in, absent for identity",
-            ),
-            (
-                200,
                 "Vary",
                 "Names Accept-Encoding, since this file has a stored content coding",
+                &[200, 206, 304],
             ),
-            (
-                206,
-                "Vary",
-                "Names Accept-Encoding, since this file has a stored content coding",
-            ),
-            (
-                304,
-                "Vary",
-                "Names Accept-Encoding, since this file has a stored content coding",
-            ),
-        ] {
+        ];
+
+        for (name, description, statuses) in fields {
             if name == "Cache-Control" && self.cache_control.is_none() {
                 continue;
             }
@@ -206,14 +190,16 @@ impl AssetEndpoint {
                 continue;
             }
 
-            operation.add_response_header(
-                kynos_openapi::StatusPattern::Code(status),
-                name,
-                &kynos_openapi::Header::new(kynos_openapi::Schema::of_type(
-                    kynos_openapi::model::schema::types::SchemaType::String,
-                ))
-                .with_description(description),
-            );
+            for &status in statuses {
+                operation.add_response_header(
+                    kynos_openapi::StatusPattern::Code(status),
+                    name,
+                    &kynos_openapi::Header::new(kynos_openapi::Schema::of_type(
+                        kynos_openapi::model::schema::types::SchemaType::String,
+                    ))
+                    .with_description(description),
+                );
+            }
         }
     }
 }
