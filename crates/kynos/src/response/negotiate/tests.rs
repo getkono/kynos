@@ -15,6 +15,40 @@ use crate::{
     schema::registry::Registry,
 };
 
+/// An offer type deriving nothing, as an application's own body type does.
+struct Bare;
+
+/// Compiles only where `T: Eq`, which `assert_eq!` alone does not require.
+fn is_eq<T: Eq>() {}
+
+/// The offer sits only in a `PhantomData`, so `Accept` and `Negotiated` are
+/// bounded on what they hold and print that, leaving the offer out.
+#[test]
+fn an_offer_deriving_nothing_leaves_accept_and_negotiated_their_traits() {
+    let accept = Accept::<Bare>::parse("text/plain;q=0.5").expect("valid Accept header");
+    assert_eq!(accept.clone(), accept);
+    assert_ne!(
+        accept,
+        Accept::<Bare>::parse("text/html").expect("valid Accept header")
+    );
+    assert_eq!(
+        format!("{accept:?}"),
+        r#"Accept { preferences: [Preference { type_: "text", subtype: "plain", quality: 500, order: 0 }], .. }"#
+    );
+    is_eq::<Accept<Bare>>();
+
+    let negotiated = super::Negotiated::<Bare> {
+        response: crate::http::Response::default(),
+        offer: std::marker::PhantomData,
+    };
+    let printed = format!("{negotiated:?}");
+    assert!(
+        printed.starts_with("Negotiated { response: Response { status: 200,"),
+        "{printed}"
+    );
+    assert!(printed.ends_with(", .. }"), "{printed}");
+}
+
 #[test]
 fn accept_prefers_quality_then_specificity() {
     let accepted = Accept::<(Text, Binary<Pdf>)>::parse("text/*;q=0.5, application/pdf;q=0.9")

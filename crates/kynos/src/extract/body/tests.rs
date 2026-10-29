@@ -47,6 +47,53 @@ fn a_raw_binary_body_states_no_type_and_repeats_no_media_type() {
     assert_eq!(schema.content_encoding, None, "these bytes are not encoded");
 }
 
+/// A media type marker written as the docs write it, deriving nothing.
+struct Bare;
+
+/// Compiles only where `T: Eq`, which `assert_eq!` alone does not require.
+fn is_eq<T: Eq>() {}
+
+/// The marker sits only in a `PhantomData`, so no trait the bodies carry may be
+/// bounded on it: each holds over `Bare`, and compares the content alone.
+#[test]
+fn a_marker_deriving_nothing_leaves_binary_and_text_as_their_traits() {
+    use crate::extract::body::text_as::TextAs;
+
+    let bytes = Binary::<Bare>::new(&b"ab"[..]);
+    assert_eq!(bytes.clone(), bytes);
+    assert_ne!(bytes, Binary::<Bare>::new(&b"ba"[..]));
+    assert_eq!(Binary::<Bare>::default(), Binary::<Bare>::new(&b""[..]));
+    assert_eq!(format!("{bytes:?}"), r#"Binary { bytes: b"ab", .. }"#);
+    is_eq::<Binary<Bare>>();
+
+    let text = TextAs::<Bare>::new("a");
+    assert_eq!(text.clone(), text);
+    assert_ne!(text, TextAs::<Bare>::new("b"));
+    assert_eq!(TextAs::<Bare>::default(), TextAs::<Bare>::new(""));
+    assert_eq!(format!("{text:?}"), r#"TextAs { text: "a", .. }"#);
+    assert!(text < TextAs::<Bare>::new("b"));
+    assert_eq!(
+        text.partial_cmp(&TextAs::<Bare>::new("b")),
+        Some(std::cmp::Ordering::Less)
+    );
+    let set: std::collections::HashSet<_> = [text.clone(), text, TextAs::<Bare>::new("b")].into();
+    assert_eq!(set.len(), 2, "equal texts hash alike");
+}
+
+/// `JsonAs` holds each trait wherever its value does, whatever the marker.
+#[cfg(feature = "json")]
+#[test]
+fn a_marker_deriving_nothing_leaves_json_as_its_traits() {
+    use crate::extract::body::json_as::JsonAs;
+
+    let document = JsonAs::<Bare, u64>::new(7);
+    assert_eq!(document.clone(), document);
+    assert_ne!(document, JsonAs::<Bare, u64>::new(8));
+    assert_eq!(JsonAs::<Bare, u64>::default(), JsonAs::<Bare, u64>::new(0));
+    assert_eq!(format!("{document:?}"), "JsonAs { value: 7, .. }");
+    is_eq::<JsonAs<Bare, u64>>();
+}
+
 /// The media type reaches the description from the marker, so two markers
 /// produce two different keys from one type.
 #[test]

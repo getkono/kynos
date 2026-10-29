@@ -1182,3 +1182,53 @@ async fn body(response: Response) -> Bytes {
         .expect("a readable body")
         .to_bytes()
 }
+
+/// A media type marker deriving nothing beyond the one trait `Served` requires.
+struct Bare;
+
+impl crate::http::media::MediaType for Bare {
+    const MEDIA_TYPE: &'static str = "application/octet-stream";
+}
+
+/// The marker sits only in a `PhantomData`, so `Debug` on `Served` and
+/// `Delivery` is bounded on what they hold and prints that, leaving the marker
+/// out.
+#[tokio::test]
+async fn a_marker_deriving_nothing_leaves_served_and_delivery_debug() {
+    let served = Served::<_, Bare>::new(InMemory::new(Bytes::from_static(b"01")));
+    assert_eq!(
+        format!("{served:?}"),
+        r#"Served { source: InMemory(b"01"), etag: None, last_modified: None, cache_control: None, disposition: None, .. }"#
+    );
+
+    let conditions = Conditions {
+        method: Method::GET,
+        fields: HeaderMap::new(),
+    };
+    let delivery = served
+        .deliver(&conditions)
+        .await
+        .expect("an in-memory source cannot fail");
+    let printed = format!("{delivery:?}");
+    assert!(
+        printed.starts_with("Delivery { response: Response { status: 200,"),
+        "{printed}"
+    );
+    assert!(printed.ends_with(", .. }"), "{printed}");
+}
+
+/// The representation sits only in a `PhantomData`, so `Range` is bounded on
+/// nothing and prints the `range-set` alone.
+#[test]
+fn a_representation_deriving_nothing_leaves_range_its_traits() {
+    fn is_eq<T: Eq>() {}
+
+    let range = Range::<Bare>::parse("bytes=0-1");
+    assert_eq!(range.clone(), range);
+    assert_ne!(range, Range::<Bare>::parse("bytes=1-2"));
+    assert_eq!(
+        format!("{range:?}"),
+        "Range { requested: Ok([Offsets { first: 0, last: Some(1) }]), .. }"
+    );
+    is_eq::<Range<Bare>>();
+}

@@ -45,3 +45,33 @@ fn null_is_admitted_only_where_the_schema_visibly_says_so() {
     // Unrecognised rather than refused: an unconstrained object schema.
     assert!(!admits(json!({})));
 }
+
+/// A media type marker written as the docs write it, deriving nothing.
+struct Bare;
+
+/// The marker sits only in a `PhantomData`, so no trait may be bounded on it:
+/// each holds wherever the value's does, and compares the value alone.
+#[test]
+fn a_marker_deriving_nothing_leaves_query_string_its_traits() {
+    use std::cmp::Ordering;
+
+    use super::QueryString;
+
+    let query = QueryString::<u64, Bare>::new(7);
+    let copied = query;
+    assert_eq!(query, copied, "a `Copy` value is still usable once moved");
+    assert_eq!(query.clone(), query);
+    assert_ne!(query, QueryString::<u64, Bare>::new(8));
+    assert_eq!(
+        QueryString::<u64, Bare>::default(),
+        QueryString::<u64, Bare>::new(0)
+    );
+    assert_eq!(format!("{query:?}"), "QueryString { value: 7, .. }");
+    assert_eq!(query.cmp(&QueryString::new(8)), Ordering::Less);
+    assert_eq!(
+        query.partial_cmp(&QueryString::new(6)),
+        Some(Ordering::Greater)
+    );
+    let set: std::collections::HashSet<_> = [query, copied, QueryString::new(8)].into();
+    assert_eq!(set.len(), 2, "equal values hash alike");
+}

@@ -36,7 +36,6 @@ use crate::{
 ///     kynos::response::status::NoContent
 /// }
 /// ```
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Binary<M> {
     /// The body's bytes.
     pub bytes: bytes::Bytes,
@@ -59,6 +58,37 @@ impl<M> Binary<M> {
         self.bytes
     }
 }
+
+// By hand, so none is bounded on `M`: a media type is a marker, and a derive
+// would ask it to be `Clone` or `Debug` too.
+impl<M> Clone for Binary<M> {
+    fn clone(&self) -> Self {
+        Self::new(self.bytes.clone())
+    }
+}
+
+impl<M> std::fmt::Debug for Binary<M> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Binary")
+            .field("bytes", &self.bytes)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<M> Default for Binary<M> {
+    fn default() -> Self {
+        Self::new(bytes::Bytes::new())
+    }
+}
+
+impl<M> PartialEq for Binary<M> {
+    fn eq(&self, other: &Self) -> bool {
+        self.bytes == other.bytes
+    }
+}
+
+impl<M> Eq for Binary<M> {}
 
 impl<C: Sync, M: MediaType + Send> FromRequest<C> for Binary<M> {
     type Rejection = BodyRejection;
