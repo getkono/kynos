@@ -10,20 +10,19 @@ use syn::{
 
 use super::{
     Extension, Failure, HeaderField, Outcome, Transparent, TypeUri,
-    args::{
-        Base, Position, ProblemArgs, check_field_markers, is_extension, is_headers, parse_problem,
-    },
+    args::{Base, Markers, Position, ProblemArgs, check_field_markers, parse_problem},
 };
 use crate::doc::doc_string;
 
 /// Every way the type can fail, read from the `#[problem(...)]` declarations.
 pub(super) fn outcomes(input: &DeriveInput) -> syn::Result<Vec<Outcome>> {
-    let base = parse_problem(&input.attrs, Position::Type)?.base;
+    let args = parse_problem(&input.attrs, Position::Type)?;
+    let base = args.base.as_ref();
 
     match &input.data {
         Data::Enum(data) => {
             // A status belongs on each variant, not the enum.
-            if let Some(status) = parse_problem(&input.attrs, Position::Type)?.status {
+            if let Some(status) = args.status {
                 return Err(syn::Error::new(
                     status.1,
                     "a status belongs on each variant, because the point of an `ApiError` enum is \
@@ -34,11 +33,11 @@ pub(super) fn outcomes(input: &DeriveInput) -> syn::Result<Vec<Outcome>> {
             data.variants
                 .iter()
                 .map(|variant| {
-                    check_field_markers(&variant.fields)?;
+                    let markers = check_field_markers(&variant.fields)?;
 
                     let args = parse_problem(&variant.attrs, Position::Variant)?;
                     if let Some(span) = args.transparent {
-                        return transparent(variant, &args, span, &input.generics)
+                        return transparent(variant, &args, span, &markers, &input.generics)
                             .map(Outcome::Transparent);
                     }
 
@@ -57,10 +56,10 @@ pub(super) fn outcomes(input: &DeriveInput) -> syn::Result<Vec<Outcome>> {
 
                     Ok(Outcome::Declared(Failure {
                         path: quote!(Self::#name),
-                        extensions: extensions(&variant.fields),
-                        headers: header_field(&variant.fields)?,
+                        extensions: extensions(&variant.fields, &markers),
+                        headers: header_field(&variant.fields, &markers)?,
                         status,
-                        type_uri: type_uri(&args, base.as_ref(), &variant.ident),
+                        type_uri: type_uri(&args, base, &variant.ident),
                         title: args.title,
                         doc: doc_string(&variant.attrs),
                     }))
@@ -69,9 +68,8 @@ pub(super) fn outcomes(input: &DeriveInput) -> syn::Result<Vec<Outcome>> {
         }
 
         Data::Struct(data) => {
-            check_field_markers(&data.fields)?;
+            let markers = check_field_markers(&data.fields)?;
 
-            let args = parse_problem(&input.attrs, Position::Type)?;
             let Some((status, _)) = args.status else {
                 return Err(syn::Error::new(
                     input.ident.span(),
@@ -82,10 +80,10 @@ pub(super) fn outcomes(input: &DeriveInput) -> syn::Result<Vec<Outcome>> {
 
             Ok(vec![Outcome::Declared(Failure {
                 path: quote!(Self),
-                extensions: extensions(&data.fields),
-                headers: header_field(&data.fields)?,
+                extensions: extensions(&data.fields, &markers),
+                headers: header_field(&data.fields, &markers)?,
                 status,
-                type_uri: type_uri(&args, base.as_ref(), &input.ident),
+                type_uri: type_uri(&args, base, &input.ident),
                 title: args.title,
                 doc: doc_string(&input.attrs),
             })])
@@ -101,6 +99,7 @@ fn transparent(
     variant: &Variant,
     args: &ProblemArgs,
     span: Span,
+    markers: &[Markers],
     generics: &Generics,
 ) -> syn::Result<Transparent> {
     if args.status.is_some() || args.title.is_some() || args.type_uri.is_some() {
@@ -122,17 +121,20 @@ fn transparent(
         ));
     };
 
-    if let Some(attr) = field.attrs.iter().find(|attr| is_extension(attr)) {
+    // The one field's, since `variant` has exactly one.
+    let marked = markers.first().copied().unwrap_or_default();
+
+    if let Some(span) = marked.extension {
         return Err(syn::Error::new(
-            attr.span(),
+            span,
             "a transparent variant publishes the extension members of the error it holds, not \
              the field holding it",
         ));
     }
 
-    if let Some(attr) = field.attrs.iter().find(|attr| is_headers(attr)) {
+    if let Some(span) = marked.headers {
         return Err(syn::Error::new(
-            attr.span(),
+            span,
             "a transparent variant sends the headers of the error it holds, which is not a \
              header group itself",
         ));
@@ -228,8 +230,8 @@ fn kebab(name: &str) -> String {
     slug
 }
 
-/// The named fields marked `#[problem(extension)]`.
-fn extensions(fields: &Fields) -> Vec<Extension> {
+/// The named fields marked `#[problem(extension)]`, by their `markers`.
+fn extensions(fields: &Fields, markers: &[Markers]) -> Vec<Extension> {
     let Fields::Named(named) = fields else {
         return Vec::new();
     };
@@ -237,8 +239,9 @@ fn extensions(fields: &Fields) -> Vec<Extension> {
     named
         .named
         .iter()
-        .filter(|field| field.attrs.iter().any(is_extension))
-        .filter_map(|field| {
+        .zip(markers)
+        .filter(|(_, marked)| marked.extension.is_some())
+        .filter_map(|(field, _)| {
             field.ident.clone().map(|name| Extension {
                 name,
                 ty: field.ty.clone(),
@@ -247,19 +250,19 @@ fn extensions(fields: &Fields) -> Vec<Extension> {
         .collect()
 }
 
-/// The one field marked `#[problem(headers)]`, refusing a second and one also
-/// published as an extension member.
-fn header_field(fields: &Fields) -> syn::Result<Option<Box<HeaderField>>> {
+/// The one field marked `#[problem(headers)]`, by its `markers`, refusing a
+/// second and one also published as an extension member.
+fn header_field(fields: &Fields, markers: &[Markers]) -> syn::Result<Option<Box<HeaderField>>> {
     let mut found: Option<(HeaderField, String)> = None;
 
-    for (index, field) in fields.iter().enumerate() {
-        let Some(attr) = field.attrs.iter().find(|attr| is_headers(attr)) else {
+    for (index, (field, marked)) in fields.iter().zip(markers).enumerate() {
+        let Some(span) = marked.headers else {
             continue;
         };
 
-        if field.attrs.iter().any(is_extension) {
+        if marked.extension.is_some() {
             return Err(syn::Error::new(
-                attr.span(),
+                span,
                 "a header group is sent as response fields, not published in the body. Mark this \
                  field `extension` or `headers`, not both",
             ));
@@ -271,7 +274,7 @@ fn header_field(fields: &Fields) -> syn::Result<Option<Box<HeaderField>>> {
             .map_or_else(|| Member::Unnamed(Index::from(index)), Member::Named);
         if let Some((_, first)) = &found {
             return Err(syn::Error::new(
-                attr.span(),
+                span,
                 format!(
                     "this failure already sends the header group in `{first}`; one group holds \
                      every header it sends"
