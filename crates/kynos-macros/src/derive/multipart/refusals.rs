@@ -3,7 +3,10 @@
 
 use syn::{DeriveInput, FieldsNamed};
 
-use crate::derive::schema::{attributes::serde_key_span, split_renamed_field, split_rule};
+use crate::derive::schema::{
+    attributes::serde_key_span,
+    members::{split_renamed_field, split_rule},
+};
 
 /// serde's keys that leave a field out of what serde reads or writes.
 const SKIPS: &[&str] = &[

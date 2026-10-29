@@ -8,10 +8,11 @@ use syn::{DeriveInput, Field, Fields, Lit, LitStr, Type, spanned::Spanned};
 use crate::derive::attribute::{Keys, key_name};
 use crate::derive::common::non_token_message;
 use crate::derive::schema::{
-    COUNTS, Container, NUMERIC,
+    COUNTS, NUMERIC,
     attributes::{described_as_keys, is_flattened, is_phantom, open_span},
-    field_groups,
+    container::Container,
     flatten::internally_tagged_payloads,
+    members::field_groups,
 };
 
 /// Keys written alone, with no value.

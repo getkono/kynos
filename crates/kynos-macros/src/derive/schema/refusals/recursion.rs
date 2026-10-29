@@ -4,9 +4,9 @@ use proc_macro2::Span;
 use syn::{DeriveInput, GenericArgument, Ident, Path, PathArguments, Type};
 
 use crate::derive::schema::{
-    Container,
     attributes::{described_type, is_described, is_phantom},
-    described_groups,
+    container::Container,
+    members::described_groups,
 };
 
 /// A generic type naming itself in a member its schema describes, through the

@@ -1,9 +1,12 @@
 use super::{
-    Comma, Container, DataEnum, Field, Fields, Punctuated, TokenStream2, Variant,
+    Comma, DataEnum, Field, Fields, Punctuated, TokenStream2, Variant,
     aliases::{keyed, named_string, property, variants_read_names},
     attributes::described_type,
-    closed, constraints, deprecate, described, described_variants, doc_string, is_deprecated,
-    is_described, is_flattened, is_open, is_phantom, is_unit_like, min_items, positional_members,
+    closed, constraints,
+    container::Container,
+    deprecate, described, doc_string, is_deprecated, is_described, is_flattened, is_open,
+    is_phantom, is_unit_like,
+    members::{described_variants, min_items, positional_members},
     quote, transparent_member,
 };
 

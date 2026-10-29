@@ -6,8 +6,11 @@
 //! name two variants claim is read as the first alone.
 
 use super::{
-    Container, Field, TokenStream2, Variant, close, field_read_name, is_required, quote,
-    shape::member_schema, skip_value, string_value, variant_read_name,
+    Field, TokenStream2, Variant, close,
+    container::{Container, string_value},
+    field_read_name, is_required, quote,
+    shape::member_schema,
+    skip_value, variant_read_name,
 };
 
 /// Every name serde reads a named field under: its read name first, then each

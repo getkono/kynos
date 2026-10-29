@@ -1,7 +1,11 @@
+use proc_macro2::Span;
+
 use super::{
-    ANNOTATIONS, COUNTS, Container, DeriveInput, Field, Fields, IdentExt, Lit, LitFloat, LitInt,
-    LitStr, NUMERIC, Span, Spanned, TokenStream2, Type, Variant, Visitor,
-    aliases::variants_read_names, quote, skip_value, string_value,
+    ANNOTATIONS, COUNTS, DeriveInput, Field, Fields, IdentExt, Lit, LitFloat, LitInt, LitStr,
+    NUMERIC, Spanned, TokenStream2, Type, Variant,
+    aliases::variants_read_names,
+    container::{Container, Visitor, string_value},
+    quote, skip_value,
 };
 use crate::derive::common::wrapped;
 

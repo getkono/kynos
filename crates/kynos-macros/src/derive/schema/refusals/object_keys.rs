@@ -4,12 +4,13 @@
 use syn::{Data, DeriveInput, Fields};
 
 use crate::derive::schema::{
-    Container, aliases,
+    aliases,
     attributes::{
         described_members, field_name, is_flattened, is_skipped_both_ways, open_span, serde_flag,
         serde_key_span,
     },
-    described_groups, unread_field_span, written_groups,
+    container::Container,
+    members::{described_groups, unread_field_span, written_groups},
 };
 
 /// An object `#[serde(deny_unknown_fields)]` closes has no schema true of a

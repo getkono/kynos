@@ -4,13 +4,14 @@
 use syn::{Data, DeriveInput, Fields, Variant};
 
 use crate::derive::schema::{
-    Container, Visitor, aliases,
+    aliases,
     aliases::shadowed_variant,
     attributes::{
         field_name, field_read_name, is_flattened, rename_all_fields, serde_flag, serde_key_span,
         variant_name, variant_read_name, variant_rename_all,
     },
-    described_variants, is_written, split_rule,
+    container::{Container, Visitor},
+    members::{described_variants, is_written, split_rule},
 };
 
 /// A variant whose own name serde reads as an earlier variant has no schema

@@ -10,7 +10,7 @@ use syn::{
     PathArguments, Type, spanned::Spanned,
 };
 
-use crate::derive::{attribute::field_args, schema::property_names};
+use crate::derive::{attribute::field_args, schema::members::property_names};
 
 /// The named fields of a struct, or a diagnostic naming what was found instead.
 pub(crate) fn named_fields<'a>(

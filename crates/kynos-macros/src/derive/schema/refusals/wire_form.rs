@@ -5,9 +5,9 @@
 use syn::{Data, DeriveInput, Field, Fields};
 
 use crate::derive::schema::{
-    Container,
     attributes::{is_skipped_both_ways, serde_flag, serde_key_span, transparent_picks},
-    described_variants, is_written,
+    container::Container,
+    members::{described_variants, is_written},
 };
 
 /// serde's keys that hand a value to a function instead of its own

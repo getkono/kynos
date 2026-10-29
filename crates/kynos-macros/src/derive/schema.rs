@@ -34,21 +34,24 @@
 pub(crate) mod aliases;
 pub(crate) mod attributes;
 pub(crate) mod check;
+mod container;
 mod flatten;
 mod kinds;
+pub(crate) mod members;
 #[cfg(feature = "pattern")]
 mod pattern;
 pub(crate) mod refusals;
 mod shape;
 
 use attributes::{
-    Sides, constraints, field_name, field_read_name, is_described, is_flattened, is_open,
-    is_phantom, is_required, is_skipped_both_ways, is_unit_like, serde_flag, serde_key_span, sides,
-    transparent_member, variant_read_name, variant_rename_all,
+    constraints, field_read_name, is_described, is_flattened, is_open, is_phantom, is_required,
+    is_unit_like, transparent_member, variant_read_name,
 };
+use container::Container;
+use members::{described_variants, positional_members};
 use shape::{enum_body, struct_body};
 
-use proc_macro2::{Span, TokenStream as TokenStream2};
+use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{
     Data, DataEnum, DeriveInput, Field, Fields, Lit, LitFloat, LitInt, LitStr, Type, Variant,
@@ -185,230 +188,6 @@ fn schema_bounded_generics(input: &DeriveInput) -> syn::Generics {
     generics
 }
 
-/// The field groups of every object serde writes: a struct's, and each
-/// variant's serde writes.
-fn written_groups(input: &DeriveInput) -> Vec<&Fields> {
-    match &input.data {
-        Data::Struct(data) => vec![&data.fields],
-        Data::Enum(data) => data
-            .variants
-            .iter()
-            .filter(|variant| is_written(variant))
-            .map(|variant| &variant.fields)
-            .collect(),
-        // Refused at the top of `expand_inner`.
-        Data::Union(_) => Vec::new(),
-    }
-}
-
-/// Each group of fields the input declares: a struct's, or one per variant.
-fn field_groups(input: &DeriveInput) -> Vec<&Fields> {
-    match &input.data {
-        Data::Struct(data) => vec![&data.fields],
-        Data::Enum(data) => data
-            .variants
-            .iter()
-            .map(|variant| &variant.fields)
-            .collect(),
-        Data::Union(_) => Vec::new(),
-    }
-}
-
-/// The field groups the emitted schema describes: every group but that of a
-/// variant serde skips both ways.
-///
-/// Attribute grammar still reads [`field_groups`]: a malformed attribute is an
-/// error wherever it is written.
-fn described_groups<'a>(input: &'a DeriveInput, container: &Container) -> Vec<&'a Fields> {
-    match &input.data {
-        Data::Enum(data) => described_variants(data, container)
-            .into_iter()
-            .map(|variant| &variant.fields)
-            .collect(),
-        _ => field_groups(input),
-    }
-}
-
-/// The variants the emitted schema describes: every one serde does not skip
-/// both ways. A read-only variant is among them, since serde accepts it.
-///
-/// An identifier enum's are all of them: serde's identifier visitor names
-/// every declared variant and reads no `skip`, and serde refuses to write one.
-fn described_variants<'a>(data: &'a DataEnum, container: &Container) -> Vec<&'a Variant> {
-    data.variants
-        .iter()
-        .filter(|variant| {
-            container.visitor == Visitor::Identifier || !is_skipped_both_ways(&variant.attrs)
-        })
-        .collect()
-}
-
-/// Whether serde writes a variant: it carries neither `skip` nor
-/// `skip_serializing`.
-fn is_written(variant: &Variant) -> bool {
-    !serde_flag(&variant.attrs, &["skip", "skip_serializing"])
-}
-
-/// Where the first named field serde writes and never reads, `skip_deserializing`
-/// alone, carries that key.
-fn unread_field_span(fields: &Fields) -> Option<Span> {
-    let Fields::Named(named) = fields else {
-        return None;
-    };
-    named
-        .named
-        .iter()
-        .find_map(|field| one_way_skip_span(field, &["skip_deserializing"]))
-        .map(|(_, span)| span)
-}
-
-/// The first of `keys` a member carries without the other half of
-/// `#[serde(skip)]`, and where it is written.
-fn one_way_skip_span(field: &Field, keys: &[&str]) -> Option<(String, Span)> {
-    if is_skipped_both_ways(&field.attrs) {
-        return None;
-    }
-    serde_key_span(&field.attrs, keys)
-}
-
-/// The members of a tuple or tuple variant that hold a position on the wire,
-/// in order: each one serde does not skip both ways. Not [`is_described`],
-/// which would drop a `skip_deserializing` member the refusals must still see.
-fn positional_members(fields: &Punctuated<Field, Comma>) -> Vec<&Field> {
-    fields
-        .iter()
-        .filter(|field| !is_skipped_both_ways(&field.attrs))
-        .collect()
-}
-
-/// The fewest elements serde reads for a tuple holding these positions.
-///
-/// Every position up to the last one with no `#[serde(default)]`, since serde
-/// fills only trailing defaults. Under a container default (`defaulted`) it
-/// fills every missing element, so there is no bound.
-fn min_items(positions: &[&Field], defaulted: bool) -> u64 {
-    if defaulted {
-        return 0;
-    }
-    let required = positions
-        .iter()
-        .rposition(|field| !serde_flag(&field.attrs, &["default"]))
-        .map_or(0, |last| last + 1);
-    u64::try_from(required).unwrap_or(u64::MAX)
-}
-
-/// What the type's own serde attributes said, read rather than restated.
-#[derive(Clone, Default)]
-struct Container {
-    /// The container `rename`, serialize side: the name serde writes a
-    /// struct's `#[serde(tag = "...")]` as.
-    rename: Option<String>,
-    /// The container `rename_all` style, serialize side, or deserialize side for
-    /// an identifier enum, which serde only reads; a split one is otherwise
-    /// refused first ([`split_rule`]). In [`Container::fields_of`], a variant's.
-    rename_all: Option<String>,
-    /// An enum's `rename_all_fields`, each side: names a variant's fields on
-    /// each side the variant's own `rename_all` leaves.
-    rename_all_fields: Sides,
-    tag: Option<String>,
-    content: Option<String>,
-    /// `#[serde(transparent)]`: the wire form is the one field's value.
-    transparent: bool,
-    doc: Option<String>,
-    /// A container `#[serde(default)]` on a non-unit struct.
-    default: bool,
-    /// `#[serde(deny_unknown_fields)]`, which [`closed`] follows.
-    deny_unknown_fields: bool,
-    /// The visitor serde reads an enum's variants through.
-    visitor: Visitor,
-}
-
-/// The visitor serde's `Deserialize` reads an enum's variants through.
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-enum Visitor {
-    /// The enum visitor, which honours each variant's `skip` keys.
-    #[default]
-    Enum,
-    /// `#[serde(field_identifier)]` or `#[serde(variant_identifier)]`: the
-    /// identifier visitor, which names every declared variant and reads no
-    /// `skip` key ([`described_variants`]). serde refuses to write such an enum.
-    Identifier,
-}
-
-impl Container {
-    fn read(input: &DeriveInput) -> Self {
-        let mut container = Self {
-            doc: doc_string(&input.attrs),
-            ..Self::default()
-        };
-        let mut rename_all = Sides::default();
-
-        for attr in &input.attrs {
-            if !attr.path().is_ident("serde") {
-                continue;
-            }
-            // Shape errors in serde's own attribute are serde's to report.
-            let _ = attr.parse_nested_meta(|meta| {
-                let Some(key) = meta.path.get_ident() else {
-                    return skip_value(&meta);
-                };
-                match key.to_string().as_str() {
-                    "rename" => container.rename = sides(&meta)?.serialize,
-                    "rename_all" => rename_all = sides(&meta)?,
-                    "rename_all_fields" => container.rename_all_fields = sides(&meta)?,
-                    "tag" => container.tag = string_value(&meta)?,
-                    "content" => container.content = string_value(&meta)?,
-                    "transparent" => container.transparent = true,
-                    "deny_unknown_fields" => container.deny_unknown_fields = true,
-                    "field_identifier" | "variant_identifier" => {
-                        container.visitor = Visitor::Identifier;
-                    }
-                    _ => skip_value(&meta)?,
-                }
-                Ok(())
-            });
-        }
-
-        // Taken once every key is read: `field_identifier` may follow it.
-        container.rename_all = match container.visitor {
-            Visitor::Enum => rename_all.serialize,
-            Visitor::Identifier => rename_all.deserialize,
-        };
-        container.default = matches!(&input.data, Data::Struct(data) if !matches!(data.fields, Fields::Unit))
-            && serde_flag(&input.attrs, &["default"]);
-
-        container
-    }
-
-    /// The container a variant's fields are named under: the variant's own
-    /// `rename_all`, else the enum's `rename_all_fields`, in place of the enum's
-    /// `rename_all`, which serde applies to variant names alone. Serialize side
-    /// for a written variant, deserialize side for a read-only one, each rule
-    /// on that side, as serde fills it.
-    fn fields_of(&self, variant: &Variant) -> Self {
-        let own = variant_rename_all(variant);
-        let rename_all = if is_written(variant) {
-            own.serialize
-                .or_else(|| self.rename_all_fields.serialize.clone())
-        } else {
-            own.deserialize
-                .or_else(|| self.rename_all_fields.deserialize.clone())
-        };
-        Self {
-            rename_all,
-            ..self.clone()
-        }
-    }
-}
-
-/// The `= "..."` of a nested-meta item, when it has one.
-fn string_value(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<Option<String>> {
-    if !meta.input.peek(syn::Token![=]) {
-        return Ok(None);
-    }
-    Ok(Some(meta.value()?.parse::<LitStr>()?.value()))
-}
-
 /// The `schema` body for whatever shape the type has.
 fn body(input: &DeriveInput, container: &Container) -> TokenStream2 {
     let described = match &input.data {
@@ -499,54 +278,4 @@ fn described(schema: TokenStream2, doc: Option<&str>) -> TokenStream2 {
             described
         }
     }
-}
-
-/// The names this derive would describe a struct's fields under, in order.
-/// Shared with [`multipart`](super::multipart) so part and property names
-/// agree, and with [`common::wire_names`](super::common::wire_names) so a
-/// parameter's name falls back to the property name.
-pub(super) fn property_names(input: &DeriveInput, fields: &syn::FieldsNamed) -> Vec<String> {
-    let container = Container::read(input);
-    fields
-        .named
-        .iter()
-        .map(|field| field_name(field, &container))
-        .collect()
-}
-
-/// The span of the first field whose split `rename` gives serde's two
-/// directions different names, at that `rename`; [`multipart`](super::multipart)
-/// refuses it, since a part has one name.
-pub(super) fn split_renamed_field(input: &DeriveInput, fields: &syn::FieldsNamed) -> Option<Span> {
-    let container = Container::read(input);
-    fields
-        .named
-        .iter()
-        .find(|field| field_name(field, &container) != field_read_name(field, &container))
-        .map(|field| {
-            serde_key_span(&field.attrs, &["rename"]).map_or_else(|| field.span(), |(_, span)| span)
-        })
-}
-
-/// The span of a split `key(serialize = ..., deserialize = ...)` in `attrs`
-/// whose sides differ, one side left out included, at that `key`. Shape errors
-/// stay serde's to report.
-pub(super) fn split_rule(attrs: &[syn::Attribute], key: &str) -> Option<Span> {
-    let mut found = None;
-    for attr in attrs {
-        if !attr.path().is_ident("serde") {
-            continue;
-        }
-        let _ = attr.parse_nested_meta(|meta| {
-            if !meta.path.is_ident(key) {
-                return skip_value(&meta);
-            }
-            let sides = sides(&meta)?;
-            if found.is_none() && sides.serialize != sides.deserialize {
-                found = Some(meta.path.span());
-            }
-            Ok(())
-        });
-    }
-    found
 }

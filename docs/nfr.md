@@ -760,7 +760,6 @@ may return.
 
 The budget, which may only shrink:
 
-- `crates/kynos-macros/src/derive/schema.rs`
 - `crates/kynos-macros/src/derive/schema/attributes.rs`
 - `crates/kynos-macros/src/lib.rs`
 - `crates/kynos-openapi/src/annotation/mod.rs`

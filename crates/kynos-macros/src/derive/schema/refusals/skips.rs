@@ -7,12 +7,14 @@ use syn::{Data, DeriveInput, Field, Fields, punctuated::Punctuated, token::Comma
 use crate::derive::{
     common::wrapped,
     schema::{
-        Container, Visitor,
         attributes::{
             is_described, is_flattened, is_open, is_required, is_unit_like, serde_flag,
             serde_key_span,
         },
-        described_variants, is_written, one_way_skip_span, positional_members, written_groups,
+        container::{Container, Visitor},
+        members::{
+            described_variants, is_written, one_way_skip_span, positional_members, written_groups,
+        },
     },
 };
 
@@ -130,7 +132,7 @@ pub(super) fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> 
 /// describe.
 ///
 /// `skip_serializing_if` is allowed only on the last position beside a default,
-/// which [`min_items`](crate::derive::schema::min_items) leaves out of the
+/// which [`min_items`](crate::derive::schema::members::min_items) leaves out of the
 /// bound. serde ignores all three on a newtype struct.
 pub(super) fn reject_one_way_member_skip(input: &DeriveInput) -> syn::Result<()> {
     let container = Container::read(input);

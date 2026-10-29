@@ -25,7 +25,7 @@ use crate::derive::{
     common::{NameCase, named_fields, reject_duplicate_names, wrapped},
     schema::{
         attributes::{DefaultFrom, serde_default, serde_key_span},
-        property_names,
+        members::property_names,
     },
 };
 

@@ -6,9 +6,11 @@ use quote::{quote, quote_spanned};
 use syn::{Data, DeriveInput, Field, Fields, spanned::Spanned};
 
 use super::{
-    Container,
     attributes::{described_members, is_flattened, is_open, is_unit_like, serde_flag},
-    described_groups, described_variants, is_written, unread_field_span, written_groups,
+    container::Container,
+    members::{
+        described_groups, described_variants, is_written, unread_field_span, written_groups,
+    },
 };
 
 /// The flatten witnesses, then the `Flatten` and `ClosedFlatten` claims the
