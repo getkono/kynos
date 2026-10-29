@@ -147,35 +147,25 @@ fn check_key(name: &str, bounds: &KeyBounds, at: Pointer<'_>, violations: &mut V
     }
 }
 
-impl<T: Schema> Schema for Vec<T> {
-    fn schema(registry: &mut Registry) -> OpenApiSchema {
-        array::<T>(registry, false)
-    }
+/// Emits [`Schema`] for a sequence of `T`: an array, each element checked at
+/// its index.
+macro_rules! sequence {
+    ($($ty:ty),+ $(,)?) => {
+        $(
+            impl<T: Schema> Schema for $ty {
+                fn schema(registry: &mut Registry) -> OpenApiSchema {
+                    array::<T>(registry, false)
+                }
 
-    fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
-        check_elements(self.iter(), at, violations);
-    }
+                fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
+                    check_elements(self.iter(), at, violations);
+                }
+            }
+        )+
+    };
 }
 
-impl<T: Schema> Schema for VecDeque<T> {
-    fn schema(registry: &mut Registry) -> OpenApiSchema {
-        array::<T>(registry, false)
-    }
-
-    fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
-        check_elements(self.iter(), at, violations);
-    }
-}
-
-impl<T: Schema> Schema for [T] {
-    fn schema(registry: &mut Registry) -> OpenApiSchema {
-        array::<T>(registry, false)
-    }
-
-    fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
-        check_elements(self.iter(), at, violations);
-    }
-}
+sequence!(Vec<T>, VecDeque<T>, [T]);
 
 /// A fixed-length array, whose length is part of the contract.
 impl<T: Schema, const N: usize> Schema for [T; N] {
