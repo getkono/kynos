@@ -61,6 +61,12 @@ fn every_diagnostic_has_a_case(file: &str, source: &str, cases: usize) {
     );
 }
 
+// A grammar refuses a key read twice and a key outside it through
+// `attribute::Keys::read` and `attribute::unknown`, whose sites the
+// `attribute` ledger counts. A grammar's own ledger keeps the rows that reach
+// them, since each grammar words both refusals itself, and leaves them out of
+// its file's count as its `IN_ATTRIBUTE`.
+
 mod schema {
     use super::{
         Case, DeriveInput, TokenStream2, case, each_case_is_refused, every_diagnostic_has_a_case,
@@ -639,6 +645,9 @@ mod schema {
         );
     }
 
+    /// The row refusing a key written twice, which `attribute::Keys` raises.
+    const IN_ATTRIBUTE: usize = 1;
+
     #[test]
     fn every_schema_diagnostic_has_a_case() {
         // The derive raises the union refusal in `schema.rs` and every other
@@ -664,7 +673,8 @@ mod schema {
                 + variant_ledger().len()
                 + field_ledger().len()
                 + tag_ledger().len()
-                + rename_ledger().len(),
+                + rename_ledger().len()
+                - IN_ATTRIBUTE,
         );
     }
 
@@ -4725,12 +4735,16 @@ mod attribute {
         assert!(!expansion.contains("DESCRIBED"), "{expansion}");
     }
 
+    /// Both grammars here refuse a repeat and a key outside them through the
+    /// sites every grammar shares, so four rows meet two sites.
+    const SHARED_TWICE: usize = 2;
+
     #[test]
     fn every_attribute_diagnostic_has_a_case() {
         every_diagnostic_has_a_case(
             "attribute.rs",
             include_str!("attribute.rs"),
-            ledger().len() + group_ledger().len(),
+            ledger().len() + group_ledger().len() - SHARED_TWICE,
         );
     }
 }
@@ -5187,6 +5201,11 @@ mod api_error {
         );
     }
 
+    /// The rows refusing a key written twice and a key outside the grammar,
+    /// for the item and for a field, which `attribute::Keys::read` and
+    /// `attribute::unknown` raise.
+    const IN_ATTRIBUTE: usize = 4;
+
     #[test]
     fn every_api_error_diagnostic_has_a_case() {
         every_diagnostic_has_a_case(
@@ -5201,7 +5220,8 @@ mod api_error {
             ledger().len()
                 + transparent_ledger().len()
                 + headers_ledger().len()
-                + keys_ledger().len(),
+                + keys_ledger().len()
+                - IN_ATTRIBUTE,
         );
     }
 }
@@ -5986,6 +6006,11 @@ mod security_scheme {
         each_case_is_refused(version_gated_ledger(), expand_inner);
     }
 
+    /// The rows refusing a key written twice and a key outside the grammar,
+    /// on the scheme, in a kind and in a flow, which `attribute::Keys::read`
+    /// and `attribute::unknown` raise.
+    const IN_ATTRIBUTE: usize = 6;
+
     #[test]
     fn every_security_scheme_diagnostic_has_a_case() {
         every_diagnostic_has_a_case(
@@ -6000,7 +6025,8 @@ mod security_scheme {
                 + oauth2_ledger().len()
                 + keys_ledger().len()
                 + version_gated_ledger().len()
-                + UNREACHABLE_HERE,
+                + UNREACHABLE_HERE
+                - IN_ATTRIBUTE,
         );
     }
 
@@ -6335,9 +6361,17 @@ mod provider {
         );
     }
 
+    /// The rows refusing a second `skip` and a key outside the grammar, which
+    /// `attribute::Keys::read` and `attribute::unknown` raise.
+    const IN_ATTRIBUTE: usize = 2;
+
     #[test]
     fn every_provider_diagnostic_has_a_case() {
-        every_diagnostic_has_a_case("provider.rs", include_str!("provider.rs"), ledger().len());
+        every_diagnostic_has_a_case(
+            "provider.rs",
+            include_str!("provider.rs"),
+            ledger().len() - IN_ATTRIBUTE,
+        );
     }
 }
 
@@ -7084,6 +7118,10 @@ mod tag {
     /// it refuses is legal there.
     const UNREACHABLE_HERE: usize = if cfg!(feature = "openapi32") { 1 } else { 0 };
 
+    /// The rows refusing a key outside the grammar and a key written twice,
+    /// which `attribute::unknown` and `attribute::Keys::read` raise.
+    const IN_ATTRIBUTE: usize = 2;
+
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
@@ -7096,7 +7134,8 @@ mod tag {
         // gated ledger's three cases meet one site. Counting the *site* is the
         // point: a fourth 3.2 member added without a case fails here.
         let covered =
-            ledger().len() + usize::from(!version_gated_ledger().is_empty()) + UNREACHABLE_HERE;
+            ledger().len() + usize::from(!version_gated_ledger().is_empty()) + UNREACHABLE_HERE
+                - IN_ATTRIBUTE;
         every_diagnostic_has_a_case("tag.rs", include_str!("tag.rs"), covered);
     }
 }

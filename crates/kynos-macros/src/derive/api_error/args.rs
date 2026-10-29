@@ -3,7 +3,10 @@
 use proc_macro2::Span;
 use syn::{Attribute, Expr, ExprLit, ExprPath, Fields, Lit, LitInt, LitStr, spanned::Spanned};
 
-use crate::derive::{attribute::key_name, common::skip_value};
+use crate::derive::{
+    attribute::{Keys, unknown},
+    common::skip_value,
+};
 
 /// The range a problem detail's status may fall in: RFC 9457 errors, 4xx and
 /// 5xx.
@@ -62,15 +65,17 @@ pub(super) enum Base {
 /// Reads one item's `#[problem(...)]` lists, validating every member.
 pub(super) fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Result<ProblemArgs> {
     let mut args = ProblemArgs::default();
-    // Across every list, so a second list cannot overwrite the first.
-    let mut seen: Vec<String> = Vec::new();
+    // A second `status` is left to its own refusal, which names the response
+    // it duplicates.
+    let mut keys = Keys::new("is already set, and `#[problem(...)]` takes each key once")
+        .except(|key| key == "status");
 
     for attr in attrs {
         if !attr.path().is_ident("problem") {
             continue;
         }
         attr.parse_nested_meta(|meta| {
-            let key = first_time(&meta.path, &mut seen)?;
+            let key = keys.read(&meta.path)?;
             let span = meta.path.span();
 
             match key.as_str() {
@@ -151,10 +156,7 @@ pub(super) fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Res
                     ));
                 }
                 other => {
-                    return Err(syn::Error::new(
-                        span,
-                        format!("`{other}` is not part of the `#[problem(...)]` grammar"),
-                    ));
+                    return Err(unknown(&meta.path, other, "the `#[problem(...)]` grammar"));
                 }
             }
             Ok(())
@@ -164,21 +166,6 @@ pub(super) fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Res
     Ok(args)
 }
 
-/// An item key as written, refused where `seen` already holds it and recorded
-/// otherwise. A second `status` is left to its own refusal, which names the
-/// response it duplicates.
-fn first_time(path: &syn::Path, seen: &mut Vec<String>) -> syn::Result<String> {
-    let key = key_name(path);
-    if key != "status" && seen.contains(&key) {
-        return Err(syn::Error::new(
-            path.span(),
-            format!("`{key}` is already set, and `#[problem(...)]` takes each key once"),
-        ));
-    }
-    seen.push(key.clone());
-    Ok(key)
-}
-
 /// Checks each field's `#[problem(...)]` markers: `extension` or `headers`,
 /// each once, and `extension` only on a named field, which has a member name.
 pub(super) fn check_field_markers(fields: &Fields) -> syn::Result<()> {
@@ -186,22 +173,14 @@ pub(super) fn check_field_markers(fields: &Fields) -> syn::Result<()> {
 
     for field in fields {
         // Across every list on the field, as on the item.
-        let mut seen: Vec<String> = Vec::new();
+        let mut keys =
+            Keys::new("is already set, and a field's `#[problem(...)]` takes each marker once");
         for attr in &field.attrs {
             if !attr.path().is_ident("problem") {
                 continue;
             }
             attr.parse_nested_meta(|meta| {
-                let key = key_name(&meta.path);
-                if seen.contains(&key) {
-                    return Err(syn::Error::new(
-                        meta.path.span(),
-                        format!(
-                            "`{key}` is already set, and a field's `#[problem(...)]` takes each \
-                             marker once"
-                        ),
-                    ));
-                }
+                let key = keys.read(&meta.path)?;
                 match key.as_str() {
                     "extension" if !named => {
                         return Err(syn::Error::new(
@@ -226,16 +205,14 @@ pub(super) fn check_field_markers(fields: &Fields) -> syn::Result<()> {
                     }
                     "extension" | "headers" => {}
                     other => {
-                        return Err(syn::Error::new(
-                            meta.path.span(),
-                            format!(
-                                "`{other}` is not part of a field's `#[problem(...)]` grammar, \
-                                 which is `extension` or `headers`"
-                            ),
+                        return Err(unknown(
+                            &meta.path,
+                            other,
+                            "a field's `#[problem(...)]` grammar, which is `extension` or \
+                             `headers`",
                         ));
                     }
                 }
-                seen.push(key);
                 Ok(())
             })?;
         }

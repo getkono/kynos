@@ -5,7 +5,10 @@ use kynos_openapi::model::parameter::header::is_ignored_header_parameter;
 use syn::{DeriveInput, Expr, Ident, LitBool, LitStr, Token, Type, spanned::Spanned};
 
 use super::flow::{FlowArgs, check_oauth2, read_flow};
-use crate::derive::{attribute::key_name, common::non_token_message};
+use crate::derive::{
+    attribute::{Keys, key_name, unknown},
+    common::non_token_message,
+};
 
 /// Locations an API key may travel in; not `path` or 3.2's `querystring`.
 const API_KEY_LOCATIONS: &[&str] = &["header", "query", "cookie"];
@@ -62,23 +65,17 @@ pub(super) struct Nested {
 /// grammar does not hold.
 pub(super) fn parse_args(input: &DeriveInput) -> syn::Result<SchemeArgs> {
     let mut args = SchemeArgs::default();
-    // Across every list, so a second list cannot overwrite the first.
-    let mut seen: Vec<String> = Vec::new();
+    // `carrier` and the kind name what they repeat, below.
+    let mut keys = Keys::new("is already set, and `#[security(...)]` takes each key once")
+        .except(|key| key == "carrier" || is_kind(key));
 
     for attr in &input.attrs {
         if !attr.path().is_ident("security") {
             continue;
         }
         attr.parse_nested_meta(|meta| {
-            let key = key_name(&meta.path);
+            let key = keys.read(&meta.path)?;
             let span = meta.path.span();
-            // `carrier` and the kind name what they repeat, below.
-            if seen.contains(&key) && key != "carrier" && !is_kind(&key) {
-                return Err(syn::Error::new(
-                    span,
-                    format!("`{key}` is already set, and `#[security(...)]` takes each key once"),
-                ));
-            }
 
             match key.as_str() {
                 "name" => args.name = Some(meta.value()?.parse()?),
@@ -141,13 +138,9 @@ pub(super) fn parse_args(input: &DeriveInput) -> syn::Result<SchemeArgs> {
                     args.kind = Some(kind.clone());
                 }
                 other => {
-                    return Err(syn::Error::new(
-                        span,
-                        format!("`{other}` is not part of the `#[security(...)]` grammar"),
-                    ));
+                    return Err(unknown(&meta.path, other, "the `#[security(...)]` grammar"));
                 }
             }
-            seen.push(key);
             Ok(())
         })?;
     }
@@ -185,6 +178,9 @@ fn check_kind(
 ) -> syn::Result<()> {
     if meta.input.peek(syn::token::Paren) {
         let kind_name = kind.to_string();
+        let mut keys = Keys::new(format!(
+            "is already set, and `{kind_name}(...)` takes each option once"
+        ));
         meta.parse_nested_meta(|option| {
             let key = key_name(&option.path);
             // The options this kind models; any other is refused, not skipped.
@@ -198,23 +194,18 @@ fn check_kind(
                 _ => None,
             };
             if let Some(slot) = slot {
-                if slot.is_some() {
-                    return Err(syn::Error::new(
-                        option.path.span(),
-                        format!(
-                            "`{key}` is already set, and `{kind_name}(...)` takes each option once"
-                        ),
-                    ));
-                }
+                keys.read(&option.path)?;
                 *slot = Some(option.value()?.parse()?);
                 return Ok(());
             }
-            // Every other option of `oauth2` is a flow, which `read_flow` checks.
+            // Every other option of `oauth2` is a flow, which `read_flow` checks
+            // and refuses the repeat of.
             match option.path.get_ident() {
                 Some(flow) if kind_name == "oauth2" => read_flow(flow, &key, &option, nested),
-                _ => Err(syn::Error::new(
-                    option.path.span(),
-                    format!("`{key}` is not part of the `{kind_name}(...)` grammar"),
+                _ => Err(unknown(
+                    &option.path,
+                    &key,
+                    &format!("the `{kind_name}(...)` grammar"),
                 )),
             }
         })?;

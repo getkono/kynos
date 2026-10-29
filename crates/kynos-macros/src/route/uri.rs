@@ -5,6 +5,8 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{GenericArgument, ItemFn, PathArguments, Type, spanned::Spanned};
 
+use crate::derive::attribute::compact;
+
 pub(crate) fn endpoint_uri_impl(
     function: &ItemFn,
     path: &str,
@@ -30,7 +32,7 @@ pub(crate) fn endpoint_uri_impl(
     // Checked against `EndpointMeta::PATH_VARIABLES`, the description's source.
     // A const panic renders one `&str`, so the comparison composes the message.
     let path_assertion = path_type.as_ref().map(|path_type| {
-        let group = quote!(#path_type).to_string().replace(' ', "");
+        let group = compact(path_type);
         quote! {
             const _: () = if let ::core::option::Option::Some(message) =
                 ::kynos::__private::path::path_parameter_mismatch(
