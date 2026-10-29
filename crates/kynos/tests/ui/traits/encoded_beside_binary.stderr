@@ -5,18 +5,24 @@ error[E0080]: evaluation panicked: a `Binary` marker is offered requests the bod
   |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `kynos::extract::body::alternative::encoded::<impl kynos::extract::body::alternative::Alternative<kynos::extract::body::binary::Binary<RawTally>> for kynos::extract::body::codec::Encoded<Tally, u64>>::DISTINCT` failed inside this call
   |
 note: inside `alternative::distinct`
+ --> src/extract/body/alternative.rs
+  |
+  | /     refuse_shared(
+  | |         marker,
+  | |         body,
+  | |         "a `Binary` marker is offered requests the body beside it in `OneOf` is offered too",
+  | |     );
+  | |_____^
+note: inside `alternative::refuse_shared`
  --> $RUST/core/src/panic.rs
   |
-  |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
-  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |         $crate::panicking::panic_display(&$arg);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
   |
  ::: src/extract/body/alternative.rs
   |
-  | /     assert!(
-  | |         !shares_requests(marker, body),
-  | |         "a `Binary` marker is offered requests the body beside it in `OneOf` is offered too"
-  | |     );
-  | |_____- in this macro invocation
+  |     assert!(!shares_requests(marker, body), "{}", refusal);
+  |     ------------------------------------------------------ in this macro invocation
 
 note: erroneous constant encountered
  --> src/extract/body/mod.rs

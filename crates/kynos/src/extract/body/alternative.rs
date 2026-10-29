@@ -133,12 +133,19 @@ where
     const DISTINCT: () = ();
 }
 
+/// Refuses, in the constant evaluation calling it, a `marker` that
+/// [`shares_requests`] with the `body` beside it, with `refusal`.
+const fn refuse_shared(marker: &str, body: &str, refusal: &str) {
+    assert!(!shares_requests(marker, body), "{}", refusal);
+}
+
 /// Refuses, in the constant evaluation calling it, a marker offered a request
 /// `body` is offered too.
 pub(crate) const fn distinct(marker: &str, body: &str) {
-    assert!(
-        !shares_requests(marker, body),
-        "a `Binary` marker is offered requests the body beside it in `OneOf` is offered too"
+    refuse_shared(
+        marker,
+        body,
+        "a `Binary` marker is offered requests the body beside it in `OneOf` is offered too",
     );
 }
 
@@ -147,9 +154,10 @@ pub(crate) const fn distinct(marker: &str, body: &str) {
 /// media type, or a `TextAs`'s marker.
 #[cfg(feature = "json")]
 pub(crate) const fn distinct_json(marker: &str, body: &str) {
-    assert!(
-        !shares_requests(marker, body),
-        "a `JsonAs` marker is offered requests the body beside it in `OneOf` is offered too"
+    refuse_shared(
+        marker,
+        body,
+        "a `JsonAs` marker is offered requests the body beside it in `OneOf` is offered too",
     );
 }
 
@@ -157,9 +165,10 @@ pub(crate) const fn distinct_json(marker: &str, body: &str) {
 /// request `body` is offered too: another `TextAs`'s marker, `Text`'s own
 /// media type, or a `JsonAs`'s marker.
 pub(crate) const fn distinct_text(marker: &str, body: &str) {
-    assert!(
-        !shares_requests(marker, body),
-        "a `TextAs` marker is offered requests the body beside it in `OneOf` is offered too"
+    refuse_shared(
+        marker,
+        body,
+        "a `TextAs` marker is offered requests the body beside it in `OneOf` is offered too",
     );
 }
 
@@ -169,10 +178,11 @@ pub(crate) const fn distinct_text(marker: &str, body: &str) {
 ///
 /// [`BodyCodec`]: super::codec::BodyCodec
 pub(crate) const fn distinct_codec(codec: &str, body: &str) {
-    assert!(
-        !shares_requests(codec, body),
+    refuse_shared(
+        codec,
+        body,
         "a `BodyCodec`'s media type is offered requests the body beside it in `OneOf` is offered \
-         too"
+         too",
     );
 }
 
