@@ -83,7 +83,7 @@ pub(crate) fn query_pairs(
     query_names(query).map(|(name, value)| (name, decode_query_component(value)))
 }
 
-/// [`query_pairs`] with each value left as the target wrote it, for a reader
+/// `query_pairs` with each value left as the target wrote it, for a reader
 /// that decodes only the values it reads, through [`decode_query_component`].
 pub fn query_names(
     query: Option<&str>,
@@ -171,7 +171,7 @@ fn escaped_octet(octets: &[u8], index: usize) -> Option<u8> {
     u8::try_from(octet).ok()
 }
 
-/// One name or value of a query pair, decoded as [`query_pairs`] decodes it:
+/// One name or value of a query pair, decoded as `query_pairs` decodes it:
 /// `+` to a space, then percent-decoding; borrowed when neither changed
 /// anything.
 #[must_use]
