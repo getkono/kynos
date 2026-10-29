@@ -508,7 +508,13 @@ host="$(rustc +"$FUZZ_TOOLCHAIN" -vV | sed -n 's/^host: //p')"
 if [ -n "${usage_target:-}" ]; then
   set -- "$usage_target"
 else
-  set -- $(cargo +"$FUZZ_TOOLCHAIN" fuzz list --fuzz-dir fuzz)
+  # An assignment carries the listing's status to `set -e`; `set --` would not.
+  targets="$(cargo +"$FUZZ_TOOLCHAIN" fuzz list --fuzz-dir fuzz)"
+  if [ -z "$targets" ]; then
+    echo "cargo fuzz list found no target under fuzz/fuzz_targets" >&2
+    exit 1
+  fi
+  set -- $targets
 fi
 
 for target in "$@"; do
@@ -529,7 +535,14 @@ set -eu
 rustup toolchain install "$FUZZ_TOOLCHAIN" --profile minimal --no-self-update
 host="$(rustc +"$FUZZ_TOOLCHAIN" -vV | sed -n 's/^host: //p')"
 
-for target in $(cargo +"$FUZZ_TOOLCHAIN" fuzz list --fuzz-dir fuzz); do
+# An assignment carries the listing's status to `set -e`; a `for` list would not.
+targets="$(cargo +"$FUZZ_TOOLCHAIN" fuzz list --fuzz-dir fuzz)"
+if [ -z "$targets" ]; then
+  echo "cargo fuzz list found no target under fuzz/fuzz_targets" >&2
+  exit 1
+fi
+
+for target in $targets; do
   cargo +"$FUZZ_TOOLCHAIN" fuzz run --fuzz-dir fuzz --target "$host" "$target" \
     "fuzz/corpus/$target" -- -runs=0
 done
