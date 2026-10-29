@@ -6309,9 +6309,11 @@ mod no_prelude {
     };
     use ::std::{collections::BTreeMap, option::Option, string::String, vec::Vec};
 
+    /// An item, described by its prose.
     #[derive(::kynos::Schema, ::serde::Serialize, ::serde::Deserialize)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     struct Item {
+        /// The item's identifier.
         #[schema(minimum = 1, maximum = 1000, multiple_of = 1)]
         id: u64,
         #[schema(min_length = 1, max_length = 10, pattern = "^[a-z]+$")]
@@ -6371,6 +6373,7 @@ mod no_prelude {
 
     #[derive(::kynos::Schema, ::serde::Serialize, ::serde::Deserialize)]
     enum External {
+        /// A bare number.
         Number(u32),
         Pair(u32, String),
         Text {
@@ -6460,6 +6463,10 @@ mod no_prelude {
     struct SignedBearer;
 
     #[derive(::kynos::SecurityScheme)]
+    #[security(bearer, carrier = optional)]
+    struct OptionalBearer;
+
+    #[derive(::kynos::SecurityScheme)]
     #[security(basic, description = "A login.")]
     struct Basic;
 
@@ -6519,8 +6526,13 @@ mod no_prelude {
     struct Conditional {
         #[header(rename = "If-None-Match")]
         if_none_match: Option<String>,
+        /// The request's correlation identifier.
         #[header(rename = "X-Request-Id")]
         request: String,
+        #[header(rename = "X-Content-Type-Options", value = "nosniff")]
+        nosniff: (),
+        #[header(rename = "Cache-Control", value = "no-store")]
+        no_store: Option<()>,
     }
 
     #[derive(::kynos::HeaderParams)]
@@ -6534,6 +6546,7 @@ mod no_prelude {
     struct Session {
         session: String,
         theme: Option<String>,
+        #[cfg(feature = "openapi32")]
         #[cookie(style = "cookie")]
         raw: Option<String>,
     }
@@ -6546,9 +6559,20 @@ mod no_prelude {
         images: Vec<FilePart>,
     }
 
+    #[derive(::kynos::Schema, ::kynos::MultipartForm)]
+    #[serde(deny_unknown_fields)]
+    struct ClosedUpload {
+        name: String,
+    }
+
     #[derive(::kynos::Tag)]
     #[tag(name = "items", description = "Managing items")]
     struct Items;
+
+    #[cfg(feature = "openapi32")]
+    #[derive(::kynos::Tag)]
+    #[tag(name = "archived", summary = "Archived items", kind = "nav", parent = Items)]
+    struct Archived;
 
     #[derive(::kynos::Provider)]
     struct App {
