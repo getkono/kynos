@@ -131,35 +131,20 @@ cargo hack clippy -p kynos --feature-powerset --depth 2 --no-dev-deps \
   --at-least-one-of http1,http2 \
   -- -D warnings
 
-invalid_server_output="$(mktemp)"
-trap 'rm -f "$invalid_server_output"' EXIT
-if cargo check -p kynos --no-default-features --features openapi31,server \
-    >"$invalid_server_output" 2>&1; then
-  echo "server unexpectedly compiled without an HTTP protocol" >&2
-  exit 1
-fi
-grep -F 'the `server` feature requires at least one of `http1` or `http2`' \
-  "$invalid_server_output"
+sh scripts/refuses.sh \
+  "server unexpectedly compiled without an HTTP protocol" \
+  'the `server` feature requires at least one of `http1` or `http2`' \
+  cargo check -p kynos --no-default-features --features openapi31,server
 
-invalid_time_output="$(mktemp)"
-trap 'rm -f "$invalid_server_output" "$invalid_time_output"' EXIT
-if cargo check -p kynos --no-default-features --features openapi31,time \
-    >"$invalid_time_output" 2>&1; then
-  echo "the time umbrella unexpectedly compiled without a backend" >&2
-  exit 1
-fi
-grep -F 'the `time` feature carries no types of its own' "$invalid_time_output"
+sh scripts/refuses.sh \
+  "the time umbrella unexpectedly compiled without a backend" \
+  'the `time` feature carries no types of its own' \
+  cargo check -p kynos --no-default-features --features openapi31,time
 
-invalid_decimal_output="$(mktemp)"
-trap 'rm -f "$invalid_server_output" "$invalid_time_output" \
-  "$invalid_decimal_output"' EXIT
-if cargo check -p kynos --no-default-features --features openapi31,decimal \
-    >"$invalid_decimal_output" 2>&1; then
-  echo "the decimal umbrella unexpectedly compiled without a backend" >&2
-  exit 1
-fi
-grep -F 'the `decimal` feature carries no types of its own' \
-  "$invalid_decimal_output"
+sh scripts/refuses.sh \
+  "the decimal umbrella unexpectedly compiled without a backend" \
+  'the `decimal` feature carries no types of its own' \
+  cargo check -p kynos --no-default-features --features openapi31,decimal
 '''
 
 [tasks."features:targets"]
@@ -338,17 +323,12 @@ env = { RUSTDOCFLAGS = "-D warnings" }
 description = "Verify panic recovery rejects aborting builds only when selected"
 run = '''
 set -eu
-panic_check_output="$(mktemp)"
-trap 'rm -f "$panic_check_output"' EXIT
-
 RUSTFLAGS="-C panic=abort" cargo check -p kynos --lib
 
-if RUSTFLAGS="-C panic=abort" cargo build -p kynos --test panic-recovery-check >"$panic_check_output" 2>&1; then
-  echo "panic recovery unexpectedly compiled with panic=abort" >&2
-  exit 1
-fi
-
-grep -F 'Kynos panic recovery requires `panic = "unwind"`' "$panic_check_output"
+RUSTFLAGS="-C panic=abort" sh scripts/refuses.sh \
+  "panic recovery unexpectedly compiled with panic=abort" \
+  'Kynos panic recovery requires `panic = "unwind"`' \
+  cargo build -p kynos --test panic-recovery-check
 '''
 
 [tasks."msrv:check"]
