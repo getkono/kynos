@@ -91,12 +91,21 @@ pub(crate) const fn is_utf8_or_unstated(media_type: &str) -> bool {
 
 /// The value of the first `charset` parameter a media type declares, trimmed
 /// and unquoted; `None` when it declares none.
+///
+/// Parameters are split only at a `;` outside a quoted value (RFC 9110
+/// section 5.6.6), so a `charset=` inside one is part of that value.
 pub(crate) const fn charset(media_type: &str) -> Option<&[u8]> {
-    use super::{eq_ignore_ascii_case, split_at_byte, unquoted};
+    use super::{eq_ignore_ascii_case, split_at_byte, unquoted, unquoted_position};
 
     let mut parameters = split_essence(media_type.as_bytes()).1;
     while !parameters.is_empty() {
-        let (parameter, rest) = split_at_byte(parameters, b';');
+        let (parameter, rest) = match unquoted_position(parameters, b';') {
+            Some(at) => {
+                let (parameter, rest) = parameters.split_at(at);
+                (parameter, rest.split_at(1).1)
+            }
+            None => parameters.split_at(parameters.len()),
+        };
         let (name, value) = split_at_byte(parameter, b'=');
         if eq_ignore_ascii_case(name.trim_ascii(), b"charset") {
             return Some(unquoted(value.trim_ascii()));

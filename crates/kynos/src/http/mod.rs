@@ -118,25 +118,13 @@ pub(crate) const fn copy_into(out: &mut [u8], at: usize, bytes: &[u8]) -> usize 
 /// `;` inside it separates nothing. A `\` inside quotes escapes the octet
 /// after it (section 5.6.4).
 ///
-/// Shared by `Accept` and the body codecs' `Content-Type`.
+/// Shared by `Accept` and the body codecs' `Content-Type`; a constant reads
+/// the same pieces through [`unquoted_position`].
 pub(crate) fn unquoted_split(text: &str, delimiter: u8) -> impl Iterator<Item = &str> {
     let mut rest = Some(text);
     std::iter::from_fn(move || {
         let piece = rest?;
-        let (mut quoted, mut escaped) = (false, false);
-        let at = piece.bytes().position(|byte| {
-            if escaped {
-                escaped = false;
-            } else if quoted && byte == b'\\' {
-                escaped = true;
-            } else if byte == b'"' {
-                quoted = !quoted;
-            } else if !quoted && byte == delimiter {
-                return true;
-            }
-            false
-        });
-        match at {
+        match unquoted_position(piece.as_bytes(), delimiter) {
             Some(at) => {
                 rest = Some(&piece[at + 1..]);
                 Some(&piece[..at])
@@ -144,6 +132,27 @@ pub(crate) fn unquoted_split(text: &str, delimiter: u8) -> impl Iterator<Item = 
             None => rest.take(),
         }
     })
+}
+
+/// Where the first `delimiter` outside any `quoted-string` in `bytes` is, as
+/// [`unquoted_split`] splits; usable in a constant.
+pub(crate) const fn unquoted_position(bytes: &[u8], delimiter: u8) -> Option<usize> {
+    let (mut quoted, mut escaped) = (false, false);
+    let mut at = 0;
+    while at < bytes.len() {
+        let byte = bytes[at];
+        if escaped {
+            escaped = false;
+        } else if quoted && byte == b'\\' {
+            escaped = true;
+        } else if byte == b'"' {
+            quoted = !quoted;
+        } else if !quoted && byte == delimiter {
+            return Some(at);
+        }
+        at += 1;
+    }
+    None
 }
 
 /// Whether two ASCII strings match, ignoring case.
