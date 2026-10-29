@@ -694,7 +694,7 @@ the model a compile error there rather than a map it silently stops reading.
 Every function in it asks the same question of a different object, so a split
 would separate the visits from each other. One concern, so one file.
 
-`server/mod.rs` is the shape above. It declares `Server` and `BoundServer`, so
+`server/mod.rs` is `status.rs`'s shape. It declares `Server` and `BoundServer`, so
 splitting the builder from what it builds would turn `server::Server` into
 `server::builder::Server`. What pushed it over was one more setter,
 `request_body_idle_timeout`, whose documentation is the part a caller reads
