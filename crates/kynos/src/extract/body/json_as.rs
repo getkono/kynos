@@ -167,7 +167,6 @@ use crate::{
 /// let written = kynos::response::IntoResponse::into_response(JsonAs::<V1, u64>::new(7));
 /// assert_eq!(written.headers()["content-type"], "application/vnd.acme.v1+json");
 /// ```
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct JsonAs<M, T> {
     /// The decoded document.
     pub value: T,
@@ -190,6 +189,37 @@ impl<M, T> JsonAs<M, T> {
         self.value
     }
 }
+
+// By hand, so each is bounded on `T` alone: a media type is a marker, and a
+// derive would ask it to be `Clone` or `Debug` too.
+impl<M, T: Clone> Clone for JsonAs<M, T> {
+    fn clone(&self) -> Self {
+        Self::new(self.value.clone())
+    }
+}
+
+impl<M, T: std::fmt::Debug> std::fmt::Debug for JsonAs<M, T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("JsonAs")
+            .field("value", &self.value)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<M, T: Default> Default for JsonAs<M, T> {
+    fn default() -> Self {
+        Self::new(T::default())
+    }
+}
+
+impl<M, T: PartialEq> PartialEq for JsonAs<M, T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+
+impl<M, T: Eq> Eq for JsonAs<M, T> {}
 
 impl<M: MediaType, T> JsonAs<M, T> {
     /// Refuses, in the constant evaluation reading it, a marker that does not

@@ -181,7 +181,6 @@ use crate::{
 /// let offered = <(Text, TextAs<Csv>, TextAs<Html>)>::media_types();
 /// assert_eq!(offered.len(), 3);
 /// ```
-#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TextAs<M> {
     /// The decoded text.
     pub text: String,
@@ -202,6 +201,55 @@ impl<M> TextAs<M> {
     #[must_use]
     pub fn into_inner(self) -> String {
         self.text
+    }
+}
+
+// By hand, so none is bounded on `M`: a media type is a marker, and a derive
+// would ask it to be `Clone` or `Debug` too.
+impl<M> Clone for TextAs<M> {
+    fn clone(&self) -> Self {
+        Self::new(self.text.clone())
+    }
+}
+
+impl<M> std::fmt::Debug for TextAs<M> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TextAs")
+            .field("text", &self.text)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<M> Default for TextAs<M> {
+    fn default() -> Self {
+        Self::new(String::new())
+    }
+}
+
+impl<M> PartialEq for TextAs<M> {
+    fn eq(&self, other: &Self) -> bool {
+        self.text == other.text
+    }
+}
+
+impl<M> Eq for TextAs<M> {}
+
+impl<M> PartialOrd for TextAs<M> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<M> Ord for TextAs<M> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.text.cmp(&other.text)
+    }
+}
+
+impl<M> std::hash::Hash for TextAs<M> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.text.hash(state);
     }
 }
 

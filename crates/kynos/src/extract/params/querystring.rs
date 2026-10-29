@@ -30,7 +30,6 @@ use crate::{
 ///
 /// Reach the decoded query through [`into_inner`](Self::into_inner) or the
 /// public field.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct QueryString<T, M> {
     /// The decoded query string.
     pub value: T,
@@ -51,6 +50,57 @@ impl<T, M> QueryString<T, M> {
     #[must_use]
     pub fn into_inner(self) -> T {
         self.value
+    }
+}
+
+// By hand, so each is bounded on `T` alone: a media type is a marker, and a
+// derive would ask it to be `Clone` or `Debug` too.
+impl<T: Clone, M> Clone for QueryString<T, M> {
+    fn clone(&self) -> Self {
+        Self::new(self.value.clone())
+    }
+}
+
+impl<T: Copy, M> Copy for QueryString<T, M> {}
+
+impl<T: std::fmt::Debug, M> std::fmt::Debug for QueryString<T, M> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("QueryString")
+            .field("value", &self.value)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<T: Default, M> Default for QueryString<T, M> {
+    fn default() -> Self {
+        Self::new(T::default())
+    }
+}
+
+impl<T: PartialEq, M> PartialEq for QueryString<T, M> {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+
+impl<T: Eq, M> Eq for QueryString<T, M> {}
+
+impl<T: PartialOrd, M> PartialOrd for QueryString<T, M> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.value.partial_cmp(&other.value)
+    }
+}
+
+impl<T: Ord, M> Ord for QueryString<T, M> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.value.cmp(&other.value)
+    }
+}
+
+impl<T: std::hash::Hash, M> std::hash::Hash for QueryString<T, M> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.value.hash(state);
     }
 }
 
