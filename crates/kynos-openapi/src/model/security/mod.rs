@@ -62,7 +62,9 @@ pub enum SecurityScheme {
     ApiKey {
         /// The name of the header, query parameter or cookie.
         name: String,
-        /// Where the key is carried. Only query, header and cookie are legal.
+        /// Where the key is carried. Only query, header and cookie are legal;
+        /// validation reports any other as
+        /// [`SpecError::IllegalApiKeyLocation`](crate::validate::violation::SpecError::IllegalApiKeyLocation).
         #[serde(rename = "in")]
         location: ParameterIn,
         /// A description of the scheme. [CommonMark] syntax may be used.

@@ -1,5 +1,6 @@
-//! Security rules: each OAuth flow declares the URLs its flow requires, and
-//! each requirement names a scheme.
+//! Security rules: an `apiKey` is carried in a query, header or cookie, each
+//! OAuth flow declares the URLs its flow requires, and each requirement names
+//! a scheme.
 //!
 //! The root requirements are checked here; an operation's are checked with
 //! the rest of its rules, by the same predicate.
@@ -9,6 +10,7 @@ use std::collections::HashSet;
 use crate::{
     model::{
         document::Document,
+        parameter::ParameterIn,
         security::{
             SecurityScheme,
             oauth::{OAuthFlow, OAuthFlows},
@@ -66,7 +68,8 @@ impl Validator {
     }
 }
 
-/// Checks every OAuth flow of every Security Scheme defined in `components`.
+/// Checks every Security Scheme defined in `components`: where an `apiKey` is
+/// carried, and every OAuth flow.
 ///
 /// A `$ref` is not followed: the scheme it names is checked where it is
 /// defined.
@@ -77,10 +80,24 @@ pub(in crate::validate) fn check_security_schemes(
     visit::inline_items(
         At::ROOT.key("components").key("securitySchemes"),
         &document.components.security_schemes,
-        |at, scheme| {
-            if let SecurityScheme::OAuth2 { flows, .. } = scheme {
+        |at, scheme| match scheme {
+            SecurityScheme::ApiKey { location, .. } => {
+                if !matches!(
+                    location,
+                    ParameterIn::Query | ParameterIn::Header | ParameterIn::Cookie
+                ) {
+                    violations.push(Violation::error(
+                        at.key("in").pointer(),
+                        SpecError::IllegalApiKeyLocation {
+                            location: location.as_str(),
+                        },
+                    ));
+                }
+            }
+            SecurityScheme::OAuth2 { flows, .. } => {
                 check_flows(&at.key("flows").pointer(), flows, violations);
             }
+            _ => {}
         },
     );
 }

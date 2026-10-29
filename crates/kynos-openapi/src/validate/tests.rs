@@ -2957,12 +2957,11 @@ fn the_device_authorization_flow_must_declare_its_required_urls() {
     assert_eq!(missing_flow_urls(complete, SpecVersion::V3_2), []);
 }
 
-/// The locations of every error `version` reports for an `apiKey` scheme
-/// declared as `Key` and carried `in` `location`.
-fn api_key_location_errors(
-    location: crate::model::parameter::ParameterIn,
-    version: SpecVersion,
-) -> Vec<String> {
+/// A document declaring one `apiKey` scheme, `Key`, carried `in` `location`.
+///
+/// Parsed rather than constructed, as a description that names an illegal
+/// location arrives.
+fn api_key_document(location: crate::model::parameter::ParameterIn) -> Document {
     let mut document = document_with(&[]);
     document.components.security_schemes.insert(
         "Key".to_owned(),
@@ -2975,11 +2974,19 @@ fn api_key_location_errors(
             .expect("an apiKey scheme parses whatever its location"),
         ),
     );
+    document
+}
+
+/// Every error `version` reports for [`api_key_document`], with its location.
+fn api_key_location_errors(
+    location: crate::model::parameter::ParameterIn,
+    version: SpecVersion,
+) -> Vec<(String, SpecError)> {
     Validator::new(version)
-        .validate(&document)
+        .validate(&api_key_document(location))
         .into_iter()
         .filter(|v| v.severity == super::Severity::Error)
-        .map(|v| v.location)
+        .map(|v| (v.location, v.error))
         .collect()
 }
 
@@ -2991,28 +2998,52 @@ fn api_key_location_errors(
 fn an_api_key_is_carried_only_in_a_query_header_or_cookie() {
     use crate::model::parameter::ParameterIn;
 
-    let illegal = "#/components/securitySchemes/Key/in";
-    let mut cases = vec![
-        (ParameterIn::Query, SpecVersion::V3_1, None),
-        (ParameterIn::Header, SpecVersion::V3_1, None),
-        (ParameterIn::Cookie, SpecVersion::V3_1, None),
-        (ParameterIn::Path, SpecVersion::V3_1, Some(illegal)),
+    let cases = [
+        (ParameterIn::Query, SpecVersion::V3_1, false),
+        (ParameterIn::Header, SpecVersion::V3_1, false),
+        (ParameterIn::Cookie, SpecVersion::V3_1, false),
+        (ParameterIn::Path, SpecVersion::V3_1, true),
+        #[cfg(feature = "openapi32")]
+        (ParameterIn::Query, SpecVersion::V3_2, false),
+        #[cfg(feature = "openapi32")]
+        (ParameterIn::Path, SpecVersion::V3_2, true),
+        #[cfg(feature = "openapi32")]
+        (ParameterIn::Querystring, SpecVersion::V3_2, true),
     ];
-    #[cfg(feature = "openapi32")]
-    cases.extend([
-        (ParameterIn::Query, SpecVersion::V3_2, None),
-        (ParameterIn::Path, SpecVersion::V3_2, Some(illegal)),
-        (ParameterIn::Querystring, SpecVersion::V3_2, Some(illegal)),
-        (ParameterIn::Querystring, SpecVersion::V3_1, Some(illegal)),
-    ]);
-    for (location, version, expected) in cases {
+    let at = "#/components/securitySchemes/Key/in";
+    let illegal_at = |location: ParameterIn| {
+        (
+            at.to_owned(),
+            SpecError::IllegalApiKeyLocation {
+                location: location.as_str(),
+            },
+        )
+    };
+    for (location, version, illegal) in cases {
         assert_eq!(
             api_key_location_errors(location, version),
-            Vec::from_iter(expected.map(str::to_owned)),
+            Vec::from_iter(illegal.then(|| illegal_at(location))),
             "an apiKey `in` `{}` under {version:?}",
             location.as_str(),
         );
     }
+
+    // Under 3.1 the location is also one 3.1 cannot spell, so the document
+    // is refused at `#` for it beside the location rule.
+    #[cfg(feature = "openapi32")]
+    assert_eq!(
+        api_key_location_errors(ParameterIn::Querystring, SpecVersion::V3_1),
+        [
+            (
+                "#".to_owned(),
+                SpecError::RequiresV3_2 {
+                    blockers: vec![at.to_owned()],
+                },
+            ),
+            illegal_at(ParameterIn::Querystring),
+        ],
+        "an apiKey `in` `querystring` under V3_1"
+    );
 }
 
 #[test]
@@ -3830,6 +3861,7 @@ fn variant_name(error: &SpecError) -> &'static str {
         SpecError::UnknownLinkOperationId { .. } => "UnknownLinkOperationId",
         SpecError::UnresolvedLinkOperationRef { .. } => "UnresolvedLinkOperationRef",
         SpecError::MissingOAuthFlowUrl { .. } => "MissingOAuthFlowUrl",
+        SpecError::IllegalApiKeyLocation { .. } => "IllegalApiKeyLocation",
         SpecError::UndocumentedTag { .. } => "UndocumentedTag",
         SpecError::EmptyServerVariableEnum { .. } => "EmptyServerVariableEnum",
         SpecError::ServerVariableDefaultNotInEnum { .. } => "ServerVariableDefaultNotInEnum",
@@ -4136,6 +4168,7 @@ fn ledger_querystring() -> Vec<(&'static str, SpecVersion, Document)> {
 /// Cases for the whole-document rules: components, tags, servers, security.
 fn ledger_document() -> Vec<(&'static str, SpecVersion, Document)> {
     use crate::model::{
+        parameter::ParameterIn,
         schema::Schema,
         server::{Server, ServerVariable},
         tag::Tag,
@@ -4193,6 +4226,7 @@ fn ledger_document() -> Vec<(&'static str, SpecVersion, Document)> {
         );
         document
     });
+    push("IllegalApiKeyLocation", api_key_document(ParameterIn::Path));
     push(
         "UndocumentedTag",
         document_with(&[("/users", get(operation().with_tag("orders")))]),

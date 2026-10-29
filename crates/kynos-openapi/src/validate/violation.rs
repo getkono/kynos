@@ -370,6 +370,21 @@ pub enum SpecError {
         field: &'static str,
     },
 
+    /// An `apiKey` security scheme was carried somewhere other than a query
+    /// parameter, a header or a cookie.
+    ///
+    /// Reported at the scheme's `in`, under either version: `path` is never
+    /// legal there, and nor is 3.2's `querystring`, which names the whole
+    /// query string rather than one key in it.
+    #[error(
+        "an `apiKey` security scheme may not be `in: {location}`; only `query`, `header` and \
+         `cookie` are legal"
+    )]
+    IllegalApiKeyLocation {
+        /// The location used, as a description spells it (`path`).
+        location: &'static str,
+    },
+
     /// An operation used a tag with no metadata.
     #[error("operation uses tag `{name}`, which has no metadata in the document `tags`")]
     UndocumentedTag {
