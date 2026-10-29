@@ -27,14 +27,10 @@ assert which rules ran rather than counting failures.
 running neither at import, which is what keeps a document nobody can read from
 killing the gate and this run with it.
 
-This docstring is the testing standard for this file, and for a gate script's
-tests generally, and deliberately.
-`docs/testing.md` allocates a method to five kinds of *Rust* code and names
-`containment.py` only as a consumer of the tables it holds; this file has never
-appeared in it, and neither has `cost_features_test.py`, which is held by its
-own gate and says nothing about this one. A gate script is tooling
-rather than shipped surface, and its tests are held by the gate that runs them,
-so there is no row here to write and none owed.
+This docstring says what this file's tests hold and why they are shaped as
+they are. It describes these tests only: `docs/testing.md` names
+`containment.py` as a consumer of the tables it holds, and whatever that
+document requires of a gate script's tests applies here as it would anywhere.
 
 The parsers are where a regression is silent. A rule that breaks reports a
 failure and exits one; a parser that breaks drops a spelling, a site or a whole
@@ -43,7 +39,8 @@ region of a file and the gate still prints `every rule holds` -- the shape
 reports that the elements are off the path when nobody has checked". Each case
 below is a mutation the real tree happens not to contain: a cell whose second
 token lost its backticks, a site that would have opened a sibling crate, a brace
-inside a string in a test module. Every one of them passed the gate green.
+inside a string in a test module. Each one passes the gate green unless the
+parser handles it.
 
 The Rust fragments are written for this file rather than captured. They are the
 minimum that reaches a branch: what a corpus is asked is only whether a spelling
@@ -73,10 +70,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-# Before the import below, and before anything else can trigger one: a run
-# writes no `.pyc` into the tree it reads, and `.gitignore` covers the imports
-# no task controls. The task passes `-B` for the same reason; this covers a
-# direct `python3` run.
+# Before the import below, and before anything else can trigger one: a run,
+# through the task or directly, writes no `.pyc` into the tree it reads, and
+# `.gitignore` covers the imports no task controls.
 sys.dont_write_bytecode = True
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))

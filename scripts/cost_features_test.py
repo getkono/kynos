@@ -3,9 +3,9 @@
 Everything under test here reads text and returns a number or a string. The
 half that shells out to `cargo` is deliberately absent: a sweep is fifty builds
 and testing it would test cargo, while a parser regression is silent -- it
-yields a plausible wrong attribution and exits zero -- and `DISAMBIGUATOR` has
-already regressed once, in `1cf9bd6`, where a pattern meant for a crate id also
-ate a float slice and collapsed two functions onto one key.
+yields a plausible wrong attribution and exits zero. `DISAMBIGUATOR` is the
+sharpest case: a pattern for a crate id that also matches a float slice
+collapses two functions onto one key.
 
 `LLVM_LINES_SAMPLE` is captured output rather than invented: `cargo llvm-lines
 --package kynos --example cost_fixture --color never --sort lines
@@ -46,15 +46,15 @@ import re
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from collections import namedtuple
 from pathlib import Path
 from unittest import mock
 
-# Before the import below, and before anything else can trigger one: a run
-# writes no `.pyc` into the tree it reads, and `.gitignore` covers the imports
-# no task controls. The task passes `-B` for the same reason; this covers a
-# direct `python3` run.
+# Before the import below, and before anything else can trigger one: a run,
+# through the task or directly, writes no `.pyc` into the tree it reads, and
+# `.gitignore` covers the imports no task controls.
 sys.dont_write_bytecode = True
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -782,26 +782,29 @@ class SinceRelease(unittest.TestCase):
                 self.assertEqual(self.released(Path(root)), (None, {}))
 
 
-#: Per `--kind`: the sweep `main` calls, the baseline it reads and records, the
-#: table every run writes beside the report, the section that reports it, and
-#: how this file records a baseline of that kind.
+#: Per `--kind`: the sweep `main` runs for it -- the kind, and for a `.text`
+#: kind the example it builds and the point its deltas are taken against -- the
+#: baseline it reads and records, the table every run writes beside the report,
+#: the section that reports it, and how this file records a baseline of that
+#: kind.
 Kind = namedtuple("Kind", ("sweep", "baseline", "table", "title", "record"))
 KINDS = {
     "binary": Kind(
-        "sweep_binary", cost.BINARY_TSV, "cost-binary.tsv", "### Binary delta",
-        recorded_binary,
+        ("binary", "cost_fixture", "openapi31"),
+        cost.BINARY_TSV, "cost-binary.tsv", "### Binary delta", recorded_binary,
     ),
     "codegen": Kind(
-        "sweep_codegen", cost.CODEGEN_TSV, "cost-codegen.tsv", "### Codegen delta",
-        recorded_codegen,
+        ("codegen", None, None),
+        cost.CODEGEN_TSV, "cost-codegen.tsv", "### Codegen delta", recorded_codegen,
     ),
     "codec": Kind(
-        "sweep_codec", cost.CODEC_TSV, "cost-codec.tsv", "### Codec delta",
-        recorded_codec,
+        ("codec", "cost_codec", "(no codec)"),
+        cost.CODEC_TSV, "cost-codec.tsv", "### Codec delta", recorded_codec,
     ),
 }
 
-#: What `main` did, and what it left behind under `ROOT` and `COST`.
+#: What `main` did, and what it left behind under `ROOT` and `COST`. `sweeps`
+#: is each sweep `main` ran, in order, as `Kind.sweep` spells one.
 Ran = namedtuple("Ran", ("code", "said", "report", "sweeps", "tables", "baselines"))
 
 
@@ -819,15 +822,20 @@ def run_main(kind, mode, measured, recorded=None):
         measured, recorded = {kind: measured}, {kind: recorded}
     recorded = recorded or {}
 
-    def swept(name):
-        rows = measured[name]
-        return (rows, codegen_functions(rows)) if name == "codegen" else rows
+    # Each call is recorded with what it was asked to build. An unselected
+    # kind's sweep returns nothing usable: `main` must not call it.
+    calls = []
 
-    # An unselected kind's sweep returns nothing usable: `main` must not call it.
-    sweeps = {
-        k.sweep: mock.Mock(return_value=swept(name) if name in measured else None)
-        for name, k in KINDS.items()
-    }
+    def sweep_text(name, _points, example, baseline, _env, _host):
+        calls.append((name, example, baseline))
+        return measured.get(name)
+
+    def sweep_codegen(_env):
+        calls.append(("codegen", None, None))
+        rows = measured.get("codegen")
+        return (rows, codegen_functions(rows)) if rows is not None else None
+
+    sweeps = (("sweep_text", sweep_text), ("sweep_codegen", sweep_codegen))
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         was = {
@@ -847,7 +855,7 @@ def run_main(kind, mode, measured, recorded=None):
                 ("read_recorded", mock.Mock(side_effect=lambda path: (
                     was.get(path.name)
                 ))),
-                *sweeps.items(),
+                *sweeps,
             ):
                 stack.enter_context(mock.patch.object(cost, name, value))
             stack.enter_context(mock.patch.object(sys, "argv", argv))
@@ -864,7 +872,7 @@ def run_main(kind, mode, measured, recorded=None):
             code,
             said.getvalue(),
             report.read_text() if report.is_file() else None,
-            [name for name, sweep in sweeps.items() if sweep.called],
+            calls,
             {k.table: cost.read_recorded(root / k.table) for k in KINDS.values()},
             {
                 k.baseline: cost.read_recorded(root / "cost" / k.baseline)
@@ -1129,6 +1137,11 @@ class Main(unittest.TestCase):
         self.assertNotIn("no baseline recorded", ran.said)
 
 
+def task_run(name):
+    """The `run` body `mise.toml` declares for task `name`, as mise parses it."""
+    return tomllib.loads((cost.ROOT / "mise.toml").read_text())["tasks"][name]["run"]
+
+
 class Exclusions(unittest.TestCase):
     """One feature-exclusion set, written down in three places.
 
@@ -1137,20 +1150,21 @@ class Exclusions(unittest.TestCase):
     `docs/testing.md#cross-cutting` holds that a set with names is asserted
     against those names rather than intended. The three are not identical and
     this states exactly how they differ, so that a feature added to one of
-    them cannot quietly go missing from another: `features:check` needs no
-    exclusion for `full` because a powerset that carries every feature is
-    excluded by `--exclude-all-features` already, and the sweep excludes
+    them cannot quietly go missing from another: `features:check` keeps
+    `full`, so its powerset lints `--features full` (`--exclude-all-features`
+    drops only the build naming every feature, which `full` is not), while
+    `features:targets` excludes it, since `full` gates no target of its own
+    and is only the union of the features that run already visits, and the
+    sweep excludes
     `openapi31` on top because it is the pinned baseline every other point is
     measured against rather than a point of its own.
     """
 
     def excluded_by(self, task):
         """Every `--exclude-features` list `mise.toml`'s `task` spells."""
-        text = (cost.ROOT / "mise.toml").read_text()
-        body = text.split(f'[tasks."{task}"]', 1)[1].split("\n[tasks.", 1)[0]
         return [
             frozenset(names.split(","))
-            for names in re.findall(r"--exclude-features ([\w,-]+)", body)
+            for names in re.findall(r"--exclude-features ([\w,-]+)", task_run(task))
         ]
 
     def test_the_sweep_excludes_the_target_matrix_set_and_its_baseline(self):
@@ -1176,9 +1190,7 @@ class Codecs(unittest.TestCase):
 
     def linted_sets(self):
         """The feature sets `mise.toml`'s `lint:codecs` builds every target at."""
-        text = (cost.ROOT / "mise.toml").read_text()
-        body = text.split('[tasks."lint:codecs"]', 1)[1].split("\n[tasks.", 1)[0]
-        return set(re.findall(r"openapi31,macros(?:,[\w-]+)?", body))
+        return set(re.findall(r"openapi31,macros(?:,[\w-]+)?", task_run("lint:codecs")))
 
     def test_the_swept_sets_are_the_sets_lint_codecs_builds(self):
         swept = {flags[-1] for _, flags in cost.codec_points()}

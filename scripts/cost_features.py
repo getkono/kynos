@@ -54,6 +54,18 @@ TOP = 5
 FIXTURE = "cost_fixture"
 CODEC_FIXTURE = "cost_codec"
 
+# The environment that builds something other than what a measurement
+# describes, refused by this sweep and by `profile_report.py` alike. Four names,
+# not the two that are obviously flags: cargo reads a profile's flags from
+# `CARGO_BUILD_RUSTFLAGS` when neither `RUSTFLAGS` nor its encoded form is set,
+# and `CARGO_BUILD_TARGET` moves the build off the host a measurement records.
+AMBIENT_FLAGS = (
+    "RUSTFLAGS",
+    "CARGO_ENCODED_RUSTFLAGS",
+    "CARGO_BUILD_RUSTFLAGS",
+    "CARGO_BUILD_TARGET",
+)
+
 # The opt-in payload codecs. Stated, since no `[features]` entry marks a codec;
 # `mise.toml`'s `lint:codecs` and `tests/alloc_codecs.rs` list the same five,
 # and `cost_features_test.py` holds this set against that task's.
@@ -196,6 +208,73 @@ CODEGEN_HEADER = """\
 # baseline: {baseline} lines
 """
 
+# One measured kind: the baseline it is recorded to and the copy every run
+# writes beside the report, that file's prose and columns, the point its
+# deltas are taken against, the columns its report ranks, and its section.
+Kind = namedtuple(
+    "Kind",
+    (
+        "baseline_tsv",
+        "generated",
+        "header",
+        "columns",
+        "baseline",
+        "value",
+        "delta",
+        "unit",
+        "title",
+        "note",
+    ),
+)
+# In report order, which is also the order `main` sweeps and writes them.
+KINDS = {
+    "binary": Kind(
+        BINARY_TSV,
+        "cost-binary.tsv",
+        BINARY_HEADER,
+        ("text", "delta"),
+        BASELINE,
+        "text",
+        "delta",
+        "`.text` bytes",
+        "Binary delta",
+        "`.text` of the linked fixture, built at `--release`.",
+    ),
+    "codegen": Kind(
+        CODEGEN_TSV,
+        "cost-codegen.tsv",
+        CODEGEN_HEADER,
+        ("lines", "copies", "delta_lines", "delta_copies"),
+        BASELINE,
+        "lines",
+        "delta_lines",
+        "IR lines",
+        "Codegen delta",
+        "Monomorphized LLVM IR for the fixture, counted at the dev profile "
+        "because a fat-LTO build deletes what this counts. The attributed "
+        "functions below need not sum to the total: `cargo llvm-lines` "
+        "counts more into `(TOTAL)` than it lists as rows.",
+    ),
+    "codec": Kind(
+        CODEC_TSV,
+        "cost-codec.tsv",
+        CODEC_HEADER,
+        ("text", "delta"),
+        CODEC_BASELINE,
+        "text",
+        "delta",
+        "`.text` bytes",
+        "Codec delta",
+        "`.text` of the *mounting* fixture, built at `--release`. The "
+        "baseline is that fixture with its transport floor and no codec, "
+        "so a delta is decoding and encoding rather than reading a body at "
+        "all. Each delta is the codec, the crate that implements it -- "
+        "`serde_json`, `serde_html_form`, `multer`, `prost`, "
+        "`async-compression` -- and the payload type its operations "
+        "declare, so it is not attributable to Kynos alone.",
+    ),
+}
+
 
 def fail(message, code=1):
     """Report why the run stops, and stop with `code`."""
@@ -223,21 +302,12 @@ def sweep_env():
     """The environment every build in the sweep runs under.
 
     An ambient flag silently changes every number recorded here, and a trend
-    built on that is noise rather than a trend, so each is refused rather than
-    overridden -- overriding one would discard a flag the caller meant.
-
-    Four names, not the two that are obviously flags. Cargo reads a profile's
-    flags from `CARGO_BUILD_RUSTFLAGS` when neither `RUSTFLAGS` nor its encoded
-    form is set, and `CARGO_BUILD_TARGET` moves the build off the host the
-    provenance header records -- so a sweep under either is measuring a program
-    the header does not describe.
+    built on that is noise rather than a trend, so each of `AMBIENT_FLAGS` is
+    refused rather than overridden -- overriding one would discard a flag the
+    caller meant. A sweep under one is measuring a program the provenance
+    header does not describe.
     """
-    for name in (
-        "RUSTFLAGS",
-        "CARGO_ENCODED_RUSTFLAGS",
-        "CARGO_BUILD_RUSTFLAGS",
-        "CARGO_BUILD_TARGET",
-    ):
+    for name in AMBIENT_FLAGS:
         if os.environ.get(name):
             fail(
                 f"{name} is set. It changes every number this sweep records "
@@ -389,7 +459,7 @@ def measure_codegen(flags, env):
     output = capture(
         [
             "cargo", "llvm-lines", "--package", "kynos",
-            "--example", "cost_fixture", "--color", "never", "--sort", "lines",
+            "--example", FIXTURE, "--color", "never", "--sort", "lines",
             *flags,
         ],
         env,
@@ -400,36 +470,22 @@ def measure_codegen(flags, env):
     return total, functions
 
 
-def sweep_binary(env, host):
-    """`.text` at every point, and each point's delta against the baseline."""
-    size = llvm_size(host)
-    text = {}
-    for label, flags in points():
-        print(f"cost: binary {label}", file=sys.stderr, flush=True)
-        text[label] = measure_binary(size, flags, env)
-    base = text[BASELINE]
-    return {
-        label: {"text": value, "delta": value - base}
-        for label, value in text.items()
-    }
+def sweep_text(kind, points, example, baseline, env, host):
+    """`.text` of `example` at every one of `points`, and each delta against
+    `baseline`'s.
 
-
-def sweep_codec(env, host):
-    """`.text` of the mounting fixture at each codec, against the floor.
-
-    The same instrument and the same section as `sweep_binary`, over the other
-    fixture and a different baseline. Separate rather than parameterised into
-    that function because the two differ in what they hold fixed: this one
-    varies the *program* on purpose -- the codec point mounts two operations the
-    baseline point does not -- and folding them together would put one docstring
-    over two opposite claims about the fixture.
+    `kind` names the sweep in progress lines. What a delta means is the
+    kind's: the binary kind holds the program fixed and varies only the
+    features, while the codec kind varies the *program* on purpose -- a codec
+    point mounts two operations its floor does not -- so `baseline` is always
+    that kind's own floor.
     """
     size = llvm_size(host)
     text = {}
-    for label, flags in codec_points():
-        print(f"cost: codec {label}", file=sys.stderr, flush=True)
-        text[label] = measure_binary(size, flags, env, CODEC_FIXTURE)
-    base = text[CODEC_BASELINE]
+    for label, flags in points:
+        print(f"cost: {kind} {label}", file=sys.stderr, flush=True)
+        text[label] = measure_binary(size, flags, env, example)
+    base = text[baseline]
     return {
         label: {"text": value, "delta": value - base}
         for label, value in text.items()
@@ -461,17 +517,16 @@ def read_recorded(path):
     `None` when nothing is recorded. The two header lines `write_tsv` emits for
     provenance are kept rather than dropped with the rest of the `#` prose. A
     drift is a difference against these rows, and a difference measured by a
-    different rustc is not the same claim as one measured by this one; while
-    they were dropped the report could not tell a reader which it was holding.
+    different rustc is not the same claim as one measured by this one, so the
+    report has to be able to tell a reader which it is holding.
 
     `None` also when the file parses but holds nothing to compare against. A
     baseline is unusable two ways short of being absent: a column header with
     no row under it, and a row whose cells do not line up with that header --
     which is what a conflicted file looks like, since `<<<<<<< HEAD` splits
-    into a single cell and lands beside the real rows. Both were accepted, and
-    an accepted-but-empty baseline is worse than no baseline: the report stops
-    saying it has nothing to compare against and starts printing a drift
-    verdict for a comparison it never made.
+    into a single cell and lands beside the real rows. Either would be worse
+    than no baseline: the report would stop saying it has nothing to compare
+    against and print a drift verdict for a comparison it never made.
     """
     if not path.is_file():
         return None
@@ -535,7 +590,7 @@ def released():
         return None, {}
     tag = tag.strip()
     tables = {}
-    for name in (BINARY_TSV, CODEGEN_TSV, CODEC_TSV):
+    for name in (kind.baseline_tsv for kind in KINDS.values()):
         shown = git("show", f"{tag}:{COST.relative_to(ROOT).as_posix()}/{name}")
         tables[name] = None if shown is None else parse_recorded(shown)
     return tag, tables
@@ -565,10 +620,8 @@ def table(rows, recorded, value, delta, unit, versions, baseline=BASELINE):
     row for has no drift: there is nothing for it to have drifted from, and
     ranking it beside the points that did drift would put two different
     quantities in one list. It is collected as `fresh` and ranked by what it
-    costs instead. Collecting it nowhere is what made the run that first
-    measures a new feature the one run that ranks and attributes nothing --
-    the row was in the table, and the separately headed sections below it were
-    empty.
+    costs instead, so the run that first measures a new feature still ranks
+    and attributes it rather than leaving it in the table alone.
 
     The baseline row is the exception to comparing deltas. Its delta is zero by
     construction, so its drift is its absolute instead: the floor every other
@@ -687,9 +740,8 @@ def provenance(recorded, versions):
 
     A drift is a fact about Kynos only when both measurements came from the
     same rustc; across a toolchain bump it is a fact about rustc, and the two
-    render identically in a table of numbers. `write_tsv` has always written
-    the recording toolchain into the baseline's header -- this is the half that
-    reads it back and says so.
+    render identically in a table of numbers. `write_tsv` writes the recording
+    toolchain into the baseline's header; this reads it back and says so.
     """
     if recorded is None:
         return []
@@ -956,52 +1008,22 @@ def report(
     ]
     if verdict is not None:
         out += gate(verdict)
-    if binary is not None:
+    measured = {"binary": binary, "codegen": codegen, "codec": codec}
+    for name, kind in KINDS.items():
+        if measured[name] is None:
+            continue
         out += section(
-            "Binary delta",
-            "`.text` of the linked fixture, built at `--release`.",
-            binary,
-            recorded[BINARY_TSV],
-            "text",
-            "delta",
-            "`.text` bytes",
+            kind.title,
+            kind.note,
+            measured[name],
+            recorded[kind.baseline_tsv],
+            kind.value,
+            kind.delta,
+            kind.unit,
             versions,
-            release=shipped(BINARY_TSV),
-        )
-    if codegen is not None:
-        out += section(
-            "Codegen delta",
-            "Monomorphized LLVM IR for the fixture, counted at the dev profile "
-            "because a fat-LTO build deletes what this counts. The attributed "
-            "functions below need not sum to the total: `cargo llvm-lines` "
-            "counts more into `(TOTAL)` than it lists as rows.",
-            codegen,
-            recorded[CODEGEN_TSV],
-            "lines",
-            "delta_lines",
-            "IR lines",
-            versions,
-            functions,
-            release=shipped(CODEGEN_TSV),
-        )
-    if codec is not None:
-        out += section(
-            "Codec delta",
-            "`.text` of the *mounting* fixture, built at `--release`. The "
-            "baseline is that fixture with its transport floor and no codec, "
-            "so a delta is decoding and encoding rather than reading a body at "
-            "all. Each delta is the codec, the crate that implements it -- "
-            "`serde_json`, `serde_html_form`, `multer`, `prost`, "
-            "`async-compression` -- and the payload type its operations "
-            "declare, so it is not attributable to Kynos alone.",
-            codec,
-            recorded[CODEC_TSV],
-            "text",
-            "delta",
-            "`.text` bytes",
-            versions,
-            baseline=CODEC_BASELINE,
-            release=shipped(CODEC_TSV),
+            functions if name == "codegen" else None,
+            kind.baseline,
+            shipped(kind.baseline_tsv),
         )
     return "\n".join(out) + "\n"
 
@@ -1019,59 +1041,38 @@ def main():
     env = sweep_env()
     versions = toolchain()
     recorded = {
-        name: read_recorded(COST / name)
-        for name in (BINARY_TSV, CODEGEN_TSV, CODEC_TSV)
+        k.baseline_tsv: read_recorded(COST / k.baseline_tsv) for k in KINDS.values()
     }
 
-    binary = sweep_binary(env, versions[1]) if kind in ("all", "binary") else None
-    codegen, functions = (
-        sweep_codegen(env) if kind in ("all", "codegen") else (None, None)
-    )
-    codec = sweep_codec(env, versions[1]) if kind in ("all", "codec") else None
+    selected = set(KINDS) if kind == "all" else {kind}
+    measured = dict.fromkeys(KINDS)
+    functions = None
+    if "binary" in selected:
+        measured["binary"] = sweep_text(
+            "binary", points(), FIXTURE, BASELINE, env, versions[1]
+        )
+    if "codegen" in selected:
+        measured["codegen"], functions = sweep_codegen(env)
+    if "codec" in selected:
+        measured["codec"] = sweep_text(
+            "codec", codec_points(), CODEC_FIXTURE, CODEC_BASELINE, env, versions[1]
+        )
 
-    written = []
-    if binary is not None:
-        written.append(
-            (
-                BINARY_TSV,
-                "cost-binary.tsv",
-                BINARY_HEADER.format(
-                    toolchain=versions[0],
-                    host=versions[1],
-                    baseline=binary[BASELINE]["text"],
-                ),
-                ["text", "delta"],
-                binary,
-            )
+    written = [
+        (
+            k.baseline_tsv,
+            k.generated,
+            k.header.format(
+                toolchain=versions[0],
+                host=versions[1],
+                baseline=measured[name][k.baseline][k.value],
+            ),
+            list(k.columns),
+            measured[name],
         )
-    if codegen is not None:
-        written.append(
-            (
-                CODEGEN_TSV,
-                "cost-codegen.tsv",
-                CODEGEN_HEADER.format(
-                    toolchain=versions[0],
-                    host=versions[1],
-                    baseline=codegen[BASELINE]["lines"],
-                ),
-                ["lines", "copies", "delta_lines", "delta_copies"],
-                codegen,
-            )
-        )
-    if codec is not None:
-        written.append(
-            (
-                CODEC_TSV,
-                "cost-codec.tsv",
-                CODEC_HEADER.format(
-                    toolchain=versions[0],
-                    host=versions[1],
-                    baseline=codec[CODEC_BASELINE]["text"],
-                ),
-                ["text", "delta"],
-                codec,
-            )
-        )
+        for name, k in KINDS.items()
+        if measured[name] is not None
+    ]
 
     mode = os.environ.get("KYNOS_COST")
     verdict = None
@@ -1083,7 +1084,14 @@ def main():
         ]
 
     text = report(
-        binary, codegen, functions, codec, recorded, versions, verdict, released()
+        measured["binary"],
+        measured["codegen"],
+        functions,
+        measured["codec"],
+        recorded,
+        versions,
+        verdict,
+        released(),
     )
     (ROOT / "cost-report.md").write_text(text)
     print(text)

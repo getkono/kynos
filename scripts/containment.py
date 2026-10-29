@@ -1434,8 +1434,8 @@ def placeholder_rule(corpus, failures):
     """No `todo!()` or `unimplemented!()` stands in for a body."""
     if placeholders := sorted(path for path, text in corpus.files if PLACEHOLDER.search(text)):
         failures.append(
-            "a `todo!()` or `unimplemented!()` stands in for a body, and the exception that allowed one "
-            "lapsed when the API-skeleton milestone ended:\n    " + "\n    ".join(placeholders)
+            "a `todo!()` or `unimplemented!()` stands in for a body, and no exception allows "
+            "one outside a doc example:\n    " + "\n    ".join(placeholders)
         )
 
 
