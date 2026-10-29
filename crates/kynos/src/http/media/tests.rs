@@ -55,6 +55,56 @@ fn a_declared_charset_is_read_and_held_to_utf_8() {
     assert!(!is_utf8_or_unstated("text/csv; charset=utf8"));
 }
 
+/// A `;` inside a quoted parameter value separates nothing (RFC 9110 sections
+/// 5.6.4 and 5.6.6), so a `charset=` there is part of that value, not a
+/// parameter: swept over every list of up to three parameters drawn from an
+/// alphabet whose charset, if any, each piece records for itself.
+#[test]
+fn a_charset_is_read_only_from_a_parameter_outside_quotes() {
+    // Each piece as written, and the charset it declares.
+    let alphabet: [(&str, Option<&[u8]>); 8] = [
+        ("profile=\"a;charset=latin1\"", None),
+        ("profile=\"a\\\";charset=latin1\"", None),
+        ("note=\"=;\"", None),
+        ("header=present", None),
+        ("charset=utf-8", Some(b"utf-8")),
+        ("Charset = \"iso-8859-1\"", Some(b"iso-8859-1")),
+        ("charset=\"a;b\"", Some(b"a;b")),
+        (" ", None),
+    ];
+
+    let mut level = vec![Vec::new()];
+    let mut lists = level.clone();
+    for _ in 0..3 {
+        level = level
+            .iter()
+            .flat_map(|list| {
+                alphabet.iter().map(move |piece| {
+                    let mut list = list.clone();
+                    list.push(*piece);
+                    list
+                })
+            })
+            .collect();
+        lists.extend(level.iter().cloned());
+    }
+
+    for list in lists {
+        let written = list
+            .iter()
+            .fold(String::from("text/x.acme"), |text, (piece, _)| {
+                format!("{text};{piece}")
+            });
+        let expected = list.iter().find_map(|&(_, charset)| charset);
+        assert_eq!(charset(&written), expected, "`{written}`");
+        assert_eq!(
+            is_utf8_or_unstated(&written),
+            expected.is_none_or(|charset| charset == b"utf-8"),
+            "`{written}`"
+        );
+    }
+}
+
 /// What a `BodyCodec`'s `MEDIA_TYPE` must be: a `type/subtype` of RFC 9110
 /// tokens, with any parameters in octets a field value may hold.
 #[test]
