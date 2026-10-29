@@ -127,13 +127,8 @@ impl<'a> At<'a> {
 }
 
 /// How many decimal digits `index` is written in.
-fn digits(mut index: usize) -> usize {
-    let mut digits = 1;
-    while index >= 10 {
-        index /= 10;
-        digits += 1;
-    }
-    digits
+fn digits(index: usize) -> usize {
+    index.checked_ilog10().map_or(1, |log| log as usize + 1)
 }
 
 #[cfg(test)]

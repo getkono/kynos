@@ -23,10 +23,10 @@ use crate::{
 #[cfg(feature = "openapi32")]
 pub const SEQUENTIAL_MEDIA_TYPES: &[&str] = &[
     "application/jsonl",
-    crate::model::body::mime_names::APPLICATION_NDJSON,
-    crate::model::body::mime_names::APPLICATION_JSON_SEQ,
+    "application/x-ndjson",
+    "application/json-seq",
     "application/geo+json-seq",
-    crate::model::body::mime_names::TEXT_EVENT_STREAM,
+    "text/event-stream",
     "multipart/mixed",
     // RFC 9110 section 14.6: a multi-part 206 is a sequence of parts, as 3.2's
     // *Streaming Byte Ranges* example describes with `itemSchema`.

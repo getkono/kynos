@@ -5,18 +5,12 @@ pub mod method;
 pub mod operation;
 pub mod template;
 
-use std::fmt;
-
-use serde::{
-    Deserialize, Deserializer, Serialize, Serializer,
-    de::{MapAccess, Visitor},
-    ser::SerializeMap,
-};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
     Map,
     model::{
-        extensions::Extensions,
+        extensions::{Extensions, deserialize_with_items, serialize_with_items},
         paths::{item::PathItem, template::PathTemplate},
     },
 };
@@ -70,42 +64,15 @@ impl Paths {
 
 impl Serialize for Paths {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut map = serializer.serialize_map(Some(self.items.len() + self.extensions.0.len()))?;
-        for (key, item) in &self.items {
-            map.serialize_entry(key, item)?;
-        }
-        for (key, value) in &self.extensions.0 {
-            map.serialize_entry(key, value)?;
-        }
-        map.end()
+        serialize_with_items(serializer, &self.items, &self.extensions)
     }
 }
 
 impl<'de> Deserialize<'de> for Paths {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct PathsVisitor;
-
-        impl<'de> Visitor<'de> for PathsVisitor {
-            type Value = Paths;
-
-            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str("a map of path templates to path items")
-            }
-
-            fn visit_map<A: MapAccess<'de>>(self, mut access: A) -> Result<Paths, A::Error> {
-                let mut paths = Paths::new();
-                while let Some(key) = access.next_key::<String>()? {
-                    if key.starts_with(crate::model::extensions::EXTENSION_PREFIX) {
-                        paths.extensions.0.insert(key, access.next_value()?);
-                    } else {
-                        paths.items.insert(key, access.next_value()?);
-                    }
-                }
-                Ok(paths)
-            }
-        }
-
-        deserializer.deserialize_map(PathsVisitor)
+        let (items, extensions) =
+            deserialize_with_items(deserializer, "a map of path templates to path items")?;
+        Ok(Self { items, extensions })
     }
 }
 

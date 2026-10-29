@@ -211,33 +211,24 @@ impl SecurityScheme {
 
     /// An API key carried in a header.
     pub fn api_key_header(name: impl Into<String>) -> Self {
-        Self::ApiKey {
-            name: name.into(),
-            location: ParameterIn::Header,
-            description: None,
-            #[cfg(feature = "openapi32")]
-            deprecated: None,
-            extensions: Extensions::new(),
-        }
+        Self::api_key(name.into(), ParameterIn::Header)
     }
 
     /// An API key carried in a query parameter.
     pub fn api_key_query(name: impl Into<String>) -> Self {
-        Self::ApiKey {
-            name: name.into(),
-            location: ParameterIn::Query,
-            description: None,
-            #[cfg(feature = "openapi32")]
-            deprecated: None,
-            extensions: Extensions::new(),
-        }
+        Self::api_key(name.into(), ParameterIn::Query)
     }
 
     /// An API key carried in a cookie.
     pub fn api_key_cookie(name: impl Into<String>) -> Self {
+        Self::api_key(name.into(), ParameterIn::Cookie)
+    }
+
+    /// An API key carried at `location`.
+    fn api_key(name: String, location: ParameterIn) -> Self {
         Self::ApiKey {
-            name: name.into(),
-            location: ParameterIn::Cookie,
+            name,
+            location,
             description: None,
             #[cfg(feature = "openapi32")]
             deprecated: None,
@@ -337,16 +328,8 @@ impl SecurityScheme {
     /// 3.1 — see [`emit`](crate::emit).
     #[cfg(feature = "openapi32")]
     #[must_use]
-    pub fn deprecated(mut self) -> Self {
-        let slot = match &mut self {
-            Self::ApiKey { deprecated, .. }
-            | Self::Http { deprecated, .. }
-            | Self::MutualTls { deprecated, .. }
-            | Self::OAuth2 { deprecated, .. }
-            | Self::OpenIdConnect { deprecated, .. } => deprecated,
-        };
-        *slot = Some(true);
-        self
+    pub fn deprecated(self) -> Self {
+        self.with_deprecated(true)
     }
 
     /// Sets the RFC 8414 authorization server metadata URL.

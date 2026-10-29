@@ -1,6 +1,12 @@
 //! Specification extensions (`x-` prefixed fields).
 
-use serde::{Deserialize, Serialize};
+use std::{fmt, marker::PhantomData};
+
+use serde::{
+    Deserialize, Deserializer, Serialize, Serializer,
+    de::{MapAccess, Visitor},
+    ser::SerializeMap,
+};
 use serde_json::Value;
 
 use crate::Map;
@@ -67,6 +73,61 @@ impl Extensions {
                 .iter()
                 .any(|reserved| name.starts_with(reserved))
     }
+}
+
+/// Writes `items` and then `extensions` as one flat map, as an object whose
+/// keys are its entries writes itself.
+pub(crate) fn serialize_with_items<S: Serializer, T: Serialize>(
+    serializer: S,
+    items: &Map<T>,
+    extensions: &Extensions,
+) -> Result<S::Ok, S::Error> {
+    let mut map = serializer.serialize_map(Some(items.len() + extensions.0.len()))?;
+    for (key, item) in items {
+        map.serialize_entry(key, item)?;
+    }
+    for (key, value) in &extensions.0 {
+        map.serialize_entry(key, value)?;
+    }
+    map.end()
+}
+
+/// Reads one flat map into its entries and its `x-` extensions, the inverse
+/// of [`serialize_with_items`]. `expecting` names the map in a type error.
+pub(crate) fn deserialize_with_items<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+    deserializer: D,
+    expecting: &'static str,
+) -> Result<(Map<T>, Extensions), D::Error> {
+    struct ItemsVisitor<T> {
+        expecting: &'static str,
+        item: PhantomData<T>,
+    }
+
+    impl<'de, T: Deserialize<'de>> Visitor<'de> for ItemsVisitor<T> {
+        type Value = (Map<T>, Extensions);
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(self.expecting)
+        }
+
+        fn visit_map<A: MapAccess<'de>>(self, mut access: A) -> Result<Self::Value, A::Error> {
+            let mut items = Map::new();
+            let mut extensions = Extensions::new();
+            while let Some(key) = access.next_key::<String>()? {
+                if key.starts_with(EXTENSION_PREFIX) {
+                    extensions.0.insert(key, access.next_value()?);
+                } else {
+                    items.insert(key, access.next_value()?);
+                }
+            }
+            Ok((items, extensions))
+        }
+    }
+
+    deserializer.deserialize_map(ItemsVisitor {
+        expecting,
+        item: PhantomData,
+    })
 }
 
 #[cfg(test)]

@@ -136,9 +136,9 @@ impl Responses {
             self.default_response.clone_from(&other.default_response);
         }
         for (key, response) in &other.responses {
-            if !self.responses.contains_key(key) {
-                self.responses.insert(key.clone(), response.clone());
-            }
+            self.responses
+                .entry(key.clone())
+                .or_insert_with(|| response.clone());
         }
     }
 

@@ -58,10 +58,6 @@ impl<'doc> Visit<'doc> for Operations<'_> {
 
     /// After its callbacks, so their operations are reported first.
     fn operation_walked(&mut self, at: At<'_>, operation: &'doc Operation) {
-        if !Opaque::is_annotated(operation) {
-            return;
-        }
-
         match Opaque::of(operation) {
             Ok(Some(marker)) => self.violations.push(Violation::warning(
                 at.pointer(),
@@ -69,7 +65,6 @@ impl<'doc> Visit<'doc> for Operations<'_> {
                     reasons: marker.reasons,
                 },
             )),
-            // `is_annotated` was true, so the annotation is present.
             Ok(None) => {}
             Err(error) => self.violations.push(malformed(at.pointer(), &error)),
         }

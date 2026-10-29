@@ -534,7 +534,14 @@ pub enum SpecError {
         detail: String,
     },
 
-    /// The document uses 3.2-only constructs or unrecognised non-`x-` fields 3.1 cannot express.
+    /// The document holds something 3.1 cannot express.
+    ///
+    /// [`blockers`](Self::RequiresV3_2::blockers) is what
+    /// [`three_two_only_constructs`](crate::emit::downgrade::three_two_only_constructs)
+    /// lists: 3.2-only fields, unrecognised non-`x-` fields, `content` entries
+    /// given by reference, inline responses without a `description`, and
+    /// security requirement names that name a scheme by URI. The message calls
+    /// every one a field.
     #[error("cannot emit as OpenAPI 3.1: {} 3.2-only or unrecognised field(s) in use: {}", blockers.len(), blockers.join(", "))]
     RequiresV3_2 {
         /// Locations of the fields standing in the way.

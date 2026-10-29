@@ -2,6 +2,7 @@
 
 pub mod header;
 pub mod style;
+mod wire;
 
 use std::fmt;
 
@@ -12,9 +13,7 @@ use crate::{
     Map,
     model::{
         body::media_type::MediaType,
-        example::{
-            Example, Examples, ExamplesConflict, examples_from, examples_into, examples_with_named,
-        },
+        example::{Example, Examples, examples_with_named},
         extensions::Extensions,
         parameter::style::Style,
         reference::{Ref, RefOr},
@@ -81,7 +80,7 @@ impl fmt::Display for ParameterIn {
 /// `content` and never both or neither, and shown by an [`Examples`], which is
 /// the inline `example` or the named `examples` and never both.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "RawParameter", into = "RawParameter")]
+#[serde(try_from = "wire::RawParameter", into = "wire::RawParameter")]
 pub struct Parameter {
     /// The name of the parameter, case-sensitive.
     ///
@@ -90,20 +89,17 @@ pub struct Parameter {
     pub name: String,
 
     /// Where the parameter is carried.
-    #[serde(rename = "in")]
     pub location: ParameterIn,
 
     /// A description of the parameter. [CommonMark] syntax may be used.
     ///
     /// [CommonMark]: https://spec.commonmark.org/
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
     /// Whether the parameter is mandatory.
     ///
     /// Must be `true` when [`location`](Parameter::location) is
     /// [`ParameterIn::Path`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub required: Option<bool>,
 
     /// Whether the parameter is deprecated.
@@ -380,212 +376,6 @@ impl Parameter {
                     .unwrap_or_else(|| self.effective_style().is_some_and(Style::default_explode)),
             ),
             ParameterShape::Content { .. } => None,
-        }
-    }
-}
-
-/// The wire shape: the value fields flat, as the specification writes them.
-#[derive(Serialize, Deserialize)]
-struct RawParameter {
-    name: String,
-
-    #[serde(rename = "in")]
-    location: ParameterIn,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    required: Option<bool>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    deprecated: Option<bool>,
-
-    #[serde(
-        rename = "allowEmptyValue",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    allow_empty_value: Option<bool>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    style: Option<Style>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    explode: Option<bool>,
-
-    #[serde(
-        rename = "allowReserved",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    allow_reserved: Option<bool>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    schema: Option<Schema>,
-
-    #[serde(
-        default,
-        deserialize_with = "crate::model::nullable::some",
-        skip_serializing_if = "Option::is_none"
-    )]
-    example: Option<Value>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    examples: Option<Map<RefOr<Example>>>,
-
-    #[serde(default, skip_serializing_if = "Map::is_empty")]
-    content: Map<RefOr<MediaType>>,
-
-    #[serde(flatten)]
-    extensions: Extensions,
-}
-
-/// A Parameter or Header Object whose fields do not hold together.
-#[derive(Debug)]
-pub(crate) enum ParameterConflict {
-    /// The value is described by neither `schema` nor `content`, or by both.
-    Shape(ShapeConflict),
-
-    /// The value is shown by both `example` and `examples`.
-    Examples(ExamplesConflict),
-}
-
-impl fmt::Display for ParameterConflict {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Shape(conflict) => conflict.fmt(f),
-            Self::Examples(conflict) => conflict.fmt(f),
-        }
-    }
-}
-
-impl From<ShapeConflict> for ParameterConflict {
-    fn from(conflict: ShapeConflict) -> Self {
-        Self::Shape(conflict)
-    }
-}
-
-impl From<ExamplesConflict> for ParameterConflict {
-    fn from(conflict: ExamplesConflict) -> Self {
-        Self::Examples(conflict)
-    }
-}
-
-/// A Parameter or Header Object whose value description does not hold together.
-#[derive(Debug)]
-pub(crate) enum ShapeConflict {
-    /// Neither `schema` nor `content` was given.
-    Neither,
-
-    /// Both `schema` and `content` were given.
-    Both,
-
-    /// `content` held a number of entries other than one.
-    ContentNotSingular(usize),
-}
-
-impl fmt::Display for ShapeConflict {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Neither => f.write_str("one of `schema` and `content` is required"),
-            Self::Both => f.write_str("`schema` and `content` are mutually exclusive"),
-            Self::ContentNotSingular(found) => {
-                write!(f, "`content` must hold exactly one entry, found {found}")
-            }
-        }
-    }
-}
-
-/// The one `content` entry a shape may hold, keyed by its media type.
-type ContentEntry = (String, RefOr<MediaType>);
-
-/// Splits the wire fields into a shape, or says why they will not go.
-pub(crate) fn shape_from(
-    schema: Option<Schema>,
-    content: Map<RefOr<MediaType>>,
-) -> Result<(Schema, Option<ContentEntry>), ShapeConflict> {
-    match (schema, content.len()) {
-        (Some(_), 1..) => Err(ShapeConflict::Both),
-        (None, 0) => Err(ShapeConflict::Neither),
-        (None, 1) => {
-            let (media_type, value) = content
-                .into_iter()
-                .next()
-                .expect("a map of length one has an entry");
-            Ok((Schema::Bool(true), Some((media_type, value))))
-        }
-        (None, found) => Err(ShapeConflict::ContentNotSingular(found)),
-        (Some(schema), 0) => Ok((schema, None)),
-    }
-}
-
-impl TryFrom<RawParameter> for Parameter {
-    type Error = ParameterConflict;
-
-    fn try_from(raw: RawParameter) -> Result<Self, Self::Error> {
-        let shape = match shape_from(raw.schema, raw.content)? {
-            (_, Some((media_type, value))) => ParameterShape::Content {
-                media_type,
-                value: Box::new(value),
-            },
-            (schema, None) => ParameterShape::Schema {
-                schema,
-                style: raw.style,
-                explode: raw.explode,
-                allow_reserved: raw.allow_reserved,
-            },
-        };
-
-        Ok(Self {
-            name: raw.name,
-            location: raw.location,
-            description: raw.description,
-            required: raw.required,
-            deprecated: raw.deprecated,
-            allow_empty_value: raw.allow_empty_value,
-            shape,
-            examples: examples_from(raw.example, raw.examples)?,
-            extensions: raw.extensions,
-        })
-    }
-}
-
-impl From<Parameter> for RawParameter {
-    fn from(parameter: Parameter) -> Self {
-        let (schema, style, explode, allow_reserved, content) = match parameter.shape {
-            ParameterShape::Schema {
-                schema,
-                style,
-                explode,
-                allow_reserved,
-            } => (Some(schema), style, explode, allow_reserved, Map::new()),
-            ParameterShape::Content { media_type, value } => (
-                None,
-                None,
-                None,
-                None,
-                Map::from_iter([(media_type, *value)]),
-            ),
-        };
-
-        let (example, examples) = examples_into(parameter.examples);
-
-        Self {
-            name: parameter.name,
-            location: parameter.location,
-            description: parameter.description,
-            required: parameter.required,
-            deprecated: parameter.deprecated,
-            allow_empty_value: parameter.allow_empty_value,
-            style,
-            explode,
-            allow_reserved,
-            schema,
-            example,
-            examples,
-            content,
-            extensions: parameter.extensions,
         }
     }
 }

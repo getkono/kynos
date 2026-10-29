@@ -5,7 +5,6 @@ use super::Method;
 /// A described method has a wire spelling, so this direction never fails.
 impl From<Method> for ::http::Method {
     fn from(method: Method) -> Self {
-        // `as_wire_str` returns only valid method tokens.
         Self::from_bytes(method.as_wire_str().as_bytes())
             .expect("every described method is a valid HTTP method token")
     }

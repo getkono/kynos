@@ -32,9 +32,7 @@ impl SecurityRequirement {
 
     /// Requires a scheme that takes no scopes.
     pub fn scheme(name: impl Into<String>) -> Self {
-        let mut map = Map::new();
-        map.insert(name.into(), Vec::new());
-        Self(map)
+        Self(Map::from_iter([(name.into(), Vec::new())]))
     }
 
     /// Requires a scheme together with a set of scopes.
@@ -42,9 +40,10 @@ impl SecurityRequirement {
         name: impl Into<String>,
         scopes: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
-        let mut map = Map::new();
-        map.insert(name.into(), scopes.into_iter().map(Into::into).collect());
-        Self(map)
+        Self(Map::from_iter([(
+            name.into(),
+            scopes.into_iter().map(Into::into).collect(),
+        )]))
     }
 
     /// Adds another scheme that must be satisfied alongside the existing ones.

@@ -219,30 +219,19 @@ struct RawExample {
 }
 
 /// An Example Object whose value fields cannot hold together.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 enum ExampleConflict {
     /// `value` was set beside one of the fields that excludes it.
+    #[error(
+        "`value` is mutually exclusive with `dataValue`, `serializedValue` and \
+         `externalValue` on an Example Object"
+    )]
     ValueNotAlone,
 
     /// `serializedValue` and `externalValue` were both set.
     #[cfg(feature = "openapi32")]
+    #[error("`serializedValue` and `externalValue` are mutually exclusive on an Example Object")]
     TwoSerializations,
-}
-
-impl std::fmt::Display for ExampleConflict {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::ValueNotAlone => f.write_str(
-                "`value` is mutually exclusive with `dataValue`, `serializedValue` and \
-                 `externalValue` on an Example Object",
-            ),
-            #[cfg(feature = "openapi32")]
-            Self::TwoSerializations => f.write_str(
-                "`serializedValue` and `externalValue` are mutually exclusive on an Example \
-                 Object",
-            ),
-        }
-    }
 }
 
 impl TryFrom<RawExample> for Example {
@@ -356,14 +345,9 @@ impl Examples {
 }
 
 /// An object setting both of the mutually exclusive example fields.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("`example` and `examples` are mutually exclusive")]
 pub(crate) struct ExamplesConflict;
-
-impl std::fmt::Display for ExamplesConflict {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("`example` and `examples` are mutually exclusive")
-    }
-}
 
 /// Folds the wire fields into one form, or says they will not go.
 pub(crate) fn examples_from(

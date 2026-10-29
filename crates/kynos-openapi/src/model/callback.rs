@@ -1,16 +1,14 @@
 //! The Callback Object.
 
-use std::fmt;
-
-use serde::{
-    Deserialize, Deserializer, Serialize, Serializer,
-    de::{MapAccess, Visitor},
-    ser::SerializeMap,
-};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
     Map,
-    model::{extensions::Extensions, paths::item::PathItem, reference::RefOr},
+    model::{
+        extensions::{Extensions, deserialize_with_items, serialize_with_items},
+        paths::item::PathItem,
+        reference::RefOr,
+    },
 };
 
 /// Out-of-band requests the API makes as part of an operation.
@@ -56,41 +54,14 @@ impl Callback {
 
 impl Serialize for Callback {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut map = serializer.serialize_map(Some(self.items.len() + self.extensions.0.len()))?;
-        for (expression, item) in &self.items {
-            map.serialize_entry(expression, item)?;
-        }
-        for (key, value) in &self.extensions.0 {
-            map.serialize_entry(key, value)?;
-        }
-        map.end()
+        serialize_with_items(serializer, &self.items, &self.extensions)
     }
 }
 
 impl<'de> Deserialize<'de> for Callback {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct CallbackVisitor;
-
-        impl<'de> Visitor<'de> for CallbackVisitor {
-            type Value = Callback;
-
-            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str("a map of runtime expressions to path items")
-            }
-
-            fn visit_map<A: MapAccess<'de>>(self, mut access: A) -> Result<Callback, A::Error> {
-                let mut callback = Callback::new();
-                while let Some(key) = access.next_key::<String>()? {
-                    if key.starts_with(crate::model::extensions::EXTENSION_PREFIX) {
-                        callback.extensions.0.insert(key, access.next_value()?);
-                    } else {
-                        callback.items.insert(key, access.next_value()?);
-                    }
-                }
-                Ok(callback)
-            }
-        }
-
-        deserializer.deserialize_map(CallbackVisitor)
+        let (items, extensions) =
+            deserialize_with_items(deserializer, "a map of runtime expressions to path items")?;
+        Ok(Self { items, extensions })
     }
 }
