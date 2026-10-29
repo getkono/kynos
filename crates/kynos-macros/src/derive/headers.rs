@@ -219,7 +219,7 @@ pub(crate) fn expand(item: TokenStream) -> TokenStream {
 }
 
 pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
-    let fields = named_fields(input, "Headers")?;
+    let fields = named_fields(input, "HeaderParams")?;
 
     let names = wire_names(input, fields, "header")?;
     reject_non_token_names(fields, &names, "header", "an RFC 9110 field name")?;

@@ -22,7 +22,7 @@ pub(crate) fn expand(item: TokenStream) -> TokenStream {
 }
 
 pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
-    let fields = named_fields(input, "Cookies")?;
+    let fields = named_fields(input, "CookieParams")?;
     let names = wire_names(input, fields, "cookie")?;
     reject_non_token_names(fields, &names, "cookie", "an RFC 6265 cookie name")?;
     // Cookie names are matched exactly, as `http::cookie::value_of` reads them.
