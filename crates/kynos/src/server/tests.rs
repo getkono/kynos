@@ -1052,11 +1052,9 @@ async fn repeated_shutdown_trigger_forces_an_incomplete_drain() {
     let shutdown = crate::server::shutdown::Shutdown {
         future: Box::pin(async move {
             let _ = shutdown_receiver.await;
-            Ok(crate::server::shutdown::ShutdownRequest {
-                force: Box::pin(async move {
-                    let _ = force_receiver.await;
-                }),
-            })
+            Ok(Box::pin(async move {
+                let _ = force_receiver.await;
+            }) as crate::server::shutdown::ForceFuture)
         }),
     };
     let bound = crate::server::Server::new(service)

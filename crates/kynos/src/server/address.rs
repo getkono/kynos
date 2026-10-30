@@ -111,28 +111,26 @@ impl From<TcpListener> for Listener {
 pub(in crate::server) async fn resolve(
     address: &BindAddress,
 ) -> std::result::Result<Vec<SocketAddr>, ServerError> {
+    let failed = |source| ServerError::Resolve {
+        address: address.clone(),
+        source,
+    };
     let resolved = match &address.0 {
         BindTarget::Socket(address) => return Ok(vec![*address]),
         BindTarget::Name(name) => tokio::net::lookup_host(name.as_str())
             .await
-            .map_err(|source| ServerError::Resolve {
-                address: address.clone(),
-                source,
-            })?
+            .map_err(failed)?
             .collect::<Vec<_>>(),
         BindTarget::Host { host, port } => tokio::net::lookup_host((host.as_str(), *port))
             .await
-            .map_err(|source| ServerError::Resolve {
-                address: address.clone(),
-                source,
-            })?
+            .map_err(failed)?
             .collect::<Vec<_>>(),
     };
     if resolved.is_empty() {
-        return Err(ServerError::Resolve {
-            address: address.clone(),
-            source: io::Error::new(io::ErrorKind::AddrNotAvailable, "no addresses resolved"),
-        });
+        return Err(failed(io::Error::new(
+            io::ErrorKind::AddrNotAvailable,
+            "no addresses resolved",
+        )));
     }
     Ok(resolved)
 }

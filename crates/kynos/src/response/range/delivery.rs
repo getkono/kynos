@@ -1,6 +1,7 @@
-//! How a validated delivery is described: the statuses, fields and
+//! How a ranged delivery is described: the statuses, fields and
 //! preconditions a [`Served`](super::served::Served) delivery and a ranged
-//! asset share, so the two describe them in the same words.
+//! asset share, and the `Accept-Ranges` advertisement every ranged response
+//! type adds to its body's, so each describes them in the same words.
 
 use kynos_openapi::{
     Header, Parameter, Response, Schema, StatusPattern, model::schema::types::SchemaType,
@@ -9,7 +10,13 @@ use kynos_openapi::{
 use crate::{
     error::rejection::RangeRejection,
     extract::params::header::HeaderParams,
-    response::{Responses, codec::unconstrained, disposition::ContentDisposition, range::headers},
+    response::{
+        Responses,
+        codec::unconstrained,
+        disposition::ContentDisposition,
+        headers::declare_on_each,
+        range::{headers, headers::AcceptRanges, rangeable::Rangeable},
+    },
     schema::registry::Registry,
 };
 
@@ -75,6 +82,20 @@ pub(crate) fn content_response(description: &str, media_type: &str) -> Response 
 /// The 304 a validated delivery sends when the client's copy is current.
 pub(crate) fn not_modified_response() -> Response {
     Response::new("the client's copy is current")
+}
+
+/// `T`'s own responses, each advertising `Accept-Ranges`, and that
+/// advertisement for the 206 a ranged type adds beside them.
+pub(crate) fn advertised<T: Rangeable>(
+    registry: &mut Registry,
+) -> (
+    kynos_openapi::Responses,
+    kynos_openapi::Map<kynos_openapi::RefOr<Header>>,
+) {
+    let advertised = AcceptRanges::response_headers(registry);
+    let mut responses = T::responses(registry);
+    declare_on_each(&mut responses, &advertised, true);
+    (responses, advertised)
 }
 
 /// The statuses and fields a [`Served`](super::served::Served) delivery can

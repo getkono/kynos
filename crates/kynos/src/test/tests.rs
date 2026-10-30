@@ -14,7 +14,7 @@ use std::{
 use bytes::Bytes;
 use http_body::Body as HttpBody;
 
-use super::{Framed, RequestBody};
+use super::body::{Framed, RequestBody};
 
 fn framed(bytes: &'static str, remaining: Option<u64>) -> Framed {
     Framed {

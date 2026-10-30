@@ -87,25 +87,17 @@ pub(crate) type BoxResponse = Pin<Box<dyn Future<Output = Result<Response, Infal
 /// it gets the request and must produce a response.
 pub trait UncheckedHandler<C>: Send + Sync + 'static {
     /// Handles a request that matched an undescribed route.
-    fn call(
-        &self,
-        request: crate::http::Request,
-        context: &C,
-    ) -> impl Future<Output = crate::http::Response> + Send;
+    fn call(&self, request: Request, context: &C) -> impl Future<Output = Response> + Send;
 }
 
 /// Any `async fn(Request) -> Response` is an unchecked handler.
 impl<C, F, Fut> UncheckedHandler<C> for F
 where
     C: Sync + 'static,
-    F: Fn(crate::http::Request) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = crate::http::Response> + Send,
+    F: Fn(Request) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Response> + Send,
 {
-    fn call(
-        &self,
-        request: crate::http::Request,
-        _context: &C,
-    ) -> impl Future<Output = crate::http::Response> + Send {
+    fn call(&self, request: Request, _context: &C) -> impl Future<Output = Response> + Send {
         self(request)
     }
 }
@@ -126,7 +118,7 @@ pub(crate) trait Resume: Send + Sync + 'static {
 /// Inserted once per request and advanced in place, so a layer costs no insert
 /// of its own; removed before the operation, which never sees it.
 #[derive(Clone)]
-pub(crate) struct Continuation {
+struct Continuation {
     table: Arc<dyn Resume>,
     path: usize,
     position: usize,
@@ -322,20 +314,20 @@ impl<C> std::fmt::Debug for UncheckedInner<C> {
     }
 }
 
-impl<C> tower_service::Service<crate::http::Request> for UncheckedInner<C>
+impl<C> tower_service::Service<Request> for UncheckedInner<C>
 where
     C: Send + Sync + 'static,
 {
-    type Response = crate::http::Response;
+    type Response = Response;
     type Error = Infallible;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+    type Future = BoxResponse;
 
     fn poll_ready(&mut self, context: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         let _ = context;
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, request: crate::http::Request) -> Self::Future {
+    fn call(&mut self, request: Request) -> Self::Future {
         advance(request)
     }
 }
@@ -373,20 +365,20 @@ impl<C> Service<C> {
     }
 }
 
-impl<C> tower_service::Service<crate::http::Request> for UncheckedService<C>
+impl<C> tower_service::Service<Request> for UncheckedService<C>
 where
     C: Send + Sync + 'static,
 {
-    type Response = crate::http::Response;
+    type Response = Response;
     type Error = Infallible;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+    type Future = BoxResponse;
 
     fn poll_ready(&mut self, context: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         let _ = context;
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, request: crate::http::Request) -> Self::Future {
+    fn call(&mut self, request: Request) -> Self::Future {
         let service = Arc::clone(&self.service);
         Box::pin(async move { Ok(service.call(request).await) })
     }

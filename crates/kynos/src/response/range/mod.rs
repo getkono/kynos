@@ -48,7 +48,6 @@ use crate::{
     http::{Parts, Response, StatusCode},
     response::{
         IntoResponse, Responses,
-        headers::declare_on_each,
         range::{
             headers::{AcceptRanges, ContentRange},
             rangeable::Rangeable,
@@ -351,7 +350,7 @@ pub(crate) fn write_selection(
 /// a [`WithHeaders`](crate::response::headers::WithHeaders).
 impl<T: Rangeable> Responses for Ranged<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        let (responses, advertised) = advertised::<T>(registry);
+        let (responses, advertised) = delivery::advertised::<T>(registry);
 
         let mut partial =
             delivery::content_response("the requested part of the representation", T::media_type());
@@ -362,20 +361,6 @@ impl<T: Rangeable> Responses for Ranged<T> {
 
         responses.with(StatusCode::PARTIAL_CONTENT.as_u16(), partial)
     }
-}
-
-/// `T`'s own responses, each advertising `Accept-Ranges`, and that
-/// advertisement for the 206 a ranged type adds beside them.
-fn advertised<T: Rangeable>(
-    registry: &mut Registry,
-) -> (
-    kynos_openapi::Responses,
-    kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>>,
-) {
-    let advertised = AcceptRanges::response_headers(registry);
-    let mut responses = T::responses(registry);
-    declare_on_each(&mut responses, &advertised, true);
-    (responses, advertised)
 }
 
 /// The `range-set` to resolve against a representation of `complete_length`,
