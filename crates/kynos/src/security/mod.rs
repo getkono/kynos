@@ -18,6 +18,60 @@
 //! credential in, [`requirement`] the ways schemes combine inside one, and
 //! [`schemes`] the schemes Kynos can describe without a derive.
 
+/// Implements every trait `#[derive]` would for a marker whose one field is a
+/// `PhantomData` over its parameters, bounding none of them.
+///
+/// A derive bounds each parameter even where only the `PhantomData` holds it,
+/// so a claims or scope type deriving nothing would strip the marker of every
+/// trait. `Debug` prints the `PhantomData` as a derive does.
+macro_rules! phantom_traits {
+    ($($name:ident<$($param:ident),+>),+ $(,)?) => {$(
+        impl<$($param),+> Clone for $name<$($param),+> {
+            fn clone(&self) -> Self {
+                *self
+            }
+        }
+
+        impl<$($param),+> Copy for $name<$($param),+> {}
+
+        impl<$($param),+> ::std::fmt::Debug for $name<$($param),+> {
+            fn fmt(&self, formatter: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                formatter.debug_tuple(stringify!($name)).field(&self.0).finish()
+            }
+        }
+
+        impl<$($param),+> Default for $name<$($param),+> {
+            fn default() -> Self {
+                Self(::std::marker::PhantomData)
+            }
+        }
+
+        impl<$($param),+> PartialEq for $name<$($param),+> {
+            fn eq(&self, _: &Self) -> bool {
+                true
+            }
+        }
+
+        impl<$($param),+> Eq for $name<$($param),+> {}
+
+        impl<$($param),+> PartialOrd for $name<$($param),+> {
+            fn partial_cmp(&self, other: &Self) -> Option<::std::cmp::Ordering> {
+                Some(self.cmp(other))
+            }
+        }
+
+        impl<$($param),+> Ord for $name<$($param),+> {
+            fn cmp(&self, _: &Self) -> ::std::cmp::Ordering {
+                ::std::cmp::Ordering::Equal
+            }
+        }
+
+        impl<$($param),+> ::std::hash::Hash for $name<$($param),+> {
+            fn hash<H: ::std::hash::Hasher>(&self, _: &mut H) {}
+        }
+    )+};
+}
+
 pub mod auth;
 pub mod carrier;
 pub mod requirement;
