@@ -12,7 +12,7 @@
 
 #![no_main]
 
-use kynos::__private::{fuzz::percent_decoded_utf8, uri::query_pairs};
+use kynos::__private::fuzz::{percent_decoded_utf8, query_pairs};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {

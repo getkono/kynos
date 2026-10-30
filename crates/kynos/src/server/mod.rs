@@ -242,6 +242,10 @@ impl<C: 'static> Server<C> {
     pub async fn prepare(self) -> Result<BoundServer<C>> {
         self.validate()?;
         validate_tcp_keepalive(self.tcp_keepalive)?;
+        #[cfg(feature = "tls")]
+        let mut config = self.transport();
+        #[cfg(not(feature = "tls"))]
+        let config = self.transport();
 
         #[cfg(feature = "tls")]
         let mut service = self.service;
@@ -249,18 +253,16 @@ impl<C: 'static> Server<C> {
         let service = self.service;
 
         #[cfg(feature = "tls")]
-        let tls = if let Some(config) = self.tls {
-            if config.client_authentication.is_some() {
+        if let Some(tls) = self.tls {
+            if tls.client_authentication.is_some() {
                 Arc::get_mut(&mut service)
                     .ok_or(ServerError::InvalidConfiguration(
                         "mutual TLS adds itself to the document, so no serve_io connection may still share the service",
                     ))?
                     .openapi_mut(apply_mutual_tls)??;
             }
-            Some(config.build().map_err(ServerError::from)?)
-        } else {
-            None
-        };
+            config.tls = Some(tls.build().map_err(ServerError::from)?);
+        }
 
         let mut listeners = Vec::new();
         for source in self.listeners {
@@ -302,17 +304,7 @@ impl<C: 'static> Server<C> {
             listeners,
             local_addrs,
             socket: SocketOptions::new(self.tcp_keepalive),
-            config: TransportConfig {
-                #[cfg(feature = "http1")]
-                http1: self.http1,
-                #[cfg(feature = "http2")]
-                http2: self.http2,
-                #[cfg(feature = "tls")]
-                tls,
-                shutdown_timeout: self.shutdown_timeout,
-                max_connections: self.max_connections,
-                request_body_idle_timeout: self.request_body_idle_timeout,
-            },
+            config,
             shutdown: self.shutdown,
         })
     }
@@ -405,7 +397,17 @@ impl<C: 'static> Server<C> {
             .into());
         }
 
-        let config = TransportConfig {
+        Ok(connection::serve_io(
+            io,
+            peer,
+            Arc::clone(&self.service),
+            self.transport(),
+        ))
+    }
+
+    /// The per-connection settings, without TLS: `prepare` builds and adds it.
+    fn transport(&self) -> TransportConfig {
+        TransportConfig {
             #[cfg(feature = "http1")]
             http1: self.http1,
             #[cfg(feature = "http2")]
@@ -415,13 +417,7 @@ impl<C: 'static> Server<C> {
             shutdown_timeout: self.shutdown_timeout,
             max_connections: self.max_connections,
             request_body_idle_timeout: self.request_body_idle_timeout,
-        };
-        Ok(connection::serve_io(
-            io,
-            peer,
-            Arc::clone(&self.service),
-            config,
-        ))
+        }
     }
 
     /// Refuses a setting that would misconfigure every connection, whatever
@@ -518,7 +514,7 @@ impl<C: 'static> BoundServer<C> {
                 Some(Err(error)) => (Some(accept_loop_failure(&error)), Box::pin(pending()) as ForceFuture),
             },
             signal = &mut shutdown => match signal {
-                Ok(request) => (None, request.force),
+                Ok(force) => (None, force),
                 Err(error) => (Some(ServerError::Signal(error)), Box::pin(pending()) as ForceFuture),
             },
         };

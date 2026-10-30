@@ -22,7 +22,7 @@ use crate::{
     error::problem::Problem,
     http::{self, HeaderValue, StatusCode, Version, body::BoxError, header},
     response::IntoResponse,
-    server::error::ServerError,
+    server::{error::ServerError, protocol::non_zero},
 };
 
 /// How long a request body may go without a frame unless the server is told
@@ -33,12 +33,12 @@ pub(crate) const DEFAULT_REQUEST_BODY_IDLE_TIMEOUT: Duration = Duration::from_se
 pub(crate) fn validate_request_body_idle_timeout(
     timeout: Option<Duration>,
 ) -> std::result::Result<(), ServerError> {
-    if timeout.is_some_and(|timeout| timeout.is_zero()) {
-        return Err(ServerError::InvalidConfiguration(
+    non_zero(
+        timeout,
+        ServerError::InvalidConfiguration(
             "request_body_idle_timeout must be non-zero when enabled",
-        ));
-    }
-    Ok(())
+        ),
+    )
 }
 
 /// `body`, failing once its reader has waited `limit` for a frame, and the

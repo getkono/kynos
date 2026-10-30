@@ -238,11 +238,16 @@ enum Rank {
 /// The rank of one template segment.
 fn rank(segment: &str) -> Rank {
     if segment.contains('{') {
-        // A literal run, then an expression name, alternately.
-        Rank::Variable(segment.split(['{', '}']).step_by(2).map(str::len).sum())
+        Rank::Variable(literals(segment).map(str::len).sum())
     } else {
         Rank::Literal
     }
+}
+
+/// The literal runs of a template segment, in order: a segment is a literal
+/// run, then an expression name, alternately.
+fn literals(segment: &str) -> impl Iterator<Item = &str> {
+    segment.split(['{', '}']).step_by(2)
 }
 
 /// Whether a concrete path is an instance of a template.
@@ -273,8 +278,7 @@ fn template_matches(template: &str, path: &str) -> bool {
 /// segment; a crowded one gives each literal between two expressions the first
 /// place it fits, which leaves the most room for those after it.
 fn segment_matches(expected: &str, actual: &str) -> bool {
-    // A literal run, then an expression name, alternately.
-    let mut literals = expected.split(['{', '}']).step_by(2);
+    let mut literals = literals(expected);
     let first = literals.next().unwrap_or_default();
     let Some(mut rest) = actual.strip_prefix(first) else {
         return false;

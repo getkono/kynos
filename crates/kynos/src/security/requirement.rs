@@ -171,14 +171,7 @@ where
     C: Authenticates<S>,
 {
     async fn check(parts: &Parts, context: &C) -> Result<Option<S::Credential>, AuthRejection> {
-        // Only a presented credential reaches the verifier.
-        let Some(presented) = S::present(parts)? else {
-            return Ok(None);
-        };
-
-        verify::<S, C>(presented, owed_defaults::<S>(), context)
-            .await
-            .map(Some)
+        present_and_verify::<S, C>(parts, context, || owed_defaults::<S>().map(Cow::Borrowed)).await
     }
 }
 
@@ -207,13 +200,7 @@ where
         context: &C,
         required: &'static [<S as SecurityScheme>::Scope],
     ) -> Result<Option<S::Credential>, AuthRejection> {
-        let Some(presented) = S::present(parts)? else {
-            return Ok(None);
-        };
-
-        verify::<S, C>(presented, Some(&demanded::<S>(required)), context)
-            .await
-            .map(Some)
+        present_and_verify::<S, C>(parts, context, || Some(demanded::<S>(required))).await
     }
 }
 
@@ -300,6 +287,27 @@ fn first_challenge(challenges: &[fn() -> Option<&'static str>]) -> Option<&'stat
     challenges.iter().find_map(|challenge| challenge())
 }
 
+/// Appends `requirement` to an [`AnyOf`]'s `alternatives` unless it is there:
+/// two schemes registered under one key are one alternative.
+fn alternative(alternatives: &mut Vec<SecurityRequirement>, requirement: SecurityRequirement) {
+    if !alternatives.contains(&requirement) {
+        alternatives.push(requirement);
+    }
+}
+
+/// One [`AnyOf`] alternative's outcome: its credential where it was satisfied,
+/// and otherwise `None`, keeping the first refusal in `refused`. An absent
+/// credential is skipped.
+fn satisfied<T>(
+    checked: Result<Option<T>, AuthRejection>,
+    refused: &mut Option<AuthRejection>,
+) -> Option<T> {
+    checked.unwrap_or_else(|rejection| {
+        refused.get_or_insert(rejection);
+        None
+    })
+}
+
 /// Implements [`Requirement`], [`CheckedBy`], [`Scopable`] and
 /// [`ScopeCheckedBy`] for one [`AnyOf`] arity.
 ///
@@ -326,13 +334,12 @@ macro_rules! any_of {
             }
 
             fn declare(operation: &mut OperationCx<'_>) -> Vec<SecurityRequirement> {
-                // Two schemes registered under one key are one alternative.
                 let mut alternatives = Vec::new();
                 $(
-                    let requirement = require::<$scheme>(operation, defaults::<$scheme>());
-                    if !alternatives.contains(&requirement) {
-                        alternatives.push(requirement);
-                    }
+                    alternative(
+                        &mut alternatives,
+                        require::<$scheme>(operation, defaults::<$scheme>()),
+                    );
                 )+
                 alternatives
             }
@@ -349,12 +356,9 @@ macro_rules! any_of {
             ) -> Result<Option<Self::Credential>, AuthRejection> {
                 let mut refused = None;
                 $(
-                    match <$scheme as CheckedBy<C>>::check(parts, context).await {
-                        Ok(Some(credential)) => return Ok(Some($either::$variant(credential))),
-                        Ok(None) => {}
-                        Err(rejection) => {
-                            refused.get_or_insert(rejection);
-                        }
+                    let checked = <$scheme as CheckedBy<C>>::check(parts, context).await;
+                    if let Some(credential) = satisfied(checked, &mut refused) {
+                        return Ok(Some($either::$variant(credential)));
                     }
                 )+
                 refused.map_or(Ok(None), Err)
@@ -376,14 +380,12 @@ macro_rules! any_of {
                 operation: &mut OperationCx<'_>,
                 required: &'static [<$first as SecurityScheme>::Scope],
             ) -> Vec<SecurityRequirement> {
-                // As `declare`: two schemes under one key are one alternative.
                 let mut alternatives = Vec::new();
                 $(
-                    let requirement =
-                        require::<$scheme>(operation, demanded_names::<$scheme>(required));
-                    if !alternatives.contains(&requirement) {
-                        alternatives.push(requirement);
-                    }
+                    alternative(
+                        &mut alternatives,
+                        require::<$scheme>(operation, demanded_names::<$scheme>(required)),
+                    );
                 )+
                 alternatives
             }
@@ -404,14 +406,11 @@ macro_rules! any_of {
                 // whichever alternative is tried.
                 let mut refused = None;
                 $(
-                    match <$scheme as ScopeCheckedBy<C>>::check_scoped(parts, context, required)
-                        .await
-                    {
-                        Ok(Some(credential)) => return Ok(Some($either::$variant(credential))),
-                        Ok(None) => {}
-                        Err(rejection) => {
-                            refused.get_or_insert(rejection);
-                        }
+                    let checked =
+                        <$scheme as ScopeCheckedBy<C>>::check_scoped(parts, context, required)
+                            .await;
+                    if let Some(credential) = satisfied(checked, &mut refused) {
+                        return Ok(Some($either::$variant(credential)));
                     }
                 )+
                 refused.map_or(Ok(None), Err)
@@ -496,13 +495,32 @@ all_of!(A, B);
 all_of!(A, B, D);
 all_of!(A, B, D, E);
 
+/// Reads scheme `S`'s credential and, only where one was presented, verifies
+/// it for the `scopes` that are then computed.
+async fn present_and_verify<S, C>(
+    parts: &Parts,
+    context: &C,
+    scopes: impl FnOnce() -> Option<Cow<'static, [S::Scope]>>,
+) -> Result<Option<S::Credential>, AuthRejection>
+where
+    S: Carries,
+    C: Authenticates<S>,
+{
+    let Some(presented) = S::present(parts)? else {
+        return Ok(None);
+    };
+    verify::<S, C>(presented, scopes().as_deref(), context)
+        .await
+        .map(Some)
+}
+
 /// Authenticates `presented` as scheme `S`, then authorizes it for `scopes`
 /// where they are given.
 ///
 /// `None` skips `authorize`, as a guard naming no scope set does for a scheme
 /// with no default scopes ([`owed_defaults`]); `Some` calls it even with an
 /// empty slice, as [`Scoped`](crate::security::auth::Scoped) does.
-pub(crate) async fn verify<S, C>(
+async fn verify<S, C>(
     presented: S::Presented,
     scopes: Option<&[S::Scope]>,
     context: &C,
@@ -582,7 +600,7 @@ fn owed_scope_challenge<S: SecurityScheme>() -> Option<&'static str> {
 /// Registers scheme `S` and returns the requirement naming it with `scopes`.
 ///
 /// One name for both, so the requirement and the definition share a key.
-pub(crate) fn require<S: SecurityScheme>(
+fn require<S: SecurityScheme>(
     operation: &mut OperationCx<'_>,
     scopes: Vec<&'static str>,
 ) -> SecurityRequirement {
@@ -593,7 +611,7 @@ pub(crate) fn require<S: SecurityScheme>(
 }
 
 /// The names of the scopes scheme `S` demands by default.
-pub(crate) fn defaults<S: SecurityScheme>() -> Vec<&'static str> {
+fn defaults<S: SecurityScheme>() -> Vec<&'static str> {
     S::scopes().iter().map(Scope::name).collect()
 }
 
@@ -633,7 +651,7 @@ fn demanded_names<S: SecurityScheme>(required: &'static [S::Scope]) -> Vec<&'sta
 /// [`SecurityScheme::NAME`] need not be a legal component key and `Describe`
 /// cannot report an error, so it is sanitized. An empty name falls back to the
 /// scheme's type name.
-pub(crate) fn component_name<S: SecurityScheme>() -> ComponentName {
+pub(in crate::security) fn component_name<S: SecurityScheme>() -> ComponentName {
     ComponentName::sanitized(S::NAME).unwrap_or_else(|_| {
         ComponentName::sanitized(std::any::type_name::<S>())
             .expect("a Rust type name is never empty")

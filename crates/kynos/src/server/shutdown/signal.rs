@@ -4,32 +4,20 @@
 //! behavior for the rest of the process lifetime, so the listeners are kept
 //! alive through the drain and a repeated signal stays effective.
 
-use crate::server::shutdown::{ShutdownFuture, ShutdownRequest};
+use crate::server::shutdown::{ForceFuture, ShutdownFuture};
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(in crate::server) fn repeatable_ctrl_c() -> ShutdownFuture {
     Box::pin(async {
+        #[cfg(unix)]
         let mut interrupt =
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
-        let _ = interrupt.recv().await;
-        Ok(ShutdownRequest {
-            force: Box::pin(async move {
-                let _ = interrupt.recv().await;
-            }),
-        })
-    })
-}
-
-#[cfg(windows)]
-pub(in crate::server) fn repeatable_ctrl_c() -> ShutdownFuture {
-    Box::pin(async {
+        #[cfg(windows)]
         let mut interrupt = tokio::signal::windows::ctrl_c()?;
         let _ = interrupt.recv().await;
-        Ok(ShutdownRequest {
-            force: Box::pin(async move {
-                let _ = interrupt.recv().await;
-            }),
-        })
+        Ok(Box::pin(async move {
+            let _ = interrupt.recv().await;
+        }) as ForceFuture)
     })
 }
 
@@ -37,11 +25,9 @@ pub(in crate::server) fn repeatable_ctrl_c() -> ShutdownFuture {
 pub(in crate::server) fn repeatable_ctrl_c() -> ShutdownFuture {
     Box::pin(async {
         tokio::signal::ctrl_c().await?;
-        Ok(ShutdownRequest {
-            force: Box::pin(async {
-                let _ = tokio::signal::ctrl_c().await;
-            }),
-        })
+        Ok(Box::pin(async {
+            let _ = tokio::signal::ctrl_c().await;
+        }) as ForceFuture)
     })
 }
 
@@ -56,14 +42,12 @@ pub(in crate::server) fn platform_signals() -> ShutdownFuture {
             _ = interrupt.recv() => {}
             _ = terminate.recv() => {}
         }
-        Ok(ShutdownRequest {
-            force: Box::pin(async move {
-                tokio::select! {
-                    _ = interrupt.recv() => {}
-                    _ = terminate.recv() => {}
-                }
-            }),
-        })
+        Ok(Box::pin(async move {
+            tokio::select! {
+                _ = interrupt.recv() => {}
+                _ = terminate.recv() => {}
+            }
+        }) as ForceFuture)
     })
 }
 
@@ -72,9 +56,7 @@ pub(in crate::server) fn platform_signals() -> ShutdownFuture {
     Box::pin(async {
         let mut signals = WindowsSignals::new()?;
         signals.recv().await;
-        Ok(ShutdownRequest {
-            force: Box::pin(async move { signals.recv().await }),
-        })
+        Ok(Box::pin(async move { signals.recv().await }) as ForceFuture)
     })
 }
 
@@ -84,7 +66,7 @@ pub(in crate::server) fn platform_signals() -> ShutdownFuture {
 }
 
 #[cfg(windows)]
-pub(in crate::server) struct WindowsSignals {
+struct WindowsSignals {
     interrupt: tokio::signal::windows::CtrlC,
     break_key: tokio::signal::windows::CtrlBreak,
     close: tokio::signal::windows::CtrlClose,

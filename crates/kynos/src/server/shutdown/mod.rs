@@ -12,12 +12,9 @@ use std::{
 use crate::server::shutdown::signal::{platform_signals, repeatable_ctrl_c};
 
 pub(in crate::server) type ForceFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+/// Resolves when shutdown begins, to the future that forces it.
 pub(in crate::server) type ShutdownFuture =
-    Pin<Box<dyn Future<Output = io::Result<ShutdownRequest>> + Send + 'static>>;
-
-pub(in crate::server) struct ShutdownRequest {
-    pub(in crate::server) force: ForceFuture,
-}
+    Pin<Box<dyn Future<Output = io::Result<ForceFuture>> + Send + 'static>>;
 
 /// A trigger that begins graceful shutdown.
 ///
@@ -68,9 +65,7 @@ impl Shutdown {
         Self {
             future: Box::pin(async move {
                 future.await;
-                Ok(ShutdownRequest {
-                    force: Box::pin(pending()),
-                })
+                Ok(Box::pin(pending()) as ForceFuture)
             }),
         }
     }
