@@ -74,6 +74,10 @@ struct Grant;
 /// A realm deriving nothing.
 struct Admin;
 
+/// An application's own scheme deriving nothing, so a combinator holding it
+/// carries its traits only if it bounds none of them on its schemes.
+struct Custom;
+
 /// Asserts the traits every scheme marker and combinator carries hold on `M`
 /// whatever its parameters derive, and that its one value is equal to,
 /// ordered as and hashed as itself, and prints as `debug`.
@@ -126,16 +130,16 @@ fn mutual_tls_holds_its_traits_over_claims_and_scope_deriving_nothing() {
 /// The schemes are held only in a `PhantomData`, so `AnyOf` asks nothing of
 /// them, nor of their claims and scopes.
 #[test]
-fn any_of_holds_its_traits_over_schemes_whose_claims_and_scope_derive_nothing() {
-    type Schemes = (Bearer<Claims, Grant>, MutualTls<Claims, Grant>);
+fn any_of_holds_its_traits_over_schemes_deriving_nothing() {
+    type Schemes = (Bearer<Claims, Grant>, Custom);
 
     holds_marker_traits::<AnyOf<Schemes>>(&format!("AnyOf({:?})", PhantomData::<fn() -> Schemes>));
 }
 
 /// As for `AnyOf`.
 #[test]
-fn all_of_holds_its_traits_over_schemes_whose_claims_and_scope_derive_nothing() {
-    type Schemes = (Bearer<Claims, Grant>, MutualTls<Claims, Grant>);
+fn all_of_holds_its_traits_over_schemes_deriving_nothing() {
+    type Schemes = (Bearer<Claims, Grant>, Custom);
 
     holds_marker_traits::<AllOf<Schemes>>(&format!("AllOf({:?})", PhantomData::<fn() -> Schemes>));
 }
