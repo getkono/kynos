@@ -10,7 +10,7 @@
 //! a span and returns that span, so a client resuming a download at the 900MB
 //! mark costs one span rather than one file.
 //!
-//! Five things are worth noticing:
+//! Six things are worth noticing:
 //!
 //! * **The source is a trait, not a path.** The one here is a synthetic
 //!   generator, which is the point — an object store, a decrypting reader or a
@@ -35,6 +35,11 @@
 //!   GET without content anyway; declaring `head` is what makes it a separate
 //!   operation in the description, and a declared `head` wins over the GET.
 //!   Both reach the same builder, and `Served` sends no content for the second.
+//! * **A media type can be chosen per request.** A file whose container is known
+//!   only once it is read names the set it can be with `MediaRanges`, which
+//!   becomes the `content` keys of its 200 and 206, and hands the one it detected
+//!   to `content_type`, which checks it against that set. `deliver` does not
+//!   exist until it has.
 
 use std::{
     net::Ipv4Addr,
@@ -44,7 +49,10 @@ use std::{
 use bytes::Bytes;
 use kynos::{
     Router,
-    http::{etag::ETag, media::MediaType},
+    http::{
+        etag::ETag,
+        media::{MediaRanges, MediaType},
+    },
     response::range::{
         served::{Conditions, Delivery, Served},
         source::ByteSource,
@@ -57,6 +65,13 @@ struct Mpeg;
 
 impl MediaType for Mpeg {
     const MEDIA_TYPE: &'static str = "audio/mpeg";
+}
+
+/// A clip, in whichever container it was uploaded.
+struct Video;
+
+impl MediaRanges for Video {
+    const RANGES: &'static [&'static str] = &["video/*"];
 }
 
 /// Half a gigabyte that exists nowhere.
@@ -124,9 +139,20 @@ async fn head_recording(conditions: Conditions) -> Delivery<Mpeg> {
         .expect("a generator cannot fail")
 }
 
+/// Streams a clip under the type a real server would detect from its signature.
+#[kynos::get("/clips/current")]
+async fn get_clip(conditions: Conditions) -> Delivery<Video> {
+    Served::<_, Video>::new(Synthetic { length: 1024 })
+        .etag(ETag::strong("clip-v1"))
+        .content_type("video/mp4")
+        .deliver(&conditions)
+        .await
+        .expect("a generator cannot fail")
+}
+
 #[tokio::main]
 async fn main() -> kynos::Result<()> {
-    let router = Router::<()>::new().mount(kynos::routes![get_recording, head_recording]);
+    let router = Router::<()>::new().mount(kynos::routes![get_recording, head_recording, get_clip]);
 
     println!("{}", router.openapi()?.to_json()?);
 

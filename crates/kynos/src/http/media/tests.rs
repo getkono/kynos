@@ -1,4 +1,6 @@
-use super::{charset, is_text, is_utf8_or_unstated};
+use super::{
+    Html, MediaRanges, Png, admits, admitted, charset, is_media_range, is_text, is_utf8_or_unstated,
+};
 
 /// A structured syntax suffix is JSON, which is what lets a vendor media
 /// type be decoded as the JSON it is.
@@ -139,4 +141,154 @@ fn a_codec_media_type_is_a_type_and_subtype_of_tokens() {
     ] {
         assert!(!is_media_type(refused), "`{refused:?}` is not a media type");
     }
+}
+
+/// RFC 9110 section 12.5.1's three shapes of `media-range`, and nothing else
+/// with a wildcard in it.
+#[test]
+fn a_media_range_has_a_wildcard_only_where_the_grammar_does() {
+    for range in [
+        "*/*",
+        "video/*",
+        "video/mp4",
+        "text/html; charset=utf-8",
+        "text/*; charset=utf-8",
+        "video/*;",
+        "video/mp4 ; codecs=avc1",
+        "video/mp4;a=1;;b=\"x;y\\\"z\"",
+    ] {
+        assert!(is_media_range(range), "`{range}` is a media range");
+    }
+    for refused in [
+        "*/mp4",
+        "*",
+        "video",
+        "video/",
+        "/mp4",
+        "video/mp4\r\nx: 1",
+        "",
+        " video/*",
+        "video/* ",
+        "text/html; charset",
+        "text/html; =utf-8",
+        "text/html; charset=",
+        "text/html; charset = utf-8",
+        "video/mp4; codecs=a b",
+        "video/mp4; a=\"x",
+        "video/mp4; a=\"x\\\"",
+        "video/mp4; a=\"x\"y\"",
+    ] {
+        assert!(
+            !is_media_range(refused),
+            "`{refused:?}` is not a media range"
+        );
+    }
+}
+
+/// What can go out as a `Content-Type`, held to section 8.3.1 and section
+/// 5.6.6's parameters, since the value is read at run time and nothing compiled
+/// it. Every entry is admitted by `*/*`, so the verdict is the value's own.
+#[test]
+fn only_a_well_formed_concrete_media_type_can_be_sent() {
+    struct Anything;
+    impl MediaRanges for Anything {
+        const RANGES: &'static [&'static str] = &["*/*"];
+    }
+
+    for sendable in [
+        "video/mp4",
+        "VIDEO/MP4",
+        "video/mp4;",
+        "video/mp4 ; codecs=avc1",
+        "video/mp4;a=1;;b=\"x;y\\\"z\"",
+        "video/mp4; a=\"\"",
+    ] {
+        assert!(admitted::<Anything>(sendable).is_some(), "`{sendable}`");
+    }
+    for refused in [
+        "",
+        "video",
+        "video/",
+        "*/*",
+        "video/*",
+        "*/mp4",
+        " video/mp4",
+        "video/mp4 ",
+        "video / mp4",
+        "video/mp4/x",
+        "video/mp4; codecs",
+        "video/mp4; =avc1",
+        "video/mp4; codecs = avc1",
+        "video/mp4; codecs=",
+        "video/mp4; codecs=a b",
+        "video/mp4; a=\"unterminated",
+        "video/mp4; a=\"x\\\"",
+        "video/mp4; a=\"x\"y\"",
+        "video/mp4\r\nx-injected: 1",
+        "video/caf\u{e9}",
+    ] {
+        assert!(admitted::<Anything>(refused).is_none(), "`{refused:?}`");
+    }
+}
+
+/// Every range against every value, against a table written out by hand: a
+/// value not listed for a range must be refused by it, which a sample of the
+/// pairs could not say.
+#[test]
+fn a_range_admits_exactly_the_types_it_covers() {
+    const VALUES: [&str; 8] = [
+        "video/mp4",
+        "VIDEO/MP4",
+        "video/webm",
+        "audio/mp4",
+        "video/mp4; codecs=avc1",
+        "text/html",
+        "text/html; charset=UTF-8",
+        "text/html; level=1; charset=\"utf-8\"",
+    ];
+    const TABLE: [(&str, &[usize]); 7] = [
+        ("*/*", &[0, 1, 2, 3, 4, 5, 6, 7]),
+        ("video/*", &[0, 1, 2, 4]),
+        ("VIDEO/*", &[0, 1, 2, 4]),
+        ("video/mp4", &[0, 1, 4]),
+        ("Video/MP4", &[0, 1, 4]),
+        ("text/html; charset=utf-8", &[6, 7]),
+        ("text/*; level=1", &[7]),
+    ];
+
+    for (range, covered) in TABLE {
+        for (index, value) in VALUES.into_iter().enumerate() {
+            assert_eq!(
+                admits(range, value),
+                covered.contains(&index),
+                "`{range}` over `{value}`"
+            );
+        }
+    }
+}
+
+/// A marker is the set holding only itself, so one carrying a parameter admits
+/// a type only with it.
+#[test]
+fn a_marker_is_the_set_of_itself() {
+    assert_eq!(<Png as MediaRanges>::RANGES, ["image/png"]);
+    assert!(admitted::<Png>("image/png").is_some());
+    assert!(admitted::<Png>("image/webp").is_none());
+
+    assert!(admitted::<Html>("text/html; charset=utf-8").is_some());
+    assert!(admitted::<Html>("text/html").is_none());
+}
+
+/// The second range of a set is read too.
+#[test]
+fn a_set_admits_what_any_of_its_ranges_does() {
+    struct Video;
+    impl MediaRanges for Video {
+        const RANGES: &'static [&'static str] = &["video/*", "application/x-mpegurl"];
+    }
+
+    let sent = admitted::<Video>("application/x-mpegurl").expect("the second entry");
+    assert_eq!(sent, "application/x-mpegurl");
+    assert!(admitted::<Video>("video/mp4").is_some());
+    assert!(admitted::<Video>("application/json").is_none());
 }

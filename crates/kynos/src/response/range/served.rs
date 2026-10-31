@@ -15,7 +15,7 @@ use std::{sync::Arc, time::SystemTime};
 
 use crate::{
     http::etag::ETag,
-    http::media::{MediaType, WellFormed},
+    http::media::{MediaRanges, MediaType, WellFormed, WellFormedRanges},
     http::{HeaderValue, Method, Parts, Response, StatusCode, body::bodiless, header},
     response::{
         IntoResponse,
@@ -52,22 +52,91 @@ use crate::{
 ///         .expect("an in-memory source cannot fail")
 /// }
 /// ```
-pub struct Served<S: ByteSource, M: MediaType> {
+///
+/// A representation whose type is known only at request time names the set it
+/// can be with [`MediaRanges`], and gives its type to
+/// [`content_type`](Self::content_type):
+///
+/// ```no_run
+/// use bytes::Bytes;
+/// use kynos::{
+///     http::media::MediaRanges,
+///     response::range::{
+///         served::{Conditions, Delivery, Served},
+///         source::InMemory,
+///     },
+/// };
+///
+/// struct Video;
+///
+/// impl MediaRanges for Video {
+///     const RANGES: &'static [&'static str] = &["video/*"];
+/// }
+///
+/// #[kynos::get("/clips/current")]
+/// async fn clip(conditions: Conditions) -> Delivery<Video> {
+///     Served::<_, Video>::new(InMemory::new(Bytes::from_static(b"...")))
+///         .content_type("video/mp4")
+///         .deliver(&conditions)
+///         .await
+///         .expect("an in-memory source cannot fail")
+/// }
+/// ```
+///
+/// A set names no type to send, so one that was never given a type cannot be
+/// delivered:
+///
+/// ```compile_fail
+/// use bytes::Bytes;
+/// use kynos::{
+///     http::media::MediaRanges,
+///     response::range::{
+///         served::{Conditions, Delivery, Served},
+///         source::InMemory,
+///     },
+/// };
+///
+/// struct Video;
+///
+/// impl MediaRanges for Video {
+///     const RANGES: &'static [&'static str] = &["video/*"];
+/// }
+///
+/// async fn clip(conditions: Conditions) -> Delivery<Video> {
+///     Served::<_, Video>::new(InMemory::new(Bytes::new()))
+///         .deliver(&conditions)
+///         .await
+///         .expect("an in-memory source cannot fail")
+/// }
+/// ```
+pub struct Served<S: ByteSource, M: MediaRanges, T = Declared> {
     source: Arc<S>,
     media_type: std::marker::PhantomData<fn() -> M>,
+    content_type: T,
     etag: Option<ETag>,
     last_modified: Option<SystemTime>,
     cache_control: Option<String>,
     disposition: Option<ContentDisposition>,
 }
 
-// By hand, so it is bounded on `S` alone: a media type is a marker, and a
-// derive would ask it to be `Debug` too.
-impl<S: ByteSource + std::fmt::Debug, M: MediaType> std::fmt::Debug for Served<S, M> {
+/// A [`Served`] sent as its [`MediaType`] marker states.
+#[derive(Clone, Copy, Debug)]
+pub struct Declared;
+
+/// A [`Served`] given its media type by [`content_type`](Served::content_type).
+#[derive(Clone, Debug)]
+pub struct Detected(Option<HeaderValue>);
+
+// By hand, so it is not bounded on the media type: it is a marker, and a derive
+// would ask it to be `Debug` too.
+impl<S: ByteSource + std::fmt::Debug, M: MediaRanges, T: std::fmt::Debug> std::fmt::Debug
+    for Served<S, M, T>
+{
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("Served")
             .field("source", &self.source)
+            .field("content_type", &self.content_type)
             .field("etag", &self.etag)
             .field("last_modified", &self.last_modified)
             .field("cache_control", &self.cache_control)
@@ -76,18 +145,20 @@ impl<S: ByteSource + std::fmt::Debug, M: MediaType> std::fmt::Debug for Served<S
     }
 }
 
-impl<S: ByteSource, M: MediaType> Served<S, M> {
+impl<S: ByteSource, M: MediaRanges> Served<S, M> {
     /// A representation read from `source`, sent as `M`.
     ///
     /// `M` is a type parameter so that [`Delivery`] can describe itself
-    /// statically.
+    /// statically. Where it is a [`MediaRanges`] set rather than a [`MediaType`]
+    /// marker, [`content_type`](Self::content_type) says which type this one is.
     #[must_use]
     pub fn new(source: S) -> Self {
-        let () = <M as WellFormed>::WELL_FORMED;
+        let () = <M as WellFormedRanges>::WELL_FORMED;
 
         Self {
             source: Arc::new(source),
             media_type: std::marker::PhantomData,
+            content_type: Declared,
             etag: None,
             last_modified: None,
             cache_control: None,
@@ -95,6 +166,70 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
         }
     }
 
+    /// The media type this representation is sent as, chosen for this request.
+    ///
+    /// Sent as `Content-Type` on the 200 and the 206 alone: the 304 and the 412
+    /// carry none, and the 416 stays the problem document it is.
+    ///
+    /// A value that is no `type/subtype` with well-formed parameters (RFC 9110
+    /// section 8.3.1), or that none of `M`'s [`RANGES`](MediaRanges::RANGES)
+    /// admits, has `deliver` answer 500 in place of each response that would
+    /// carry it, since the description would otherwise be wrong. A range admits
+    /// a type on type and subtype in any case, and, where it states parameters,
+    /// only a type carrying each of them.
+    #[must_use]
+    pub fn content_type(self, value: impl AsRef<str>) -> Served<S, M, Detected> {
+        Served {
+            source: self.source,
+            media_type: self.media_type,
+            content_type: Detected(crate::http::media::admitted::<M>(value.as_ref())),
+            etag: self.etag,
+            last_modified: self.last_modified,
+            cache_control: self.cache_control,
+            disposition: self.disposition,
+        }
+    }
+}
+
+impl<S: ByteSource, M: MediaType> Served<S, M> {
+    /// Answers `parts`, reading only what the answer needs, sent as `M` states.
+    ///
+    /// # Errors
+    ///
+    /// Returns the source's own error if the length cannot be read; a tag
+    /// that cannot be spelled is answered with a 500 before the source is
+    /// asked, so it is never that error. A failed
+    /// span read, or a source that stops short of the length it reported
+    /// ([`Truncated`](super::source::Truncated)), fails the body stream instead,
+    /// since the head has already been sent.
+    pub async fn deliver(self, conditions: &Conditions) -> Result<Delivery<M>, S::Error> {
+        // Static, so it costs no allocation: `WELL_FORMED` refused a marker
+        // `from_static` would not take.
+        let () = <M as WellFormed>::WELL_FORMED;
+        self.answer(conditions, Some(HeaderValue::from_static(M::MEDIA_TYPE)))
+            .await
+    }
+}
+
+impl<S: ByteSource, M: MediaRanges> Served<S, M, Detected> {
+    /// Answers `parts`, reading only what the answer needs, sent as
+    /// [`content_type`](Served::content_type) was given.
+    ///
+    /// # Errors
+    ///
+    /// Returns the source's own error if the length cannot be read; a tag
+    /// that cannot be spelled is answered with a 500 before the source is
+    /// asked, so it is never that error. A failed
+    /// span read, or a source that stops short of the length it reported
+    /// ([`Truncated`](super::source::Truncated)), fails the body stream instead,
+    /// since the head has already been sent.
+    pub async fn deliver(mut self, conditions: &Conditions) -> Result<Delivery<M>, S::Error> {
+        let content_type = self.content_type.0.take();
+        self.answer(conditions, content_type).await
+    }
+}
+
+impl<S: ByteSource, M: MediaRanges, T> Served<S, M, T> {
     /// The validator this representation is known by.
     ///
     /// A resumable download needs a strong tag: without one, `If-Range` cannot
@@ -149,17 +284,13 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
         self
     }
 
-    /// Answers `parts`, reading only what the answer needs.
-    ///
-    /// # Errors
-    ///
-    /// Returns the source's own error if the length cannot be read; a tag
-    /// that cannot be spelled is answered with a 500 before the source is
-    /// asked, so it is never that error. A failed
-    /// span read, or a source that stops short of the length it reported
-    /// ([`Truncated`](super::source::Truncated)), fails the body stream instead,
-    /// since the head has already been sent.
-    pub async fn deliver(self, conditions: &Conditions) -> Result<Delivery<M>, S::Error> {
+    /// Section 13.2.2's algorithm, labelling a 200 or 206 `content_type`; one
+    /// that cannot be sent is `None`, refused as a field `head` cannot encode.
+    async fn answer(
+        self,
+        conditions: &Conditions,
+        content_type: Option<HeaderValue>,
+    ) -> Result<Delivery<M>, S::Error> {
         // Encoded once, before any precondition reads the tag: one that cannot
         // be spelled would otherwise be evaluated as no tag at all. Before the
         // source is read too, since no answer it gives changes this one.
@@ -187,7 +318,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
                 return Ok(Delivery::precondition_failed());
             }
             let response = self
-                .head(None, complete_length, tag)
+                .head(None, complete_length, tag, content_type)
                 .unwrap_or_else(crate::response::headers::refused);
             return Ok(Delivery::new(response));
         }
@@ -206,7 +337,8 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
 
         // A refused head is answered as it is: the content goes only under
         // the fields that describe it.
-        let Some(mut response) = self.head(Some(selection), complete_length, tag) else {
+        let Some(mut response) = self.head(Some(selection), complete_length, tag, content_type)
+        else {
             return Ok(Delivery::new(crate::response::headers::refused()));
         };
 
@@ -226,14 +358,15 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
     /// where there is none.
     ///
     /// `tag` is [`etag`](Self::etag) as `deliver` encoded it, moved in so it
-    /// is not encoded twice. `None` where a field cannot be encoded: the
-    /// caller sends the shared refusal in its place, and never with the
-    /// content.
+    /// is not encoded twice. `None` where a field cannot be encoded, as a 200
+    /// or 206 whose `content_type` is `None` cannot: the caller sends the
+    /// shared refusal in its place, and never with the content.
     fn head(
         &self,
         selection: Option<Selection>,
         complete_length: u64,
         tag: Option<HeaderValue>,
+        content_type: Option<HeaderValue>,
     ) -> Option<Response> {
         let mut response = Response::new(crate::http::body::Body::empty());
 
@@ -248,13 +381,7 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
         let fields = response.headers_mut();
 
         if selection.is_some() {
-            // Static, so it costs no allocation: `WELL_FORMED` refused a
-            // marker `from_static` would not take.
-            let () = <M as WellFormed>::WELL_FORMED;
-            fields.insert(
-                header::CONTENT_TYPE,
-                HeaderValue::from_static(M::MEDIA_TYPE),
-            );
+            fields.insert(header::CONTENT_TYPE, content_type?);
             if let Some(disposition) = &self.disposition {
                 if crate::response::headers::write(fields, disposition).is_err() {
                     return None;
@@ -387,14 +514,14 @@ fn seconds(time: SystemTime) -> u64 {
 /// calling [`deliver`](Served::deliver) is a compile error.
 ///
 /// [`Responses`]: crate::response::Responses
-pub struct Delivery<M: MediaType> {
+pub struct Delivery<M: MediaRanges> {
     response: Response,
     media_type: std::marker::PhantomData<fn() -> M>,
 }
 
 // By hand, so it is not bounded on the marker, which a derive would ask to be
 // `Debug` too.
-impl<M: MediaType> std::fmt::Debug for Delivery<M> {
+impl<M: MediaRanges> std::fmt::Debug for Delivery<M> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("Delivery")
@@ -403,7 +530,7 @@ impl<M: MediaType> std::fmt::Debug for Delivery<M> {
     }
 }
 
-impl<M: MediaType> Delivery<M> {
+impl<M: MediaRanges> Delivery<M> {
     fn new(response: Response) -> Self {
         Self {
             response,
@@ -423,16 +550,16 @@ impl<M: MediaType> Delivery<M> {
     }
 }
 
-impl<M: MediaType> IntoResponse for Delivery<M> {
+impl<M: MediaRanges> IntoResponse for Delivery<M> {
     fn into_response(self) -> Response {
         self.response
     }
 }
 
-impl<M: MediaType> crate::response::Responses for Delivery<M> {
+impl<M: MediaRanges> crate::response::Responses for Delivery<M> {
     fn responses(registry: &mut crate::schema::registry::Registry) -> kynos_openapi::Responses {
-        let () = <M as WellFormed>::WELL_FORMED;
-        delivery::responses(registry, M::MEDIA_TYPE)
+        let () = <M as WellFormedRanges>::WELL_FORMED;
+        delivery::responses(registry, M::RANGES)
     }
 }
 
