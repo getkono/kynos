@@ -44,6 +44,7 @@
 //! let _ = BinaryStream::<_, OctetStream>::new(chunks()).into_response();
 //! ```
 
+#[doc(no_inline)]
 pub use futures_core::Stream;
 
 pub mod binary;
