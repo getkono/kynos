@@ -1198,7 +1198,7 @@ async fn a_marker_deriving_nothing_leaves_served_and_delivery_debug() {
     let served = Served::<_, Bare>::new(InMemory::new(Bytes::from_static(b"01")));
     assert_eq!(
         format!("{served:?}"),
-        r#"Served { source: InMemory(b"01"), etag: None, last_modified: None, cache_control: None, disposition: None, .. }"#
+        r#"Served { source: InMemory(b"01"), content_type: Declared, etag: None, last_modified: None, cache_control: None, disposition: None, .. }"#
     );
 
     let conditions = Conditions {
@@ -1231,4 +1231,148 @@ fn a_representation_deriving_nothing_leaves_range_its_traits() {
         "Range { requested: Ok([Offsets { first: 0, last: Some(1) }]), .. }"
     );
     is_eq::<Range<Bare>>();
+}
+
+// --- A delivery choosing its media type per request ------------------------
+
+/// What an operation serving either a video container or a playlist describes.
+struct Video;
+
+impl crate::http::media::MediaRanges for Video {
+    const RANGES: &'static [&'static str] = &["video/*", "application/x-mpegurl"];
+}
+
+/// What a ten-octet delivery tagged `"b"` and given `content_type` answers
+/// `method` carrying `fields` with.
+async fn detected(
+    method: Method,
+    content_type: &str,
+    fields: &[(HeaderName, &'static str)],
+) -> Response {
+    let mut headers = HeaderMap::new();
+    for (name, value) in fields {
+        headers.append(name, HeaderValue::from_static(value));
+    }
+    let conditions = Conditions {
+        method,
+        fields: headers,
+    };
+
+    Served::<_, Video>::new(InMemory::new(Bytes::from_static(b"0123456789")))
+        .etag(crate::http::etag::ETag::strong("b"))
+        .content_type(content_type)
+        .deliver(&conditions)
+        .await
+        .expect("an in-memory source cannot fail")
+        .into_response()
+}
+
+fn content_type_of(response: &Response) -> Option<&str> {
+    response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .map(|value| value.to_str().expect("visible ASCII"))
+}
+
+/// The status and the label of each status a delivery can answer with: the two
+/// carrying the representation say the chosen type, and each other keeps what
+/// the range engine gives it, whatever was chosen.
+#[tokio::test]
+async fn a_detected_type_labels_the_200_and_206_and_no_other_status() {
+    type Fields<'a> = &'a [(HeaderName, &'static str)];
+
+    let range = [(header::RANGE, "bytes=0-1")];
+    let current = [(header::IF_NONE_MATCH, "\"b\"")];
+    let stale = [(header::IF_MATCH, "\"a\"")];
+    let unsatisfiable = [(header::RANGE, "bytes=99-")];
+
+    let cases: [(Method, Fields<'_>, StatusCode, Option<&str>); 6] = [
+        (Method::GET, &[], StatusCode::OK, Some("video/mp4")),
+        (Method::HEAD, &[], StatusCode::OK, Some("video/mp4")),
+        (
+            Method::GET,
+            &range,
+            StatusCode::PARTIAL_CONTENT,
+            Some("video/mp4"),
+        ),
+        (Method::GET, &current, StatusCode::NOT_MODIFIED, None),
+        (Method::GET, &stale, StatusCode::PRECONDITION_FAILED, None),
+        (
+            Method::GET,
+            &unsatisfiable,
+            StatusCode::RANGE_NOT_SATISFIABLE,
+            Some("application/problem+json"),
+        ),
+    ];
+
+    for (method, fields, status, label) in cases {
+        let response = detected(method.clone(), "video/mp4", fields).await;
+        assert_eq!(response.status(), status, "{method} {fields:?}");
+        assert_eq!(content_type_of(&response), label, "{method} {fields:?}");
+    }
+}
+
+/// A type the set does not admit is refused only where it would be sent: the
+/// 200 and 206 become the shared 500's problem document, while a 304, a 412 and
+/// a 416, which never carry it, are answered as they would be.
+#[tokio::test]
+async fn an_inadmissible_type_refuses_only_the_responses_carrying_it() {
+    let refused = detected(Method::GET, "image/png", &[]).await;
+    assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        content_type_of(&refused),
+        Some("application/problem+json"),
+        "the refused type never reaches the wire"
+    );
+
+    let range = [(header::RANGE, "bytes=0-1")];
+    assert_eq!(
+        detected(Method::GET, "image/png", &range).await.status(),
+        StatusCode::INTERNAL_SERVER_ERROR,
+    );
+
+    for (fields, status) in [
+        ([(header::IF_NONE_MATCH, "\"b\"")], StatusCode::NOT_MODIFIED),
+        (
+            [(header::IF_MATCH, "\"a\"")],
+            StatusCode::PRECONDITION_FAILED,
+        ),
+        (
+            [(header::RANGE, "bytes=99-")],
+            StatusCode::RANGE_NOT_SATISFIABLE,
+        ),
+    ] {
+        assert_eq!(
+            detected(Method::GET, "image/png", &fields).await.status(),
+            status,
+        );
+    }
+}
+
+/// The set is the `content` of the 200 and the 206 alone, each entry a key with
+/// nothing constraining its bytes; the rest describe what they carry today.
+#[test]
+fn a_set_is_described_as_the_content_keys_of_the_200_and_206() {
+    let described = <super::served::Delivery<Video> as Responses>::responses(&mut Registry::new());
+    let document = serde_json::to_value(&described).expect("responses serialize");
+
+    for status in ["200", "206"] {
+        assert_eq!(
+            document[status]["content"],
+            serde_json::json!({
+                "application/x-mpegurl": {"schema": {}},
+                "video/*": {"schema": {}},
+            }),
+            "{status}"
+        );
+    }
+    for status in ["304", "412"] {
+        assert!(document[status].get("content").is_none(), "{status}");
+    }
+    let problem: Vec<&String> = document["416"]["content"]
+        .as_object()
+        .expect("a 416 carries a problem document")
+        .keys()
+        .collect();
+    assert_eq!(problem, ["application/problem+json"]);
 }

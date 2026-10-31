@@ -1,0 +1,26 @@
+error[E0080]: evaluation panicked: a `MediaRanges` set is empty, and a delivery's 200 and 206 are described by its entries
+ --> $RUST/core/src/panic.rs
+  |
+  |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<Nothing as kynos::http::media::WellFormedRanges>::WELL_FORMED` failed here
+  |
+ ::: src/http/media.rs
+  |
+  | /         assert!(
+  | |             !Self::RANGES.is_empty(),
+  | |             "a `MediaRanges` set is empty, and a delivery's 200 and 206 are described by its \
+  | |              entries"
+  | |         );
+  | |_________- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/response/range/served.rs
+  |
+  |         let () = <M as WellFormedRanges>::WELL_FORMED;
+  |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn Served::<InMemory, Nothing>::new`
+  --> tests/ui/traits/media_ranges_empty.rs:19:13
+   |
+19 |     let _ = Served::<_, Nothing>::new(InMemory::new(Bytes::new()));
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

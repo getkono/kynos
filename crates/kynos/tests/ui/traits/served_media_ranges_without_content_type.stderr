@@ -1,0 +1,19 @@
+error[E0599]: the method `deliver` exists for struct `Served<InMemory, Video>`, but its trait bounds were not satisfied
+  --> tests/ui/traits/served_media_ranges_without_content_type.rs:24:10
+   |
+16 |   struct Video;
+   |   ------------ doesn't satisfy `Video: kynos::http::media::MediaType`
+...
+23 | /     Served::<_, Video>::new(InMemory::new(Bytes::new()))
+24 | |         .deliver(&conditions)
+   | |         -^^^^^^^ method cannot be called on `Served<InMemory, Video>` due to unsatisfied trait bounds
+   | |_________|
+   |
+   |
+   = note: the following trait bounds were not satisfied:
+           `Video: kynos::http::media::MediaType`
+note: the trait `kynos::http::media::MediaType` must be implemented
+  --> src/http/media.rs
+   |
+   | pub trait MediaType {
+   | ^^^^^^^^^^^^^^^^^^^

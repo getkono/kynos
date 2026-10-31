@@ -98,14 +98,28 @@ pub(crate) fn advertised<T: Rangeable>(
     (responses, advertised)
 }
 
+/// A 200 or 206 carrying each of `media_types`, as [`content_response`] carries
+/// one.
+fn ranges_response(description: &str, media_types: &[&str]) -> Response {
+    let mut response = Response::new(description);
+    for media_type in media_types {
+        response
+            .content
+            .insert((*media_type).to_owned(), unconstrained().into());
+    }
+    response
+}
+
 /// The statuses and fields a [`Served`](super::served::Served) delivery can
 /// produce.
 ///
 /// 200, 206, 304, 412 and [`RangeRejection`]'s 416; no 400, since section 14.2
-/// ignores an unusable `Range`. The fields the builder adds only on request,
-/// `Cache-Control` and `Content-Disposition`, are declared optional.
+/// ignores an unusable `Range`. `media_types` are the `content` keys of the 200
+/// and the 206, the two that carry the representation, each of which may be a
+/// media range (OAS 3.1.1 `response-content`). The fields the builder adds only
+/// on request, `Cache-Control` and `Content-Disposition`, are declared optional.
 #[must_use]
-pub(crate) fn responses(registry: &mut Registry, media_type: &str) -> kynos_openapi::Responses {
+pub(crate) fn responses(registry: &mut Registry, media_types: &[&str]) -> kynos_openapi::Responses {
     let string = || Header::new(Schema::of_type(SchemaType::String));
     // The type's own description, optional here: a delivery names a file only
     // where its builder asked for one. A drift away from an inline header must
@@ -119,11 +133,11 @@ pub(crate) fn responses(registry: &mut Registry, media_type: &str) -> kynos_open
     let mut responses = kynos_openapi::Responses::new()
         .with(
             200,
-            content_response("the whole representation", media_type),
+            ranges_response("the whole representation", media_types),
         )
         .with(
             206,
-            content_response("the part the request asked for", media_type),
+            ranges_response("the part the request asked for", media_types),
         )
         .with(304, not_modified_response())
         .with(
