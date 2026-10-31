@@ -174,8 +174,8 @@ impl<M: MediaType + ?Sized> WellFormed for M {}
 /// ```
 ///
 /// An empty set, or an entry that is no RFC 9110 section 12.5.1 `media-range`
-/// in octets a header may hold, fails the build wherever a delivery naming the
-/// set is built or described:
+/// (well-formed parameters, and no surrounding whitespace), fails the build
+/// wherever a delivery naming the set is built or described:
 ///
 /// ```compile_fail
 /// use kynos::{
@@ -208,11 +208,67 @@ const fn type_and_subtype(media_type: &[u8]) -> (&[u8], &[u8]) {
     super::split_at_byte(split_essence(media_type).0, b'/')
 }
 
+/// Whether `value` is an RFC 9110 section 5.6.4 `quoted-string`; usable in a
+/// constant.
+const fn is_quoted_string(value: &[u8]) -> bool {
+    let [b'"', inner @ .., b'"'] = value else {
+        return false;
+    };
+    let (mut at, mut escaped) = (0, false);
+    while at < inner.len() {
+        if escaped {
+            escaped = false;
+        } else if inner[at] == b'\\' {
+            escaped = true;
+        } else if inner[at] == b'"' {
+            return false;
+        }
+        at += 1;
+    }
+    !escaped
+}
+
+/// Whether each parameter a field-value-clean `media_type` carries is section
+/// 5.6.6's `token=token` or `token=quoted-string`, the empty ones it allows
+/// aside; usable in a constant.
+const fn has_well_formed_parameters(media_type: &[u8]) -> bool {
+    use super::{is_token, split_at_byte, unquoted_position};
+
+    let mut parameters = split_essence(media_type).1;
+    while !parameters.is_empty() {
+        let (parameter, rest) = match unquoted_position(parameters, b';') {
+            Some(at) => {
+                let (parameter, rest) = parameters.split_at(at);
+                (parameter, rest.split_at(1).1)
+            }
+            None => parameters.split_at(parameters.len()),
+        };
+        let parameter = parameter.trim_ascii();
+        if !parameter.is_empty() {
+            let (name, value) = split_at_byte(parameter, b'=');
+            if !is_token(name) || !(is_token(value) || is_quoted_string(value)) {
+                return false;
+            }
+        }
+        parameters = rest;
+    }
+    true
+}
+
+/// [`is_media_type`] with the leniency a marker's check allows removed: no
+/// surrounding whitespace, and well-formed parameters; usable in a constant.
+const fn is_strict_media_type(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    is_media_type(value)
+        && bytes.trim_ascii().len() == bytes.len()
+        && has_well_formed_parameters(bytes)
+}
+
 /// Whether `range` is an RFC 9110 section 12.5.1 `media-range`, whose only
 /// wildcards are `*/*` and `type/*`; usable in a constant.
 pub(crate) const fn is_media_range(range: &str) -> bool {
     let (type_, subtype) = type_and_subtype(range.as_bytes());
-    is_media_type(range) && (!matches!(type_, b"*") || matches!(subtype, b"*"))
+    is_strict_media_type(range) && (!matches!(type_, b"*") || matches!(subtype, b"*"))
 }
 
 /// Refuses, in the constant evaluation reading it, a [`MediaRanges`] set that
@@ -232,8 +288,9 @@ pub(crate) trait WellFormedRanges: MediaRanges {
         while at < Self::RANGES.len() {
             assert!(
                 is_media_range(Self::RANGES[at]),
-                "a `MediaRanges` entry is not a `*/*`, `type/*` or `type/subtype` of tokens in \
-                 octets a header may hold, and a `content` key is named by each"
+                "a `MediaRanges` entry is not a `*/*`, `type/*` or `type/subtype` of tokens with \
+                 well-formed parameters and no surrounding whitespace, and a `content` key is \
+                 named by each"
             );
             at += 1;
         }
@@ -243,54 +300,27 @@ pub(crate) trait WellFormedRanges: MediaRanges {
 impl<M: MediaRanges + ?Sized> WellFormedRanges for M {}
 
 /// A media type's parameters as a name and a value, skipping the empty ones
-/// RFC 9110 section 5.6.6 allows; `None` for one with no `=`.
-fn parameters(media_type: &str) -> impl Iterator<Item = Option<(&str, &str)>> {
+/// RFC 9110 section 5.6.6 allows. Read only of what
+/// [`has_well_formed_parameters`] passed, so each has its `=`.
+fn parameters(media_type: &str) -> impl Iterator<Item = (&str, &str)> {
     let after_essence = media_type.split_once(';').map_or("", |(_, rest)| rest);
     super::unquoted_split(after_essence, b';')
-        .map(|parameter| parameter.trim_matches([' ', '\t']))
-        .filter(|parameter| !parameter.is_empty())
-        .map(|parameter| parameter.split_once('='))
-}
-
-/// Whether `value` is an RFC 9110 section 5.6.4 `quoted-string`.
-fn is_quoted_string(value: &[u8]) -> bool {
-    let [b'"', inner @ .., b'"'] = value else {
-        return false;
-    };
-    let mut escaped = false;
-    for &octet in inner {
-        match octet {
-            _ if escaped => escaped = false,
-            b'\\' => escaped = true,
-            b'"' => return false,
-            _ => {}
-        }
-    }
-    !escaped
+        .filter_map(|parameter| parameter.trim_matches([' ', '\t']).split_once('='))
 }
 
 /// Whether `value` can be sent as a `Content-Type`: RFC 9110 section 8.3.1's
 /// `type/subtype`, neither half a wildcard, with well-formed parameters.
 ///
-/// Stricter than [`is_media_type`], which reads a marker a developer wrote:
-/// this reads whatever a detector or a provider returned at run time.
+/// Reads whatever a detector or a provider returned at run time, where the
+/// const check on a [`MediaRanges`] entry refuses at build time.
 fn is_sendable(value: &str) -> bool {
     let (type_, subtype) = type_and_subtype(value.as_bytes());
-    is_media_type(value)
-        && value.trim_ascii() == value
-        && type_ != b"*"
-        && subtype != b"*"
-        && parameters(value).all(|parameter| {
-            parameter.is_some_and(|(name, value)| {
-                super::is_token(name.as_bytes())
-                    && (super::is_token(value.as_bytes()) || is_quoted_string(value.as_bytes()))
-            })
-        })
+    is_strict_media_type(value) && type_ != b"*" && subtype != b"*"
 }
 
-/// Whether `range` admits the sendable `value`: on type and subtype in any case
-/// (section 8.3.1), and, where it states parameters, only a type carrying each
-/// of them (section 12.5.1).
+/// Whether the well-formed `range` admits the sendable `value`: on type and
+/// subtype in any case (section 8.3.1), and, where it states parameters, only a
+/// type carrying each of them (section 12.5.1).
 fn admits(range: &str, value: &str) -> bool {
     use super::{eq_ignore_ascii_case, unquoted};
 
@@ -300,8 +330,8 @@ fn admits(range: &str, value: &str) -> bool {
     (range_type == b"*"
         || (eq_ignore_ascii_case(range_type, type_)
             && (range_subtype == b"*" || eq_ignore_ascii_case(range_subtype, subtype))))
-        && parameters(range).flatten().all(|(name, stated)| {
-            parameters(value).flatten().any(|(carried, sent)| {
+        && parameters(range).all(|(name, stated)| {
+            parameters(value).any(|(carried, sent)| {
                 name.eq_ignore_ascii_case(carried)
                     && eq_ignore_ascii_case(unquoted(stated.as_bytes()), unquoted(sent.as_bytes()))
             })

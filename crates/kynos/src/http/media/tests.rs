@@ -153,6 +153,9 @@ fn a_media_range_has_a_wildcard_only_where_the_grammar_does() {
         "video/mp4",
         "text/html; charset=utf-8",
         "text/*; charset=utf-8",
+        "video/*;",
+        "video/mp4 ; codecs=avc1",
+        "video/mp4;a=1;;b=\"x;y\\\"z\"",
     ] {
         assert!(is_media_range(range), "`{range}` is a media range");
     }
@@ -164,6 +167,16 @@ fn a_media_range_has_a_wildcard_only_where_the_grammar_does() {
         "/mp4",
         "video/mp4\r\nx: 1",
         "",
+        " video/*",
+        "video/* ",
+        "text/html; charset",
+        "text/html; =utf-8",
+        "text/html; charset=",
+        "text/html; charset = utf-8",
+        "video/mp4; codecs=a b",
+        "video/mp4; a=\"x",
+        "video/mp4; a=\"x\\\"",
+        "video/mp4; a=\"x\"y\"",
     ] {
         assert!(
             !is_media_range(refused),

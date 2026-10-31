@@ -1,4 +1,4 @@
-error[E0080]: evaluation panicked: a `MediaRanges` entry is not a `*/*`, `type/*` or `type/subtype` of tokens in octets a header may hold, and a `content` key is named by each
+error[E0080]: evaluation panicked: a `MediaRanges` entry is not a `*/*`, `type/*` or `type/subtype` of tokens with well-formed parameters and no surrounding whitespace, and a `content` key is named by each
  --> $RUST/core/src/panic.rs
   |
   |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
@@ -8,8 +8,9 @@ error[E0080]: evaluation panicked: a `MediaRanges` entry is not a `*/*`, `type/*
   |
   | /             assert!(
   | |                 is_media_range(Self::RANGES[at]),
-  | |                 "a `MediaRanges` entry is not a `*/*`, `type/*` or `type/subtype` of tokens in \
-  | |                  octets a header may hold, and a `content` key is named by each"
+  | |                 "a `MediaRanges` entry is not a `*/*`, `type/*` or `type/subtype` of tokens with \
+  | |                  well-formed parameters and no surrounding whitespace, and a `content` key is \
+  | |                  named by each"
   | |             );
   | |_____________- in this macro invocation
 

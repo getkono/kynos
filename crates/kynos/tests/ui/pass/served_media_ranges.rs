@@ -1,6 +1,7 @@
 //! A `MediaRanges` set a downstream crate declares delivers once it is given a
-//! type, and mounts as a route: the sibling of the three `ui/traits/` cases
-//! refusing an empty set, a malformed entry, and a set given no type.
+//! type, and mounts as a route: the sibling of the four `ui/traits/` cases
+//! refusing an empty set, a malformed entry, a malformed parameter, and a set
+//! given no type.
 //!
 //! Downstream, because the blanket implementation over `MediaType` is what such
 //! an `impl` could collide with. A marker beside it still delivers as it did.
@@ -18,7 +19,7 @@ use kynos::{
 struct Video;
 
 impl MediaRanges for Video {
-    const RANGES: &'static [&'static str] = &["video/*"];
+    const RANGES: &'static [&'static str] = &["video/*", "text/html; charset=utf-8"];
 }
 
 #[kynos::get("/clips/current")]
