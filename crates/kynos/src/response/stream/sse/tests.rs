@@ -372,7 +372,7 @@ impl Ticking {
     }
 }
 
-impl futures_core::Stream for Ticking {
+impl crate::response::stream::Stream for Ticking {
     type Item = Result<Event<u8>, std::convert::Infallible>;
 
     fn poll_next(
