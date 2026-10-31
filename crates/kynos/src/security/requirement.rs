@@ -224,7 +224,6 @@ where
 ///     }
 /// }
 /// ```
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AnyOf<T>(PhantomData<fn() -> T>);
 
 /// Every one of a tuple of schemes, together.
@@ -246,8 +245,9 @@ pub struct AnyOf<T>(PhantomData<fn() -> T>);
 ///     todo!()
 /// }
 /// ```
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AllOf<T>(PhantomData<fn() -> T>);
+
+phantom_traits!(AnyOf<T>, AllOf<T>);
 
 /// Which of two schemes in an [`AnyOf`] authenticated.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

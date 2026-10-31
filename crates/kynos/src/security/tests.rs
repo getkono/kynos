@@ -1,4 +1,10 @@
-use super::constant_time_eq;
+use std::{cmp::Ordering, collections::HashSet, fmt::Debug, hash::Hash, marker::PhantomData};
+
+use super::{
+    constant_time_eq,
+    requirement::{AllOf, AnyOf},
+    schemes::{Basic, Bearer, MutualTls},
+};
 
 /// Agreement with `==`, swept over every way two short strings can differ.
 ///
@@ -56,4 +62,84 @@ fn a_difference_anywhere_is_a_difference() {
     }
 
     assert!(constant_time_eq(secret, secret));
+}
+
+/// What a verified credential yields, deriving nothing, as an application's
+/// own claims type may.
+struct Claims;
+
+/// A scope deriving nothing.
+struct Grant;
+
+/// A realm deriving nothing.
+struct Admin;
+
+/// An application's own scheme deriving nothing, so a combinator holding it
+/// carries its traits only if it bounds none of them on its schemes.
+struct Custom;
+
+/// Asserts the traits every scheme marker and combinator carries hold on `M`
+/// whatever its parameters derive, and that its one value is equal to,
+/// ordered as and hashed as itself, and prints as `debug`.
+fn holds_marker_traits<M>(debug: &str)
+where
+    M: Clone + Copy + Debug + Default + Eq + Ord + Hash,
+{
+    let marker = M::default();
+    let copied = marker;
+
+    assert_eq!(marker.clone(), copied);
+    assert_eq!(marker.partial_cmp(&copied), Some(Ordering::Equal));
+    assert_eq!(marker.cmp(&copied), Ordering::Equal);
+    assert_eq!(
+        HashSet::from([marker, copied]).len(),
+        1,
+        "equal markers hash alike"
+    );
+    assert_eq!(format!("{marker:?}"), debug);
+}
+
+/// The claims and scope sit only in a `PhantomData`, so no trait on `Bearer`
+/// is bounded on them.
+#[test]
+fn bearer_holds_its_traits_over_claims_and_scope_deriving_nothing() {
+    holds_marker_traits::<Bearer<Claims, Grant>>(&format!(
+        "Bearer({:?})",
+        PhantomData::<fn() -> (Claims, Grant)>
+    ));
+}
+
+/// As for `Bearer`, and the realm is held the same way.
+#[test]
+fn basic_holds_its_traits_over_claims_scope_and_realm_deriving_nothing() {
+    holds_marker_traits::<Basic<Claims, Grant, Admin>>(&format!(
+        "Basic({:?})",
+        PhantomData::<fn() -> (Claims, Grant, Admin)>
+    ));
+}
+
+/// As for `Bearer`.
+#[test]
+fn mutual_tls_holds_its_traits_over_claims_and_scope_deriving_nothing() {
+    holds_marker_traits::<MutualTls<Claims, Grant>>(&format!(
+        "MutualTls({:?})",
+        PhantomData::<fn() -> (Claims, Grant)>
+    ));
+}
+
+/// The schemes are held only in a `PhantomData`, so `AnyOf` asks nothing of
+/// them, nor of their claims and scopes.
+#[test]
+fn any_of_holds_its_traits_over_schemes_deriving_nothing() {
+    type Schemes = (Bearer<Claims, Grant>, Custom);
+
+    holds_marker_traits::<AnyOf<Schemes>>(&format!("AnyOf({:?})", PhantomData::<fn() -> Schemes>));
+}
+
+/// As for `AnyOf`.
+#[test]
+fn all_of_holds_its_traits_over_schemes_deriving_nothing() {
+    type Schemes = (Bearer<Claims, Grant>, Custom);
+
+    holds_marker_traits::<AllOf<Schemes>>(&format!("AllOf({:?})", PhantomData::<fn() -> Schemes>));
 }

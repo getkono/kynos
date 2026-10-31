@@ -27,7 +27,6 @@ use crate::{
 /// `bearerFormat` is an optional hint, so this describes itself completely
 /// without one. Use `#[derive(SecurityScheme)]` with `bearer(format = "JWT")`
 /// to add it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Bearer<T = String, P = Unscoped>(PhantomData<fn() -> (T, P)>);
 
 /// HTTP basic authentication, per RFC 7617.
@@ -35,7 +34,6 @@ pub struct Bearer<T = String, P = Unscoped>(PhantomData<fn() -> (T, P)>);
 /// `R` is the [`Realm`] its challenge names, [`ApiRealm`] unless named:
 /// `Basic<Credentials, Unscoped, Admin>` challenges with `realm="admin"` for
 /// an `Admin` whose [`Realm::REALM`] is `"admin"`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Basic<T = Credentials, P = Unscoped, R = ApiRealm>(Markers<T, P, R>);
 
 /// [`Basic`]'s parameters, owning none of them.
@@ -163,8 +161,9 @@ const fn append(out: &mut [u8; CHALLENGE_CAPACITY], len: usize, bytes: &[u8]) ->
 ///
 /// Declared automatically when the listener is configured to verify client
 /// certificates.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MutualTls<T = Vec<u8>, P = Unscoped>(PhantomData<fn() -> (T, P)>);
+
+phantom_traits!(Bearer<T, P>, Basic<T, P, R>, MutualTls<T, P>);
 
 impl<T: Send + 'static, P: Scope> SecurityScheme for Bearer<T, P> {
     const NAME: &'static str = "Bearer";
