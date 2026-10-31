@@ -210,7 +210,7 @@ fn non_field_value_message(value: &str) -> Option<String> {
 }
 
 pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
-    let fields = named_fields(input, "Headers")?;
+    let fields = named_fields(input, "HeaderParams")?;
     // Only a written `described` overrides the trait's default.
     let described = group_args(input)?
         .described
