@@ -41,6 +41,23 @@ use crate::{
 /// }
 /// ```
 ///
+/// `S` is a [`Stream`](super::Stream) of [`Event`]s, and that re-export is how a
+/// handler names it without a `futures-core` dependency of its own:
+///
+/// ```no_run
+/// use std::convert::Infallible;
+/// use kynos::response::stream::{
+///     Stream,
+///     sse::{Event, Sse},
+/// };
+///
+/// fn events(
+///     ticks: impl Stream<Item = Result<Event<u32>, Infallible>>,
+/// ) -> Sse<impl Stream<Item = Result<Event<u32>, Infallible>>> {
+///     Sse::new(ticks)
+/// }
+/// ```
+///
 /// # Disconnect and backpressure
 ///
 /// Both are the stream's own, and neither needs a callback.

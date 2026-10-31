@@ -8,6 +8,44 @@
 //! Each of these commits its status before the stream ends, so a failure
 //! partway through terminates the body; it cannot replace the status already
 //! sent with a problem response.
+//!
+//! [`Stream`] is the trait all of them are bounded by, re-exported so an
+//! application names it without a `futures-core` dependency of its own:
+//!
+//! ```
+//! use std::{
+//!     convert::Infallible,
+//!     pin::Pin,
+//!     task::{Context, Poll},
+//! };
+//!
+//! use kynos::{
+//!     http::media::OctetStream,
+//!     response::{
+//!         IntoResponse,
+//!         stream::{Stream, binary::BinaryStream},
+//!     },
+//! };
+//!
+//! struct Chunks;
+//!
+//! impl Stream for Chunks {
+//!     type Item = Result<bytes::Bytes, Infallible>;
+//!
+//!     fn poll_next(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+//!         Poll::Ready(None)
+//!     }
+//! }
+//!
+//! fn chunks() -> impl Stream<Item = Result<bytes::Bytes, Infallible>> + Send + 'static {
+//!     Chunks
+//! }
+//!
+//! let _ = BinaryStream::<_, OctetStream>::new(chunks()).into_response();
+//! ```
+
+#[doc(no_inline)]
+pub use futures_core::Stream;
 
 pub mod binary;
 #[cfg(feature = "openapi32")]

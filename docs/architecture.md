@@ -131,8 +131,10 @@ the graph.
   never as a bound on a handler.
 - No lifetimes in handler signatures. Generics that exist for performance stay
   private.
-- Every public type is either a re-export from `http`, `bytes`, `serde` or
-  `indexmap` (2.x, through the `kynos_openapi::Map` alias), or something Kynos
+- Every public type is either a re-export from `http`, `bytes`, `serde`,
+  `indexmap` (2.x, through the `kynos_openapi::Map` alias) or `futures-core`
+  (its `Stream` trait alone, through `response::stream::Stream`, since the
+  public bounds of the streaming responses already name it), or something Kynos
   is prepared to own indefinitely.
 - Fields the specification makes mutually exclusive are one enum, not several
   `Option`s, and a field whose legal values are a subset of some wider type is
@@ -153,10 +155,11 @@ by naming the row X displaces rather than by arguing that X is good.
 
 - Every dependency is either *ambient* or *contained*. Ambient dependencies may
   be named anywhere, and there are exactly four: `http`, `bytes`, `serde` and
-  `thiserror`. The first three are the re-export allowance above; `thiserror`
+  `thiserror`. The first three are in the re-export allowance above; `thiserror`
   is a derive that reaches no public signature. Every other dependency may be
-  named only under the path the table gives it. This is the runtime rule
-  generalized, not a second rule.
+  named only under the path the table gives it, the allowance's `indexmap` and
+  `futures-core` included. This is the runtime rule generalized, not a second
+  rule.
 - `httparse` and `h2` are never named. They are hyper's HTTP/1 parser and
   HTTP/2 framing layer and they reach Kynos through it. Naming either would
   mean Kynos had taken the protocol over, which is a decision this section
@@ -214,7 +217,7 @@ by naming the row X displaces rather than by arguing that X is good.
 | Percent-encoding | `percent-encoding` | [`__private/uri.rs`](../crates/kynos/src/__private/uri.rs) | built |
 | Errors | `thiserror` | ambient | built |
 | Observability facade | `tracing` | [`server/`](../crates/kynos/src/server/), [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) | built |
-| Streaming bodies | `futures-core` | [`response/stream/binary.rs`](../crates/kynos/src/response/stream/binary.rs) and [`http/body.rs`](../crates/kynos/src/http/body.rs), in every build; the rest of [`response/stream/`](../crates/kynos/src/response/stream/) and [`extract/body/json_lines/`](../crates/kynos/src/extract/body/json_lines/), gated on `openapi32`; [`test/mod.rs`](../crates/kynos/src/test/mod.rs) and [`test/body.rs`](../crates/kynos/src/test/body.rs), whose request body a test may stream, gated on `test-util` | built |
+| Streaming bodies | `futures-core` | [`response/stream/mod.rs`](../crates/kynos/src/response/stream/mod.rs), whose re-export is the path an application names, [`response/stream/binary.rs`](../crates/kynos/src/response/stream/binary.rs) and [`http/body.rs`](../crates/kynos/src/http/body.rs), in every build; the rest of [`response/stream/`](../crates/kynos/src/response/stream/) and [`extract/body/json_lines/`](../crates/kynos/src/extract/body/json_lines/), gated on `openapi32`; [`test/mod.rs`](../crates/kynos/src/test/mod.rs) and [`test/body.rs`](../crates/kynos/src/test/body.rs), whose request body a test may stream, gated on `test-util` | built |
 | JSON | `serde_json` | ambient with `serde` | built |
 | Form codec | `serde_html_form` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs), [`test/mod.rs`](../crates/kynos/src/test/mod.rs) | built |
 | Multipart codec | `multer` | [`extract/body/multipart.rs`](../crates/kynos/src/extract/body/multipart.rs) | built |

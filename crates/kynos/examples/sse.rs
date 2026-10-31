@@ -52,7 +52,10 @@ use kynos::{
     extract::sse::LastEventId,
     middleware::compression::{Compression, streaming::LatencyMode},
     prelude::*,
-    response::stream::sse::{Event, KeepAlive, Sse},
+    response::stream::{
+        Stream,
+        sse::{Event, KeepAlive, Sse},
+    },
     server::Server,
 };
 use serde::{Deserialize, Serialize};
@@ -105,9 +108,10 @@ impl Update {
 
 /// A feed that can begin part-way through.
 ///
-/// Hand-written, because `futures_core::Stream` is the entire requirement.
-/// There is no Kynos stream type to adapt to and no combinator crate in the
-/// dependency tree.
+/// Hand-written, because [`Stream`] is the entire requirement. Kynos re-exports
+/// the trait, so naming it takes no dependency of the application's own. There
+/// is no Kynos stream type to adapt to and no combinator crate in the dependency
+/// tree.
 struct Feed {
     /// The identifier of the next event, which is what a client sends back.
     next_id: u64,
@@ -143,7 +147,7 @@ impl Feed {
     }
 }
 
-impl futures_core::Stream for Feed {
+impl Stream for Feed {
     // A `Result`, because a feed can fail after the status is on the wire. The
     // error terminates the stream; it cannot retract the 200 already sent,
     // which is why a streamed operation should validate everything it can
@@ -207,8 +211,11 @@ async fn updates(LastEventId(resume): LastEventId) -> Sse<Feed> {
 ///
 /// No keep-alive, because the stream ends long before anything could reap it.
 /// Configuring one anyway would send comments nobody is waiting on.
+///
+/// The return type names only the bound, which is what a handler writes when the
+/// stream's own type is an adapter's or cannot be spelled at all.
 #[kynos::get("/updates/burst")]
-async fn burst() -> Sse<Feed> {
+async fn burst() -> Sse<impl Stream<Item = Result<Event<Update>, io::Error>>> {
     Sse::new(Feed::resuming_after(None))
 }
 
@@ -245,8 +252,6 @@ async fn main() -> kynos::Result<()> {
 #[cfg(test)]
 mod tests {
     use std::task::Waker;
-
-    use futures_core::Stream as _;
 
     use super::*;
 
