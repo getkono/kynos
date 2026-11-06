@@ -19,8 +19,10 @@ use std::{
 
 use bytes::Bytes;
 use http_body_util::BodyExt;
-use kynos_openapi::{Document, Method};
-use serde_json::Value;
+use kynos_openapi::{
+    Document, Method, model::body::mime_names::APPLICATION_PROBLEM_JSON as PROBLEM_JSON,
+};
+use serde_json::{Map, Value};
 
 use crate::{
     http::{
@@ -733,6 +735,158 @@ impl TestResponse {
         self
     }
 
+    /// Asserts that this response is an RFC 9457 problem of a given status and
+    /// type, whole.
+    ///
+    /// Checks, in order: the status, as
+    /// [`assert_status`](Self::assert_status) does; that `Content-Type` is
+    /// `application/problem+json` (RFC 9457 section 6.1), its parameters aside;
+    /// that the body's `type` is `type_uri`, an omitted one being
+    /// `about:blank` (section 3.1.1); and that a `status` member, where the
+    /// document carries one, names the status line, which section 3.1.2 binds a
+    /// generator to.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// client
+    ///     .get("/items/7")
+    ///     .send()
+    ///     .await
+    ///     .assert_problem(404, "https://errors.example.com/no-such-item");
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when the status differs or names no status; when `Content-Type`
+    /// is absent or another media type; when the body is not a problem
+    /// document, as [`problem`](Self::problem) reads one; when its `type`
+    /// differs; and when its `status` member disagrees with the status line.
+    pub fn assert_problem(&self, status: impl IntoStatus, type_uri: &str) -> &Self {
+        self.assert_status(status);
+
+        match self
+            .response
+            .headers()
+            .get(crate::http::header::CONTENT_TYPE)
+        {
+            Some(value) => {
+                let essence = value
+                    .as_bytes()
+                    .split(|&octet| octet == b';')
+                    .next()
+                    .unwrap_or_default()
+                    .trim_ascii();
+                assert!(
+                    essence.eq_ignore_ascii_case(PROBLEM_JSON.as_bytes()),
+                    "{}: expected `Content-Type: {PROBLEM_JSON}`, received `Content-Type: {}`\n{}",
+                    self.exchange(),
+                    value.as_bytes().escape_ascii(),
+                    self.rendered_body()
+                );
+            }
+            None => panic!(
+                "{}: expected `Content-Type: {PROBLEM_JSON}`, and the response carries none\n{}",
+                self.exchange(),
+                self.rendered_body()
+            ),
+        }
+
+        let problem = self.problem();
+        assert!(
+            problem.type_uri == type_uri,
+            "{}: expected problem type `{type_uri}`, received `{}`\n{}",
+            self.exchange(),
+            problem.type_uri,
+            self.rendered_body()
+        );
+        if let Some(member) = problem.status {
+            assert!(
+                member == self.status().as_u16(),
+                "{}: the problem document's `status` is {member}, and the status line {}\n{}",
+                self.exchange(),
+                self.status().as_u16(),
+                self.rendered_body()
+            );
+        }
+        self
+    }
+
+    /// The body read as an RFC 9457 problem document.
+    ///
+    /// Reads the body alone: [`assert_problem`](Self::assert_problem) is what
+    /// also holds the status and the media type.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// use kynos::error::problem::PointerError;
+    ///
+    /// let problem = client.post("/items").send().await.problem();
+    /// assert_eq!(problem.detail.as_deref(), Some("the body is not valid"));
+    /// let errors: Option<Vec<PointerError>> = problem.extension("errors");
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when the body is not a JSON object, and when a member RFC 9457
+    /// section 3.1 registers is not of the type it registers: a recipient
+    /// ignores such a member, which in a test would hide the defect that
+    /// produced it.
+    #[must_use]
+    pub fn problem(&self) -> TestProblem {
+        let mut members = match serde_json::from_slice(&self.body) {
+            Ok(Value::Object(members)) => members,
+            Ok(_) => panic!(
+                "{}: the body is not a problem document, which is a JSON object\n{}",
+                self.exchange(),
+                self.rendered_body()
+            ),
+            Err(error) => panic!(
+                "{}: the body is not a problem document: {error}\n{}",
+                self.exchange(),
+                self.rendered_body()
+            ),
+        };
+
+        let mut string = |name: &str| match members.remove(name) {
+            None => None,
+            Some(Value::String(value)) => Some(value),
+            Some(_) => panic!(
+                "{}: the problem document's `{name}` is not a string\n{}",
+                self.exchange(),
+                self.rendered_body()
+            ),
+        };
+        let type_uri = string("type").unwrap_or_else(|| "about:blank".to_owned());
+        let title = string("title");
+        let detail = string("detail");
+        let instance = string("instance");
+
+        let status = members.remove("status").map(|value| {
+            value
+                .as_u64()
+                .and_then(|number| u16::try_from(number).ok())
+                .filter(|number| StatusCode::from_u16(*number).is_ok())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{}: the problem document's `status` is not a status code\n{}",
+                        self.exchange(),
+                        self.rendered_body()
+                    )
+                })
+        });
+
+        TestProblem {
+            type_uri,
+            title,
+            status,
+            detail,
+            instance,
+            extensions: members,
+        }
+    }
+
     /// The body as text.
     ///
     /// # Panics
@@ -1062,5 +1216,52 @@ impl TestEvent {
     pub fn json<T: serde::de::DeserializeOwned>(&self) -> T {
         serde_json::from_str(&self.data)
             .unwrap_or_else(|error| panic!("`{}` is not the expected JSON: {error}", self.data))
+    }
+}
+
+/// An RFC 9457 problem document, as [`TestResponse::problem`] read it.
+///
+/// The members section 3.1 registers are typed; every other member is an
+/// extension, read by [`extension`](Self::extension).
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct TestProblem {
+    /// The `type` URI, `about:blank` where the document omits it (RFC 9457
+    /// section 3.1.1).
+    pub type_uri: String,
+    /// The `title`.
+    pub title: Option<String>,
+    /// The `status` member, which is not necessarily the status line.
+    pub status: Option<u16>,
+    /// The `detail`.
+    pub detail: Option<String>,
+    /// The `instance` URI.
+    pub instance: Option<String>,
+    /// Every member the five above are not.
+    extensions: Map<String, Value>,
+}
+
+impl TestProblem {
+    /// The extension member `name`, deserialized; `None` when the document
+    /// does not carry it.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `name` is one of the five registered members, which are
+    /// read from their fields and would otherwise read as absent here, and
+    /// when the member is present but not a `T`.
+    #[must_use]
+    pub fn extension<T: serde::de::DeserializeOwned>(&self, name: &str) -> Option<T> {
+        assert!(
+            !["type", "title", "status", "detail", "instance"].contains(&name),
+            "`{name}` is a member RFC 9457 registers, not an extension; read its field"
+        );
+        let value = self.extensions.get(name)?;
+        Some(T::deserialize(value).unwrap_or_else(|error| {
+            panic!(
+                "the problem document's `{name}` is not a `{}`: {error}\n{name}: {value}",
+                std::any::type_name::<T>()
+            )
+        }))
     }
 }

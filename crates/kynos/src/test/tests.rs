@@ -201,6 +201,169 @@ mod assertions {
             .assert_problem_type("urn:example:x");
     }
 
+    /// A problem response, as `Problem` renders one.
+    const PROBLEM: (&str, &str) = ("content-type", "application/problem+json");
+
+    /// The media type is compared by its essence: parameters aside, and
+    /// without regard to case (RFC 9110 section 8.3.1).
+    #[test]
+    fn assert_problem_passes_on_a_whole_problem() {
+        received(
+            StatusCode::CONFLICT,
+            &[("content-type", "Application/Problem+JSON; charset=utf-8")],
+            br#"{"type":"urn:example:taken","status":409}"#,
+        )
+        .assert_problem(409, "urn:example:taken")
+        .assert_problem(StatusCode::CONFLICT, "urn:example:taken");
+    }
+
+    /// A document omitting both `type` and `status` is `about:blank`, with no
+    /// member to disagree with the status line.
+    #[test]
+    fn assert_problem_reads_an_omitted_type_as_blank_and_an_omitted_status_as_agreeing() {
+        received(StatusCode::NOT_FOUND, &[PROBLEM], b"{}").assert_problem(404, "about:blank");
+    }
+
+    #[test]
+    #[should_panic(expected = "GET /things -> 404: expected 409 Conflict, received 404 Not Found")]
+    fn assert_problem_fails_on_another_status() {
+        received(StatusCode::NOT_FOUND, &[PROBLEM], b"{}").assert_problem(409, "about:blank");
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 404: expected `Content-Type: application/problem+json`, \
+                    and the response carries none"
+    )]
+    fn assert_problem_fails_on_an_absent_media_type() {
+        received(StatusCode::NOT_FOUND, &[], b"{}").assert_problem(404, "about:blank");
+    }
+
+    /// A problem document sent as plain JSON is not one to a client that
+    /// dispatches on the media type (RFC 9457 section 6.1).
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 404: expected `Content-Type: application/problem+json`, \
+                    received `Content-Type: application/json`"
+    )]
+    fn assert_problem_fails_on_another_media_type() {
+        received(
+            StatusCode::NOT_FOUND,
+            &[("content-type", "application/json")],
+            b"{}",
+        )
+        .assert_problem(404, "about:blank");
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 404: expected problem type `urn:example:x`, received `about:blank`"
+    )]
+    fn assert_problem_fails_on_another_type() {
+        received(StatusCode::NOT_FOUND, &[PROBLEM], b"{}").assert_problem(404, "urn:example:x");
+    }
+
+    /// RFC 9457 section 3.1.2 binds a generator to the same status in the
+    /// member and on the status line.
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 404: the problem document's `status` is 410, and the status line 404"
+    )]
+    fn assert_problem_fails_on_a_status_member_the_status_line_disagrees_with() {
+        received(StatusCode::NOT_FOUND, &[PROBLEM], br#"{"status":410}"#)
+            .assert_problem(404, "about:blank");
+    }
+
+    /// Every registered member is read into its field, and only the rest are
+    /// extensions.
+    #[test]
+    fn problem_reads_the_registered_members_and_keeps_the_rest_as_extensions() {
+        let problem = received(
+            StatusCode::BAD_REQUEST,
+            &[PROBLEM],
+            br#"{"type":"urn:example:x","title":"Bad","status":400,"detail":"no",
+                 "instance":"/things/1","errors":[{"pointer":"/a","detail":"short"}]}"#,
+        )
+        .problem();
+
+        assert_eq!(problem.type_uri, "urn:example:x");
+        assert_eq!(problem.title.as_deref(), Some("Bad"));
+        assert_eq!(problem.status, Some(400));
+        assert_eq!(problem.detail.as_deref(), Some("no"));
+        assert_eq!(problem.instance.as_deref(), Some("/things/1"));
+        assert_eq!(
+            problem.extension::<Vec<crate::error::problem::PointerError>>("errors"),
+            Some(vec![crate::error::problem::PointerError::new(
+                "/a", "short"
+            )])
+        );
+        assert_eq!(problem.extension::<String>("retry"), None);
+    }
+
+    #[test]
+    fn problem_reads_an_omitted_type_as_blank() {
+        let problem = received(StatusCode::NOT_FOUND, &[], b"{}").problem();
+        assert_eq!(problem.type_uri, "about:blank");
+        assert_eq!(problem.status, None);
+    }
+
+    #[test]
+    #[should_panic(expected = "GET /things -> 400: the body is not a problem document: ")]
+    fn problem_fails_on_a_body_that_is_not_json() {
+        let _ = received(StatusCode::BAD_REQUEST, &[], b"plain").problem();
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 400: the body is not a problem document, which is a JSON object"
+    )]
+    fn problem_fails_on_json_that_is_not_an_object() {
+        let _ = received(StatusCode::BAD_REQUEST, &[], b"[]").problem();
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 400: the problem document's `detail` is not a string"
+    )]
+    fn problem_fails_on_a_registered_member_of_another_type() {
+        let _ = received(StatusCode::BAD_REQUEST, &[], br#"{"detail":7}"#).problem();
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 400: the problem document's `status` is not a status code"
+    )]
+    fn problem_fails_on_a_status_given_as_text() {
+        let _ = received(StatusCode::BAD_REQUEST, &[], br#"{"status":"400"}"#).problem();
+    }
+
+    /// `StatusCode`'s range bounds the member as it bounds an expected status.
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 400: the problem document's `status` is not a status code"
+    )]
+    fn problem_fails_on_a_status_no_status_code_has() {
+        let _ = received(StatusCode::BAD_REQUEST, &[], br#"{"status":1000}"#).problem();
+    }
+
+    #[test]
+    #[should_panic(expected = "the problem document's `retry` is not a `u64`")]
+    fn extension_fails_on_a_member_of_another_type() {
+        let _ = received(StatusCode::BAD_REQUEST, &[], br#"{"retry":"soon"}"#)
+            .problem()
+            .extension::<u64>("retry");
+    }
+
+    /// A registered member is never among the extensions, so reading one here
+    /// would report it absent whatever the document carried.
+    #[test]
+    #[should_panic(expected = "`detail` is a member RFC 9457 registers, not an extension")]
+    fn extension_refuses_a_registered_member() {
+        let _ = received(StatusCode::BAD_REQUEST, &[], br#"{"detail":"no"}"#)
+            .problem()
+            .extension::<String>("detail");
+    }
+
     #[test]
     #[should_panic(expected = "GET /things -> 200: `x-trace` is not on the response")]
     fn assert_header_fails_on_an_absent_field() {
