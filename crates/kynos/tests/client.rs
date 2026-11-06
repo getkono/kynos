@@ -406,6 +406,39 @@ async fn a_header_can_be_read_and_asserted() {
 
     assert_eq!(reply.header("nonexistent"), None);
     assert!(reply.header("set-cookie").is_some());
+    reply.assert_no_header("nonexistent").assert_status(204);
+}
+
+/// A response names the request it answers as sent: the method, and the target
+/// with the query string appended.
+#[tokio::test]
+async fn a_response_names_the_request_it_answers() {
+    let reply = client()
+        .post("/echo?page=2")
+        .query_string(&Filter {
+            limit: Some(1),
+            label: None,
+        })
+        .text("")
+        .send()
+        .await;
+
+    assert_eq!(reply.method(), Method::POST);
+    assert_eq!(reply.path(), "/echo?page=2&limit=1");
+}
+
+/// A failing assertion opens with the request, so a loop over operations
+/// reports which one failed.
+#[tokio::test]
+#[should_panic(
+    expected = "PUT /probe -> 501: expected 204 No Content, received 501 Not Implemented"
+)]
+async fn a_failed_assertion_names_the_request() {
+    client()
+        .method(Method::PUT, "/probe")
+        .send()
+        .await
+        .assert_status(204);
 }
 
 // --- Ranged and streamed responses ----------------------------------------
