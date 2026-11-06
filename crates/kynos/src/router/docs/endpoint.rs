@@ -14,7 +14,7 @@ use crate::{
     },
     response::codec::{unconstrained, with_content_type},
     router::{
-        docs::State,
+        docs::state::State,
         endpoint::Endpoint,
         operation::{DeclaredTag, OperationCx},
     },
