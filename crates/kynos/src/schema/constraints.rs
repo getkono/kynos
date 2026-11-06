@@ -80,7 +80,98 @@ pub struct Constraints {
     pub content_media_type: Option<String>,
 }
 
+/// Emits one `const` builder per field holding a `Copy` value.
+macro_rules! copy_builders {
+    ($($field:ident: $ty:ty => $keyword:literal),+ $(,)?) => {
+        $(
+            #[doc = concat!("Sets `", $keyword, "`.")]
+            #[must_use]
+            pub const fn $field(mut self, value: $ty) -> Self {
+                self.$field = Some(value);
+                self
+            }
+        )+
+    };
+}
+
+/// Emits one builder per field holding a `String`.
+///
+/// Not `const`: replacing a `String` drops the one it held, which a `const fn`
+/// cannot do.
+macro_rules! text_builders {
+    ($($field:ident => $keyword:literal),+ $(,)?) => {
+        $(
+            #[doc = concat!("Sets `", $keyword, "`.")]
+            #[must_use]
+            pub fn $field(mut self, value: impl Into<String>) -> Self {
+                self.$field = Some(value.into());
+                self
+            }
+        )+
+    };
+}
+
+/// Built field by field, since the struct is `#[non_exhaustive]`: each method
+/// sets one keyword and returns the set. Those taking a number or a flag are
+/// `const`, so a bound can be named once and shared. A set built here is what
+/// a hand-written schema [applies](Self::apply) to its description; the check a
+/// value is held to is the one `#[derive(Schema)]` generates.
+///
+/// ```
+/// use kynos::schema::constraints::Constraints;
+///
+/// const PAGE_SIZE: Constraints = Constraints::new().minimum(1.0).maximum(500.0);
+///
+/// let mut by_field = Constraints::default();
+/// by_field.minimum = Some(1.0);
+/// by_field.maximum = Some(500.0);
+/// assert_eq!(PAGE_SIZE, by_field);
+///
+/// let cursor = Constraints::new().max_length(64).format("byte");
+/// assert_eq!(cursor.format.as_deref(), Some("byte"));
+/// ```
 impl Constraints {
+    /// No constraint set, the same as [`Default::default`].
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            minimum: None,
+            maximum: None,
+            exclusive_minimum: None,
+            exclusive_maximum: None,
+            multiple_of: None,
+            min_length: None,
+            max_length: None,
+            pattern: None,
+            min_items: None,
+            max_items: None,
+            unique_items: None,
+            format: None,
+            content_encoding: None,
+            content_media_type: None,
+        }
+    }
+
+    copy_builders!(
+        minimum: f64 => "minimum",
+        maximum: f64 => "maximum",
+        exclusive_minimum: f64 => "exclusiveMinimum",
+        exclusive_maximum: f64 => "exclusiveMaximum",
+        multiple_of: f64 => "multipleOf",
+        min_length: u64 => "minLength",
+        max_length: u64 => "maxLength",
+        min_items: u64 => "minItems",
+        max_items: u64 => "maxItems",
+        unique_items: bool => "uniqueItems",
+    );
+
+    text_builders!(
+        pattern => "pattern",
+        format => "format",
+        content_encoding => "contentEncoding",
+        content_media_type => "contentMediaType",
+    );
+
     /// Whether any constraint is set.
     ///
     /// An empty set applied to a schema leaves it unchanged, so a caller that
