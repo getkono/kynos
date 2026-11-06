@@ -479,6 +479,31 @@ async fn a_bound_named_by_a_const_is_described_and_enforced_as_its_value() {
     refuses::<Limited>(broken, &["/even", "/level", "/name", "/tags"]).await;
 }
 
+/// A bound the application parenthesized is its own expression, which the
+/// expansion must not make a redundant argument that `unused_parens` warns on.
+#[deny(unused_parens)]
+mod parenthesized {
+    use kynos::Schema;
+
+    use super::limits;
+
+    #[derive(Schema)]
+    pub(super) struct Bounded {
+        #[schema(max_length = (limits::MAX_TAGS + 1))]
+        pub(super) name: String,
+        #[schema(minimum = (limits::FLOOR))]
+        pub(super) level: f64,
+    }
+}
+
+/// A parenthesized bound describes the value inside the parentheses.
+#[test]
+fn a_parenthesized_const_bound_is_described_as_its_value() {
+    let properties = &emitted::<parenthesized::Bounded>()["properties"];
+    assert_eq!(properties["name"]["maxLength"], json!(3));
+    assert_eq!(properties["level"]["minimum"], json!(-3.0));
+}
+
 /// Externally tagged, the default: a payload sits under its variant's name.
 #[derive(Debug, Schema, Deserialize)]
 #[serde(rename_all = "snake_case")]
