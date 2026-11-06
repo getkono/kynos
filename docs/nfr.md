@@ -641,7 +641,7 @@ The budget is the honest record of what stayed. A path leaves it when its module
 is split, and one joins it only with the argument for why that module needs the
 room, in the same commit.
 
-Thirteen of them crossed the line after v0.1.0, and each was argued for as it did.
+Fourteen of them crossed the line after v0.1.0, and each was argued for as it did.
 `response/status.rs` is the shape above rather than a new argument. It declares
 seven public types — `Location`, `InvalidLocation`, `NoContent`, `Created`,
 `Accepted`, `Redirect` and `ValidRedirectCode` — so splitting it would turn
@@ -758,6 +758,15 @@ hold and the harness does. The traits are one concern — what a scheme is and
 what verifies it — and an opt-in on the scheme changes what an authenticator
 may return.
 
+`middleware/limits/body_size.rs` is `status.rs`'s shape. It declares
+`BodySize`, `BodySizeExceeded`, `BodyTooSlow` and `BodyRefused`, so a split
+would turn `body_size::BodyRefused` into `body_size::deadline::BodyRefused`.
+What pushed it over was `BodySize::deadline`, which issue #1137 put on the cap
+rather than beside it so that no mounting order separates the clock from the
+count. The two are one concern — refusing a request body before the handler
+trusts it — and the deadline's private body wrapper is the declared-length
+half of the same `intercept`, which reads back what the wrapper recorded.
+
 The budget, which may only shrink:
 
 - `crates/kynos-macros/src/derive/schema/attributes.rs`
@@ -776,6 +785,7 @@ The budget, which may only shrink:
 - `crates/kynos/src/middleware/compression/mod.rs`
 - `crates/kynos/src/middleware/cors/mod.rs`
 - `crates/kynos/src/middleware/decompression/mod.rs`
+- `crates/kynos/src/middleware/limits/body_size.rs`
 - `crates/kynos/src/middleware/mod.rs`
 - `crates/kynos/src/response/range/served.rs`
 - `crates/kynos/src/response/status.rs`

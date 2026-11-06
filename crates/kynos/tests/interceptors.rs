@@ -605,6 +605,7 @@ fn collect_sources(directory: &std::path::Path, into: &mut Vec<String>) {
 /// uninhabited, so there is no value to drive and no status to declare.
 const SHORT_CIRCUITS: &[&str] = &[
     "AtCapacity",
+    "BodyRefused",
     "BodySizeExceeded",
     "CrossSite",
     "Infallible",
@@ -666,7 +667,7 @@ fn every_unconstructible_short_circuit_declares_no_status() {
 /// Every short circuit Kynos ships, named against the set the sweep drives.
 ///
 /// The same argument as the two sets above, one trait further out: without it a
-/// short circuit beyond the ten listed is a type the sweep silently does not
+/// short circuit beyond the eleven listed is a type the sweep silently does not
 /// reach. The walk is over the whole crate rather than `src/middleware/`,
 /// because `Infallible`'s implementation is in `src/response/mod.rs`.
 #[test]
@@ -874,7 +875,11 @@ async fn every_case() -> Vec<Case> {
 
     use kynos::middleware::{
         csrf::CrossSite,
-        limits::{body_size::BodySizeExceeded, concurrency::AtCapacity, timeout::TimedOut},
+        limits::{
+            body_size::{BodyRefused, BodySizeExceeded, BodyTooSlow},
+            concurrency::AtCapacity,
+            timeout::TimedOut,
+        },
         rate_limit::refusal::{RateLimited, RateLimitedFields},
     };
 
@@ -882,6 +887,20 @@ async fn every_case() -> Vec<Case> {
     let mut cases = Vec::new();
 
     cases.push(case(registry, BodySizeExceeded::<()>::new(64)).await);
+    cases.push(
+        case(
+            registry,
+            BodyRefused::<(), ()>::TooLarge(BodySizeExceeded::new(64)),
+        )
+        .await,
+    );
+    cases.push(
+        case(
+            registry,
+            BodyRefused::<(), ()>::TooSlow(BodyTooSlow::new(Duration::from_secs(1))),
+        )
+        .await,
+    );
     cases.push(case(registry, TimedOut::<()>::new(Duration::from_secs(1))).await);
     cases.push(
         case(
@@ -1067,12 +1086,18 @@ fn assert_clone_and_debug<T: Clone + std::fmt::Debug>() {}
 fn a_refusal_is_send_and_sync_whatever_marker_names_it() {
     use kynos::middleware::{
         csrf::CrossSite,
-        limits::{body_size::BodySizeExceeded, concurrency::AtCapacity, timeout::TimedOut},
+        limits::{
+            body_size::{BodyRefused, BodySizeExceeded, BodyTooSlow},
+            concurrency::AtCapacity,
+            timeout::TimedOut,
+        },
     };
 
     use kynos::middleware::rate_limit::refusal::{RateLimited, RateLimitedFields};
 
     assert_send_sync::<BodySizeExceeded<Unsendable>>();
+    assert_send_sync::<BodyTooSlow<Unsendable>>();
+    assert_send_sync::<BodyRefused<Unsendable, Unsendable>>();
     assert_send_sync::<TimedOut<Unsendable>>();
     assert_send_sync::<AtCapacity<Unsendable>>();
     assert_send_sync::<CrossSite<Unsendable>>();
@@ -1097,6 +1122,7 @@ struct Policy;
 /// `a_refusal_is_send_and_sync_whatever_marker_names_it` witness. Sorted.
 const MARKED_REFUSALS: &[&str] = &[
     "AtCapacity",
+    "BodyRefused",
     "BodySizeExceeded",
     "CrossSite",
     "NotAcceptable",
@@ -1196,7 +1222,7 @@ fn naming_a_problem_type_costs_the_marker_no_derives() {
     use kynos::middleware::{
         csrf::{CrossSite, Csrf},
         limits::{
-            body_size::{BodySize, BodySizeExceeded},
+            body_size::{BodyRefused, BodySize, BodySizeExceeded, BodyTooSlow},
             concurrency::{AtCapacity, Concurrency},
             timeout::TimedOut,
         },
@@ -1211,6 +1237,8 @@ fn naming_a_problem_type_costs_the_marker_no_derives() {
     };
 
     assert_refusal_traits::<BodySizeExceeded<Bare>>();
+    assert_refusal_traits::<BodyTooSlow<Bare>>();
+    assert_refusal_traits::<BodyRefused<Bare, Bare>>();
     assert_refusal_traits::<TimedOut<Bare>>();
     assert_refusal_traits::<AtCapacity<Bare>>();
     assert_refusal_traits::<CrossSite<Bare>>();
@@ -1218,6 +1246,7 @@ fn naming_a_problem_type_costs_the_marker_no_derives() {
     assert_refusal_traits::<RateLimitedFields<Bare>>();
 
     assert_clone_and_debug::<BodySize<Bare>>();
+    assert_clone_and_debug::<BodySize<Bare, BodyTooSlow<Bare>>>();
     assert_clone_and_debug::<Concurrency<Bare>>();
     assert_clone_and_debug::<Csrf<Bare>>();
     assert_clone_and_debug::<Timeout<TimedOut<Bare>>>();
@@ -1336,6 +1365,48 @@ fn a_marked_refusal_prints_compares_and_clones_its_fields() {
     }
 }
 
+/// The same for the two refusals a body deadline answers with, kept apart
+/// only so neither function outgrows the length lint.
+#[test]
+fn a_body_deadline_refusal_prints_compares_and_clones_its_fields() {
+    use std::time::Duration;
+
+    use kynos::middleware::limits::body_size::{BodyRefused, BodySizeExceeded, BodyTooSlow};
+
+    assert_copy::<BodyTooSlow<Bare>>();
+    assert_copy::<BodyRefused<Bare, Bare>>();
+
+    let too_slow = BodyTooSlow::<Bare>::new(Duration::from_secs(5));
+    assert_eq!(
+        format!("{too_slow:?}"),
+        "BodyTooSlow { after: 5s, closes: false }"
+    );
+    assert_eq!(too_slow.clone(), too_slow);
+    assert_ne!(
+        too_slow,
+        BodyTooSlow::new(Duration::from_secs(6)),
+        "after is not compared"
+    );
+
+    let too_large = BodySizeExceeded::<Bare>::new(16);
+    let refused = BodyRefused::<Bare, Bare>::TooSlow(too_slow);
+    assert_eq!(
+        format!("{refused:?}"),
+        "TooSlow(BodyTooSlow { after: 5s, closes: false })"
+    );
+    assert_eq!(refused.clone(), refused);
+    assert_ne!(
+        refused,
+        BodyRefused::TooLarge(too_large),
+        "the variant is not compared"
+    );
+    assert_ne!(
+        BodyRefused::<Bare, Bare>::TooLarge(too_large),
+        BodyRefused::TooLarge(BodySizeExceeded::new(17)),
+        "a variant's refusal is not compared"
+    );
+}
+
 /// Each interceptor a marker names prints every setting it holds, and a clone
 /// prints the same.
 ///
@@ -1348,7 +1419,11 @@ fn a_marked_interceptor_prints_and_clones_its_settings() {
 
     use kynos::middleware::{
         csrf::Csrf,
-        limits::{body_size::BodySize, concurrency::Concurrency, timeout::Timeout},
+        limits::{
+            body_size::{BodySize, BodyTooSlow},
+            concurrency::Concurrency,
+            timeout::Timeout,
+        },
     };
 
     /// What `interceptor` prints, asserting its clone prints the same.
@@ -1359,6 +1434,7 @@ fn a_marked_interceptor_prints_and_clones_its_settings() {
     }
 
     assert_copy::<BodySize<Bare>>();
+    assert_copy::<BodySize<Bare, BodyTooSlow<Bare>>>();
     assert_copy::<Timeout<kynos::middleware::limits::timeout::TimedOut<Bare>>>();
 
     assert_eq!(
@@ -1377,6 +1453,15 @@ fn a_marked_interceptor_prints_and_clones_its_settings() {
     assert_eq!(
         printed(&BodySize::new(4096).problem_type::<Bare>()),
         "BodySize { limit: 4096 }"
+    );
+    assert_eq!(
+        printed(
+            &BodySize::new(4096)
+                .deadline(Duration::from_secs(30))
+                .deadline_problem_type::<Bare>()
+                .problem_type::<Bare>()
+        ),
+        "BodySize { limit: 4096, deadline: 30s }"
     );
 
     // The slots are tokio's semaphore, whose own `Debug` is not this crate's

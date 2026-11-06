@@ -68,19 +68,21 @@ impl<T: ProblemType> Responses for TimedOut<T> {
 /// gateway section 15.6.5 scopes 504 to, and 503 is taken by
 /// [`Concurrency`](super::concurrency::Concurrency).
 ///
-/// # Mount it outside a [`BodySize`](super::body_size::BodySize)
+/// # Bounding a body's total is `BodySize::deadline`'s job
 ///
-/// A timeout wraps whatever is beneath it, so it bounds a body read only when
-/// it is the *earlier* `intercept` call, per
-/// [the module's ordering rule](crate::middleware#the-order-a-chain-runs-in).
-/// `BodySize` walks a length-less body frame by frame, and a client that trickles
-/// frames holds that loop open. The server's idle timer
-/// (`Server::request_body_idle_timeout`) ends a body that stalls between
-/// frames; a `Timeout` mounted outside bounds only the total a slow but steady
-/// body may take.
+/// A timeout bounds the handler's work together with any body read beneath
+/// it. To bound only how long a body takes to arrive, and leave the handler
+/// to take what it needs, use
+/// [`BodySize::deadline`](super::body_size::BodySize::deadline), whose clock
+/// and cap no mounting order can separate.
 ///
-/// Nothing enforces this. `CompatibleWith` compares sets, and a set has no
-/// positions, so the wrong order compiles and describes itself identically.
+/// A timeout bounds a body read only when it is the *earlier* `intercept`
+/// call, per
+/// [the module's ordering rule](crate::middleware#the-order-a-chain-runs-in):
+/// `BodySize` walks a length-less body frame by frame before the chain beneath
+/// runs, and a client that trickles frames holds that loop open. Nothing
+/// enforces this. `CompatibleWith` compares sets, and a set has no positions,
+/// so the wrong order compiles and describes itself identically.
 ///
 /// # Answering with something else
 ///

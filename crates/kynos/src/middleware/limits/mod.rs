@@ -3,7 +3,8 @@
 //! Each limit is its own module, holding the interceptor and the response type
 //! it answers with, which both sets and describes its status and headers:
 //!
-//! - [`body_size`] caps a request body, answering 413.
+//! - [`body_size`] caps a request body, answering 413, and, given a deadline,
+//!   how long it takes to arrive, answering 408.
 //! - [`timeout`] caps how long a handler runs, answering 408.
 //! - [`concurrency`] caps the requests in flight at once, answering 503.
 //! - [`body_timeout`] caps how long a response body takes, and answers nothing:
@@ -12,6 +13,8 @@
 //! One limit is not an interceptor: the server holds every request body it
 //! reads off a socket to an idle timeout between frames, set with
 //! [`Server::request_body_idle_timeout`](crate::server::Server::request_body_idle_timeout).
+//! A body's *total* is bounded by
+//! [`BodySize::deadline`](body_size::BodySize::deadline).
 
 pub mod body_size;
 pub mod body_timeout;

@@ -9,13 +9,13 @@ error[E0277]: `std::io::Error` cannot be an interceptor's short circuit
    = note: use `std::convert::Infallible` for an interceptor that always reaches the handler
    = help: the following other types implement trait `ShortCircuit`:
              AtCapacity<T>
+             BodyRefused<T, U>
              BodySizeExceeded<T>
              CrossSite<T>
              Infallible
              NotModified
              RateLimited<T>
              RateLimitedFields<T>
-             StoreError
            and $N others
 
 error[E0277]: the trait bound `std::io::Error: IntoProblem` is not satisfied
@@ -50,9 +50,9 @@ error[E0277]: `std::io::Error` cannot be turned into a response
              AtCapacity<T>
              AuthRejection
              BinaryStream<S, M>
+             BodyRefused<T, U>
              BodyRejection
              BodySizeExceeded<T>
-             CookieRejection
            and $N others
 
 error[E0277]: `std::io::Error` does not declare which responses it can produce
@@ -69,7 +69,7 @@ error[E0277]: `std::io::Error` does not declare which responses it can produce
              AtCapacity<T>
              AuthRejection
              BinaryStream<S, M>
+             BodyRefused<T, U>
              BodyRejection
              BodySizeExceeded<T>
-             CookieRejection
            and $N others

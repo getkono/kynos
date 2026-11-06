@@ -728,6 +728,316 @@ mod stalled_body {
     }
 }
 
+// --- BodySize::deadline: 408 for the body, nothing for the handler ---------
+
+/// A body's total time, bounded where the cap is counted, and the handler
+/// beneath left unbounded. The clock is paused, so a body paced over 100 ms
+/// and a handler working for ten minutes cost no real time.
+#[cfg(feature = "test-util")]
+mod body_deadline {
+    use std::{
+        collections::VecDeque,
+        pin::Pin,
+        task::{Context, Poll},
+        time::Duration,
+    };
+
+    use bytes::Bytes;
+    use kynos::{
+        error::problem::ProblemType,
+        http::{self, StatusCode},
+        middleware::{Continued, Interceptor, Next, limits::body_size::BodySize},
+        response::status::NoContent,
+        router::service::Service,
+        test::{TestClient, TestResponse},
+    };
+
+    use super::{
+        DEFAULT_LIMIT, TooLarge, narrowed_type,
+        support::{self, App, User},
+        user_of_length,
+    };
+
+    /// The deadline every case mounts.
+    const DEADLINE: Duration = Duration::from_millis(50);
+
+    /// A user's JSON in five parts, each after `gap`: a client that never
+    /// stalls, which an idle timer between frames therefore never ends.
+    struct Paced {
+        parts: VecDeque<Bytes>,
+        gap: Duration,
+        timer: Pin<Box<tokio::time::Sleep>>,
+    }
+
+    impl Paced {
+        /// The whole document, a part every `gap`.
+        fn new(gap: Duration) -> Self {
+            let parts = [&b"{\"id\""[..], b": 1, ", b"\"name\"", b": \"Ada", b"\"}"];
+            Self {
+                parts: parts.into_iter().map(Bytes::from_static).collect(),
+                gap,
+                timer: Box::pin(tokio::time::sleep(gap)),
+            }
+        }
+
+        /// The number of octets every part adds up to.
+        fn length() -> u64 {
+            br#"{"id": 1, "name": "Ada"}"#.len() as u64
+        }
+    }
+
+    impl futures_core::Stream for Paced {
+        type Item = Bytes;
+
+        fn poll_next(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Bytes>> {
+            let this = self.get_mut();
+            if this.parts.is_empty() {
+                return Poll::Ready(None);
+            }
+            std::task::ready!(this.timer.as_mut().poll(context));
+            let next = tokio::time::Instant::now() + this.gap;
+            this.timer.as_mut().reset(next);
+            Poll::Ready(this.parts.pop_front())
+        }
+    }
+
+    /// Reads a user, then works for ten minutes.
+    #[kynos::post("/work")]
+    async fn work(
+        kynos::extract::body::json::Json(user): kynos::extract::body::json::Json<User>,
+    ) -> NoContent {
+        let _ = user;
+        tokio::time::sleep(Duration::from_secs(600)).await;
+        NoContent
+    }
+
+    /// Waits a second before letting the chain beneath read anything.
+    #[derive(Clone, Copy, Debug)]
+    struct Dawdles;
+
+    impl<C: Sync + 'static> Interceptor<C> for Dawdles {
+        type Reads = ();
+        type Adds = ();
+        type Short = std::convert::Infallible;
+
+        async fn intercept(
+            &self,
+            request: http::Request,
+            reads: (),
+            context: &C,
+            next: Next<'_, C>,
+        ) -> Result<Continued<()>, std::convert::Infallible> {
+            let _ = (reads, context);
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            Ok(next.run(request).await)
+        }
+    }
+
+    /// The fixture's operations and `work`, under a 4 KiB cap with the deadline.
+    fn service() -> Service<App> {
+        support::router()
+            .mount(kynos::routes![work])
+            .intercept(BodySize::new(4096).deadline(DEADLINE))
+            .build(App::new())
+            .expect("a describable router")
+    }
+
+    /// `path`'s answer to a user paced a part every `gap`, under a declared
+    /// length when `declared`.
+    async fn paced(
+        service: Service<App>,
+        path: &str,
+        gap: Duration,
+        declared: bool,
+    ) -> TestResponse {
+        let client = TestClient::new(service);
+        let mut request = client
+            .post(path)
+            .body_stream("application/json", Paced::new(gap));
+        if declared {
+            request = request.content_length(Paced::length());
+        }
+        request.send().await
+    }
+
+    /// 100 ms of steady parts passes no idle timer and passes the deadline,
+    /// read here or by the extractor beneath: answered 408, closing the HTTP/1
+    /// connection the rest of the body was still arriving on.
+    #[tokio::test(start_paused = true)]
+    async fn a_body_steadily_arriving_past_its_deadline_is_answered_408() {
+        for declared in [false, true] {
+            let reply = paced(service(), "/users", Duration::from_millis(20), declared).await;
+
+            reply
+                .assert_status(StatusCode::REQUEST_TIMEOUT)
+                .assert_problem_type("about:blank")
+                .assert_header("connection", "close");
+            assert!(
+                reply.text().contains("did not arrive within 50ms"),
+                "declared: {declared}: {}",
+                reply.text()
+            );
+        }
+    }
+
+    /// The point of a body deadline over a `Timeout`: a body in within it
+    /// reaches a handler that then outlasts it many times over.
+    #[tokio::test(start_paused = true)]
+    async fn a_body_within_its_deadline_reaches_a_handler_that_outlasts_it() {
+        for declared in [false, true] {
+            let reply = paced(service(), "/work", Duration::from_millis(5), declared).await;
+
+            assert_eq!(
+                reply.status(),
+                StatusCode::NO_CONTENT,
+                "declared: {declared}: {}",
+                reply.text()
+            );
+        }
+    }
+
+    /// A body that has already arrived is delivered however late it is read:
+    /// the deadline bounds the client, not a reader that waited.
+    #[tokio::test(start_paused = true)]
+    async fn a_body_already_arrived_is_not_late_for_a_reader_that_waited() {
+        let service = support::router()
+            .intercept(BodySize::new(4096).deadline(DEADLINE))
+            .intercept(Dawdles)
+            .build(App::new())
+            .expect("a describable router");
+        let body = br#"{"id": 1, "name": "Ada"}"#;
+
+        let reply = TestClient::new(service)
+            .post("/users")
+            .body("application/json", &body[..])
+            .content_length(body.len() as u64)
+            .send()
+            .await;
+
+        assert_eq!(reply.status(), StatusCode::CREATED, "{}", reply.text());
+    }
+
+    /// A declared body nothing reads is never late: the operation's own answer
+    /// stands, though the body never finishes.
+    #[tokio::test(start_paused = true)]
+    async fn a_body_nothing_reads_is_never_late() {
+        let reply = TestClient::new(service())
+            .delete("/users/1")
+            .body_stream("application/json", Paced::new(Duration::from_secs(60)))
+            .content_length(Paced::length())
+            .send()
+            .await;
+
+        assert_eq!(reply.status(), StatusCode::NO_CONTENT, "{}", reply.text());
+    }
+
+    /// The cap still decides from the head: the body would take far past the
+    /// deadline, and the 413 is answered without waiting for it.
+    #[tokio::test(start_paused = true)]
+    async fn a_declared_length_past_the_limit_is_still_answered_413() {
+        let service = support::router()
+            .intercept(BodySize::new(8).deadline(DEADLINE))
+            .build(App::new())
+            .expect("a describable router");
+
+        let reply = paced(service, "/users", Duration::from_secs(60), true).await;
+
+        reply.assert_status(StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    /// A body declaring no length is counted under the deadline, and passing
+    /// the cap is answered 413, not 408: it arrived in time, only too large.
+    #[tokio::test(start_paused = true)]
+    async fn a_chunked_body_past_the_limit_is_answered_413_within_its_deadline() {
+        let service = support::router()
+            .intercept(BodySize::new(8).deadline(DEADLINE))
+            .build(App::new())
+            .expect("a describable router");
+
+        let reply = TestClient::new(service)
+            .post("/users")
+            .json(&User {
+                id: 1,
+                name: "Ada".to_owned(),
+            })
+            .send()
+            .await;
+
+        reply.assert_status(StatusCode::PAYLOAD_TOO_LARGE);
+        assert!(reply.text().contains("exceeds 8 bytes"), "{}", reply.text());
+    }
+
+    /// A deadline keeps the cap's override of the extractor's default: a body
+    /// past the default but under the raised limit reaches its operation,
+    /// chunked or declared.
+    #[tokio::test(start_paused = true)]
+    async fn a_deadline_raises_the_limit_past_the_extractor_default() {
+        for declared in [false, true] {
+            let service = support::router()
+                .intercept(BodySize::new(DEFAULT_LIMIT * 2).deadline(DEADLINE))
+                .build(App::new())
+                .expect("a describable router");
+            let client = TestClient::new(service);
+            let mut request = client
+                .post("/users")
+                .json(&user_of_length(DEFAULT_LIMIT + 1));
+            if declared {
+                request = request.content_length(DEFAULT_LIMIT + 1);
+            }
+
+            let reply = request.send().await;
+
+            assert_eq!(
+                reply.status(),
+                StatusCode::CREATED,
+                "declared: {declared}: {}",
+                reply.text()
+            );
+        }
+    }
+
+    /// The 408's problem type, apart from the 413's.
+    struct TooSlow;
+
+    impl ProblemType for TooSlow {
+        const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/too-slow");
+    }
+
+    /// Each status declares the type its own marker names, on every operation
+    /// the limit covers, and the 408 the wire sends is the one declared.
+    #[tokio::test(start_paused = true)]
+    async fn a_deadline_declares_408_beside_413_each_under_its_own_type() {
+        let service = support::router()
+            .intercept(
+                BodySize::new(4096)
+                    .deadline(DEADLINE)
+                    .deadline_problem_type::<TooSlow>()
+                    .problem_type::<TooLarge>(),
+            )
+            .build(App::new())
+            .expect("a describable router");
+        let declared = serde_json::to_value(service.openapi()).expect("a serializable document");
+
+        assert_eq!(
+            narrowed_type(&declared, "/users/{id}", "delete", 408),
+            TooSlow::TYPE_URI.expect("a URI")
+        );
+        assert_eq!(
+            narrowed_type(&declared, "/users/{id}", "delete", 413),
+            TooLarge::TYPE_URI.expect("a URI")
+        );
+        assert_eq!(
+            declared["paths"]["/users/{id}"]["delete"]["responses"]["408"]["description"],
+            "the request body did not arrive within the configured limit"
+        );
+
+        paced(service, "/users", Duration::from_millis(20), false)
+            .await
+            .assert_status(StatusCode::REQUEST_TIMEOUT)
+            .assert_problem_type(TooSlow::TYPE_URI.expect("a URI"));
+    }
+}
+
 // --- Concurrency scope ----------------------------------------------------
 
 /// Two endpoints, one `Concurrency` each: the caps are separate.
