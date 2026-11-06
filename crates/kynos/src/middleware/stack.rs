@@ -3,7 +3,7 @@
 //!
 //! Interceptors are erased for execution; alongside rides a phantom list of
 //! their types, carried by [`Router`](crate::router::Router),
-//! [`Group`](crate::router::group::Group) and
+//! [`Group`] and
 //! [`EndpointBuilder`](crate::router::endpoint::builder::EndpointBuilder), so
 //! that mounting an interceptor that would collide with one already there
 //! fails to compile. Nothing here exists at run time save
