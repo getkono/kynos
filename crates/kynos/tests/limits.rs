@@ -753,8 +753,9 @@ mod body_deadline {
     };
 
     use super::{
-        TooLarge, narrowed_type,
+        DEFAULT_LIMIT, TooLarge, narrowed_type,
         support::{self, App, User},
+        user_of_length,
     };
 
     /// The deadline every case mounts.
@@ -942,6 +943,57 @@ mod body_deadline {
         let reply = paced(service, "/users", Duration::from_secs(60), true).await;
 
         reply.assert_status(StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    /// A body declaring no length is counted under the deadline, and passing
+    /// the cap is answered 413, not 408: it arrived in time, only too large.
+    #[tokio::test(start_paused = true)]
+    async fn a_chunked_body_past_the_limit_is_answered_413_within_its_deadline() {
+        let service = support::router()
+            .intercept(BodySize::new(8).deadline(DEADLINE))
+            .build(App::new())
+            .expect("a describable router");
+
+        let reply = TestClient::new(service)
+            .post("/users")
+            .json(&User {
+                id: 1,
+                name: "Ada".to_owned(),
+            })
+            .send()
+            .await;
+
+        reply.assert_status(StatusCode::PAYLOAD_TOO_LARGE);
+        assert!(reply.text().contains("exceeds 8 bytes"), "{}", reply.text());
+    }
+
+    /// A deadline keeps the cap's override of the extractor's default: a body
+    /// past the default but under the raised limit reaches its operation,
+    /// chunked or declared.
+    #[tokio::test(start_paused = true)]
+    async fn a_deadline_raises_the_limit_past_the_extractor_default() {
+        for declared in [false, true] {
+            let service = support::router()
+                .intercept(BodySize::new(DEFAULT_LIMIT * 2).deadline(DEADLINE))
+                .build(App::new())
+                .expect("a describable router");
+            let client = TestClient::new(service);
+            let mut request = client
+                .post("/users")
+                .json(&user_of_length(DEFAULT_LIMIT + 1));
+            if declared {
+                request = request.content_length(DEFAULT_LIMIT + 1);
+            }
+
+            let reply = request.send().await;
+
+            assert_eq!(
+                reply.status(),
+                StatusCode::CREATED,
+                "declared: {declared}: {}",
+                reply.text()
+            );
+        }
     }
 
     /// The 408's problem type, apart from the 413's.
