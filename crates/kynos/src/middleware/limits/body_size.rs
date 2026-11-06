@@ -325,6 +325,26 @@ impl<T> BodySize<T> {
     /// let limit = BodySize::new(1_024 * 1_024).deadline(Duration::from_secs(30));
     /// # let _ = limit;
     /// ```
+    ///
+    /// A [`Timeout`](super::timeout::Timeout) declares 408 too, so the two do
+    /// not compile over one operation, since one status could not say which
+    /// bound a client passed; give the timeout another status through
+    /// [`answer_with`](super::timeout::Timeout::answer_with):
+    ///
+    /// ```compile_fail
+    /// use std::time::Duration;
+    ///
+    /// use kynos::{
+    ///     Router,
+    ///     middleware::limits::{body_size::BodySize, timeout::Timeout},
+    /// };
+    ///
+    /// let service = Router::<()>::new()
+    ///     .intercept(Timeout::new(Duration::from_secs(300)))
+    ///     .intercept(BodySize::new(1_024).deadline(Duration::from_secs(30)))
+    ///     .build(());
+    /// # let _ = service;
+    /// ```
     #[must_use]
     pub fn deadline(self, total: Duration) -> BodySize<T, BodyTooSlow> {
         BodySize {
@@ -475,13 +495,11 @@ where
         }
 
         let (parts, body) = request.into_parts();
-        let counted = collect_capped(body, self.limit);
-        let capped = match deadline {
-            Some(deadline) => tokio::time::timeout_at(deadline, counted)
-                .await
-                .map_err(|_elapsed| late())?,
-            None => counted.await,
-        };
+        // Nothing has awaited since `deadline` was read, so `total` from now is
+        // that instant; `timeout` saturates where it would overflow.
+        let capped = tokio::time::timeout(total, collect_capped(body, self.limit))
+            .await
+            .map_err(|_elapsed| late())?;
         let body = handed_on(capped)
             .map_err(|limit| BodyRefused::TooLarge(BodySizeExceeded::new(limit)))?;
 
@@ -551,9 +569,11 @@ impl HttpBody for Deadlined {
         let Some(deadline) = this.deadline else {
             return Poll::Pending;
         };
-        let timer = this
-            .timer
-            .get_or_insert_with(|| Box::pin(tokio::time::sleep_until(deadline)));
+        let timer = this.timer.get_or_insert_with(|| {
+            Box::pin(tokio::time::sleep(
+                deadline.saturating_duration_since(Instant::now()),
+            ))
+        });
         if timer.as_mut().poll(context).is_pending() {
             return Poll::Pending;
         }
