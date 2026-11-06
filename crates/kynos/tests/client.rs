@@ -15,6 +15,7 @@
 
 use kynos::{
     Router,
+    error::problem::PointerError,
     extract::params::header::Headers,
     http::{Method, StatusCode},
     prelude::*,
@@ -301,6 +302,22 @@ async fn a_form_body_is_sent_as_a_form() {
 
     assert_eq!(seen.body, "3");
     assert_eq!(seen.query.as_deref(), Some("weekly"));
+}
+
+/// A refusal the framework renders is asserted as a problem whole, and its
+/// `errors` extension read as the type that wrote it rather than as raw JSON.
+#[tokio::test]
+async fn a_problem_is_asserted_whole_and_read_typed() {
+    let reply = client()
+        .post("/form")
+        .body("application/x-www-form-urlencoded", "limit=many")
+        .send()
+        .await;
+
+    let problem = reply.assert_problem(422, "about:blank").problem();
+    assert_eq!(problem.status, Some(422));
+    let errors: Vec<PointerError> = problem.extension("errors").expect("an `errors` member");
+    assert_eq!(errors.len(), 1, "{errors:?}");
 }
 
 // --- A body sent in parts -------------------------------------------------
