@@ -27,6 +27,7 @@ the framework, and the list of features it deliberately rejects, lives in the
 | [`nfr.md`](nfr.md) | Adding a module-level guarantee, or deciding what a change must prove before it lands |
 | [`performance.md`](performance.md) | Deciding what a feature costs the request path, and which measurement that shape of code owes |
 | [`releasing.md`](releasing.md) | Cutting a release, or diagnosing why one did not publish |
+| [`migrating.md`](migrating.md) | Upgrading an application, or shipping a feature that makes downstream code unnecessary |
 
 ## The anti-patterns are normative
 
@@ -45,9 +46,10 @@ section headed `Rationale` is not: it records why a rule exists so the rule can
 be argued with honestly later, rather than merely overturned. Nothing in a
 `Rationale` section is an instruction.
 
-One document is not normative at any heading: [`releasing.md`](releasing.md) is
-a runbook. It records what a person does to cut a release, which is a procedure
-rather than a rule binding the code.
+Two documents are not normative at any heading. [`releasing.md`](releasing.md)
+is a runbook: it records what a person does to cut a release, which is a
+procedure rather than a rule binding the code. [`migrating.md`](migrating.md)
+is a guide for applications upgrading across a release.
 
 ## Relationship to the code
 
