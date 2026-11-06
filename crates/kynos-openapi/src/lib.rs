@@ -93,6 +93,7 @@ pub use crate::{
             Schema,
             discriminator::Discriminator,
             object::SchemaObject,
+            types::{SchemaType, TypeSet},
             xml::{Xml, XmlNode},
         },
         security::{
