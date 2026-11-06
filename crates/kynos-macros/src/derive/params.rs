@@ -14,7 +14,7 @@ use syn::{Field, FieldsNamed, Ident, Type, spanned::Spanned};
 use crate::{
     derive::{
         common::wrapped,
-        schema::{aliases::named_string, attributes::constraints, check::value_checks},
+        schema::{aliases::named_string, attributes::constraints, check::value::value_checks},
     },
     doc::doc_string,
 };

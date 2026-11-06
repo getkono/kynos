@@ -472,7 +472,7 @@ impl ToTokens for BoundValue {
 }
 
 /// A field's `#[schema(...)]` constraints, in the order written; shared by
-/// [`constraints`] and `check::value_checks` so both read the attribute alike.
+/// [`constraints`] and `check::value::value_checks` so both read the attribute alike.
 pub(super) fn bounds(field: &Field) -> Vec<Bound> {
     let mut bounds = Vec::new();
 

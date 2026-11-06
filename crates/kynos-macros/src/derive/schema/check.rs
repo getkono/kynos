@@ -5,19 +5,18 @@
 //! serde reads it at. An aliased member is reported at its parent, since the
 //! name the document used is gone once read.
 
+pub(crate) mod value;
+
 use super::{
     Container, DataEnum, DeriveInput, Field, Fields, TokenStream2, Variant,
     aliases::{read_names, variants_read_names},
-    attributes::{
-        Bound, DefaultFrom, bounds, described_as, described_via, is_described, is_phantom,
-        is_unit_like, serde_default,
-    },
+    attributes::{DefaultFrom, is_described, is_phantom, is_unit_like, serde_default},
     described_variants, is_flattened, positional_members, quote, transparent_member,
 };
+use value::described_checks;
 
 use proc_macro2::Span;
-use quote::quote_spanned;
-use syn::{Data, Ident, Index, LitStr, Type, spanned::Spanned};
+use syn::{Data, Ident, Index, LitStr};
 
 /// The body of `check_constraints`, which reads `self`, `at` and `violations`.
 pub(super) fn body(input: &DeriveInput, container: &Container) -> TokenStream2 {
@@ -304,7 +303,7 @@ fn located(step: &Step, checks: &TokenStream2) -> TokenStream2 {
     }
 }
 
-/// One member's checks: [`value_checks`], located by `step`.
+/// One member's checks: [`value::value_checks`], located by `step`.
 ///
 /// A defaulted member that fails is rechecked on its filled value, and its
 /// violations are reported unless the filled value breaks exactly the same
@@ -355,54 +354,4 @@ fn member(
     };
 
     located(step, &checks)
-}
-
-/// [`value_checks`], or under `#[schema(as = T)]` the same on the `T` converted
-/// through `From<&F>`, spanned at `T` so a missing conversion is reported there;
-/// under `via = path` too, converted by calling `path` on the `&F` instead,
-/// spanned at `path` so a function of another signature is reported there.
-fn described_checks(field: &Field) -> TokenStream2 {
-    let Some(described) = described_as(field) else {
-        return value_checks(field);
-    };
-    let (ty, checks) = (&field.ty, checks_on(field, &described));
-    if let Some(via) = described_via(field) {
-        return quote_spanned! {via.span()=>
-            let value: &#described = &#via(value);
-            #checks
-        };
-    }
-    quote_spanned! {described.span()=>
-        let value: &#described = &<#described as ::core::convert::From<&#ty>>::from(value);
-        #checks
-    }
-}
-
-/// The checks on one value of `field`'s type: its bounds, then its type's.
-/// Reads `value`, `at` and `violations`; every parameter derive's decoder runs them.
-pub(crate) fn value_checks(field: &Field) -> TokenStream2 {
-    checks_on(field, &field.ty)
-}
-
-/// `field`'s bounds, then `ty`'s own, on `value`, a `&#ty`.
-fn checks_on(field: &Field, ty: &Type) -> TokenStream2 {
-    let keywords = bounds(field)
-        .into_iter()
-        .map(|Bound { key, value: bound }| match bound {
-            // Without the feature, `refusals` refuses every `pattern`.
-            #[cfg(feature = "pattern")]
-            Some(super::attributes::BoundValue::Pattern(pattern)) => {
-                super::pattern::check(ty, &pattern)
-            }
-            bound => {
-                let bound = bound.map(|bound| quote!(#bound,));
-                quote! {
-                    ::kynos::__private::constraints::#key::<#ty>(value, #bound at, violations);
-                }
-            }
-        });
-    quote! {
-        #(#keywords)*
-        ::kynos::schema::Schema::check_constraints(value, at, violations);
-    }
 }
