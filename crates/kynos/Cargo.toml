@@ -332,6 +332,7 @@ decimal-big = ["decimal", "dep:bigdecimal"]
 
 # --- Observability ---------------------------------------------------------
 # The `tracing` facade only. Choosing a subscriber stays the application's call.
+# Also logs a derived `ApiError`'s 5xx with its source chain (docs/errors.md).
 trace = ["dep:tracing"]
 
 # --- Document emission -----------------------------------------------------

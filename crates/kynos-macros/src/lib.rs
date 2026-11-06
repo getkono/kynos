@@ -579,6 +579,11 @@ pub fn derive_schema(item: TokenStream) -> TokenStream {
 /// The error's `Display` supplies each problem's `detail`, so `thiserror`'s `#[error("...")]` is the sentence an API consumer receives.
 /// A type without a `Display` is rejected at the derive.
 ///
+/// With the `trace` feature, a failure declaring a 5xx is logged as it is
+/// turned into a response: one `ERROR` event on the `kynos::error` target with
+/// its `status`, `problem_type` and, where the type is a `std::error::Error`,
+/// its `source()` chain, which `detail` never carries. A 4xx logs nothing.
+///
 /// A field is published as an extension member only when it says
 /// `#[problem(extension)]`, so error-site context stays off the wire by
 /// default. Its type is sent through `Into<serde_json::Value>` and declared by

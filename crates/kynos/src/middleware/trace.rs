@@ -11,7 +11,9 @@ use crate::{http, middleware::Observer, router::operation::Route};
 /// the same placeholder as `matched_path` where nothing matched.
 ///
 /// Handler bodies use plain `tracing::info!` and inherit whatever span the
-/// application established.
+/// application established. A 5xx a derived `ApiError` answers with logs its
+/// cause there too, on the `kynos::error` target and always at `ERROR`; the
+/// closing event here carries only its status.
 ///
 /// Observers run before any interceptor, so the opening event precedes
 /// [`RequestId`](super::request_id::RequestId) assigning an identifier. Its
