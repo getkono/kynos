@@ -78,7 +78,7 @@ pub(crate) struct Mounted<C> {
     /// Which half of a reference this is, when it is one. Kept per entry so a
     /// violation that drops the entry drops its half with it.
     #[cfg(feature = "docs")]
-    pub(crate) docs: Option<docs::Role>,
+    pub(crate) docs: Option<docs::state::Role>,
 }
 
 /// The root of an API.
