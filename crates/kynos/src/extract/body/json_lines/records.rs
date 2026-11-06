@@ -269,12 +269,10 @@ impl<T: serde::de::DeserializeOwned + Schema> Records<T> {
             match Pin::new(&mut self.body).poll_next(context) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Some(Ok(chunk))) => self.buffer.extend_from_slice(&chunk),
-                // A transport failure is a 400, as for a whole-body read.
+                // A transport failure is a 408 or a 400, as for a whole-body read.
                 Poll::Ready(Some(Err(error))) => {
                     self.state = State::Fused;
-                    return Poll::Ready(Some(Err(BodyRejection::Syntax {
-                        detail: error.to_string(),
-                    })));
+                    return Poll::Ready(Some(Err(BodyRejection::read_failed(&*error))));
                 }
                 Poll::Ready(None) => self.state = State::Ended,
             }

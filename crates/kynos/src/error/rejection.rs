@@ -397,6 +397,21 @@ pub enum BodyRejection {
         /// The limit it exceeded, in bytes.
         limit: u64,
     },
+
+    /// The client stopped sending the body part-way: a read failed with
+    /// [`BodyStalled`](crate::http::body::BodyStalled). Produces 408.
+    ///
+    /// Answered through the router like every other rejection, so it keeps
+    /// what the interceptors add; the server then adds `Connection: close`
+    /// over HTTP/1 (RFC 9110 §15.5.9). Exists only with the `server` feature,
+    /// the one thing that makes a body stall, so only there is the 408
+    /// declared.
+    #[cfg(feature = "server")]
+    #[error("the request body stalled")]
+    Stalled {
+        /// How long the read waited for a frame.
+        after: Duration,
+    },
 }
 
 impl BodyRejection {
@@ -404,6 +419,8 @@ impl BodyRejection {
     #[must_use]
     pub fn status(&self) -> StatusCode {
         match self {
+            #[cfg(feature = "server")]
+            Self::Stalled { .. } => StatusCode::REQUEST_TIMEOUT,
             Self::Syntax { .. } => StatusCode::BAD_REQUEST,
             Self::Schema { .. } => StatusCode::UNPROCESSABLE_ENTITY,
             Self::UnsupportedMediaType { .. } | Self::UnsupportedCoding { .. } => {
@@ -420,6 +437,21 @@ impl BodyRejection {
         Self::Schema {
             failures: BTreeMap::from([(pointer, detail)]),
             type_uri: None,
+        }
+    }
+
+    /// What a body read that failed part-way rejects with: the 408 where the
+    /// failure is a `BodyStalled`, however deep a reader wrapped it, and a
+    /// 400 for any other transport failure.
+    pub(crate) fn read_failed(error: &(dyn std::error::Error + 'static)) -> Self {
+        #[cfg(feature = "server")]
+        if let Some(stalled) = crate::http::body::BodyStalled::find(error) {
+            return Self::Stalled {
+                after: stalled.after,
+            };
+        }
+        Self::Syntax {
+            detail: error.to_string(),
         }
     }
 }
@@ -449,12 +481,19 @@ impl IntoProblem for BodyRejection {
             Self::TooLarge { limit } => {
                 problem.with_detail(format!("the request body exceeds {limit} bytes"))
             }
+
+            #[cfg(feature = "server")]
+            Self::Stalled { after } => {
+                problem.with_detail(format!("the request body sent nothing for {after:?}"))
+            }
         }
     }
 
     fn statuses() -> &'static [StatusCode] {
         &[
             StatusCode::BAD_REQUEST,
+            #[cfg(feature = "server")]
+            StatusCode::REQUEST_TIMEOUT,
             StatusCode::PAYLOAD_TOO_LARGE,
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             StatusCode::UNPROCESSABLE_ENTITY,

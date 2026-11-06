@@ -84,6 +84,22 @@ async fn create_user(Json(user): Json<User>) -> Result<Created<Json<User>>, Stor
     ))
 }
 
+/// A request body that never sends a byte.
+#[cfg(feature = "server")]
+struct Silent;
+
+#[cfg(feature = "server")]
+impl futures_core::Stream for Silent {
+    type Item = bytes::Bytes;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<bytes::Bytes>> {
+        std::task::Poll::Pending
+    }
+}
+
 /// Builds the service under test.
 ///
 /// A function rather than inline setup, because the example and
@@ -96,7 +112,10 @@ fn service() -> kynos::Result<kynos::router::service::Service<()>> {
 
 // `pub(crate)` so `tests/examples.rs`, which includes this file as a module,
 // can run it.
-#[tokio::main]
+//
+// The clock is paused, so the stalled body below waits out its idle timeout at
+// once rather than in real time.
+#[tokio::main(flavor = "current_thread", start_paused = true)]
 pub(crate) async fn main() -> kynos::Result<()> {
     let client = TestClient::new(service()?);
 
@@ -195,6 +214,17 @@ async fn exercise_the_rejections(client: &TestClient<()>) {
         .send()
         .await
         .assert_status(StatusCode::PAYLOAD_TOO_LARGE);
+
+    // A client that never sends the body it promised. The test client holds a
+    // body to the idle timeout a server does, so the read fails and the
+    // extractor answers with the 408 `BodyRejection` declares.
+    #[cfg(feature = "server")]
+    client
+        .post("/users")
+        .body_stream(mime_names::APPLICATION_JSON, Silent)
+        .send()
+        .await
+        .assert_status(StatusCode::REQUEST_TIMEOUT);
 
     // The successful creation, which is the response a suite is most likely to
     // have and least likely to notice missing.

@@ -118,6 +118,52 @@ impl Body {
     }
 }
 
+/// The error a request body's read ends with once no frame arrived within the
+/// server's `request_body_idle_timeout`.
+///
+/// Every body extractor rejects with [`BodyRejection::Stalled`], the 408,
+/// when its read fails with this. A reader of its own downcasts the read's
+/// error to it and decides what to answer; the server adds only
+/// `Connection: close` over HTTP/1.
+///
+/// [`BodyRejection::Stalled`]: crate::error::rejection::BodyRejection::Stalled
+#[cfg(feature = "server")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct BodyStalled {
+    /// How long the read waited for a frame.
+    pub after: std::time::Duration,
+}
+
+#[cfg(feature = "server")]
+impl BodyStalled {
+    /// A stall after `after` without a frame.
+    pub(crate) fn new(after: std::time::Duration) -> Self {
+        Self { after }
+    }
+
+    /// The stall `error` is, or was caused by: a reader wrapping a body's
+    /// error in its own keeps it as a [`source`](StdError::source).
+    pub(crate) fn find<'a>(error: &'a (dyn StdError + 'static)) -> Option<&'a Self> {
+        std::iter::successors(Some(error), |&error| error.source())
+            .find_map(|error| error.downcast_ref::<Self>())
+    }
+}
+
+#[cfg(feature = "server")]
+impl fmt::Display for BodyStalled {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "no request body frame arrived within {:?}",
+            self.after
+        )
+    }
+}
+
+#[cfg(feature = "server")]
+impl std::error::Error for BodyStalled {}
+
 /// A response with `status` and no content.
 #[must_use]
 pub(crate) fn bodiless(status: super::StatusCode) -> super::Response {

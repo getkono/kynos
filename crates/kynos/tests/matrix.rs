@@ -699,7 +699,10 @@ const DOWNLOAD: &[kynos::router::assets::Asset] = &[kynos::router::assets::Asset
 /// One test rather than two, because the second assertion reads the *same*
 /// recorded exchanges: splitting them would mean driving the whole matrix
 /// twice, and a second client would record a second, different set.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+///
+/// The clock is paused, so the stalled bodies' idle timeout and the limits'
+/// timers cost no real time.
+#[tokio::test(start_paused = true)]
 async fn the_owned_layer_matrix_matches_the_description_it_emits() {
     let client = TestClient::new(service().expect("a describable router"));
 
@@ -710,6 +713,8 @@ async fn the_owned_layer_matrix_matches_the_description_it_emits() {
     exercise_the_shared_status(&client).await;
     exercise_the_limits(&client).await;
     exercise_the_default_body_cap(&client).await;
+    #[cfg(feature = "server")]
+    exercise_the_stalled_bodies(&client).await;
     #[cfg(feature = "assets")]
     exercise_the_ranges(&client).await;
 
@@ -1123,6 +1128,41 @@ async fn exercise_the_default_body_cap(client: &TestClient<App>) {
         .send()
         .await
         .assert_status(StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+/// The 408 every operation reading a body declares, once a body stops
+/// part-way for the idle timeout a served body is held to: read by the
+/// extractor alone, and through `BodySize`'s count.
+#[cfg(feature = "server")]
+async fn exercise_the_stalled_bodies(client: &TestClient<App>) {
+    /// Yields its one chunk, then waits for good.
+    struct Stalls(Option<bytes::Bytes>);
+
+    impl futures_core::Stream for Stalls {
+        type Item = bytes::Bytes;
+
+        fn poll_next(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<bytes::Bytes>> {
+            match self.get_mut().0.take() {
+                Some(chunk) => std::task::Poll::Ready(Some(chunk)),
+                None => std::task::Poll::Pending,
+            }
+        }
+    }
+
+    for path in ["/users", "/limits/size"] {
+        client
+            .post(path)
+            .body_stream(
+                "application/json",
+                Stalls(Some(bytes::Bytes::from_static(b"{\"id\": 1, "))),
+            )
+            .send()
+            .await
+            .assert_status(StatusCode::REQUEST_TIMEOUT);
+    }
 }
 
 /// Every status an interceptor contributes, on the one operation it covers.

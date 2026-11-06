@@ -5803,6 +5803,12 @@ mod request_body_idle {
             StatusCode::OK,
             "a body that only waited is not a stall"
         );
+        assert!(
+            !response
+                .headers()
+                .contains_key(crate::http::header::CONNECTION),
+            "a connection whose body only waited stays open"
+        );
     }
 
     /// The bound body reports its inner body's end and size, so a reader that
@@ -5846,16 +5852,18 @@ mod request_body_idle {
         assert_eq!(body.size_hint().exact(), Some(0));
     }
 
-    /// A body that stalls ends with an error naming the limit it passed, and
-    /// its request is answered 408 -- closing an HTTP/1 connection, and
-    /// carrying no `Connection` field on HTTP/2, which hyper would strip before
-    /// a client could see it.
+    /// A body that stalls ends with a [`BodyStalled`] naming the limit it
+    /// passed, and the chain's answer stands -- status and headers alike --
+    /// closing an HTTP/1 connection, and carrying no `Connection` field on
+    /// HTTP/2, which hyper would strip before a client could see it.
+    ///
+    /// [`BodyStalled`]: crate::http::body::BodyStalled
     #[tokio::test]
     async fn a_stalled_body_names_its_limit_and_closes_only_http1() {
         use http_body_util::BodyExt as _;
 
         use crate::{
-            http::{HeaderValue, StatusCode, Version, header},
+            http::{HeaderValue, StatusCode, Version, body::BodyStalled, header},
             server::request_body::{answer, bounded},
         };
 
@@ -5874,12 +5882,27 @@ mod request_body_idle {
                 .expect("a stall ends the body with a frame")
                 .expect_err("the frame is the stall");
             assert_eq!(
+                error.downcast_ref::<BodyStalled>(),
+                Some(&BodyStalled::new(limit)),
+                "{error}"
+            );
+            assert_eq!(
                 error.to_string(),
                 "no request body frame arrived within 1ms"
             );
 
-            let response = answer(crate::http::Response::default(), stall);
+            let mut chained = crate::http::Response::default();
+            *chained.status_mut() = StatusCode::REQUEST_TIMEOUT;
+            chained
+                .headers_mut()
+                .insert("x-request-id", HeaderValue::from_static("7"));
+            let response = answer(chained, stall);
             assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+            assert_eq!(
+                response.headers().get("x-request-id"),
+                Some(&HeaderValue::from_static("7")),
+                "the chain's headers survive"
+            );
             assert_eq!(
                 response.headers().get(header::CONNECTION),
                 connection.as_ref(),
@@ -5906,31 +5929,33 @@ mod request_body_idle {
     /// A limit no unit test waits out.
     const IDLE_UNREACHED: Duration = Duration::from_secs(60);
 
-    /// A service that reads its whole body, as every buffering codec does, and
-    /// answers with its length -- or 400 when the read failed, which is what
-    /// the codecs make of a failed read and what a stall must not reach the
-    /// client as.
+    /// Reads the whole body, as every buffering codec does, and answers with
+    /// its length -- or with what a codec makes of a failed read: the 408 of a
+    /// stall.
     #[cfg(any(feature = "http1", feature = "http2"))]
-    fn reading_service() -> crate::router::service::Service<()> {
+    async fn read_whole(request: crate::http::Request) -> crate::http::Response {
         use http_body_util::BodyExt as _;
 
+        use crate::response::IntoResponse as _;
+
+        match request.into_body().collect().await {
+            Ok(collected) => crate::http::Response::new(crate::http::body::Body::from(
+                collected.to_bytes().len().to_string(),
+            )),
+            Err(error) => {
+                crate::error::rejection::BodyRejection::read_failed(&*error).into_response()
+            }
+        }
+    }
+
+    /// A service answering with [`read_whole`].
+    #[cfg(any(feature = "http1", feature = "http2"))]
+    fn reading_service() -> crate::router::service::Service<()> {
         let document = kynos_openapi::Document::new(
             kynos_openapi::SpecVersion::V3_1,
             kynos_openapi::Info::new("Test", "1"),
         );
-        crate::router::service::Service::new(document, |request: crate::http::Request| async move {
-            let (status, body) = match request.into_body().collect().await {
-                Ok(collected) => (
-                    crate::http::StatusCode::OK,
-                    collected.to_bytes().len().to_string(),
-                ),
-                Err(error) => (crate::http::StatusCode::BAD_REQUEST, error.to_string()),
-            };
-            let mut response =
-                crate::http::Response::new(crate::http::body::Body::from_bytes(body.into()));
-            *response.status_mut() = status;
-            response
-        })
+        crate::router::service::Service::new(document, read_whole)
     }
 
     /// A plaintext server over [`reading_service`] with `idle` as its limit.
@@ -6030,8 +6055,6 @@ mod request_body_idle {
         delay: Duration,
         reading: std::sync::Arc<tokio::sync::Notify>,
     ) -> crate::router::service::Service<()> {
-        use http_body_util::BodyExt as _;
-
         let document = kynos_openapi::Document::new(
             kynos_openapi::SpecVersion::V3_1,
             kynos_openapi::Info::new("Test", "1"),
@@ -6041,17 +6064,7 @@ mod request_body_idle {
             async move {
                 tokio::time::sleep(delay).await;
                 reading.notify_one();
-                let (status, body) = match request.into_body().collect().await {
-                    Ok(collected) => (
-                        crate::http::StatusCode::OK,
-                        collected.to_bytes().len().to_string(),
-                    ),
-                    Err(error) => (crate::http::StatusCode::BAD_REQUEST, error.to_string()),
-                };
-                let mut response =
-                    crate::http::Response::new(crate::http::body::Body::from_bytes(body.into()));
-                *response.status_mut() = status;
-                response
+                read_whole(request).await
             }
         })
     }
