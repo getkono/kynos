@@ -587,7 +587,9 @@ async fn a_query_leaves_the_stored_response_in_place() {
 /// call.
 #[cfg(feature = "openapi32")]
 #[kynos::query("/numbered")]
-async fn search_numbered() -> WithHeaders<Json<Report>, CacheControl> {
+async fn search_numbered(
+    _: kynos::extract::body::text::Text,
+) -> WithHeaders<Json<Report>, CacheControl> {
     let id = CALLS.fetch_add(1, Ordering::SeqCst);
     WithHeaders::new(
         Json(Report {
@@ -619,13 +621,13 @@ async fn a_query_response_is_neither_stored_nor_served_from_the_store() {
     );
 
     // The same content twice, then other content: no repeat is a hit.
-    for (call, body) in (1..).zip(["{\"a\":1}", "{\"a\":1}", "{\"a\":2}"]) {
+    for (call, body) in (1..).zip(["a=1", "a=1", "a=2"]) {
         let reply = send(
             &service,
             Method::from_bytes(b"QUERY").expect("`QUERY` is a method token"),
             "/numbered",
         )
-        .header("content-type", "application/json")
+        .header("content-type", "text/plain")
         .body(body)
         .call()
         .await;
