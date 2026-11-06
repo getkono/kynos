@@ -95,14 +95,19 @@ pub(crate) fn decode_field(
     let name = &param.name;
     let span = param.field.ty.span();
 
+    // Only the paths are spanned to the field, so a type that does not parse
+    // or whose error does not display is reported there; `raw` keeps the
+    // derive's hygiene context, wherever the type's tokens came from.
+    let to_string = quote_spanned!(span=> ::std::string::ToString::to_string);
     let parse = |inner: &Type| {
-        quote_spanned! {span=>
-            match <#inner as ::core::str::FromStr>::from_str(raw) {
+        let from_str = quote_spanned!(span=> <#inner as ::core::str::FromStr>::from_str);
+        quote! {
+            match #from_str(raw) {
                 ::core::result::Result::Ok(value) => value,
                 ::core::result::Result::Err(error) => {
                     return ::core::result::Result::Err(#rejection::Invalid {
                         name: <::std::string::String as ::core::convert::From<_>>::from(#name),
-                        detail: ::std::string::ToString::to_string(&error),
+                        detail: #to_string(&error),
                     });
                 }
             }
@@ -216,18 +221,17 @@ pub(crate) fn construct(params: &[Param<'_>]) -> TokenStream2 {
 /// This field's value as an `Option<String>`, absent only when the field is.
 pub(crate) fn render(param: &Param<'_>) -> TokenStream2 {
     let ident = param.ident();
-    let span = param.field.ty.span();
+    // Only the path is spanned to the field, so a type that does not display
+    // is reported there; `self` keeps the derive's hygiene context.
+    let to_string = quote_spanned!(param.field.ty.span()=> ::std::string::ToString::to_string);
 
     if param.optional().is_some() {
-        quote_spanned! {span=>
-            ::core::option::Option::map(
-                ::core::option::Option::as_ref(&self.#ident),
-                ::std::string::ToString::to_string,
-            )
+        quote! {
+            ::core::option::Option::map(::core::option::Option::as_ref(&self.#ident), #to_string)
         }
     } else {
-        quote_spanned! {span=>
-            ::core::option::Option::Some(::std::string::ToString::to_string(&self.#ident))
+        quote! {
+            ::core::option::Option::Some(#to_string(&self.#ident))
         }
     }
 }
