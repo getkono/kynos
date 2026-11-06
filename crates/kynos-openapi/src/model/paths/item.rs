@@ -68,7 +68,7 @@ pub struct PathItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trace: Option<Box<Operation>>,
 
-    /// The `QUERY` operation.
+    /// The `QUERY` operation, as defined by RFC 10008.
     ///
     /// Introduced in OpenAPI 3.2.
     #[cfg(feature = "openapi32")]

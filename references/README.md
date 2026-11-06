@@ -298,6 +298,23 @@ same thing.
 
 RFC 9651 obsoletes RFC 8941, which is not vendored. Treat 8941 as historical.
 
+## The QUERY Method
+
+[`rfc10008.txt`](rfc10008.txt) is an unmodified, byte-for-byte copy of the RFC
+Editor's official plain-text publication of [RFC 10008, The HTTP QUERY
+Method](https://www.rfc-editor.org/rfc/rfc10008.txt), retrieved on 2026-11-06.
+Its SHA-256 digest is
+`de289b4a8d2a105d1ae393b52e1ce32a2bce6f2adf8b2638f95946d6296219c6`.
+
+OpenAPI 3.2's Path Item `query` field defines the operation by
+`draft-ietf-httpbis-safe-method-w-body` "or its RFC successor"; this is that
+successor, and the drafts are not vendored. Section 2 makes QUERY safe and
+idempotent and requires a request whose `Content-Type` is missing or
+inconsistent with its content to fail, section 2.6 defers conditional requests
+to RFC 9110 section 13 against the equivalent resource's selected
+representation, and section 3's `Accept-Query` is an RFC 9651 List, so it is
+read with the section above.
+
 ## Deprecating "X-" Prefixes
 
 [`rfc6648.txt`](rfc6648.txt) is an unmodified, byte-for-byte copy of the RFC
@@ -370,8 +387,8 @@ current browsers enforce that. Citing 8878 alone for the coding is out of date.
 
 ### Licensing
 
-RFC 6265, 6585, 6648, 6797, 7239, 7932, 8878, 9111, 9112, 9113, 9651 and 9659,
-and both vendored Internet-Drafts, were published under the IETF Trust's [Legal
+RFC 6265, 6585, 6648, 6797, 7239, 7932, 8878, 9111, 9112, 9113, 9651, 9659
+and 10008, and both vendored Internet-Drafts, were published under the IETF Trust's [Legal
 Provisions Relating to IETF
 Documents](https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/)
 (TLP 5.0), on the same terms as RFC 9110 above. Each vendored file preserves the
