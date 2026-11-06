@@ -334,7 +334,15 @@ for a parameter, whose value is part of the request's target rather than its
 content (RFC 9110 §15.5.21). The variant does too: the rejection's `Schema`
 variant carries the URI in `type_uri`, as `AuthRejection::Forbidden` does,
 rather than a second variant, since a parameter's `Schema` is already nothing
-but a broken bound.
+but a broken bound. Its `title` is the status's reason phrase, so the URI must
+be a type of its own: one an `ApiError` also publishes under a title of its own
+would reach clients with two, which RFC 9457 §3.1.3 rules out.
+
+A parameter group's own `#[schema(constraint_type = ...)]` is ignored by
+`Query<T>`, `Path<T>`, `Headers<T>` and `Cookies<T>`, which read each field's
+type; it still applies where the group is itself the decoded value, as a
+`QueryString<T>` or a body's `T`. Name the type on the field types to have a
+parameter answer with it.
 
 What a body that does not decode into `T` sends is unchanged: `about:blank`,
 since no bound was consulted. Each input therefore declares a choice at its
