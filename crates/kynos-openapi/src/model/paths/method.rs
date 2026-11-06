@@ -31,7 +31,7 @@ pub enum Method {
     Patch,
     /// `TRACE`.
     Trace,
-    /// `QUERY`, as defined by the HTTP QUERY method draft.
+    /// `QUERY`, as defined by RFC 10008.
     ///
     /// Introduced in OpenAPI 3.2.
     #[cfg(feature = "openapi32")]
