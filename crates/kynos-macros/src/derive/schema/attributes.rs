@@ -577,8 +577,9 @@ fn number(name: &str, value: &Expr) -> Option<TokenStream2> {
     );
     Some(quote_spanned! {value.span()=>
         {
-            // The cast is the point: the bound is described as an `f64`.
-            #[allow(clippy::cast_lossless, clippy::cast_precision_loss)]
+            // The cast is the point: the bound is described as an `f64`. Any
+            // binding of `#value` warns on parentheses the application wrote.
+            #[allow(unused_parens, clippy::cast_lossless, clippy::cast_precision_loss)]
             const __KYNOS_BOUND: ::core::primitive::f64 = {
                 let bound = ::kynos::__private::constraints::number_bound(#value)
                     as ::core::primitive::f64;
@@ -609,8 +610,11 @@ fn count(name: &str, value: &Expr) -> Option<TokenStream2> {
     // `i128::MAX` wrap negative and are refused as they would be anyway.
     Some(quote_spanned! {value.span()=>
         {
-            // The assertion bounds both casts, which `From` cannot do in a `const`.
+            // The assertion bounds both casts, which `From` cannot do in a
+            // `const`. Any binding of `#value` warns on parentheses the
+            // application wrote.
             #[allow(
+                unused_parens,
                 clippy::cast_lossless,
                 clippy::cast_possible_truncation,
                 clippy::cast_possible_wrap,
