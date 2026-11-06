@@ -1,6 +1,7 @@
 //! What `#[derive(ApiError)]` declares each status with, joins a `const` type
 //! URI prefix with, unions a transparent variant's statuses with, and sends
-//! and declares a failure's `#[problem(headers)]` group with.
+//! and declares a failure's `#[problem(headers)]` group with, and logs a 5xx
+//! failure through before its problem consumes it.
 //!
 //! [`response`] forwards to [`error::problem`](crate::error::problem), where
 //! the shape is built, and the header helpers to
@@ -139,6 +140,126 @@ const fn first_sighting(parts: &[&[u16]], part: usize, index: usize) -> bool {
         earlier += 1;
     }
     true
+}
+
+/// A server failure a derived `into_response` is about to consume, held so
+/// it can be logged first.
+///
+/// The expansion calls `(&Failed(&self)).report(status, type_uri)` with
+/// [`ReportSource`] and [`ReportDisplay`] both in scope: method resolution
+/// takes the first where `E` is an `Error`, so its `source()` chain is logged,
+/// and the second, one autoref later, where `E` is only `Display`.
+pub struct Failed<'a, E: ?Sized>(pub &'a E);
+
+impl<E: ?Sized> core::fmt::Debug for Failed<'_, E> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_struct("Failed").finish_non_exhaustive()
+    }
+}
+
+/// Logs a failure with its `source()` chain; see [`Failed`].
+pub trait ReportSource {
+    /// Emits the event where `trace` is enabled, and nothing otherwise.
+    fn report(&self, status: u16, type_uri: &'static str);
+}
+
+/// Logs a failure by its `Display` alone; see [`Failed`].
+pub trait ReportDisplay {
+    /// Emits the event where `trace` is enabled, and nothing otherwise.
+    fn report(&self, status: u16, type_uri: &'static str);
+}
+
+impl<E: std::error::Error + ?Sized> ReportSource for Failed<'_, E> {
+    #[inline]
+    fn report(&self, status: u16, type_uri: &'static str) {
+        #[cfg(feature = "trace")]
+        reported::emit(status, type_uri, || reported::Chain::of(self.0));
+        #[cfg(not(feature = "trace"))]
+        let _ = (status, type_uri);
+    }
+}
+
+impl<E: core::fmt::Display + ?Sized> ReportDisplay for &Failed<'_, E> {
+    #[inline]
+    fn report(&self, status: u16, type_uri: &'static str) {
+        #[cfg(feature = "trace")]
+        reported::emit(status, type_uri, || reported::Chain::alone(self.0));
+        #[cfg(not(feature = "trace"))]
+        let _ = (status, type_uri);
+    }
+}
+
+/// The event [`Failed`] emits, and the owned chain it records.
+#[cfg(feature = "trace")]
+pub(crate) mod reported {
+    use std::{error::Error, fmt};
+
+    /// The target the event is filtered by: the module the policy is
+    /// documented in, rather than this one, which is not public API.
+    pub(crate) const TARGET: &str = "kynos::error";
+
+    /// A failure's message and its sources', owned, so a chain borrowed from
+    /// an error with a lifetime is recorded as the `'static` error `tracing`
+    /// asks for.
+    #[derive(Debug)]
+    pub(crate) struct Chain {
+        message: String,
+        source: Option<Box<Chain>>,
+    }
+
+    impl Chain {
+        /// `error`'s message, then each `source()` in turn.
+        pub(crate) fn of<E: Error + ?Sized>(error: &E) -> Self {
+            let mut messages = vec![error.to_string()];
+            let mut next = error.source();
+            while let Some(source) = next {
+                messages.push(source.to_string());
+                next = source.source();
+            }
+            let mut chain = None;
+            while let Some(message) = messages.pop() {
+                chain = Some(Box::new(Self {
+                    message,
+                    source: chain,
+                }));
+            }
+            *chain.expect("the failure's own message is the first")
+        }
+
+        /// A failure with no `source()` to walk: its message alone.
+        pub(crate) fn alone<E: fmt::Display + ?Sized>(failure: &E) -> Self {
+            Self {
+                message: failure.to_string(),
+                source: None,
+            }
+        }
+    }
+
+    impl fmt::Display for Chain {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str(&self.message)
+        }
+    }
+
+    impl Error for Chain {
+        fn source(&self) -> Option<&(dyn Error + 'static)> {
+            self.source.as_deref().map(|source| source as _)
+        }
+    }
+
+    /// One `ERROR` event, whatever level `Trace` is set to, as a panic's is:
+    /// a server failure is never filtered out by the request log's verbosity.
+    /// The chain is built only where a subscriber listens: `tracing` evaluates
+    /// a field only once the event is enabled.
+    pub(crate) fn emit(status: u16, type_uri: &'static str, chain: impl FnOnce() -> Chain) {
+        tracing::error!(
+            target: TARGET,
+            status,
+            problem_type = type_uri,
+            error = &chain() as &(dyn Error + 'static),
+            "operation failed",
+        );
+    }
 }
 
 /// The `&str` [`join`]'s bytes spell.
