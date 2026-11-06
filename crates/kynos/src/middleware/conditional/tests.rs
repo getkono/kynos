@@ -232,8 +232,9 @@ fn a_not_modified_replays_what_a_cache_needs_and_nothing_else() {
 }
 
 /// RFC 9110 section 13.1.2: a matched `If-None-Match` is answered 304 only for
-/// GET and HEAD. Every other method's response goes on as the handler made it
-/// — the 412 those methods call for is not this interceptor's to send.
+/// GET and HEAD, and RFC 10008 section 2.6 extends that to QUERY. Every other
+/// method's response goes on as the handler made it — the 412 those methods
+/// call for is not this interceptor's to send.
 mod methods {
     use crate::{
         Router,
@@ -305,5 +306,41 @@ mod methods {
                 "{method}"
             );
         }
+    }
+
+    /// RFC 10008 section 2.6: a QUERY's selected representation is a GET's,
+    /// and its conditional request is answered as Appendix A.5 shows, with a
+    /// 304, where a `Served` delivery answers it the same way.
+    #[cfg(feature = "openapi32")]
+    #[tokio::test]
+    async fn a_query_is_answered_not_modified() {
+        let service = Router::<()>::new()
+            .mount(EndpointBuilder::new(
+                Operation::Query,
+                PathTemplate::parse("/doc").expect("a valid path"),
+                tagged,
+            ))
+            .intercept(Conditional::new())
+            .build(())
+            .expect("a describable router");
+
+        let request = |tag: &'static str| {
+            http::Request::builder()
+                .method(Method::from_bytes(b"QUERY").expect("a method token"))
+                .uri("/doc")
+                .header(header::IF_NONE_MATCH, tag)
+                .body(Body::empty())
+                .expect("a well-formed request")
+        };
+
+        assert_eq!(
+            service.call(request("\"abc\"")).await.status(),
+            StatusCode::NOT_MODIFIED
+        );
+        // The control: a tag the client does not hold leaves the 200.
+        assert_eq!(
+            service.call(request("\"other\"")).await.status(),
+            StatusCode::OK
+        );
     }
 }
