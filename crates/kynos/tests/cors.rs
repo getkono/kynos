@@ -436,6 +436,69 @@ async fn a_preflight_refuses_a_served_method_no_cors_covers() {
     assert_eq!(field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS), None);
 }
 
+/// A `QUERY` on the same path, which a browser preflights: RFC 10008 section 4
+/// leaves it off the CORS-safelisted methods.
+#[cfg(feature = "openapi32")]
+#[kynos::query("/widgets")]
+async fn search_widgets() -> NoContent {
+    NoContent
+}
+
+/// A `QUERY` under a `Cors` is advertised on its preflight as any covered
+/// method is, and one outside every `Cors` is refused and named nowhere, even
+/// where the path's `GET` is covered.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn a_query_is_advertised_on_a_preflight_only_where_a_cors_covers_it() {
+    let preflight = |method| {
+        [
+            ("origin", "https://app.example.com"),
+            ("access-control-request-method", method),
+        ]
+    };
+    let covered = Router::<()>::new()
+        .mount(kynos::routes![list_widgets, search_widgets])
+        .intercept(Cors::new().allow_origins(["https://app.example.com"]))
+        .build(())
+        .expect("a describable router");
+    let uncovered = Router::<()>::new()
+        .mount(kynos::routes![search_widgets])
+        .group(
+            kynos::router::group::Group::new("/")
+                .mount(kynos::routes![list_widgets])
+                .intercept(Cors::new().allow_origins(["https://app.example.com"])),
+        )
+        .build(())
+        .expect("a describable router");
+
+    let (status, fields) = send(&covered, Method::OPTIONS, "/widgets", &preflight("QUERY")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_ORIGIN).as_deref(),
+        Some("https://app.example.com")
+    );
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS).as_deref(),
+        Some("GET, HEAD, QUERY")
+    );
+
+    let (status, fields) = send(&uncovered, Method::OPTIONS, "/widgets", &preflight("QUERY")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_ORIGIN),
+        None,
+        "approved a preflight for a QUERY no CORS configuration covers"
+    );
+    assert_eq!(field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS), None);
+
+    // The covered `GET`'s preflight names what its `Cors` covers, and no more.
+    let (_, fields) = send(&uncovered, Method::OPTIONS, "/widgets", &preflight("GET")).await;
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS).as_deref(),
+        Some("GET, HEAD")
+    );
+}
+
 /// A third method on the same path, for a `Cors` covering neither of the others.
 #[kynos::post("/widgets")]
 async fn create_widget() -> NoContent {

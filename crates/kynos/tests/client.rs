@@ -189,6 +189,41 @@ async fn head_and_options_are_reachable() {
     );
 }
 
+/// Reports the filter a `QUERY` carried as its content.
+#[cfg(feature = "openapi32")]
+#[kynos::query("/search")]
+async fn search(Json(filter): Json<Filter>) -> Json<Filter> {
+    Json(filter)
+}
+
+/// `query` sends a `QUERY` with its content, which reaches the operation
+/// `#[kynos::query]` declared, and the response names the method it answers.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn query_is_reachable_with_its_content() {
+    let client = TestClient::new(
+        Router::<()>::new()
+            .mount(kynos::routes![search])
+            .build(())
+            .expect("a describable router"),
+    );
+
+    let response = client
+        .query("/search")
+        .json(&Filter {
+            limit: Some(3),
+            label: Some("weekly".to_owned()),
+        })
+        .send()
+        .await;
+
+    response.assert_status(200);
+    assert_eq!(response.method().as_str(), "QUERY");
+    let echoed: Filter = response.json();
+    assert_eq!(echoed.limit, Some(3));
+    assert_eq!(echoed.label.as_deref(), Some("weekly"));
+}
+
 /// A method Kynos routes but this type does not name is still sendable.
 #[tokio::test]
 async fn any_method_can_be_sent() {
