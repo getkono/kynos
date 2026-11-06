@@ -144,8 +144,7 @@ pub trait PathParams: Sized {
     /// `about:blank`: the
     /// [`CONSTRAINT_TYPE`](crate::schema::Schema::CONSTRAINT_TYPE) of each
     /// field type naming one, so the 400 [`Path`] declares names what
-    /// [`PathRejection::Schema`](crate::error::rejection::PathRejection::Schema)
-    /// sends.
+    /// [`PathRejection::Schema`] sends.
     ///
     /// `#[derive(PathParams)]` replaces this; the default names none, which is
     /// right for a group holding no value to a bound.
