@@ -75,6 +75,20 @@ impl<'doc> Items<'doc, '_> {
             violations.push(Violation::error(location, SpecError::NoResponses));
         }
 
+        // The item's own `query` field, not an `additionalOperations` key,
+        // which never spells `QUERY` legally.
+        #[cfg(feature = "openapi32")]
+        if item
+            .operation(crate::model::paths::method::Method::Query)
+            .is_some_and(|query| std::ptr::eq(query, operation))
+            && !requires_body(operation, components)
+        {
+            violations.push(Violation::error(
+                location,
+                SpecError::QueryWithoutRequiredBody,
+            ));
+        }
+
         // The reader's own grammar, so a key accepted here is one it reads
         // back as a status rather than refusing it or taking it for `default`
         // or an extension.
@@ -125,6 +139,30 @@ impl<'doc> Items<'doc, '_> {
         }
         check_operation_content(at, operation, components, violations);
     }
+}
+
+/// Whether `operation` requires its request body, following a reference into
+/// `#/components/requestBodies`.
+///
+/// `true` where the reference cannot be followed here — it leaves the
+/// document, names a missing component, or names another reference — since
+/// what it reaches is unknown.
+#[cfg(feature = "openapi32")]
+fn requires_body(operation: &Operation, components: &Components) -> bool {
+    let body = match &operation.request_body {
+        None => return false,
+        Some(RefOr::Item(body)) => body,
+        Some(RefOr::Ref(reference)) => {
+            match super::literal_component_name(&reference.location, "requestBodies")
+                .and_then(|name| components.request_bodies.get(name))
+            {
+                Some(RefOr::Item(body)) => body,
+                _ => return true,
+            }
+        }
+    };
+
+    body.required == Some(true)
 }
 
 /// Every operation a link can name, found by its own walk so a link anywhere

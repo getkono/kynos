@@ -26,8 +26,8 @@
 //!   humans reading a diff.
 
 use kynos_openapi::{
-    Document, Info, Method, Operation, PathItem, PathTemplate, Response, Responses, Schema,
-    SpecVersion,
+    Document, Info, Method, Operation, PathItem, PathTemplate, RefOr, RequestBody, Response,
+    Responses, Schema, SpecVersion,
     model::{body::mime_names, schema::types::SchemaType},
     validate::Validator,
 };
@@ -74,9 +74,15 @@ fn order_list() -> kynos_openapi::MediaType {
 ///
 /// The construct that makes `emit(V3_1)` refuse further down. 3.1 has no Path
 /// Item field for `QUERY`, so there is nowhere honest to put this.
+///
+/// Its filter is the request content, which RFC 10008 makes the query, so the
+/// body is required: `Validator` refuses a `QUERY` that does not require one.
 fn search_orders() -> Operation {
     Operation {
         operation_id: Some("searchOrders".to_owned()),
+        request_body: Some(RefOr::Item(RequestBody::json(Schema::of_type(
+            SchemaType::Object,
+        )))),
         responses: Responses::new().with(200, Response::new("Orders matching the filter")),
         ..Operation::default()
     }

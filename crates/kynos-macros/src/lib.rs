@@ -98,10 +98,23 @@ pub fn trace(attribute: TokenStream, item: TokenStream) -> TokenStream {
     route::expand("TRACE", attribute, item)
 }
 
-/// Declares a `QUERY` operation.
+/// Declares a `QUERY` operation. See [`macro@get`] for the syntax.
 ///
 /// Requires the `openapi32` feature: `QUERY` has no Path Item field before
 /// OpenAPI 3.2.
+///
+/// RFC 10008 makes the request content and its media type the query, so the
+/// handler takes a required body, such as `Json<T>`: building a router refuses
+/// a `QUERY` operation whose `requestBody` is absent or optional, which an
+/// `Option` body would make it. A request naming no media type is a 400
+/// before the handler runs.
+///
+/// ```ignore
+/// #[kynos::query("/users")]
+/// async fn search(Json(filter): Json<UserFilter>) -> Json<Vec<User>> {
+///     todo!()
+/// }
+/// ```
 #[cfg(feature = "openapi32")]
 #[proc_macro_attribute]
 pub fn query(attribute: TokenStream, item: TokenStream) -> TokenStream {

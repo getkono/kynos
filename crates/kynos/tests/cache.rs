@@ -530,7 +530,7 @@ async fn a_failed_unsafe_method_leaves_the_stored_response_alone() {
 /// method unsafe, its response would invalidate the target.
 #[cfg(feature = "openapi32")]
 #[kynos::query("/reports")]
-async fn search_reports() -> NoContent {
+async fn search_reports(_: kynos::extract::body::text::Text) -> NoContent {
     NoContent
 }
 
@@ -562,7 +562,8 @@ async fn a_query_leaves_the_stored_response_in_place() {
             Method::from_bytes(b"QUERY").expect("`QUERY` is a method token"),
             "/reports"
         )
-        .json(&serde_json::json!({}))
+        .header("content-type", "text/plain")
+        .body("reports")
         .call()
         .await
         .status,

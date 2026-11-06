@@ -2094,7 +2094,13 @@ fn a_query_operation_must_require_its_request_body() {
     };
 
     let body = || RequestBody::json(Schema::of_type(SchemaType::Object));
-    let refused = |violations: Vec<(String, SpecError)>| violations.len() == 1;
+    let refused = |violations: Vec<(String, SpecError)>| {
+        violations
+            == [(
+                "#/paths/~1search/query".to_owned(),
+                SpecError::QueryWithoutRequiredBody,
+            )]
+    };
 
     assert!(refused(query_violations(None, body())), "no body");
     assert!(
@@ -3888,6 +3894,8 @@ fn variant_name(error: &SpecError) -> &'static str {
         SpecError::IgnoredHeaderParameter { .. } => "IgnoredHeaderParameter",
         SpecError::IgnoredHeader { .. } => "IgnoredHeader",
         SpecError::NoResponses => "NoResponses",
+        #[cfg(feature = "openapi32")]
+        SpecError::QueryWithoutRequiredBody => "QueryWithoutRequiredBody",
         SpecError::InvalidResponseKey { .. } => "InvalidResponseKey",
         SpecError::MissingResponseDescription => "MissingResponseDescription",
         #[cfg(feature = "openapi32")]
@@ -3959,6 +3967,9 @@ const RAISED_ELSEWHERE: &[&str] = &[
     // discriminating property be optional with one.
     #[cfg(not(feature = "openapi32"))]
     "DiscriminatorWithoutDefaultMapping",
+    // `QUERY` has a Path Item field only in 3.2.
+    #[cfg(not(feature = "openapi32"))]
+    "QueryWithoutRequiredBody",
 ];
 
 /// One document per variant, each named by the variant it must raise and the
@@ -4158,6 +4169,16 @@ fn ledger_parameters() -> Vec<(&'static str, SpecVersion, Document)> {
                 .with_encoding("fiel", Encoding::new("text/plain")),
         )
     });
+    // 3.2 only, like the `query` field the operation sits in.
+    #[cfg(feature = "openapi32")]
+    cases.push((
+        "QueryWithoutRequiredBody",
+        SpecVersion::V3_2,
+        document_with(&[(
+            "/users",
+            PathItem::new().with_operation(Method::Query, operation()),
+        )]),
+    ));
     cases
 }
 
