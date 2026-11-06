@@ -526,6 +526,61 @@ async fn a_failed_unsafe_method_leaves_the_stored_response_alone() {
     );
 }
 
+/// A `QUERY` beside the stored `GET`. A 204, so a non-error status: were the
+/// method unsafe, its response would invalidate the target.
+#[cfg(feature = "openapi32")]
+#[kynos::query("/reports")]
+async fn search_reports() -> NoContent {
+    NoContent
+}
+
+/// RFC 10008 section 5.1 registers `QUERY` as safe, so the section 4.4
+/// invalidation of RFC 9111, which applies to unsafe methods, never runs on its
+/// response.
+///
+/// Without it every search over a collection drops the collection's stored
+/// listing, and whether it does would turn on the `http` release an
+/// application's graph resolves: before 1.5.0, `http` called `QUERY` unsafe.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn a_query_leaves_the_stored_response_in_place() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![reports, search_reports])
+        .intercept(Cache::new(Stored::default()).namespace("test"))
+        .build(())
+        .expect("a describable router");
+    let before = CALLS.load(Ordering::SeqCst);
+
+    assert_eq!(
+        get(&service, "/reports").call().await.status,
+        StatusCode::OK
+    );
+
+    assert_eq!(
+        send(
+            &service,
+            Method::from_bytes(b"QUERY").expect("`QUERY` is a method token"),
+            "/reports"
+        )
+        .json(&serde_json::json!({}))
+        .call()
+        .await
+        .status,
+        StatusCode::NO_CONTENT
+    );
+
+    assert_eq!(
+        get(&service, "/reports").call().await.status,
+        StatusCode::OK
+    );
+
+    assert_eq!(
+        calls_during(before),
+        1,
+        "the QUERY invalidated the stored GET, so the handler ran again"
+    );
+}
+
 // --- Which request a stored response answers ------------------------------
 
 /// RFC 9111 section 2 keys a stored response on the whole target URI, and the
