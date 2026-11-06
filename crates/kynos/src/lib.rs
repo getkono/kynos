@@ -22,8 +22,9 @@
 //!
 //! Several things other Rust frameworks offer are absent, because OpenAPI
 //! cannot express them: wildcard routes, opaque middleware, raw request access,
-//! runtime-chosen status codes, WebSockets. The `unchecked` feature provides
-//! named escape hatches — `layer_unchecked`, `into_tower_unchecked`,
+//! runtime-chosen status codes. WebSockets are deferred: Kynos will describe
+//! the stream in an `AsyncAPI` document it emits. The `unchecked` feature
+//! provides named escape hatches — `layer_unchecked`, `into_tower_unchecked`,
 //! `route_unchecked` and `upgrade_unchecked` — at the price of a description
 //! that is no longer authoritative for the route that took one. See the README
 //! for the full list.

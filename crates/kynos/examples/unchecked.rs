@@ -21,10 +21,10 @@
 //! * **`has_unchecked` is the check a build should make.** It is what a CI job
 //!   asserts is false, or what a team allows deliberately with a comment. The
 //!   escape hatch is a decision, and this is where the decision is recorded.
-//! * **Two of the three are not temporary gaps.** A catch-all has no path
-//!   template that is true of it, and a connection upgraded away from HTTP is
-//!   outside what any version of OpenAPI can express. `AsyncAPI` covers the
-//!   second, and Kynos would rather point at it than pretend.
+//! * **Only the catch-all is a permanent gap.** It has no path template that
+//!   is true of it. A connection upgraded away from HTTP is outside what any
+//!   version of OpenAPI can express, but `AsyncAPI` covers it, and WebSocket
+//!   support will describe the stream in an `AsyncAPI` document Kynos emits.
 //!
 //! `layer_unchecked` *is* a gap worth closing, and the remedy is barely more
 //! work: an `Interceptor` names the responses it can answer with and the

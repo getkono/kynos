@@ -26,9 +26,10 @@ rules. The `unchecked` feature provides named escape hatches — `layer_unchecke
 `into_tower_unchecked`, `route_unchecked` and `upgrade_unchecked` — at the price
 of a description that is no longer authoritative for the route that took one.
 All eleven, each with its own reasoning, are in the [repository
-README](https://github.com/getkono/kynos#anti-patterns); WebSockets, served
-only through `upgrade_unchecked`, and OpenAPI 3.0 support, refused outright, are
-listed just above it.
+README](https://github.com/getkono/kynos#anti-patterns). Listed just above
+them are OpenAPI 3.0 support, refused outright, and WebSockets, deferred to an
+AsyncAPI description Kynos will emit and served through `upgrade_unchecked`
+until then.
 
 ## Feature flags
 

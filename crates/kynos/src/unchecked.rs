@@ -15,9 +15,10 @@
 //!   deployment with no reverse proxy in front.
 //! - A `tower` layer that has no equivalent interceptor yet, and that you have
 //!   satisfied yourself is response-transparent.
-//! - A WebSocket or WebTransport endpoint alongside a REST API. OpenAPI has no
-//!   vocabulary for either — that is `AsyncAPI`'s domain — so this is not a gap
-//!   Kynos can close later.
+//! - A WebSocket endpoint alongside a REST API. OpenAPI has no vocabulary for
+//!   the stream; that is `AsyncAPI`'s domain. WebSocket support is deferred,
+//!   and when it lands it will describe the stream in an `AsyncAPI` document
+//!   Kynos emits. Until then, this is the way to serve one.
 //!
 //! # When they are not
 //!
