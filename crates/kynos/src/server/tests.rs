@@ -264,6 +264,11 @@ fn tcp_keepalive_defaults_are_owned_by_kynos() {
     assert_eq!(keepalive.idle, Duration::from_secs(60));
     assert_eq!(keepalive.interval, Duration::from_secs(15));
     assert_eq!(
+        keepalive.user_timeout,
+        Some(keepalive.idle + 9 * keepalive.interval),
+        "a peer lost mid-response is released within the idle bound"
+    );
+    assert_eq!(
         crate::server::Server::new(test_service()).tcp_keepalive,
         Some(keepalive),
         "a server keeps accepted sockets alive unless told not to"
@@ -311,6 +316,46 @@ fn a_tcp_keepalive_the_kernel_would_refuse_is_refused() {
                 .interval(Duration::from_secs(bound)),
         ))
         .expect("both bounds are accepted");
+    }
+}
+
+/// A user timeout the kernel would refuse or read as its default is refused.
+///
+/// Under a millisecond reaches `TCP_USER_TIMEOUT` as zero, which the kernel
+/// reads as "use the system default", and past `i32::MAX` milliseconds the
+/// kernel reads it as negative and refuses it; either way the socket would be
+/// served without the bound it was configured with.
+#[test]
+fn a_tcp_user_timeout_the_kernel_would_not_honor_is_refused() {
+    use std::time::Duration;
+
+    use crate::server::{
+        error::ServerError,
+        tcp::{TcpKeepAlive, validate_tcp_keepalive},
+    };
+
+    for timeout in [
+        Duration::ZERO,
+        Duration::from_micros(999),
+        Duration::from_millis(2_147_483_648),
+    ] {
+        assert!(
+            matches!(
+                validate_tcp_keepalive(Some(TcpKeepAlive::default().user_timeout(Some(timeout)))),
+                Err(ServerError::InvalidConfiguration(
+                    "TCP user_timeout must be between 1 and 2147483647 milliseconds"
+                ))
+            ),
+            "{timeout:?} must be refused"
+        );
+    }
+    for timeout in [
+        None,
+        Some(Duration::from_millis(1)),
+        Some(Duration::from_millis(2_147_483_647)),
+    ] {
+        validate_tcp_keepalive(Some(TcpKeepAlive::default().user_timeout(timeout)))
+            .expect("both bounds, and no user timeout, are accepted");
     }
 }
 
@@ -367,7 +412,8 @@ async fn an_accepted_socket_carries_the_configured_keepalive() {
 
     let keepalive = TcpKeepAlive::default()
         .idle(Duration::from_secs(42))
-        .interval(Duration::from_secs(7));
+        .interval(Duration::from_secs(7))
+        .user_timeout(Some(Duration::from_millis(12_345)));
     let (accepted, _client) = accepted_with(&SocketOptions::new(Some(keepalive))).await;
     let socket = socket2::SockRef::from(&accepted);
 
@@ -382,7 +428,30 @@ async fn an_accepted_socket_carries_the_configured_keepalive() {
             .expect("TCP_KEEPINTVL reads"),
         Duration::from_secs(7)
     );
+    assert_eq!(
+        socket.tcp_user_timeout().expect("TCP_USER_TIMEOUT reads"),
+        Some(Duration::from_millis(12_345))
+    );
     assert!(accepted.nodelay().expect("TCP_NODELAY reads"));
+}
+
+/// A keepalive without a user timeout leaves the kernel's default, which reads
+/// back as none set.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn no_user_timeout_leaves_the_kernel_default() {
+    use crate::server::tcp::{SocketOptions, TcpKeepAlive};
+
+    for keepalive in [Some(TcpKeepAlive::default().user_timeout(None)), None] {
+        let (accepted, _client) = accepted_with(&SocketOptions::new(keepalive)).await;
+        assert_eq!(
+            socket2::SockRef::from(&accepted)
+                .tcp_user_timeout()
+                .expect("TCP_USER_TIMEOUT reads"),
+            None,
+            "keepalive {keepalive:?}"
+        );
+    }
 }
 
 /// The kernel's timer for the server's end of a loopback connection, read from
@@ -4990,6 +5059,10 @@ const CONFIGURATION_REFUSALS: &[(&str, &str)] = &[
     (
         "server/tcp.rs",
         "TCP keepalive durations must be between 1 and 32767 seconds",
+    ),
+    (
+        "server/tcp.rs",
+        "TCP user_timeout must be between 1 and 2147483647 milliseconds",
     ),
 ];
 
