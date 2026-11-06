@@ -7,12 +7,16 @@ body:
   - type: markdown
     attributes:
       value: |
-        Kynos is opinionated on purpose, and some edges are closed rather than
-        undecided. Permanently out of scope: **OpenAPI 3.0 and older**,
-        **WebSockets**, **templating and HTML rendering**, **abstraction over
-        the runtime** (tokio is a hard dependency, not a generic parameter), and
-        **custom transports and Unix sockets**. **HTTP/3 and QUIC** are gated on
-        demonstrated demand, not on design debate.
+        Kynos is opinionated on purpose, and some edges are closed or
+        deliberately parked rather than undecided. Permanently out of scope:
+        **OpenAPI 3.0 and older**, **templating and HTML rendering**, and
+        **abstraction over the runtime** (tokio is a hard dependency, not a
+        generic parameter).
+        Deferred: **HTTP/3 and QUIC**, gated on demonstrated demand rather than
+        on design debate; **WebSockets**, which Kynos will describe through an
+        AsyncAPI document it emits; and **WebTransport**, until intermediaries
+        support it reliably and HTTP/3 is built. Unix domain socket listeners
+        are in scope and tracked in #1131.
 
         `docs/architecture.md` and the README's anti-patterns are normative. A
         request that contradicts them is closed rather than argued, so read the

@@ -21,10 +21,10 @@
 //! * **`has_unchecked` is the check a build should make.** It is what a CI job
 //!   asserts is false, or what a team allows deliberately with a comment. The
 //!   escape hatch is a decision, and this is where the decision is recorded.
-//! * **Two of the three are not temporary gaps.** A catch-all has no path
-//!   template that is true of it, and a connection upgraded away from HTTP is
-//!   outside what any version of OpenAPI can express. `AsyncAPI` covers the
-//!   second, and Kynos would rather point at it than pretend.
+//! * **Only the catch-all is a permanent gap.** It has no path template that
+//!   is true of it. A connection upgraded away from HTTP is outside what any
+//!   version of OpenAPI can express, but `AsyncAPI` covers it, and WebSocket
+//!   support will describe the stream in an `AsyncAPI` document Kynos emits.
 //!
 //! `layer_unchecked` *is* a gap worth closing, and the remedy is barely more
 //! work: an `Interceptor` names the responses it can answer with and the
@@ -89,9 +89,10 @@ async fn serve_asset(request: Request) -> Response {
 
 /// Upgrades a connection to a WebSocket.
 ///
-/// Not a gap that will close. OpenAPI describes HTTP request and response
-/// semantics, and a socket that stops being either is outside what the
-/// specification models at any version.
+/// OpenAPI describes HTTP request and response semantics, and a socket that
+/// stops being either is outside what the specification models at any
+/// version. WebSocket support is deferred, and when it lands it will describe
+/// the stream in an `AsyncAPI` document Kynos emits instead.
 async fn open_socket(request: Request) -> Response {
     let _ = request;
 
@@ -111,7 +112,8 @@ async fn main() -> kynos::Result<()> {
         // under the opaque-routes annotation instead, so the omission is
         // stated rather than merely present.
         .route_unchecked([Method::GET, Method::HEAD], "/assets/{*path}", serve_asset)
-        // Likewise, and for a reason that will not change.
+        // Likewise, until WebSocket support describes the handshake and the
+        // stream in its place.
         .upgrade_unchecked("/live", open_socket);
 
     // The line a CI job asserts on. An application that means to use the hatch

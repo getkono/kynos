@@ -107,9 +107,15 @@ the examples, each about a page and all listed in
 Permanently out-of-scope
 
 - Support for OpenAPI 3.0 and older: OpenAPI 3.0.x is vastly different from OpenAPI 3.1+ and has technically been superseded for many years.
-- WebSockets, WebTransport and bidirectional streaming generally: OpenAPI describes HTTP request/response semantics. A stream that stops being either belongs to AsyncAPI, and Kynos would rather point at it than pretend. Escape hatch: `upgrade_unchecked`, behind `unchecked`, which serves the handshake and records the route as opaque rather than describing it. Server-Sent Events are not an exception to this — an event stream is one ordinary response body, which is why `openapi32` can describe it.
 - Templating and HTML rendering: Kynos is a REST framework, not a web framework.
 - Runtime abstraction: Kynos is tokio-only. There is no executor generic and no feature flag selecting another runtime, because no trait spans readiness-based and completion-based I/O without paying for a copy. See [`docs/architecture.md`](docs/architecture.md#runtime-policy).
+
+Deferred
+
+- WebSockets: OpenAPI describes HTTP request/response semantics, and a WebSocket stops being either once it is established. Kynos will describe the handshake as an OpenAPI operation and the message stream in an AsyncAPI document it emits. Until then, the escape hatch is `upgrade_unchecked`, behind `unchecked`, which serves the handshake and records the route as opaque rather than describing it. Server-Sent Events never needed this: an event stream is one ordinary response body, which is why `openapi32` can describe it.
+- WebTransport: it is deployed over HTTP/3, which is itself deferred, and support for it across proxies, load balancers and CDNs is still unreliable. Its sessions leave request/response as a WebSocket's do, so it needs a describability answer too.
+
+See [scope edges](docs/architecture.md#scope-edges).
 
 ## Anti-patterns
 

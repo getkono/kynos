@@ -232,7 +232,8 @@ by naming the row X displaces rather than by arguing that X is good.
 | YAML emission | `serde_norway` | [`kynos-openapi/emit/`](../crates/kynos-openapi/src/emit/), behind the owned `YamlError` | built |
 | Macro parsing | `proc-macro2`, `quote`, `syn` | [`kynos-macros`](../crates/kynos-macros/src/) | built |
 | HTTP/3, QUIC | — | — | deferred |
-| WebSockets, WebTransport | — | — | out of scope |
+| WebSockets | — | — | deferred |
+| WebTransport | — | — | deferred |
 
 Four statuses, and the distinction is what keeps the table checkable:
 
@@ -240,7 +241,7 @@ Four statuses, and the distinction is what keeps the table checkable:
 | --- | --- |
 | `built` | Reached by code that is implemented |
 | `chosen` | Settled as the answer, declared by nobody. It appears in no manifest and no lockfile |
-| `deferred` | Not implemented, and no dependency chosen. The ground is cost rather than principle, so demonstrated demand reopens it |
+| `deferred` | Not implemented, and no dependency chosen. The ground is cost or an unsettled ecosystem rather than principle, so demonstrated demand or the ecosystem settling reopens it |
 | `out of scope` | Refused on a stated ground, so no dependency will be chosen. Demand does not reopen it; a different argument would have to |
 
 A row whose *Named in* column says `never` or `ambient` is `built` when the
@@ -252,6 +253,9 @@ are reached only through `hyper`.
 made and its alternatives closed before any manifest can record it, since
 declaring a dependency the tree does not name would break the
 consumed-by-a-member requirement in [`nfr.md`](nfr.md#dependencies).
+`out of scope` has had no occupants since WebSockets and WebTransport moved to
+`deferred` ([Scope edges](#scope-edges)). It stays for the next refusal that
+names a dependency.
 
 `hyper` has two sites rather than one because the body handover is where its
 `Incoming` type enters, and `http/body.rs` is by design the only place the
@@ -534,26 +538,52 @@ and HTTP/2. Nothing about HTTP/3 is undescribable — it carries the same reques
 and response semantics OpenAPI already covers — so the ground here is cost, not
 principle, and the door stays open. See [why HTTP/3 is deferred](#why-http3-is-deferred).
 
-**Listeners other than TCP are out**, for the same reason the runtime is: they
-widen the coupling surface the runtime policy exists to bound. A stream
-accepted some other way — a Unix socket, an in-memory pipe, a custom acceptor —
-is served by `Server::serve_io`, one connection per call, as plaintext, which
-exposes the connection driver's existing `AsyncRead + AsyncWrite` bound rather
-than adding a coupling point; accepting those streams stays the application's.
+**Unix domain socket listeners are in, and not yet built.** Listeners are TCP
+today. A Unix listener does not add a coupling point. It is a second kind of
+listener inside the existing "accept loop and listener" point, so the
+five-point count holds. The runtime question it might seem to reopen is
+already closed: that count exists for auditability, and was never about
+keeping a runtime swap open. Refusing it costs more than building it. A
+deployment behind a local proxy or sidecar that serves itself over `serve_io`
+has to rebuild the connection limit, graceful shutdown and drain that a
+listener provides, and has to invent a peer address that every handler then
+believes. The address model comes first, since a Unix peer has no
+`SocketAddr` ([#1130](https://github.com/getkono/kynos/issues/1130)), and
+then the listener ([#1131](https://github.com/getkono/kynos/issues/1131)). A
+stream no listener accepts, such as an in-memory pipe or one from a custom
+acceptor, is served by `Server::serve_io`, one connection per call, as
+plaintext. That exposes the connection driver's existing
+`AsyncRead + AsyncWrite` bound rather than adding a coupling point, and
+accepting those streams stays the application's job.
 
-**WebSockets and WebTransport are out.** Both stop being request/response the
-moment they are established, and OpenAPI describes request/response. This is
-the same refusal for both, and it is a describability one: it does not soften
-with demand, because the document Kynos emits would have nothing to say about
-the stream. A protocol that stops being HTTP request/response belongs to
-AsyncAPI, and Kynos would rather point at it than emit a description that
-covers the upgrade handshake and then goes silent. The escape hatch is
-`upgrade_unchecked`, behind `unchecked`: it serves the handshake on `GET` and
-records the route under `x-kynos-opaque-routes` rather than describing it, and
-the protocol on the far side stays the application's. Server-Sent Events are the
-edge that stays in, and they stay in precisely because they do not cross it:
-an event stream is one ordinary response body, so `openapi32` describes it as
-one.
+**WebSockets are deferred, and the description they need is AsyncAPI.** A
+WebSocket stops being request/response once it is established, and OpenAPI
+describes request/response. So a WebSocket route described in the OpenAPI
+document alone would cover the upgrade handshake and then say nothing about
+the stream, and Kynos still refuses to emit that. The answer is to emit two
+documents. The handshake stays an OpenAPI operation, and the message stream is
+described by an AsyncAPI document Kynos emits from the same types. That
+settles describability, which leaves cost. AsyncAPI is a second document
+model, so it lives outside core like every standard
+([Invariant 1](#invariants)). Its specification has to be vendored into
+`references/` before any of it is built. A feature flag has to gate it, and
+message schemas have to come from the same `schema/` implementations bodies
+use, so that one type cannot be described two ways. Until then the escape
+hatch is `upgrade_unchecked`, behind `unchecked`. It serves the handshake on
+`GET`, records the route under `x-kynos-opaque-routes` rather than describing
+it, and leaves the protocol on the far side to the application.
+
+**WebTransport is deferred for a different reason.** It is deployed over
+HTTP/3, which is itself [deferred](#why-http3-is-deferred), and support for it
+across the proxies, load balancers and CDNs between a client and an origin is
+still unreliable. Its sessions leave request/response just as a WebSocket
+does, so reopening it also needs a describability answer, but that is not
+what holds it back. It stays parked until intermediary support settles and
+HTTP/3 is built, both of them.
+
+Server-Sent Events are the edge that is in and built. They stay in because
+they never leave request/response: an event stream is one ordinary response
+body, so `openapi32` describes it as one.
 
 ## Invariants
 
