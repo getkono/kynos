@@ -1,6 +1,8 @@
 //! HTTP/1 tuning.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use tokio::time::Instant;
 
 /// The smallest per-connection read/write buffer the crate accepts.
 ///

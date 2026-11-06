@@ -1543,7 +1543,8 @@ const SILENT_CONNECTION_BOUND: std::time::Duration = std::time::Duration::from_s
 #[cfg(feature = "http1")]
 #[test]
 fn the_first_head_deadline_counts_the_header_read_timeout_from_accept() {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
+    use tokio::time::Instant;
 
     let accepted = Instant::now();
     let deadline = |timeout| {
@@ -1562,7 +1563,8 @@ fn the_first_head_deadline_counts_the_header_read_timeout_from_accept() {
 #[cfg(feature = "http2")]
 #[test]
 fn the_http2_first_head_deadline_counts_the_idle_timeout_from_accept() {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
+    use tokio::time::Instant;
 
     let accepted = Instant::now();
     let deadline = |timeout| {
@@ -1582,7 +1584,8 @@ fn the_http2_first_head_deadline_counts_the_idle_timeout_from_accept() {
 #[cfg(all(feature = "http1", feature = "http2"))]
 #[test]
 fn the_first_head_deadline_is_the_earlier_of_both_protocols() {
-    use std::{num::NonZeroUsize, time::Instant};
+    use std::num::NonZeroUsize;
+    use tokio::time::Instant;
 
     let accepted = Instant::now();
     let later = HEAD_TIMEOUT * 2;
@@ -1605,6 +1608,34 @@ fn the_first_head_deadline_is_the_earlier_of_both_protocols() {
     assert_eq!(deadline(None, Some(HEAD_TIMEOUT)), first);
     assert_eq!(deadline(Some(HEAD_TIMEOUT), None), first);
     assert_eq!(deadline(None, None), None);
+}
+
+/// Every silent connection gets its whole first-head window on the clock the
+/// server sleeps on, however far a paused clock has auto-advanced past real
+/// time before it was accepted.
+#[cfg(feature = "http1")]
+#[tokio::test(start_paused = true)]
+async fn each_silent_connection_on_a_paused_clock_is_held_for_the_whole_first_head_window() {
+    use std::time::Duration;
+
+    let window = Duration::from_secs(30);
+    let server = crate::server::Server::new(test_service())
+        .http1(Http1Config::default().header_read_timeout(Some(window)));
+    let peer = "192.0.2.1:50000".parse().expect("a socket address");
+
+    for connection in 1..=3 {
+        let (_client, io) = tokio::io::duplex(4096);
+        let accepted = tokio::time::Instant::now();
+        let _ = server
+            .serve_io(io, peer)
+            .expect("the configuration is accepted")
+            .await;
+        let held = accepted.elapsed();
+        assert!(
+            held >= window && held < window + Duration::from_secs(1),
+            "connection {connection} was closed after {held:?}, not at its {window:?} window"
+        );
+    }
 }
 
 /// The idle timeout the `Streams::idle` cases wait out, on a paused clock.
