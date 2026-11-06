@@ -1607,6 +1607,34 @@ fn the_first_head_deadline_is_the_earlier_of_both_protocols() {
     assert_eq!(deadline(None, None), None);
 }
 
+/// Every silent connection gets its whole first-head window on the clock the
+/// server sleeps on, however far a paused clock has auto-advanced past real
+/// time before it was accepted.
+#[cfg(feature = "http1")]
+#[tokio::test(start_paused = true)]
+async fn each_silent_connection_on_a_paused_clock_is_held_for_the_whole_first_head_window() {
+    use std::time::Duration;
+
+    let window = Duration::from_secs(30);
+    let server = crate::server::Server::new(test_service())
+        .http1(Http1Config::default().header_read_timeout(Some(window)));
+    let peer = "192.0.2.1:50000".parse().expect("a socket address");
+
+    for connection in 1..=3 {
+        let (_client, io) = tokio::io::duplex(4096);
+        let accepted = tokio::time::Instant::now();
+        let _ = server
+            .serve_io(io, peer)
+            .expect("the configuration is accepted")
+            .await;
+        let held = accepted.elapsed();
+        assert!(
+            held >= window && held < window + Duration::from_secs(1),
+            "connection {connection} was closed after {held:?}, not at its {window:?} window"
+        );
+    }
+}
+
 /// The idle timeout the `Streams::idle` cases wait out, on a paused clock.
 #[cfg(feature = "http2")]
 const IDLE: std::time::Duration = std::time::Duration::from_secs(10);
