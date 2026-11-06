@@ -89,9 +89,10 @@ async fn serve_asset(request: Request) -> Response {
 
 /// Upgrades a connection to a WebSocket.
 ///
-/// Not a gap that will close. OpenAPI describes HTTP request and response
-/// semantics, and a socket that stops being either is outside what the
-/// specification models at any version.
+/// OpenAPI describes HTTP request and response semantics, and a socket that
+/// stops being either is outside what the specification models at any
+/// version. WebSocket support is deferred, and when it lands it will describe
+/// the stream in an `AsyncAPI` document Kynos emits instead.
 async fn open_socket(request: Request) -> Response {
     let _ = request;
 

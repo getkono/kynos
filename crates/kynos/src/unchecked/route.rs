@@ -235,8 +235,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// and `AsyncAPI` covers this ground. WebSocket support is deferred rather
     /// than refused, so this route stays the way to serve one until Kynos
     /// describes the stream in an `AsyncAPI` document it emits. WebTransport
-    /// cannot be served here: it needs HTTP/3 or extended `CONNECT`, not a
-    /// `GET` with `Upgrade`.
+    /// cannot be served here: its sessions open with an extended `CONNECT`
+    /// over HTTP/3 or HTTP/2, not a `GET` with `Upgrade`.
     ///
     /// Served on `GET`, the only method [RFC 9110][] leaves an upgrade handshake
     /// and the only one RFC 6455 permits, and recorded with

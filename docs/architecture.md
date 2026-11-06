@@ -254,8 +254,8 @@ made and its alternatives closed before any manifest can record it, since
 declaring a dependency the tree does not name would break the
 consumed-by-a-member requirement in [`nfr.md`](nfr.md#dependencies).
 `out of scope` has had no occupants since WebSockets and WebTransport moved to
-`deferred` once they had a describability answer ([Scope edges](#scope-edges)).
-It stays for the next refusal that names a dependency.
+`deferred` ([Scope edges](#scope-edges)). It stays for the next refusal that
+names a dependency.
 
 `hyper` has two sites rather than one because the body handover is where its
 `Incoming` type enters, and `http/body.rs` is by design the only place the
@@ -573,11 +573,13 @@ hatch is `upgrade_unchecked`, behind `unchecked`. It serves the handshake on
 `GET`, records the route under `x-kynos-opaque-routes` rather than describing
 it, and leaves the protocol on the far side to the application.
 
-**WebTransport is deferred for a different reason.** It runs over HTTP/3,
-which is itself [deferred](#why-http3-is-deferred), and support for it across
-the proxies, load balancers and CDNs between a client and an origin is still
-unreliable. The ground is the ecosystem, not describability, and it stays parked until
-that support settles.
+**WebTransport is deferred for a different reason.** It is deployed over
+HTTP/3, which is itself [deferred](#why-http3-is-deferred), and support for it
+across the proxies, load balancers and CDNs between a client and an origin is
+still unreliable. Its sessions leave request/response just as a WebSocket
+does, so reopening it also needs a describability answer, but that is not
+what holds it back. It stays parked until intermediary support settles and
+HTTP/3 is built, both of them.
 
 Server-Sent Events are the edge that is in and built. They stay in because
 they never leave request/response: an event stream is one ordinary response
