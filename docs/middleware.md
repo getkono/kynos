@@ -677,7 +677,7 @@ four different answers depending on which layer is asked.
 | Request-head read time | `header_read_timeout`, 30 s | the first head only, by the server's bound | from accept to the first head, before a protocol is known: the earlier of `header_read_timeout` and `Http2Config::idle_timeout` | — | yes |
 | Slow body | — | — | `request_body_idle_timeout`, 30 s between frames → 408 | `Timeout`, *outside* `BodySize`, for a total | yes, by the gap |
 | Keep-alive idle | `header_read_timeout` covers the wait for the next head | `idle_timeout`, 30 s with no stream in flight → GOAWAY, then close; a stream counts until its response body ends | — | — | yes |
-| Vanished peer | `tcp_keepalive`, with nothing in flight | `Http2KeepAlive`, a PING after 30 s silent and 20 s to answer | `tcp_keepalive`, probing after 60 s idle, every 15 s | — | yes; mid-response over HTTP/1 by retransmission only |
+| Vanished peer | `tcp_keepalive`: probes with nothing in flight, `user_timeout` mid-response | `Http2KeepAlive`, a PING after 30 s silent and 20 s to answer | `tcp_keepalive`, probing after 60 s idle, every 15 s, and a 195 s `TCP_USER_TIMEOUT` on unacknowledged data | — | yes; mid-response over HTTP/1 within 195 s on Linux, Android, Fuchsia and Cygwin, by retransmission only elsewhere |
 | Handler runtime | — | — | — | `Timeout`, when mounted | **no** |
 | Response body stall | — | — | — | `BodyTimeout::idle`, when mounted | **no** |
 | Response body total time | — | — | — | `BodyTimeout::deadline`, when mounted | **no** |
