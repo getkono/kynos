@@ -3,7 +3,8 @@
 //! A peer that disappears without a FIN or RST — a mobile network change, a
 //! NAT timeout, a crashed host — leaves its connection open on the server, and
 //! with it a connection permit and its buffers. TCP keepalive is how the kernel
-//! notices, whatever protocol the connection speaks.
+//! notices, whatever protocol the connection speaks, with `TCP_USER_TIMEOUT`
+//! covering the peer that vanished with data still in flight.
 
 use std::{net::SocketAddr, time::Duration};
 
@@ -21,18 +22,30 @@ use crate::server::error::ServerError;
 /// the connection permit
 /// [`Server::max_connections`](crate::server::Server::max_connections) caps.
 ///
-/// It bounds only a connection with nothing in flight: a peer that vanished
-/// mid-response is released by retransmission timeouts instead, some fifteen
-/// minutes at Linux's defaults. HTTP/2's
-/// [`keep_alive`](crate::server::protocol::http2::Http2Config::keep_alive) bounds that
-/// case for an HTTP/2 connection; nothing Kynos sets bounds it for HTTP/1.
+/// Probes bound only a connection with nothing in flight, because the kernel
+/// sends none while data is unacknowledged. A peer that vanished mid-response
+/// is bounded by `user_timeout` instead (RFC 5482's user timeout, set as
+/// `TCP_USER_TIMEOUT`): the longest sent data may go unacknowledged before the
+/// kernel drops the connection. Its default, 195 seconds, matches the idle
+/// bound, so either kind of vanished peer is released within it. Without it,
+/// only retransmission timeouts release that connection, some fifteen minutes
+/// at Linux's defaults. Once set, Linux also ends a probed connection when
+/// nothing has been heard from the peer for `user_timeout` rather than after
+/// its probe count, so a `user_timeout` shorter than `idle + 9 × interval`
+/// shortens the idle bound too, to the first unanswered probe after it.
 ///
-/// Both durations are whole seconds on the wire, from one to Linux's ceiling of
-/// 32767. The probe count is the operating system's. `interval` is applied
-/// where the platform lets a socket set it — Linux, Android, the Apple
-/// platforms, FreeBSD, NetBSD, illumos, Fuchsia and Windows among them — and
-/// `idle` is ignored on Haiku, OpenBSD, QNX Neutrino and Vita; the operating
-/// system's default applies otherwise.
+/// `idle` and `interval` are whole seconds on the wire, from one to Linux's
+/// ceiling of 32767, and `user_timeout` whole milliseconds, from one to the
+/// kernel's ceiling of 2147483647. The probe count is the operating system's.
+/// `interval` is applied where the platform lets a socket set it — Linux,
+/// Android, the Apple platforms, FreeBSD, NetBSD, illumos, Fuchsia and Windows
+/// among them — and `idle` is ignored on Haiku, OpenBSD, QNX Neutrino and
+/// Vita; the operating system's default applies otherwise. `user_timeout` is
+/// applied on Linux, Android, Fuchsia and Cygwin only, and ignored everywhere
+/// else, the Apple platforms and Windows included: no other platform has
+/// `TCP_USER_TIMEOUT`, and HTTP/2's
+/// [`keep_alive`](crate::server::protocol::http2::Http2Config::keep_alive) is
+/// then the only bound on a peer lost mid-response.
 ///
 /// `#[non_exhaustive]`, so start from [`default`](Self::default):
 ///
@@ -48,6 +61,10 @@ pub struct TcpKeepAlive {
     pub idle: Duration,
     /// Time between unanswered probes.
     pub interval: Duration,
+    /// Longest time sent data may stay unacknowledged before the kernel drops
+    /// the connection (`TCP_USER_TIMEOUT`), or `None` to leave the operating
+    /// system's default.
+    pub user_timeout: Option<Duration>,
 }
 
 impl Default for TcpKeepAlive {
@@ -55,6 +72,8 @@ impl Default for TcpKeepAlive {
         Self {
             idle: Duration::from_secs(60),
             interval: Duration::from_secs(15),
+            // `idle + 9 × interval`, the idle bound at Linux's probe count.
+            user_timeout: Some(Duration::from_secs(195)),
         }
     }
 }
@@ -79,10 +98,27 @@ impl TcpKeepAlive {
         self.interval = interval;
         self
     }
+
+    /// Sets the longest time sent data may stay unacknowledged before the
+    /// kernel drops the connection, or `None` to leave the operating system's
+    /// default.
+    ///
+    /// Applied on Linux, Android, Fuchsia and Cygwin, and ignored elsewhere.
+    /// [`Server::prepare`](crate::server::Server::prepare) refuses anything
+    /// outside 1 to 2147483647 milliseconds, counting whole milliseconds.
+    #[must_use]
+    pub fn user_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.user_timeout = timeout;
+        self
+    }
 }
 
 /// The longest idle time or interval Linux accepts, in seconds.
 const MAX_KEEPALIVE_SECONDS: u64 = 32_767;
+
+/// The longest `TCP_USER_TIMEOUT` Linux accepts, in milliseconds: it reads the
+/// option as a signed `int` and refuses a negative one.
+const MAX_USER_TIMEOUT_MILLISECONDS: u128 = 2_147_483_647;
 
 /// Refuses a keepalive the kernel would refuse.
 ///
@@ -104,6 +140,22 @@ pub(in crate::server) fn validate_tcp_keepalive(
             "TCP keepalive durations must be between 1 and 32767 seconds",
         ));
     }
+    // Zero milliseconds reaches the kernel as "the system default", silently.
+    // Checked on every platform, so one configuration is valid everywhere.
+    let user_timeout_accepted =
+        |timeout: Duration| (1..=MAX_USER_TIMEOUT_MILLISECONDS).contains(&timeout.as_millis());
+    if keepalive
+        .and_then(|keepalive| keepalive.user_timeout)
+        .is_some_and(|timeout| !user_timeout_accepted(timeout))
+    {
+        const _: () = assert!(
+            MAX_USER_TIMEOUT_MILLISECONDS == 2_147_483_647,
+            "MAX_USER_TIMEOUT_MILLISECONDS moved; the message below still says 2147483647"
+        );
+        return Err(ServerError::InvalidConfiguration(
+            "TCP user_timeout must be between 1 and 2147483647 milliseconds",
+        ));
+    }
     Ok(())
 }
 
@@ -112,6 +164,14 @@ pub(in crate::server) fn validate_tcp_keepalive(
 #[derive(Clone, Debug)]
 pub(in crate::server) struct SocketOptions {
     keepalive: Option<socket2::TcpKeepalive>,
+    /// `TCP_USER_TIMEOUT`, held only where `socket2` can set it.
+    #[cfg(any(
+        target_os = "android",
+        target_os = "fuchsia",
+        target_os = "linux",
+        target_os = "cygwin",
+    ))]
+    user_timeout: Option<Duration>,
 }
 
 impl SocketOptions {
@@ -142,6 +202,14 @@ impl SocketOptions {
                 let params = params.with_interval(keepalive.interval);
                 params
             }),
+            // `socket2`'s own platform list for `set_tcp_user_timeout`.
+            #[cfg(any(
+                target_os = "android",
+                target_os = "fuchsia",
+                target_os = "linux",
+                target_os = "cygwin",
+            ))]
+            user_timeout: keepalive.and_then(|keepalive| keepalive.user_timeout),
         }
     }
 
@@ -160,6 +228,17 @@ impl SocketOptions {
         if let Some(keepalive) = &self.keepalive {
             if let Err(error) = socket2::SockRef::from(stream).set_tcp_keepalive(keepalive) {
                 tracing::debug!(%error, %local_addr, %peer_addr, "could not enable TCP keepalive");
+            }
+        }
+        #[cfg(any(
+            target_os = "android",
+            target_os = "fuchsia",
+            target_os = "linux",
+            target_os = "cygwin",
+        ))]
+        if let Some(timeout) = self.user_timeout {
+            if let Err(error) = socket2::SockRef::from(stream).set_tcp_user_timeout(Some(timeout)) {
+                tracing::debug!(%error, %local_addr, %peer_addr, "could not set TCP_USER_TIMEOUT");
             }
         }
     }
