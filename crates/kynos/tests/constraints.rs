@@ -59,7 +59,7 @@ where
 
     match extract::<Json<T>>(request).await {
         Ok(_) => None,
-        Err(BodyRejection::Schema { failures }) => Some(failures),
+        Err(BodyRejection::Schema { failures, .. }) => Some(failures),
         Err(other) => panic!("a well-formed document refused as something else: {other:?}"),
     }
 }
@@ -708,6 +708,84 @@ async fn a_map_key_is_held_to_its_property_names_at_the_map() {
     .await;
 }
 
+/// The problem type the types below name for a broken bound.
+const VALIDATION_FAILED: &str = "https://errors.example.com/validation-failed";
+
+/// A body naming its own problem type, holding a member that names another.
+#[derive(Debug, Schema, Deserialize)]
+#[schema(constraint_type = VALIDATION_FAILED)]
+struct Named {
+    #[schema(maximum = 100)]
+    limit: u32,
+    inner: Option<Inner>,
+}
+
+/// A member naming a type of its own, which the body holding it overrides.
+#[derive(Debug, Schema, Deserialize)]
+#[schema(constraint_type = "https://errors.example.com/inner")]
+struct Inner {
+    #[schema(minimum = 1)]
+    quantity: u32,
+}
+
+/// The rejection `Json<T>` sends for `document`, which it must refuse.
+async fn refusal<T>(document: &Value) -> BodyRejection
+where
+    Json<T>: FromRequest<(), Rejection = BodyRejection>,
+{
+    let bytes = serde_json::to_vec(document).expect("a document serializes");
+    let mut request = Request::new(Body::from_bytes(bytes::Bytes::from(bytes)));
+    request.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    extract::<Json<T>>(request)
+        .await
+        .err()
+        .expect("the document is refused")
+}
+
+/// A broken bound carries the problem type the decoded type names, whichever
+/// member broke it, and through the wrappers that are their `T`; a body that
+/// does not decode into the type at all consulted no bound and carries none.
+#[tokio::test]
+async fn a_broken_bound_carries_the_type_its_body_names() {
+    let carried = |rejection: BodyRejection| match rejection {
+        BodyRejection::Schema { type_uri, .. } => type_uri,
+        other => panic!("a well-formed document refused as something else: {other:?}"),
+    };
+
+    let broken = json!({ "limit": 101 });
+    assert_eq!(
+        carried(refusal::<Named>(&broken).await),
+        Some(VALIDATION_FAILED)
+    );
+    assert_eq!(
+        carried(refusal::<Box<Named>>(&broken).await),
+        Some(VALIDATION_FAILED)
+    );
+    assert_eq!(
+        carried(refusal::<Option<Named>>(&broken).await),
+        Some(VALIDATION_FAILED)
+    );
+
+    // Only the decoded type's own answer counts.
+    let nested = json!({ "limit": 1, "inner": { "quantity": 0 } });
+    assert_eq!(
+        carried(refusal::<Named>(&nested).await),
+        Some(VALIDATION_FAILED)
+    );
+
+    assert_eq!(
+        carried(refusal::<Named>(&json!({ "limit": "many" })).await),
+        None
+    );
+    assert_eq!(
+        carried(refusal::<Line>(&json!({ "quantity": 0 })).await),
+        None
+    );
+}
+
 /// `Form<T>` runs the same check after `serde_html_form` reads the body.
 #[cfg(feature = "form")]
 mod form {
@@ -745,7 +823,7 @@ mod form {
         assert_eq!((signup.name.as_str(), signup.seats), ("ab", 10));
 
         match read("name=a&seats=11").await {
-            Err(BodyRejection::Schema { failures }) => {
+            Err(BodyRejection::Schema { failures, .. }) => {
                 assert_eq!(
                     failures.into_keys().collect::<Vec<_>>(),
                     ["/name", "/seats"]
@@ -773,7 +851,7 @@ mod form {
             HeaderValue::from_static("application/x-www-form-urlencoded"),
         );
         match super::extract::<Form<Readings>>(request).await {
-            Err(BodyRejection::Schema { failures }) => {
+            Err(BodyRejection::Schema { failures, .. }) => {
                 assert_eq!(failures.into_keys().collect::<Vec<_>>(), ["/v"]);
             }
             other => panic!("a repeated reading was not refused at `/v`: {other:?}"),
@@ -819,7 +897,7 @@ mod records {
         while let Some(record) = records.next().await {
             outcomes.push(match record {
                 Ok(_) => None,
-                Err(BodyRejection::Schema { failures }) => Some(failures.into_keys().collect()),
+                Err(BodyRejection::Schema { failures, .. }) => Some(failures.into_keys().collect()),
                 Err(other) => panic!("a well-formed record refused as something else: {other:?}"),
             });
         }
@@ -904,12 +982,43 @@ mod query_string {
             .expect_err("a broken bound is refused");
         assert_eq!(rejection.status(), StatusCode::BAD_REQUEST);
         match rejection {
-            QueryRejection::Schema { name, failures } => {
+            QueryRejection::Schema {
+                name,
+                failures,
+                type_uri,
+                ..
+            } => {
                 assert_eq!(name, "querystring");
                 assert_eq!(failures.into_keys().collect::<Vec<_>>(), ["/quantity"]);
+                assert_eq!(type_uri, None);
             }
             other => panic!("a broken bound was refused as something else: {other:?}"),
         }
+    }
+
+    /// A query string whose type names a problem type carries it, at the
+    /// parameter's 400.
+    #[tokio::test]
+    async fn a_query_string_carries_the_type_its_schema_names() {
+        let mut request = Request::new(Body::empty());
+        *request.uri_mut() = Uri::from_static("/search?%7B%22limit%22%3A101%7D");
+        let mut parts = request.into_parts().0;
+        let rejection =
+            QueryString::<super::Named, media::Json>::from_request_parts(&mut parts, &())
+                .await
+                .expect_err("a broken bound is refused");
+
+        assert_eq!(rejection.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            matches!(
+                rejection,
+                QueryRejection::Schema {
+                    type_uri: Some(super::VALIDATION_FAILED),
+                    ..
+                }
+            ),
+            "{rejection:?}"
+        );
     }
 }
 
@@ -951,7 +1060,7 @@ mod multipart {
         assert_eq!(upload.name, "abc");
 
         match read("abcd").await {
-            Err(BodyRejection::Schema { failures }) => {
+            Err(BodyRejection::Schema { failures, .. }) => {
                 assert_eq!(failures.into_keys().collect::<Vec<_>>(), ["/name"]);
             }
             other => panic!("a part breaking its bound was not refused at it: {other:?}"),
@@ -1006,7 +1115,7 @@ mod protobuf {
             samples: vec![7, 11],
         };
         match read(&outside).await {
-            Err(BodyRejection::Schema { failures }) => {
+            Err(BodyRejection::Schema { failures, .. }) => {
                 assert_eq!(
                     failures.into_keys().collect::<Vec<_>>(),
                     ["/samples", "/series"]

@@ -86,6 +86,13 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     }
     let container = Container::read(input);
     refusals::check(input, &container)?;
+    // Typed, so an expression that is not a `&'static str` fails at its span.
+    let constraint_type = container::constraint_type(input)?.map(|named| {
+        quote! {
+            const CONSTRAINT_TYPE: ::core::option::Option<&'static str> =
+                ::core::option::Option::Some(#named);
+        }
+    });
 
     let name = &input.ident;
     let generics = schema_bounded_generics(input);
@@ -142,6 +149,8 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         // at its own definition (as serde's derives also allow).
         #[allow(deprecated)]
         impl #impl_generics ::kynos::schema::Schema for #name #ty_generics #where_clause {
+            #constraint_type
+
             fn schema(
                 registry: &mut ::kynos::schema::registry::Registry,
             ) -> ::kynos::openapi::Schema {

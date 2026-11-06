@@ -25,7 +25,11 @@
 //!   [`QueryRejection`], `Json<T>` with [`BodyRejection`]. A single shared union
 //!   would be sound and would still make a handler that reads one path
 //!   parameter advertise the 401 it can never answer — which a client generator
-//!   turns into dead retry logic.
+//!   turns into dead retry logic. A rejection's `type` is `about:blank` unless
+//!   the type it decodes names its own: `User` answers a broken bound with
+//!   `BOUND_BROKEN`, from the API's own catalogue. It is not `Invalid`'s type,
+//!   since Kynos titles it with the status's reason phrase and one problem
+//!   type has one title.
 //! * **Five of the responses below come from no handler at all.** A fallback
 //!   policy produces the 404, the 405 and the 501, `catch_panics` produces the 500, and
 //!   an interceptor produces the 503. The 500 and the 503 reach the description
@@ -53,12 +57,23 @@ use kynos::{
 };
 use serde::{Deserialize, Serialize};
 
+/// The problem type a body breaking a bound it declares answers with, in the
+/// same catalogue as `Invalid`'s but a type of its own: Kynos titles it with
+/// the status's reason phrase, and RFC 9457 gives one type one title, so it
+/// must not be a type `Invalid` already publishes under "Validation failed".
+const BOUND_BROKEN: &str = "https://errors.example.com/bound-broken";
+
 /// A user of the service.
+///
+/// A name past 64 characters is refused before `create_user` runs, with a 422
+/// of type `BOUND_BROKEN` rather than `about:blank`.
 #[derive(Schema, Serialize, Deserialize)]
+#[schema(constraint_type = BOUND_BROKEN)]
 struct User {
     /// The user's identifier.
     id: u64,
     /// The user's display name.
+    #[schema(max_length = 64)]
     name: String,
 }
 

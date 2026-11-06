@@ -12,7 +12,8 @@ use crate::derive::{
         wire_names,
     },
     params::{
-        Param, check_field, construct, decode_field, parameters_body, render, response_headers_body,
+        Param, check_field, constraint_types_body, construct, decode_field, parameters_body,
+        render, response_headers_body,
     },
 };
 
@@ -250,6 +251,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     );
     let response_headers = response_headers_body(&params);
     let encode = encode_body(&params);
+    let constraint_types = constraint_types_body(&params);
 
     Ok(quote! {
         impl #impl_generics ::kynos::extract::params::header::DecodeHeaders
@@ -291,6 +293,10 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
                 registry: &mut ::kynos::schema::registry::Registry,
             ) -> ::kynos::openapi::Map<::kynos::openapi::RefOr<::kynos::openapi::Header>> {
                 #response_headers
+            }
+
+            fn constraint_types() -> ::std::vec::Vec<&'static str> {
+                #constraint_types
             }
         }
     })

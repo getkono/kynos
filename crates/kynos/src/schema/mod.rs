@@ -147,6 +147,46 @@ use crate::schema::{
             is unconstrained"
 )]
 pub trait Schema {
+    /// The RFC 9457 problem `type` a value of this type answers with when it
+    /// breaks a bound [`check_constraints`](Self::check_constraints) reports,
+    /// or `None` for `about:blank`.
+    ///
+    /// Read by the extractor that decoded the value — a body extractor's `T`, a
+    /// `QueryString`'s `T`, the type of a field of a derived parameter group —
+    /// into both the rejection it sends and the response its operation
+    /// declares, so an application publishing its own problem catalogue keeps
+    /// Kynos enforcing what the document declares. The status stays the
+    /// extractor's: 422 for a body, 400 for a parameter. A body that does not
+    /// decode into the type at all is still `about:blank`, since no bound was
+    /// consulted.
+    ///
+    /// Only the decoded type's own answer counts: a member whose type names
+    /// another one breaks a bound under the type holding it. `Option`, `Box`
+    /// and `Arc` are their `T` and answer as it does.
+    ///
+    /// `#[derive(Schema)]` sets it with `#[schema(constraint_type = ...)]` on
+    /// the type. The URI reaches the client verbatim, so it should name a class
+    /// of failure and be absolute (RFC 9457 section 3.1.1).
+    ///
+    /// ```
+    /// use kynos::{
+    ///     openapi::Schema as OpenApiSchema,
+    ///     schema::{Schema, registry::Registry},
+    /// };
+    ///
+    /// struct Limit(u32);
+    ///
+    /// impl Schema for Limit {
+    ///     const CONSTRAINT_TYPE: Option<&'static str> =
+    ///         Some("https://errors.example.com/validation-failed");
+    ///
+    ///     fn schema(registry: &mut Registry) -> OpenApiSchema {
+    ///         u32::schema(registry)
+    ///     }
+    /// }
+    /// ```
+    const CONSTRAINT_TYPE: Option<&'static str> = None;
+
     /// Produces the schema body for this type.
     ///
     /// Field and element types go through [`Registry::resolve`]; see the trait

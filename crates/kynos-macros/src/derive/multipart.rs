@@ -111,6 +111,8 @@ fn dispatch(declared: &[Declared<'_>], closed: bool) -> TokenStream2 {
                             "the part is not declared",
                         ),
                     )]),
+                    // A part no field reads is the form's shape, not a bound.
+                    type_uri: ::core::option::Option::None,
                 },
             );
         }}
@@ -291,6 +293,7 @@ impl<'a> Declared<'a> {
                                 "the part is required",
                             ),
                         )]),
+                        type_uri: ::core::option::Option::None,
                     },
                 )
             },

@@ -82,6 +82,20 @@ pub trait QueryParams: Sized + Schema {
             kynos_openapi::Schema::Bool(_) => Vec::new(),
         }
     }
+
+    /// The problem types a value breaking a bound answers with, beside
+    /// `about:blank`: the
+    /// [`CONSTRAINT_TYPE`](crate::schema::Schema::CONSTRAINT_TYPE) of each
+    /// field type naming one, so the 400 [`Query`] declares names what
+    /// [`QueryRejection::Schema`] sends.
+    ///
+    /// `#[derive(QueryParams)]` replaces this. The default names none, which
+    /// is right for a group holding no value to a bound, as a hand-written
+    /// [`DecodeQuery`] may; one that does reports the types it sends here.
+    #[must_use]
+    fn constraint_types() -> Vec<&'static str> {
+        Vec::new()
+    }
 }
 
 /// Reading a query parameter group from a request.
@@ -113,7 +127,7 @@ impl<C: Sync, T: DecodeQuery + Send> FromRequestParts<C> for Query<T> {
 
 impl<T: QueryParams> Describe for Query<T> {
     fn describe(operation: &mut OperationCx<'_>) {
-        super::describe_parameters(operation, T::parameters);
+        super::describe_parameters(operation, T::parameters, &T::constraint_types());
     }
 }
 

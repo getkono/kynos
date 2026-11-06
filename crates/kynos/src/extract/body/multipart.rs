@@ -352,4 +352,8 @@ impl<T: Schema> RequestContent for MultipartForm<T> {
             kynos_openapi::MediaType::new(registry.resolve::<T>()),
         )
     }
+
+    fn constraint_types() -> Vec<&'static str> {
+        super::constraint_type::<T>()
+    }
 }

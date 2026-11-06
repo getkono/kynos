@@ -1,0 +1,11 @@
+error: a type's `#[schema(...)]` takes only `constraint_type = ...`, the problem type a broken bound answers with; bounds go on a field, whose value they hold
+ --> tests/ui/macros/schema_container_attribute_refusals.rs:6:10
+  |
+6 | #[schema(minimum = 1)]
+  |          ^^^^^^^
+
+error: `constraint_type` is already set: a type answers a broken bound with one problem type
+  --> tests/ui/macros/schema_container_attribute_refusals.rs:13:10
+   |
+13 | #[schema(constraint_type = "https://errors.example.com/b")]
+   |          ^^^^^^^^^^^^^^^

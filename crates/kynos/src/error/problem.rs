@@ -289,6 +289,88 @@ impl Schema for Problem {
 /// `instance`.
 impl Flatten for Problem {}
 
+/// One entry of the `errors` extension member a schema failure sends (RFC 9457
+/// section 3.2): where in the decoded value something went wrong, and what.
+///
+/// Public so an application reporting violations of its own sends them in the
+/// shape a client already reads from Kynos's, and declares them with the same
+/// schema:
+///
+/// ```
+/// use kynos::{Problem, error::problem::PointerError, http::StatusCode};
+///
+/// let errors = vec![PointerError::new("/end", "must not precede `/start`")];
+/// let problem = Problem::of_type(
+///     StatusCode::UNPROCESSABLE_ENTITY,
+///     "https://errors.example.com/validation-failed",
+///     "Validation failed",
+/// )
+/// .with_extension("errors", serde_json::to_value(errors)?);
+///
+/// assert_eq!(problem.extensions["errors"][0]["pointer"], "/end");
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+///
+/// Its schema is inlined rather than registered as a component, so the
+/// `errors` member every rejection declares reads the same in each.
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[non_exhaustive]
+pub struct PointerError {
+    /// A JSON Pointer (RFC 6901) into the decoded value, relative to whatever
+    /// the problem's `detail` names: the body, or one parameter's value. The
+    /// empty pointer names the value as a whole.
+    pub pointer: String,
+
+    /// What was wrong at [`pointer`](Self::pointer).
+    pub detail: String,
+}
+
+impl PointerError {
+    /// An entry naming `detail` at `pointer`.
+    #[must_use]
+    pub fn new(pointer: impl Into<String>, detail: impl Into<String>) -> Self {
+        Self {
+            pointer: pointer.into(),
+            detail: detail.into(),
+        }
+    }
+
+    /// One entry per pointer of `failures`, in pointer order: what a
+    /// rejection's `failures` sends as `errors`.
+    #[must_use]
+    pub fn from_failures(failures: BTreeMap<String, String>) -> Vec<Self> {
+        failures
+            .into_iter()
+            .map(|(pointer, detail)| Self { pointer, detail })
+            .collect()
+    }
+}
+
+/// An object of the two strings, `pointer` carrying the `json-pointer` format.
+impl Schema for PointerError {
+    fn schema(registry: &mut Registry) -> OpenApiSchema {
+        let detail = registry.resolve::<String>();
+        let mut pointer = detail.clone();
+        if let OpenApiSchema::Object(object) = &mut pointer {
+            object.format = Some("json-pointer".to_owned());
+        }
+
+        OpenApiSchema::Object(Box::new(SchemaObject {
+            ty: Some(TypeSet::One(SchemaType::Object)),
+            properties: [
+                ("pointer".to_owned(), pointer),
+                ("detail".to_owned(), detail),
+            ]
+            .into_iter()
+            .collect(),
+            required: Some(vec!["pointer".to_owned(), "detail".to_owned()]),
+            ..SchemaObject::default()
+        }))
+    }
+}
+
 /// The description of one response carrying a problem document: the problem
 /// media type and the shared component, unnarrowed.
 ///

@@ -12,7 +12,7 @@ use std::{
 use kynos_openapi::{RefOr, StatusPattern};
 
 use crate::{
-    error::rejection::HeaderRejection,
+    error::rejection::{HeaderRejection, constraint_responses},
     extract::params::header::{DecodeHeaders, HeaderParams},
     http::{Request, Response},
     middleware::{Continued, Interceptor, Next},
@@ -91,6 +91,12 @@ where
         if <I::Reads as DecodeHeaders>::FALLIBLE {
             let rejected = <HeaderRejection as Responses>::responses(operation.registry());
             operation.add_responses(&rejected);
+            let named = constraint_responses(
+                operation.registry(),
+                crate::http::StatusCode::BAD_REQUEST,
+                &<I::Reads as HeaderParams>::constraint_types(),
+            );
+            operation.add_responses(&named);
         }
 
         let responses = <I::Short as Responses>::responses(operation.registry());

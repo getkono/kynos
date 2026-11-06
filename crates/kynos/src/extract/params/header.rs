@@ -128,6 +128,21 @@ pub trait HeaderParams: Sized {
             .map(|parameter| (parameter.name.clone(), RefOr::Item(header_from(parameter))))
             .collect()
     }
+
+    /// The problem types a value breaking a bound answers with, beside
+    /// `about:blank`: the
+    /// [`CONSTRAINT_TYPE`](crate::schema::Schema::CONSTRAINT_TYPE) of each
+    /// field type naming one, so the 400 [`Headers`] declares names what
+    /// [`HeaderRejection::Schema`] sends.
+    ///
+    /// `#[derive(HeaderParams)]` replaces this; the default names none, which
+    /// is right for a group holding no value to a bound. A response carrying
+    /// the group reads none of it, since a header a handler sends is not
+    /// checked.
+    #[must_use]
+    fn constraint_types() -> Vec<&'static str> {
+        Vec::new()
+    }
 }
 
 /// Reading a header group from a request.
@@ -224,13 +239,15 @@ impl<C: Sync, T: DecodeHeaders + Send> FromRequestParts<C> for Headers<T> {
 }
 
 /// Honours [`DESCRIBED`](HeaderParams::DESCRIBED): an undescribed group
-/// contributes nothing.
+/// contributes no parameter. Its 400s are declared either way, as
+/// [`HeaderRejection`]'s own are, since it is refused either way.
 impl<T: HeaderParams> Describe for Headers<T> {
     fn describe(operation: &mut OperationCx<'_>) {
         if !T::DESCRIBED {
+            super::describe_constraints(operation, &T::constraint_types());
             return;
         }
-        super::describe_parameters(operation, T::parameters);
+        super::describe_parameters(operation, T::parameters, &T::constraint_types());
     }
 }
 

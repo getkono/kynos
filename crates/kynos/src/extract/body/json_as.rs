@@ -275,4 +275,8 @@ impl<M: MediaType, T: Schema> RequestContent for JsonAs<M, T> {
             kynos_openapi::MediaType::new(registry.resolve::<T>()),
         )
     }
+
+    fn constraint_types() -> Vec<&'static str> {
+        super::constraint_type::<T>()
+    }
 }

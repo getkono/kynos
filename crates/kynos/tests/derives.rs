@@ -2006,7 +2006,7 @@ fn a_query_value_that_breaks_a_bound_is_refused_naming_its_parameter() {
         ("q=ab&score=101", "score", "must be at most 100"),
     ] {
         match <Bounded as DecodeQuery>::decode(Some(query)) {
-            Err(QueryRejection::Schema { name, failures }) => {
+            Err(QueryRejection::Schema { name, failures, .. }) => {
                 assert_eq!(name, parameter, "{query}");
                 assert_eq!(
                     failures,
@@ -2047,7 +2047,7 @@ fn a_nan_query_value_is_refused_under_its_numeric_bounds() {
     use kynos::{error::rejection::QueryRejection, extract::params::query::DecodeQuery};
 
     match <Ratio as DecodeQuery>::decode(Some("ratio=NaN")) {
-        Err(QueryRejection::Schema { name, failures }) => {
+        Err(QueryRejection::Schema { name, failures, .. }) => {
             assert_eq!(name, "ratio");
             assert_eq!(
                 failures,
@@ -2146,7 +2146,7 @@ fn a_path_value_that_breaks_a_bound_is_refused_naming_its_parameter() {
         ),
     ] {
         match BoundedPath::decode(&values) {
-            Err(PathRejection::Schema { name, failures }) => {
+            Err(PathRejection::Schema { name, failures, .. }) => {
                 assert_eq!(name, parameter, "{values:?}");
                 assert_eq!(failures, at_the_value(detail), "{values:?}");
             }
@@ -2210,7 +2210,7 @@ fn a_header_value_that_breaks_a_bound_is_refused_naming_it() {
         ),
     ] {
         match BoundedHeaders::decode(&header_map(fields)) {
-            Err(HeaderRejection::Schema { name, failures }) => {
+            Err(HeaderRejection::Schema { name, failures, .. }) => {
                 assert_eq!(name, header, "{fields:?}");
                 assert_eq!(failures, at_the_value(detail), "{fields:?}");
             }
@@ -2274,7 +2274,7 @@ fn a_cookie_carries_its_fields_bounds_and_refuses_a_value_breaking_one() {
         ("session=s-12; score=101", "score", "must be at most 100"),
     ] {
         match BoundedCookies::decode(&jar(field)) {
-            Err(CookieRejection::Schema { name, failures }) => {
+            Err(CookieRejection::Schema { name, failures, .. }) => {
                 assert_eq!(name, cookie, "{field}");
                 assert_eq!(failures, at_the_value(detail), "{field}");
             }
@@ -2291,6 +2291,128 @@ fn a_cookie_carries_its_fields_bounds_and_refuses_a_value_breaking_one() {
             BoundedCookies::decode(&jar(field)).expect("values within their bounds are read");
         assert_eq!(decoded.score, score, "{field}");
     }
+}
+
+// --- A parameter answers with the problem type its field's type names -----
+//
+// The same recorded exception: what the decoder a derive generates carries,
+// and what the group reports for the description to declare.
+
+/// The problem type [`PageNumber`] names for a broken bound.
+const PAGE_OUT_OF_RANGE: &str = "https://errors.example.com/page-out-of-range";
+
+/// A parameter value naming its own problem type.
+#[derive(Schema, Debug, PartialEq)]
+#[schema(constraint_type = PAGE_OUT_OF_RANGE)]
+struct PageNumber(#[schema(maximum = 100)] u32);
+
+impl std::str::FromStr for PageNumber {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        raw.parse().map(Self)
+    }
+}
+
+impl std::fmt::Display for PageNumber {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl kynos::schema::ParamValue for PageNumber {}
+
+#[derive(Schema, QueryParams)]
+struct NamedQuery {
+    #[schema(minimum = 1)]
+    page: Option<PageNumber>,
+    #[schema(minimum = 1)]
+    limit: Option<u32>,
+}
+
+#[derive(PathParams)]
+struct NamedPath {
+    page: PageNumber,
+}
+
+#[derive(HeaderParams)]
+struct NamedHeaders {
+    #[header(rename = "X-Page")]
+    page: Option<PageNumber>,
+}
+
+#[cfg(feature = "cookie")]
+#[derive(kynos::CookieParams)]
+struct NamedCookies {
+    page: Option<PageNumber>,
+}
+
+/// A value breaking its field's bound, or its type's, carries the type its
+/// field's type names, and a field whose type names none carries none; each
+/// group reports the types its fields name once per field.
+#[test]
+fn a_parameter_carries_the_type_its_field_type_names() {
+    use kynos::{
+        error::rejection::{HeaderRejection, PathRejection, QueryRejection},
+        extract::params::{
+            header::{DecodeHeaders, HeaderParams},
+            path::{DecodePath, PathParams},
+            query::{DecodeQuery, QueryParams},
+        },
+        http::{HeaderMap, HeaderValue},
+    };
+
+    for (query, named) in [
+        ("page=0", Some(PAGE_OUT_OF_RANGE)),
+        ("page=101", Some(PAGE_OUT_OF_RANGE)),
+        ("limit=0", None),
+    ] {
+        match NamedQuery::decode(Some(query)) {
+            Err(QueryRejection::Schema { type_uri, .. }) => assert_eq!(type_uri, named, "{query}"),
+            Err(other) => panic!("{query}: refused for another reason: {other}"),
+            Ok(_) => panic!("{query}: accepted"),
+        }
+    }
+    assert_eq!(NamedQuery::constraint_types(), [PAGE_OUT_OF_RANGE]);
+
+    assert!(matches!(
+        NamedPath::decode(&[("page", "101")]),
+        Err(PathRejection::Schema {
+            type_uri: Some(PAGE_OUT_OF_RANGE),
+            ..
+        })
+    ));
+    assert_eq!(NamedPath::constraint_types(), [PAGE_OUT_OF_RANGE]);
+
+    let mut headers = HeaderMap::new();
+    headers.insert("x-page", HeaderValue::from_static("101"));
+    assert!(matches!(
+        NamedHeaders::decode(&headers),
+        Err(HeaderRejection::Schema {
+            type_uri: Some(PAGE_OUT_OF_RANGE),
+            ..
+        })
+    ));
+    assert_eq!(NamedHeaders::constraint_types(), [PAGE_OUT_OF_RANGE]);
+
+    #[cfg(feature = "cookie")]
+    {
+        use kynos::{error::rejection::CookieRejection, extract::params::cookie::CookieParams};
+
+        let mut jar = HeaderMap::new();
+        jar.insert("cookie", HeaderValue::from_static("page=101"));
+        assert!(matches!(
+            NamedCookies::decode(&jar),
+            Err(CookieRejection::Schema {
+                type_uri: Some(PAGE_OUT_OF_RANGE),
+                ..
+            })
+        ));
+        assert_eq!(NamedCookies::constraint_types(), [PAGE_OUT_OF_RANGE]);
+    }
+
+    // A group naming none reports none.
+    assert!(<Bounded as QueryParams>::constraint_types().is_empty());
 }
 
 // --- The derived cookie decoder reads only a cookie that is text -----------

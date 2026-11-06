@@ -20,14 +20,12 @@
 
 use std::{collections::BTreeMap, marker::PhantomData, time::Duration};
 
-use kynos_openapi::{
-    Schema as OpenApiSchema, SchemaObject,
-    model::schema::types::{SchemaType, TypeSet},
-};
-use serde_json::json;
+use kynos_openapi::Schema as OpenApiSchema;
 
 use crate::{
-    error::problem::{IntoProblem, Member, Problem, narrowed_response, problem_response},
+    error::problem::{
+        Branch, IntoProblem, Member, PointerError, Problem, narrowed_response, problem_response,
+    },
     http::{HeaderValue, StatusCode, header, retry_after_header, set_retry_after},
     response::{IntoResponse, Responses},
     schema::registry::Registry,
@@ -104,39 +102,59 @@ macro_rules! rejection_response {
 }
 
 /// Schema failures as RFC 9457's `errors` extension, one entry per pointer.
-fn pointer_errors(failures: BTreeMap<String, String>) -> Vec<serde_json::Value> {
-    failures
-        .into_iter()
-        .map(|(pointer, detail)| json!({ "pointer": pointer, "detail": detail }))
-        .collect()
+fn pointer_errors(failures: BTreeMap<String, String>) -> serde_json::Value {
+    // Two strings serialize infallibly.
+    serde_json::to_value(PointerError::from_failures(failures)).unwrap_or_default()
 }
 
-/// What [`pointer_errors`] sends, declared: an array of `{pointer, detail}`
-/// objects, each pointer a JSON Pointer (RFC 6901).
+/// What [`pointer_errors`] sends, declared: an array of [`PointerError`]s.
 fn pointer_errors_schema(registry: &mut Registry) -> OpenApiSchema {
-    let detail = registry.resolve::<String>();
-    let mut pointer = detail.clone();
-    if let OpenApiSchema::Object(object) = &mut pointer {
-        object.format = Some("json-pointer".to_owned());
+    registry.resolve::<Vec<PointerError>>()
+}
+
+/// The problem a schema failure answers with at `status`: of the type the
+/// broken value's [`Schema::CONSTRAINT_TYPE`](crate::schema::Schema::CONSTRAINT_TYPE)
+/// names, else `about:blank`.
+///
+/// The title stays the status code's reason phrase either way, as a named
+/// [`AuthRejection::Forbidden`]'s does.
+fn schema_problem(status: StatusCode, type_uri: Option<&'static str>) -> Problem {
+    let problem = Problem::new(status);
+    match type_uri {
+        Some(type_uri) => Problem::of_type(status, type_uri, problem.title),
+        None => problem,
+    }
+}
+
+/// The response `status` declares for a broken bound on a value whose schema
+/// names one of `named` as its
+/// [`CONSTRAINT_TYPE`](crate::schema::Schema::CONSTRAINT_TYPE): one branch per
+/// type, each sending the [`pointer_errors`] member. Nothing where `named` is
+/// empty.
+///
+/// What an extractor adds to its rejection's own declaration, which already
+/// declares `about:blank` at `status` for every failure no schema names a type
+/// for; the two join into a choice.
+pub(crate) fn constraint_responses(
+    registry: &mut Registry,
+    status: StatusCode,
+    named: &[&'static str],
+) -> kynos_openapi::Responses {
+    if named.is_empty() {
+        return kynos_openapi::Responses::new();
     }
 
-    let entry = SchemaObject {
-        ty: Some(TypeSet::One(SchemaType::Object)),
-        properties: [
-            ("pointer".to_owned(), pointer),
-            ("detail".to_owned(), detail),
-        ]
-        .into_iter()
-        .collect(),
-        required: Some(vec!["pointer".to_owned(), "detail".to_owned()]),
-        ..SchemaObject::default()
-    };
+    let members: [Member; 1] = [("errors", pointer_errors_schema(registry), true)];
+    let branches: Vec<Branch<'_>> = named
+        .iter()
+        .map(|uri| (Some(*uri), None, &members[..]))
+        .collect();
+    let problem = registry.resolve::<Problem>();
 
-    OpenApiSchema::Object(Box::new(SchemaObject {
-        ty: Some(TypeSet::One(SchemaType::Array)),
-        items: Some(Box::new(OpenApiSchema::Object(Box::new(entry)))),
-        ..SchemaObject::default()
-    }))
+    kynos_openapi::Responses::new().with(
+        status.as_u16(),
+        narrowed_response(&problem, status.as_u16(), &branches),
+    )
 }
 
 /// Declares a parameter rejection: an `Invalid` and a `Schema` variant, both
@@ -181,6 +199,11 @@ macro_rules! parameter_rejection {
                     "."
                 )]
                 failures: BTreeMap<String, String>,
+                /// The problem `type` this rejection carries, or `about:blank`
+                /// when `None`: the
+                /// [`CONSTRAINT_TYPE`](crate::schema::Schema::CONSTRAINT_TYPE)
+                /// of the type whose bound was broken.
+                type_uri: Option<&'static str>,
             },
         }
 
@@ -206,7 +229,7 @@ macro_rules! parameter_rejection {
                         Problem::new(status).with_detail(format!("{summary}: {detail}"))
                     }
                     // Pointers are relative to the subject the detail names.
-                    Self::Schema { failures, .. } => Problem::new(status)
+                    Self::Schema { failures, type_uri, .. } => schema_problem(status, type_uri)
                         .with_detail(summary)
                         .with_extension("errors", pointer_errors(failures)),
                 }
@@ -332,6 +355,16 @@ pub enum BodyRejection {
     Schema {
         /// The failures, keyed by JSON Pointer into the body.
         failures: BTreeMap<String, String>,
+
+        /// The problem `type` this rejection carries, or `about:blank` when
+        /// `None`.
+        ///
+        /// A bound the body's type declares and the decoded body broke carries
+        /// that type's
+        /// [`CONSTRAINT_TYPE`](crate::schema::Schema::CONSTRAINT_TYPE). A body
+        /// that did not decode into the type at all carries `None`: no schema
+        /// was consulted.
+        type_uri: Option<&'static str>,
     },
 
     /// The `Content-Type` was absent or unsupported. Produces 415.
@@ -380,11 +413,13 @@ impl BodyRejection {
         }
     }
 
-    /// The 422 for one failure, keyed at `pointer`; the empty pointer for a
-    /// decoder that names no location.
+    /// The 422 for one decoding failure, keyed at `pointer`; the empty pointer
+    /// for a decoder that names no location. `about:blank`, since no bound
+    /// was consulted.
     pub(crate) fn schema_at(pointer: String, detail: String) -> Self {
         Self::Schema {
             failures: BTreeMap::from([(pointer, detail)]),
+            type_uri: None,
         }
     }
 }
@@ -397,7 +432,7 @@ impl IntoProblem for BodyRejection {
         match self {
             Self::Syntax { detail } => problem.with_detail(format!("{summary}: {detail}")),
 
-            Self::Schema { failures } => problem
+            Self::Schema { failures, type_uri } => schema_problem(problem.status, type_uri)
                 .with_detail(summary)
                 .with_extension("errors", pointer_errors(failures)),
 
