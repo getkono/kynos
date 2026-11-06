@@ -771,14 +771,11 @@ impl TestResponse {
             .get(crate::http::header::CONTENT_TYPE)
         {
             Some(value) => {
-                let essence = value
-                    .as_bytes()
-                    .split(|&octet| octet == b';')
-                    .next()
-                    .unwrap_or_default()
-                    .trim_ascii();
                 assert!(
-                    essence.eq_ignore_ascii_case(PROBLEM_JSON.as_bytes()),
+                    crate::http::eq_ignore_ascii_case(
+                        crate::http::media::split_essence(value.as_bytes()).0,
+                        PROBLEM_JSON.as_bytes()
+                    ),
                     "{}: expected `Content-Type: {PROBLEM_JSON}`, received `Content-Type: {}`\n{}",
                     self.exchange(),
                     value.as_bytes().escape_ascii(),
