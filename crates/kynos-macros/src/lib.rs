@@ -339,6 +339,28 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// struct InfoHashHex(#[schema(as = String, min_length = 40, max_length = 40)] InfoHash);
 /// ```
 ///
+/// A broken bound answers with `about:blank` unless the type names its own
+/// problem type with `#[schema(constraint_type = ...)]` on the type itself,
+/// which sets `Schema::CONSTRAINT_TYPE`: the type a body, a `QueryString` or
+/// a parameter field decodes into answers with it, at that input's own status.
+/// The value is any expression of type `&'static str`, typically a `const`
+/// from the application's problem catalogue. It is the only key a type's
+/// `#[schema(...)]` takes, and is taken once; a bound written on the type is
+/// refused, since it goes on the field whose value it holds.
+///
+/// ```ignore
+/// mod problems {
+///     pub const VALIDATION_FAILED: &str = "https://errors.example.com/validation-failed";
+/// }
+///
+/// #[derive(kynos::Schema, serde::Deserialize)]
+/// #[schema(constraint_type = problems::VALIDATION_FAILED)]
+/// struct NewTorrent {
+///     #[schema(max_length = 2048)]
+///     magnet: String,
+/// }
+/// ```
+///
 /// A concrete type takes its identifier as its component name, and a field
 /// referring back to it is a `$ref`. A generic type's instantiation takes its
 /// identifier joined by `_` to each type argument's component name and each

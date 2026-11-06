@@ -49,6 +49,9 @@ pub(crate) fn nullable(schema: OpenApiSchema) -> OpenApiSchema {
 /// Whether an *object field* of this type is also optional is a separate
 /// question, answered by the `required` list the derive builds.
 impl<T: Schema> Schema for Option<T> {
+    // `null` breaks no bound, so every failure is `T`'s.
+    const CONSTRAINT_TYPE: Option<&'static str> = T::CONSTRAINT_TYPE;
+
     fn schema(registry: &mut Registry) -> OpenApiSchema {
         nullable(registry.resolve::<T>())
     }
@@ -65,6 +68,8 @@ macro_rules! transparent {
     ($($ty:ident),+ $(,)?) => {
         $(
             impl<T: Schema> Schema for $ty<T> {
+                const CONSTRAINT_TYPE: Option<&'static str> = T::CONSTRAINT_TYPE;
+
                 fn schema(registry: &mut Registry) -> OpenApiSchema {
                     T::schema(registry)
                 }
@@ -81,7 +86,8 @@ macro_rules! transparent {
     };
 }
 
-// `name` delegates too, so a `Box<User>` and a `User` are one component.
+// `name` delegates too, so a `Box<User>` and a `User` are one component; and
+// `CONSTRAINT_TYPE`, so one answers as the other does.
 transparent!(Box, Arc);
 
 // The flatten markers carry across as `T`'s answer. Written out rather than in

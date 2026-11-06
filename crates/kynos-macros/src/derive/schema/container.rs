@@ -115,6 +115,39 @@ impl Container {
     }
 }
 
+/// The type's own `#[schema(constraint_type = ...)]`: the expression naming the
+/// problem type a broken bound answers with, written once.
+///
+/// It is the one key a type's `#[schema(...)]` takes, so any other is refused
+/// rather than ignored: a bound written on the type would otherwise read as
+/// enforced and be neither described nor checked.
+pub(super) fn constraint_type(input: &DeriveInput) -> syn::Result<Option<syn::Expr>> {
+    let mut named: Option<syn::Expr> = None;
+    for attr in &input.attrs {
+        if !attr.path().is_ident("schema") {
+            continue;
+        }
+        attr.parse_nested_meta(|meta| {
+            if !meta.path.is_ident("constraint_type") {
+                return Err(meta.error(
+                    "a type's `#[schema(...)]` takes only `constraint_type = ...`, the problem \
+                     type a broken bound answers with; bounds go on a field, whose value they \
+                     hold",
+                ));
+            }
+            if named.is_some() {
+                return Err(meta.error(
+                    "`constraint_type` is already set: a type answers a broken bound with one \
+                     problem type",
+                ));
+            }
+            named = Some(meta.value()?.parse()?);
+            Ok(())
+        })?;
+    }
+    Ok(named)
+}
+
 /// The `= "..."` of a nested-meta item, when it has one.
 pub(super) fn string_value(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<Option<String>> {
     if !meta.input.peek(syn::Token![=]) {
