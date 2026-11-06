@@ -569,6 +569,7 @@ RateLimit::new(policy).problem_type::<Throttled>()
 | --- | --- | --- |
 | `RateLimit` | `RateLimited`, `RateLimitedFields` (429) | `problem_type` |
 | `BodySize` | `BodySizeExceeded` (413) | `problem_type` |
+| `BodySize::deadline` | `BodyRefused` (408, 413) | `deadline_problem_type` for the 408, `problem_type` for the 413 |
 | `Timeout` | `TimedOut` (408) | `problem_type` |
 | `Concurrency` | `AtCapacity` (503) | `problem_type` |
 | `Csrf` | `CrossSite` (403) | `problem_type` |
@@ -576,7 +577,7 @@ RateLimit::new(policy).problem_type::<Throttled>()
 | `Decompression` | `Undecodable` (400, 413, 415) | `malformed_problem_type`, `too_large_problem_type`, `unsupported_coding_problem_type` |
 
 `Conditional`'s `NotModified` is absent because a 304 carries no body, and
-`Infallible` because it declares no status. Those are the two of the ten
+`Infallible` because it declares no status. Those are the two of the eleven
 `ShortCircuit` implementations that have no problem document to name.
 
 **The marker goes on the refusal, not on the interceptor.** A `ProblemType`
@@ -675,7 +676,7 @@ four different answers depending on which layer is asked.
 | Query-string length | subsumed by the URI | subsumed by the list size | — | — | yes, loosely |
 | Body size | — | — | every buffering body extractor, 2 MiB → 413 | `BodySize`, replacing the default where mounted | yes |
 | Request-head read time | `header_read_timeout`, 30 s | the first head only, by the server's bound | from accept to the first head, before a protocol is known: the earlier of `header_read_timeout` and `Http2Config::idle_timeout` | — | yes |
-| Slow body | — | — | `request_body_idle_timeout`, 30 s between frames → 408 | `Timeout`, *outside* `BodySize`, for a total | yes, by the gap |
+| Slow body | — | — | `request_body_idle_timeout`, 30 s between frames → 408 | `BodySize::deadline`, for a total → 408 | yes, by the gap |
 | Keep-alive idle | `header_read_timeout` covers the wait for the next head | `idle_timeout`, 30 s with no stream in flight → GOAWAY, then close; a stream counts until its response body ends | — | — | yes |
 | Vanished peer | `tcp_keepalive`, with nothing in flight | `Http2KeepAlive`, a PING after 30 s silent and 20 s to answer | `tcp_keepalive`, probing after 60 s idle, every 15 s | — | yes; mid-response over HTTP/1 by retransmission only |
 | Handler runtime | — | — | — | `Timeout`, when mounted | **no** |
@@ -744,14 +745,33 @@ protocol's 408 and a body whose every gap is under the limit but whose total is
 over it.
 
 A client that sends one byte every 29 seconds still passes. Bounding the
-*total* is `Timeout`'s job, and it bounds the read only when it is mounted
-*outside* the limit doing the reading — the earlier `intercept` call, per
-[the ordering rule](#the-order-a-chain-runs-in). The types do not enforce it;
-the `stalled_body` cases in [`tests/limits.rs`](../crates/kynos/tests/limits.rs)
-pin it in-process, with a `TestClient` body that stops: a length-less one is
-answered 408 under a `Timeout` outside `BodySize` and never inside it, while a
-declared length within the limit is read beneath `BodySize` and bounded in
-either order.
+*total* is `BodySize::deadline`'s job: the whole body must arrive within it,
+and a late one is answered with a 408 every covered operation declares. The
+clock lives in the interceptor that counts the cap, so no mounting order
+separates them, and the handler beneath is not bounded — an operation whose
+work legitimately waits minutes keeps a short deadline on its body. A
+length-less body is counted under the clock before the chain runs. A declared
+length is handed on unread, as without a deadline: a read of it that waits past
+the deadline fails, and once the chain returns the failure is answered with the
+408, carrying `Connection: close` over HTTP/1. The body is polled before the
+clock, for the reason an idle `BodyTimeout` is below: octets that already
+arrived are delivered however late they are read. A reader that defers its read
+past the deadline still spends it, since flow control then holds the client
+back. The `body_deadline` cases in
+[`tests/limits.rs`](../crates/kynos/tests/limits.rs) pin these with a paused
+clock, a body nothing reads never being late among them.
+
+`Timeout` bounds the total too, but only together with the handler, and only
+when it is mounted *outside* the limit doing the reading — the earlier
+`intercept` call, per [the ordering rule](#the-order-a-chain-runs-in). The
+types do not enforce that; the `stalled_body` cases pin it: a length-less body
+is answered 408 under a `Timeout` outside `BodySize` and never inside it, while
+a declared length within the limit is read beneath `BodySize` and bounded in
+either order. A deadline and a `Timeout` both declare 408, so `CompatibleWith`
+refuses the pair on one operation, as it refuses `BodySize` beside
+`Decompression`: one status cannot say which bound a client passed. A service
+wanting both gives the handler's timeout another status through
+`Timeout::answer_with`.
 
 **A response body is bounded by neither of the rows above.** `Timeout` wraps the
 chain's future, and that future completes when the *head* is ready. A handler
