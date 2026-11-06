@@ -661,6 +661,25 @@ places it matters are the slow-body row below,
 [where a cache sits](#where-a-cache-sits), and where
 [security headers](#security-headers) sit around one.
 
+**A chain reused across groups is one value and one type.** Each `intercept`
+changes the group's type, and a function handing out a group that is still to be
+mounted into has to name it. `kynos::stack!` names it in the order above, and
+`Group::intercept_all` takes the chain as a tuple, first element outermost:
+
+```rust,ignore
+fn writes(
+    prefix: &str,
+    deadline: Duration,
+    limit: u64,
+) -> Group<App, Propagate, kynos::stack![Timeout, BodySize]> {
+    Group::new(prefix).intercept_all((Timeout::new(deadline), BodySize::new(limit)))
+}
+```
+
+`intercept_all` is `intercept` once per element, so each element is checked
+exactly as that call would be. It is on `Group` only: a group is the unit a
+chain is shared between, and a router takes its own scope's chain once.
+
 ## What bounds a request before an interceptor runs
 
 An interceptor covers the operations in its subtree, which means it runs after

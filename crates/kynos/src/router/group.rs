@@ -9,7 +9,7 @@ use crate::{
         Interceptor,
         catch_panic::{Catch, PanicPolicy, Propagate},
         erased::ErasedInterceptor,
-        stack::{CompatibleStack, CompatibleWith, Cons, Flatten},
+        stack::{CompatibleStack, CompatibleWith, Cons, Flatten, InterceptorList},
     },
     response::ShortCircuit,
     router::error::RouterError,
@@ -165,6 +165,40 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
             .short_circuit_checks
             .push(short_circuit_mismatch::<N::Short>);
         group
+    }
+
+    /// Applies each interceptor in `chain` to every operation in this group,
+    /// first element outermost.
+    ///
+    /// Exactly [`intercept`](Group::intercept) once per element, in order, and
+    /// checked as those calls are: each element against the group's stack, the
+    /// endpoints already mounted, and the elements before it. What it adds is
+    /// that a chain is one value, so a function can hand it out, and that the
+    /// group it returns is named with [`stack!`](crate::stack!) in the same
+    /// order the tuple is written.
+    ///
+    /// ```no_run
+    /// use kynos::{
+    ///     middleware::{catch_panic::Propagate, limits::body_size::BodySize, request_id::RequestId},
+    ///     router::group::Group,
+    /// };
+    ///
+    /// fn uploads() -> Group<(), Propagate, kynos::stack![RequestId, BodySize]> {
+    ///     Group::new("/uploads").intercept_all((RequestId::new(), BodySize::new(1 << 20)))
+    /// }
+    /// # let _ = uploads();
+    /// ```
+    ///
+    /// Two elements that collide fail to compile, as two `intercept` calls do:
+    ///
+    /// ```compile_fail,E0080
+    /// use kynos::{middleware::request_id::RequestId, router::group::Group};
+    ///
+    /// let _ = Group::<()>::new("/a").intercept_all((RequestId::new(), RequestId::new()));
+    /// ```
+    #[must_use]
+    pub fn intercept_all<L: InterceptorList<C, I, S>>(self, chain: L) -> Group<C, P, L::Stack, S> {
+        crate::middleware::stack::sealed::Apply::apply(chain, self)
     }
 
     /// Mounts operations into this group.
