@@ -667,7 +667,11 @@ mounted into has to name it. `kynos::stack!` names it in the order above, and
 `Group::intercept_all` takes the chain as a tuple, first element outermost:
 
 ```rust,ignore
-fn writes(prefix: &str) -> Group<App, Propagate, kynos::stack![Timeout, BodySize]> {
+fn writes(
+    prefix: &str,
+    deadline: Duration,
+    limit: u64,
+) -> Group<App, Propagate, kynos::stack![Timeout, BodySize]> {
     Group::new(prefix).intercept_all((Timeout::new(deadline), BodySize::new(limit)))
 }
 ```
