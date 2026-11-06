@@ -581,9 +581,37 @@ mod schema {
         ]
     }
 
+    /// The refusals of a type's own `#[schema(...)]`, which takes
+    /// `constraint_type` alone, and once.
+    fn container_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a bound written on the type",
+                quote::quote!(
+                    #[schema(minimum = 1)]
+                    struct Order {
+                        total: u32,
+                    }
+                ),
+                "a type's `#[schema(...)]` takes only `constraint_type = ...`",
+            ),
+            case(
+                "`constraint_type` written twice",
+                quote::quote!(
+                    #[schema(constraint_type = "a", constraint_type = "b")]
+                    struct Order {
+                        total: u32,
+                    }
+                ),
+                "`constraint_type` is already set",
+            ),
+        ]
+    }
+
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
+        each_case_is_refused(container_ledger(), expand_inner);
         each_case_is_refused(number_ledger(), expand_inner);
         each_case_is_refused(content_ledger(), expand_inner);
         each_case_is_refused(described_as_ledger(), expand_inner);
@@ -651,12 +679,14 @@ mod schema {
 
     #[test]
     fn every_schema_diagnostic_has_a_case() {
-        // The derive raises the union refusal in `schema.rs` and every other
-        // rule in a module under `schema/refusals/`.
+        // The derive raises the union refusal in `schema.rs`, a type's own
+        // `#[schema(...)]` in `schema/container.rs` where it is read, and
+        // every other rule in a module under `schema/refusals/`.
         every_diagnostic_has_a_case(
-            "schema.rs` and `schema/refusals/",
+            "schema.rs`, `schema/container.rs` and `schema/refusals/",
             &[
                 include_str!("schema.rs"),
+                include_str!("schema/container.rs"),
                 include_str!("schema/refusals.rs"),
                 include_str!("schema/refusals/grammar.rs"),
                 include_str!("schema/refusals/naming.rs"),
@@ -667,6 +697,7 @@ mod schema {
             ]
             .concat(),
             ledger().len()
+                + container_ledger().len()
                 + number_ledger().len()
                 + content_ledger().len()
                 + described_as_ledger().len()
