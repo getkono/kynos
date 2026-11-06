@@ -579,8 +579,9 @@ fn number(name: &str, value: &Expr) -> Option<TokenStream2> {
         {
             // The cast is the point: the bound is described as an `f64`.
             #[allow(clippy::cast_lossless, clippy::cast_precision_loss)]
-            const __KYNOS_BOUND: f64 = {
-                let bound = ::kynos::__private::constraints::number_bound(#value) as f64;
+            const __KYNOS_BOUND: ::core::primitive::f64 = {
+                let bound = ::kynos::__private::constraints::number_bound(#value)
+                    as ::core::primitive::f64;
                 ::core::assert!(bound.is_finite(), #refusal);
                 bound
             };
@@ -615,10 +616,14 @@ fn count(name: &str, value: &Expr) -> Option<TokenStream2> {
                 clippy::cast_possible_wrap,
                 clippy::cast_sign_loss
             )]
-            const __KYNOS_BOUND: u64 = {
-                let bound = ::kynos::__private::constraints::count_bound(#value) as i128;
-                ::core::assert!(0 <= bound && bound <= u64::MAX as i128, #refusal);
-                bound as u64
+            const __KYNOS_BOUND: ::core::primitive::u64 = {
+                let bound = ::kynos::__private::constraints::count_bound(#value)
+                    as ::core::primitive::i128;
+                ::core::assert!(
+                    0 <= bound && bound <= ::core::primitive::u64::MAX as ::core::primitive::i128,
+                    #refusal
+                );
+                bound as ::core::primitive::u64
             };
             __KYNOS_BOUND
         }
