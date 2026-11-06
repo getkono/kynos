@@ -330,6 +330,33 @@ pub(super) fn described_as(field: &Field) -> Option<Type> {
     described_as_keys(field).pop().map(|(_, ty)| ty)
 }
 
+/// Each `via = path` a field's `#[schema(...)]` lists, at its key, in the
+/// order written; `check_constraints` refuses a second one, and one without
+/// an `as`.
+pub(super) fn described_via_keys(field: &Field) -> Vec<(Span, syn::ExprPath)> {
+    let mut found = Vec::new();
+    for attr in &field.attrs {
+        if !attr.path().is_ident("schema") {
+            continue;
+        }
+        // Shape errors in the list are `check_constraints`' to report.
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("via") {
+                found.push((meta.path.span(), meta.value()?.parse()?));
+                return Ok(());
+            }
+            skip_schema_value(&meta)
+        });
+    }
+    found
+}
+
+/// The function a field's `#[schema(as = T, via = path)]` converts it to `T`
+/// through, if it names one.
+pub(super) fn described_via(field: &Field) -> Option<syn::ExprPath> {
+    described_via_keys(field).pop().map(|(_, path)| path)
+}
+
 /// The type a field's schema is resolved from: its `as`, else its own.
 pub(super) fn described_type(field: &Field) -> Type {
     described_as(field).unwrap_or_else(|| field.ty.clone())
@@ -445,7 +472,7 @@ impl ToTokens for BoundValue {
 }
 
 /// A field's `#[schema(...)]` constraints, in the order written; shared by
-/// [`constraints`] and `check::value_checks` so both read the attribute alike.
+/// [`constraints`] and `check::value::value_checks` so both read the attribute alike.
 pub(super) fn bounds(field: &Field) -> Vec<Bound> {
     let mut bounds = Vec::new();
 
@@ -460,12 +487,12 @@ pub(super) fn bounds(field: &Field) -> Vec<Bound> {
             };
             let name = key.to_string();
 
-            // Neither is a constraint: `object_body` reads `open`, and
-            // `described_as` reads `as`.
+            // None is a constraint: `object_body` reads `open`,
+            // `described_as` reads `as` and `described_via` reads `via`.
             if name == "open" {
                 return Ok(());
             }
-            if name == "as" {
+            if name == "as" || name == "via" {
                 return skip_schema_value(&meta);
             }
 

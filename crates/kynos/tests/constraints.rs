@@ -344,6 +344,46 @@ async fn a_field_described_as_another_type_is_held_to_what_that_type_states() {
     refuses::<Reading>(short, &["/ticket"]).await;
 }
 
+/// A code serde reads as a bare string, standing in for a type from another
+/// crate: nothing here implements `From<&Voucher>` for a type it describes.
+#[derive(Debug, Deserialize)]
+#[serde(transparent)]
+struct Voucher(String);
+
+impl Voucher {
+    fn code(&self) -> String {
+        self.0.clone()
+    }
+
+    fn sku(&self) -> Sku {
+        Sku(self.0.clone())
+    }
+}
+
+/// Fields converted through a named function rather than `From`: one under a
+/// bound of its own, and one under the bound the type it names declares.
+#[derive(Debug, Schema, Deserialize)]
+struct Redemption {
+    #[schema(as = String, via = Voucher::code, max_length = 4)]
+    voucher: Voucher,
+    #[schema(as = Sku, via = Voucher::sku)]
+    item: Voucher,
+}
+
+#[tokio::test]
+async fn a_field_converted_through_a_named_function_is_held_to_what_its_type_states() {
+    let redemption = json!({ "voucher": "abcd", "item": "abc" });
+    admits::<Redemption>(redemption.clone()).await;
+
+    let mut long = redemption.clone();
+    long["voucher"] = json!("abcde");
+    refuses::<Redemption>(long, &["/voucher"]).await;
+
+    let mut short = redemption;
+    short["item"] = json!("ab");
+    refuses::<Redemption>(short, &["/item"]).await;
+}
+
 /// A count serde reads as a number, which is a kind of its own.
 #[derive(Debug, Deserialize)]
 #[serde(transparent)]
