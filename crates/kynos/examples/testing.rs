@@ -113,8 +113,10 @@ pub(crate) async fn main() -> kynos::Result<()> {
 
     // The failure path, asserted by its problem type rather than by its prose.
     // The `type` URI is the stable identifier a client branches on; the
-    // `detail` is a sentence that may be reworded.
-    client
+    // `detail` is a sentence that may be reworded. `assert_problem` holds the
+    // status and the `application/problem+json` media type with it, and
+    // `problem` reads the members typed for whatever else a test checks.
+    let problem = client
         .post("/users")
         .json(&User {
             id: 42,
@@ -122,8 +124,12 @@ pub(crate) async fn main() -> kynos::Result<()> {
         })
         .send()
         .await
-        .assert_status(StatusCode::CONFLICT)
-        .assert_problem_type("https://errors.example.com/name-taken");
+        .assert_problem(
+            StatusCode::CONFLICT,
+            "https://errors.example.com/name-taken",
+        )
+        .problem();
+    println!("refused: {}", problem.detail.unwrap_or_default());
 
     // Everything else the two operations declare. A rejection is a declared
     // response like any other, so exercising the API means exercising the ways
