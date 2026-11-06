@@ -106,18 +106,20 @@ output (rule 11). The lists — `server`, `tag`, `security_scheme` — union acr
 outer router's value is published when it sets one, and otherwise the first
 absorbed router's.
 
-A tag is applied at four scopes, and they add rather than override:
-`Router::tag`, `Group::tag`, `EndpointBuilder::tag`, and `tag = T` on the route
-attribute itself. Only the last is a fact about the operation rather than about
-what encloses it, which is why it is the only one readable without building a
-router — it becomes
+A tag is applied at five scopes, and they add rather than override:
+`Router::tag`, `Group::tag`, `EndpointBuilder::tag`, `tag = T` on the route
+attribute itself, and [`Docs::tag`](../crates/kynos/src/router/docs/mod.rs) on
+the operations a reference mounts. `tag = T` and `Docs::tag` are facts about
+the operation rather than about what encloses it: `Docs::tag` adds the own tags
+of the operations its reference mounts, which no `Group` reaches. Only
+`tag = T` is readable without building a router — it becomes
 [`EndpointMeta::TAGS`](../crates/kynos/src/router/endpoint/meta.rs). The
 attribute names one tag; the enclosing scopes are how an operation acquires the
 rest.
 
 They add in one order: the operation's own tags first — the attribute's, then
-any `EndpointBuilder::tag` — and then every enclosing scope, **outermost
-first**. A router's blanket tag therefore precedes the tag of a group inside it,
+any `EndpointBuilder::tag`, or for a reference's operations its `Docs::tag`
+calls in call order — and then every enclosing scope, **outermost first**. A router's blanket tag therefore precedes the tag of a group inside it,
 and a nested router's precedes its own groups'. Most generators bucket an
 operation by its first tag, so an operation that tags itself wins its own
 primary bucket; one that does not is bucketed by its outermost enclosing scope,
