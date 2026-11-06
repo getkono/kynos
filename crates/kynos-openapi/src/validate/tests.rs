@@ -2056,6 +2056,89 @@ fn an_additional_operation_is_held_to_the_operation_rules_at_its_key() {
     );
 }
 
+/// The error-level violations at a `QUERY` operation on `/search` whose
+/// `requestBody` is `body`, beside a `requestBodies` component `Filter` holding
+/// `component`.
+#[cfg(feature = "openapi32")]
+fn query_violations(
+    body: Option<crate::model::reference::RefOr<crate::model::body::RequestBody>>,
+    component: crate::model::body::RequestBody,
+) -> Vec<(String, SpecError)> {
+    let mut operation = Operation::new("search").with_responses(ok_responses());
+    operation.request_body = body;
+    let mut document = document_with(&[(
+        "/search",
+        PathItem::new().with_operation(Method::Query, operation),
+    )]);
+    document.components.request_bodies.insert(
+        "Filter".to_owned(),
+        crate::model::reference::RefOr::Item(component),
+    );
+
+    located_errors_3_2(&document)
+        .into_iter()
+        .filter(|(at, _)| at == "#/paths/~1search/query")
+        .collect()
+}
+
+/// RFC 10008 section 2: a `QUERY`'s content and its media type are the query,
+/// and a request without `Content-Type` fails. An operation that declares no
+/// body, or lets a client omit it, describes requests that can only fail; one
+/// whose body is required, inline or through a component, is accepted.
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_query_operation_must_require_its_request_body() {
+    use crate::model::{
+        body::RequestBody,
+        reference::{Ref, RefOr},
+    };
+
+    let body = || RequestBody::json(Schema::of_type(SchemaType::Object));
+    let refused = |violations: Vec<(String, SpecError)>| violations.len() == 1;
+
+    assert!(refused(query_violations(None, body())), "no body");
+    assert!(
+        refused(query_violations(
+            Some(RefOr::Item(body().optional())),
+            body()
+        )),
+        "an optional body"
+    );
+    assert!(
+        refused(query_violations(
+            Some(RefOr::Ref(Ref::request_body("Filter"))),
+            body().optional()
+        )),
+        "a reference to an optional body"
+    );
+
+    assert_eq!(
+        query_violations(Some(RefOr::Item(body())), body()),
+        vec![],
+        "a required body"
+    );
+    assert_eq!(
+        query_violations(Some(RefOr::Ref(Ref::request_body("Filter"))), body()),
+        vec![],
+        "a reference to a required body"
+    );
+}
+
+/// The rule is `QUERY`'s alone: any other method may declare no body.
+#[cfg(feature = "openapi32")]
+#[test]
+fn only_a_query_operation_must_require_a_request_body() {
+    let item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("search").with_responses(ok_responses()),
+    );
+
+    assert_eq!(
+        located_errors_3_2(&document_with(&[("/search", item)])),
+        vec![]
+    );
+}
+
 /// Every component section's keys are checked, not five of them.
 ///
 /// `references/3.1.2.md:593`: "**All** the fixed fields declared above are
