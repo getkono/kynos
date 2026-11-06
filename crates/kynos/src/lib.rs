@@ -172,8 +172,8 @@ pub mod prelude {
         router::{Router, group::Group},
         // Unaliased: rustc names a trait by its shortest visible path in
         // diagnostics. The derive shares the name from the macro namespace.
-        schema::Schema,
-        security::auth::Auth,
+        schema::{ParamValue, Schema},
+        security::auth::{Auth, Scoped},
     };
 
     #[cfg(feature = "json")]
@@ -181,8 +181,9 @@ pub mod prelude {
 
     #[cfg(feature = "macros")]
     pub use crate::{
-        ApiError, HeaderParams, PathParams, Provider, QueryParams, Reply, Schema, SecurityScheme,
-        Tag, delete, get, head, operation, options, patch, path, post, put, routes, trace,
+        ApiError, HeaderParams, ParamValue, PathParams, Provider, QueryParams, Reply, Schema,
+        SecurityScheme, Tag, delete, get, head, operation, options, patch, path, post, put, routes,
+        trace,
     };
 
     #[cfg(feature = "cookie")]
