@@ -41,7 +41,7 @@
 //! property of the field rather than of the body. `Thumbnail` says so on its
 //! field, with `content_encoding` and `content_media_type`.
 
-use std::net::Ipv4Addr;
+use std::{net::Ipv4Addr, time::Duration};
 
 use kynos::{
     error::rejection::NegotiationRejection,
@@ -357,9 +357,12 @@ async fn main() -> kynos::Result<()> {
         // A budget rather than a derivation: `Upload` bounds how many images
         // arrive, not how large each is, so this allows `max_items = 8` of the
         // megabyte `replace_image` takes, plus room for each part's headers.
+        // The largest body here also gets a deadline: all of it must arrive
+        // within a minute, or the client is answered 408. Unlike a `Timeout`,
+        // it leaves the handler unbounded once the body is in.
         kynos::routes![upload_images]
             .0
-            .intercept(BodySize::new(8 * MIB + 64 * KIB)),
+            .intercept(BodySize::new(8 * MIB + 64 * KIB).deadline(Duration::from_secs(60))),
         // A megabyte, which is what the thumbnail's `maxLength` decodes to: one
         // image size across all three binary shapes.
         kynos::routes![replace_image]
