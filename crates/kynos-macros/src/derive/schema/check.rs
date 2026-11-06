@@ -9,8 +9,8 @@ use super::{
     Container, DataEnum, DeriveInput, Field, Fields, TokenStream2, Variant,
     aliases::{read_names, variants_read_names},
     attributes::{
-        Bound, DefaultFrom, bounds, described_as, is_described, is_phantom, is_unit_like,
-        serde_default,
+        Bound, DefaultFrom, bounds, described_as, described_via, is_described, is_phantom,
+        is_unit_like, serde_default,
     },
     described_variants, is_flattened, positional_members, quote, transparent_member,
 };
@@ -358,12 +358,20 @@ fn member(
 }
 
 /// [`value_checks`], or under `#[schema(as = T)]` the same on the `T` converted
-/// through `From<&F>`, spanned at `T` so a missing conversion is reported there.
+/// through `From<&F>`, spanned at `T` so a missing conversion is reported there;
+/// under `via = path` too, converted by calling `path` on the `&F` instead,
+/// spanned at `path` so a function of another signature is reported there.
 fn described_checks(field: &Field) -> TokenStream2 {
     let Some(described) = described_as(field) else {
         return value_checks(field);
     };
     let (ty, checks) = (&field.ty, checks_on(field, &described));
+    if let Some(via) = described_via(field) {
+        return quote_spanned! {via.span()=>
+            let value: &#described = &#via(value);
+            #checks
+        };
+    }
     quote_spanned! {described.span()=>
         let value: &#described = &<#described as ::core::convert::From<&#ty>>::from(value);
         #checks
