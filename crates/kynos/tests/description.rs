@@ -44,6 +44,10 @@
 //! The eighth is what an interceptor's `Reads` answers with when it cannot be
 //! decoded. The 400 is sent before the interceptor runs, so nothing in its
 //! `Short` names it, and a document that left it out would still validate.
+//!
+//! The ninth is what a broken bound publishes when the type holding it names
+//! a problem type: the extractor's rejection declares `about:blank` alone, so
+//! a document that never consulted the type would still validate.
 
 #![cfg(all(feature = "macros", feature = "json"))]
 
@@ -2494,4 +2498,106 @@ fn an_interceptor_whose_reads_cannot_fail_declares_no_rejection() {
         .expect("a describable router");
 
     assert_eq!(declaring(&document, "400"), BTreeSet::new());
+}
+
+// --- Scope in what a broken bound publishes ----------------------------------
+//
+// `Schema::CONSTRAINT_TYPE` puts an application's own problem type on the
+// refusal of a value breaking a bound its type declares. The status keeps the
+// type an input decodes into beside `about:blank`, which the same input still
+// sends for a value that never decoded, and only where that input reads a type
+// naming one.
+
+/// The problem type the types below name.
+const VALIDATION_FAILED: &str = "https://errors.example.com/validation-failed";
+
+#[derive(Schema, serde::Deserialize)]
+#[schema(constraint_type = VALIDATION_FAILED)]
+struct NewTorrent {
+    #[schema(max_length = 2048)]
+    magnet: String,
+}
+
+#[derive(Schema, serde::Deserialize)]
+struct Untyped {
+    #[schema(max_length = 2048)]
+    magnet: String,
+}
+
+/// A page size naming the same type, as a query parameter's value.
+#[derive(Schema, Debug)]
+#[schema(constraint_type = VALIDATION_FAILED)]
+struct Limit(#[schema(maximum = 100)] u32);
+
+impl std::str::FromStr for Limit {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        raw.parse().map(Self)
+    }
+}
+
+impl std::fmt::Display for Limit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl kynos::schema::ParamValue for Limit {}
+
+#[derive(Schema, kynos::QueryParams)]
+struct TorrentPage {
+    limit: Option<Limit>,
+}
+
+#[kynos::post("/torrents")]
+async fn add_torrent(
+    _: kynos::extract::params::query::Query<TorrentPage>,
+    _: kynos::extract::body::json::Json<NewTorrent>,
+) -> NoContent {
+    NoContent
+}
+
+#[kynos::post("/untyped")]
+async fn add_untyped(_: kynos::extract::body::json::Json<Untyped>) -> NoContent {
+    NoContent
+}
+
+/// A body and a parameter whose types name a problem type declare it beside
+/// `about:blank`, each at its input's own status, with the `errors` member it
+/// always sends; a body whose type names none declares `about:blank` alone.
+#[test]
+fn a_named_constraint_type_is_declared_beside_about_blank() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![add_torrent, add_untyped])
+        .openapi()
+        .expect("a describable router");
+
+    for status in ["400", "422"] {
+        let schema = declared_problem_schema(&document, "/torrents", status);
+        let mut published = published(&schema);
+        published.sort();
+        assert_eq!(
+            published,
+            ["about:blank", VALIDATION_FAILED],
+            "{status}: {schema}"
+        );
+
+        let named = schema["oneOf"]
+            .as_array()
+            .and_then(|branches| {
+                branches.iter().find(|branch| {
+                    branch["allOf"][1]["properties"]["type"]["const"] == VALIDATION_FAILED
+                })
+            })
+            .unwrap_or_else(|| panic!("{status}: no branch for the named type: {schema}"));
+        assert_eq!(
+            named["allOf"][1]["required"],
+            serde_json::json!(["errors"]),
+            "{status}: {named}"
+        );
+    }
+
+    let schema = declared_problem_schema(&document, "/untyped", "422");
+    assert_eq!(published(&schema), ["about:blank"], "{schema}");
 }

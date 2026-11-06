@@ -518,7 +518,7 @@ async fn a_record_that_does_not_fit_the_type_does_not_end_the_stream() {
         .expect_err("a value of the wrong type is a rejection");
 
     assert_eq!(rejection.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    let BodyRejection::Schema { failures } = &rejection else {
+    let BodyRejection::Schema { failures, .. } = &rejection else {
         panic!("an ill-fitting record is a schema rejection, not {rejection:?}");
     };
     assert_eq!(
@@ -549,7 +549,7 @@ async fn an_array_for_a_struct_record_is_refused_at_its_index() {
             .await
             .expect("the array record is reported")
             .expect_err("an array is not an object");
-        let BodyRejection::Schema { failures } = &rejection else {
+        let BodyRejection::Schema { failures, .. } = &rejection else {
             panic!("an array record is a schema rejection, not {rejection:?}");
         };
         assert_eq!(failures.keys().collect::<Vec<_>>(), vec!["/0"]);

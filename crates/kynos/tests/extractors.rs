@@ -282,7 +282,7 @@ mod content_type {
             rejection.status(),
             kynos::http::StatusCode::UNPROCESSABLE_ENTITY
         );
-        let BodyRejection::Schema { failures } = rejection else {
+        let BodyRejection::Schema { failures, .. } = rejection else {
             panic!("expected a schema failure, got {rejection:?}");
         };
         assert_eq!(
@@ -524,7 +524,7 @@ mod multipart {
     /// Asserts `rejection` is the 422 keyed at `a/b`'s RFC 6901 pointer,
     /// `/a~1b`, rather than the unescaped `/a/b` naming member `b` of `a`.
     fn assert_at_slashed(rejection: BodyRejection, detail: &str) {
-        let BodyRejection::Schema { failures } = rejection else {
+        let BodyRejection::Schema { failures, .. } = rejection else {
             panic!("expected a schema failure, got {rejection:?}");
         };
         assert_eq!(
@@ -662,7 +662,7 @@ mod multipart {
             (malformed, "the part is not valid UTF-8"),
             (missing, "the part is required"),
         ] {
-            let BodyRejection::Schema { failures } = rejection else {
+            let BodyRejection::Schema { failures, .. } = rejection else {
                 panic!("expected a schema failure, got {rejection:?}");
             };
             assert_eq!(
@@ -692,7 +692,7 @@ mod multipart {
         )
         .await
         .expect_err("`extra` is not declared");
-        let BodyRejection::Schema { failures } = rejection else {
+        let BodyRejection::Schema { failures, .. } = rejection else {
             panic!("expected a schema failure, got {rejection:?}");
         };
         assert_eq!(
@@ -730,7 +730,7 @@ mod a_json_struct_body {
             .await
             .err()
             .unwrap_or_else(|| panic!("{:?} is not an object", String::from_utf8_lossy(body)));
-        let BodyRejection::Schema { failures } = rejection else {
+        let BodyRejection::Schema { failures, .. } = rejection else {
             panic!("expected a 422, got {rejection:?}");
         };
         assert_eq!(failures.keys().collect::<Vec<_>>(), [""], "{failures:?}");

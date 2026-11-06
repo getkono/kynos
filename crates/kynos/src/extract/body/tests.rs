@@ -476,7 +476,7 @@ mod a_param_value_part_is_read_as_its_text {
     /// The 422's failures, keyed by JSON Pointer.
     fn failures<T: std::fmt::Debug>(result: Result<T, BodyRejection>) -> BTreeMap<String, String> {
         let rejection = result.expect_err("a refused part");
-        let BodyRejection::Schema { failures } = rejection else {
+        let BodyRejection::Schema { failures, .. } = rejection else {
             panic!("expected a 422, got {rejection:?}");
         };
         failures
@@ -992,7 +992,7 @@ mod a_form_body_decodes_what_it_describes {
             .expect_err("`first` is not a `u32`");
 
         assert_eq!(rejection.status(), StatusCode::UNPROCESSABLE_ENTITY);
-        let BodyRejection::Schema { failures } = rejection else {
+        let BodyRejection::Schema { failures, .. } = rejection else {
             panic!("expected a schema failure, got {rejection:?}");
         };
         assert_eq!(
@@ -1032,7 +1032,7 @@ mod a_form_body_decodes_what_it_describes {
             .expect_err("a scalar takes one pair");
 
         assert_eq!(rejection.status(), StatusCode::UNPROCESSABLE_ENTITY);
-        let BodyRejection::Schema { failures } = rejection else {
+        let BodyRejection::Schema { failures, .. } = rejection else {
             panic!("expected a schema failure, got {rejection:?}");
         };
         assert_eq!(failures.keys().collect::<Vec<_>>(), [""]);
@@ -1992,7 +1992,7 @@ mod a_json_body_under_a_declared_media_type {
         ))
         .await
         .expect_err("a string is not a `u32`");
-        let BodyRejection::Schema { failures } = rejection else {
+        let BodyRejection::Schema { failures, .. } = rejection else {
             panic!("{rejection:?}");
         };
         assert_eq!(failures.keys().collect::<Vec<_>>(), [""]);
@@ -2006,7 +2006,7 @@ mod a_json_body_under_a_declared_media_type {
         ))
         .await
         .expect_err("a count of zero breaks the bound");
-        let BodyRejection::Schema { failures } = rejection else {
+        let BodyRejection::Schema { failures, .. } = rejection else {
             panic!("{rejection:?}");
         };
         assert_eq!(failures.keys().collect::<Vec<_>>(), ["/count"]);
@@ -2022,7 +2022,7 @@ mod a_json_body_under_a_declared_media_type {
         ))
         .await
         .expect_err("an array is not an object");
-        let BodyRejection::Schema { failures } = rejection else {
+        let BodyRejection::Schema { failures, .. } = rejection else {
             panic!("{rejection:?}");
         };
         assert_eq!(failures.keys().collect::<Vec<_>>(), [""]);
@@ -2126,7 +2126,7 @@ mod a_nested_json_struct_is_read_only_from_an_object {
     fn refused<T: serde::de::DeserializeOwned + std::fmt::Debug>(body: &str, at: &str) {
         let failure = strict_json::from_slice::<T>(body.as_bytes())
             .expect_err(&format!("{body}: an array is not an object"));
-        let BodyRejection::Schema { failures } = json::rejection(failure) else {
+        let BodyRejection::Schema { failures, .. } = json::rejection(failure) else {
             panic!("{body}: expected a 422");
         };
         assert_eq!(failures.keys().collect::<Vec<_>>(), [at], "{body}");
@@ -2407,7 +2407,7 @@ mod a_json_failure_is_keyed_where_it_happened {
         let failure = strict_json::from_slice::<T>(body)
             .expect_err(&format!("{}: does not fit", String::from_utf8_lossy(body)));
         let body = String::from_utf8_lossy(body);
-        let BodyRejection::Schema { failures } = json::rejection(failure) else {
+        let BodyRejection::Schema { failures, .. } = json::rejection(failure) else {
             panic!("{body}: expected a 422");
         };
         let mut pointers = failures.into_keys();
@@ -2859,7 +2859,7 @@ mod a_body_in_an_outside_format {
         .await
         .expect_err("one past u64::MAX");
         assert_eq!(rejection.status(), StatusCode::UNPROCESSABLE_ENTITY);
-        let BodyRejection::Schema { failures } = rejection else {
+        let BodyRejection::Schema { failures, .. } = rejection else {
             panic!("{rejection:?}");
         };
         assert_eq!(
@@ -2877,7 +2877,7 @@ mod a_body_in_an_outside_format {
         .await
         .expect_err("a count of zero breaks the bound");
         assert_eq!(rejection.status(), StatusCode::UNPROCESSABLE_ENTITY);
-        let BodyRejection::Schema { failures } = rejection else {
+        let BodyRejection::Schema { failures, .. } = rejection else {
             panic!("{rejection:?}");
         };
         assert_eq!(failures.keys().collect::<Vec<_>>(), ["/count"]);

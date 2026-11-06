@@ -6,7 +6,7 @@ use syn::{DeriveInput, spanned::Spanned};
 
 use crate::derive::{
     common::{NameCase, named_fields, names_const, reject_duplicate_names, wire_names},
-    params::{Param, check_field, construct, decode_field, parameters_body},
+    params::{Param, check_field, constraint_types_body, construct, decode_field, parameters_body},
 };
 
 /// A path variable is always captured, and an absent one would render as an
@@ -56,6 +56,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let value = construct(&params);
 
     let parameters = parameters_body(&params, &quote!(::kynos::openapi::ParameterIn::Path), true);
+    let constraint_types = constraint_types_body(&params);
     let encode = encode_body(&params);
 
     Ok(quote! {
@@ -68,6 +69,10 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
                 registry: &mut ::kynos::schema::registry::Registry,
             ) -> ::std::vec::Vec<::kynos::openapi::Parameter> {
                 #parameters
+            }
+
+            fn constraint_types() -> ::std::vec::Vec<&'static str> {
+                #constraint_types
             }
         }
 

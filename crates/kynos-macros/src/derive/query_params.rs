@@ -5,7 +5,9 @@ use syn::{DeriveInput, Ident};
 
 use crate::derive::{
     common::{NameCase, named_fields, reject_duplicate_names, wire_names},
-    params::{Param, check_field, construct, decode_field, parameters_body, render},
+    params::{
+        Param, check_field, constraint_types_body, construct, decode_field, parameters_body, render,
+    },
 };
 
 pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
@@ -50,6 +52,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         quote!(#decoded #checked)
     });
     let value = construct(&params);
+    let constraint_types = constraint_types_body(&params);
 
     let parameters = parameters_body(
         &params,
@@ -66,6 +69,10 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
                 registry: &mut ::kynos::schema::registry::Registry,
             ) -> ::std::vec::Vec<::kynos::openapi::Parameter> {
                 #parameters
+            }
+
+            fn constraint_types() -> ::std::vec::Vec<&'static str> {
+                #constraint_types
             }
         }
 

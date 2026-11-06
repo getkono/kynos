@@ -2,6 +2,8 @@ use super::{
     AuthRejection, BodyRejection, HeaderRejection, NegotiationRejection, PathRejection,
     QueryRejection, RangeRejection,
 };
+use serde_json::Value;
+
 use crate::{error::problem::IntoProblem, http::StatusCode};
 
 /// Every status a rejection can return at run time has to appear in the set it
@@ -62,6 +64,7 @@ fn each_body_failure_has_its_own_status() {
             failures: [("/id".to_owned(), "expected integer".to_owned())]
                 .into_iter()
                 .collect(),
+            type_uri: None,
         },
         BodyRejection::UnsupportedMediaType {
             received: Some("text/csv".into()),
@@ -98,6 +101,7 @@ fn a_schema_failure_travels_as_one_errors_entry_per_pointer() {
         ]
         .into_iter()
         .collect(),
+        type_uri: None,
     }
     .into_problem();
 
@@ -129,6 +133,7 @@ fn a_query_schema_failure_travels_as_one_errors_entry_per_pointer() {
         ]
         .into_iter()
         .collect(),
+        type_uri: None,
     }
     .into_problem();
 
@@ -158,6 +163,7 @@ fn a_path_header_or_cookie_schema_failure_travels_as_an_errors_entry() {
             PathRejection::Schema {
                 name: "id".into(),
                 failures: failures(),
+                type_uri: None,
             }
             .into_problem(),
             "path parameter `id` does not satisfy its schema",
@@ -166,6 +172,7 @@ fn a_path_header_or_cookie_schema_failure_travels_as_an_errors_entry() {
             HeaderRejection::Schema {
                 name: "X-Page".into(),
                 failures: failures(),
+                type_uri: None,
             }
             .into_problem(),
             "header `X-Page` does not satisfy its schema",
@@ -175,6 +182,7 @@ fn a_path_header_or_cookie_schema_failure_travels_as_an_errors_entry() {
             super::CookieRejection::Schema {
                 name: "page".into(),
                 failures: failures(),
+                type_uri: None,
             }
             .into_problem(),
             "cookie `page` does not satisfy its schema",
@@ -191,6 +199,90 @@ fn a_path_header_or_cookie_schema_failure_travels_as_an_errors_entry() {
                 "detail": detail,
                 "errors": [{ "pointer": "", "detail": "must be at least 1" }],
             })
+        );
+    }
+}
+
+/// A schema failure naming a problem type carries it, at its own status and
+/// under the status's reason phrase, as a body's and as a parameter's; the
+/// `errors` member is unchanged by it.
+#[test]
+fn a_schema_failure_carries_the_type_its_schema_names() {
+    const NAMED: &str = "https://errors.example.com/validation-failed";
+    let failures = || [("/limit".to_owned(), "must be at most 100".to_owned())].into();
+    let problems = [
+        (
+            BodyRejection::Schema {
+                failures: failures(),
+                type_uri: Some(NAMED),
+            }
+            .into_problem(),
+            "Unprocessable Entity",
+            422,
+            "the request body does not satisfy its schema",
+        ),
+        (
+            QueryRejection::Schema {
+                name: "querystring".into(),
+                failures: failures(),
+                type_uri: Some(NAMED),
+            }
+            .into_problem(),
+            "Bad Request",
+            400,
+            "query parameter `querystring` does not satisfy its schema",
+        ),
+    ];
+
+    for (problem, title, status, detail) in problems {
+        assert_eq!(
+            serde_json::to_value(problem).expect("a problem serializes"),
+            serde_json::json!({
+                "type": NAMED,
+                "title": title,
+                "status": status,
+                "detail": detail,
+                "errors": [{ "pointer": "/limit", "detail": "must be at most 100" }],
+            })
+        );
+    }
+}
+
+/// What an extractor adds for the types its schemas name: nothing where none
+/// is named, and otherwise one branch per distinct type at the status asked
+/// for, each requiring the `errors` member every such failure sends.
+#[test]
+fn a_named_constraint_type_declares_a_branch_of_its_own() {
+    use crate::schema::registry::Registry;
+
+    let registry = &mut Registry::new();
+    assert!(
+        super::constraint_responses(registry, StatusCode::BAD_REQUEST, &[])
+            .responses
+            .is_empty()
+    );
+
+    let first = "https://errors.example.com/out-of-range";
+    let second = "https://errors.example.com/validation-failed";
+    let responses = serde_json::to_value(super::constraint_responses(
+        registry,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        &[first, second, first],
+    ))
+    .expect("responses serialize");
+
+    let schema = &responses["422"]["content"]["application/problem+json"]["schema"];
+    let branches = schema["oneOf"].as_array().expect("one branch per type");
+    let named: Vec<&Value> = branches
+        .iter()
+        .map(|branch| &branch["allOf"][1]["properties"]["type"]["const"])
+        .collect();
+    assert_eq!(named, [first, second]);
+    for branch in branches {
+        assert_eq!(
+            branch["allOf"][1]["required"],
+            serde_json::json!(["errors"]),
+            "{branch}"
         );
     }
 }
@@ -888,6 +980,7 @@ fn parameter_ledger() -> Vec<Row> {
                 failures: [(String::new(), text("must be at least 1"))]
                     .into_iter()
                     .collect(),
+                type_uri: None,
             },
         ),
         query(
@@ -904,6 +997,7 @@ fn parameter_ledger() -> Vec<Row> {
                 failures: [(text("/limit"), text("must be at most 100"))]
                     .into_iter()
                     .collect(),
+                type_uri: None,
             },
         ),
         header(
@@ -920,6 +1014,7 @@ fn parameter_ledger() -> Vec<Row> {
                 failures: [(String::new(), text("must be at most 64 characters long"))]
                     .into_iter()
                     .collect(),
+                type_uri: None,
             },
         ),
         #[cfg(feature = "cookie")]
@@ -938,6 +1033,7 @@ fn parameter_ledger() -> Vec<Row> {
                 failures: [(String::new(), text("must be at least 16 characters long"))]
                     .into_iter()
                     .collect(),
+                type_uri: None,
             },
         ),
     ]
@@ -961,6 +1057,7 @@ fn content_ledger() -> Vec<Row> {
                 failures: [(text("/name"), text("expected a string"))]
                     .into_iter()
                     .collect(),
+                type_uri: None,
             },
         ),
         body(

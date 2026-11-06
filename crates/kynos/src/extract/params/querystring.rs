@@ -176,6 +176,7 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send, M: MediaType + Sen
         Violations::of(&value, Pointer::root()).map_err(|failures| QueryRejection::Schema {
             name: QUERYSTRING_NAME.to_owned(),
             failures,
+            type_uri: T::CONSTRAINT_TYPE,
         })?;
         Ok(Self::new(value))
     }
@@ -210,6 +211,11 @@ impl<T: Schema, M: MediaType> Describe for QueryString<T, M> {
         } else {
             parameter
         });
+
+        super::describe_constraints(
+            operation,
+            &T::CONSTRAINT_TYPE.into_iter().collect::<Vec<_>>(),
+        );
     }
 }
 

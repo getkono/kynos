@@ -317,6 +317,31 @@ A schema failure says what was wrong in `errors`, an array of
 `{pointer, detail}` objects, and the status it answers with declares that
 member: required on the body's 422, which only a schema failure sends, and
 optional on a parameter's 400, which an undecodable value sends without it.
+The entry is `error::problem::PointerError`, public so an application reporting
+violations of its own sends and declares the same shape.
+
+**A broken bound answers with the type its type names.**
+`Schema::CONSTRAINT_TYPE`, set by `#[schema(constraint_type = ...)]` on the
+type, is the problem `type` a value of that type answers with when it breaks a
+bound it declares, so an application publishing its own problem catalogue keeps
+Kynos enforcing what the document declares. It is a `const` on a trait the
+application already implements for the value, the `Scopes::FORBIDDEN_TYPE`
+shape above. The type read is the one the input decodes: a body extractor's
+`T`, a `QueryString`'s `T`, a derived parameter field's type. A member naming a
+type of its own does not override the body holding it, and `Option`, `Box` and
+`Arc` answer as their `T`. The status stays the input's — 422 for a body, 400
+for a parameter, whose value is part of the request's target rather than its
+content (RFC 9110 §15.5.21). The variant does too: the rejection's `Schema`
+variant carries the URI in `type_uri`, as `AuthRejection::Forbidden` does,
+rather than a second variant, since a parameter's `Schema` is already nothing
+but a broken bound.
+
+What a body that does not decode into `T` sends is unchanged: `about:blank`,
+since no bound was consulted. Each input therefore declares a choice at its
+status — the named type beside the `about:blank` its rejection declares, both
+sending `errors` — read from the type through `RequestContent::constraint_types`
+and each parameter trait's `constraint_types`, which the parameter derives
+write.
 
 **A JSON struct body is read only from an object.** `serde`'s derive also reads
 a struct from an array of its members, and from `[]` where every member

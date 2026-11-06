@@ -96,4 +96,8 @@ impl<T: Schema> RequestContent for Json<T> {
     fn request_body(registry: &mut Registry) -> kynos_openapi::RequestBody {
         kynos_openapi::RequestBody::json(registry.resolve::<T>())
     }
+
+    fn constraint_types() -> Vec<&'static str> {
+        super::constraint_type::<T>()
+    }
 }

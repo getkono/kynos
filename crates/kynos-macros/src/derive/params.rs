@@ -150,14 +150,42 @@ pub(crate) fn decode_field(
     }
 }
 
+/// The `ParamValue` the field carries, whose `CONSTRAINT_TYPE` a broken bound
+/// on it answers with.
+fn carried(param: &Param<'_>) -> TokenStream2 {
+    let carried = param.optional().unwrap_or(param.ty());
+    quote!(<#carried as ::kynos::schema::Schema>::CONSTRAINT_TYPE)
+}
+
+/// The `constraint_types` body: each checked field's type's `CONSTRAINT_TYPE`,
+/// in declaration order, those naming none left out. A fixed field carries no
+/// value to check.
+pub(crate) fn constraint_types_body(params: &[Param<'_>]) -> TokenStream2 {
+    let named: Vec<TokenStream2> = params
+        .iter()
+        .filter(|param| param.fixed.is_none())
+        .map(carried)
+        .collect();
+    let count = named.len();
+    quote! {
+        // Typed, so a group with no checked field still names its element.
+        let named: [::core::option::Option<&'static str>; #count] = [#(#named),*];
+        ::core::iter::Iterator::collect(::core::iter::Iterator::flatten(
+            ::core::iter::IntoIterator::into_iter(named),
+        ))
+    }
+}
+
 /// Refuses a decoded field that breaks one of its `#[schema(...)]` bounds, or
 /// one its type declares, as `Schema`, naming the parameter, each failure at a
-/// pointer into its value. Runs after [`decode_field`] has bound the field.
+/// pointer into its value, and carrying the problem type the field's type
+/// names. Runs after [`decode_field`] has bound the field.
 pub(crate) fn check_field(param: &Param<'_>, rejection: &TokenStream2) -> TokenStream2 {
     let ident = param.ident();
     let ty = param.ty();
     let name = &param.name;
     let checks = value_checks(param.field);
+    let type_uri = carried(param);
 
     quote! {
         {
@@ -172,6 +200,7 @@ pub(crate) fn check_field(param: &Param<'_>, rejection: &TokenStream2) -> TokenS
                 return ::core::result::Result::Err(#rejection::Schema {
                     name: <::std::string::String as ::core::convert::From<_>>::from(#name),
                     failures: __kynos_violations.into_failures(),
+                    type_uri: #type_uri,
                 });
             }
         }

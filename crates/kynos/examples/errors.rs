@@ -25,7 +25,10 @@
 //!   [`QueryRejection`], `Json<T>` with [`BodyRejection`]. A single shared union
 //!   would be sound and would still make a handler that reads one path
 //!   parameter advertise the 401 it can never answer — which a client generator
-//!   turns into dead retry logic.
+//!   turns into dead retry logic. A rejection's `type` is `about:blank` unless
+//!   the type it decodes names its own: `User` answers a broken bound with
+//!   `Invalid`'s, so a client branches on one `type` whichever side found the
+//!   fault.
 //! * **Five of the responses below come from no handler at all.** A fallback
 //!   policy produces the 404, the 405 and the 501, `catch_panics` produces the 500, and
 //!   an interceptor produces the 503. The 500 and the 503 reach the description
@@ -53,12 +56,22 @@ use kynos::{
 };
 use serde::{Deserialize, Serialize};
 
+/// The problem type `Invalid` publishes — its `base` and its name — which a
+/// body breaking a bound it declares answers with too, so one 422 `type` means
+/// "correct the request" whether Kynos or the handler found the fault.
+const INVALID: &str = "https://errors.example.com/invalid";
+
 /// A user of the service.
+///
+/// A name past 64 characters is refused before `create_user` runs, with a 422
+/// of type `INVALID` rather than `about:blank`.
 #[derive(Schema, Serialize, Deserialize)]
+#[schema(constraint_type = INVALID)]
 struct User {
     /// The user's identifier.
     id: u64,
     /// The user's display name.
+    #[schema(max_length = 64)]
     name: String,
 }
 

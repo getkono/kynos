@@ -143,6 +143,10 @@ impl<T: Schema> RequestContent for JsonLines<Records<T>> {
             kynos_openapi::MediaType::sequential(registry.resolve::<T>()),
         )
     }
+
+    fn constraint_types() -> Vec<&'static str> {
+        super::constraint_type::<T>()
+    }
 }
 
 impl<C: Sync, T: serde::de::DeserializeOwned + Schema> FromRequest<C> for JsonSeq<Records<T>> {
@@ -174,5 +178,9 @@ impl<T: Schema> RequestContent for JsonSeq<Records<T>> {
             SEQUENCE_MEDIA_TYPE,
             kynos_openapi::MediaType::sequential(registry.resolve::<T>()),
         )
+    }
+
+    fn constraint_types() -> Vec<&'static str> {
+        super::constraint_type::<T>()
     }
 }

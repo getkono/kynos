@@ -82,5 +82,6 @@ impl<T: RequestContent> Describe for Option<T> {
     fn describe(operation: &mut OperationCx<'_>) {
         let body = T::request_body(operation.registry()).optional();
         operation.set_request_body(body);
+        super::describe_constraints::<T>(operation);
     }
 }

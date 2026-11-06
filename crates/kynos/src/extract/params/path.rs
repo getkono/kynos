@@ -139,6 +139,20 @@ pub trait PathParams: Sized {
             .map(|name| kynos_openapi::Parameter::path(name, kynos_openapi::Schema::any()))
             .collect()
     }
+
+    /// The problem types a value breaking a bound answers with, beside
+    /// `about:blank`: the
+    /// [`CONSTRAINT_TYPE`](crate::schema::Schema::CONSTRAINT_TYPE) of each
+    /// field type naming one, so the 400 [`Path`] declares names what
+    /// [`PathRejection::Schema`](crate::error::rejection::PathRejection::Schema)
+    /// sends.
+    ///
+    /// `#[derive(PathParams)]` replaces this; the default names none, which is
+    /// right for a group holding no value to a bound.
+    #[must_use]
+    fn constraint_types() -> Vec<&'static str> {
+        Vec::new()
+    }
 }
 
 /// Reading a path parameter group from a matched route.
@@ -263,7 +277,7 @@ fn decode_captures<'v, 'p: 'v>(
 
 impl<T: PathParams> Describe for Path<T> {
     fn describe(operation: &mut OperationCx<'_>) {
-        super::describe_parameters(operation, T::parameters);
+        super::describe_parameters(operation, T::parameters, &T::constraint_types());
     }
 }
 
