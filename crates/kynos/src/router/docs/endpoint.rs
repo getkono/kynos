@@ -13,7 +13,11 @@ use crate::{
         media::{Html, MediaType},
     },
     response::codec::{unconstrained, with_content_type},
-    router::{docs::State, endpoint::Endpoint, operation::OperationCx},
+    router::{
+        docs::State,
+        endpoint::Endpoint,
+        operation::{DeclaredTag, OperationCx},
+    },
 };
 
 /// HTML with an explicit charset, as [`Html`] sends.
@@ -38,6 +42,8 @@ pub(super) struct DocsEndpoint {
     half: Half,
     template: PathTemplate,
     operation_id: String,
+    /// What [`Docs::tag`](super::Docs::tag) named, in call order.
+    tags: Arc<[DeclaredTag]>,
     state: Arc<State>,
 }
 
@@ -46,12 +52,14 @@ impl DocsEndpoint {
         half: Half,
         template: PathTemplate,
         operation_id: String,
+        tags: Arc<[DeclaredTag]>,
         state: Arc<State>,
     ) -> Self {
         Self {
             half,
             template,
             operation_id,
+            tags,
             state,
         }
     }
@@ -68,6 +76,12 @@ impl<C: Send + Sync + 'static> Endpoint<C> for DocsEndpoint {
 
     fn describe(&self, operation: &mut OperationCx<'_>) {
         operation.set_operation_id(&self.operation_id);
+
+        // The operation's own tags, as a route attribute's are: each carries
+        // its metadata into the document's `tags`.
+        for tag in self.tags.iter() {
+            operation.add_tag(*tag);
+        }
 
         // Each payload is unconstrained: the page as every non-JSON payload is
         // described, and the description because the OpenAPI meta-schema is

@@ -65,6 +65,7 @@ use crate::router::{
     docs::endpoint::{DocsEndpoint, Half},
     endpoint::{DynEndpoint, operation_id},
     error::RouterError,
+    operation::{DeclaredTag, Tag},
 };
 
 /// An API reference, ready to mount.
@@ -85,6 +86,7 @@ pub struct Docs<M = WithPage> {
     page: Option<PageMount>,
     description_at: PathTemplate,
     operation_id_prefix: Cow<'static, str>,
+    tags: Vec<DeclaredTag>,
     violations: Vec<Violation<RouterError>>,
     mode: PhantomData<fn() -> M>,
 }
@@ -241,6 +243,7 @@ impl<M> Docs<M> {
             page,
             description_at,
             operation_id_prefix: Cow::Borrowed("docs"),
+            tags: Vec::new(),
             violations,
             mode: PhantomData,
         }
@@ -275,6 +278,42 @@ impl<M> Docs<M> {
         self
     }
 
+    /// Tags every operation this reference mounts with `T`.
+    ///
+    /// Both halves where there is a page, and `T`'s metadata reaches the
+    /// document's `tags` as any tag an operation names does. Each call adds
+    /// one, in call order, ahead of whatever tags an enclosing router adds.
+    /// Untagged by default.
+    ///
+    /// ```no_run
+    /// use kynos::{
+    ///     Router,
+    ///     router::{docs::Docs, operation::Tag},
+    /// };
+    ///
+    /// // `#[derive(kynos::Tag)]` writes this under the `macros` feature.
+    /// struct Operations;
+    ///
+    /// impl Tag for Operations {
+    ///     const NAME: &'static str = "operations";
+    ///
+    ///     fn metadata() -> kynos::openapi::Tag {
+    ///         kynos::openapi::Tag::new(Self::NAME)
+    ///     }
+    /// }
+    ///
+    /// let docs = Docs::description_only()
+    ///     .description_at("/v1/openapi.json")
+    ///     .tag::<Operations>();
+    /// let router = Router::<()>::new().docs(docs);
+    /// # let _ = router;
+    /// ```
+    #[must_use]
+    pub fn tag<T: Tag>(mut self) -> Self {
+        self.tags.push(DeclaredTag::of::<T>());
+        self
+    }
+
     /// The description half, then the page half where there is a page, sharing
     /// one state, ready for the router to absorb.
     pub(super) fn into_halves<C: Send + Sync + 'static>(
@@ -285,6 +324,8 @@ impl<M> Docs<M> {
             .page
             .map(|PageMount { at, template }| (at, template))
             .unzip();
+
+        let tags: Arc<[DeclaredTag]> = self.tags.into();
 
         let state = Arc::new(State {
             rendered: RwLock::new(None),
@@ -297,6 +338,7 @@ impl<M> Docs<M> {
                 Half::Description,
                 self.description_at,
                 description_id,
+                Arc::clone(&tags),
                 Arc::clone(&state),
             )),
             Role::Description(Arc::clone(&state)),
@@ -305,7 +347,7 @@ impl<M> Docs<M> {
         if let Some(at) = at {
             let page_id = operation_id(&self.operation_id_prefix, at.as_str());
             halves.push((
-                Arc::new(DocsEndpoint::new(Half::Page, at, page_id, state)),
+                Arc::new(DocsEndpoint::new(Half::Page, at, page_id, tags, state)),
                 Role::Page,
             ));
         }
