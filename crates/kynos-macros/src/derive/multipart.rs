@@ -195,13 +195,15 @@ impl<'a> Declared<'a> {
         format_ident!("__kynos_parts_{}", self.index)
     }
 
-    /// One part converted into this field's element, spanned at the field so
-    /// a missing `FromPart` is reported there.
+    /// One part converted into this field's element. Only the path is spanned
+    /// at the field, so a missing `FromPart` is reported there while `part`
+    /// keeps the derive's hygiene context.
     fn convert(&self) -> TokenStream2 {
         let element = self.element;
-        quote_spanned! {self.field.ty.span()=>
-            <#element as ::kynos::extract::body::multipart::FromPart>::from_part(part)
-        }
+        let from_part = quote_spanned! {self.field.ty.span()=>
+            <#element as ::kynos::extract::body::multipart::FromPart>::from_part
+        };
+        quote!(#from_part(part))
     }
 
     /// The local's declaration. A single part is held as it arrived; a
@@ -335,13 +337,13 @@ impl<'a> Declared<'a> {
         let span = self.field.ty.span();
         let element = self.element;
 
+        // As for `convert`: the path is spanned at the field, `parts` is not.
+        let into_part = quote_spanned! {span=>
+            <#element as ::kynos::response::codec::multipart::IntoPart>::into_part
+        };
         let push = |value: TokenStream2| {
-            quote_spanned! {span=>
-                parts.push(
-                    <#element as ::kynos::response::codec::multipart::IntoPart>::into_part(
-                        #value, #name,
-                    ),
-                );
+            quote! {
+                parts.push(#into_part(#value, #name));
             }
         };
 

@@ -219,10 +219,13 @@ fn response(variant: &Variant, status: u16, description: Option<&str>, held: boo
     if let (true, Fields::Unnamed(fields)) = (held, &variant.fields) {
         let ty = &fields.unnamed[0].ty;
         let description = optional(description);
-        // Spanned on the held type, so one lacking `Responses` is reported
-        // against the variant a user wrote.
-        return quote_spanned! {ty.span()=>
-            ::kynos::__private::reply::describe::<#ty>(
+        // Only the path is spanned on the held type, so one lacking
+        // `Responses` is reported against the variant a user wrote; the
+        // bindings keep the derive's hygiene context, wherever the type's
+        // tokens came from.
+        let describe = quote_spanned!(ty.span()=> ::kynos::__private::reply::describe::<#ty>);
+        return quote! {
+            #describe(
                 registry,
                 &mut responses,
                 &mut failures,
