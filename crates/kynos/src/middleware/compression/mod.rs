@@ -93,11 +93,20 @@ pub struct NotAcceptable<T = ()> {
     problem_type: PhantomData<fn() -> T>,
 }
 
-impl<T: ProblemType> crate::response::IntoResponse for NotAcceptable<T> {
-    fn into_response(self) -> http::Response {
+impl<T: ProblemType> crate::error::problem::IntoProblem for NotAcceptable<T> {
+    fn into_problem(self) -> crate::error::problem::Problem {
         crate::error::problem::refusal_problem::<T>(http::StatusCode::NOT_ACCEPTABLE)
             .with_detail("no representation of this resource has an acceptable content coding")
-            .into_response()
+    }
+
+    fn statuses() -> &'static [http::StatusCode] {
+        &[http::StatusCode::NOT_ACCEPTABLE]
+    }
+}
+
+impl<T: ProblemType> crate::response::IntoResponse for NotAcceptable<T> {
+    fn into_response(self) -> http::Response {
+        crate::error::problem::IntoProblem::into_problem(self).into_response()
     }
 }
 

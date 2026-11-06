@@ -14,7 +14,7 @@ use kynos_openapi::model::schema::types::SchemaType;
 use tokio::io::AsyncRead;
 
 use crate::{
-    error::problem::{ProblemType, refusal_problem, refusal_response},
+    error::problem::{IntoProblem, Problem, ProblemType, refusal_problem, refusal_response},
     extract::body::limit::{BodyLimit, Capped, collect_capped},
     http::{self, body::Body},
     middleware::{
@@ -100,33 +100,53 @@ where
     L: ProblemType,
 {
     fn into_response(self) -> http::Response {
+        let reason = self.reason;
+        let mut response = self.into_problem().into_response();
+
+        // Only on this 415: on a media-type 415 it would misread as a coding
+        // complaint (section 15.5.16).
+        if reason == Reason::UnsupportedCoding {
+            response.headers_mut().insert(
+                http::header::ACCEPT_ENCODING,
+                http::HeaderValue::from_static(ACCEPTED),
+            );
+        }
+
+        response
+    }
+}
+
+/// The problem alone: the 415's `Accept-Encoding` is a header, so only
+/// [`into_response`](IntoResponse::into_response) writes it.
+impl<U, M, L> IntoProblem for Undecodable<U, M, L>
+where
+    U: ProblemType,
+    M: ProblemType,
+    L: ProblemType,
+{
+    fn into_problem(self) -> Problem {
         match self.reason {
             Reason::UnsupportedCoding => {
-                let mut response = refusal_problem::<U>(http::StatusCode::UNSUPPORTED_MEDIA_TYPE)
-                    .with_detail(format!(
-                        "the request body's content coding is not one this server decodes; \
-                         it accepts {ACCEPTED}"
-                    ))
-                    .into_response();
-
-                // Only on this 415: on a media-type 415 it would misread as a
-                // coding complaint (section 15.5.16).
-                response.headers_mut().insert(
-                    http::header::ACCEPT_ENCODING,
-                    http::HeaderValue::from_static(ACCEPTED),
-                );
-
-                response
+                refusal_problem::<U>(http::StatusCode::UNSUPPORTED_MEDIA_TYPE).with_detail(format!(
+                    "the request body's content coding is not one this server decodes; \
+                     it accepts {ACCEPTED}"
+                ))
             }
             Reason::Malformed => refusal_problem::<M>(http::StatusCode::BAD_REQUEST)
-                .with_detail("the request body did not decode as the coding it declared")
-                .into_response(),
+                .with_detail("the request body did not decode as the coding it declared"),
             Reason::TooLarge { limit } => refusal_problem::<L>(http::StatusCode::PAYLOAD_TOO_LARGE)
                 .with_detail(format!(
                     "the request body exceeds {limit} bytes once decoded"
-                ))
-                .into_response(),
+                )),
         }
+    }
+
+    fn statuses() -> &'static [http::StatusCode] {
+        &[
+            http::StatusCode::BAD_REQUEST,
+            http::StatusCode::PAYLOAD_TOO_LARGE,
+            http::StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        ]
     }
 }
 

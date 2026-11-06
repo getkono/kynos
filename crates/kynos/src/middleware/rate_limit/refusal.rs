@@ -7,7 +7,7 @@
 use std::{marker::PhantomData, time::Duration};
 
 use crate::{
-    error::problem::{ProblemType, refusal_problem, refusal_response},
+    error::problem::{IntoProblem, Problem, ProblemType, refusal_problem, refusal_response},
     extract::params::header::{EncodeHeaders, HeaderParams},
     http::{self, retry_after_header, set_retry_after},
     middleware::rate_limit::{
@@ -39,6 +39,16 @@ impl<T> RateLimited<T> {
             limit,
             problem_type: PhantomData,
         }
+    }
+}
+
+impl<T: ProblemType> IntoProblem for RateLimited<T> {
+    fn into_problem(self) -> Problem {
+        problem::<T>()
+    }
+
+    fn statuses() -> &'static [http::StatusCode] {
+        &[http::StatusCode::TOO_MANY_REQUESTS]
     }
 }
 
@@ -98,6 +108,16 @@ impl<T> RateLimitedFields<T> {
     }
 }
 
+impl<T: ProblemType> IntoProblem for RateLimitedFields<T> {
+    fn into_problem(self) -> Problem {
+        problem::<T>()
+    }
+
+    fn statuses() -> &'static [http::StatusCode] {
+        &[http::StatusCode::TOO_MANY_REQUESTS]
+    }
+}
+
 impl<T: ProblemType> IntoResponse for RateLimitedFields<T> {
     fn into_response(self) -> http::Response {
         refusal::<T, _>(
@@ -140,12 +160,18 @@ fn described_refusal<T: ProblemType>(
     kynos_openapi::Responses::new().with(429, response)
 }
 
+/// The problem the 429 carries in either spelling, which is the whole of what
+/// [`IntoProblem`] yields: `Retry-After` and the `RateLimit` fields are
+/// headers, so only [`refusal`] writes them.
+fn problem<T: ProblemType>() -> Problem {
+    refusal_problem::<T>(http::StatusCode::TOO_MANY_REQUESTS)
+        .with_detail("the client has exceeded its request rate")
+}
+
 /// The 429 in either spelling: the problem, `Retry-After`, and `group` written
 /// through the same writer a forwarded response uses.
 fn refusal<T: ProblemType, G: EncodeHeaders>(retry_after: Duration, group: &G) -> http::Response {
-    let mut response = refusal_problem::<T>(http::StatusCode::TOO_MANY_REQUESTS)
-        .with_detail("the client has exceeded its request rate")
-        .into_response();
+    let mut response = problem::<T>().into_response();
     set_retry_after(&mut response, retry_after);
     crate::response::headers::write_or_refuse(&mut response, group);
 
