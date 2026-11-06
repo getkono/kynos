@@ -587,8 +587,8 @@ impl<C> TestRequest<'_, C> {
         }
 
         self.client.recorded().push(Observed {
-            method: self.method,
-            target: self.path,
+            method: self.method.clone(),
+            target: self.path.clone(),
             uri,
             status: parts.status,
             headers: parts.headers.clone(),
@@ -596,21 +596,44 @@ impl<C> TestRequest<'_, C> {
         });
 
         TestResponse {
+            method: self.method,
+            path: self.path,
             response: Response::from_parts(parts, Body::from_bytes(bytes.clone())),
             body: bytes,
         }
     }
 }
 
-/// A response received by a [`TestClient`].
+/// A response received by a [`TestClient`], with the request it answers.
+///
+/// Every panic a method here raises opens with that request and the status it
+/// received, as `GET /v1/items -> 404: `, so a failure in a loop over
+/// operations names the one that failed.
 #[derive(Debug)]
 pub struct TestResponse {
+    method: HttpMethod,
+    /// The target as the test wrote it.
+    path: String,
     response: Response,
     /// The drained body, kept so the response stays readable after assertions.
     body: Bytes,
 }
 
 impl TestResponse {
+    /// The method the request was sent with.
+    #[must_use]
+    pub fn method(&self) -> &HttpMethod {
+        &self.method
+    }
+
+    /// The request target as the test wrote it: the path given to the
+    /// [`TestClient`], with whatever
+    /// [`query_string`](TestRequest::query_string) appended.
+    #[must_use]
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
     /// The status code.
     #[must_use]
     pub fn status(&self) -> StatusCode {
@@ -627,7 +650,8 @@ impl TestResponse {
     pub fn json<T: serde::de::DeserializeOwned>(&self) -> T {
         serde_json::from_slice(&self.body).unwrap_or_else(|error| {
             panic!(
-                "the body is not valid JSON for `{}`: {error}\n{}",
+                "{}: the body is not valid JSON for `{}`: {error}\n{}",
+                self.exchange(),
                 std::any::type_name::<T>(),
                 self.rendered_body()
             )
@@ -640,16 +664,33 @@ impl TestResponse {
         &self.body
     }
 
-    /// Asserts the status.
+    /// Asserts the status, given as a [`StatusCode`] or as its number.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// use kynos::http::StatusCode;
+    ///
+    /// let reply = client.get("/items/7").send().await;
+    /// reply.assert_status(StatusCode::NOT_FOUND).assert_status(404);
+    /// # }
+    /// ```
     ///
     /// # Panics
     ///
-    /// Panics, with the body included, when the status differs.
-    pub fn assert_status(&self, expected: StatusCode) -> &Self {
+    /// Panics, with the body included, when the status differs, and when a
+    /// number is outside 100 to 999, which no status can be.
+    pub fn assert_status(&self, expected: impl IntoStatus) -> &Self {
+        let expected = expected.status().unwrap_or_else(|code| {
+            panic!(
+                "{}: `{code}` is not a status code, which is 100 to 999",
+                self.exchange()
+            )
+        });
         let actual = self.status();
         assert!(
             actual == expected,
-            "expected {expected}, received {actual}\n{}",
+            "{}: expected {expected}, received {actual}\n{}",
+            self.exchange(),
             self.rendered_body()
         );
         self
@@ -666,7 +707,8 @@ impl TestResponse {
     pub fn assert_problem_type(&self, expected: &str) -> &Self {
         let document: Value = serde_json::from_slice(&self.body).unwrap_or_else(|error| {
             panic!(
-                "the body is not a problem document: {error}\n{}",
+                "{}: the body is not a problem document: {error}\n{}",
+                self.exchange(),
                 self.rendered_body()
             )
         });
@@ -676,14 +718,16 @@ impl TestResponse {
             .map_or(Some("about:blank"), Value::as_str)
             .unwrap_or_else(|| {
                 panic!(
-                    "the problem document's `type` is not a string\n{}",
+                    "{}: the problem document's `type` is not a string\n{}",
+                    self.exchange(),
                     self.rendered_body()
                 )
             });
 
         assert!(
             actual == expected,
-            "expected problem type `{expected}`, received `{actual}`\n{}",
+            "{}: expected problem type `{expected}`, received `{actual}`\n{}",
+            self.exchange(),
             self.rendered_body()
         );
         self
@@ -697,7 +741,11 @@ impl TestResponse {
     #[must_use]
     pub fn text(&self) -> &str {
         std::str::from_utf8(&self.body).unwrap_or_else(|_| {
-            panic!("the body is not text\n{}", self.rendered_body());
+            panic!(
+                "{}: the body is not text\n{}",
+                self.exchange(),
+                self.rendered_body()
+            );
         })
     }
 
@@ -747,10 +795,37 @@ impl TestResponse {
         match self.header(name) {
             Some(actual) => assert!(
                 actual == expected,
-                "expected `{name}: {expected}`, received `{name}: {actual}`"
+                "{}: expected `{name}: {expected}`, received `{name}: {actual}`",
+                self.exchange()
             ),
-            None => panic!("`{name}` is not on the response"),
+            None => panic!("{}: `{name}` is not on the response", self.exchange()),
         }
+        self
+    }
+
+    /// Asserts no field `name` is on the response.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `name` is not a header name, which no response could carry
+    /// and so would pass whatever was sent, and when the response carries the
+    /// field, naming every value it carries.
+    pub fn assert_no_header(&self, name: &str) -> &Self {
+        let field = HeaderName::from_bytes(name.as_bytes())
+            .unwrap_or_else(|_| panic!("{}: `{name}` is not a header name", self.exchange()));
+        let values: Vec<String> = self
+            .response
+            .headers()
+            .get_all(&field)
+            .iter()
+            .map(|value| format!("`{name}: {}`", value.as_bytes().escape_ascii()))
+            .collect();
+        assert!(
+            values.is_empty(),
+            "{}: expected no `{name}`, received {}",
+            self.exchange(),
+            values.join(", ")
+        );
         self
     }
 
@@ -764,10 +839,12 @@ impl TestResponse {
         match cookies.iter().find(|(set, _)| *set == name) {
             Some((_, actual)) => assert!(
                 *actual == expected,
-                "expected cookie `{name}={expected}`, received `{name}={actual}`"
+                "{}: expected cookie `{name}={expected}`, received `{name}={actual}`",
+                self.exchange()
             ),
             None => panic!(
-                "no `Set-Cookie` names `{name}`; the response set {:?}",
+                "{}: no `Set-Cookie` names `{name}`; the response set {:?}",
+                self.exchange(),
                 cookies.iter().map(|(set, _)| *set).collect::<Vec<_>>()
             ),
         }
@@ -783,7 +860,8 @@ impl TestResponse {
     pub fn assert_redirect(&self, location: &str) -> &Self {
         assert!(
             self.status().is_redirection(),
-            "expected a redirect, received {}",
+            "{}: expected a redirect, received {}",
+            self.exchange(),
             self.status()
         );
         self.assert_header("location", location);
@@ -803,11 +881,13 @@ impl TestResponse {
     pub fn assert_part(&self, first: u64, last: u64, complete_length: u64) -> &Self {
         assert!(
             first <= last,
-            "`bytes {first}-{last}` names no octets: its last position precedes its first"
+            "{}: `bytes {first}-{last}` names no octets: its last position precedes its first",
+            self.exchange()
         );
         assert!(
             self.status() == StatusCode::PARTIAL_CONTENT,
-            "expected 206, received {}",
+            "{}: expected 206, received {}",
+            self.exchange(),
             self.status()
         );
 
@@ -818,7 +898,8 @@ impl TestResponse {
         let enclosed = u128::from(last - first) + 1;
         assert!(
             self.body.len() as u128 == enclosed,
-            "`Content-Range` names {enclosed} octet(s) and the body carries {}",
+            "{}: `Content-Range` names {enclosed} octet(s) and the body carries {}",
+            self.exchange(),
             self.body.len()
         );
         self
@@ -881,12 +962,70 @@ impl TestResponse {
         self.response
     }
 
+    /// The request and the status it received, as every panic here opens.
+    fn exchange(&self) -> String {
+        format!(
+            "{} {} -> {}",
+            self.method,
+            self.path,
+            self.status().as_u16()
+        )
+    }
+
     /// The body as an assertion message shows it.
     fn rendered_body(&self) -> String {
         match std::str::from_utf8(&self.body) {
             Ok(text) => format!("body: {text}"),
             Err(_) => format!("body: {} bytes, not UTF-8", self.body.len()),
         }
+    }
+}
+
+/// A status [`TestResponse::assert_status`] expects: a [`StatusCode`], or its
+/// number, which a table of expected outcomes holds more naturally.
+///
+/// Sealed: implemented for [`StatusCode`] and [`u16`], so an integer literal
+/// is inferred as a `u16` without a suffix.
+pub trait IntoStatus: sealed::Sealed {
+    /// The status this names.
+    ///
+    /// # Panics
+    ///
+    /// Panics when a number is outside 100 to 999, which no status can be.
+    fn into_status(self) -> StatusCode;
+}
+
+mod sealed {
+    use crate::http::StatusCode;
+
+    pub trait Sealed: Sized {
+        /// The status, or the number that names none.
+        fn status(self) -> Result<StatusCode, u16>;
+    }
+}
+
+impl sealed::Sealed for StatusCode {
+    fn status(self) -> Result<StatusCode, u16> {
+        Ok(self)
+    }
+}
+
+impl sealed::Sealed for u16 {
+    fn status(self) -> Result<StatusCode, u16> {
+        StatusCode::from_u16(self).map_err(|_| self)
+    }
+}
+
+impl IntoStatus for StatusCode {
+    fn into_status(self) -> StatusCode {
+        self
+    }
+}
+
+impl IntoStatus for u16 {
+    fn into_status(self) -> StatusCode {
+        sealed::Sealed::status(self)
+            .unwrap_or_else(|code| panic!("`{code}` is not a status code, which is 100 to 999"))
     }
 }
 

@@ -103,11 +103,12 @@ mod assertions {
     use bytes::Bytes;
 
     use crate::{
-        http::{HeaderName, HeaderValue, Response, StatusCode, body::Body},
-        test::TestResponse,
+        http::{HeaderName, HeaderValue, Method, Response, StatusCode, body::Body},
+        test::{IntoStatus, TestResponse},
     };
 
-    /// A received response, as `TestRequest::send` leaves one.
+    /// A received response, as `TestRequest::send` leaves one, answering
+    /// `GET /things`.
     fn received(status: StatusCode, headers: &[(&str, &str)], body: &'static [u8]) -> TestResponse {
         let body = Bytes::from_static(body);
         let mut response = Response::new(Body::from_bytes(body.clone()));
@@ -118,23 +119,73 @@ mod assertions {
                 HeaderValue::from_str(value).expect("a header value"),
             );
         }
-        TestResponse { response, body }
+        TestResponse {
+            method: Method::GET,
+            path: "/things".to_owned(),
+            response,
+            body,
+        }
     }
 
     #[test]
-    #[should_panic(expected = "expected 200 OK, received 404 Not Found\nbody: gone")]
+    #[should_panic(
+        expected = "GET /things -> 404: expected 200 OK, received 404 Not Found\n\
+                               body: gone"
+    )]
     fn assert_status_fails_on_another_status_and_shows_the_body() {
         received(StatusCode::NOT_FOUND, &[], b"gone").assert_status(StatusCode::OK);
     }
 
+    /// An unsuffixed literal is a `u16`, read as the status it numbers.
     #[test]
-    #[should_panic(expected = "the body is not a problem document")]
+    fn assert_status_takes_a_bare_number() {
+        received(StatusCode::NOT_FOUND, &[], b"").assert_status(404);
+    }
+
+    #[test]
+    #[should_panic(expected = "GET /things -> 404: expected 200 OK, received 404 Not Found")]
+    fn assert_status_fails_on_another_number() {
+        received(StatusCode::NOT_FOUND, &[], b"").assert_status(200);
+    }
+
+    /// `StatusCode::from_u16`'s range, 100 to 999, bounds what a number may
+    /// name; one outside it is a mistaken table, not a status that differs.
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 200: `1000` is not a status code, which is 100 to 999"
+    )]
+    fn assert_status_refuses_a_number_no_status_has() {
+        received(StatusCode::OK, &[], b"").assert_status(1000);
+    }
+
+    #[test]
+    #[should_panic(expected = "GET /things -> 200: `99` is not a status code, which is 100 to 999")]
+    fn assert_status_refuses_a_number_below_every_status() {
+        received(StatusCode::OK, &[], b"").assert_status(99);
+    }
+
+    /// The two ends of the range are statuses.
+    #[test]
+    fn into_status_reads_both_ends_of_the_range() {
+        assert_eq!(100.into_status(), StatusCode::CONTINUE);
+        assert_eq!(999.into_status().as_u16(), 999);
+        assert_eq!(StatusCode::OK.into_status(), StatusCode::OK);
+    }
+
+    #[test]
+    #[should_panic(expected = "`1000` is not a status code, which is 100 to 999")]
+    fn into_status_refuses_a_number_no_status_has() {
+        let _ = 1000.into_status();
+    }
+
+    #[test]
+    #[should_panic(expected = "GET /things -> 400: the body is not a problem document")]
     fn assert_problem_type_fails_on_a_body_that_is_not_json() {
         received(StatusCode::BAD_REQUEST, &[], b"plain").assert_problem_type("about:blank");
     }
 
     #[test]
-    #[should_panic(expected = "the problem document's `type` is not a string")]
+    #[should_panic(expected = "GET /things -> 400: the problem document's `type` is not a string")]
     fn assert_problem_type_fails_on_a_type_that_is_not_a_string() {
         received(StatusCode::BAD_REQUEST, &[], br#"{"type":7}"#).assert_problem_type("about:blank");
     }
@@ -142,60 +193,100 @@ mod assertions {
     /// An omitted `type` is `about:blank` (RFC 9457 section 3.1.1), and is
     /// reported as that rather than as an absence.
     #[test]
-    #[should_panic(expected = "expected problem type `urn:example:x`, received `about:blank`")]
+    #[should_panic(
+        expected = "GET /things -> 400: expected problem type `urn:example:x`, received `about:blank`"
+    )]
     fn assert_problem_type_fails_on_another_type_reading_an_omitted_one_as_blank() {
         received(StatusCode::BAD_REQUEST, &[], br#"{"status":400}"#)
             .assert_problem_type("urn:example:x");
     }
 
     #[test]
-    #[should_panic(expected = "`x-trace` is not on the response")]
+    #[should_panic(expected = "GET /things -> 200: `x-trace` is not on the response")]
     fn assert_header_fails_on_an_absent_field() {
         received(StatusCode::OK, &[], b"").assert_header("x-trace", "1");
     }
 
     #[test]
-    #[should_panic(expected = "expected `x-trace: 1`, received `x-trace: 2`")]
+    #[should_panic(expected = "GET /things -> 200: expected `x-trace: 1`, received `x-trace: 2`")]
     fn assert_header_fails_on_another_value() {
         received(StatusCode::OK, &[("x-trace", "2")], b"").assert_header("x-trace", "1");
     }
 
+    /// A field name is matched without regard to case (RFC 9110 section 5.1).
     #[test]
-    #[should_panic(expected = "no `Set-Cookie` names `session`; the response set [\"theme\"]")]
+    fn assert_no_header_passes_on_an_absent_field() {
+        received(StatusCode::OK, &[("x-other", "1")], b"").assert_no_header("WWW-Authenticate");
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 401: expected no `WWW-Authenticate`, received \
+                    `WWW-Authenticate: Basic`, `WWW-Authenticate: Bearer`"
+    )]
+    fn assert_no_header_fails_on_a_present_field_and_names_every_value() {
+        received(
+            StatusCode::UNAUTHORIZED,
+            &[
+                ("www-authenticate", "Basic"),
+                ("www-authenticate", "Bearer"),
+            ],
+            b"",
+        )
+        .assert_no_header("WWW-Authenticate");
+    }
+
+    /// A name no field can have would pass against any response, so it is
+    /// refused rather than passed.
+    #[test]
+    #[should_panic(expected = "GET /things -> 200: `x trace` is not a header name")]
+    fn assert_no_header_refuses_a_name_no_field_can_have() {
+        received(StatusCode::OK, &[], b"").assert_no_header("x trace");
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 200: no `Set-Cookie` names `session`; the response set [\"theme\"]"
+    )]
     fn assert_cookie_fails_on_a_cookie_never_set_and_names_the_ones_that_were() {
         received(StatusCode::OK, &[("set-cookie", "theme=dark; Path=/")], b"")
             .assert_cookie("session", "s");
     }
 
     #[test]
-    #[should_panic(expected = "expected cookie `theme=light`, received `theme=dark`")]
+    #[should_panic(
+        expected = "GET /things -> 200: expected cookie `theme=light`, received `theme=dark`"
+    )]
     fn assert_cookie_fails_on_another_value() {
         received(StatusCode::OK, &[("set-cookie", "theme=dark; Path=/")], b"")
             .assert_cookie("theme", "light");
     }
 
     #[test]
-    #[should_panic(expected = "expected a redirect, received 200 OK")]
+    #[should_panic(expected = "GET /things -> 200: expected a redirect, received 200 OK")]
     fn assert_redirect_fails_on_a_status_that_is_not_a_redirect() {
         received(StatusCode::OK, &[("location", "/next")], b"").assert_redirect("/next");
     }
 
     #[test]
-    #[should_panic(expected = "expected `location: /next`, received `location: /elsewhere`")]
+    #[should_panic(
+        expected = "GET /things -> 303: expected `location: /next`, received `location: /elsewhere`"
+    )]
     fn assert_redirect_fails_on_another_location() {
         received(StatusCode::SEE_OTHER, &[("location", "/elsewhere")], b"")
             .assert_redirect("/next");
     }
 
     #[test]
-    #[should_panic(expected = "expected 206, received 200 OK")]
+    #[should_panic(expected = "GET /things -> 200: expected 206, received 200 OK")]
     fn assert_part_fails_on_a_status_other_than_206() {
         received(StatusCode::OK, &[("content-range", "bytes 0-1/4")], b"ab").assert_part(0, 1, 4);
     }
 
     #[test]
     #[should_panic(
-        expected = "expected `content-range: bytes 0-1/4`, received `content-range: bytes 0-2/4`"
+        expected = "GET /things -> 206: expected `content-range: bytes 0-1/4`, \
+                               received `content-range: bytes 0-2/4`"
     )]
     fn assert_part_fails_on_another_span() {
         received(
@@ -207,7 +298,9 @@ mod assertions {
     }
 
     #[test]
-    #[should_panic(expected = "`Content-Range` names 2 octet(s) and the body carries 3")]
+    #[should_panic(
+        expected = "GET /things -> 206: `Content-Range` names 2 octet(s) and the body carries 3"
+    )]
     fn assert_part_fails_on_a_body_the_field_does_not_describe() {
         received(
             StatusCode::PARTIAL_CONTENT,
@@ -222,7 +315,8 @@ mod assertions {
     /// overflowing the length subtraction, which panics in a debug build and
     /// wraps in a release one, even against a response whose field repeats it.
     #[test]
-    #[should_panic(expected = "`bytes 5-2` names no octets: its last position precedes its first")]
+    #[should_panic(expected = "GET /things -> 206: `bytes 5-2` names no octets: \
+                               its last position precedes its first")]
     fn assert_part_refuses_a_span_that_ends_before_it_starts() {
         received(
             StatusCode::PARTIAL_CONTENT,
@@ -236,7 +330,8 @@ mod assertions {
     /// and is compared rather than overflowed.
     #[test]
     #[should_panic(
-        expected = "`Content-Range` names 18446744073709551616 octet(s) and the body carries 0"
+        expected = "GET /things -> 206: `Content-Range` names 18446744073709551616 octet(s) \
+                    and the body carries 0"
     )]
     fn assert_part_compares_the_widest_span_without_overflowing() {
         received(
@@ -248,5 +343,19 @@ mod assertions {
             b"",
         )
         .assert_part(0, u64::MAX, u64::MAX);
+    }
+
+    /// The readers that panic name the request as the assertions do.
+    #[test]
+    #[should_panic(expected = "GET /things -> 200: the body is not text")]
+    fn text_fails_on_a_body_that_is_not_utf8_and_names_the_request() {
+        let _ = received(StatusCode::OK, &[], b"\xff").text();
+    }
+
+    #[cfg(feature = "json")]
+    #[test]
+    #[should_panic(expected = "GET /things -> 200: the body is not valid JSON for `u8`")]
+    fn json_fails_on_a_body_that_is_not_the_type_and_names_the_request() {
+        let _: u8 = received(StatusCode::OK, &[], b"\"x\"").json();
     }
 }
