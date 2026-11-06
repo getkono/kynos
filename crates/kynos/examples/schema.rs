@@ -55,14 +55,9 @@ use serde::{Deserialize, Serialize};
 struct Sku(String);
 
 /// `propertyNames` for a map keyed by this.
-///
-/// `Constraints` is `#[non_exhaustive]`, so it grows without breaking callers —
-/// which is also why this starts from `default` rather than a literal.
 impl MapKey for Sku {
     fn key_constraints() -> Constraints {
-        let mut constraints = Constraints::default();
-        constraints.pattern = Some("^[A-Z]{3}-[0-9]{4}$".to_owned());
-        constraints
+        Constraints::new().pattern("^[A-Z]{3}-[0-9]{4}$")
     }
 }
 

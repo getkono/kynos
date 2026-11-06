@@ -233,11 +233,7 @@ pub fn instantiation_name(
 /// # }
 /// impl MapKey for Sku {
 ///     fn key_constraints() -> Constraints {
-///         // `Constraints` is `#[non_exhaustive]`, so it grows without
-///         // breaking you — which also means starting from `default`.
-///         let mut constraints = Constraints::default();
-///         constraints.pattern = Some("^[A-Z]{3}-[0-9]{4}$".to_owned());
-///         constraints
+///         Constraints::new().pattern("^[A-Z]{3}-[0-9]{4}$")
 ///     }
 /// }
 /// ```
