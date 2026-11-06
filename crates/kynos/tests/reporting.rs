@@ -76,6 +76,9 @@ fn last_segment(path: &str) -> String {
 /// The error types `src/` declares that no caller can hold, each with the
 /// reason it cannot.
 const UNRECEIVABLE: &[&str] = &[
+    // Private to `middleware::limits::body_size`: a late body's reader sees it
+    // as a failed read, and the interceptor answers the 408 in its place.
+    "Late",
     // Private to `middleware::limits`: a stalled body's reader sees it as a
     // failed read, and the interceptor answers the 408 in its place.
     "Stalled",
