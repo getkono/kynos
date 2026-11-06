@@ -76,6 +76,54 @@ impl<C: Send + Sync + 'static> ErasedTerminal<C> for PreflightTerminal {
     }
 }
 
+/// The end of a chain whose `QUERY` names no media type, in place of its
+/// operation.
+///
+/// A 400, which RFC 10008 section 2.1 names for a request lacking media type
+/// information: section 2 requires the server to fail it, whatever the
+/// operation would have read.
+struct UntypedQuery;
+
+impl<C: Send + Sync + 'static> ErasedTerminal<C> for UntypedQuery {
+    fn call<'a>(
+        &'a self,
+        request: Request,
+        context: &'a C,
+    ) -> Pin<Box<dyn Future<Output = Response> + Send + 'a>> {
+        let _ = (request, context);
+        let problem = Problem::new(StatusCode::BAD_REQUEST).with_detail(
+            "a `QUERY` request must name its content's media type in `Content-Type` \
+             (RFC 10008 section 2)",
+        );
+        Box::pin(std::future::ready(problem.into_response()))
+    }
+}
+
+/// Whether `request`, routed to the operation answering `method`, is a `QUERY`
+/// naming no media type: no `Content-Type` line carries a value.
+///
+/// Absence alone: a value that is malformed, repeated or unsupported is still
+/// media type information, which the operation's body extractor judges and
+/// answers with a 415 naming it.
+fn untyped_query(method: Method, request: &Request) -> bool {
+    #[cfg(feature = "openapi32")]
+    {
+        method == Method::Query
+            && request
+                .headers()
+                .get_all(header::CONTENT_TYPE)
+                .iter()
+                .all(|value| value.as_bytes().trim_ascii().is_empty())
+    }
+
+    // No operation answers `QUERY` without `openapi32`.
+    #[cfg(not(feature = "openapi32"))]
+    {
+        let _ = (method, request);
+        false
+    }
+}
+
 /// One declared operation, ready to serve.
 pub(crate) struct Served<C> {
     pub(crate) method: Method,
@@ -435,6 +483,10 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
     /// Runs one already-routed operation's chain, with recovery if it asked for
     /// it.
     ///
+    /// A `QUERY` that names no media type ends that chain at [`UntypedQuery`]
+    /// rather than at the operation, so the router's and its groups'
+    /// interceptors still see the refusal.
+    ///
     /// A panic is reported here whichever scope recovered it: this one, or the
     /// endpoint's own, whose 500 carries the payload out.
     fn run<'a>(
@@ -443,9 +495,15 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         route: Route<'a>,
         request: Request,
     ) -> impl Future<Output = Response> + Send + 'a {
+        let terminal: &'a dyn ErasedTerminal<C> = if untyped_query(operation.method, &request) {
+            &UntypedQuery
+        } else {
+            &*operation.terminal
+        };
+
         self.chain(
             &operation.interceptors,
-            &*operation.terminal,
+            terminal,
             Some(route),
             operation.catch_panics,
             request,
