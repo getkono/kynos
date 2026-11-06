@@ -1158,7 +1158,8 @@ fn querying(trailing_slashes: TrailingSlashPolicy) -> kynos::router::service::Se
 }
 
 /// A `QUERY` reaches the operation declaring it, as any declared method does:
-/// RFC 10008 Appendix A.2 has a server that implements `QUERY` process it.
+/// RFC 10008 Appendix A.2 has a server either process a `QUERY` or answer it
+/// 405 with `Allow`, and this path declares one.
 #[cfg(feature = "openapi32")]
 #[tokio::test]
 async fn a_query_reaches_the_operation_declaring_it() {
@@ -1209,10 +1210,10 @@ async fn a_declared_query_implies_no_other_method() {
     }
 }
 
-/// A `QUERY` one final slash away from its route is redirected with 308, whose
-/// RFC 9110 section 15.4.9 forbids changing the method: RFC 10008 section 2.5
-/// warns that a 301 or 302 may turn it into a `GET`, and the replayed request
-/// has to stay a `QUERY` with its content.
+/// A `QUERY` one final slash away from its route is redirected with 308, which
+/// RFC 9110 section 15.4.9 forbids a user agent to answer with another method,
+/// and which RFC 10008 section 2.5 reads as an invitation to send the same
+/// `QUERY` to the `Location`.
 #[cfg(feature = "openapi32")]
 #[tokio::test]
 async fn a_query_is_redirected_with_a_status_that_keeps_its_method() {
