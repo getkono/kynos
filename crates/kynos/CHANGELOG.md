@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/getkono/kynos/compare/kynos-v0.5.0...kynos-v0.6.0) - 2026-11-06
+
+### Added
+
+- *(error)* implement IntoProblem for every built-in refusal ([#1180](https://github.com/getkono/kynos/pull/1180))
+- *(macros)* let #[schema(as = T)] convert through a function named by via ([#1178](https://github.com/getkono/kynos/pull/1178))
+- *(router)* name an interceptor chain with stack! and apply it with intercept_all ([#1181](https://github.com/getkono/kynos/pull/1181))
+- *(test)* assert a problem response whole, and read its members typed ([#1184](https://github.com/getkono/kynos/pull/1184))
+- *(server)* bound a peer lost mid-response with TCP_USER_TIMEOUT ([#1176](https://github.com/getkono/kynos/pull/1176))
+- *(test)* name the request in assertion failures, take a bare status code, and assert a header absent ([#1175](https://github.com/getkono/kynos/pull/1175))
+- *(docs)* let Docs tag the operations it mounts ([#1170](https://github.com/getkono/kynos/pull/1170))
+- *(limits)* bound a request body's total arrival with BodySize::deadline ([#1166](https://github.com/getkono/kynos/pull/1166))
+- *(macros)* let #[schema] numeric and count bounds name a const ([#1165](https://github.com/getkono/kynos/pull/1165))
+- *(error)* [**breaking**] let a broken declared bound answer with the application's problem type ([#1169](https://github.com/getkono/kynos/pull/1169))
+- fill the crate-root facades and prelude for hand-written schemas and guards ([#1167](https://github.com/getkono/kynos/pull/1167))
+
+### Documentation
+
+- align the remaining WebSocket and WebTransport wording
+- correct what the WebTransport and WebSocket deferrals claim
+- defer WebSockets and WebTransport rather than refusing them
+
+### Fixed
+
+- *(conditional)* answer a conditional QUERY with 304 in Conditional and Served ([#1171](https://github.com/getkono/kynos/pull/1171))
+- *(macros)* keep ApiError's bindings out of the field type's hygiene ([#1173](https://github.com/getkono/kynos/pull/1173))
+- *(test)* match conformance and coverage on the URI's path, not the target string ([#1160](https://github.com/getkono/kynos/pull/1160))
+- *(server)* take the first-head deadline from tokio's clock ([#1159](https://github.com/getkono/kynos/pull/1159))
+- *(cache)* treat QUERY as safe whichever http release resolves ([#1163](https://github.com/getkono/kynos/pull/1163))
+
 ## [0.5.0](https://github.com/getkono/kynos/compare/kynos-v0.4.0...kynos-v0.5.0) - 2026-10-31
 
 ### Added

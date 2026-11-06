@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/getkono/kynos/compare/kynos-macros-v0.5.0...kynos-macros-v0.6.0) - 2026-11-06
+
+### Added
+
+- *(macros)* let #[schema(as = T)] convert through a function named by via ([#1178](https://github.com/getkono/kynos/pull/1178))
+- *(macros)* let #[schema] numeric and count bounds name a const ([#1165](https://github.com/getkono/kynos/pull/1165))
+- *(error)* [**breaking**] let a broken declared bound answer with the application's problem type ([#1169](https://github.com/getkono/kynos/pull/1169))
+
+### Fixed
+
+- *(macros)* keep ApiError's bindings out of the field type's hygiene ([#1173](https://github.com/getkono/kynos/pull/1173))
+
 ## [0.5.0](https://github.com/getkono/kynos/compare/kynos-macros-v0.4.0...kynos-macros-v0.5.0) - 2026-10-31
 
 ### Added
