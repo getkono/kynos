@@ -13,13 +13,13 @@ use kynos_openapi::{
 use serde_json::Value;
 
 use crate::{
-    http::{HeaderMap, header},
+    http::{HeaderMap, Uri, header},
     test::Observed,
 };
 
 /// Every way one observed response fails to match the description.
 pub(super) fn conformance(document: &Document, record: &Observed) -> Vec<String> {
-    let Some(template) = matched_template(document, &record.path) else {
+    let Some(template) = matched_template(document, &record.uri) else {
         return vec!["no declared path matches this request".to_owned()];
     };
     let Some(method) = Method::from_wire_str(record.method.as_str()) else {
@@ -194,14 +194,18 @@ fn validate(document: &Document, schema: &kynos_openapi::Schema, instance: &Valu
 /// The `paths` key this request matched, or `None` when the description
 /// declares no path it could have reached.
 ///
+/// Matched by the URI's path, as the router routes it: an absolute-form target
+/// (RFC 9112 section 3.2.2) carries a scheme and authority before it, and any
+/// target a query after it, neither of which a `paths` key holds.
+///
 /// Between matching templates, the first position where their segments rank
 /// differently decides, read left to right, as in the router's matcher: a
 /// literal beats a segment mixing an expression with literal text, which beats
 /// a whole-segment variable, and between two mixed segments the longer literal
 /// text wins. Document order breaks a tie, which only templates the router
 /// would refuse as conflicting can reach.
-pub(super) fn matched_template<'d>(document: &'d Document, path: &str) -> Option<&'d str> {
-    let path = path.split(['?', '#']).next().unwrap_or(path);
+pub(super) fn matched_template<'d>(document: &'d Document, uri: &Uri) -> Option<&'d str> {
+    let path = uri.path();
 
     let mut best: Option<&'d str> = None;
     for template in document.paths.items.keys() {

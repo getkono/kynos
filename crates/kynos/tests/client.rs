@@ -121,6 +121,35 @@ async fn session() -> WithHeaders<NoContent, kynos::middleware::cookies::SetCook
     )
 }
 
+/// The `X-Opaque` field's value as octets, which no derived group can hold,
+/// since a derived field reads text.
+struct Opaque(Vec<u8>);
+
+impl kynos::extract::params::header::HeaderParams for Opaque {
+    const NAMES: &'static [&'static str] = &["x-opaque"];
+}
+
+impl kynos::extract::params::header::DecodeHeaders for Opaque {
+    const FALLIBLE: bool = false;
+
+    fn decode(
+        headers: &kynos::http::HeaderMap,
+    ) -> Result<Self, kynos::error::rejection::HeaderRejection> {
+        Ok(Self(
+            headers
+                .get("x-opaque")
+                .map(|value| value.as_bytes().to_vec())
+                .unwrap_or_default(),
+        ))
+    }
+}
+
+/// Reports the `X-Opaque` octets that arrived.
+#[kynos::get("/opaque")]
+async fn opaque(Headers(Opaque(octets)): Headers<Opaque>) -> Json<Vec<u8>> {
+    Json(octets)
+}
+
 /// Sends the client somewhere else.
 #[kynos::get("/old")]
 async fn old() -> Redirect<308> {
@@ -136,6 +165,7 @@ fn client() -> TestClient<()> {
                 probe,
                 probe_options,
                 session,
+                opaque,
                 old
             ])
             .build(())
@@ -194,6 +224,27 @@ async fn a_request_carries_a_query_a_cookie_a_body_and_a_peer() {
     assert_eq!(seen.cookie.as_deref(), Some("session=abc123; theme=dark"));
     assert_eq!(seen.peer, "203.0.113.7:4242");
     assert_eq!(seen.query.as_deref(), Some("limit=10&label=a+b"));
+}
+
+/// A value `header` cannot spell, `obs-text` that is not UTF-8, reaches the
+/// service octet for octet.
+#[tokio::test]
+async fn an_opaque_header_value_arrives_as_sent() {
+    let octets: Vec<u8> = client()
+        .get("/opaque")
+        .header_bytes("x-opaque", b"caf\xe9\xff")
+        .send()
+        .await
+        .json();
+
+    assert_eq!(octets, b"caf\xe9\xff");
+}
+
+/// No field value holds a control character other than horizontal tab.
+#[test]
+#[should_panic(expected = "`a\\x00b` is not a header value")]
+fn an_octet_no_field_value_can_hold_panics() {
+    let _ = client().get("/opaque").header_bytes("x-opaque", b"a\0b");
 }
 
 /// A form body is encoded, labelled, and decodable by a handler that wants one.

@@ -34,12 +34,15 @@ use crate::{
     },
 };
 
-/// One response, as it was received, with the concrete path; the template is
+/// One response, as it was received, with the request target; the template is
 /// matched against the description when an assertion runs.
 #[derive(Debug)]
 struct Observed {
     method: HttpMethod,
-    path: String,
+    /// The target as the test wrote it, for reporting.
+    target: String,
+    /// The target the service routed, which the template is matched by.
+    uri: Uri,
     status: StatusCode,
     headers: HeaderMap,
     body: Bytes,
@@ -194,7 +197,7 @@ impl<C> TestClient<C> {
                 failures.push(format!(
                     "  {} {} -> {}: {reason}",
                     record.method,
-                    record.path,
+                    record.target,
                     record.status.as_u16()
                 ));
             }
@@ -223,7 +226,7 @@ impl<C> TestClient<C> {
             self.service.openapi(),
             recorded
                 .iter()
-                .map(|record| (&record.method, record.path.as_str(), record.status)),
+                .map(|record| (&record.method, &record.uri, record.status)),
         );
     }
 }
@@ -270,7 +273,7 @@ impl Coverage {
             document,
             exchanges
                 .iter()
-                .map(|exchange| (&exchange.method, exchange.path.as_str(), exchange.status)),
+                .map(|exchange| (&exchange.method, &exchange.uri, exchange.status)),
         );
     }
 }
@@ -280,18 +283,18 @@ impl Coverage {
 #[derive(Debug)]
 struct Exchange {
     method: HttpMethod,
-    path: String,
+    uri: Uri,
     status: StatusCode,
 }
 
 /// Asserts that every response `document` declares is among `received`.
 fn assert_covered<'r>(
     document: &Document,
-    received: impl Iterator<Item = (&'r HttpMethod, &'r str, StatusCode)>,
+    received: impl Iterator<Item = (&'r HttpMethod, &'r Uri, StatusCode)>,
 ) {
     let exercised: BTreeSet<(&str, Method, String)> = received
-        .filter_map(|(method, path, status)| {
-            let template = matched_template(document, path)?;
+        .filter_map(|(method, uri, status)| {
+            let template = matched_template(document, uri)?;
             let method = Method::from_wire_str(method.as_str())?;
             let operation = document.paths.items.get(template)?.operation(method)?;
             let (key, _) = declared_response(&operation.responses, status.as_u16())?;
@@ -346,6 +349,26 @@ impl<C> TestRequest<'_, C> {
             .unwrap_or_else(|_| panic!("`{name}` is not a header name"));
         let value = HeaderValue::from_str(value)
             .unwrap_or_else(|_| panic!("`{value}` is not a header value"));
+        self.headers.insert(name, value);
+        self
+    }
+
+    /// Sets a header to a value given as octets.
+    ///
+    /// For a value [`header`](Self::header) cannot spell: one holding
+    /// `obs-text` (RFC 9110 section 5.5), octets `0x80` to `0xFF` that need not
+    /// be UTF-8, as a test of how a service treats an opaque `Host` sends.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `name` is not a header name, or when `value` holds an octet
+    /// no field value can: a control character other than horizontal tab.
+    #[must_use]
+    pub fn header_bytes(mut self, name: &str, value: &[u8]) -> Self {
+        let name = HeaderName::from_bytes(name.as_bytes())
+            .unwrap_or_else(|_| panic!("`{name}` is not a header name"));
+        let value = HeaderValue::from_bytes(value)
+            .unwrap_or_else(|_| panic!("`{}` is not a header value", value.escape_ascii()));
         self.headers.insert(name, value);
         self
     }
@@ -513,10 +536,11 @@ impl<C> TestRequest<'_, C> {
         };
         let mut request = Request::new(body);
         *request.method_mut() = self.method.clone();
-        *request.uri_mut() = self
+        let uri = self
             .path
             .parse::<Uri>()
             .unwrap_or_else(|_| panic!("`{}` is not a request target", self.path));
+        *request.uri_mut() = uri.clone();
         if !self.cookies.is_empty() {
             let jar = self
                 .cookies
@@ -557,14 +581,15 @@ impl<C> TestRequest<'_, C> {
                 .expect("a coverage record whose recorder panicked cannot be written to")
                 .push(Exchange {
                     method: self.method.clone(),
-                    path: self.path.clone(),
+                    uri: uri.clone(),
                     status: parts.status,
                 });
         }
 
         self.client.recorded().push(Observed {
             method: self.method,
-            path: self.path,
+            target: self.path,
+            uri,
             status: parts.status,
             headers: parts.headers.clone(),
             body: bytes.clone(),

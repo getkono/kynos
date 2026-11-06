@@ -269,6 +269,49 @@ async fn a_client_without_the_coverage_does_not_count_toward_it() {
     coverage.assert_declared_responses_covered(&document);
 }
 
+/// An absolute-form target (RFC 9112 section 3.2.2) is routed by its path, so
+/// the harness matches it to the template its path instantiates: it conforms,
+/// and it counts toward coverage, in the client and in a shared `Coverage`.
+#[tokio::test]
+async fn an_absolute_form_target_is_matched_by_its_path() {
+    let coverage = Coverage::new();
+    let client = TestClient::new(service().expect("a describable router")).with_coverage(&coverage);
+
+    client
+        .get("http://example.com/users/42")
+        .send()
+        .await
+        .assert_status(StatusCode::OK);
+    client
+        .get("http://example.com/users/not-a-number?verbose=1")
+        .send()
+        .await
+        .assert_status(StatusCode::BAD_REQUEST);
+    exercise_writes(&client).await;
+
+    client.assert_conformance();
+    client.assert_declared_responses_covered();
+    let document = service().expect("a describable router").openapi().clone();
+    coverage.assert_declared_responses_covered(&document);
+}
+
+/// A failure on an absolute-form target is reported with the target as the
+/// test wrote it, not only its path.
+#[tokio::test]
+#[should_panic(expected = "GET http://example.com/nowhere -> 404: \
+                           no declared path matches this request")]
+async fn an_absolute_form_target_is_reported_as_written() {
+    let client = TestClient::new(service().expect("a describable router"));
+
+    client
+        .get("http://example.com/nowhere")
+        .send()
+        .await
+        .assert_status(StatusCode::NOT_FOUND);
+
+    client.assert_conformance();
+}
+
 // --- A scheme that never forbids ---------------------------------------------
 //
 // `forbids = false` says a scheme's authenticator never refuses a valid

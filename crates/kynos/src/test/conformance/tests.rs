@@ -191,11 +191,8 @@ fn document(templates: &[&str]) -> Document {
 fn a_literal_beats_a_variable_in_the_same_segment() {
     let document = document(&["/users/{id}", "/users/me"]);
 
-    assert_eq!(matched_template(&document, "/users/me"), Some("/users/me"));
-    assert_eq!(
-        matched_template(&document, "/users/42"),
-        Some("/users/{id}")
-    );
+    assert_eq!(matched(&document, "/users/me"), Some("/users/me"));
+    assert_eq!(matched(&document, "/users/42"), Some("/users/{id}"));
 }
 
 /// The router ranks a segment mixing an expression with literal text between
@@ -239,7 +236,7 @@ fn a_mixed_segment_ranks_between_a_literal_and_a_variable() {
     for (templates, path, expected) in cases {
         for templates in [templates, [templates[1], templates[0]]] {
             assert_eq!(
-                matched_template(&document(&templates), path),
+                matched(&document(&templates), path),
                 Some(expected),
                 "{templates:?} against `{path}`"
             );
@@ -256,8 +253,8 @@ fn the_first_differing_segment_decides_between_matching_templates() {
     for templates in [["/a/{x}/{y}", "/{x}/b/c"], ["/{x}/b/c", "/a/{x}/{y}"]] {
         let document = document(&templates);
 
-        assert_eq!(matched_template(&document, "/a/b/c"), Some("/a/{x}/{y}"));
-        assert_eq!(matched_template(&document, "/z/b/c"), Some("/{x}/b/c"));
+        assert_eq!(matched(&document, "/a/b/c"), Some("/a/{x}/{y}"));
+        assert_eq!(matched(&document, "/z/b/c"), Some("/{x}/b/c"));
     }
 }
 
@@ -267,12 +264,32 @@ fn the_first_differing_segment_decides_between_matching_templates() {
 fn a_query_or_fragment_is_not_part_of_what_is_matched() {
     let document = document(&["/users"]);
 
+    assert_eq!(matched(&document, "/users?limit=2"), Some("/users"));
+    assert_eq!(matched(&document, "/users#top"), Some("/users"));
+    assert_eq!(matched(&document, "/other"), None);
+}
+
+/// An absolute-form target (RFC 9112 section 3.2.2) is routed by its path, so
+/// its scheme and authority are not part of what is matched either.
+#[test]
+fn an_absolute_form_target_is_matched_by_its_path() {
+    let document = document(&["/users/{id}"]);
+
     assert_eq!(
-        matched_template(&document, "/users?limit=2"),
-        Some("/users")
+        matched(&document, "http://example.com/users/42?limit=2"),
+        Some("/users/{id}")
     );
-    assert_eq!(matched_template(&document, "/users#top"), Some("/users"));
-    assert_eq!(matched_template(&document, "/other"), None);
+    assert_eq!(
+        matched(&document, "https://example.com:8443/users/42"),
+        Some("/users/{id}")
+    );
+    assert_eq!(matched(&document, "http://example.com/other"), None);
+}
+
+/// The template a request to `target` matched, `target` parsed as the client
+/// parses it.
+fn matched<'d>(document: &'d Document, target: &str) -> Option<&'d str> {
+    matched_template(document, &target.parse().expect("a request target"))
 }
 
 /// The precedence a consumer resolves a status by: exact, then wildcard,
@@ -350,7 +367,8 @@ fn observed(status: u16, content_type: Option<&str>, body: &str) -> crate::test:
 
     crate::test::Observed {
         method: crate::http::Method::GET,
-        path: "/thing".to_owned(),
+        target: "/thing".to_owned(),
+        uri: crate::http::Uri::from_static("/thing"),
         status: crate::http::StatusCode::from_u16(status).expect("a status"),
         headers,
         body: bytes::Bytes::copy_from_slice(body.as_bytes()),
@@ -654,7 +672,8 @@ fn every_reason_is_reported_in_its_own_sentence() {
         ..observed(200, None, "")
     };
     let elsewhere = crate::test::Observed {
-        path: "/elsewhere".to_owned(),
+        target: "/elsewhere".to_owned(),
+        uri: crate::http::Uri::from_static("/elsewhere"),
         ..observed(200, None, "")
     };
 
