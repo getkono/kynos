@@ -123,6 +123,10 @@ fn every_guided_diagnostic_has_a_snapshot() {
         ("ByteSource", "traits/byte_source.stderr"),
         ("Carries", "traits/carries.stderr"),
         (
+            "CountBound",
+            "macros/schema_constraint_const_of_the_wrong_type.stderr",
+        ),
+        (
             "ClosedFlatten",
             "macros/schema_flatten_internally_tagged_denying_unknown_fields.stderr",
         ),
@@ -140,6 +144,10 @@ fn every_guided_diagnostic_has_a_snapshot() {
         ("Items", "macros/schema_item_bound_on_a_string.stderr"),
         ("Languages", "traits/languages.stderr"),
         ("MapKey", "traits/map_key.stderr"),
+        (
+            "NumberBound",
+            "macros/schema_constraint_const_of_the_wrong_type.stderr",
+        ),
         ("Numeric", "macros/schema_numeric_bound_on_a_string.stderr"),
         ("OpenMap", "traits/open_map.stderr"),
         ("ParamValue", "macros/query_params_object_field.stderr"),
