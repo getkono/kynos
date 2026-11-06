@@ -328,7 +328,7 @@ where
                 }
 
                 (
-                    (storing || !method.is_safe()).then(|| key.into_owned()),
+                    (storing || !is_safe(&method)).then(|| key.into_owned()),
                     storing.then(|| request.headers().clone()),
                 )
             };
@@ -340,7 +340,7 @@ where
             // `GET` and `HEAD` keys, not the key this request's method would build.
             if let Some(key) = key
                 .as_ref()
-                .filter(|_| !method.is_safe() && is_non_error(continued.status()))
+                .filter(|_| !is_safe(&method) && is_non_error(continued.status()))
             {
                 for stored in [kynos_openapi::Method::Get, kynos_openapi::Method::Head] {
                     self.store
@@ -479,6 +479,20 @@ fn primary_key<'a>(
                 .map_or_else(|| request.uri().path(), ::http::uri::PathAndQuery::as_str),
         ),
     }
+}
+
+/// Whether `method` is safe, so its response invalidates nothing under RFC 9111
+/// section 4.4.
+///
+/// RFC 9110 section 9.2.1's `GET`, `HEAD`, `OPTIONS` and `TRACE`, and `QUERY`,
+/// which RFC 10008 section 5.1 registers as safe. Kept here rather than read
+/// from [`http::Method::is_safe`], whose answer for `QUERY` changed in `http`
+/// 1.5.0. `QUERY` is matched by name, which every `http` release spells alike.
+fn is_safe(method: &http::Method) -> bool {
+    matches!(
+        *method,
+        http::Method::GET | http::Method::HEAD | http::Method::OPTIONS | http::Method::TRACE
+    ) || method.as_str() == "QUERY"
 }
 
 /// Whether `status` is a non-error (2xx or 3xx) status, per RFC 9111 section

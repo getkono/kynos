@@ -1261,7 +1261,13 @@ So a `POST`, `PUT`, `PATCH` or `DELETE` drops what was stored for that target,
 and a 4xx or 5xx answer to the same request drops nothing — a refused write
 changed nothing worth paying a handler call to rediscover.
 
-One detail is a decision rather than mechanics.
+Two details are decisions rather than mechanics.
+
+**`QUERY` is safe, whichever `http` resolves.** RFC 10008 section 5.1
+registers it as safe, so a search over a collection leaves the collection's
+stored listing in place. `Cache` keeps its own safe set rather than asking
+`http::Method::is_safe`, whose answer for `QUERY` changed in `http` 1.5.0: one
+Kynos release should not invalidate differently by a dependency's patch level.
 
 **Both stored methods are dropped, not the one that arrived.** The requirement
 invalidates a *URI*; `PrimaryKey` carries the method; and only `GET` and `HEAD`
