@@ -534,12 +534,23 @@ and HTTP/2. Nothing about HTTP/3 is undescribable — it carries the same reques
 and response semantics OpenAPI already covers — so the ground here is cost, not
 principle, and the door stays open. See [why HTTP/3 is deferred](#why-http3-is-deferred).
 
-**Listeners other than TCP are out**, for the same reason the runtime is: they
-widen the coupling surface the runtime policy exists to bound. A stream
-accepted some other way — a Unix socket, an in-memory pipe, a custom acceptor —
-is served by `Server::serve_io`, one connection per call, as plaintext, which
-exposes the connection driver's existing `AsyncRead + AsyncWrite` bound rather
-than adding a coupling point; accepting those streams stays the application's.
+**Unix domain socket listeners are in, and not yet built.** Listeners are TCP
+today. A Unix listener does not add a coupling point. It is a second kind of
+listener inside the existing "accept loop and listener" point, so the
+five-point count holds. The runtime question it might seem to reopen is
+already closed: that count exists for auditability, and was never about
+keeping a runtime swap open. Refusing it costs more than building it. A
+deployment behind a local proxy or sidecar that serves itself over `serve_io`
+has to rebuild the connection limit, graceful shutdown and drain that a
+listener provides, and has to invent a peer address that every handler then
+believes. The address model comes first, since a Unix peer has no
+`SocketAddr` ([#1130](https://github.com/getkono/kynos/issues/1130)), and
+then the listener ([#1131](https://github.com/getkono/kynos/issues/1131)). A
+stream no listener accepts, such as an in-memory pipe or one from a custom
+acceptor, is served by `Server::serve_io`, one connection per call, as
+plaintext. That exposes the connection driver's existing
+`AsyncRead + AsyncWrite` bound rather than adding a coupling point, and
+accepting those streams stays the application's job.
 
 **WebSockets and WebTransport are out.** Both stop being request/response the
 moment they are established, and OpenAPI describes request/response. This is
