@@ -12,9 +12,9 @@ error[E0277]: `kynos::Problem` does not declare which responses it can produce
              AtCapacity<T>
              AuthRejection
              BinaryStream<S, M>
+             BodyRefused<T, U>
              BodyRejection
              BodySizeExceeded<T>
-             CookieRejection
            and $N others
    = note: required for `Result<NoContent, kynos::Problem>` to implement `kynos::response::Responses`
 note: required by a bound in `returns`
