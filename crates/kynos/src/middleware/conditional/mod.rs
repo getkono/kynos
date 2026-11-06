@@ -169,7 +169,7 @@ impl Responses for NotModified {
     }
 }
 
-/// Answers a safe request with 304 when the client's copy is current.
+/// Answers a retrieval with 304 when the client's copy is current.
 ///
 /// Contributes 304 and declares `If-None-Match`.
 ///
@@ -187,8 +187,13 @@ impl Responses for NotModified {
 /// [the module's ordering rule](crate::middleware#the-order-a-chain-runs-in)):
 /// a cache hit never reaches a `Conditional` mounted inside it.
 ///
-/// Safe methods only: `If-None-Match` on an unsafe method calls for a 412, not
-/// a 304.
+/// # Which methods it answers
+///
+/// `GET` and `HEAD` (RFC 9110 section 13.1.2), and `QUERY`, whose conditional
+/// request RFC 10008 section 2.6 answers as a `GET`'s, with a 304. Every other
+/// method's response goes on as the handler made it: section 13.1.2 answers a
+/// matched `If-None-Match` on one with 412, which must be decided before the
+/// method is performed, and so is the handler's to send.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Conditional;
 
@@ -214,10 +219,10 @@ impl<C: Sync + 'static> Interceptor<C> for Conditional {
     ) -> Result<Continued<()>, NotModified> {
         let _ = context;
 
-        let safe = matches!(request.method(), &http::Method::GET | &http::Method::HEAD);
+        let retrieval = answers_not_modified(request.method());
         let continued = next.run(request).await;
 
-        let Some(condition) = reads.if_none_match.filter(|_| safe) else {
+        let Some(condition) = reads.if_none_match.filter(|_| retrieval) else {
             return Ok(continued);
         };
 
@@ -233,6 +238,15 @@ impl<C: Sync + 'static> Interceptor<C> for Conditional {
 
         Ok(continued)
     }
+}
+
+/// Whether a matched `If-None-Match` on `method` is answered 304.
+///
+/// RFC 9110 section 13.1.2's `GET` and `HEAD`, and `QUERY` per RFC 10008
+/// section 2.6. `QUERY` is matched by name, which every `http` release spells
+/// alike.
+fn answers_not_modified(method: &http::Method) -> bool {
+    matches!(*method, http::Method::GET | http::Method::HEAD) || method.as_str() == "QUERY"
 }
 
 /// Whether the client's copy is the one the response carries.
