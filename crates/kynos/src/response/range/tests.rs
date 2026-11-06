@@ -921,14 +921,23 @@ async fn tagged_status(fields: &[(HeaderName, &str)]) -> StatusCode {
         .status()
 }
 
+/// `QUERY`, which no `http` constant names in every release Kynos admits.
+fn query() -> Method {
+    Method::from_bytes(b"QUERY").expect("a method token")
+}
+
 /// Section 13.1.2: a false `If-None-Match` answers 304 only to GET and HEAD,
 /// and 412 to any other method, since a 304 would tell the client its unsafe
-/// request was a cache validation that succeeded.
+/// request was a cache validation that succeeded. RFC 10008 section 2.6 adds
+/// QUERY to the 304s, as its Appendix A.5 shows; OPTIONS, safe but no
+/// retrieval, keeps RFC 9110's 412.
 #[tokio::test]
 async fn a_false_if_none_match_on_an_unsafe_method_answers_412() {
     for (method, expected) in [
         (Method::GET, StatusCode::NOT_MODIFIED),
         (Method::HEAD, StatusCode::NOT_MODIFIED),
+        (query(), StatusCode::NOT_MODIFIED),
+        (Method::OPTIONS, StatusCode::PRECONDITION_FAILED),
         (Method::POST, StatusCode::PRECONDITION_FAILED),
         (Method::PUT, StatusCode::PRECONDITION_FAILED),
         (Method::DELETE, StatusCode::PRECONDITION_FAILED),
@@ -1012,6 +1021,26 @@ async fn a_refused_delivery_is_bare_and_a_304_carries_its_validators() {
             true
         ),
     );
+}
+
+/// Section 13.1.3: `If-Modified-Since` is ignored unless the method is GET or
+/// HEAD, and RFC 10008 Appendix A.5 evaluates it for QUERY, answering 304.
+#[tokio::test]
+async fn if_modified_since_is_evaluated_for_get_head_and_query_alone() {
+    const SENT: &str = "Sun, 06 Nov 1994 08:49:37 GMT";
+
+    for (method, expected) in [
+        (Method::GET, StatusCode::NOT_MODIFIED),
+        (Method::HEAD, StatusCode::NOT_MODIFIED),
+        (query(), StatusCode::NOT_MODIFIED),
+        (Method::OPTIONS, StatusCode::OK),
+        (Method::POST, StatusCode::OK),
+        (Method::PUT, StatusCode::OK),
+    ] {
+        let (status, _, _) =
+            delivered_head(method.clone(), &[(header::IF_MODIFIED_SINCE, SENT)]).await;
+        assert_eq!(status, expected, "{method}");
+    }
 }
 
 /// A `*` line beside a tag line matches by itself, so an untagged

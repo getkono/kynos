@@ -582,6 +582,79 @@ async fn a_query_leaves_the_stored_response_in_place() {
     );
 }
 
+/// A `QUERY` beside `numbered`'s `GET`, stating the same lifetime and counted
+/// by the same calls, so a reply served from the store would name an earlier
+/// call.
+#[cfg(feature = "openapi32")]
+#[kynos::query("/numbered")]
+async fn search_numbered() -> WithHeaders<Json<Report>, CacheControl> {
+    let id = CALLS.fetch_add(1, Ordering::SeqCst);
+    WithHeaders::new(
+        Json(Report {
+            id: u64::try_from(id).expect("a call count fits"),
+        }),
+        CacheControl,
+    )
+}
+
+/// RFC 10008 section 2.7 lets a cache store a `QUERY` response only under a key
+/// that includes the request content, and this cache keys on the target alone,
+/// so it stores none: a `QUERY` stating a lifetime is answered by its handler
+/// every time, and never by the `GET` stored for the same target.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn a_query_response_is_neither_stored_nor_served_from_the_store() {
+    let store = Stored::default();
+    let service = Router::<()>::new()
+        .mount(kynos::routes![numbered, search_numbered])
+        .intercept(Cache::new(store.clone()).namespace("test"))
+        .build(())
+        .expect("a describable router");
+    let before = CALLS.load(Ordering::SeqCst);
+
+    // The `GET` beside it is stored, so the lookup has something to miss.
+    assert_eq!(
+        get(&service, "/numbered").call().await.status,
+        StatusCode::OK
+    );
+
+    // The same content twice, then other content: no repeat is a hit.
+    for (call, body) in (1..).zip(["{\"a\":1}", "{\"a\":1}", "{\"a\":2}"]) {
+        let reply = send(
+            &service,
+            Method::from_bytes(b"QUERY").expect("`QUERY` is a method token"),
+            "/numbered",
+        )
+        .header("content-type", "application/json")
+        .body(body)
+        .call()
+        .await;
+
+        assert_eq!(reply.status, StatusCode::OK, "{body}");
+        // Each reply names the call that produced it, so none is a replay of
+        // the `GET` or of an earlier `QUERY`.
+        assert_eq!(
+            reply.json()["id"],
+            before + call,
+            "a QUERY was served from the store"
+        );
+    }
+
+    assert_eq!(
+        calls_during(before),
+        4,
+        "a QUERY was answered from the store"
+    );
+    let stored = store.0.lock().expect("no test panics while holding this");
+    assert!(
+        stored
+            .keys()
+            .all(|key| key.method == kynos::openapi::Method::Get),
+        "a QUERY's response was stored: {:?}",
+        stored.keys().collect::<Vec<_>>()
+    );
+}
+
 // --- Which request a stored response answers ------------------------------
 
 /// RFC 9111 section 2 keys a stored response on the whole target URI, and the

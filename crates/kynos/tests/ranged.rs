@@ -587,6 +587,64 @@ async fn head_carries_every_field_and_no_body() {
     assert_eq!(reply.field("etag").as_deref(), Some("\"r3\""));
 }
 
+// --- QUERY ----------------------------------------------------------------
+
+/// The same representation, answered to a `QUERY`.
+#[cfg(feature = "openapi32")]
+#[kynos::query("/recordings/current")]
+async fn recording_query(conditions: Conditions) -> Delivery<Mpeg> {
+    Served::<_, Mpeg>::new(Catalogue::new())
+        .etag(ETag::strong("r3"))
+        .last_modified(UNIX_EPOCH + Duration::from_secs(MODIFIED))
+        .deliver(&conditions)
+        .await
+        .expect("this source cannot fail")
+}
+
+/// A `QUERY` is sent the whole representation whatever `Range` it carries:
+/// RFC 9110 section 14.2 lets a server ignore the field, and Kynos applies it
+/// to a `GET` alone, since RFC 10008 section 2.8 finds byte ranges of little
+/// value for a query's results. Its conditions are a `GET`'s, though:
+/// RFC 10008 section 2.6 and Appendix A.5 answer a current tag or date with
+/// 304.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn a_query_ignores_a_range_and_honours_a_condition() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![recording_query])
+        .build(())
+        .expect("a describable router");
+    let query = || Method::from_bytes(b"QUERY").expect("a method token");
+
+    let ranged = send(&service, query(), "/recordings/current")
+        .header("range", "bytes=10-19")
+        .call()
+        .await;
+    assert_eq!(ranged.status, StatusCode::OK);
+    assert_eq!(ranged.body, RECORDING);
+    assert_eq!(ranged.field("content-range"), None);
+
+    for (name, value) in [
+        ("if-none-match", "\"r3\""),
+        ("if-modified-since", MODIFIED_AS_SENT),
+    ] {
+        let current = send(&service, query(), "/recordings/current")
+            .header(name, value)
+            .call()
+            .await;
+        assert_eq!(current.status, StatusCode::NOT_MODIFIED, "{name}");
+        assert!(current.body.is_empty(), "{name}");
+    }
+
+    // The control: a date before the last change is not current.
+    let older = send(&service, query(), "/recordings/current")
+        .header("if-modified-since", "Sat, 05 Nov 1994 08:49:37 GMT")
+        .call()
+        .await;
+    assert_eq!(older.status, StatusCode::OK);
+    assert_eq!(older.body, RECORDING);
+}
+
 // --- The description ------------------------------------------------------
 
 /// Every field the delivery reads is declared, and every status it can send.

@@ -8,6 +8,11 @@
 //! `Range` is evaluated only where a 200 was otherwise owed (section 14.2), so
 //! a 304 wins over a 206.
 //!
+//! A `QUERY` is validated as a `GET` is (RFC 10008 section 2.6): a matched
+//! `If-None-Match` or `If-Modified-Since` answers it 304, as the RFC's Appendix
+//! A.5 shows. Every other method keeps RFC 9110's letter: 412 for a matched
+//! `If-None-Match`, and `If-Modified-Since` ignored.
+//!
 //! A source that cannot answer is handed back to the caller, which knows
 //! whether a missing object is a 404, a 410 or a 500.
 
@@ -312,9 +317,10 @@ impl<S: ByteSource, M: MediaRanges, T> Served<S, M, T> {
         // Steps 3 and 4: the cache validations.
         if self.unmodified(conditions, current) {
             // Section 13.1.2: a false `If-None-Match` is a 304 for GET and
-            // HEAD alone, and a 412 for any other method. Only it can hold
-            // here for one, since the date applies to GET and HEAD alone.
-            if conditions.method != Method::GET && conditions.method != Method::HEAD {
+            // HEAD, and QUERY (RFC 10008 section 2.6), and a 412 for any other
+            // method. Only it can hold here for one, since the date applies to
+            // those three alone.
+            if !validated(&conditions.method) {
                 return Ok(Delivery::precondition_failed());
             }
             let response = self
@@ -452,8 +458,9 @@ impl<S: ByteSource, M: MediaRanges, T> Served<S, M, T> {
             return named;
         }
 
-        // Section 13.1.3: the date applies to GET and HEAD alone.
-        if conditions.method != Method::GET && conditions.method != Method::HEAD {
+        // Section 13.1.3: the date applies to GET and HEAD alone, and to
+        // QUERY, which RFC 10008 Appendix A.5 answers 304 on it.
+        if !validated(&conditions.method) {
             return false;
         }
 
@@ -469,6 +476,15 @@ impl<S: ByteSource, M: MediaRanges, T> Served<S, M, T> {
         // At the field's one-second resolution.
         seconds(modified) <= seconds(since)
     }
+}
+
+/// Whether `method` is a retrieval its cache validators answer with 304.
+///
+/// RFC 9110 section 13.1's `GET` and `HEAD`, and `QUERY`, whose selected
+/// representation RFC 10008 section 2.6 makes a `GET`'s. `QUERY` is matched by
+/// name, which every `http` release spells alike.
+fn validated(method: &Method) -> bool {
+    matches!(*method, Method::GET | Method::HEAD) || method.as_str() == "QUERY"
 }
 
 /// `length` as a `Content-Length` value, in the one allocation the value

@@ -12,7 +12,10 @@ use crate::{
     error::Result,
     router::{
         Mounted,
-        docs::{Rendered, Role, State, page},
+        docs::{
+            page,
+            state::{Rendered, Role, State},
+        },
     },
 };
 

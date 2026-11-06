@@ -104,6 +104,18 @@ body:
     validations:
       required: true
 
+  - type: textarea
+    id: replaces
+    attributes:
+      label: Replaces
+      description: >
+        The downstream code this makes unnecessary, as one line per pattern:
+        what an application writes today, and what it would write instead.
+        When the issue ships, each line becomes a row in `docs/migrating.md`.
+      placeholder: |
+        If you wrote: a hand-written `FromStr` and `Display` for a unit enum
+        Write instead: `#[derive(ParamValue)]`
+
   - type: checkboxes
     id: contribution
     attributes:

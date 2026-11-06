@@ -78,7 +78,7 @@ pub(crate) struct Mounted<C> {
     /// Which half of a reference this is, when it is one. Kept per entry so a
     /// violation that drops the entry drops its half with it.
     #[cfg(feature = "docs")]
-    pub(crate) docs: Option<docs::Role>,
+    pub(crate) docs: Option<docs::state::Role>,
 }
 
 /// The root of an API.
@@ -116,7 +116,8 @@ pub(crate) struct Mounted<C> {
 /// An opaque `I` or `S` cannot be checked against another interceptor, so
 /// neither `intercept` on such a router nor `nest` or `merge` of it into
 /// another compiles. Return a router that is still being composed with all four
-/// parameters named.
+/// parameters named; [`stack!`](crate::stack!) writes `I` in the order its
+/// interceptors were mounted.
 ///
 /// ```compile_fail
 /// use kynos::{Router, middleware::{catch_panic::PanicPolicy, limits::body_size::BodySize}};

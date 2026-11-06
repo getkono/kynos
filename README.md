@@ -27,6 +27,10 @@ The default features are `openapi31`, `macros`, `server`, `http1`, `http2`,
 `json` and `trace`. Everything else is additive and off; the
 [feature flags](#feature-flags) table says what each one adds.
 
+Upgrading from an earlier release? The [migration guide](docs/migrating.md)
+lists the workarounds each release makes unnecessary, which still compile and
+so survive an upgrade.
+
 ## Quickstart
 
 ```rust

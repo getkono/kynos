@@ -1,4 +1,5 @@
-//! What the built-in pages do with the two values substituted into them.
+//! What the built-in pages do with the two values substituted into them, and
+//! what a reference's own configuration puts on the operations it mounts.
 //!
 //! Sweeps over [`page::SHIPPED`] rather than cases per renderer: the set is
 //! finite and written down once, so enumerating it is total where a case per
@@ -6,6 +7,7 @@
 //! without a rule holding for it fails these.
 
 use super::{Docs, page};
+use crate::{Router, router::operation::Tag};
 
 /// Every page, rendered with the values a caller would set.
 fn rendered(description_url: &str, title: &str) -> Vec<(&'static str, String)> {
@@ -296,4 +298,99 @@ fn the_defaults_are_the_documented_ones() {
     assert!(alone.page.is_none());
     assert_eq!(alone.description_at.as_str(), "/openapi.json");
     assert_eq!(alone.operation_id_prefix, "docs");
+
+    // Untagged by default, either way.
+    assert!(docs.tags.is_empty());
+    assert!(alone.tags.is_empty());
+}
+
+struct Operations;
+
+impl Tag for Operations {
+    const NAME: &'static str = "operations";
+
+    fn metadata() -> kynos_openapi::Tag {
+        // A description, so the document is seen to carry the metadata rather
+        // than a tag rebuilt from the name alone.
+        kynos_openapi::Tag::new(Self::NAME).with_description("What runs the API")
+    }
+}
+
+struct Blanket;
+
+impl Tag for Blanket {
+    const NAME: &'static str = "blanket";
+
+    fn metadata() -> kynos_openapi::Tag {
+        kynos_openapi::Tag::new(Self::NAME)
+    }
+}
+
+/// The tag names on the `GET` at `path`.
+fn tags_at(document: &kynos_openapi::Document, path: &str) -> Vec<String> {
+    document.paths.items[path]
+        .get
+        .as_ref()
+        .unwrap_or_else(|| panic!("a GET at {path}"))
+        .tags
+        .clone()
+}
+
+#[test]
+fn a_tag_reaches_every_operation_a_reference_mounts_and_the_document() {
+    for (docs, paths) in [
+        (
+            Router::<()>::new().docs(Docs::scalar().tag::<Operations>()),
+            &["/docs", "/openapi.json"][..],
+        ),
+        (
+            Router::<()>::new().docs(Docs::description_only().tag::<Operations>()),
+            &["/openapi.json"][..],
+        ),
+    ] {
+        let document = docs.openapi().expect("a describable router");
+
+        for path in paths {
+            assert_eq!(tags_at(&document, path), ["operations"], "{path}");
+        }
+        assert_eq!(document.tags, [Operations::metadata()]);
+    }
+}
+
+#[test]
+fn an_untagged_reference_tags_nothing_and_declares_no_tag() {
+    // The control for the case above: without it, that test passes against a
+    // `describe` that tags every reference whether or not `tag` was called.
+    let document = Router::<()>::new()
+        .docs(Docs::scalar())
+        .openapi()
+        .expect("a describable router");
+
+    for path in ["/docs", "/openapi.json"] {
+        assert!(tags_at(&document, path).is_empty(), "{path}");
+    }
+    assert!(document.tags.is_empty());
+}
+
+#[test]
+fn a_reference_tag_precedes_an_enclosing_routers_and_a_repeat_is_dropped() {
+    // A reference's tags are its operations' own, so they come first, as a
+    // route attribute's do; a tag named twice keeps its first slot.
+    let document = Router::<()>::new()
+        .tag::<Blanket>()
+        .docs(
+            Docs::description_only()
+                .tag::<Operations>()
+                .tag::<Blanket>()
+                .tag::<Operations>(),
+        )
+        .openapi()
+        .expect("a describable router");
+
+    assert_eq!(
+        tags_at(&document, "/openapi.json"),
+        ["operations", "blanket"]
+    );
+    let declared: Vec<_> = document.tags.iter().map(|tag| tag.name.as_str()).collect();
+    assert_eq!(declared, ["blanket", "operations"]);
 }

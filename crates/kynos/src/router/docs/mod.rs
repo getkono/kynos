@@ -48,23 +48,23 @@
 mod endpoint;
 mod page;
 pub(super) mod render;
+pub(super) mod state;
 
 #[cfg(test)]
 mod tests;
 
-use std::{
-    borrow::Cow,
-    marker::PhantomData,
-    sync::{Arc, OnceLock, PoisonError, RwLock},
-};
+use std::{borrow::Cow, marker::PhantomData, sync::Arc};
 
-use bytes::Bytes;
 use kynos_openapi::{PathTemplate, validate::violation::Violation};
 
 use crate::router::{
-    docs::endpoint::{DocsEndpoint, Half},
+    docs::{
+        endpoint::{DocsEndpoint, Half},
+        state::{Role, State},
+    },
     endpoint::{DynEndpoint, operation_id},
     error::RouterError,
+    operation::{DeclaredTag, Tag},
 };
 
 /// An API reference, ready to mount.
@@ -85,6 +85,7 @@ pub struct Docs<M = WithPage> {
     page: Option<PageMount>,
     description_at: PathTemplate,
     operation_id_prefix: Cow<'static, str>,
+    tags: Vec<DeclaredTag>,
     violations: Vec<Violation<RouterError>>,
     mode: PhantomData<fn() -> M>,
 }
@@ -241,6 +242,7 @@ impl<M> Docs<M> {
             page,
             description_at,
             operation_id_prefix: Cow::Borrowed("docs"),
+            tags: Vec::new(),
             violations,
             mode: PhantomData,
         }
@@ -275,6 +277,42 @@ impl<M> Docs<M> {
         self
     }
 
+    /// Tags every operation this reference mounts with `T`.
+    ///
+    /// Both halves where there is a page, and `T`'s metadata reaches the
+    /// document's `tags` as any tag an operation names does. Each call adds
+    /// one, in call order, ahead of whatever tags an enclosing router adds.
+    /// Untagged by default.
+    ///
+    /// ```no_run
+    /// use kynos::{
+    ///     Router,
+    ///     router::{docs::Docs, operation::Tag},
+    /// };
+    ///
+    /// // `#[derive(kynos::Tag)]` writes this under the `macros` feature.
+    /// struct Operations;
+    ///
+    /// impl Tag for Operations {
+    ///     const NAME: &'static str = "operations";
+    ///
+    ///     fn metadata() -> kynos::openapi::Tag {
+    ///         kynos::openapi::Tag::new(Self::NAME)
+    ///     }
+    /// }
+    ///
+    /// let docs = Docs::description_only()
+    ///     .description_at("/v1/openapi.json")
+    ///     .tag::<Operations>();
+    /// let router = Router::<()>::new().docs(docs);
+    /// # let _ = router;
+    /// ```
+    #[must_use]
+    pub fn tag<T: Tag>(mut self) -> Self {
+        self.tags.push(DeclaredTag::of::<T>());
+        self
+    }
+
     /// The description half, then the page half where there is a page, sharing
     /// one state, ready for the router to absorb.
     pub(super) fn into_halves<C: Send + Sync + 'static>(
@@ -286,17 +324,16 @@ impl<M> Docs<M> {
             .map(|PageMount { at, template }| (at, template))
             .unzip();
 
-        let state = Arc::new(State {
-            rendered: RwLock::new(None),
-            description_path: OnceLock::new(),
-            page,
-        });
+        let tags: Arc<[DeclaredTag]> = self.tags.into();
+
+        let state = Arc::new(State::new(page));
 
         let mut halves: Vec<(Arc<dyn DynEndpoint<C>>, Role)> = vec![(
             Arc::new(DocsEndpoint::new(
                 Half::Description,
                 self.description_at,
                 description_id,
+                Arc::clone(&tags),
                 Arc::clone(&state),
             )),
             Role::Description(Arc::clone(&state)),
@@ -305,7 +342,7 @@ impl<M> Docs<M> {
         if let Some(at) = at {
             let page_id = operation_id(&self.operation_id_prefix, at.as_str());
             halves.push((
-                Arc::new(DocsEndpoint::new(Half::Page, at, page_id, state)),
+                Arc::new(DocsEndpoint::new(Half::Page, at, page_id, tags, state)),
                 Role::Page,
             ));
         }
@@ -321,72 +358,4 @@ fn template(path: &str, violations: &mut Vec<Violation<RouterError>>) -> PathTem
         // A placeholder; the violation fails the build.
         PathTemplate::parse("/").expect("a root path is always a legal template")
     })
-}
-
-/// Which half of one reference a mounted entry is.
-#[derive(Clone, Debug)]
-pub(crate) enum Role {
-    /// Carries no state: the description's half names the reference, and the
-    /// page reads the URL that half recorded.
-    Page,
-    Description(Arc<State>),
-}
-
-/// What the halves share, filled once the document exists.
-#[derive(Debug)]
-pub(crate) struct State {
-    /// Replaced whenever the built service's document is edited.
-    rendered: RwLock<Option<Rendered>>,
-    /// The `paths` key the description ended up at, written by its own mount.
-    description_path: OnceLock<String>,
-    /// `None` for a description-only reference, which renders no page.
-    page: Option<PageTemplate>,
-}
-
-/// Both halves' bytes, swapped together so no request sees a page from one
-/// rendering beside a description from another.
-#[derive(Debug)]
-struct Rendered {
-    /// `None` exactly when [`State::page`] is: no page half is mounted to
-    /// read it.
-    page: Option<Bytes>,
-    description: Bytes,
-}
-
-/// Read where a rendered reference cannot be missing: only `Router::build`
-/// makes a `Service`, and it renders first.
-const UNRENDERED: &str =
-    "an API reference is rendered by `Router::build`, which is the only way to obtain a `Service`";
-
-impl State {
-    /// Read only by a mounted page half, which exists only beside a page.
-    pub(super) fn page(&self) -> Bytes {
-        self.read(|rendered| rendered.page.as_ref().expect(WITH_PAGE))
-    }
-
-    pub(super) fn policy(&self) -> Option<&'static str> {
-        self.page.as_ref().and_then(|page| page.policy)
-    }
-
-    pub(super) fn description(&self) -> Bytes {
-        self.read(|rendered| &rendered.description)
-    }
-
-    /// One half of the current rendering, which `Bytes` clones by reference.
-    fn read(&self, half: impl FnOnce(&Rendered) -> &Bytes) -> Bytes {
-        let rendered = self
-            .rendered
-            .read()
-            // Only a non-panicking assignment runs under the write lock.
-            .unwrap_or_else(PoisonError::into_inner);
-        half(rendered.as_ref().expect(UNRENDERED)).clone()
-    }
-
-    /// Replaces both halves' bytes at once.
-    fn publish(&self, rendered: Rendered) {
-        *self
-            .rendered
-            .write()
-            .unwrap_or_else(PoisonError::into_inner) = Some(rendered);
-    }
 }

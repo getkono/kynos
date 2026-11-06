@@ -192,7 +192,8 @@ impl<C: 'static> Server<C> {
     /// that vanished without closing its connection holds a connection permit.
     ///
     /// [`prepare`](Self::prepare) refuses an `idle` or `interval` outside 1 to
-    /// 32767 seconds.
+    /// 32767 seconds, and a `user_timeout` outside 1 to 2147483647
+    /// milliseconds. `None` leaves `TCP_USER_TIMEOUT` unset too.
     #[must_use]
     pub fn tcp_keepalive(mut self, keepalive: Option<TcpKeepAlive>) -> Self {
         self.tcp_keepalive = keepalive;
