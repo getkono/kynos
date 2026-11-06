@@ -114,11 +114,14 @@ fn unbound_local_addr(peer_addr: SocketAddr) -> SocketAddr {
 /// head: the earlier of HTTP/1's header-read deadline and HTTP/2's idle
 /// deadline, since no stream is in flight before that head under either
 /// protocol. `None` when every compiled timeout is disabled.
+///
+/// On tokio's clock, the one [`unheard`] sleeps on: a paused clock runs ahead
+/// of the real one, so a deadline from the real clock would read as past.
 pub(in crate::server) fn first_head_deadline(
     config: &TransportConfig,
-    accepted: std::time::Instant,
-) -> Option<std::time::Instant> {
-    let deadlines: &[Option<std::time::Instant>] = &[
+    accepted: Instant,
+) -> Option<Instant> {
+    let deadlines: &[Option<Instant>] = &[
         #[cfg(feature = "http1")]
         (config.http1).first_head_deadline(accepted),
         #[cfg(feature = "http2")]
@@ -127,9 +130,9 @@ pub(in crate::server) fn first_head_deadline(
     deadlines.iter().flatten().copied().min()
 }
 
-/// [`first_head_deadline`] for a connection accepted now, on tokio's clock.
+/// [`first_head_deadline`] for a connection accepted now.
 fn first_head_deadline_from_now(config: &TransportConfig) -> Option<Instant> {
-    first_head_deadline(config, std::time::Instant::now()).map(Instant::from_std)
+    first_head_deadline(config, Instant::now())
 }
 
 /// Resolves once `deadline` passes unless `head_seen` says a request head

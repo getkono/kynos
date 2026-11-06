@@ -224,8 +224,8 @@ impl Http2Config {
     /// `None` when the idle timeout is disabled or would overflow the clock.
     pub(in crate::server) fn first_head_deadline(
         &self,
-        accepted: std::time::Instant,
-    ) -> Option<std::time::Instant> {
+        accepted: tokio::time::Instant,
+    ) -> Option<tokio::time::Instant> {
         self.idle_timeout
             .and_then(|timeout| accepted.checked_add(timeout))
     }

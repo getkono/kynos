@@ -1543,7 +1543,8 @@ const SILENT_CONNECTION_BOUND: std::time::Duration = std::time::Duration::from_s
 #[cfg(feature = "http1")]
 #[test]
 fn the_first_head_deadline_counts_the_header_read_timeout_from_accept() {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
+    use tokio::time::Instant;
 
     let accepted = Instant::now();
     let deadline = |timeout| {
@@ -1562,7 +1563,8 @@ fn the_first_head_deadline_counts_the_header_read_timeout_from_accept() {
 #[cfg(feature = "http2")]
 #[test]
 fn the_http2_first_head_deadline_counts_the_idle_timeout_from_accept() {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
+    use tokio::time::Instant;
 
     let accepted = Instant::now();
     let deadline = |timeout| {
@@ -1582,7 +1584,8 @@ fn the_http2_first_head_deadline_counts_the_idle_timeout_from_accept() {
 #[cfg(all(feature = "http1", feature = "http2"))]
 #[test]
 fn the_first_head_deadline_is_the_earlier_of_both_protocols() {
-    use std::{num::NonZeroUsize, time::Instant};
+    use std::num::NonZeroUsize;
+    use tokio::time::Instant;
 
     let accepted = Instant::now();
     let later = HEAD_TIMEOUT * 2;
