@@ -156,6 +156,9 @@ token into CI for the occasion — see below. Instead:
      --notes-file <(sed -n '/^## \[X.Y.Z\]/,/^## \[/p' crates/kynos/CHANGELOG.md)
    ```
 
+   Then append the migration-guide line `git_release_body` in
+   `release-plz.toml` adds to every other release page.
+
 `release-plz.yml` reads no `CARGO_REGISTRY_TOKEN` and must not be given one.
 Release-plz skips the OIDC exchange whenever a registry token is present in the
 environment, so a secret wired in for an occasion like the one above — or left

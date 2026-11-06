@@ -28,6 +28,12 @@ changelog_path = "crates/kynos/CHANGELOG.md"
 git_tag_name = "kynos-v{{ version }}"
 git_release_enable = true
 git_release_name = "Kynos v{{ version }}"
+# The changelog says what was added; the guide says what that replaces.
+git_release_body = """
+{{ changelog }}
+
+Upgrading? The [migration guide](https://github.com/getkono/kynos/blob/master/docs/migrating.md) lists the workarounds each release makes unnecessary.
+"""
 
 [[package]]
 name = "kynos-macros"
