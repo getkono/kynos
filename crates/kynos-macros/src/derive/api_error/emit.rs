@@ -238,7 +238,12 @@ pub(super) fn responses(
                 || quote!(::kynos::__private::problem::headers::<()>(registry)),
                 |field| {
                     let ty = &field.ty;
-                    quote_spanned!(ty.span()=> ::kynos::__private::problem::headers::<#ty>(registry))
+                    // Only the path is spanned to the field: `registry` keeps
+                    // the derive's hygiene context, wherever the type's tokens
+                    // came from.
+                    let headers =
+                        quote_spanned!(ty.span()=> ::kynos::__private::problem::headers::<#ty>);
+                    quote!(#headers(registry))
                 },
             )
         });
@@ -254,11 +259,11 @@ pub(super) fn responses(
 
     let handed_over = delegates.iter().map(|delegate| {
         let ty = &delegate.ty;
-        quote_spanned! {ty.span()=>
-            ::kynos::__private::problem::union_responses(
-                &mut responses,
-                &<#ty as ::kynos::response::Responses>::responses(registry),
-            );
+        // As for a headers group: the type's path is spanned, the bindings
+        // are not.
+        let inner = quote_spanned!(ty.span()=> <#ty as ::kynos::response::Responses>::responses);
+        quote! {
+            ::kynos::__private::problem::union_responses(&mut responses, &#inner(registry));
         }
     });
 
@@ -288,10 +293,11 @@ fn member(extension: &Extension) -> TokenStream2 {
     let (ty, sent) = extension
         .optional()
         .map_or((&extension.ty, true), |inner| (inner, false));
-    // Spanned to the field, so a type with no schema is reported where it is
-    // named.
-    let schema = quote_spanned!(ty.span()=> registry.resolve::<#ty>());
-    quote!((#name, #schema, #sent))
+    // The type is spanned to the field, so one with no schema is reported
+    // where it is named; `registry` is not, so it keeps the derive's hygiene
+    // context when a `macro_rules!` hands the type over.
+    let resolve = quote_spanned!(ty.span()=> resolve::<#ty>);
+    quote!((#name, registry.#resolve(), #sent))
 }
 
 /// The statuses in declaration order, without repeats; two variants may share
