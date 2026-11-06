@@ -353,6 +353,26 @@ impl<C> TestRequest<'_, C> {
         self
     }
 
+    /// Sets a header to a value given as octets.
+    ///
+    /// For a value [`header`](Self::header) cannot spell: one holding
+    /// `obs-text` (RFC 9110 section 5.5), octets `0x80` to `0xFF` that need not
+    /// be UTF-8, as a test of how a service treats an opaque `Host` sends.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `name` is not a header name, or when `value` holds an octet
+    /// no field value can: a control character other than horizontal tab.
+    #[must_use]
+    pub fn header_bytes(mut self, name: &str, value: &[u8]) -> Self {
+        let name = HeaderName::from_bytes(name.as_bytes())
+            .unwrap_or_else(|_| panic!("`{name}` is not a header name"));
+        let value = HeaderValue::from_bytes(value)
+            .unwrap_or_else(|_| panic!("`{}` is not a header value", value.escape_ascii()));
+        self.headers.insert(name, value);
+        self
+    }
+
     /// Sets a JSON body.
     ///
     /// # Panics
