@@ -1113,3 +1113,135 @@ async fn an_endpoint_interceptor_is_handed_the_mounted_paths_key() {
 async fn nothing_at_all() -> NoContent {
     NoContent
 }
+
+// --- QUERY, which RFC 10008 defines and nothing is derived from ------------
+
+/// `QUERY`, which no `http` constant names in every release Kynos admits.
+fn query() -> Method {
+    Method::from_bytes(b"QUERY").expect("a method token")
+}
+
+/// The names a 405's `Allow` carries, sorted, so the assertion does not turn
+/// on declaration order.
+#[cfg(feature = "openapi32")]
+fn allowed(reply: &support::Reply) -> Vec<String> {
+    let allow = reply.field(header::ALLOW.as_str()).expect("an Allow field");
+    let mut methods: Vec<String> = allow.split(", ").map(str::to_owned).collect();
+    methods.sort_unstable();
+    methods
+}
+
+/// A `QUERY` beside the fixture's `GET` and `POST` on `/users`, answering with
+/// a body that names it, so a reply says which operation ran.
+#[cfg(feature = "openapi32")]
+#[kynos::query("/users")]
+async fn search_users() -> Text {
+    Text("query".to_owned())
+}
+
+/// A path declaring `QUERY` and nothing else, so nothing on it can answer
+/// another method by fallback.
+#[cfg(feature = "openapi32")]
+#[kynos::query("/searches")]
+async fn search_only() -> Text {
+    Text("query".to_owned())
+}
+
+/// The fixture service, with both `QUERY` operations mounted.
+#[cfg(feature = "openapi32")]
+fn querying(trailing_slashes: TrailingSlashPolicy) -> kynos::router::service::Service<App> {
+    support::router()
+        .mount(kynos::routes![search_users, search_only])
+        .trailing_slashes(trailing_slashes)
+        .build(App::new())
+        .expect("a describable router")
+}
+
+/// A `QUERY` reaches the operation declaring it, as any declared method does:
+/// RFC 10008 Appendix A.2 has a server that implements `QUERY` process it.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn a_query_reaches_the_operation_declaring_it() {
+    let reply = send(&querying(TrailingSlashPolicy::Strict), query(), "/users")
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::OK);
+    assert_eq!(reply.text(), "query");
+}
+
+/// On a path that declares no `QUERY`, a service implementing one elsewhere
+/// answers 405 with RFC 9110 section 15.5.6's `Allow`, and `Allow` names
+/// `QUERY` only where it is declared.
+///
+/// It is also no `GET`: unlike `HEAD`, which section 9.3.2 lets a `GET`
+/// answer, nothing lets a `GET` answer a `QUERY`, so `/users/42`'s `GET` does
+/// not run.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn a_query_on_a_path_declaring_none_is_refused_and_no_get_answers_it() {
+    let service = querying(TrailingSlashPolicy::Strict);
+
+    let refused = send(&service, query(), "/users/42").call().await;
+    assert_eq!(refused.status, StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(allowed(&refused), ["DELETE", "GET", "HEAD"]);
+
+    // `DELETE` is implemented on `/users/{id}`, so `/users` answers 405 too,
+    // and names the `QUERY` it declares beside its `GET`, `HEAD` and `POST`.
+    let declared = send(&service, Method::DELETE, "/users").call().await;
+    assert_eq!(declared.status, StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(allowed(&declared), ["GET", "HEAD", "POST", "QUERY"]);
+}
+
+/// A declared `QUERY` implies no other method, as a `GET` implies `HEAD`: on a
+/// path declaring `QUERY` alone, `Allow` names `QUERY` alone, and a `GET` or a
+/// `HEAD` there is refused rather than answered by it.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn a_declared_query_implies_no_other_method() {
+    let service = querying(TrailingSlashPolicy::Strict);
+
+    for method in [Method::GET, Method::HEAD] {
+        let reply = send(&service, method.clone(), "/searches").call().await;
+
+        assert_eq!(reply.status, StatusCode::METHOD_NOT_ALLOWED, "{method}");
+        assert_eq!(allowed(&reply), ["QUERY"], "{method}");
+    }
+}
+
+/// A `QUERY` one final slash away from its route is redirected with 308, whose
+/// RFC 9110 section 15.4.9 forbids changing the method: RFC 10008 section 2.5
+/// warns that a 301 or 302 may turn it into a `GET`, and the replayed request
+/// has to stay a `QUERY` with its content.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn a_query_is_redirected_with_a_status_that_keeps_its_method() {
+    let reply = send(&querying(TrailingSlashPolicy::Redirect), query(), "/users/")
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::PERMANENT_REDIRECT);
+    assert_eq!(
+        reply.field(header::LOCATION.as_str()).as_deref(),
+        Some("/users")
+    );
+}
+
+/// A `QUERY` to a service where no operation implements it is a 501, RFC 9110
+/// section 15.6.2, on a matched path and an unmatched one alike, with no
+/// `Allow`.
+///
+/// Without `openapi32` that is every service: `QUERY` has no Path Item field
+/// before OpenAPI 3.2, so no operation can declare it and the router never
+/// routes it. With it, the fixture service simply declares none.
+#[tokio::test]
+async fn a_query_no_operation_implements_is_not_implemented() {
+    let service = service();
+
+    for target in ["/users", "/users/42", "/widgets"] {
+        let reply = send(&service, query(), target).call().await;
+
+        assert_eq!(reply.status, StatusCode::NOT_IMPLEMENTED, "{target}");
+        assert_eq!(reply.field(header::ALLOW.as_str()), None, "{target}");
+    }
+}
