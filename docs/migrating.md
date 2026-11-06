@@ -7,7 +7,8 @@ a workaround that still compiles, so it survives the upgrade beside the API
 that replaced it. This guide lists those.
 
 Each row reads: if you wrote the left column, write the middle one instead.
-The issue in the right column carries the motivating example. Paths are
+The [issue](https://github.com/getkono/kynos/issues) in the right column
+carries the motivating example. Paths are
 relative to `kynos`, and an item `kynos::prelude` exports is named bare.
 
 This is a guide, not a contract: nothing here is normative.
