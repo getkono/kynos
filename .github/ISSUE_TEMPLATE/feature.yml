@@ -15,8 +15,8 @@ body:
         Deferred: **HTTP/3 and QUIC**, gated on demonstrated demand rather than
         on design debate; **WebSockets**, which Kynos will describe through an
         AsyncAPI document it emits; and **WebTransport**, until intermediaries
-        support it reliably. Unix domain socket listeners are in scope and
-        tracked in #1131.
+        support it reliably and HTTP/3 is built. Unix domain socket listeners
+        are in scope and tracked in #1131.
 
         `docs/architecture.md` and the README's anti-patterns are normative. A
         request that contradicts them is closed rather than argued, so read the

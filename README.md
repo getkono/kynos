@@ -113,7 +113,7 @@ Permanently out-of-scope
 Deferred
 
 - WebSockets: OpenAPI describes HTTP request/response semantics, and a WebSocket stops being either once it is established. Kynos will describe the handshake as an OpenAPI operation and the message stream in an AsyncAPI document it emits. Until then, the escape hatch is `upgrade_unchecked`, behind `unchecked`, which serves the handshake and records the route as opaque rather than describing it. Server-Sent Events never needed this: an event stream is one ordinary response body, which is why `openapi32` can describe it.
-- WebTransport: it runs over HTTP/3, and support for it across proxies, load balancers and CDNs is still unreliable.
+- WebTransport: it is deployed over HTTP/3, which is itself deferred, and support for it across proxies, load balancers and CDNs is still unreliable. Its sessions leave request/response as a WebSocket's do, so it needs a describability answer too.
 
 See [scope edges](docs/architecture.md#scope-edges).
 

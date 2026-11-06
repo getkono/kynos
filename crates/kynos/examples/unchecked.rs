@@ -112,7 +112,8 @@ async fn main() -> kynos::Result<()> {
         // under the opaque-routes annotation instead, so the omission is
         // stated rather than merely present.
         .route_unchecked([Method::GET, Method::HEAD], "/assets/{*path}", serve_asset)
-        // Likewise, and for a reason that will not change.
+        // Likewise, until WebSocket support describes the handshake and the
+        // stream in its place.
         .upgrade_unchecked("/live", open_socket);
 
     // The line a CI job asserts on. An application that means to use the hatch
