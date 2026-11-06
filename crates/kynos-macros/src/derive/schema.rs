@@ -19,6 +19,11 @@
 //!             | content_media_type = "<RFC 9110 media type>"
 //! ```
 //!
+//! A `<number>` or `<integer>` is a plain decimal literal, or any other
+//! expression, which `attributes::bounds` evaluates in a `const` item asserting
+//! it finite or within `0..=u64::MAX`: the only check a value nobody can read
+//! while expanding can get.
+//!
 //! The two `content_*` keys are annotations, as JSON Schema makes them: the
 //! check holds the field to a string and asserts nothing about its content.
 //!

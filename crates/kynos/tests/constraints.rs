@@ -433,6 +433,77 @@ async fn a_content_annotation_is_described_and_asserted_by_neither_side() {
     refuses::<Upload>(long, &["/torrent"]).await;
 }
 
+/// Limits an application enforces elsewhere, which a bound names rather than
+/// restates.
+mod limits {
+    pub(super) const MAX_TAGS: usize = 2;
+    pub(super) const FLOOR: i8 = -3;
+}
+
+const CEILING: f32 = 7.5;
+
+/// Each bound named by a `const` path or computed by a `const` expression.
+#[derive(Debug, Schema, Deserialize)]
+struct Limited {
+    #[schema(max_length = limits::MAX_TAGS + 1)]
+    name: String,
+    #[schema(minimum = limits::FLOOR, exclusive_maximum = CEILING)]
+    level: f64,
+    #[schema(maximum = i16::MAX, multiple_of = limits::MAX_TAGS)]
+    even: i32,
+    #[schema(min_items = limits::MAX_TAGS - 1, max_items = limits::MAX_TAGS)]
+    tags: Vec<String>,
+}
+
+/// A bound written as a `const` is the same value on both sides: the keyword
+/// the description emits, and the check `Json` runs.
+#[tokio::test]
+async fn a_bound_named_by_a_const_is_described_and_enforced_as_its_value() {
+    let properties = &emitted::<Limited>()["properties"];
+    assert_eq!(properties["name"]["maxLength"], json!(3));
+    assert_eq!(properties["level"]["minimum"], json!(-3.0));
+    assert_eq!(properties["level"]["exclusiveMaximum"], json!(7.5));
+    assert_eq!(properties["even"]["maximum"], json!(32767.0));
+    assert_eq!(properties["even"]["multipleOf"], json!(2.0));
+    assert_eq!(properties["tags"]["minItems"], json!(1));
+    assert_eq!(properties["tags"]["maxItems"], json!(2));
+
+    let limited = json!({ "name": "abc", "level": -3, "even": 32766, "tags": ["a", "b"] });
+    admits::<Limited>(limited.clone()).await;
+
+    let mut broken = limited;
+    broken["name"] = json!("abcd");
+    broken["level"] = json!(7.5);
+    broken["even"] = json!(32767);
+    broken["tags"] = json!([]);
+    refuses::<Limited>(broken, &["/even", "/level", "/name", "/tags"]).await;
+}
+
+/// A bound the application parenthesized is its own expression, which the
+/// expansion must not make a redundant argument that `unused_parens` warns on.
+#[deny(unused_parens)]
+mod parenthesized {
+    use kynos::Schema;
+
+    use super::limits;
+
+    #[derive(Schema)]
+    pub(super) struct Bounded {
+        #[schema(max_length = (limits::MAX_TAGS + 1))]
+        pub(super) name: String,
+        #[schema(minimum = (limits::FLOOR))]
+        pub(super) level: f64,
+    }
+}
+
+/// A parenthesized bound describes the value inside the parentheses.
+#[test]
+fn a_parenthesized_const_bound_is_described_as_its_value() {
+    let properties = &emitted::<parenthesized::Bounded>()["properties"];
+    assert_eq!(properties["name"]["maxLength"], json!(3));
+    assert_eq!(properties["level"]["minimum"], json!(-3.0));
+}
+
 /// Externally tagged, the default: a payload sits under its variant's name.
 #[derive(Debug, Schema, Deserialize)]
 #[serde(rename_all = "snake_case")]

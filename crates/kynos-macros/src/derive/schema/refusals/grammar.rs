@@ -3,13 +3,13 @@
 //! field, across lists too, are refused.
 
 use proc_macro2::Span;
-use syn::{DeriveInput, Field, Fields, Lit, LitStr, Type, spanned::Spanned};
+use syn::{DeriveInput, Expr, Field, Fields, Lit, LitStr, Type, spanned::Spanned};
 
 use crate::derive::attribute::{Keys, key_name};
 use crate::derive::common::non_token_message;
 use crate::derive::schema::{
     COUNTS, NUMERIC,
-    attributes::{described_as_keys, is_flattened, is_phantom, open_span},
+    attributes::{as_literal, described_as_keys, is_flattened, is_phantom, open_span},
     container::Container,
     flatten::internally_tagged_payloads,
     members::field_groups,
@@ -174,17 +174,26 @@ fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
         };
     }
 
+    // A bound that is no literal is a `const` expression, which the expansion
+    // asserts in range at compile time.
     if NUMERIC.contains(&name.as_str()) {
-        return check_number(&name, &meta.value()?.parse()?);
+        let value: Expr = meta.value()?.parse()?;
+        return as_literal(&value).map_or(Ok(()), |literal| check_number(&name, &literal));
     }
 
     if COUNTS.contains(&name.as_str()) {
-        let literal = meta.value()?.parse()?;
+        let value: Expr = meta.value()?.parse()?;
+        let Some(literal) = as_literal(&value) else {
+            return Ok(());
+        };
         return match &literal {
             Lit::Int(value) => value.base10_parse::<u64>().map(|_| ()),
             other => Err(syn::Error::new(
                 other.span(),
-                format!("`{name}` takes a non-negative whole number"),
+                format!(
+                    "`{name}` takes a non-negative whole number: a literal, or a `const` \
+                     expression of a primitive integer type"
+                ),
             )),
         };
     }
@@ -247,7 +256,7 @@ fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
     ))
 }
 
-/// A numeric bound `name`'s value: a number, written in plain decimal, since
+/// A numeric bound `name`'s literal value: a number, written in plain decimal, since
 /// [`as_float`](crate::derive::schema::attributes::as_float) emits it as
 /// written with `f64` appended.
 fn check_number(name: &str, literal: &Lit) -> syn::Result<()> {
@@ -257,7 +266,10 @@ fn check_number(name: &str, literal: &Lit) -> syn::Result<()> {
         other => {
             return Err(syn::Error::new(
                 other.span(),
-                format!("`{name}` takes a number"),
+                format!(
+                    "`{name}` takes a number: a literal, or a `const` expression of a primitive \
+                     number type"
+                ),
             ));
         }
     };

@@ -1,4 +1,6 @@
 use proc_macro2::Span;
+use quote::{ToTokens, quote_spanned};
+use syn::Expr;
 
 use super::{
     ANNOTATIONS, COUNTS, Field, Fields, IdentExt, Lit, LitFloat, LitInt, LitStr, NUMERIC, Spanned,
@@ -417,12 +419,14 @@ pub(super) struct Bound {
     pub(super) value: Option<BoundValue>,
 }
 
-/// What a [`Bound`] holds, as the typed literal the expansion writes.
+/// What a [`Bound`] holds, as the expression the expansion writes.
 pub(super) enum BoundValue {
-    /// An `f64`, which every numeric JSON Schema bound is.
-    Number(LitFloat),
-    /// A `u64` count.
-    Count(LitInt),
+    /// An `f64`, which every numeric JSON Schema bound is: a typed literal, or
+    /// a block reading a `const` expression ([`number`]).
+    Number(TokenStream2),
+    /// A `u64` count: a typed literal, or a block reading a `const`
+    /// expression ([`count`]).
+    Count(TokenStream2),
     /// The `pattern`, as written.
     Pattern(LitStr),
     /// A `content_encoding` or `content_media_type`, as written: an annotation
@@ -430,7 +434,7 @@ pub(super) enum BoundValue {
     Annotation(LitStr),
 }
 
-impl quote::ToTokens for BoundValue {
+impl ToTokens for BoundValue {
     fn to_tokens(&self, tokens: &mut TokenStream2) {
         match self {
             Self::Number(number) => number.to_tokens(tokens),
@@ -473,25 +477,19 @@ pub(super) fn bounds(field: &Field) -> Vec<Bound> {
                 return Ok(());
             }
 
-            let literal: Lit = meta.value()?.parse()?;
+            let written: Expr = meta.value()?.parse()?;
             let value = if NUMERIC.contains(&name.as_str()) {
-                as_float(&literal).map(BoundValue::Number)
+                number(&name, &written).map(BoundValue::Number)
             } else if COUNTS.contains(&name.as_str()) {
-                match &literal {
-                    Lit::Int(count) => Some(BoundValue::Count(LitInt::new(
-                        &format!("{}u64", count.base10_digits()),
-                        count.span(),
-                    ))),
-                    _ => None,
-                }
+                count(&name, &written).map(BoundValue::Count)
             } else if name == "pattern" {
-                match literal {
-                    Lit::Str(pattern) => Some(BoundValue::Pattern(pattern)),
+                match as_literal(&written) {
+                    Some(Lit::Str(pattern)) => Some(BoundValue::Pattern(pattern)),
                     _ => None,
                 }
             } else if ANNOTATIONS.contains(&name.as_str()) {
-                match literal {
-                    Lit::Str(annotation) => Some(BoundValue::Annotation(annotation)),
+                match as_literal(&written) {
+                    Some(Lit::Str(annotation)) => Some(BoundValue::Annotation(annotation)),
                     _ => None,
                 }
             } else {
@@ -554,4 +552,84 @@ pub(super) fn as_float(literal: &Lit) -> Option<LitFloat> {
         _ => return None,
     };
     Some(LitFloat::new(&format!("{digits}f64"), span))
+}
+
+/// A `#[schema(...)]` value that is one literal, a negative number included,
+/// looking through the invisible group a `macro_rules!` fragment arrives in;
+/// `None` for any other expression.
+pub(super) fn as_literal(value: &Expr) -> Option<Lit> {
+    let mut value = value;
+    while let Expr::Group(group) = value {
+        value = &group.expr;
+    }
+    syn::parse2(value.to_token_stream()).ok()
+}
+
+/// A numeric bound `name`'s value as an `f64` expression: a literal as
+/// [`as_float`] writes it, and anything else as a `const` that asserts the
+/// value finite, since JSON has no NaN or infinity to write it as.
+fn number(name: &str, value: &Expr) -> Option<TokenStream2> {
+    if let Some(literal) = as_literal(value) {
+        return as_float(&literal).map(|number| number.to_token_stream());
+    }
+    let refusal = format!(
+        "`{name}` takes a finite number, as JSON writes one: NaN and infinity have no JSON form"
+    );
+    Some(quote_spanned! {value.span()=>
+        {
+            // The cast is the point: the bound is described as an `f64`. Any
+            // binding of `#value` warns on parentheses the application wrote.
+            #[allow(unused_parens, clippy::cast_lossless, clippy::cast_precision_loss)]
+            const __KYNOS_BOUND: ::core::primitive::f64 = {
+                let bound = ::kynos::__private::constraints::number_bound(#value)
+                    as ::core::primitive::f64;
+                ::core::assert!(bound.is_finite(), #refusal);
+                bound
+            };
+            __KYNOS_BOUND
+        }
+    })
+}
+
+/// A count `name`'s value as a `u64` expression: a literal suffixed as one,
+/// and anything else as a `const` that asserts the value a `u64`, which a
+/// negative or wider integer is not.
+fn count(name: &str, value: &Expr) -> Option<TokenStream2> {
+    if let Some(literal) = as_literal(value) {
+        return match literal {
+            Lit::Int(count) => Some(
+                LitInt::new(&format!("{}u64", count.base10_digits()), count.span())
+                    .into_token_stream(),
+            ),
+            _ => None,
+        };
+    }
+    let refusal =
+        format!("`{name}` takes a whole number from 0 to 18446744073709551615, which a count is");
+    // Every primitive integer widens into `i128` but `u128`, whose values past
+    // `i128::MAX` wrap negative and are refused as they would be anyway.
+    Some(quote_spanned! {value.span()=>
+        {
+            // The assertion bounds both casts, which `From` cannot do in a
+            // `const`. Any binding of `#value` warns on parentheses the
+            // application wrote.
+            #[allow(
+                unused_parens,
+                clippy::cast_lossless,
+                clippy::cast_possible_truncation,
+                clippy::cast_possible_wrap,
+                clippy::cast_sign_loss
+            )]
+            const __KYNOS_BOUND: ::core::primitive::u64 = {
+                let bound = ::kynos::__private::constraints::count_bound(#value)
+                    as ::core::primitive::i128;
+                ::core::assert!(
+                    0 <= bound && bound <= ::core::primitive::u64::MAX as ::core::primitive::i128,
+                    #refusal
+                );
+                bound as ::core::primitive::u64
+            };
+            __KYNOS_BOUND
+        }
+    })
 }

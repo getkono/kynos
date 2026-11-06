@@ -278,6 +278,13 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// error, and a derived newtype takes its member's kinds, so
 /// `#[schema(max_length = 8)] label: Label` bounds the string `Label` wraps.
 ///
+/// A numeric bound or a count takes a literal or a `const` expression of a
+/// primitive number, such as `max_items = MAX_BATCH` or `maximum = i32::MAX`,
+/// so a limit enforced elsewhere is described as itself rather than as a copy.
+/// The expression is evaluated in a `const` item, where a NaN or infinite
+/// bound, or a count below 0 or past `u64::MAX`, fails to compile; being an
+/// item, it cannot name `Self` or a generic parameter.
+///
 /// `format` is **not** among them: it follows from the type, so a `String`
 /// annotated as a UUID is a compile error naming the remedy — `uuid::Uuid`,
 /// one of the date, time or decimal types behind their features, or a newtype

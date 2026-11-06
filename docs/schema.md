@@ -208,12 +208,14 @@ A `String` field that already carries encoded bytes, such as a file uploaded
 as base64 inside a JSON body, says so on the field:
 
 ```rust,ignore
+const MAX_TORRENT_FILE_BYTES: usize = 1_048_576;
+
 #[derive(Schema, Deserialize)]
 struct AddTorrent {
     #[schema(
         content_encoding = "base64",
         content_media_type = "application/x-bittorrent",
-        max_length = 1398101
+        max_length = MAX_TORRENT_FILE_BYTES.div_ceil(3) * 4
     )]
     metainfo: String,
 }
@@ -718,6 +720,15 @@ and against the bounds its type declares. A derived `HeaderParams` writes them
 into its response headers too, but a header a handler sends is not checked, as
 no response body is.
 
+- **A numeric bound or a count may name a `const`**, or compute one, so the
+  limit a handler enforces elsewhere is the one described rather than a copy:
+  `max_items = MAX_BATCH`, `maximum = i32::MAX`,
+  `max_length = LIMIT.div_ceil(3) * 4`. The derive evaluates it in a `const`
+  item, which asserts a number finite and a count a whole number from 0 to
+  `u64::MAX`, so a value out of range fails to compile as a literal does; a
+  float count or a `bool` bound is a type error. Being an item, it cannot name
+  `Self` or a generic parameter. `pattern` and the two `content_*` keys stay
+  literals, since the derive checks their text while it expands.
 - **A keyword applies to its own kind only**, as in JSON Schema: an absent
   `Option` satisfies every bound. A bound on a type of another kind is a compile
   error through `Numeric`, `Textual`, `Items` or `UniqueItems`, since a check that

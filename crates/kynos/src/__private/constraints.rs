@@ -207,6 +207,51 @@ pub fn content_encoding<T: Textual + ?Sized>(_: &T, _: &str, _: Pointer<'_>, _: 
 pub fn content_media_type<T: Textual + ?Sized>(_: &T, _: &str, _: Pointer<'_>, _: &mut Violations) {
 }
 
+/// A numeric bound written as a `const` expression rather than a literal: the
+/// derive casts it to `f64` inside a `const` item once this has held it to a
+/// primitive number.
+#[doc(hidden)]
+#[must_use]
+pub const fn number_bound<T: NumberBound>(value: T) -> T {
+    value
+}
+
+/// A count written as a `const` expression rather than a literal: the derive
+/// range-checks it into a `u64` inside a `const` item once this has held it to
+/// a primitive integer, which no float or `bool` truncates into.
+#[doc(hidden)]
+#[must_use]
+pub const fn count_bound<T: CountBound>(value: T) -> T {
+    value
+}
+
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a number, which a `#[schema(...)]` numeric bound takes",
+    label = "not a primitive number",
+    note = "`minimum`, `maximum`, `exclusive_minimum`, `exclusive_maximum` and `multiple_of` \
+            take a literal or a `const` expression of a primitive integer or float type"
+)]
+pub trait NumberBound: Copy {}
+
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a whole number, which a `#[schema(...)]` count takes",
+    label = "not a primitive integer",
+    note = "`min_length`, `max_length`, `min_items` and `max_items` take a literal or a `const` \
+            expression of a primitive integer type, from 0 to `u64::MAX`"
+)]
+pub trait CountBound: Copy {}
+
+macro_rules! bound_types {
+    ($bound:ident: $($ty:ty),+) => {
+        $(impl $bound for $ty {})+
+    };
+}
+
+bound_types!(CountBound: u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize);
+bound_types!(NumberBound: u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize, f32, f64);
+
 /// Checks a member serde reads under any of `names`, its read name first,
 /// and reports what `check` finds at `at`, the object holding the member.
 ///
