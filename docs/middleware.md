@@ -752,8 +752,8 @@ read. A body that stalls fails that read with `http::body::BodyStalled` —
 whoever is reading it: a codec, `BodySize`'s count, `Decompression`, a streamed
 `Records` — and every body extractor answers it with `BodyRejection::Stalled`,
 a 408 every operation reading a body declares. The 408 is the chain's own, so
-it carries the interceptors' headers (a request id among them) and any problem
-type the operation's error mapping gives it. The server then adds only
+it carries the interceptors' headers (a request id among them); its problem is
+`about:blank`, with the idle limit it passed as the detail. The server then adds only
 `Connection: close` over HTTP/1, to whatever the chain answered, as RFC 9110
 §15.5.9 advises. Over HTTP/2 the stall held one stream, and the 408 ends that
 stream alone. A handler reading its body itself sees the `BodyStalled` and
@@ -768,8 +768,10 @@ chain sees it, so no reader can be left out. `TestClient` wraps each request
 body in the same timer at the server's default, so a stalled `body_stream` is
 answered as a served one is and its 408 counts toward coverage. The cases are in
 [`server/tests.rs`](../crates/kynos/src/server/tests.rs) over a real socket, each
-protocol's 408 through a router and a body whose every gap is under the limit
-but whose total is over it.
+protocol's 408 on a bare service and a body whose every gap is under the limit
+but whose total is over it, and in
+[`tests/connection_adversarial.rs`](../crates/kynos/tests/connection_adversarial.rs),
+an HTTP/1 408 through a router whose `RequestId` header survives it.
 
 A client that sends one byte every 29 seconds still passes. Bounding the
 *total* is `BodySize::deadline`'s job: the whole body must arrive within it,
@@ -798,7 +800,11 @@ either order. A deadline and a `Timeout` both declare 408, so `CompatibleWith`
 refuses the pair on one operation, as it refuses `BodySize` beside
 `Decompression`: one status cannot say which bound a client passed. A service
 wanting both gives the handler's timeout another status through
-`Timeout::answer_with`.
+`Timeout::answer_with`. The idle timer's 408 is the exception: it is declared on
+every operation reading a body, so it shares its status with either bound, and
+only the problem's detail names the idle limit. Refusing the pair would refuse
+every deadline and `Timeout` on such an operation, and all three ask the client
+the same thing — send the body faster or retry.
 
 **A response body is bounded by neither of the rows above.** `Timeout` wraps the
 chain's future, and that future completes when the *head* is ready. A handler
