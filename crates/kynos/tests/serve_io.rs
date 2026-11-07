@@ -13,6 +13,8 @@ use std::{net::SocketAddr, time::Duration};
 
 use http_body_util::{BodyExt as _, Empty};
 use hyper_util::rt::{TokioExecutor, TokioIo};
+#[cfg(all(unix, feature = "http1"))]
+use kynos::http::forwarded::{Forwarded, ProxyHeader, TrustedProxies};
 use kynos::{
     Router,
     error::Error,
@@ -117,32 +119,99 @@ async fn an_http1_request_is_served_and_sees_the_peer_it_was_handed() {
 #[cfg(all(unix, feature = "http1"))]
 #[tokio::test]
 async fn a_unix_socket_is_served_as_the_unix_peer_it_is() {
-    /// One request over a fresh Unix socket pair, served as the connection
-    /// between the server end's own addresses.
-    async fn over_unix(path: &str) -> (http::StatusCode, String) {
-        let (client, server) = std::os::unix::net::UnixStream::pair().expect("a socket pair");
-        let connection = Connection::from_peer(
-            server.peer_addr().expect("a peer address"),
-            server.local_addr().expect("a local address"),
-        );
-        let [client, server] = [client, server].map(|stream| {
-            stream.set_nonblocking(true).expect("a non-blocking socket");
-            tokio::net::UnixStream::from_std(stream).expect("registered with the runtime")
-        });
-        http1_get(client, server, connection, path).await
-    }
-
     assert_eq!(
-        over_unix("/transport").await,
+        over_unix(service(), get("/transport", hyper::Version::HTTP_11)).await,
         (http::StatusCode::OK, "unix unnamed=true".to_owned())
     );
 
-    let (status, body) = over_unix("/peer").await;
+    let (status, body) = over_unix(service(), get("/peer", hyper::Version::HTTP_11)).await;
     assert_eq!(status, http::StatusCode::INTERNAL_SERVER_ERROR);
     assert!(
         body.contains(r#""detail":"the connection has no IP peer address""#),
         "{body}"
     );
+}
+
+/// Answers with the client and scheme the router resolved, `none` for each it
+/// resolved none of.
+#[cfg(all(unix, feature = "http1"))]
+#[kynos::get("/origin")]
+async fn origin(forwarded: Forwarded) -> Text {
+    Text(format!(
+        "{} {}",
+        forwarded
+            .client()
+            .map_or_else(|| "none".to_owned(), |client| client.to_string()),
+        forwarded.proto().unwrap_or("none")
+    ))
+}
+
+/// A Unix peer has no IP address, so it resolves forwarding as no peer: a
+/// trust policy naming proxy addresses cannot name it and ignores the fields
+/// it relays, while one counting hops counts it and believes them.
+///
+/// Both fields are spoofed with the same client and scheme, and each trust
+/// form reads each field. Were the Unix peer made up as an IP address, as it
+/// was before, the address form would trust or distrust it by accident.
+#[cfg(all(unix, feature = "http1"))]
+#[tokio::test]
+async fn a_unix_peer_resolves_forwarding_as_no_peer_under_either_trust_form() {
+    // The addresses a made-up IP peer would most likely have taken, so
+    // trusting them would believe a Unix peer that was faked as one.
+    const PROXIES: [std::net::IpAddr; 2] = [
+        std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+    ];
+
+    for header in [ProxyHeader::Forwarded, ProxyHeader::XForwarded] {
+        for (trusted, expected) in [
+            (TrustedProxies::hops(header, 1), "203.0.113.7 https"),
+            (TrustedProxies::addresses(header, PROXIES), "none none"),
+        ] {
+            let form = format!("{trusted:?}");
+            let service = Router::<()>::new()
+                .mount(kynos::routes![origin])
+                .trusted_proxies(trusted)
+                .build(())
+                .expect("a describable router");
+
+            let mut request = get("/origin", hyper::Version::HTTP_11);
+            for (name, value) in [
+                ("forwarded", "for=203.0.113.7;proto=https"),
+                ("x-forwarded-for", "203.0.113.7"),
+                ("x-forwarded-proto", "https"),
+            ] {
+                request
+                    .headers_mut()
+                    .insert(name, http::HeaderValue::from_static(value));
+            }
+
+            assert_eq!(
+                over_unix(service, request).await,
+                (http::StatusCode::OK, expected.to_owned()),
+                "{form}"
+            );
+        }
+    }
+}
+
+/// Serves `request` over a fresh Unix socket pair to `service`, handed the
+/// connection between the server end's own addresses.
+#[cfg(all(unix, feature = "http1"))]
+async fn over_unix(
+    service: Service<()>,
+    request: hyper::Request<Empty<bytes::Bytes>>,
+) -> (http::StatusCode, String) {
+    let (client, server) = std::os::unix::net::UnixStream::pair().expect("a socket pair");
+    let connection = Connection::from_peer(
+        server.peer_addr().expect("a peer address"),
+        server.local_addr().expect("a local address"),
+    );
+    let [client, server] = [client, server].map(|stream| {
+        stream.set_nonblocking(true).expect("a non-blocking socket");
+        tokio::net::UnixStream::from_std(stream).expect("registered with the runtime")
+    });
+    http1_send(client, server, service, connection, request).await
 }
 
 /// Serves one HTTP/1.1 `GET path` over `io` handed to the server as
@@ -159,8 +228,33 @@ where
     T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
     I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
+    http1_send(
+        client,
+        io,
+        service(),
+        connection,
+        get(path, hyper::Version::HTTP_11),
+    )
+    .await
+}
+
+/// Serves one HTTP/1.1 `request` to `service` over `io` handed to the server
+/// as `connection`, with the client on `client`, and returns the answer once
+/// the connection has ended cleanly.
+#[cfg(feature = "http1")]
+async fn http1_send<T, I>(
+    client: T,
+    io: I,
+    service: Service<()>,
+    connection: Connection,
+    request: hyper::Request<Empty<bytes::Bytes>>,
+) -> (http::StatusCode, String)
+where
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
     let served = tokio::spawn(
-        Server::new(service())
+        Server::new(service)
             .serve_io(io, connection)
             .expect("the default configuration is accepted"),
     );
@@ -172,7 +266,7 @@ where
 
     let version = hyper::Version::HTTP_11;
     let response = sender
-        .send_request(get(path, version))
+        .send_request(request)
         .await
         .expect("request succeeds");
     let answer = read(response, version).await;
