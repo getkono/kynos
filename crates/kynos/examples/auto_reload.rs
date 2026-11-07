@@ -75,9 +75,9 @@ async fn main() -> kynos::Result<()> {
         Ok(Some(listener)) => {
             println!("inheriting a listener from the environment");
             // Already bound, so `Server::listener` rather than `Server::bind`.
-            // Kynos flips it to non-blocking and hands it to Tokio while
-            // preparing, which is why a standard-library listener is accepted
-            // here at all.
+            // `listenfd` hands it over as the standard library's listener,
+            // which is the type `Server::listener` takes: Kynos flips it to
+            // non-blocking and registers it with the runtime while preparing.
             server = server.listener(listener);
         }
         Ok(None) => {

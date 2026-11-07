@@ -1,5 +1,6 @@
-//! Where a server accepts traffic: configured addresses and pre-bound
-//! listeners.
+//! Where a server accepts traffic: the addresses it resolves and binds itself.
+//! A listener bound elsewhere is handed over as the standard library's own
+//! type, through [`Server::listener`](crate::server::Server::listener).
 //!
 //! Deliberately separate from the public server URLs in the OpenAPI document.
 //! A listener address says where this process accepts traffic; a `servers`
@@ -10,9 +11,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
 };
 
-use tokio::net::TcpListener;
-
-use crate::server::error::ServerError;
+use crate::{extract::connection::TransportAddress, server::error::ServerError};
 
 /// An owned address resolved when a server is prepared.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -83,28 +82,38 @@ impl From<(&str, u16)> for BindAddress {
     }
 }
 
-/// A supported pre-bound TCP listener.
+/// A transport address as a log line or an error message shows it: an IP one
+/// as its socket address, a Unix one as its path, `@` and its escaped name
+/// where it is abstract, or `(unnamed)`.
 ///
-/// The closed enum preserves Kynos's TCP transport guarantees while accepting
-/// either standard-library or Tokio ownership.
-#[derive(Debug)]
-#[non_exhaustive]
-pub enum Listener {
-    /// A standard-library listener, converted to nonblocking Tokio ownership.
-    Standard(std::net::TcpListener),
-    /// A listener already owned by Tokio.
-    Tokio(TcpListener),
-}
+/// Private, since a Unix path need not be UTF-8 and showing one is lossy: a
+/// caller that needs the address matches on it.
+pub(in crate::server) struct Shown<'a>(pub(in crate::server) &'a TransportAddress);
 
-impl From<std::net::TcpListener> for Listener {
-    fn from(listener: std::net::TcpListener) -> Self {
-        Self::Standard(listener)
-    }
-}
+impl fmt::Display for Shown<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            TransportAddress::Ip(address) => address.fmt(formatter),
+            #[cfg(unix)]
+            TransportAddress::Unix(address) => {
+                let address = address.as_std();
+                if let Some(path) = address.as_pathname() {
+                    return path.display().fmt(formatter);
+                }
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                {
+                    #[cfg(target_os = "android")]
+                    use std::os::android::net::SocketAddrExt as _;
+                    #[cfg(target_os = "linux")]
+                    use std::os::linux::net::SocketAddrExt as _;
 
-impl From<TcpListener> for Listener {
-    fn from(listener: TcpListener) -> Self {
-        Self::Tokio(listener)
+                    if let Some(name) = address.as_abstract_name() {
+                        return write!(formatter, "@{}", name.escape_ascii());
+                    }
+                }
+                formatter.write_str("(unnamed)")
+            }
+        }
     }
 }
 

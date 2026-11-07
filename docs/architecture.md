@@ -21,16 +21,17 @@ buffer that consumes much of what it came for.
 
 - tokio is a hard dependency, not a generic parameter. No runtime abstraction
   trait exists — not public, not internal. The server calls tokio directly.
-- tokio types appear in zero handler-facing signatures. The two deliberate
-  exceptions anywhere in the public API are
-  [`server::address::Listener::Tokio`](../crates/kynos/src/server/address.rs)
-  together with its `From<tokio::net::TcpListener>` conversion, which exist so
-  an already-bound `tokio::net::TcpListener` can be handed to the server, and
-  the `tokio::io::{AsyncRead, AsyncWrite}` bound on
+- tokio types appear in zero handler-facing signatures. The one deliberate
+  exception anywhere in the public API is the
+  `tokio::io::{AsyncRead, AsyncWrite}` bound on
   [`Server::serve_io`](../crates/kynos/src/server/mod.rs), which hands the
   server one stream no listener accepted. Naming the runtime there is the
-  point, not a leak. A surface check counts all three, because the conversion
-  names the type as plainly as the variant does.
+  point, not a leak. A pre-bound listener is not an exception: `Server::listener`
+  takes anything that converts into the standard library's listener, and the
+  server makes it nonblocking and registers it with the runtime while
+  preparing. A listener tokio already owns comes back out through its own
+  `into_std`, which costs one deregistration and registration at startup and
+  nothing per connection, so no listener type of the runtime's is ever named.
 - The runtime coupling surface is exactly five points, and they all live in
   `crates/kynos/src/server/`: the accept loop and listener, connection socket
   read and write (the `tokio::io::{AsyncRead, AsyncWrite}` bound on the
@@ -538,8 +539,8 @@ and HTTP/2. Nothing about HTTP/3 is undescribable — it carries the same reques
 and response semantics OpenAPI already covers — so the ground here is cost, not
 principle, and the door stays open. See [why HTTP/3 is deferred](#why-http3-is-deferred).
 
-**Unix domain socket listeners are in, and not yet built.** Listeners are TCP
-today. A Unix listener does not add a coupling point. It is a second kind of
+**Unix domain socket listeners are in.** A Unix listener does not add a
+coupling point. It is a second kind of
 listener inside the existing "accept loop and listener" point, so the
 five-point count holds. The runtime question it might seem to reopen is
 already closed: that count exists for auditability, and was never about
@@ -551,8 +552,18 @@ listener provides. The address model came first, since a Unix peer has no
 `Connection::peer` and `Connection::local` report a non-exhaustive
 `TransportAddress`, IP or Unix, while `ConnectInfo` keeps promising an IP
 peer and refuses any other with a declared 500, so no handler is handed an
-address nobody connected from. The listener follows
-([#1131](https://github.com/getkono/kynos/issues/1131)). A stream no listener
+address nobody connected from. The listener
+([#1131](https://github.com/getkono/kynos/issues/1131)) is handed over
+pre-bound, as the standard library's `UnixListener`, through
+`Server::unix_listener`; `BindAddress` has no path form. The socket file is
+the application's: removing a stale one, its permissions, and removing it on
+exit are decisions about one deployment, and a framework guessing them would
+delete or expose the wrong file. Kynos binds no path and never touches the
+file, so an abstract-namespace socket is handed over the same way. TLS over
+a Unix socket is refused rather than served, a peer on the same host being
+reached without crossing a network, and the emitted `servers` say nothing
+about the listener, since they describe where clients call and a socket path
+is not a URL they can. A stream no listener
 accepts, such as an in-memory pipe or one from a custom acceptor, is served
 by `Server::serve_io`, one connection per call, described by the
 `Connection` its caller records. Kynos terminates no TLS on it: a caller that

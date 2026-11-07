@@ -138,6 +138,10 @@ name = "serve_io"
 required-features = ["openapi31", "macros", "server", "http1"]
 
 [[example]]
+name = "unix_socket"
+required-features = ["openapi31", "macros", "server", "http1"]
+
+[[example]]
 name = "auto_reload"
 required-features = ["openapi31", "macros", "server", "http1"]
 
