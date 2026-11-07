@@ -331,9 +331,11 @@ where
             if records.ended {
                 return Poll::Ready(None);
             }
-            if let Some(shutdown) = records.shutdown.as_mut()
-                && shutdown.as_mut().poll(context).is_ready()
-            {
+            let began = records
+                .shutdown
+                .as_mut()
+                .is_some_and(|shutdown| shutdown.as_mut().poll(context).is_ready());
+            if began {
                 records.shutdown = None;
                 records.ended = true;
                 return Poll::Ready(None);
