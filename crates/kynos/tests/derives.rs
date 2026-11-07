@@ -5009,13 +5009,6 @@ struct FieldError {
     detail: String,
 }
 
-/// An extension member reaches the wire as a `serde_json::Value`.
-impl From<FieldError> for serde_json::Value {
-    fn from(error: FieldError) -> Self {
-        serde_json::json!({ "pointer": error.pointer, "detail": error.detail })
-    }
-}
-
 /// A failure publishing a member it always sends and one it sends only when
 /// it has it.
 #[derive(Debug, thiserror::Error, ApiError)]
@@ -5107,6 +5100,113 @@ fn an_optional_extension_member_is_sent_only_when_present() {
     assert_eq!(
         present.extensions["hint"],
         serde_json::json!("check the name")
+    );
+}
+
+/// A member type serde names differently from its Rust fields.
+#[derive(Debug, Schema, serde::Serialize)]
+struct Quota {
+    #[serde(rename = "maxBytes")]
+    max_bytes: u64,
+}
+
+/// A failure publishing a renamed member type, alone and inside an `Option`.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum QuotaError {
+    #[error("over quota")]
+    #[problem(status = 507)]
+    OverQuota {
+        #[problem(extension)]
+        limit: Quota,
+        #[problem(extension)]
+        previous: Option<Quota>,
+    },
+}
+
+/// An extension member is sent through its `Serialize`, so a
+/// `#[serde(rename)]` moves the wire and the component its `Schema` registers
+/// together, for an `Option` member as for a required one.
+#[test]
+fn an_extension_member_is_sent_under_the_names_its_schema_declares() {
+    use kynos::error::problem::IntoProblem;
+
+    let problem = QuotaError::OverQuota {
+        limit: Quota { max_bytes: 10 },
+        previous: Some(Quota { max_bytes: 5 }),
+    }
+    .into_problem();
+    assert_eq!(
+        problem.extensions["limit"],
+        serde_json::json!({ "maxBytes": 10 })
+    );
+    assert_eq!(
+        problem.extensions["previous"],
+        serde_json::json!({ "maxBytes": 5 })
+    );
+
+    let mut registry = kynos::schema::registry::Registry::new();
+    QuotaError::responses(&mut registry);
+    let components =
+        serde_json::to_value(registry.into_components().schemas).expect("the components serialize");
+    assert_eq!(
+        components["Quota"]["properties"]
+            .as_object()
+            .expect("an object schema")
+            .keys()
+            .collect::<Vec<_>>(),
+        ["maxBytes"],
+        "{components}"
+    );
+}
+
+/// A member type whose `Serialize` refuses, as one with a non-string map key
+/// does.
+#[derive(Debug, Schema)]
+struct Refusing(u8);
+
+impl serde::Serialize for Refusing {
+    fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+        Err(serde::ser::Error::custom("refused"))
+    }
+}
+
+/// A failure whose member cannot be sent, declared beside one whose can.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum RefusingError {
+    #[error("rejected")]
+    #[problem(status = 422)]
+    Rejected {
+        #[problem(extension)]
+        sent: u8,
+        #[problem(extension)]
+        refusing: Refusing,
+    },
+}
+
+/// A member that refuses to serialize answers 500 in place of the problem it
+/// would have broken, rather than a 422 missing a member it declares required,
+/// as a `Json` body that cannot be serialized answers 500.
+#[tokio::test]
+async fn an_unserializable_extension_member_answers_500() {
+    let Answered { status, body, .. } = answered(
+        RefusingError::Rejected {
+            sent: 1,
+            refusing: Refusing(2),
+        }
+        .into_response(),
+    )
+    .await;
+
+    assert_eq!(status, 500);
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("a JSON body");
+    assert_eq!(
+        body,
+        serde_json::json!({
+            "type": "about:blank",
+            "title": "Internal Server Error",
+            "status": 500,
+            "detail": "a problem extension member could not be serialized",
+        })
     );
 }
 

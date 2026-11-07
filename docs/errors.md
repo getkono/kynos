@@ -173,8 +173,12 @@ opt-in because a variant carries whatever the error site had to hand, and the
 default must not be to publish it. `trace` above stays internal.
 
 **A member sent is a member declared.** An extension field's type is sent
-through `Into<serde_json::Value>` and declared by its `Schema`, so a type
-lacking either is refused at the field. The failure's branch names the member
+through its `Serialize` and declared by its `Schema`, so a type lacking either
+is refused at the field. The `Schema` derive follows serde's attributes, so a
+`#[serde(rename)]` moves the wire and the description together; a hand-written
+`From<T> for serde_json::Value` would be a second impl nothing holds to the
+first, and is not read. A member whose `Serialize` fails at run time answers
+500 in place of the problem, as a `Json` body that cannot be serialized does. The failure's branch names the member
 under `properties`, its type registered as a component like any other, and
 lists it under `required`. An `Option<T>` member is the exception, recognised
 syntactically as parameters are: it is sent only when it holds a value, as

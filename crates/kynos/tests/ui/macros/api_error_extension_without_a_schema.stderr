@@ -1,7 +1,7 @@
 error[E0277]: `Quota` cannot describe itself as a schema
-  --> tests/ui/macros/api_error_extension_without_a_schema.rs:21:16
+  --> tests/ui/macros/api_error_extension_without_a_schema.rs:15:16
    |
-21 |         limit: Quota,
+15 |         limit: Quota,
    |                ^^^^^ not describable
    |
 help: the trait `kynos::schema::Schema` is not implemented for `Quota`

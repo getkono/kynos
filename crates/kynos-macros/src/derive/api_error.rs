@@ -22,9 +22,11 @@
 //! its own `type` hangs its slug under; a literal is joined here, a `const`
 //! in the expansion's own `const` items. `detail` comes from `Display`.
 //!
-//! An `extension` field is sent through `Into<serde_json::Value>` and declared
-//! by its type's `Schema` on its failure's branch, required; an `Option<T>` is
-//! sent only when it holds a value, so it is declared by `T` and optional.
+//! An `extension` field is sent through `kynos::__private::problem::to_member`,
+//! its type's `Serialize`, and declared by its type's `Schema` on its failure's
+//! branch, required; an `Option<T>` is sent only when it holds a value, so it
+//! is declared by `T` and optional. One that refuses to serialize breaks out of
+//! the problem block with the 500 `unserializable_member` builds.
 //!
 //! A `headers` field holds a header group, its type implementing
 //! `EncodeHeaders`: `into_response` writes it onto that failure's problem, and

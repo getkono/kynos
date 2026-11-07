@@ -4,14 +4,8 @@
 
 use kynos::{ApiError, Schema};
 
-#[derive(Debug, Schema)]
+#[derive(Debug, Schema, serde::Serialize)]
 struct Quota(u64);
-
-impl From<Quota> for serde_json::Value {
-    fn from(quota: Quota) -> Self {
-        quota.0.into()
-    }
-}
 
 macro_rules! app_error {
     (enum $name:ident { $($body:tt)* }) => {

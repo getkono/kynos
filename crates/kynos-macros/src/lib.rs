@@ -641,9 +641,12 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 ///
 /// A field is published as an extension member only when it says
 /// `#[problem(extension)]`, so error-site context stays off the wire by
-/// default. Its type is sent through `Into<serde_json::Value>` and declared by
-/// its `Schema`, required on its failure's branch; an `Option<T>` member is
-/// sent only when it holds a value, so it is declared by `T` and optional.
+/// default. Its type is sent through `Serialize` and declared by its `Schema`,
+/// which follows the same serde attributes, so the two cannot drift; it is
+/// required on its failure's branch. An `Option<T>` member is sent only when
+/// it holds a value, so it is declared by `T` and optional. A member whose
+/// `Serialize` fails answers 500 in place of its problem, as a JSON body that
+/// cannot be serialized does.
 ///
 /// A header only one failure sends lives on that failure: one field of a
 /// variant, or of a struct, may say `#[problem(headers)]`, its type a header

@@ -1,16 +1,11 @@
-//! The control for `macros/api_error_extension_without_a_schema`: the same
-//! member, differing only in that its type has a schema.
+//! The control for `macros/api_error_extension_without_a_schema` and
+//! `macros/api_error_extension_without_serialize`: the same member, differing
+//! only in that its type both has a schema and serializes.
 
 use kynos::{ApiError, Schema};
 
-#[derive(Debug, Schema)]
+#[derive(Debug, Schema, serde::Serialize)]
 struct Quota(u64);
-
-impl From<Quota> for serde_json::Value {
-    fn from(quota: Quota) -> Self {
-        quota.0.into()
-    }
-}
 
 #[derive(Debug, thiserror::Error, ApiError)]
 enum StoreError {
