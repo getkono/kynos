@@ -1,0 +1,19 @@
+error[E0277]: `Page<Torrent>` is not a named instantiation
+  --> tests/ui/traits/named_instantiation.rs:15:61
+   |
+15 |     let _ = kynos::Router::<()>::new().name_instantiation::<Page<Torrent>>();
+   |                                        ------------------   ^^^^^^^^^^^^^ no component name of its own
+   |                                        |
+   |                                        required by a bound introduced by this call
+   |
+help: the trait `NamedInstantiation` is not implemented for `Page<Torrent>`
+  --> tests/ui/traits/named_instantiation.rs:5:1
+   |
+ 5 | struct Page<T> {
+   | ^^^^^^^^^^^^^^
+   = note: declare one with `kynos::name_instantiation!(Name = Page<Torrent>);`
+note: required by a bound in `Router::<C, P, I, S>::name_instantiation`
+  --> src/router/mod.rs
+   |
+   |     pub fn name_instantiation<A: crate::schema::NamedInstantiation>(mut self) -> Self {
+   |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Router::<C, P, I, S>::name_instantiation`
