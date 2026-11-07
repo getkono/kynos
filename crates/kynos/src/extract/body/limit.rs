@@ -66,7 +66,26 @@ pub(crate) fn of(parts: &Parts) -> u64 {
 }
 
 /// The length the request declared, when it declared one.
-pub(crate) fn declared_length(headers: &HeaderMap) -> Option<u64> {
+///
+/// The first `Content-Length` line, read past surrounding whitespace as an
+/// unsigned decimal; `None` when there is none or it is not one, which leaves
+/// the limit to the read. A buffering interceptor refuses a declared length
+/// past its limit from this before reading a byte.
+///
+/// ```
+/// use kynos::{
+///     extract::body::limit::declared_length,
+///     http::{HeaderMap, HeaderValue, header},
+/// };
+///
+/// let mut headers = HeaderMap::new();
+/// assert_eq!(declared_length(&headers), None);
+///
+/// headers.insert(header::CONTENT_LENGTH, HeaderValue::from_static("1024"));
+/// assert_eq!(declared_length(&headers), Some(1024));
+/// ```
+#[must_use]
+pub fn declared_length(headers: &HeaderMap) -> Option<u64> {
     parse_length(headers.get(header::CONTENT_LENGTH)?)
 }
 
@@ -86,7 +105,11 @@ pub(crate) fn refuse_declared(headers: &HeaderMap, limit: u64) -> Result<(), Bod
 }
 
 /// What [`collect_capped`] read of a body.
-pub(crate) enum Capped {
+///
+/// [`into_body`](Self::into_body) is the body to hand on to the extractor
+/// beneath, whichever way the read ended short of the limit.
+#[derive(Debug)]
+pub enum Capped {
     /// Every byte the body carried.
     Whole(Bytes),
     /// What arrived before the read failed, and that failure.
@@ -112,7 +135,37 @@ pub(crate) enum Capped {
 /// A body arriving as one data frame comes back as that frame's `Bytes`,
 /// neither copied nor queued; only a second non-empty frame starts a buffer
 /// joining them. Frames that are not data, and empty ones, are skipped.
-pub(crate) async fn collect_capped(mut body: Body, limit: u64) -> Capped {
+///
+/// A body whose [`declared_length`] already passes `limit` need not be read at
+/// all to be refused. The limit is the interceptor's own: the one an extractor
+/// beneath reads under is moved only by an interceptor Kynos ships that
+/// declares the 413.
+///
+/// ```
+/// use bytes::Bytes;
+/// use kynos::{
+///     extract::body::limit::{Capped, collect_capped},
+///     http::body::Body,
+/// };
+///
+/// /// What a buffering interceptor hands on, or `None` for its 413.
+/// async fn buffered(body: Body, limit: u64) -> Option<Body> {
+///     let capped = collect_capped(body, limit).await;
+///     if let Capped::Whole(bytes) = &capped {
+///         // Inspect the whole payload: verify a signature, log it.
+///         let _ = bytes.len();
+///     }
+///     capped.into_body()
+/// }
+///
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() {
+/// let payload = || Body::from_bytes(Bytes::from_static(b"payload"));
+/// assert!(buffered(payload(), 64).await.is_some());
+/// assert!(buffered(payload(), 4).await.is_none());
+/// # }
+/// ```
+pub async fn collect_capped(mut body: Body, limit: u64) -> Capped {
     let mut first = Bytes::new();
     let mut joined: Option<BytesMut> = None;
     let mut so_far = 0_u64;
@@ -157,6 +210,20 @@ pub(crate) async fn collect_capped(mut body: Body, limit: u64) -> Capped {
 }
 
 impl Capped {
+    /// The body to hand on: the bytes as a complete body when the read was
+    /// whole, or those that arrived followed by the failure when it failed
+    /// part-way, through [`Body::failed_after`], so the extractor beneath
+    /// refuses a truncated payload rather than parsing it. `None` past the
+    /// limit, which the interceptor answers itself.
+    #[must_use]
+    pub fn into_body(self) -> Option<Body> {
+        match self {
+            Self::Whole(bytes) => Some(Body::from_bytes(bytes)),
+            Self::FailedPartWay { arrived, error } => Some(Body::failed_after(arrived, error)),
+            Self::Exceeded { .. } => None,
+        }
+    }
+
     /// A body read whole, or the rejection an extractor raises: the 413 past
     /// the limit, and for a transport failure part-way the 408 of a stall or
     /// else a 400.

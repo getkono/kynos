@@ -1582,7 +1582,7 @@ mod an_optional_body_without_a_content_type {
     /// answers, not a body known to be absent.
     #[tokio::test]
     async fn a_body_failing_before_its_first_octet_is_400() {
-        let rejection = read(Body::failed_after(Bytes::new(), "reset".into()))
+        let rejection = read(Body::failed_after(Bytes::new(), "reset"))
             .await
             .expect_err("an unfinished body");
         assert!(
@@ -1778,6 +1778,64 @@ mod a_body_is_read_whole_under_its_limit {
             matches!(&rejection, BodyRejection::Syntax { detail } if detail == "reset"),
             "{rejection:?}"
         );
+    }
+
+    /// A whole read is handed on as the same octets, complete.
+    #[tokio::test]
+    async fn a_whole_read_is_handed_on_complete() {
+        let handed_on = limit::collect_capped(body([data(b"ab"), data(b"cd")]), 64)
+            .await
+            .into_body()
+            .expect("within the limit");
+
+        assert_eq!(
+            read(handed_on, 64).await.expect("whole"),
+            b"abcd".as_slice()
+        );
+    }
+
+    /// A read that failed part-way is handed on as the octets that arrived,
+    /// then the same failure, so the extractor beneath refuses it as it would
+    /// have refused the original rather than parsing a truncated payload.
+    #[tokio::test]
+    async fn a_failed_read_is_handed_on_failing_with_its_own_error() {
+        let reset: BoxError = Box::new(std::io::Error::new(
+            std::io::ErrorKind::ConnectionReset,
+            "reset",
+        ));
+        let mut handed_on = limit::collect_capped(body([data(b"ab"), Err(reset)]), 64)
+            .await
+            .into_body()
+            .expect("a failure is handed on, not refused");
+
+        let arrived = http_body_util::BodyExt::frame(&mut handed_on)
+            .await
+            .expect("the octets that arrived")
+            .expect("a data frame");
+        assert_eq!(arrived.into_data().ok(), Some(Bytes::from_static(b"ab")));
+
+        let error = http_body_util::BodyExt::frame(&mut handed_on)
+            .await
+            .expect("the failure")
+            .expect_err("a failure, not a frame");
+        assert_eq!(
+            error
+                .downcast_ref::<std::io::Error>()
+                .map(std::io::Error::kind),
+            Some(std::io::ErrorKind::ConnectionReset),
+            "{error:?}"
+        );
+    }
+
+    /// A read past the limit hands nothing on: the interceptor answers it.
+    #[tokio::test]
+    async fn a_read_past_the_limit_hands_nothing_on() {
+        let capped = limit::collect_capped(body([data(b"abc"), data(b"def")]), 5).await;
+        assert!(
+            matches!(capped, limit::Capped::Exceeded { limit: 5 }),
+            "{capped:?}"
+        );
+        assert!(capped.into_body().is_none());
     }
 
     /// A head carrying one `Content-Length` line per entry of `values`.
