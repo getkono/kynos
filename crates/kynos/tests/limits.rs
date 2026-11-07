@@ -652,8 +652,10 @@ mod stalled_body {
         Stalls(Some(Bytes::from_static(b"{\"id\": 1, ")))
     }
 
-    /// The exchange, or `None` when nothing answered within a minute of
-    /// paused time. `declared` is the length the body claims, if any.
+    /// The exchange, or `None` when nothing answered within ten seconds of
+    /// paused time: short of the 30-second idle timeout the client holds a
+    /// body to as a server does, so only the limits mounted here can answer.
+    /// `declared` is the length the body claims, if any.
     async fn answer(service: Service<App>, declared: Option<u64>) -> Option<StatusCode> {
         let client = TestClient::new(service);
         let mut request = client
@@ -662,7 +664,7 @@ mod stalled_body {
         if let Some(declared) = declared {
             request = request.content_length(declared);
         }
-        tokio::time::timeout(Duration::from_secs(60), request.send())
+        tokio::time::timeout(Duration::from_secs(10), request.send())
             .await
             .ok()
             .map(|reply| reply.status())

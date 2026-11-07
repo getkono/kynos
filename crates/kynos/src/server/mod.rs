@@ -26,7 +26,8 @@ mod accept;
 mod connection;
 mod describe;
 mod lifecycle;
-mod request_body;
+// Crate-visible so the test client bounds a body as a served one is.
+pub(crate) mod request_body;
 
 pub mod address;
 pub mod error;
@@ -208,12 +209,19 @@ impl<C: 'static> Server<C> {
     /// to read, so a large upload arriving steadily is never cut short, and a
     /// handler that reads its body late is not charged for the wait.
     ///
-    /// A body that stalls fails its read, and the request is answered `408
-    /// Request Timeout` in place of whatever the operation made of that
-    /// failure — over HTTP/1 with `Connection: close`, as RFC 9110 §15.5.9
+    /// A body that stalls fails its read with
+    /// [`BodyStalled`](crate::http::body::BodyStalled), which a body extractor
+    /// answers with the `408 Request Timeout` every operation reading a body
+    /// declares, [`BodyRejection::Stalled`]. The 408 is the chain's own, so it
+    /// carries what the interceptors add. The server adds only `Connection:
+    /// close` over HTTP/1, to whatever the chain answered, as RFC 9110 §15.5.9
     /// advises, so the client cannot frame what it sends next as a new request.
-    /// A response the handler had already returned before the stall stands.
-    /// Like a 431 from the protocol driver, no operation declares the 408.
+    /// A response the handler had already returned before the stall stands
+    /// unchanged.
+    ///
+    /// Turning the timer off leaves the 408 declared.
+    ///
+    /// [`BodyRejection::Stalled`]: crate::error::rejection::BodyRejection::Stalled
     ///
     /// [`prepare`](Self::prepare) refuses `Some(Duration::ZERO)`.
     #[must_use]

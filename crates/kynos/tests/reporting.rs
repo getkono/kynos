@@ -79,9 +79,6 @@ const UNRECEIVABLE: &[&str] = &[
     // Private to `middleware::limits::body_size`: a late body's reader sees it
     // as a failed read, and the interceptor answers the 408 in its place.
     "Late",
-    // Private to `middleware::limits`: a stalled body's reader sees it as a
-    // failed read, and the interceptor answers the 408 in its place.
-    "Stalled",
 ];
 
 /// A scope set for `ScopedRejection`, which is generic over one.
@@ -159,6 +156,13 @@ reportable! {
         kynos::error::rejection::RangeRejection;
         kynos::error::rejection::AuthRejection;
         kynos::error::rejection::ScopedRejection<ReadOnly>;
+    }
+
+    /// A stalled body's read fails with this, and a handler reading its body
+    /// itself may hand it on.
+    #[cfg(feature = "server")]
+    fn a_stalled_read_is_reportable {
+        kynos::http::body::BodyStalled;
     }
 
     /// The cookie rejection, behind the feature that compiles it.

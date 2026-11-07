@@ -505,7 +505,10 @@ impl<C> TestRequest<'_, C> {
     ///
     /// Each chunk reaches the service as one frame when the stream yields it,
     /// so a stream that waits between chunks is a slow client and one that
-    /// never yields again is a stalled one. Without
+    /// never yields again is a stalled one. With the `server` feature, a read
+    /// that waits as long as a server's default `request_body_idle_timeout`
+    /// fails as a served body's does, so the stall is answered with the
+    /// operation's 408; pause the clock to reach it at once. Without
     /// [`content_length`](Self::content_length) the body declares no length,
     /// as a chunked one does, and ends when the stream does.
     ///
@@ -585,6 +588,15 @@ impl<C> TestRequest<'_, C> {
                 failed: false,
             }),
         };
+        // Held to the idle timeout a server holds it to by default, so a
+        // stalled body is answered as a served one is.
+        #[cfg(feature = "server")]
+        let (body, stall) = crate::server::request_body::bounded(
+            body,
+            Some(crate::server::request_body::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT),
+            crate::http::Version::HTTP_11,
+            std::convert::identity,
+        );
         let mut request = Request::new(body);
         *request.method_mut() = self.method.clone();
         let uri = self
@@ -618,6 +630,8 @@ impl<C> TestRequest<'_, C> {
         }
 
         let response = self.client.service.call(request).await;
+        #[cfg(feature = "server")]
+        let response = crate::server::request_body::answer(response, stall);
 
         let (parts, body) = response.into_parts();
         let bytes = body
