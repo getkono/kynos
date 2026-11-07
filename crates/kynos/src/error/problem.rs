@@ -174,6 +174,15 @@ impl Problem {
 /// Implementing this by hand compiles and is not useful: `IntoResponse` and
 /// `Responses` do not follow from it. The trait is public so the derive's
 /// output can be named and read.
+///
+/// Every refusal an interceptor short-circuits with implements it too, beside
+/// the three it already has, so a `#[problem(transparent)]` variant can hold
+/// one, such as
+/// [`BodySizeExceeded`](crate::middleware::limits::body_size::BodySizeExceeded).
+/// What it yields is the problem alone: a header the refusal sends, like a
+/// 429's `Retry-After`, is written by its `IntoResponse`, which is what a
+/// transparent variant answers through. `NotModified` is the exception, since
+/// a 304 carries no problem.
 pub trait IntoProblem {
     /// Converts this error into its wire representation.
     fn into_problem(self) -> Problem;

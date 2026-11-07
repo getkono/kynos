@@ -260,6 +260,27 @@ mod schema {
                 ),
                 "a `PhantomData` is the `null`",
             ),
+            case(
+                "`via` written twice on one field, in two lists",
+                quote::quote!(
+                    struct Digest {
+                        #[schema(as = String, via = Hash::to_hex)]
+                        #[schema(via = Hash::to_base64)]
+                        hash: Hash,
+                    }
+                ),
+                "`via` may appear once per field",
+            ),
+            case(
+                "`via` with no `as` to convert into",
+                quote::quote!(
+                    struct Digest {
+                        #[schema(min_length = 1, via = Hash::to_hex)]
+                        hash: Hash,
+                    }
+                ),
+                "this field has no `as`",
+            ),
         ]
     }
 

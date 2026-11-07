@@ -128,7 +128,7 @@ enum StoreError {
 | variant | `status` | required, 400–599 |
 | variant | `title` | the problem's `title`, and what the response's description is composed from. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
 | variant | `type` | an absolute URI, overriding `base` |
-| variant | `transparent` | answer as the `ApiError` the variant's one field holds, instead of `status`, `title` and `type` |
+| variant | `transparent` | answer as the `ApiError` or built-in refusal the variant's one field holds, instead of `status`, `title` and `type` |
 | field | `extension` | serialize this field as an extension member under its own name, and declare it by its type's schema |
 | field | `headers` | send this field, a header group, on this failure's response, and declare it under this failure's status alone |
 
@@ -184,6 +184,17 @@ enum's: the `const` is the union in declaration order, and a status both sides
 declare is unioned rather than replaced, so the description names every type
 reaching it, the enum's own first. The union is built in `const` items, so the
 held type cannot name the enum's generic parameters.
+
+**A refusal Kynos ships is held the same way.** Every interceptor refusal that
+sends a problem — `BodySizeExceeded`, `RateLimited`, `Undecodable` and the rest
+— implements `IntoProblem`, so an interceptor answering with one of them or a
+failure of its own declares one `ApiError` enum rather than writing a sum
+type's `IntoResponse`, `ShortCircuit` and `Responses` by hand. Its
+`into_problem` is the problem alone; the headers it sends, such as a 429's
+`Retry-After`, come from its `into_response`, which the variant answers
+through. A refusal implements no `Display`, so its variant names its own
+`#[error("...")]`. `NotModified` is the exception, since a 304 carries no
+problem.
 
 **What the grammar refuses.** A missing or out-of-range `status`, a member the
 grammar does not define, a `base` that is neither a string literal nor a path,

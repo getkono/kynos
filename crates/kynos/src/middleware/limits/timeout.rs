@@ -3,7 +3,7 @@
 use std::{marker::PhantomData, time::Duration};
 
 use crate::{
-    error::problem::{ProblemType, refusal_problem, refusal_response},
+    error::problem::{IntoProblem, Problem, ProblemType, refusal_problem, refusal_response},
     http,
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
@@ -34,14 +34,22 @@ impl<T> TimedOut<T> {
     }
 }
 
+impl<T: ProblemType> IntoProblem for TimedOut<T> {
+    fn into_problem(self) -> Problem {
+        refusal_problem::<T>(http::StatusCode::REQUEST_TIMEOUT).with_detail(format!(
+            "the handler did not finish within {:?}",
+            self.after
+        ))
+    }
+
+    fn statuses() -> &'static [http::StatusCode] {
+        &[http::StatusCode::REQUEST_TIMEOUT]
+    }
+}
+
 impl<T: ProblemType> IntoResponse for TimedOut<T> {
     fn into_response(self) -> http::Response {
-        refusal_problem::<T>(http::StatusCode::REQUEST_TIMEOUT)
-            .with_detail(format!(
-                "the handler did not finish within {:?}",
-                self.after
-            ))
-            .into_response()
+        self.into_problem().into_response()
     }
 }
 

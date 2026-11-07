@@ -9,7 +9,7 @@
 use std::{borrow::Cow, marker::PhantomData};
 
 use crate::{
-    error::problem::{ProblemType, refusal_problem, refusal_response},
+    error::problem::{IntoProblem, Problem, ProblemType, refusal_problem, refusal_response},
     http::{self, HeaderMap},
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, ShortCircuit},
@@ -189,11 +189,20 @@ pub struct CrossSite<T = ()> {
     problem_type: PhantomData<fn() -> T>,
 }
 
-impl<T: ProblemType> IntoResponse for CrossSite<T> {
-    fn into_response(self) -> http::Response {
+impl<T: ProblemType> IntoProblem for CrossSite<T> {
+    fn into_problem(self) -> Problem {
         refusal_problem::<T>(http::StatusCode::FORBIDDEN)
             .with_detail("this request came from another site")
-            .into_response()
+    }
+
+    fn statuses() -> &'static [http::StatusCode] {
+        &[http::StatusCode::FORBIDDEN]
+    }
+}
+
+impl<T: ProblemType> IntoResponse for CrossSite<T> {
+    fn into_response(self) -> http::Response {
+        self.into_problem().into_response()
     }
 }
 

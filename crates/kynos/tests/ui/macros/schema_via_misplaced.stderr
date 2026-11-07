@@ -1,0 +1,11 @@
+error: `via` may appear once per field: it names the one function the field converts through, so a second `via` could only overwrite the first. Keep the one that gives what serde writes
+  --> tests/ui/macros/schema_via_misplaced.rs:23:30
+   |
+23 |     #[schema(min_length = 4, via = Hash::to_upper_hex)]
+   |                              ^^^
+
+error: `via` names the function converting a field into the type its `as` describes it as, and this field has no `as`: its check already runs on its own type. Add `as = T` for the type `via` returns, or drop the key
+  --> tests/ui/macros/schema_via_misplaced.rs:29:30
+   |
+29 |     #[schema(min_length = 4, via = Hash::to_hex)]
+   |                              ^^^

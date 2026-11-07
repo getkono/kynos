@@ -327,7 +327,7 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
-/// `open` and `as` are the members of `#[schema(...)]` that are not
+/// `open`, `as` and `via` are the members of `#[schema(...)]` that are not
 /// constraints. `open` goes on a `#[serde(flatten)]` field to say that the
 /// object admits members nothing names. The
 /// field's type must implement
@@ -339,11 +339,14 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// `Serialize` and `Deserialize` carry `T`'s form: its schema is `T`'s, under
 /// the field's bounds, and its check converts the value through
 /// `T: From<&F>`, then holds that `T` to the field's bounds and to `T`'s own.
+/// Where the orphan rule forbids that impl, as for a foreign `F` described as
+/// `String`, `via = path` names any function `fn(&F) -> T` to convert through
+/// instead; `via` is refused without an `as` and twice on one field.
 /// Whether the field is required is still `F`'s. A newtype over such a member
 /// takes no kind from it, and `as` is refused on a flattened field, on an
 /// internally tagged newtype variant's payload, on a `PhantomData` and twice
 /// on one field. The parameter derives describe a
-/// field by its own type, the one `FromStr` reads, and ignore it.
+/// field by its own type, the one `FromStr` reads, and ignore both keys.
 ///
 /// ```ignore
 /// /// Twenty bytes, which serde writes as forty hex digits.

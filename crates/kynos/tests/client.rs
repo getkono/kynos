@@ -262,6 +262,33 @@ async fn a_request_carries_a_query_a_cookie_a_body_and_a_peer() {
     assert_eq!(seen.query.as_deref(), Some("limit=10&label=a+b"));
 }
 
+/// What a client sets once reaches the service on each request, and the
+/// `Cookie` field a request assembles replaces a default one whole.
+#[tokio::test]
+async fn client_defaults_reach_the_service_until_a_request_sets_its_own() {
+    let client = client()
+        .with_peer(([192, 0, 2, 10], 40000).into())
+        .with_default_header("cookie", "session=default")
+        .with_default_header("x-query", "from-client");
+
+    let defaulted: Seen = client.post("/echo").text("").send().await.json();
+    assert_eq!(defaulted.peer, "192.0.2.10:40000");
+    assert_eq!(defaulted.cookie.as_deref(), Some("session=default"));
+    assert_eq!(defaulted.query.as_deref(), Some("from-client"));
+
+    let own: Seen = client
+        .post("/echo")
+        .text("")
+        .cookie("session", "abc123")
+        .peer(([203, 0, 113, 7], 4242).into())
+        .send()
+        .await
+        .json();
+    assert_eq!(own.peer, "203.0.113.7:4242");
+    assert_eq!(own.cookie.as_deref(), Some("session=abc123"));
+    assert_eq!(own.query.as_deref(), Some("from-client"));
+}
+
 /// A value `header` cannot spell, `obs-text` that is not UTF-8, reaches the
 /// service octet for octet.
 #[tokio::test]

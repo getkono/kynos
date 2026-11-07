@@ -295,6 +295,24 @@ fn the_safe_methods_are_get_head_and_options() {
     }
 }
 
+/// `QUERY` is not in the set, although RFC 10008 section 2 calls it safe, so a
+/// cross-site `QUERY` is held to the same check as an unsafe method: a
+/// stricter choice than the RFC requires, and one that costs a browser
+/// nothing, since section 4 already has a cross-origin `QUERY` preflighted.
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_query_is_checked_as_an_unsafe_method_is() {
+    let query = Method::from_bytes(b"QUERY").expect("a method token");
+    assert!(!is_safe(&query), "QUERY passes unchecked");
+
+    let csrf = Csrf::new();
+    assert!(
+        !permits(&csrf, &query, &[("sec-fetch-site", "cross-site")]),
+        "a cross-site QUERY was let through"
+    );
+    assert!(permits(&csrf, &query, &[("sec-fetch-site", "same-origin")]));
+}
+
 /// An origin's authority is what is compared against `Host`.
 #[test]
 fn an_origin_reduces_to_its_authority() {
