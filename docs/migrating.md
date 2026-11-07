@@ -19,6 +19,13 @@ A feature request's optional **Replaces** field names the downstream code the
 feature makes unnecessary. When that issue ships, its answer becomes a row in
 the section for the release that ships it.
 
+## 0.5 to 0.6
+
+| If you wrote | Write instead | Issue |
+| --- | --- | --- |
+| A coverage record of your own, with its own template matcher, for responses no `test::TestClient` received | `test::Coverage::record` | #1152 |
+| A loopback socket, a hand-written request head and a status-line parser, to test what a configured server's timeouts answer | `test::TestClient::through_server`, which sends each request over `server::Server::serve_io` | #1152 |
+
 ## 0.4 to 0.5
 
 | If you wrote | Write instead | Issue |

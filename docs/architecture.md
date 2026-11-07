@@ -206,7 +206,7 @@ by naming the row X displaces rather than by arguing that X is good.
 | Request and response types | `http` | ambient | built |
 | Byte buffers | `bytes` | ambient | built |
 | Body trait and erasure | `http-body`, `http-body-util` | [`http/body.rs`](../crates/kynos/src/http/body.rs), [`http/body/watched.rs`](../crates/kynos/src/http/body/watched.rs), [`extract/body/`](../crates/kynos/src/extract/body/), [`middleware/cache/mod.rs`](../crates/kynos/src/middleware/cache/mod.rs), [`middleware/compression/`](../crates/kynos/src/middleware/compression/), [`middleware/limits/`](../crates/kynos/src/middleware/limits/), [`response/range/source.rs`](../crates/kynos/src/response/range/source.rs), [`server/request_body.rs`](../crates/kynos/src/server/request_body.rs), [`test/body.rs`](../crates/kynos/src/test/body.rs), [`test/mod.rs`](../crates/kynos/src/test/mod.rs) | built |
-| Protocol driver, HTTP/1 and HTTP/2 | `hyper` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs), [`http/body.rs`](../crates/kynos/src/http/body.rs) | built |
+| Protocol driver, HTTP/1 and HTTP/2 | `hyper` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs), [`http/body.rs`](../crates/kynos/src/http/body.rs); its `client` half in `server/connection.rs`, gated on `test-util`, for `TestClient::through_server` | built |
 | tokio adapters for the driver | `hyper-util` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs) | built |
 | Accepted-socket options tokio does not expose | `socket2` | [`server/tcp.rs`](../crates/kynos/src/server/tcp.rs) | built |
 | HTTP/1 parsing | `httparse` | never — reached through `hyper` | built |
@@ -524,7 +524,7 @@ module column is also where the `#[cfg]` lives.
 | `trace` | the `tracing` facade only; the subscriber stays the application's | [`middleware.md`](middleware.md) |
 | `uuid`, `time-*`, `decimal-*` | one `schema/impls/` module each. `time` and `decimal` are umbrellas that define the shape both backends map onto | [`schema.md`](schema.md#behind-a-feature-flag) |
 | `yaml` | the second document emitter, in `kynos-openapi` and re-exported | [`standards.md`](standards.md) |
-| `test-util` | `test/`, and the JSON Schema validator its conformance assertions need | [`testing.md`](testing.md) |
+| `test-util` | `test/`, and the JSON Schema validator its conformance assertions need; with `server`, hyper's `client` half and tokio's `duplex`, which `TestClient::through_server` drives `Server::serve_io` with from `server/connection.rs` | [`testing.md`](testing.md) |
 | `cache` | `middleware/cache/` and `middleware/conditional/`: the seam, never a store | [`middleware.md`](middleware.md) |
 | `assets` | `assets!` and `router/assets/`: a fixed set, so every path is a literal and nothing is waived | [`routing.md`](routing.md) |
 | `assets-fs` | `router/assets/fs/`. Implies `unchecked`, because a directory's membership is not fixed | [`routing.md`](routing.md) |

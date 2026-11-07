@@ -25,6 +25,7 @@ use kynos_openapi::{
 use serde_json::{Map, Value};
 
 use crate::{
+    extract::connection::Connection,
     http::{
         HeaderMap, HeaderName, HeaderValue, Method as HttpMethod, Request, Response, StatusCode,
         Uri, body::Body,
@@ -50,10 +51,12 @@ struct Observed {
     body: Bytes,
 }
 
-/// Sends requests to a [`Service`] directly.
+/// Sends requests to a [`Service`] directly, or through a configured
+/// [`Server`](crate::server::Server) with
+/// [`through_server`](Self::through_server).
 #[derive(Debug)]
 pub struct TestClient<C> {
-    service: Service<C>,
+    transport: Transport<C>,
     /// Behind a lock because [`TestRequest::send`] borrows the client shared.
     observed: Mutex<Vec<Observed>>,
     /// Where every exchange is also recorded, when the client shares one.
@@ -68,12 +71,25 @@ impl<C> TestClient<C> {
     /// Wraps a built service.
     #[must_use]
     pub fn new(service: Service<C>) -> Self {
+        Self::over(Transport::Direct(Box::new(service)))
+    }
+
+    fn over(transport: Transport<C>) -> Self {
         Self {
-            service,
+            transport,
             observed: Mutex::new(Vec::new()),
             coverage: None,
             peer: None,
             headers: HeaderMap::new(),
+        }
+    }
+
+    /// The service that answers, whose description assertions read.
+    fn service(&self) -> &Service<C> {
+        match &self.transport {
+            Transport::Direct(service) => service,
+            #[cfg(feature = "server")]
+            Transport::Served { server, .. } => server.served(),
         }
     }
 
@@ -228,7 +244,7 @@ impl<C> TestClient<C> {
     ///
     /// Panics listing every response that did not conform.
     pub fn assert_conformance(&self) {
-        let document = self.service.openapi();
+        let document = self.service().openapi();
         let mut failures = Vec::new();
 
         for record in self.recorded().iter() {
@@ -262,13 +278,137 @@ impl<C> TestClient<C> {
     pub fn assert_declared_responses_covered(&self) {
         let recorded = self.recorded();
         assert_covered(
-            self.service.openapi(),
+            self.service().openapi(),
             recorded
                 .iter()
                 .map(|record| (&record.method, &record.uri, record.status)),
         );
     }
 }
+
+#[cfg(feature = "server")]
+impl<C: 'static> TestClient<C> {
+    /// Sends every request over a fresh
+    /// [`Server::serve_io`](crate::server::Server::serve_io) connection on an
+    /// in-memory duplex, so the server's transport settings apply: its
+    /// protocol configs, header-read timeout and request-body idle timeout.
+    /// Observation, conformance and coverage work as for [`new`](Self::new).
+    ///
+    /// The request is written as HTTP/1.1 where the `http1` feature is
+    /// compiled, and as prior-knowledge HTTP/2 otherwise. What it inherits
+    /// from `serve_io`:
+    ///
+    /// - Listener-only settings do not apply: the connection limit, TCP
+    ///   keepalive, and graceful shutdown and its timeout.
+    /// - Each connection carries one request and closes once its response
+    ///   body has been read; a dropped [`send`](TestRequest::send) closes it
+    ///   without draining.
+    /// - The connection is recorded between [`TestRequest::peer`], the
+    ///   client's [`with_peer`](Self::with_peer), or `127.0.0.1:0` where
+    ///   neither is set, and a local `127.0.0.1:0`.
+    /// - A body ending short of its
+    ///   [`content_length`](TestRequest::content_length) aborts the message,
+    ///   as a client whose connection broke does.
+    ///
+    /// ```
+    /// use kynos::{Router, server::Server, test::TestClient};
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let service = Router::<()>::new().build(())?;
+    /// let client = TestClient::through_server(Server::new(service));
+    /// // No operation answers GET anywhere on an empty router.
+    /// client.get("/").send().await.assert_status(501);
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when `serve_io` refuses `server`: a value
+    /// [`prepare`](crate::server::Server::prepare) refuses, or TLS.
+    #[must_use]
+    pub fn through_server(server: crate::server::Server<C>) -> Self {
+        if let Err(error) = server.check_servable() {
+            panic!("a server `serve_io` refuses cannot be tested through: {error}");
+        }
+        Self::over(Transport::Served {
+            server: Box::new(server),
+            exchange: crate::server::Server::exchange,
+        })
+    }
+}
+
+/// Where a [`TestClient`] sends its requests. Each variant boxes what it
+/// holds, since a service and a server differ widely in size.
+#[derive(Debug)]
+enum Transport<C> {
+    /// To [`Service::call`].
+    Direct(Box<Service<C>>),
+    /// Over one fresh `serve_io` connection each.
+    #[cfg(feature = "server")]
+    Served {
+        server: Box<crate::server::Server<C>>,
+        /// `Server::exchange`, taken where `C: 'static` is known so sending
+        /// needs no such bound.
+        exchange: fn(&crate::server::Server<C>, Request, Connection) -> Exchanged,
+    },
+}
+
+impl<C> Transport<C> {
+    /// Sends `request` from `peer`, failing only where a connection ended
+    /// without a response.
+    async fn answer(
+        &self,
+        mut request: Request,
+        peer: Option<std::net::SocketAddr>,
+    ) -> std::io::Result<Response> {
+        match self {
+            Self::Direct(service) => {
+                if let Some(peer) = peer {
+                    // The same extension the server inserts per connection.
+                    request
+                        .extensions_mut()
+                        .insert(Connection::from_peer(peer, IN_PROCESS));
+                }
+                // Held to the idle timeout a server holds it to by default, so
+                // a stalled body is answered as a served one is.
+                #[cfg(feature = "server")]
+                let (request, stall) = {
+                    let (parts, body) = request.into_parts();
+                    let (body, stall) = crate::server::request_body::bounded(
+                        body,
+                        Some(crate::server::request_body::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT),
+                        crate::http::Version::HTTP_11,
+                        std::convert::identity,
+                    );
+                    (Request::from_parts(parts, body), stall)
+                };
+                let response = service.call(request).await;
+                #[cfg(feature = "server")]
+                let response = crate::server::request_body::answer(response, stall);
+                Ok(response)
+            }
+            #[cfg(feature = "server")]
+            Self::Served { server, exchange } => {
+                let connection = Connection::from_peer(peer.unwrap_or(IN_PROCESS), IN_PROCESS);
+                exchange(server, request, connection).await
+            }
+        }
+    }
+}
+
+/// A response [`Transport::Served`] is answered with.
+#[cfg(feature = "server")]
+type Exchanged =
+    std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<Response>> + Send>>;
+
+/// Where neither the test nor its client says who a served request is from,
+/// and where every request arrives.
+const IN_PROCESS: std::net::SocketAddr = std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
+    std::net::Ipv4Addr::LOCALHOST,
+    0,
+));
 
 /// The responses any number of [`TestClient`]s received, checked together
 /// against one description.
@@ -289,6 +429,30 @@ impl Coverage {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Records one exchange made outside a [`TestClient`], for
+    /// [`assert_declared_responses_covered`](Self::assert_declared_responses_covered)
+    /// to count.
+    ///
+    /// `path` is the concrete request target, matched against the
+    /// description when asserted, as a client's own exchanges are.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `path` is not a request target.
+    pub fn record(&self, method: &HttpMethod, path: &str, status: StatusCode) {
+        let uri = path
+            .parse::<Uri>()
+            .unwrap_or_else(|_| panic!("`{path}` is not a request target"));
+        push(
+            &self.exchanges,
+            Exchange {
+                method: method.clone(),
+                uri,
+                status,
+            },
+        );
     }
 
     /// Asserts that every response `document` declares was exercised by at
@@ -324,6 +488,14 @@ struct Exchange {
     method: HttpMethod,
     uri: Uri,
     status: StatusCode,
+}
+
+/// Adds `exchange` to a shared coverage record.
+fn push(exchanges: &Mutex<Vec<Exchange>>, exchange: Exchange) {
+    exchanges
+        .lock()
+        .expect("a coverage record whose recorder panicked cannot be written to")
+        .push(exchange);
 }
 
 /// Asserts that every response `document` declares is among `received`.
@@ -578,7 +750,9 @@ impl<C> TestRequest<'_, C> {
     ///
     /// Panics when the path is not a request target, when a
     /// [`cookie`](Self::cookie) leaves the `Cookie` field no header value, or
-    /// when the response body fails part-way through.
+    /// when the response body fails part-way through, or, for a client built
+    /// [`through_server`](TestClient::through_server), when the connection
+    /// ends without a response.
     pub async fn send(mut self) -> TestResponse {
         let body = match (self.body, self.content_length) {
             (RequestBody::Whole(bytes), None) => Body::from_bytes(bytes),
@@ -588,15 +762,6 @@ impl<C> TestRequest<'_, C> {
                 failed: false,
             }),
         };
-        // Held to the idle timeout a server holds it to by default, so a
-        // stalled body is answered as a served one is.
-        #[cfg(feature = "server")]
-        let (body, stall) = crate::server::request_body::bounded(
-            body,
-            Some(crate::server::request_body::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT),
-            crate::http::Version::HTTP_11,
-            std::convert::identity,
-        );
         let mut request = Request::new(body);
         *request.method_mut() = self.method.clone();
         let uri = self
@@ -619,36 +784,41 @@ impl<C> TestRequest<'_, C> {
 
         *request.headers_mut() = std::mem::take(&mut self.headers);
 
-        if let Some(peer) = self.peer {
-            // The same extension the server inserts per connection.
-            request
-                .extensions_mut()
-                .insert(crate::extract::connection::Connection::from_peer(
-                    peer,
-                    std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
-                ));
-        }
-
-        let response = self.client.service.call(request).await;
-        #[cfg(feature = "server")]
-        let response = crate::server::request_body::answer(response, stall);
+        let response = self
+            .client
+            .transport
+            .answer(request, self.peer)
+            .await
+            .unwrap_or_else(|error| {
+                panic!(
+                    "{} {}: no response arrived: {error}",
+                    self.method, self.path
+                )
+            });
 
         let (parts, body) = response.into_parts();
         let bytes = body
             .collect()
             .await
-            .expect("a response body driven in-process cannot fail")
+            .unwrap_or_else(|error| {
+                panic!(
+                    "{} {} -> {}: the response body failed part-way: {error}",
+                    self.method,
+                    self.path,
+                    parts.status.as_u16()
+                )
+            })
             .to_bytes();
 
         if let Some(coverage) = &self.client.coverage {
-            coverage
-                .lock()
-                .expect("a coverage record whose recorder panicked cannot be written to")
-                .push(Exchange {
+            push(
+                coverage,
+                Exchange {
                     method: self.method.clone(),
                     uri: uri.clone(),
                     status: parts.status,
-                });
+                },
+            );
         }
 
         self.client.recorded().push(Observed {

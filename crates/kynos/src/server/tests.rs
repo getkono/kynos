@@ -6621,3 +6621,50 @@ mod request_body_idle {
             .expect("server exits cleanly");
     }
 }
+
+/// The absolute target `TestClient::through_server` sends over prior-knowledge
+/// HTTP/2: the request's own scheme and authority (RFC 9112 section 3.2.2),
+/// then its `Host` header, then `localhost` (RFC 9113 section 8.3.1).
+#[cfg(feature = "test-util")]
+mod http2_target {
+    use crate::{
+        http::{body::Body, header::HOST},
+        server::connection::test_client::http2_target,
+    };
+
+    fn target(uri: &str, host: Option<&str>) -> String {
+        let mut request = http::Request::builder().uri(uri);
+        if let Some(host) = host {
+            request = request.header(HOST, host);
+        }
+        let request = request.body(Body::empty()).expect("a valid request");
+        http2_target(&request)
+            .expect("a target HTTP/2 can carry")
+            .to_string()
+    }
+
+    #[test]
+    fn an_absolute_form_target_keeps_its_own_scheme_and_authority() {
+        assert_eq!(
+            target("http://example.com/users/42?verbose=1", Some("other.test")),
+            "http://example.com/users/42?verbose=1"
+        );
+        assert_eq!(
+            target("https://example.com:8443/users/42", None),
+            "https://example.com:8443/users/42"
+        );
+    }
+
+    #[test]
+    fn an_origin_form_target_takes_its_authority_from_the_host_header() {
+        assert_eq!(
+            target("/users/42?verbose=1", Some("example.com:8080")),
+            "http://example.com:8080/users/42?verbose=1"
+        );
+    }
+
+    #[test]
+    fn an_origin_form_target_without_a_host_header_is_sent_to_localhost() {
+        assert_eq!(target("/users/42", None), "http://localhost/users/42");
+    }
+}
