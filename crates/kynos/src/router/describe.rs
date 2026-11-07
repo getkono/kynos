@@ -308,19 +308,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             }
         }
 
-        // First, since a contested name can leave a component conflict behind.
-        if let Some(refused) = registry.instantiation_name_refusals().first() {
-            return Err(Error::InstantiationName(Box::new(refused.clone())));
-        }
-        if let Some(conflict) = registry.schema_conflicts().first() {
-            return Err(Error::Schema(conflict.clone()));
-        }
-        if let Some(refused) = registry.key_pattern_refusals().first() {
-            return Err(Error::KeyPattern(Box::new(refused.clone())));
-        }
-        if let Some(conflict) = registry.scheme_conflicts().first() {
-            return Err(Error::Contribution(conflict.clone()));
-        }
+        refuse_registry_conflicts(&registry)?;
 
         let mut document = Document::new(
             highest_version(),
@@ -366,6 +354,25 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             linked,
         })
     }
+}
+
+/// Refuses the first contribution the registry could not reconcile, before
+/// its components reach the document.
+fn refuse_registry_conflicts(registry: &Registry) -> Result<()> {
+    // First, since a contested name can leave a component conflict behind.
+    if let Some(refused) = registry.instantiation_name_refusals().first() {
+        return Err(Error::InstantiationName(Box::new(refused.clone())));
+    }
+    if let Some(conflict) = registry.schema_conflicts().first() {
+        return Err(Error::Schema(conflict.clone()));
+    }
+    if let Some(refused) = registry.key_pattern_refusals().first() {
+        return Err(Error::KeyPattern(Box::new(refused.clone())));
+    }
+    if let Some(conflict) = registry.scheme_conflicts().first() {
+        return Err(Error::Contribution(conflict.clone()));
+    }
+    Ok(())
 }
 
 /// A described router: the document it produces, and everything wrong with it.
