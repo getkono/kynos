@@ -566,6 +566,42 @@ pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::run(item, derive::schema::expand_inner)
 }
 
+/// Names one instantiation of a generic `Schema` type, in place of the
+/// component name its arguments mangle.
+///
+/// ```ignore
+/// #[derive(Schema, Serialize)]
+/// pub struct Page<T> {
+///     pub items: Vec<T>,
+///     pub next_cursor: Option<String>,
+/// }
+///
+/// kynos::name_instantiation! {
+///     /// One page of torrents, ordered by infohash.
+///     pub TorrentPage = Page<TorrentSummary>;
+///     pub PlanPage = Page<Plan>;
+/// }
+///
+/// Router::new()
+///     .name_instantiation::<TorrentPage>()
+///     .name_instantiation::<PlanPage>()
+/// ```
+///
+/// Each entry is a type alias, written as declared, and an implementation of
+/// `kynos::schema::NamedInstantiation` for it: `Page<TorrentSummary>` is then
+/// published as `TorrentPage`, not `Page_TorrentSummary`, wherever it is used,
+/// once `Router::name_instantiation` registers it. The alias's doc comment
+/// becomes the component's `description`, in place of the generic type's own.
+///
+/// Refuses an alias with generic parameters, which names no one instantiation;
+/// any attribute but a doc comment; and an identifier outside ASCII, which no
+/// component name can spell. Naming one instantiation twice is the
+/// conflicting-implementation error coherence raises.
+#[proc_macro]
+pub fn name_instantiation(item: TokenStream) -> TokenStream {
+    derive::run(item, derive::schema::instantiation::expand_inner)
+}
+
 /// Maps an error type to RFC 9457 problem details.
 ///
 /// ```ignore

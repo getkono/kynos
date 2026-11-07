@@ -41,9 +41,10 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 /// any violation: [`Middleware`](Error::Middleware) for an interceptor
 /// configured with a combination it cannot honour, [`Link`](Error::Link) for a
 /// `Link` to an operation no URI can be rendered for, and
-/// [`Schema`](Error::Schema), [`KeyPattern`](Error::KeyPattern) or
-/// [`Contribution`](Error::Contribution) for a component name, map key
-/// `pattern` or security scheme the registry refuses.
+/// [`InstantiationName`](Error::InstantiationName), [`Schema`](Error::Schema),
+/// [`KeyPattern`](Error::KeyPattern) or [`Contribution`](Error::Contribution)
+/// for an instantiation's name, a component name, map key `pattern` or
+/// security scheme the registry refuses.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
@@ -68,6 +69,13 @@ pub enum Error {
     /// Two types claimed the same component name.
     #[error(transparent)]
     Schema(#[from] crate::schema::registry::SchemaConflict),
+
+    /// A name [`Router::name_instantiation`](crate::router::Router::name_instantiation)
+    /// declared could not be given.
+    ///
+    /// Boxed, for [`KeyPattern`](Error::KeyPattern)'s reason.
+    #[error(transparent)]
+    InstantiationName(#[from] Box<crate::schema::registry::InstantiationNameRefusal>),
 
     /// A map key type declared a `pattern` no check could enforce: one that
     /// does not translate from ECMA-262, or any pattern without the `pattern`

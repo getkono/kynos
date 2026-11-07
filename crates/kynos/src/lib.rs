@@ -143,8 +143,8 @@ pub use crate::{
 #[cfg(feature = "macros")]
 pub use kynos_macros::{
     ApiError, HeaderParams, ParamValue, PathParams, Provider, QueryParams, Reply, Schema,
-    SecurityScheme, Tag, delete, get, head, operation, options, patch, path, post, put, routes,
-    trace,
+    SecurityScheme, Tag, delete, get, head, name_instantiation, operation, options, patch, path,
+    post, put, routes, trace,
 };
 
 // Gated with the trait each derives, so a missing feature reports a missing

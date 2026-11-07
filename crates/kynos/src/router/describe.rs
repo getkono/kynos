@@ -226,6 +226,11 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
         self.declare_security_schemes(&mut registry, &mut violations);
 
+        // Before any operation resolves the instantiations they rename.
+        for name_instantiation in &self.instantiation_names {
+            name_instantiation(&mut registry);
+        }
+
         // Scope-declared metadata first, so the document lists it in
         // declaration order and a tag covering no operation is still
         // documented.
@@ -298,6 +303,10 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             }
         }
 
+        // First, since a contested name can leave a component conflict behind.
+        if let Some(refused) = registry.instantiation_name_refusals().first() {
+            return Err(Error::InstantiationName(Box::new(refused.clone())));
+        }
         if let Some(conflict) = registry.schema_conflicts().first() {
             return Err(Error::Schema(conflict.clone()));
         }

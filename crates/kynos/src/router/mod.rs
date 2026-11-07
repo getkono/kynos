@@ -141,6 +141,9 @@ pub struct Router<C, P = Propagate, I = (), S = ()> {
     /// because a router that mounts nothing still documents its tags.
     pub(crate) tag_metadata: Vec<kynos_openapi::Tag>,
     pub(crate) security_schemes: Vec<(&'static str, kynos_openapi::SecurityScheme)>,
+    /// Each [`NamedInstantiation`](crate::schema::NamedInstantiation) declared,
+    /// as the registration it makes before anything is described.
+    pub(crate) instantiation_names: Vec<fn(&mut crate::schema::registry::Registry)>,
     /// Problems found while mounting, which the fluent methods cannot return.
     pub(crate) violations: Vec<Violation<RouterError>>,
     /// The four application-wide policies, `None` until set, so a router
@@ -200,6 +203,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
             tags: Vec::new(),
             tag_metadata: Vec::new(),
             security_schemes: Vec::new(),
+            instantiation_names: Vec::new(),
             violations: Vec::new(),
             not_found: None,
             method_not_allowed: None,
@@ -229,6 +233,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
             tags: self.tags,
             tag_metadata: self.tag_metadata,
             security_schemes: self.security_schemes,
+            instantiation_names: self.instantiation_names,
             violations: self.violations,
             not_found: self.not_found,
             method_not_allowed: self.method_not_allowed,
@@ -334,6 +339,9 @@ impl<C, P, I, S> Router<C, P, I, S> {
         self.servers.extend(other.servers);
         self.tag_metadata.extend(other.tag_metadata);
         self.security_schemes.extend(other.security_schemes);
+        // A component name is document-wide, so an absorbed router's applies
+        // to every operation, as its security schemes do.
+        self.instantiation_names.extend(other.instantiation_names);
         self.violations.extend(other.violations);
         // Only the root router answers what no operation does and reads
         // forwarding fields, so an absorbed router's policy would be dropped.
@@ -590,6 +598,24 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     pub fn security_scheme<Scheme: SecurityScheme>(mut self) -> Self {
         self.security_schemes
             .push((Scheme::NAME, Scheme::describe()));
+        self
+    }
+
+    /// Publishes one generic instantiation under the component name
+    /// `kynos::name_instantiation!` gave it, in place of the mangled one.
+    ///
+    /// Applies to the whole document, operations mounted before the call
+    /// included, and to a router this one is nested or merged into. A refused
+    /// name fails [`validate`](Router::validate), [`openapi`](Router::openapi)
+    /// and [`build`](Router::build) with
+    /// [`Error::InstantiationName`](crate::Error::InstantiationName); see
+    /// [`NamedInstantiation`] for when.
+    ///
+    /// [`NamedInstantiation`]: crate::schema::NamedInstantiation
+    #[must_use]
+    pub fn name_instantiation<A: crate::schema::NamedInstantiation>(mut self) -> Self {
+        self.instantiation_names
+            .push(crate::schema::registry::Registry::name_instantiation::<A>);
         self
     }
 
