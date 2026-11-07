@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/getkono/kynos/compare/kynos-v0.5.0...kynos-v0.6.0) - 2026-11-07
+
+### Added
+
+- *(server)* report a Unix peer's credentials on its Connection ([#1207](https://github.com/getkono/kynos/pull/1207))
+- *(server)* let a handler see the drain begin, and end an Sse stream on it ([#1204](https://github.com/getkono/kynos/pull/1204))
+- *(test)* record an exchange into Coverage, and drive a configured Server with TestClient::through_server ([#1205](https://github.com/getkono/kynos/pull/1205))
+- *(server)* [**breaking**] serve pre-bound Unix socket listeners, and take every listener as std ([#1203](https://github.com/getkono/kynos/pull/1203))
+- *(router)* run an operation's guard ahead of a scope's interceptors with guard_first ([#1202](https://github.com/getkono/kynos/pull/1202))
+- *(server)* [**breaking**] describe a connection's addresses beyond SocketAddr ([#1197](https://github.com/getkono/kynos/pull/1197))
+- *(macros)* [**breaking**] send #[problem(extension)] members through Serialize ([#1199](https://github.com/getkono/kynos/pull/1199))
+- *(router)* emit Accept-Query on a QUERY 415 and a plain OPTIONS ([#1194](https://github.com/getkono/kynos/pull/1194))
+- *(schema)* name one generic instantiation with name_instantiation! ([#1196](https://github.com/getkono/kynos/pull/1196))
+- *(extract)* let a buffering interceptor hand on a body read that failed part-way ([#1195](https://github.com/getkono/kynos/pull/1195))
+- *(middleware)* TrustedHosts against DNS rebinding, and Csrf::when and Csrf::permits ([#1193](https://github.com/getkono/kynos/pull/1193))
+- *(error)* log a derived 5xx ApiError's source chain ([#1179](https://github.com/getkono/kynos/pull/1179))
+- *(server)* answer a stalled request body through the router with a declared 408 ([#1191](https://github.com/getkono/kynos/pull/1191))
+- *(test)* set a peer and headers once per TestClient, and send a bearer token ([#1188](https://github.com/getkono/kynos/pull/1188))
+- *(error)* implement IntoProblem for every built-in refusal ([#1180](https://github.com/getkono/kynos/pull/1180))
+- *(macros)* let #[schema(as = T)] convert through a function named by via ([#1178](https://github.com/getkono/kynos/pull/1178))
+- *(router)* name an interceptor chain with stack! and apply it with intercept_all ([#1181](https://github.com/getkono/kynos/pull/1181))
+- *(test)* assert a problem response whole, and read its members typed ([#1184](https://github.com/getkono/kynos/pull/1184))
+- *(server)* bound a peer lost mid-response with TCP_USER_TIMEOUT ([#1176](https://github.com/getkono/kynos/pull/1176))
+- *(test)* name the request in assertion failures, take a bare status code, and assert a header absent ([#1175](https://github.com/getkono/kynos/pull/1175))
+- *(docs)* let Docs tag the operations it mounts ([#1170](https://github.com/getkono/kynos/pull/1170))
+- *(limits)* bound a request body's total arrival with BodySize::deadline ([#1166](https://github.com/getkono/kynos/pull/1166))
+- *(macros)* let #[schema] numeric and count bounds name a const ([#1165](https://github.com/getkono/kynos/pull/1165))
+- *(error)* [**breaking**] let a broken declared bound answer with the application's problem type ([#1169](https://github.com/getkono/kynos/pull/1169))
+- fill the crate-root facades and prelude for hand-written schemas and guards ([#1167](https://github.com/getkono/kynos/pull/1167))
+
+### Documentation
+
+- align the remaining WebSocket and WebTransport wording
+- correct what the WebTransport and WebSocket deferrals claim
+- defer WebSockets and WebTransport rather than refusing them
+
+### Fixed
+
+- *(server)* replace the let chain that breaks the 1.85 MSRV ([#1211](https://github.com/getkono/kynos/pull/1211))
+- *(macros)* keep the Schema `as` conversion out of the field type's hygiene ([#1192](https://github.com/getkono/kynos/pull/1192))
+- *(router)* fail a QUERY without Content-Type and require a QUERY operation's body ([#1177](https://github.com/getkono/kynos/pull/1177))
+- *(macros)* keep Reply, MultipartForm and parameter group bindings out of the field type's hygiene ([#1187](https://github.com/getkono/kynos/pull/1187))
+- *(conditional)* answer a conditional QUERY with 304 in Conditional and Served ([#1171](https://github.com/getkono/kynos/pull/1171))
+- *(macros)* keep ApiError's bindings out of the field type's hygiene ([#1173](https://github.com/getkono/kynos/pull/1173))
+- *(test)* match conformance and coverage on the URI's path, not the target string ([#1160](https://github.com/getkono/kynos/pull/1160))
+- *(server)* take the first-head deadline from tokio's clock ([#1159](https://github.com/getkono/kynos/pull/1159))
+- *(cache)* treat QUERY as safe whichever http release resolves ([#1163](https://github.com/getkono/kynos/pull/1163))
+
 ## [0.5.0](https://github.com/getkono/kynos/compare/kynos-v0.4.0...kynos-v0.5.0) - 2026-10-31
 
 ### Added

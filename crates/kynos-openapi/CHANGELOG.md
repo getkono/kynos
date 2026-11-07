@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/getkono/kynos/compare/kynos-openapi-v0.5.0...kynos-openapi-v0.6.0) - 2026-11-07
+
+### Added
+
+- fill the crate-root facades and prelude for hand-written schemas and guards ([#1167](https://github.com/getkono/kynos/pull/1167))
+
+### Documentation
+
+- *(references)* vendor RFC 10008, the HTTP QUERY method ([#1158](https://github.com/getkono/kynos/pull/1158))
+
+### Fixed
+
+- *(router)* fail a QUERY without Content-Type and require a QUERY operation's body ([#1177](https://github.com/getkono/kynos/pull/1177))
+
 ## [0.5.0](https://github.com/getkono/kynos/compare/kynos-openapi-v0.4.0...kynos-openapi-v0.5.0) - 2026-10-31
 
 ### Added
