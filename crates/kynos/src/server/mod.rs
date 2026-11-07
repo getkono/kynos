@@ -161,7 +161,10 @@ impl<C: 'static> Server<C> {
     /// keepalive does not apply to them. Handlers read the peer through
     /// [`Connection::peer`](crate::extract::connection::Connection::peer),
     /// since [`ConnectInfo`](crate::extract::connection::ConnectInfo) promises
-    /// an IP one. [`BoundServer::local_addrs`] does not list the listener,
+    /// an IP one, and the process behind it through
+    /// [`Connection::peer_credentials`](crate::extract::connection::Connection::peer_credentials),
+    /// which the listener reads from the kernel once per accepted socket.
+    /// [`BoundServer::local_addrs`] does not list the listener,
     /// whose address its caller bound. [`prepare`](Self::prepare) refuses it
     /// alongside [`tls`](Self::tls): Kynos serves no TLS over a Unix socket.
     ///

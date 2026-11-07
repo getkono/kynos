@@ -819,6 +819,97 @@ async fn a_unix_listener_serves_unix_peers_and_leaves_its_socket_file() {
     );
 }
 
+/// A Unix listener records the credentials the kernel reports for each peer:
+/// the client here is this test process, so they are its own.
+#[cfg(all(unix, feature = "http1"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_unix_listener_records_its_peers_credentials() {
+    use std::io::{Read as _, Write as _};
+
+    let document = kynos_openapi::Document::new(
+        kynos_openapi::SpecVersion::V3_1,
+        kynos_openapi::Info::new("Test", "1"),
+    );
+    let service: crate::router::service::Service<()> =
+        crate::router::service::Service::new(document, |request: crate::http::Request| {
+            let credentials = request
+                .extensions()
+                .get::<crate::extract::connection::Connection>()
+                .expect("a served request carries its connection")
+                .peer_credentials();
+            async move {
+                let body = format!("{credentials:?}");
+                crate::http::Response::new(crate::http::body::Body::from_bytes(bytes::Bytes::from(
+                    body,
+                )))
+            }
+        });
+
+    let directory = SocketDirectory::new("credentials");
+    let path = directory.0.join("api.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&path).expect("the socket binds");
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(
+        crate::server::Server::new(service)
+            .unix_listener(listener)
+            .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+                let _ = shutdown_receiver.await;
+            }))
+            .serve(),
+    );
+
+    let response = tokio::task::spawn_blocking(move || {
+        let mut stream = std::os::unix::net::UnixStream::connect(path).expect("server accepts");
+        stream
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .expect("request writes");
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .expect("response reads");
+        response
+    })
+    .await
+    .expect("blocking client joins");
+
+    let uid = rustix::process::geteuid().as_raw();
+    let gid = rustix::process::getegid().as_raw();
+    let credentials = crate::extract::connection::PeerCredentials::new(uid, gid);
+    // Where the kernel reports a peer's process ID, this process is the peer.
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    let credentials = credentials.with_pid(std::process::id());
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(
+        response.ends_with(&format!("{:?}", Some(credentials))),
+        "{response}"
+    );
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// A process ID is kept only where it names a process: Linux reports zero for
+/// a peer in a PID namespace the server cannot see into.
+#[cfg(unix)]
+#[test]
+fn kernel_credentials_keep_only_a_process_id_that_names_a_process() {
+    use super::accept::kernel_credentials;
+    use crate::extract::connection::PeerCredentials;
+
+    assert_eq!(
+        kernel_credentials(1000, 100, Some(4242)),
+        PeerCredentials::new(1000, 100).with_pid(4242)
+    );
+    for pid in [None, Some(0), Some(-1)] {
+        let credentials = kernel_credentials(1000, 100, pid);
+        assert_eq!(credentials, PeerCredentials::new(1000, 100), "{pid:?}");
+        assert_eq!(credentials.pid(), None, "{pid:?}");
+    }
+}
+
 /// Kynos serves no TLS over a Unix socket, and says so before binding anything
 /// rather than serving the listener in plaintext.
 #[cfg(all(unix, feature = "tls"))]
@@ -2732,7 +2823,7 @@ async fn shutdown_cancels_an_incomplete_tls_handshake() {
     let (stop_sender, stop_receiver) = tokio::sync::watch::channel(super::Lifecycle::Running);
     let mut connection = tokio::spawn(crate::server::connection::serve_connection(
         stream,
-        peer_addr.into(),
+        crate::extract::connection::TransportAddress::from(peer_addr).into(),
         address.into(),
         Arc::new(test_service()),
         config,

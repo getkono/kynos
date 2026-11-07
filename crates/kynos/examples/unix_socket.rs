@@ -21,6 +21,10 @@
 //! * **The peer is a Unix address, not an IP one.** A connecting client is
 //!   usually unnamed, so a handler reads it through `Connection::peer`;
 //!   `ConnectInfo` promises an IP peer and answers its declared 500 here.
+//! * **The kernel says who connected.** `Connection::peer_credentials` carries
+//!   the user, group and, where the platform reports one, process ID of the
+//!   process at the other end: the user ID is what to authorize a local
+//!   caller by, while the process ID only names it for a log.
 
 #[cfg(unix)]
 use kynos::{
@@ -32,17 +36,22 @@ use kynos::{
     server::{Server, shutdown::Shutdown},
 };
 
-/// Greets whoever connected, by the transport they connected over.
+/// Greets whoever connected, by the transport they connected over and the
+/// user the kernel says they run as.
 #[cfg(unix)]
 #[kynos::get("/hello")]
 async fn hello(connection: Connection) -> Text {
-    Text(match connection.peer() {
+    let peer = match connection.peer() {
         TransportAddress::Unix(peer) => match peer.as_std().as_pathname() {
-            Some(path) => format!("hello, {}\n", path.display()),
-            None => "hello, unnamed Unix peer\n".to_owned(),
+            Some(path) => path.display().to_string(),
+            None => "unnamed Unix peer".to_owned(),
         },
-        TransportAddress::Ip(peer) => format!("hello, {peer}\n"),
-        _ => "hello, stranger\n".to_owned(),
+        TransportAddress::Ip(peer) => peer.to_string(),
+        _ => "stranger".to_owned(),
+    };
+    Text(match connection.peer_credentials() {
+        Some(credentials) => format!("hello, {peer} (uid {})\n", credentials.uid()),
+        None => format!("hello, {peer}\n"),
     })
 }
 
