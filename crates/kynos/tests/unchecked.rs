@@ -758,10 +758,84 @@ async fn an_unchecked_query_is_served_and_recorded() {
 
     let service = router.build(()).expect("a buildable router");
     let reply = support::send(&service, query(), "/search/books")
+        .header("content-type", "text/plain")
+        .body("a=1")
         .call()
         .await;
     assert_eq!(reply.status, StatusCode::OK);
     assert_eq!(reply.text(), "/search/books");
+}
+
+/// A `tower` layer that names `text/plain` on every request it wraps.
+#[cfg(feature = "openapi32")]
+#[derive(Clone, Copy, Debug)]
+struct Typing;
+
+#[cfg(feature = "openapi32")]
+impl<S> tower::Layer<S> for Typing {
+    type Service = Typed<S>;
+
+    fn layer(&self, inner: S) -> Typed<S> {
+        Typed(inner)
+    }
+}
+
+/// What [`Typing`] wraps a service in.
+#[cfg(feature = "openapi32")]
+#[derive(Clone, Debug)]
+struct Typed<S>(S);
+
+#[cfg(feature = "openapi32")]
+impl<S> tower::Service<Request> for Typed<S>
+where
+    S: tower::Service<Request>,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = S::Future;
+
+    fn poll_ready(
+        &mut self,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.0.poll_ready(context)
+    }
+
+    fn call(&mut self, mut request: Request) -> Self::Future {
+        request.headers_mut().insert(
+            "content-type",
+            kynos::http::HeaderValue::from_static("text/plain"),
+        );
+        self.0.call(request)
+    }
+}
+
+/// The untyped-`QUERY` refusal reads the request as an operation's unchecked
+/// layers leave it, since it ends the chain those layers wrap: a layer that
+/// names a media type lets an untyped `QUERY` through, and a layer that names
+/// none sees, and wraps, the 400.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn an_unchecked_layer_runs_before_the_untyped_query_refusal() {
+    let typed = Router::<()>::new()
+        .route_unchecked([query()], "/search/{*rest}", echo_path)
+        .layer_unchecked(Typing)
+        .build(())
+        .expect("a buildable router");
+    let served = support::send(&typed, query(), "/search/books").call().await;
+    assert_eq!(served.status, StatusCode::OK);
+    assert_eq!(served.text(), "/search/books");
+
+    let stamped = Router::<()>::new()
+        .route_unchecked([query()], "/search/{*rest}", echo_path)
+        .layer_unchecked(Stamp)
+        .build(())
+        .expect("a buildable router");
+    let refused = support::send(&stamped, query(), "/search/books")
+        .call()
+        .await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    assert_eq!(refused.field("x-stamped").as_deref(), Some("yes"));
 }
 
 /// Without `openapi32` a `QUERY` has no Path Item field: the route serves the
