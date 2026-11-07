@@ -5,41 +5,64 @@
 //! ```
 //!
 //! `Server::serve_io` takes any `AsyncRead + AsyncWrite` stream: a Unix socket
-//! your own loop accepted, a pipe, or, as here, an in-memory duplex with the
-//! client on the other end. Two things are worth noticing:
+//! your own loop accepted, a pipe, or, as here, one end of a Unix socket pair
+//! with the client on the other. Three things are worth noticing:
 //!
 //! * The connection runs under the server's transport settings, so the
 //!   header-read and body idle timeouts configured below bound it exactly as
 //!   they would bound a TCP connection.
-//! * Handlers see the peer address you passed in. A stream with no address of
-//!   its own, such as a Unix socket, gets whatever your acceptor decides to
-//!   report.
+//! * Handlers see the `Connection` you pass in, so record the addresses the
+//!   stream really connected between. A Unix peer is reported as one, usually
+//!   unnamed, rather than as an IP address nobody connected from.
+//! * `ConnectInfo` promises an IP peer, so a handler served over a Unix socket
+//!   reads `Connection::peer` instead.
 
-use std::{net::SocketAddr, time::Duration};
+#[cfg(unix)]
+use std::time::Duration;
 
+#[cfg(unix)]
 use kynos::{
-    extract::{body::text::Text, connection::ConnectInfo},
+    extract::{
+        body::text::Text,
+        connection::{Connection, TransportAddress},
+    },
     prelude::*,
     server::{Server, protocol::http1::Http1Config},
 };
+#[cfg(unix)]
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
-/// Greets whoever connected.
+/// Greets whoever connected, by the transport they connected over.
+#[cfg(unix)]
 #[kynos::get("/hello")]
-async fn hello(ConnectInfo(peer): ConnectInfo) -> Text {
-    Text(format!("hello, {peer}"))
+async fn hello(connection: Connection) -> Text {
+    Text(match connection.peer() {
+        TransportAddress::Ip(peer) => format!("hello, {peer}"),
+        TransportAddress::Unix(peer) => match peer.as_std().as_pathname() {
+            Some(path) => format!("hello, {}", path.display()),
+            None => "hello, unnamed Unix peer".to_owned(),
+        },
+        _ => "hello, stranger".to_owned(),
+    })
 }
 
+#[cfg(unix)]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let service = Router::<()>::new().mount(kynos::routes![hello]).build(())?;
 
-    let (mut client, io) = tokio::io::duplex(64 * 1024);
-    let peer: SocketAddr = "192.0.2.1:50000".parse()?;
+    let (client, io) = std::os::unix::net::UnixStream::pair()?;
+    // What the stream itself says it connected between.
+    let connection = Connection::from_peer(io.peer_addr()?, io.local_addr()?);
+    client.set_nonblocking(true)?;
+    io.set_nonblocking(true)?;
+    let mut client = tokio::net::UnixStream::from_std(client)?;
+    let io = tokio::net::UnixStream::from_std(io)?;
+
     let connection = Server::new(service)
         .http1(Http1Config::default().header_read_timeout(Some(Duration::from_secs(5))))
         .request_body_idle_timeout(Some(Duration::from_secs(5)))
-        .serve_io(io, peer)?;
+        .serve_io(io, connection)?;
     let served = tokio::spawn(connection);
 
     client
@@ -52,4 +75,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The server closed its side after answering `connection: close`.
     served.await??;
     Ok(())
+}
+
+/// A Unix socket pair is what this example serves over.
+#[cfg(not(unix))]
+fn main() {
+    eprintln!("this example serves over a Unix socket pair, which this platform lacks");
 }

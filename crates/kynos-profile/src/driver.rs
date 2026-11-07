@@ -10,7 +10,6 @@
 use std::any::Any;
 use std::future::{Future, poll_fn};
 use std::io;
-use std::net::SocketAddr;
 use std::pin::{Pin, pin};
 use std::task::{Context, Poll, Waker};
 
@@ -18,6 +17,7 @@ use bytes::Bytes;
 use http::response::Parts;
 use http_body::{Body as _, Frame};
 use kynos::{
+    extract::connection::Connection,
     http::{Request, Response, StatusCode, body::Body},
     router::service::Service,
     server::Server,
@@ -174,8 +174,8 @@ pub trait Served {
     /// request; or when the body fails, which no profiled response should.
     fn serve(&self, runner: &Runner, request: Request, frames: Vec<Frame<Bytes>>) -> Drained;
 
-    /// Hands the service to a [`Server`] that serves `io` as one connection
-    /// from `peer`, returning the connection's future unpolled, what a
+    /// Hands the service to a [`Server`] that serves `io` as `connection`,
+    /// returning the connection's future unpolled, what a
     /// [`connection`](crate::connection) row's region drives, beside the
     /// server that keeps the service alive past the future's end.
     ///
@@ -183,7 +183,7 @@ pub trait Served {
     ///
     /// When the server refuses its default configuration, which no profiled
     /// service should make it do.
-    fn connect(self: Box<Self>, io: DuplexStream, peer: SocketAddr) -> Connecting;
+    fn connect(self: Box<Self>, io: DuplexStream, connection: Connection) -> Connecting;
 }
 
 /// A connection's future, boxed so that one type holds every service's, and
@@ -212,11 +212,11 @@ impl<C: 'static> Served for Service<C> {
         runner.run(async move { drain(self.call(request).await, frames).await })
     }
 
-    fn connect(self: Box<Self>, io: DuplexStream, peer: SocketAddr) -> Connecting {
+    fn connect(self: Box<Self>, io: DuplexStream, connection: Connection) -> Connecting {
         let server = Server::new(*self);
         let future = Box::pin(
             server
-                .serve_io(io, peer)
+                .serve_io(io, connection)
                 .expect("the default configuration is accepted"),
         );
         Connecting {

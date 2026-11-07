@@ -839,7 +839,6 @@ async fn one_server_serves_two_connections_from_a_service_the_caller_shares() {
 
     let server = crate::server::Server::new(test_service());
     let held = Arc::clone(&server.service);
-    let peer = "192.0.2.1:50000".parse().expect("a socket address");
 
     let mut clients = Vec::new();
     let mut connections = Vec::new();
@@ -848,7 +847,7 @@ async fn one_server_serves_two_connections_from_a_service_the_caller_shares() {
         clients.push(client);
         connections.push(tokio::spawn(
             server
-                .serve_io(io, peer)
+                .serve_io(io, documentation_peer())
                 .expect("the default configuration is accepted"),
         ));
     }
@@ -1690,13 +1689,12 @@ async fn each_silent_connection_on_a_paused_clock_is_held_for_the_whole_first_he
     let window = Duration::from_secs(30);
     let server = crate::server::Server::new(test_service())
         .http1(Http1Config::default().header_read_timeout(Some(window)));
-    let peer = "192.0.2.1:50000".parse().expect("a socket address");
 
     for connection in 1..=3 {
         let (_client, io) = tokio::io::duplex(4096);
         let accepted = tokio::time::Instant::now();
         let _ = server
-            .serve_io(io, peer)
+            .serve_io(io, documentation_peer())
             .expect("the configuration is accepted")
             .await;
         let held = accepted.elapsed();
@@ -2520,7 +2518,7 @@ async fn mutual_tls_refuses_a_service_a_connection_still_shares() {
     let server = crate::server::Server::new(test_service());
     let (_client, io) = tokio::io::duplex(64);
     let connection = server
-        .serve_io(io, "192.0.2.1:50000".parse().expect("a socket address"))
+        .serve_io(io, documentation_peer())
         .expect("the default configuration is accepted");
     let error = server
         .tls(tls)
@@ -4663,6 +4661,14 @@ fn authority_issuing(servers: &[&[&str]]) -> (Authority, Vec<Identity>) {
         })
         .collect();
     (authority, servers)
+}
+
+/// A `serve_io` connection between two documentation addresses.
+fn documentation_peer() -> crate::extract::connection::Connection {
+    crate::extract::connection::Connection::from_peer(
+        std::net::SocketAddr::from(([192, 0, 2, 1], 50_000)),
+        std::net::SocketAddr::from(([192, 0, 2, 2], 80)),
+    )
 }
 
 fn test_service() -> crate::router::service::Service<()> {

@@ -551,7 +551,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
             .extensions()
             .get::<crate::extract::connection::Connection>()
             .filter(|connection| !connection.is_in_process())
-            .map(crate::extract::connection::Connection::peer_addr);
+            .and_then(crate::extract::connection::Connection::peer_addr);
 
         crate::http::forwarded::Forwarded::resolve(request.headers(), peer, &self.trusted_proxies)
     }

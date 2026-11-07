@@ -21,6 +21,7 @@ use std::{
 };
 
 use crate::{
+    error::rejection::ConnectInfoRejection,
     extract::{FromRequestParts, describe::Describe},
     http::Parts,
     router::operation::OperationCx,
@@ -29,6 +30,84 @@ use crate::{
 /// The address reported when no socket carried the request; port zero is never
 /// a peer port.
 const IN_PROCESS: SocketAddr = SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
+
+/// One end of a connection, in the address family of the transport it
+/// arrived over.
+///
+/// Read through [`Connection::peer`] and [`Connection::local`]. A handler that
+/// only serves IP takes [`ConnectInfo`] or [`Connection::peer_addr`] instead.
+///
+/// Non-exhaustive: a transport Kynos learns to serve adds a variant.
+///
+/// ```
+/// use kynos::extract::connection::{Connection, TransportAddress};
+///
+/// fn describe(connection: &Connection) -> String {
+///     match connection.peer() {
+///         TransportAddress::Ip(address) => format!("ip {address}"),
+///         #[cfg(unix)]
+///         TransportAddress::Unix(address) => format!("unix {:?}", address.as_std()),
+///         _ => "another transport".to_owned(),
+///     }
+/// }
+/// # let _ = describe;
+/// ```
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub enum TransportAddress {
+    /// An IP socket address: TCP, the transport every listener accepts on.
+    Ip(SocketAddr),
+    /// A Unix domain socket address: a filesystem path, an abstract name, or,
+    /// as a connecting peer's usually is, unnamed.
+    #[cfg(unix)]
+    Unix(UnixAddress),
+}
+
+impl From<SocketAddr> for TransportAddress {
+    fn from(address: SocketAddr) -> Self {
+        Self::Ip(address)
+    }
+}
+
+#[cfg(unix)]
+impl From<std::os::unix::net::SocketAddr> for TransportAddress {
+    fn from(address: std::os::unix::net::SocketAddr) -> Self {
+        Self::Unix(address.into())
+    }
+}
+
+#[cfg(unix)]
+impl From<UnixAddress> for TransportAddress {
+    fn from(address: UnixAddress) -> Self {
+        Self::Unix(address)
+    }
+}
+
+/// A Unix domain socket address.
+///
+/// Read it as the standard library's type through [`as_std`](Self::as_std):
+/// that type says whether the address is a path, unnamed or, on Linux and
+/// Android, abstract. Held out of line, so an IP connection's record does not
+/// grow to the width of a `sockaddr_un`.
+#[cfg(unix)]
+#[derive(Clone, Debug)]
+pub struct UnixAddress(Box<std::os::unix::net::SocketAddr>);
+
+#[cfg(unix)]
+impl UnixAddress {
+    /// The address as the standard library describes it.
+    #[must_use]
+    pub fn as_std(&self) -> &std::os::unix::net::SocketAddr {
+        &self.0
+    }
+}
+
+#[cfg(unix)]
+impl From<std::os::unix::net::SocketAddr> for UnixAddress {
+    fn from(address: std::os::unix::net::SocketAddr) -> Self {
+        Self(Box::new(address))
+    }
+}
 
 /// The path template this request matched.
 ///
@@ -47,14 +126,21 @@ const IN_PROCESS: SocketAddr = SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::UN
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MatchedPath(pub &'static str);
 
-/// The peer address of the connection this request arrived on.
+/// The IP peer address of the connection this request arrived on.
 ///
 /// A shorthand for [`Connection::peer_addr`], for a handler that wants the
-/// address and nothing else. Contributes nothing to the description.
+/// address and nothing else. Contributes only its rejection's 500 to the
+/// description.
 ///
 /// Reports `0.0.0.0:0` when no socket carried the request. Take a
 /// [`Connection`] instead where the difference matters: see
 /// [`Connection::is_in_process`].
+///
+/// Rejects with [`ConnectInfoRejection`] when the connection arrived over a
+/// transport that has no IP address, such as a Unix domain socket: that is a
+/// handler deployed where its assumption does not hold, not something the
+/// client did. A handler served over more than IP reads
+/// [`Connection::peer`] instead.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ConnectInfo(pub SocketAddr);
 
@@ -121,8 +207,8 @@ pub struct Connection(Arc<Inner>);
 
 #[derive(Debug)]
 struct Inner {
-    peer_addr: SocketAddr,
-    local_addr: SocketAddr,
+    peer: TransportAddress,
+    local: TransportAddress,
     in_process: bool,
     tls: Option<TlsIdentity>,
 }
@@ -131,8 +217,8 @@ struct Inner {
 /// fallback allocates nothing per request.
 static IN_PROCESS_CONNECTION: LazyLock<Connection> = LazyLock::new(|| {
     Connection(Arc::new(Inner {
-        peer_addr: IN_PROCESS,
-        local_addr: IN_PROCESS,
+        peer: TransportAddress::Ip(IN_PROCESS),
+        local: TransportAddress::Ip(IN_PROCESS),
         in_process: true,
         tls: None,
     }))
@@ -142,14 +228,49 @@ impl Connection {
     /// Records the addresses a socket connected between.
     ///
     /// For an embedding that owns its own accept loop and drives
-    /// [`Service::call`](crate::router::service::Service::call) itself: insert
-    /// one of these into the request's extensions and the extractors here read
-    /// it back, exactly as they do under [`Server`](crate::server::Server).
+    /// [`Service::call`](crate::router::service::Service::call) itself, and
+    /// for [`Server::serve_io`](crate::server::Server::serve_io): insert one of
+    /// these into the request's extensions and the extractors here read it
+    /// back, exactly as they do under [`Server`](crate::server::Server).
+    ///
+    /// Both ends take one type, so a `std::net::SocketAddr` pair and a
+    /// `std::os::unix::net::SocketAddr` pair are each accepted and a mix of
+    /// the two is a type error.
+    ///
+    /// ```
+    /// use kynos::extract::connection::Connection;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let peer: std::net::SocketAddr = "192.0.2.1:50000".parse()?;
+    /// let local: std::net::SocketAddr = "192.0.2.2:80".parse()?;
+    /// let connection = Connection::from_peer(peer, local);
+    /// assert_eq!(connection.peer_addr(), Some(peer));
+    ///
+    /// # #[cfg(unix)]
+    /// # {
+    /// let (stream, _) = std::os::unix::net::UnixStream::pair()?;
+    /// let connection = Connection::from_peer(stream.peer_addr()?, stream.local_addr()?);
+    /// // A Unix socket has no IP address to report.
+    /// assert_eq!(connection.peer_addr(), None);
+    /// # }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// Two ends of different types do not compile, even where both convert:
+    ///
+    /// ```compile_fail
+    /// use kynos::extract::connection::{Connection, TransportAddress};
+    ///
+    /// let peer: std::net::SocketAddr = "192.0.2.1:50000".parse().unwrap();
+    /// let local = TransportAddress::Ip("192.0.2.2:80".parse().unwrap());
+    /// let _ = Connection::from_peer(peer, local);
+    /// ```
     #[must_use]
-    pub fn from_peer(peer_addr: SocketAddr, local_addr: SocketAddr) -> Self {
+    pub fn from_peer<A: Into<TransportAddress>>(peer: A, local: A) -> Self {
         Self(Arc::new(Inner {
-            peer_addr,
-            local_addr,
+            peer: peer.into(),
+            local: local.into(),
             in_process: false,
             tls: None,
         }))
@@ -168,7 +289,8 @@ impl Connection {
     ///     http::{Request, body::Body},
     /// };
     ///
-    /// # let (peer, local) = ("192.0.2.1:50000".parse().unwrap(), "192.0.2.2:443".parse().unwrap());
+    /// # let (peer, local): (std::net::SocketAddr, std::net::SocketAddr) =
+    /// #     ("192.0.2.1:50000".parse().unwrap(), "192.0.2.2:443".parse().unwrap());
     /// # let verified_chain: Vec<bytes::Bytes> = Vec::new();
     /// let connection = Connection::from_tls_peer(
     ///     peer,
@@ -181,25 +303,44 @@ impl Connection {
     /// request.extensions_mut().insert(connection.clone());
     /// ```
     #[must_use]
-    pub fn from_tls_peer(peer_addr: SocketAddr, local_addr: SocketAddr, tls: TlsIdentity) -> Self {
+    pub fn from_tls_peer<A: Into<TransportAddress>>(peer: A, local: A, tls: TlsIdentity) -> Self {
         Self(Arc::new(Inner {
-            peer_addr,
-            local_addr,
+            peer: peer.into(),
+            local: local.into(),
             in_process: false,
             tls: Some(tls),
         }))
     }
 
-    /// The address the peer connected from.
+    /// The address the peer connected from, in its transport's family.
     #[must_use]
-    pub fn peer_addr(&self) -> SocketAddr {
-        self.0.peer_addr
+    pub fn peer(&self) -> &TransportAddress {
+        &self.0.peer
     }
 
-    /// The address the listener accepted on.
+    /// The address the connection was accepted on, in its transport's family.
     #[must_use]
-    pub fn local_addr(&self) -> SocketAddr {
-        self.0.local_addr
+    pub fn local(&self) -> &TransportAddress {
+        &self.0.local
+    }
+
+    /// The IP address the peer connected from.
+    ///
+    /// `None` when the connection arrived over a transport with no IP
+    /// address, such as a Unix domain socket; [`peer`](Self::peer) reports
+    /// that address.
+    #[must_use]
+    pub fn peer_addr(&self) -> Option<SocketAddr> {
+        ip(&self.0.peer)
+    }
+
+    /// The IP address the connection was accepted on.
+    ///
+    /// `None` when the connection arrived over a transport with no IP
+    /// address; [`local`](Self::local) reports that address.
+    #[must_use]
+    pub fn local_addr(&self) -> Option<SocketAddr> {
+        ip(&self.0.local)
     }
 
     /// Whether no socket carried this request.
@@ -259,6 +400,15 @@ impl Connection {
     }
 }
 
+/// The IP socket address `address` holds, if it is one.
+fn ip(address: &TransportAddress) -> Option<SocketAddr> {
+    match address {
+        TransportAddress::Ip(address) => Some(*address),
+        #[cfg(unix)]
+        TransportAddress::Unix(_) => None,
+    }
+}
+
 /// Infallible: a route has always matched before an argument is built.
 impl<C: Sync> FromRequestParts<C> for MatchedPath {
     type Rejection = Infallible;
@@ -302,13 +452,16 @@ impl Describe for crate::http::forwarded::Forwarded {
     }
 }
 
-/// Infallible: a service with no socket under it reports the in-process
-/// address.
+/// Fails only on a connection with no IP peer: a service with no socket under
+/// it reports the in-process address.
 impl<C: Sync> FromRequestParts<C> for ConnectInfo {
-    type Rejection = Infallible;
+    type Rejection = ConnectInfoRejection;
 
     async fn from_request_parts(parts: &mut Parts, _context: &C) -> Result<Self, Self::Rejection> {
-        Ok(Self(Connection::of(parts).peer_addr()))
+        Connection::of(parts)
+            .peer_addr()
+            .map(Self)
+            .ok_or(ConnectInfoRejection::NotIp)
     }
 }
 
@@ -318,7 +471,8 @@ impl Describe for ConnectInfo {
     }
 }
 
-/// Infallible, as [`ConnectInfo`] is.
+/// Infallible: a service with no socket under it reports the in-process
+/// connection.
 impl<C: Sync> FromRequestParts<C> for Connection {
     type Rejection = Infallible;
 

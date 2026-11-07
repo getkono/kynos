@@ -546,15 +546,22 @@ already closed: that count exists for auditability, and was never about
 keeping a runtime swap open. Refusing it costs more than building it. A
 deployment behind a local proxy or sidecar that serves itself over `serve_io`
 has to rebuild the connection limit, graceful shutdown and drain that a
-listener provides, and has to invent a peer address that every handler then
-believes. The address model comes first, since a Unix peer has no
-`SocketAddr` ([#1130](https://github.com/getkono/kynos/issues/1130)), and
-then the listener ([#1131](https://github.com/getkono/kynos/issues/1131)). A
-stream no listener accepts, such as an in-memory pipe or one from a custom
-acceptor, is served by `Server::serve_io`, one connection per call, as
-plaintext. That exposes the connection driver's existing
-`AsyncRead + AsyncWrite` bound rather than adding a coupling point, and
-accepting those streams stays the application's job.
+listener provides. The address model came first, since a Unix peer has no
+`SocketAddr` ([#1130](https://github.com/getkono/kynos/issues/1130)):
+`Connection::peer` and `Connection::local` report a non-exhaustive
+`TransportAddress`, IP or Unix, while `ConnectInfo` keeps promising an IP
+peer and refuses any other with a declared 500, so no handler is handed an
+address nobody connected from. The listener follows
+([#1131](https://github.com/getkono/kynos/issues/1131)). A stream no listener
+accepts, such as an in-memory pipe or one from a custom acceptor, is served
+by `Server::serve_io`, one connection per call, described by the
+`Connection` its caller records. Kynos terminates no TLS on it: a caller that
+terminated TLS itself records the handshake through
+`Connection::from_tls_peer`, whose ALPN then pins the protocol as a TLS
+listener's would, and a stream recorded without one is sniffed as plaintext.
+That exposes the connection driver's
+existing `AsyncRead + AsyncWrite` bound rather than adding a coupling point,
+and accepting those streams stays the application's job.
 
 **WebSockets are deferred, and the description they need is AsyncAPI.** A
 WebSocket stops being request/response once it is established, and OpenAPI

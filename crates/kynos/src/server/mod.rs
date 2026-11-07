@@ -333,12 +333,18 @@ impl<C: 'static> Server<C> {
     ///
     /// The connection runs under the transport settings a listener's would:
     /// the protocol configs, including the header-read and idle timeouts, and
-    /// the request-body idle timeout. Handlers see `peer` through
-    /// [`ConnectInfo`](crate::extract::connection::ConnectInfo) and
-    /// [`Connection`](crate::extract::connection::Connection), whose local
-    /// address is the unspecified address of `peer`'s family with port zero,
-    /// since no listener accepted it. HTTP/1 and HTTP/2 are told apart from
-    /// the first bytes, as on any plaintext listener.
+    /// the request-body idle timeout. Handlers see `connection` as given,
+    /// through [`Connection`](crate::extract::connection::Connection) and,
+    /// where its peer is an IP address,
+    /// [`ConnectInfo`](crate::extract::connection::ConnectInfo): record the
+    /// addresses `io` really connected between, such as a Unix stream's own
+    /// `peer_addr` and `local_addr`, rather than inventing IP ones. A
+    /// connection recorded through
+    /// [`from_tls_peer`](crate::extract::connection::Connection::from_tls_peer)
+    /// reports that handshake, for a stream whose TLS the caller terminated.
+    /// Where that handshake's ALPN settled `h2` or `http/1.1`, the connection
+    /// is served as that protocol, as on a TLS listener; otherwise HTTP/1 and
+    /// HTTP/2 are told apart from the first bytes, as on a plaintext listener.
     ///
     /// Nothing that belongs to listeners applies: no address is bound, and the
     /// connection limit, TCP keepalive, graceful shutdown and its timeout are
@@ -354,14 +360,17 @@ impl<C: 'static> Server<C> {
     /// server or with the last connection still running, whichever is later.
     ///
     /// ```
-    /// use kynos::{Router, server::Server};
+    /// use kynos::{Router, extract::connection::Connection, server::Server};
     /// use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     ///
     /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let service = Router::<()>::new().build(())?;
     /// let (mut client, io) = tokio::io::duplex(4096);
-    /// let connection = Server::new(service).serve_io(io, "192.0.2.1:50000".parse()?)?;
+    /// // A custom acceptor that knows which addresses it connected between.
+    /// let (peer, local): (std::net::SocketAddr, std::net::SocketAddr) =
+    ///     ("192.0.2.1:50000".parse()?, "192.0.2.2:80".parse()?);
+    /// let connection = Server::new(service).serve_io(io, Connection::from_peer(peer, local))?;
     /// let served = tokio::spawn(connection);
     ///
     /// client
@@ -392,7 +401,7 @@ impl<C: 'static> Server<C> {
     pub fn serve_io<I>(
         &self,
         io: I,
-        peer: SocketAddr,
+        connection: crate::extract::connection::Connection,
     ) -> Result<impl Future<Output = io::Result<()>> + Send + 'static>
     where
         I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -408,7 +417,7 @@ impl<C: 'static> Server<C> {
 
         Ok(connection::serve_io(
             io,
-            peer,
+            connection,
             Arc::clone(&self.service),
             self.transport(),
         ))

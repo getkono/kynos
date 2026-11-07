@@ -30,8 +30,8 @@ use core::convert::Infallible;
 use kynos::{
     HeaderParams, PathParams, QueryParams, Schema,
     error::rejection::{
-        AuthRejection, BodyRejection, HeaderRejection, NegotiationRejection, PathRejection,
-        QueryRejection,
+        AuthRejection, BodyRejection, ConnectInfoRejection, HeaderRejection, NegotiationRejection,
+        PathRejection, QueryRejection,
     },
     extract::{
         FromRequest, FromRequestParts,
@@ -299,9 +299,14 @@ witnesses! {
     /// produces.
     fn the_connection_extractors_cannot_fail {
         head_rejects_with(Infallible, (), MatchedPath);
-        head_rejects_with(Infallible, (), ConnectInfo);
         head_rejects_with(Infallible, (), kynos::http::forwarded::Forwarded);
         head_rejects_with(Infallible, (), kynos::extract::connection::Connection);
+    }
+
+    /// `ConnectInfo` promises an IP peer, which a connection over another
+    /// transport does not have.
+    fn the_ip_peer_rejects_with_its_own_type {
+        head_rejects_with(ConnectInfoRejection, (), ConnectInfo);
     }
 
     /// The router refuses to build a link with no target, so none fails a

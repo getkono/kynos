@@ -335,6 +335,7 @@ All live in [`error::rejection`](../crates/kynos/src/error/rejection.rs).
 | `BodyRejection` | 400, 408 with `server`, 413, 415, 422 | every body extractor, and `OneOf<L, R>` |
 | `NegotiationRejection` | 400, 406 | `Accept<T>` |
 | `RangeRejection` | 416 | `Range<T>`'s `select`, `apply`, `select_parts` and `apply_parts`, and `Served::deliver` |
+| `ConnectInfoRejection` | 500 | `ConnectInfo`, on a connection with no IP peer |
 | `AuthRejection` | 401, 403, and 503 where the scheme opts in | `Auth<S>`, `MaybeAuth<S>` |
 | `ScopedRejection<R>` | 401, 403, and 503 where the scheme opts in | `Scoped<S, R>` |
 
@@ -478,14 +479,20 @@ The rest of the reasoning is in
 An extractor that cannot fail says so with `Infallible`, whose `Responses`
 implementation contributes nothing — among them
 [`Inject<T>`](../crates/kynos/src/di/inject.rs),
-[`MatchedPath`, `ConnectInfo` and `Connection`](../crates/kynos/src/extract/connection.rs),
+[`MatchedPath` and `Connection`](../crates/kynos/src/extract/connection.rs),
 [`Forwarded`](../crates/kynos/src/http/forwarded.rs),
 and [`Link<E>`](../crates/kynos/src/extract/link.rs). For `MatchedPath`,
 `Forwarded` and `Link<E>` this is a fact about ordering — a route has already
 matched and the forwarding fields been resolved by the time a handler argument
-is built, and a router whose link has no target refuses to build. `ConnectInfo`
-and `Connection` report the in-process address where no socket carried the
-request.
+is built, and a router whose link has no target refuses to build. `Connection`
+reports the in-process address where no socket carried the request.
+
+`ConnectInfo` is the one connection extractor that can fail, and its 500 is
+declared rather than hidden. It promises an IP peer, which a Unix domain socket
+connection does not have. Reporting `0.0.0.0:0` there would be an address every
+log line and rate-limit bucket believes, and an `Option` would put a branch
+for every IP-only deployment into every handler. A handler that runs over
+either transport takes `Connection` and matches `Connection::peer`.
 
 ## What is not an error type
 
