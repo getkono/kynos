@@ -518,6 +518,39 @@ every process, and are rotated by nothing but the application.
 - **How to treat the secret.** As the server's private key is treated: random,
   delivered over a channel as trusted, and never logged.
 
+### Where a Unix peer's credentials fit
+
+Over a Unix domain socket the kernel says which local process connected, and
+that is the main reason to serve an API on one. A Unix listener reads them once
+per accepted socket and records them on the
+[`Connection`](../crates/kynos/src/extract/connection.rs), where
+`Connection::peer_credentials` returns a `PeerCredentials`: the peer's effective
+user and group ID and, where the kernel reports one, its process ID. They are
+read on the platforms whose kernel reports them and absent elsewhere, rather
+than filled in: tokio answers some platforms with a fixed uid and gid of zero,
+which would make every peer root.
+
+- **Authorize by `uid`.** It is the kernel's record of who called `connect(2)`,
+  so a peer cannot choose it — unlike the socket file's permissions, which
+  decide only who may connect at all.
+- **Never authorize by `pid`.** It names a process at the moment it connected,
+  and that process may exit and its ID be reused before the request is read.
+  It is for a log line.
+- **A proxy is the peer.** Behind a sidecar or reverse proxy the credentials are
+  the proxy's, as an IP peer is; nothing in a request carries the original
+  caller's, and `Forwarded` does not reach them.
+- **A connection keeps what it was accepted with.** A peer that changes user
+  afterwards, or passes its descriptor to another process, is still reported as
+  it connected; the supplementary groups are not reported.
+
+They are **not** a security scheme, deliberately. A scheme declares a credential
+a client presents in the request, and the description tells it how; the kernel's
+record of a local peer is presented by nobody and described by nothing a remote
+client could act on. A guard or interceptor reads `Connection` instead. An
+embedding serving a stream itself, or `Server::serve_io`'s caller, records them
+through `Connection::with_peer_credentials`, and that caller is then the trust
+anchor, as it is for a certificate chain.
+
 ### A scheme may be published without being required
 
 `Router::security_scheme::<S>()` registers a scheme that no operation yet
