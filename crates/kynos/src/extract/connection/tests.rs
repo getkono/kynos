@@ -114,6 +114,19 @@ fn a_connection_handle_is_one_pointer() {
     );
 }
 
+/// A transport address is as wide as the IP address it most often holds: the
+/// Unix variant is held out of line, so an IP connection's record does not
+/// grow to the width of a `sockaddr_un`, which is what keeps `Inner` at the
+/// 144 bytes measured below.
+#[test]
+fn a_transport_address_is_as_wide_as_an_ip_one() {
+    assert_eq!(
+        size_of::<TransportAddress>(),
+        size_of::<SocketAddr>(),
+        "a variant held inline widens both addresses of every connection"
+    );
+}
+
 /// The other half: cloning shares the payload rather than copying it.
 ///
 /// One pointer wide is necessary and not sufficient. `Connection(Box<Inner>)`
