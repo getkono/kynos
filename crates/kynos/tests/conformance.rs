@@ -453,3 +453,56 @@ async fn a_403_from_a_scheme_that_never_forbids_fails_conformance() {
 
     client.assert_conformance();
 }
+
+/// What a `QUERY` reads its query from.
+#[cfg(feature = "openapi32")]
+#[kynos::query("/search")]
+async fn search(
+    kynos::extract::body::text::Text(query): kynos::extract::body::text::Text,
+) -> kynos::extract::body::text::Text {
+    kynos::extract::body::text::Text(query)
+}
+
+/// A `QUERY`'s 415 sends the `Accept-Query` its description declares there
+/// (RFC 10008 section 2.1): the field is declared on that 415 and no other
+/// response, optional since a 415 for a content coding carries none, and its
+/// example is the value sent, which names the operation's content keys.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn a_query_415_sends_the_accept_query_its_description_declares() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![search])
+        .build(())
+        .expect("a describable router");
+    let document = serde_json::to_value(service.openapi()).expect("a serializable document");
+    let client = TestClient::new(service);
+
+    let refused = client
+        .query("/search")
+        .body("application/xml", "<q/>")
+        .send()
+        .await;
+    refused.assert_status(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    client
+        .query("/search")
+        .text("q")
+        .send()
+        .await
+        .assert_status(StatusCode::OK);
+    client.assert_conformance();
+
+    let responses = &document["paths"]["/search"]["query"]["responses"];
+    let declared = &responses["415"]["headers"]["Accept-Query"];
+    assert_eq!(refused.header("accept-query"), Some("text/plain"));
+    assert_eq!(declared["example"].as_str(), refused.header("accept-query"));
+    assert_eq!(declared["required"], serde_json::Value::Null);
+
+    let carrying: Vec<&String> = responses
+        .as_object()
+        .expect("a responses object")
+        .iter()
+        .filter(|(_, response)| !response["headers"]["Accept-Query"].is_null())
+        .map(|(status, _)| status)
+        .collect();
+    assert_eq!(carrying, ["415"]);
+}

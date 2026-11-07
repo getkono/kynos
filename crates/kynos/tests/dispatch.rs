@@ -1312,15 +1312,20 @@ async fn a_query_on_a_path_declaring_none_is_refused_and_no_get_answers_it() {
     assert_eq!(allowed(&refused), ["DELETE", "GET", "HEAD"]);
 
     // `DELETE` is implemented on `/users/{id}`, so `/users` answers 405 too,
-    // and names the `QUERY` it declares beside its `GET`, `HEAD` and `POST`.
+    // and names the `QUERY` it declares beside its `GET`, `HEAD` and `POST`,
+    // and the `OPTIONS` that `QUERY`'s `Accept-Query` answers.
     let declared = send(&service, Method::DELETE, "/users").call().await;
     assert_eq!(declared.status, StatusCode::METHOD_NOT_ALLOWED);
-    assert_eq!(allowed(&declared), ["GET", "HEAD", "POST", "QUERY"]);
+    assert_eq!(
+        allowed(&declared),
+        ["GET", "HEAD", "OPTIONS", "POST", "QUERY"]
+    );
 }
 
 /// A declared `QUERY` implies no other method, as a `GET` implies `HEAD`: on a
-/// path declaring `QUERY` alone, `Allow` names `QUERY` alone, and a `GET` or a
-/// `HEAD` there is refused rather than answered by it.
+/// path declaring `QUERY` alone, `Allow` names `QUERY` and the `OPTIONS` its
+/// `Accept-Query` answers, and a `GET` or a `HEAD` there is refused rather
+/// than answered by it.
 #[cfg(feature = "openapi32")]
 #[tokio::test]
 async fn a_declared_query_implies_no_other_method() {
@@ -1330,8 +1335,117 @@ async fn a_declared_query_implies_no_other_method() {
         let reply = send(&service, method.clone(), "/searches").call().await;
 
         assert_eq!(reply.status, StatusCode::METHOD_NOT_ALLOWED, "{method}");
-        assert_eq!(allowed(&reply), ["QUERY"], "{method}");
+        assert_eq!(allowed(&reply), ["OPTIONS", "QUERY"], "{method}");
     }
+}
+
+// --- `Accept-Query`, the media types a `QUERY` reads ----------------------
+
+/// RFC 10008 section 2.1: the 415 a `QUERY` answers a media type it does not
+/// read with names, in `Accept-Query`, the ones it does: its described
+/// `requestBody` content keys. Added before the router's interceptors see the
+/// response, as the 415 itself is.
+///
+/// Only that 415: the operation's 200, the dispatcher's 400 for a `QUERY`
+/// naming no media type, and the 415 for a body still under a content coding
+/// (RFC 9110 section 15.5.16, a complaint `Accept-Query` would misread) carry
+/// none.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn a_query_refusing_a_media_type_names_the_ones_it_reads() {
+    let service = searching();
+
+    let refused = send(&service, query(), "/search")
+        .header("content-type", "application/xml")
+        .body("<q/>")
+        .call()
+        .await;
+    assert_eq!(refused.status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    assert_eq!(refused.field("accept-query").as_deref(), Some("text/plain"));
+    assert!(refused.field("x-request-id").is_some());
+
+    let served = send(&service, query(), "/search")
+        .header("content-type", "text/plain")
+        .body("q")
+        .call()
+        .await;
+    let untyped = send(&service, query(), "/search").body("q").call().await;
+    let encoded = send(&service, query(), "/search")
+        .header("content-type", "text/plain")
+        .header("content-encoding", "gzip")
+        .body("q")
+        .call()
+        .await;
+
+    for (case, reply, status) in [
+        ("served", served, StatusCode::OK),
+        ("untyped", untyped, StatusCode::BAD_REQUEST),
+        ("encoded", encoded, StatusCode::UNSUPPORTED_MEDIA_TYPE),
+    ] {
+        assert_eq!(reply.status, status, "{case}");
+        assert_eq!(reply.field("accept-query"), None, "{case}");
+    }
+}
+
+/// A plain `OPTIONS` on a path whose `QUERY` names its media types is
+/// answered rather than refused: a 200 with no content, carrying the path's
+/// `Allow` (RFC 9110 section 9.3.7), which now names `OPTIONS`, its
+/// `Accept-Query` (RFC 10008 section 3), and the `Content-Length: 0` section
+/// 9.3.7 requires. It runs through the router's interceptors, as the
+/// dispatcher's own answers do.
+///
+/// The query component is ignored, since section 3's value applies to every
+/// URI sharing the path. A path with no `QUERY` still refuses `OPTIONS`, now
+/// with a 405 rather than a 501, since the service implements it.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn a_plain_options_on_a_query_path_names_its_media_types() {
+    let service = querying(TrailingSlashPolicy::Strict);
+
+    for target in ["/searches", "/searches?page=2"] {
+        let reply = send(&service, Method::OPTIONS, target).call().await;
+
+        assert_eq!(reply.status, StatusCode::OK, "{target}");
+        assert_eq!(allowed(&reply), ["OPTIONS", "QUERY"], "{target}");
+        assert_eq!(
+            reply.field("accept-query").as_deref(),
+            Some("text/plain"),
+            "{target}"
+        );
+        assert_eq!(
+            reply.field(header::CONTENT_LENGTH.as_str()).as_deref(),
+            Some("0"),
+            "{target}"
+        );
+        assert!(reply.text().is_empty(), "{target}");
+    }
+
+    let elsewhere = send(&service, Method::OPTIONS, "/users/42").call().await;
+    assert_eq!(elsewhere.status, StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(allowed(&elsewhere), ["DELETE", "GET", "HEAD"]);
+    assert_eq!(elsewhere.field("accept-query"), None);
+}
+
+/// A path declaring `OPTIONS` itself keeps that operation's answer: the
+/// application owns it, and nothing is added to a response its description
+/// does not declare the field on.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn a_declared_options_answers_in_place_of_the_derived_one() {
+    let service = support::router()
+        .mount(kynos::routes![search_only])
+        .mount(EndpointBuilder::<App, _, _>::new(
+            openapi::Method::Options,
+            openapi::PathTemplate::parse("/searches").expect("a parsable path template"),
+            nothing_at_all,
+        ))
+        .build(App::new())
+        .expect("a describable router");
+
+    let reply = send(&service, Method::OPTIONS, "/searches").call().await;
+
+    assert_eq!(reply.status, StatusCode::NO_CONTENT);
+    assert_eq!(reply.field("accept-query"), None);
 }
 
 /// A `QUERY` one final slash away from its route is redirected with 308, which

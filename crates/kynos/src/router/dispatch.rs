@@ -33,11 +33,27 @@ use crate::{
 /// An endpoint, as the end of an interceptor chain.
 pub(crate) struct EndpointTerminal<C> {
     endpoint: Arc<dyn DynEndpoint<C>>,
+    /// The `Accept-Query` a `QUERY` operation's 415 for a media type carries
+    /// (RFC 10008 section 2.1); `None` for every other operation.
+    #[cfg(feature = "openapi32")]
+    accept_query: Option<HeaderValue>,
 }
 
 impl<C> EndpointTerminal<C> {
     pub(crate) fn new(endpoint: Arc<dyn DynEndpoint<C>>) -> Self {
-        Self { endpoint }
+        Self {
+            endpoint,
+            #[cfg(feature = "openapi32")]
+            accept_query: None,
+        }
+    }
+
+    /// Adds `accept_query` to the 415 the endpoint answers an unsupported
+    /// media type with, before any interceptor sees it.
+    #[cfg(feature = "openapi32")]
+    pub(crate) fn with_accept_query(mut self, accept_query: Option<HeaderValue>) -> Self {
+        self.accept_query = accept_query;
+        self
     }
 }
 
@@ -47,8 +63,32 @@ impl<C: Send + Sync + 'static> ErasedTerminal<C> for EndpointTerminal<C> {
         request: Request,
         context: &'a C,
     ) -> Pin<Box<dyn Future<Output = Response> + Send + 'a>> {
+        // Every other operation pays nothing beyond the branch.
+        #[cfg(feature = "openapi32")]
+        if let Some(accept_query) = &self.accept_query {
+            let answered = self.endpoint.call(request, context);
+            return Box::pin(async move { with_accept_query(answered.await, accept_query) });
+        }
+
         self.endpoint.call(request, context)
     }
+}
+
+/// `response` with `accept_query` added where it is a body extractor's 415 for
+/// a media type, the marker that says so taken off.
+#[cfg(feature = "openapi32")]
+fn with_accept_query(mut response: Response, accept_query: &HeaderValue) -> Response {
+    if response
+        .extensions_mut()
+        .remove::<crate::error::rejection::MediaTypeRefused>()
+        .is_some()
+    {
+        response.headers_mut().insert(
+            crate::http::accept_query::ACCEPT_QUERY,
+            accept_query.clone(),
+        );
+    }
+    response
 }
 
 /// A CORS preflight, as the end of a chain that has no interceptors in it.
@@ -193,20 +233,45 @@ pub(crate) struct PathEntry<C> {
     /// list holding them because every [`PathCaptures`] borrows that list.
     pub(crate) variables: &'static [&'static str],
     /// The `Allow` header a 405 on this path carries, derived from the
-    /// operations below plus `HEAD` wherever `GET` is one of them.
+    /// operations below plus `HEAD` wherever `GET` is one of them, and the
+    /// `OPTIONS` [`accept_query`](Self::accept_query) answers.
     pub(crate) allow: HeaderValue,
+    /// The `Accept-Query` naming the media types this path's `QUERY` reads,
+    /// where it names any (RFC 10008 section 3). A path holding one answers a
+    /// plain `OPTIONS` it declares no operation for with it.
+    #[cfg(feature = "openapi32")]
+    pub(crate) accept_query: Option<HeaderValue>,
     pub(crate) operations: Vec<Served<C>>,
 }
 
 impl<C> PathEntry<C> {
     /// Sets [`allow`](Self::allow) from the operations declared on this path.
     pub(crate) fn derive_allow(&mut self) {
-        let methods: Vec<_> = self
+        let mut methods: Vec<_> = self
             .operations
             .iter()
             .map(|operation| operation.method)
             .collect();
+        if self.answers_options() {
+            methods.push(Method::Options);
+        }
         self.allow = allow_header(&methods);
+    }
+
+    /// Whether this path answers a plain `OPTIONS` no operation declares: one
+    /// carrying its `Accept-Query`.
+    pub(crate) fn answers_options(&self) -> bool {
+        #[cfg(feature = "openapi32")]
+        {
+            self.accept_query.is_some() && self.position(Method::Options).is_none()
+        }
+
+        // Only a `QUERY` names an `Accept-Query`.
+        #[cfg(not(feature = "openapi32"))]
+        {
+            let _ = self;
+            false
+        }
     }
 
     /// Where the operation answering `method` sits, if one does.
@@ -263,6 +328,11 @@ enum Unanswered {
     /// No operation answers the method: a 405 carrying the `Allow` of the
     /// path at `path`, or a 501 where `path` is `None`.
     Method { path: Option<usize> },
+    /// A plain `OPTIONS` on the path at `path`, which declares none and
+    /// [answers one](PathEntry::answers_options): a 200 naming what it allows
+    /// and the media types its `QUERY` reads.
+    #[cfg(feature = "openapi32")]
+    Options { path: usize },
 }
 
 /// A fallback, as the end of the root router's interceptor chain.
@@ -435,6 +505,11 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         let entry = &self.paths[index];
 
         let Some(position) = method.and_then(|method| entry.position(method)) else {
+            #[cfg(feature = "openapi32")]
+            if method == Some(Method::Options) && entry.answers_options() {
+                return Err(self.unrouted(Unanswered::Options { path: index }, request));
+            }
+
             let path = self.implements(method).then_some(index);
             return Err(self.unrouted(Unanswered::Method { path }, request));
         };
@@ -597,6 +672,15 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
                 path.map(|path| &self.paths[path].allow),
                 &self.method_not_allowed,
             ),
+            #[cfg(feature = "openapi32")]
+            Unanswered::Options { path } => {
+                let entry = &self.paths[path];
+                match &entry.accept_query {
+                    Some(accept_query) => options_answer(&entry.allow, accept_query),
+                    // Unreachable: routing names this only where one is held.
+                    None => method_refusal(Some(&entry.allow), &self.method_not_allowed),
+                }
+            }
         }
     }
 
@@ -737,6 +821,24 @@ pub(crate) fn method_refusal(allow: Option<&HeaderValue>, policy: &FallbackPolic
     response
 }
 
+/// What a plain `OPTIONS` on a path whose `QUERY` names its media types gets:
+/// a 200 carrying the path's `Allow` (RFC 9110 section 9.3.7) and its
+/// `Accept-Query` (RFC 10008 section 3), with no content and the
+/// `Content-Length: 0` section 9.3.7 requires then. Also the CORS preflight's
+/// answer to one.
+#[cfg(feature = "openapi32")]
+pub(crate) fn options_answer(allow: &HeaderValue, accept_query: &HeaderValue) -> Response {
+    let mut response = bodiless(StatusCode::OK);
+    let fields = response.headers_mut();
+    fields.insert(header::ALLOW, allow.clone());
+    fields.insert(
+        crate::http::accept_query::ACCEPT_QUERY,
+        accept_query.clone(),
+    );
+    fields.insert(header::CONTENT_LENGTH, HeaderValue::from_static("0"));
+    response
+}
+
 /// `response` as the answer to a HEAD: the same status and fields, and no
 /// content.
 ///
@@ -794,17 +896,26 @@ pub(crate) fn allow_header(methods: &[Method]) -> HeaderValue {
     joined.unwrap_or_else(|| HeaderValue::from_static(""))
 }
 
-/// Every method some operation in `paths` answers: each declared one, and
-/// `HEAD` wherever a `GET` is declared.
+/// Every method some operation in `paths` answers: each declared one, `HEAD`
+/// wherever a `GET` is declared, and `OPTIONS` wherever a path
+/// [answers it](PathEntry::answers_options) without one.
 ///
 /// Read before CORS preflights are installed: counting their `OPTIONS` would
 /// turn a plain `OPTIONS` 501 into a 405 once CORS is mounted.
 pub(crate) fn implemented<C>(paths: &[PathEntry<C>]) -> Vec<Method> {
     let mut methods: Vec<Method> = Vec::new();
 
-    for operation in paths.iter().flat_map(|entry| &entry.operations) {
-        let derived = (operation.method == Method::Get).then_some(Method::Head);
-        for method in std::iter::once(operation.method).chain(derived) {
+    for entry in paths {
+        let answered = entry.answers_options().then_some(Method::Options);
+        for operation in &entry.operations {
+            let derived = (operation.method == Method::Get).then_some(Method::Head);
+            for method in std::iter::once(operation.method).chain(derived) {
+                if !methods.contains(&method) {
+                    methods.push(method);
+                }
+            }
+        }
+        if let Some(method) = answered {
             if !methods.contains(&method) {
                 methods.push(method);
             }

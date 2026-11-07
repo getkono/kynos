@@ -81,6 +81,75 @@ pub(super) fn unique_tags(declared: &[kynos_openapi::Tag]) -> Vec<kynos_openapi:
     tags
 }
 
+/// The `Accept-Query` naming the media types of `operation`'s request body,
+/// where it is a `QUERY` and some content key can be a member.
+#[cfg(feature = "openapi32")]
+fn accept_query(
+    method: kynos_openapi::Method,
+    operation: &kynos_openapi::Operation,
+) -> Option<crate::http::HeaderValue> {
+    match operation.request_body.as_ref()? {
+        kynos_openapi::RefOr::Item(body) if method == kynos_openapi::Method::Query => {
+            crate::http::accept_query::from_request_body(body)
+        }
+        _ => None,
+    }
+}
+
+/// Records on `entry` the `Accept-Query` its described `QUERY` operation
+/// names, and returns it for that operation's terminal; `None` for any other
+/// operation, which leaves `entry` alone.
+#[cfg(feature = "openapi32")]
+pub(super) fn record_accept_query<C>(
+    entry: &mut PathEntry<C>,
+    method: kynos_openapi::Method,
+    described: Option<&kynos_openapi::Operation>,
+) -> Option<crate::http::HeaderValue> {
+    let value = described.and_then(|operation| accept_query(method, operation))?;
+    entry.accept_query = Some(value.clone());
+    Some(value)
+}
+
+/// `operation`, with the `Accept-Query` its 415 carries (RFC 10008 section
+/// 2.1) declared there when it is a `QUERY`.
+///
+/// Only on a 415 the operation already declares, never minted: the header
+/// rides on the body extractor's refusal. Not `required`, since a 415 for a
+/// content coding carries none.
+#[cfg(feature = "openapi32")]
+pub(super) fn declare_accept_query(
+    method: kynos_openapi::Method,
+    mut operation: kynos_openapi::Operation,
+) -> kynos_openapi::Operation {
+    use kynos_openapi::RefOr;
+
+    let Some(value) = accept_query(method, &operation) else {
+        return operation;
+    };
+    let Some(RefOr::Item(response)) = operation.responses.responses.get_mut("415") else {
+        return operation;
+    };
+
+    let example = value.to_str().unwrap_or_default().to_owned();
+    response
+        .headers
+        .entry("Accept-Query".to_owned())
+        .or_insert_with(|| {
+            RefOr::Item(
+                kynos_openapi::Header::new(kynos_openapi::Schema::of_type(
+                    kynos_openapi::model::schema::types::SchemaType::String,
+                ))
+                .with_description(
+                    "The media types this operation accepts as its query, as an RFC 9651 \
+                     structured-field List (RFC 10008 section 3); sent when the request's \
+                     `Content-Type` is not one of them.",
+                )
+                .with_example(example),
+            )
+        });
+    operation
+}
+
 /// One `Cors` mounted over a path, and the methods on that path it covers.
 /// Borrowed, since `Arc` identity is what tells two configurations apart.
 type CoveringCors<'a, C> = (
@@ -98,7 +167,8 @@ pub(super) fn install_preflight<C: Send + Sync + 'static>(
     method_not_allowed: &FallbackPolicy,
     implemented: &[kynos_openapi::Method],
 ) {
-    // A plain `OPTIONS` keeps the dispatcher's 405 or 501.
+    // A plain `OPTIONS` keeps the dispatcher's answer: a 405 or 501, or the
+    // 200 a path whose `QUERY` names an `Accept-Query` answers.
     let options_implemented = implemented.contains(&kynos_openapi::Method::Options);
 
     for entry in paths {
@@ -169,6 +239,9 @@ pub(super) fn install_preflight<C: Send + Sync + 'static>(
             options_implemented.then(|| entry.allow.clone()),
             method_not_allowed.clone(),
         );
+        // A plain `OPTIONS` there keeps the answer it had before CORS.
+        #[cfg(feature = "openapi32")]
+        let preflight = preflight.with_accept_query(entry.accept_query.clone());
 
         entry.operations.push(dispatch::Served {
             method: kynos_openapi::Method::Options,
