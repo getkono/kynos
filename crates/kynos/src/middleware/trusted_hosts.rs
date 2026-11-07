@@ -144,26 +144,25 @@ impl<T> TrustedHosts<T> {
     /// version-2 request's `:authority` there.
     fn admits(&self, headers: &HeaderMap, authority: Option<&Authority>) -> bool {
         let field;
-        let host = match authority {
-            Some(authority) => authority.host(),
-            None => {
-                // `http`'s own authority grammar splits the port off, telling
-                // a bracketed IPv6 literal's colons from the port's.
-                let Some(parsed) = headers
-                    .get(http::header::HOST)
-                    .and_then(|value| Authority::try_from(value.as_bytes()).ok())
-                else {
-                    return false;
-                };
-                field = parsed;
-                field.host()
-            }
+        let host = if let Some(authority) = authority {
+            authority.host()
+        } else {
+            // `http`'s own authority grammar splits the port off, telling a
+            // bracketed IPv6 literal's colons from the port's.
+            let Some(parsed) = headers
+                .get(http::header::HOST)
+                .and_then(|value| Authority::try_from(value.as_bytes()).ok())
+            else {
+                return false;
+            };
+            field = parsed;
+            field.host()
         };
         let Some(host) = canonical(host) else {
             return false;
         };
 
-        (self.loopback && is_loopback(&host)) || self.hosts.iter().any(|allowed| *allowed == host)
+        (self.loopback && is_loopback(&host)) || self.hosts.contains(&host)
     }
 }
 
