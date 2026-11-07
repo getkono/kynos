@@ -108,8 +108,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         }
     }
 
-    /// Registers every declared instantiation name, before any operation
-    /// resolves an instantiation one renames.
+    /// Registers every instantiation name before an operation resolves one.
     fn name_instantiations(&self, registry: &mut Registry) {
         for name_instantiation in &self.instantiation_names {
             name_instantiation(registry);
