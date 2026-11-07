@@ -148,6 +148,26 @@ There is no de-camel-casing of variant names anywhere.
 already writes is the sentence an API consumer receives, rather than a second
 one that can drift from it.
 
+**A server failure's cause goes to the log, not the wire.** RFC 9457 section 5
+keeps implementation detail out of a problem, so a 5xx's `Display` says what
+failed and its cause is kept as a `source()` (see
+[the policy below](#the-build-failure-reports-through-the-application)). Under
+`trace`, a derived `into_response` logs a failure declaring a 5xx before the
+problem consumes it: one `ERROR` event on the `kynos::error` target, carrying
+`status`, `problem_type` (the type URI, or `about:blank`) and `error`, the
+failure as a `std::error::Error` whose sources the subscriber walks. It is
+`ERROR` whatever level `Trace` is set to, as a panic's event is, so no request
+log verbosity hides a server failure. A 4xx is the client's to read and logs
+nothing. A transparent variant is left to the error it holds, so a failure is
+logged at most once: by that error where it is itself a derived `ApiError`, and
+not at all where it is a built-in refusal such as `AtCapacity` or a
+hand-written `ShortCircuit`, whose `into_response` emits nothing. A type that is only `Display` is logged by its message; a generic
+type is logged by its chain only where its `Error` impl holds under the
+derive's own bounds. The event inherits whatever span the application entered;
+Kynos opens none per request, so the operation is joined through that span or
+through `Trace`'s closing event. Nothing changes on the wire, and without
+`trace` nothing is emitted.
+
 **A field is not serialized unless it says so.** `#[problem(extension)]` is
 opt-in because a variant carries whatever the error site had to hand, and the
 default must not be to publish it. `trace` above stays internal.
