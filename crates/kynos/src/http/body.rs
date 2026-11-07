@@ -60,8 +60,11 @@ impl Body {
     /// beneath sees the same failure rather than a truncated whole body: handed
     /// on through [`Body::from_bytes`], the bytes so far would parse as a
     /// complete payload. `error` reaches the extractor as it is, so a stalled
-    /// read is still answered with its 408. An empty `arrived` yields no data
-    /// frame, and the body never states its end.
+    /// read is still answered with its 408. Any other `error` is answered with
+    /// a 400 whose problem `detail` carries the error's `Display` text, so
+    /// never pass an error whose message must not reach the client; wrap it
+    /// in one that says only what the client may see. An empty `arrived`
+    /// yields no data frame, and the body never states its end.
     ///
     /// [`collect_capped`](crate::extract::body::limit::collect_capped) and
     /// [`Capped::into_body`](crate::extract::body::limit::Capped::into_body)
