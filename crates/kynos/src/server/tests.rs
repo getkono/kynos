@@ -5891,23 +5891,30 @@ mod request_body_idle {
                 "no request body frame arrived within 1ms"
             );
 
-            let mut chained = crate::http::Response::default();
-            *chained.status_mut() = StatusCode::REQUEST_TIMEOUT;
-            chained
-                .headers_mut()
-                .insert("x-request-id", HeaderValue::from_static("7"));
-            let response = answer(chained, stall);
-            assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
-            assert_eq!(
-                response.headers().get("x-request-id"),
-                Some(&HeaderValue::from_static("7")),
-                "the chain's headers survive"
-            );
-            assert_eq!(
-                response.headers().get(header::CONNECTION),
-                connection.as_ref(),
-                "{version:?}"
-            );
+            // A handler reading the stall itself may answer any status; the
+            // unread rest of the body still loses HTTP/1's framing.
+            for status in [
+                StatusCode::REQUEST_TIMEOUT,
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ] {
+                let mut chained = crate::http::Response::default();
+                *chained.status_mut() = status;
+                chained
+                    .headers_mut()
+                    .insert("x-request-id", HeaderValue::from_static("7"));
+                let response = answer(chained, stall.clone());
+                assert_eq!(response.status(), status);
+                assert_eq!(
+                    response.headers().get("x-request-id"),
+                    Some(&HeaderValue::from_static("7")),
+                    "the chain's headers survive"
+                );
+                assert_eq!(
+                    response.headers().get(header::CONNECTION),
+                    connection.as_ref(),
+                    "{version:?} {status}"
+                );
+            }
         }
     }
 
