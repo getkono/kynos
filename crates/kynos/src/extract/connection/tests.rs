@@ -96,6 +96,24 @@ fn a_unix_pathname_is_kept_as_given() {
 ///
 /// The other half is `a_connection_clone_shares_its_payload` below, which is
 /// the assertion that rules out `Box`.
+#[test]
+fn a_connection_handle_is_one_pointer() {
+    let handle = size_of::<Connection>();
+    let payload = size_of::<Inner>();
+
+    assert_eq!(
+        handle,
+        size_of::<usize>(),
+        "Connection ({handle} bytes) must stay one pointer wide; \
+         a field added here is copied per request rather than per connection"
+    );
+    assert!(
+        handle < payload,
+        "Connection ({handle} bytes) should stay smaller than Inner ({payload} bytes); \
+         the payload belongs behind the Arc"
+    );
+}
+
 /// Nothing records credentials but a Unix listener or an embedding that read
 /// them: a socket recorded by address alone, and no socket at all, report none.
 #[cfg(unix)]
@@ -140,24 +158,6 @@ fn recorded_credentials_reach_only_the_handle_they_were_recorded_on() {
     assert_eq!(in_process.peer_credentials(), Some(credentials));
     assert!(in_process.is_in_process());
     assert_eq!(Connection::of(&parts).peer_credentials(), None);
-}
-
-#[test]
-fn a_connection_handle_is_one_pointer() {
-    let handle = size_of::<Connection>();
-    let payload = size_of::<Inner>();
-
-    assert_eq!(
-        handle,
-        size_of::<usize>(),
-        "Connection ({handle} bytes) must stay one pointer wide; \
-         a field added here is copied per request rather than per connection"
-    );
-    assert!(
-        handle < payload,
-        "Connection ({handle} bytes) should stay smaller than Inner ({payload} bytes); \
-         the payload belongs behind the Arc"
-    );
 }
 
 /// A transport address is as wide as the IP address it most often holds: the
