@@ -271,6 +271,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             tag_metadata.extend(cx.declared_tags().iter().map(DeclaredTag::metadata));
 
             let operation = cx.finish();
+            #[cfg(feature = "openapi32")]
+            let operation = super::install::declare_accept_query(method, operation);
 
             // Under an undeclared-effect layer, the operation is marked opaque.
             #[cfg(feature = "unchecked")]

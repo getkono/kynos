@@ -80,6 +80,11 @@ pub(crate) struct Preflight {
     allow: Option<HeaderValue>,
     /// The router's method-not-allowed policy, for a non-preflight `OPTIONS`.
     fallback: FallbackPolicy,
+    /// The path's `Accept-Query`, where its `QUERY` names one: a non-preflight
+    /// `OPTIONS` then gets the dispatcher's answer carrying it rather than a
+    /// refusal.
+    #[cfg(feature = "openapi32")]
+    accept_query: Option<HeaderValue>,
 }
 
 impl Preflight {
@@ -110,7 +115,17 @@ impl Preflight {
             served,
             allow,
             fallback,
+            #[cfg(feature = "openapi32")]
+            accept_query: None,
         }
+    }
+
+    /// Answers a non-preflight `OPTIONS` as the dispatcher answers one on a
+    /// path whose `QUERY` names `accept_query`.
+    #[cfg(feature = "openapi32")]
+    pub(crate) fn with_accept_query(mut self, accept_query: Option<HeaderValue>) -> Self {
+        self.accept_query = accept_query;
+        self
     }
 
     /// The scope that answers a preflight proposing `method`, or `None` where
@@ -197,8 +212,13 @@ impl Preflight {
         response
     }
 
-    /// The dispatcher's own refusal, for an `OPTIONS` that is not a preflight.
+    /// The dispatcher's own answer, for an `OPTIONS` that is not a preflight.
     fn not_a_preflight(&self) -> Response {
+        #[cfg(feature = "openapi32")]
+        if let (Some(allow), Some(accept_query)) = (&self.allow, &self.accept_query) {
+            return crate::router::dispatch::options_answer(allow, accept_query);
+        }
+
         crate::router::dispatch::method_refusal(self.allow.as_ref(), &self.fallback)
     }
 }

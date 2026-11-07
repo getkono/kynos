@@ -82,8 +82,16 @@ fn path_entry_fields(entry: &PathEntry<()>) {
         matched,
         variables,
         allow,
+        // A header value rendered from the document once, at build: no
+        // document model, so the request a `QUERY` 415 or a plain `OPTIONS`
+        // answers may read it.
+        #[cfg(feature = "openapi32")]
+        accept_query,
         operations,
     } = entry;
+
+    #[cfg(feature = "openapi32")]
+    let _ = accept_query;
 
     let _ = (template, matched, variables, allow, operations);
 }

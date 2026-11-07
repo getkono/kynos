@@ -499,6 +499,40 @@ async fn a_query_is_advertised_on_a_preflight_only_where_a_cors_covers_it() {
     );
 }
 
+/// The pass control for a path whose `QUERY` names its media types: a plain
+/// `OPTIONS` there is answered with its `Allow` and `Accept-Query` (RFC 10008
+/// section 3), and mounting CORS, whose preflight then holds the path's
+/// `OPTIONS`, leaves that answer as it was.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn a_plain_options_on_a_query_path_keeps_its_answer_under_cors() {
+    let querying = || Router::<()>::new().mount(kynos::routes![list_widgets, search_widgets]);
+    let bare = querying().build(()).expect("a describable router");
+    let covered = querying()
+        .intercept(Cors::new().allow_origins(["https://app.example.com"]))
+        .build(())
+        .expect("a describable router");
+
+    let (bare_status, bare_fields) = send(&bare, Method::OPTIONS, "/widgets", &[]).await;
+    let (covered_status, covered_fields) = send(&covered, Method::OPTIONS, "/widgets", &[]).await;
+
+    assert_eq!(bare_status, StatusCode::OK);
+    assert_eq!(
+        field(&bare_fields, header::ALLOW).as_deref(),
+        Some("GET, HEAD, QUERY, OPTIONS")
+    );
+    assert_eq!(
+        field(
+            &bare_fields,
+            header::HeaderName::from_static("accept-query")
+        )
+        .as_deref(),
+        Some("text/plain")
+    );
+    assert_eq!(covered_status, bare_status);
+    assert_eq!(covered_fields, bare_fields);
+}
+
 /// A third method on the same path, for a `Cors` covering neither of the others.
 #[kynos::post("/widgets")]
 async fn create_widget() -> NoContent {
