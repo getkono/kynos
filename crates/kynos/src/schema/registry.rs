@@ -87,8 +87,9 @@ impl Registry {
     /// end; named instantiations are `$ref`s to each other. `#[derive(Schema)]`
     /// refuses the direct case, a generic type naming itself, at compile time.
     ///
-    /// A name [`name_instantiation`](Registry::name_instantiation) gave
-    /// replaces the one `T` returns, and its description the body's own.
+    /// A name [`Router::name_instantiation`](crate::router::Router::name_instantiation)
+    /// declared replaces the one `T` returns, and its description the body's
+    /// own.
     pub fn resolve<T: Schema>(&mut self) -> OpenApiSchema {
         let Some(name) = T::name() else {
             return self.inline::<T>();

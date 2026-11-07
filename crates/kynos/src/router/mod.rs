@@ -608,7 +608,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// included, and to a router this one is nested or merged into. A refused
     /// name fails [`validate`](Router::validate), [`openapi`](Router::openapi)
     /// and [`build`](Router::build) with
-    /// [`Error::InstantiationName`](crate::Error::InstantiationName); see
+    /// [`crate::Error::InstantiationName`]; see
     /// [`NamedInstantiation`] for when.
     ///
     /// [`NamedInstantiation`]: crate::schema::NamedInstantiation
