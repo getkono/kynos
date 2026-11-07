@@ -126,7 +126,7 @@ where
 /// The client half of [`TestClient::through_server`](crate::test::TestClient::through_server),
 /// here because hyper and the runtime are named nowhere else.
 #[cfg(feature = "test-util")]
-mod test_client {
+pub(in crate::server) mod test_client {
     use std::{future::Future, pin::Pin};
 
     #[cfg(not(feature = "http1"))]
@@ -181,10 +181,8 @@ mod test_client {
                 };
                 #[cfg(not(feature = "http1"))]
                 let sent = {
-                    // HTTP/2 carries the scheme and authority as pseudo-headers.
                     let mut request = request;
-                    let target = format!("http://localhost{}", request.uri());
-                    *request.uri_mut() = target.parse().map_err(std::io::Error::other)?;
+                    *request.uri_mut() = http2_target(&request)?;
                     let (mut sender, connection) =
                         hyper::client::conn::http2::handshake(TokioExecutor::new(), client)
                             .await
@@ -209,6 +207,15 @@ mod test_client {
                 }
             })
         }
+    }
+
+    /// The absolute target a prior-knowledge HTTP/2 request is sent with,
+    /// since HTTP/2 carries the scheme and authority as pseudo-headers.
+    #[cfg(any(test, not(feature = "http1")))]
+    pub(in crate::server) fn http2_target(request: &Request) -> std::io::Result<crate::http::Uri> {
+        format!("http://localhost{}", request.uri())
+            .parse()
+            .map_err(std::io::Error::other)
     }
 }
 
