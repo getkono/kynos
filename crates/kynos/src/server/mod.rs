@@ -496,6 +496,18 @@ impl<C: 'static> Server<C> {
     where
         I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
+        self.servable()?;
+        Ok(connection::serve_io(
+            io,
+            connection,
+            Arc::clone(&self.service),
+            self.transport(),
+        ))
+    }
+
+    /// Refuses what [`serve_io`](Self::serve_io) cannot serve: a setting
+    /// [`prepare`](Self::prepare) refuses, or TLS.
+    fn servable(&self) -> Result<()> {
         self.validate()?;
         #[cfg(feature = "tls")]
         if self.tls.is_some() {
@@ -504,13 +516,7 @@ impl<C: 'static> Server<C> {
             )
             .into());
         }
-
-        Ok(connection::serve_io(
-            io,
-            connection,
-            Arc::clone(&self.service),
-            self.transport(),
-        ))
+        Ok(())
     }
 
     /// The per-connection settings, without TLS: `prepare` builds and adds it.
