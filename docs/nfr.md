@@ -781,8 +781,8 @@ trusts it — and the deadline's private body wrapper is the declared-length
 half of the same `intercept`, which reads back what the wrapper recorded.
 
 `extract/connection.rs` is `status.rs`'s shape. It declares `MatchedPath`,
-`ConnectInfo`, `TransportAddress`, `UnixAddress`, `TlsIdentity` and
-`Connection`, so a split would turn `connection::TransportAddress` into
+`ConnectInfo`, `TransportAddress`, `UnixAddress`, `PeerCredentials`,
+`TlsIdentity` and `Connection`, so a split would turn `connection::TransportAddress` into
 `connection::address::TransportAddress` and do the same to the rest. What
 pushed it over was #1130's transport address: a Unix peer has no
 `SocketAddr`, so `Connection` reports a `TransportAddress` and `ConnectInfo`
