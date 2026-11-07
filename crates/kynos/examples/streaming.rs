@@ -185,16 +185,35 @@ async fn stream_export() -> BinaryStream<Chunks, Csv> {
     BinaryStream::new(Chunks { remaining: 10 })
 }
 
-/// Searches readings with a whole-query-string filter.
+/// Lists readings with a whole-query-string filter.
+///
+/// ```text
+/// curl 'http://localhost:3000/readings?%7B%22limit%22%3A3%7D'
+/// ```
+#[kynos::get("/readings")]
+async fn list(filter: QueryString<ReadingFilter, FilterJson>) -> JsonLines<Countdown> {
+    readings(filter.into_inner())
+}
+
+/// Searches readings with the same filter, carried as the request content.
+///
+/// ```text
+/// curl -X QUERY http://localhost:3000/readings \
+///   -H 'Content-Type: application/json' -d '{"limit":3}'
+/// ```
 ///
 /// `#[kynos::query]` declares the HTTP `QUERY` method, which OpenAPI 3.2 added
-/// a Path Item field for. `QUERY` exists so a search can carry its filter in a
-/// body rather than a URL of unbounded length; this one carries none, and
-/// reads its filter from a media-typed query string instead, to show the two
-/// are independent.
+/// a Path Item field for. `QUERY` exists so a search can carry its filter in
+/// content rather than a URL of unbounded length, and RFC 10008 makes that
+/// content and its media type the query: a `QUERY` operation takes a required
+/// body, and one without a `Content-Type` is a 400 before this handler runs.
 #[kynos::query("/readings")]
-async fn search(filter: QueryString<ReadingFilter, FilterJson>) -> JsonLines<Countdown> {
-    let ReadingFilter { limit } = filter.into_inner();
+async fn search(Json(filter): Json<ReadingFilter>) -> JsonLines<Countdown> {
+    readings(filter)
+}
+
+/// The readings `filter` selects.
+fn readings(ReadingFilter { limit }: ReadingFilter) -> JsonLines<Countdown> {
     JsonLines {
         items: Countdown {
             remaining: limit.unwrap_or(10),
@@ -253,6 +272,7 @@ async fn main() -> kynos::Result<()> {
         stream_lines,
         stream_sequence,
         stream_export,
+        list,
         search,
         ingest,
         recording,

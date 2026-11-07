@@ -440,7 +440,7 @@ async fn a_preflight_refuses_a_served_method_no_cors_covers() {
 /// leaves it off the CORS-safelisted methods.
 #[cfg(feature = "openapi32")]
 #[kynos::query("/widgets")]
-async fn search_widgets() -> NoContent {
+async fn search_widgets(_: kynos::extract::body::text::Text) -> NoContent {
     NoContent
 }
 

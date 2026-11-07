@@ -250,6 +250,12 @@ mod methods {
         WithHeaders::new(Text("the document".to_owned()), ETag::strong("abc"))
     }
 
+    /// [`tagged`], reading the content a `QUERY` operation must require.
+    #[cfg(feature = "openapi32")]
+    async fn queried(_: Text) -> WithHeaders<Text, ETag> {
+        tagged().await
+    }
+
     /// `/doc` under `Conditional`, answering every method but HEAD, which
     /// falls back to the GET.
     fn service() -> Service<()> {
@@ -318,7 +324,7 @@ mod methods {
             .mount(EndpointBuilder::new(
                 Operation::Query,
                 PathTemplate::parse("/doc").expect("a valid path"),
-                tagged,
+                queried,
             ))
             .intercept(Conditional::new())
             .build(())
@@ -329,7 +335,8 @@ mod methods {
                 .method(Method::from_bytes(b"QUERY").expect("a method token"))
                 .uri("/doc")
                 .header(header::IF_NONE_MATCH, tag)
-                .body(Body::empty())
+                .header(header::CONTENT_TYPE, "text/plain")
+                .body(Body::from("q"))
                 .expect("a well-formed request")
         };
 

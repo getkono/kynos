@@ -449,7 +449,7 @@ async fn keying_by_route_gives_each_operation_its_own_bucket() {
 /// A `QUERY` on `/counted`, beside its `GET`.
 #[cfg(feature = "openapi32")]
 #[kynos::query("/counted")]
-async fn search_counted() -> NoContent {
+async fn search_counted(_: kynos::extract::body::text::Text) -> NoContent {
     NoContent
 }
 
@@ -475,6 +475,8 @@ async fn keying_by_route_gives_a_query_a_bucket_apart_from_the_get_beside_it() {
             kynos::http::Method::from_bytes(b"QUERY").expect("a method token"),
             "/counted",
         )
+        .header("content-type", "text/plain")
+        .body("a=1")
     };
 
     assert_eq!(

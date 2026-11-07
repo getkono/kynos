@@ -589,10 +589,14 @@ async fn head_carries_every_field_and_no_body() {
 
 // --- QUERY ----------------------------------------------------------------
 
-/// The same representation, answered to a `QUERY`.
+/// The same representation, answered to a `QUERY`, which requires the content
+/// it reads as every `QUERY` operation must.
 #[cfg(feature = "openapi32")]
 #[kynos::query("/recordings/current")]
-async fn recording_query(conditions: Conditions) -> Delivery<Mpeg> {
+async fn recording_query(
+    conditions: Conditions,
+    _: kynos::extract::body::text::Text,
+) -> Delivery<Mpeg> {
     Served::<_, Mpeg>::new(Catalogue::new())
         .etag(ETag::strong("r3"))
         .last_modified(UNIX_EPOCH + Duration::from_secs(MODIFIED))
@@ -617,6 +621,8 @@ async fn a_query_ignores_a_range_and_honours_a_condition() {
     let query = || Method::from_bytes(b"QUERY").expect("a method token");
 
     let ranged = send(&service, query(), "/recordings/current")
+        .header("content-type", "text/plain")
+        .body("current")
         .header("range", "bytes=10-19")
         .call()
         .await;
@@ -629,6 +635,8 @@ async fn a_query_ignores_a_range_and_honours_a_condition() {
         ("if-modified-since", MODIFIED_AS_SENT),
     ] {
         let current = send(&service, query(), "/recordings/current")
+            .header("content-type", "text/plain")
+            .body("current")
             .header(name, value)
             .call()
             .await;
@@ -638,6 +646,8 @@ async fn a_query_ignores_a_range_and_honours_a_condition() {
 
     // The control: a date before the last change is not current.
     let older = send(&service, query(), "/recordings/current")
+        .header("content-type", "text/plain")
+        .body("current")
         .header("if-modified-since", "Sat, 05 Nov 1994 08:49:37 GMT")
         .call()
         .await;

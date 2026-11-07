@@ -1114,6 +1114,126 @@ async fn nothing_at_all() -> NoContent {
     NoContent
 }
 
+// --- `QUERY`, whose content is its query ----------------------------------
+
+/// Echoes the query it was sent.
+#[cfg(feature = "openapi32")]
+#[kynos::query("/search")]
+async fn search(Text(query): Text) -> Text {
+    Text(query)
+}
+
+/// The service serving [`search`], under the router's `RequestId`.
+#[cfg(feature = "openapi32")]
+fn searching() -> kynos::router::service::Service<()> {
+    Router::<()>::new()
+        .intercept(RequestId::new())
+        .mount(kynos::routes![search])
+        .build(())
+        .expect("a describable router")
+}
+
+/// RFC 10008 section 2: a server MUST fail a `QUERY` whose `Content-Type` is
+/// missing, and section 2.1 names 400 for one lacking media type information.
+/// Absence is decided by the dispatcher, before any extractor reads the body,
+/// so it holds with content and without, and for a field with no value.
+///
+/// The 400 still passes through the router's interceptors, as a fallback does.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn a_query_without_a_content_type_is_a_bad_request() {
+    let service = searching();
+
+    for (case, reply) in [
+        (
+            "no content",
+            send(&service, query(), "/search").call().await,
+        ),
+        (
+            "content",
+            send(&service, query(), "/search").body("q").call().await,
+        ),
+        (
+            "an empty field",
+            send(&service, query(), "/search")
+                .header("content-type", "")
+                .body("q")
+                .call()
+                .await,
+        ),
+    ] {
+        assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{case}");
+        assert_eq!(
+            reply.field(header::CONTENT_TYPE.as_str()).as_deref(),
+            Some("application/problem+json"),
+            "{case}"
+        );
+        assert!(
+            reply.json()["detail"]
+                .as_str()
+                .is_some_and(|detail| detail.contains("Content-Type")),
+            "{case}: {:?}",
+            reply.text()
+        );
+        assert!(
+            reply.field("x-request-id").is_some(),
+            "{case} skipped the router's interceptor"
+        );
+    }
+}
+
+/// A `QUERY` naming a media type reaches its operation, whose extractor then
+/// judges the type: a supported one is served, and an unsupported one is still
+/// the extractor's 415, since the field is present.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn a_query_naming_its_media_type_reaches_its_operation() {
+    let service = searching();
+
+    let served = send(&service, query(), "/search")
+        .header("content-type", "text/plain")
+        .body("q")
+        .call()
+        .await;
+    assert_eq!(served.status, StatusCode::OK);
+    assert_eq!(served.text(), "q");
+
+    let unsupported = send(&service, query(), "/search")
+        .header("content-type", "application/xml")
+        .body("<q/>")
+        .call()
+        .await;
+    assert_eq!(unsupported.status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+}
+
+/// An unchecked route has no description, so nothing proves its handler reads
+/// a body; the dispatcher refuses an untyped `QUERY` to it all the same.
+#[cfg(all(feature = "openapi32", feature = "unchecked"))]
+#[tokio::test]
+async fn an_unchecked_query_without_a_content_type_is_a_bad_request() {
+    async fn answer(_: Request) -> Response {
+        Response::new(kynos::http::body::Body::empty())
+    }
+
+    let service = Router::<()>::new()
+        .route_unchecked([query()], "/raw/{*rest}", answer)
+        .build(())
+        .expect("a describable router");
+
+    assert_eq!(
+        send(&service, query(), "/raw/q").call().await.status,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        send(&service, query(), "/raw/q")
+            .header("content-type", "text/plain")
+            .call()
+            .await
+            .status,
+        StatusCode::OK
+    );
+}
+
 // --- QUERY, which RFC 10008 defines and nothing is derived from ------------
 
 /// `QUERY`, which no `http` constant names in every release Kynos admits.
@@ -1133,9 +1253,11 @@ fn allowed(reply: &support::Reply) -> Vec<String> {
 
 /// A `QUERY` beside the fixture's `GET` and `POST` on `/users`, answering with
 /// a body that names it, so a reply says which operation ran.
+///
+/// It requires the query its content carries, as every `QUERY` operation must.
 #[cfg(feature = "openapi32")]
 #[kynos::query("/users")]
-async fn search_users() -> Text {
+async fn search_users(_: Text) -> Text {
     Text("query".to_owned())
 }
 
@@ -1143,7 +1265,7 @@ async fn search_users() -> Text {
 /// another method by fallback.
 #[cfg(feature = "openapi32")]
 #[kynos::query("/searches")]
-async fn search_only() -> Text {
+async fn search_only(_: Text) -> Text {
     Text("query".to_owned())
 }
 
@@ -1164,6 +1286,8 @@ fn querying(trailing_slashes: TrailingSlashPolicy) -> kynos::router::service::Se
 #[tokio::test]
 async fn a_query_reaches_the_operation_declaring_it() {
     let reply = send(&querying(TrailingSlashPolicy::Strict), query(), "/users")
+        .header("content-type", "text/plain")
+        .body("q")
         .call()
         .await;
 

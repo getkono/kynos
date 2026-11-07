@@ -234,6 +234,22 @@ response has no `itemSchema` in 3.1 to describe it with, and Kynos would rather
 not emit at all than emit a description with the stream quietly missing. Reach
 for it when a consumer pins a version, and let `openapi` decide otherwise.
 
+### A `QUERY` operation requires its content
+
+RFC 10008 makes a `QUERY`'s content and its media type the query, and requires
+a server to fail one without a `Content-Type`. Two checks hold that:
+
+- **Build time.** Validation refuses a `QUERY` operation whose `requestBody` is
+  absent or not `required` (`SpecError::QueryWithoutRequiredBody`). An
+  `Option<Json<T>>` body is refused with it: the request that would leave it
+  `None` is the one the next check fails, so describing the body as optional
+  invites requests that can only fail.
+- **Request time.** A routed `QUERY` with no `Content-Type` value is a 400
+  problem in place of its operation, described or unchecked. The router's and
+  its groups' interceptors still run around it; the operation's own, which run
+  inside the operation, do not. A value that is present but unsupported or
+  malformed is left to the body extractor's 415.
+
 ## Typed URIs
 
 A route attribute emits an inherent `relative_uri` constructor beside the

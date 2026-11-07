@@ -2101,10 +2101,11 @@ async fn events() -> kynos::response::stream::sse::Sse<NoEvents> {
     kynos::response::stream::sse::Sse::new(NoEvents)
 }
 
-/// The `QUERY` method, which 3.1's Path Item has no field for.
+/// The `QUERY` method, which 3.1's Path Item has no field for, with the body
+/// every `QUERY` operation requires.
 #[cfg(feature = "openapi32")]
 #[kynos::query("/search")]
-async fn search() -> NoContent {
+async fn search(_: kynos::extract::body::text::Text) -> NoContent {
     NoContent
 }
 
