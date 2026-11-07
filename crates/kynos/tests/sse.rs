@@ -439,6 +439,26 @@ async fn until_shutdown(draining: Draining) -> Sse<OneEventThenSilence> {
     Sse::new(one_event_then_silence()).end_on_shutdown(draining)
 }
 
+/// A stream whose next event is always ready, so it is never pending.
+struct Busy;
+
+impl futures_core::Stream for Busy {
+    type Item = Result<Event<u8>, std::convert::Infallible>;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        std::task::Poll::Ready(Some(Ok(Event::new(1_u8))))
+    }
+}
+
+/// The busy stream, ended once the server begins its graceful shutdown.
+#[kynos::get("/busy-until-shutdown")]
+async fn busy_until_shutdown(draining: Draining) -> Sse<Busy> {
+    Sse::new(Busy).end_on_shutdown(draining)
+}
+
 /// Opens `path`, triggers the shutdown once its event arrives, and returns
 /// what the client read after it — until the server closed the connection or
 /// ten seconds passed — with how the server's run ended.
@@ -451,7 +471,7 @@ async fn shut_down_during(
 
     let bound = Server::new(
         Router::<()>::new()
-            .mount(kynos::routes![until_shutdown, quiet])
+            .mount(kynos::routes![until_shutdown, busy_until_shutdown, quiet])
             .build(())
             .expect("a describable router"),
     )
@@ -519,6 +539,22 @@ async fn a_stream_ended_on_shutdown_ends_when_the_drain_begins() {
     assert_eq!(
         rest, "\n\r\n0\r\n\r\n",
         "the body did not end cleanly after its event"
+    );
+    served.expect("the drain completes");
+}
+
+/// A stream whose events never stop arriving still ends once the drain begins:
+/// the shutdown is checked before the events are polled, not only once they
+/// go quiet, which this stream never does. The body still ends on a whole
+/// record.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_busy_stream_ended_on_shutdown_ends_when_the_drain_begins() {
+    let (rest, served) = shut_down_during("/busy-until-shutdown", Duration::from_secs(600)).await;
+
+    assert!(
+        rest.ends_with("data: 1\n\n\r\n0\r\n\r\n"),
+        "the body did not end on a whole record: {:?}",
+        &rest[rest.len().saturating_sub(64)..]
     );
     served.expect("the drain completes");
 }
