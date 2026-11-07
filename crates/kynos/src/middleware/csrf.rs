@@ -59,6 +59,13 @@ const SEC_FETCH_SITE: http::HeaderName = http::HeaderName::from_static("sec-fetc
 /// It also trusts what reaches it: a reverse proxy that rewrites `Host` or
 /// strips `Origin` changes what it decides.
 ///
+/// Nor does it defend against DNS rebinding. A page whose own name was
+/// re-resolved to the service's address is, to the browser, the service's
+/// origin: its requests say `same-origin` and carry an `Origin` matching the
+/// `Host` they name, and both are admitted. Refusing a host the service does
+/// not answer for is [`TrustedHosts`](crate::middleware::trusted_hosts::TrustedHosts)'s
+/// job.
+///
 /// # Naming what the 403 is
 ///
 /// [`problem_type`](Csrf::problem_type) puts an application's own URI on the

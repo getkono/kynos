@@ -160,6 +160,7 @@ pub mod rate_limit;
 pub mod request_id;
 pub mod security_headers;
 pub mod stack;
+pub mod trusted_hosts;
 
 // Never `pub`, so `Pin<Box<dyn Future>>` reaches no user signature.
 pub(crate) mod erased;

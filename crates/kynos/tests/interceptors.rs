@@ -471,6 +471,7 @@ fn every_interceptor_kynos_ships_is_accounted_for() {
         "SecurityHeaders",
         "SetCookies",
         "Timeout",
+        "TrustedHosts",
     ];
 
     let declared = implementors_of("> Interceptor<C> for ");
@@ -615,6 +616,7 @@ const SHORT_CIRCUITS: &[&str] = &[
     "RateLimitedFields",
     "TimedOut",
     "Undecodable",
+    "UntrustedHost",
 ];
 
 /// The members of `SHORT_CIRCUITS` that have no value to drive.
@@ -909,6 +911,7 @@ async fn every_case() -> Vec<Case> {
             timeout::TimedOut,
         },
         rate_limit::refusal::{RateLimited, RateLimitedFields},
+        trusted_hosts::UntrustedHost,
     };
 
     let registry = &mut kynos::schema::registry::Registry::new();
@@ -938,6 +941,7 @@ async fn every_case() -> Vec<Case> {
         .await,
     );
     cases.push(refusal(registry, CrossSite::<()>::new()).await);
+    cases.push(refusal(registry, UntrustedHost::<()>::new()).await);
     cases.push(refusal(registry, RateLimited::<()>::new(Duration::from_secs(1), 10)).await);
     cases.push(
         refusal(
@@ -1195,10 +1199,12 @@ fn a_refusal_is_send_and_sync_whatever_marker_names_it() {
             concurrency::AtCapacity,
             timeout::TimedOut,
         },
+        trusted_hosts::UntrustedHost,
     };
 
     use kynos::middleware::rate_limit::refusal::{RateLimited, RateLimitedFields};
 
+    assert_send_sync::<UntrustedHost<Unsendable>>();
     assert_send_sync::<BodySizeExceeded<Unsendable>>();
     assert_send_sync::<BodyTooSlow<Unsendable>>();
     assert_send_sync::<BodyRefused<Unsendable, Unsendable>>();
@@ -1234,6 +1240,7 @@ const MARKED_REFUSALS: &[&str] = &[
     "RateLimitedFields",
     "TimedOut",
     "Undecodable",
+    "UntrustedHost",
 ];
 
 /// The interceptors `naming_a_problem_type_costs_the_marker_no_derives`
@@ -1246,6 +1253,7 @@ const MARKED_INTERCEPTORS: &[&str] = &[
     "Decompression",
     "RateLimit",
     "Timeout",
+    "TrustedHosts",
 ];
 
 /// Every type that names a problem type, read off disk and named against the
@@ -1338,8 +1346,11 @@ fn naming_a_problem_type_costs_the_marker_no_derives() {
             Legacy, RateLimit, Structured,
             refusal::{RateLimited, RateLimitedFields},
         },
+        trusted_hosts::{TrustedHosts, UntrustedHost},
     };
 
+    assert_refusal_traits::<UntrustedHost<Bare>>();
+    assert_clone_and_debug::<TrustedHosts<Bare>>();
     assert_refusal_traits::<BodySizeExceeded<Bare>>();
     assert_refusal_traits::<BodyTooSlow<Bare>>();
     assert_refusal_traits::<BodyRefused<Bare, Bare>>();
@@ -1392,9 +1403,11 @@ fn a_marked_refusal_prints_compares_and_clones_its_fields() {
     use kynos::middleware::{
         csrf::CrossSite,
         limits::{body_size::BodySizeExceeded, concurrency::AtCapacity, timeout::TimedOut},
+        trusted_hosts::UntrustedHost,
     };
 
     assert_copy::<CrossSite<Bare>>();
+    assert_copy::<UntrustedHost<Bare>>();
     assert_copy::<TimedOut<Bare>>();
     assert_copy::<BodySizeExceeded<Bare>>();
     assert_copy::<AtCapacity<Bare>>();
@@ -1404,6 +1417,10 @@ fn a_marked_refusal_prints_compares_and_clones_its_fields() {
     let cross_site = CrossSite::<Bare>::new();
     assert_eq!(format!("{cross_site:?}"), "CrossSite");
     assert_eq!(cross_site.clone(), CrossSite::<Bare>::default());
+
+    let untrusted_host = UntrustedHost::<Bare>::new();
+    assert_eq!(format!("{untrusted_host:?}"), "UntrustedHost");
+    assert_eq!(untrusted_host.clone(), UntrustedHost::<Bare>::default());
 
     let timed_out = TimedOut::<Bare>::new(Duration::from_secs(5));
     assert_eq!(format!("{timed_out:?}"), "TimedOut { after: 5s }");
@@ -1517,6 +1534,9 @@ fn a_body_deadline_refusal_prints_compares_and_clones_its_fields() {
 /// None compares, so a clone is held to its original through what it prints.
 /// `Timeout` alone ends non-exhaustively: its marker is the response it
 /// answers with, which is a type and no setting.
+///
+/// `TrustedHosts` is held apart below, only so this does not outgrow the
+/// length lint.
 #[test]
 fn a_marked_interceptor_prints_and_clones_its_settings() {
     use std::{num::NonZeroUsize, time::Duration};
@@ -1623,6 +1643,30 @@ fn a_marked_interceptor_prints_and_clones_its_settings() {
             "Decompression { limit: 1024, max_ratio: None }"
         );
     }
+}
+
+/// `TrustedHosts` prints each host as it is compared, and whether loopback is
+/// admitted; a clone prints the same.
+#[test]
+fn trusted_hosts_prints_and_clones_its_settings() {
+    use kynos::middleware::trusted_hosts::TrustedHosts;
+
+    let hosts = TrustedHosts::new()
+        .allow("API.example.com")
+        .allow("::1")
+        .allow_loopback()
+        .problem_type::<Bare>();
+    let printed = format!("{hosts:?}");
+
+    assert_eq!(format!("{:?}", hosts.clone()), printed);
+    assert_eq!(
+        printed,
+        r#"TrustedHosts { hosts: ["api.example.com", "[::1]"], loopback: true }"#
+    );
+    assert_eq!(
+        format!("{:?}", TrustedHosts::<Bare>::default()),
+        "TrustedHosts { hosts: [], loopback: false }"
+    );
 }
 
 /// `Compression::new()` and `Compression::default()` are one configuration,

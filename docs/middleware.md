@@ -573,11 +573,12 @@ RateLimit::new(policy).problem_type::<Throttled>()
 | `Timeout` | `TimedOut` (408) | `problem_type` |
 | `Concurrency` | `AtCapacity` (503) | `problem_type` |
 | `Csrf` | `CrossSite` (403) | `problem_type` |
+| `TrustedHosts` | `UntrustedHost` (421) | `problem_type` |
 | `Compression` | `NotAcceptable` (406) | `problem_type` |
 | `Decompression` | `Undecodable` (400, 413, 415) | `malformed_problem_type`, `too_large_problem_type`, `unsupported_coding_problem_type` |
 
 `Conditional`'s `NotModified` is absent because a 304 carries no body, and
-`Infallible` because it declares no status. Those are the two of the eleven
+`Infallible` because it declares no status. Those are the two of the twelve
 `ShortCircuit` implementations that have no problem document to name.
 
 **The marker goes on the refusal, not on the interceptor.** A `ProblemType`
@@ -1111,6 +1112,40 @@ The target wins where both are present: an HTTP/1.1 request carries an
 authority there only in absolute form, and RFC 9112 §3.2.2 has an origin server
 ignore `Host` beside one. `Cache` keys on the same reading, so the two cannot
 disagree about which host a request was for.
+
+**What `Csrf` does not defend: DNS rebinding.** A page at `attacker.example`
+that re-resolves its own name to `127.0.0.1` sends its requests with
+`Host: attacker.example`, `Origin: http://attacker.example` and
+`Sec-Fetch-Site: same-origin` — truthfully, since to the browser the service
+*is* that origin. `Csrf` admits it, correctly for what it checks. The defence is
+a check of the authority against the hosts the service answers for, which
+`TrustedHosts` makes; a loopback service with no credentials needs both.
+
+## Trusted hosts
+
+`TrustedHosts` refuses a request whose authority — the target's, else `Host`,
+read as `Csrf` and `Cache` read it — names a host not on its list, with 421
+Misdirected Request. RFC 9110 §17.1 leaves the server to decide which
+authorities it answers for, and §7.4 and §15.5.20 name 421 as the answer to a
+request for one it does not. Django's `ALLOWED_HOSTS` answers 400; a 400 says
+the request was malformed, and a rebound request is well-formed and merely sent
+to the wrong server.
+
+**The host, not the port.** A rebinding page reaches the service on the port it
+listens on and names that port, so comparing ports would refuse nothing an
+attacker sends. Hosts compare case-insensitively, a trailing `.` ignored and
+an IP literal canonicalised, on both the request's side and the list's.
+
+**No wildcard.** For `Csrf`'s reason: a name under an allowed suffix is a name
+whoever takes the subdomain over can rebind.
+
+**`allow_loopback`** admits `localhost`, every `.localhost` name (RFC 6761 §6.3
+has resolvers answer those with loopback themselves, so no page can rebind
+one), and every loopback address. `0.0.0.0` is not one.
+
+**Every method.** A rebinding page wants to *read* the service, so a safe method
+is no exception, unlike `Csrf`'s. Mount it outermost, where it also covers the
+404 and 405 a router answers for no operation.
 
 ## Vary is declared apart from the names
 
