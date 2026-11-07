@@ -92,13 +92,12 @@ where
 /// Read after the chain returned, so a full-duplex handler's response that
 /// predates the stall is untouched: its head may be on the wire.
 pub(crate) fn answer(mut response: http::Response, stall: Option<Stall>) -> http::Response {
-    if let Some(stall) = stall
-        && stall.version < Version::HTTP_2
-        && stall.stalled.load(Ordering::Acquire)
-    {
-        response
-            .headers_mut()
-            .insert(header::CONNECTION, HeaderValue::from_static("close"));
+    if let Some(stall) = stall {
+        if stall.version < Version::HTTP_2 && stall.stalled.load(Ordering::Acquire) {
+            response
+                .headers_mut()
+                .insert(header::CONNECTION, HeaderValue::from_static("close"));
+        }
     }
     response
 }
