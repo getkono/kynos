@@ -4,7 +4,7 @@
 
 use super::{
     Arc, Catch, Document, ErasedInterceptor, Error, FallbackPolicy, Info, PanicPolicy, PathEntry,
-    Result, RouterError, Severity, SpecError, SpecVersion, Violation, dispatch,
+    Registry, Result, RouterError, Severity, SpecError, SpecVersion, Violation, dispatch,
 };
 use crate::schema::constraints::Pointer;
 
@@ -60,6 +60,25 @@ pub(super) fn lowest_expressing(document: &Document) -> Result<Document> {
         #[cfg(not(feature = "openapi32"))]
         Err(blocked) => Err(invalid(blocked)),
     }
+}
+
+/// Refuses the first contribution the registry could not reconcile, before
+/// its components reach the document.
+pub(super) fn refuse_registry_conflicts(registry: &Registry) -> Result<()> {
+    // First, since a contested name can leave a component conflict behind.
+    if let Some(refused) = registry.instantiation_name_refusals().first() {
+        return Err(Error::InstantiationName(Box::new(refused.clone())));
+    }
+    if let Some(conflict) = registry.schema_conflicts().first() {
+        return Err(Error::Schema(conflict.clone()));
+    }
+    if let Some(refused) = registry.key_pattern_refusals().first() {
+        return Err(Error::KeyPattern(Box::new(refused.clone())));
+    }
+    if let Some(conflict) = registry.scheme_conflicts().first() {
+        return Err(Error::Contribution(conflict.clone()));
+    }
+    Ok(())
 }
 
 /// The visibly placeholder `info` block a router that declared none emits.
