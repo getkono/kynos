@@ -18,7 +18,7 @@ use http_body::{Body as HttpBody, Frame, SizeHint};
 use tokio::time::{Instant, Sleep};
 
 use crate::{
-    error::problem::{ProblemType, refusal_problem, refusal_response},
+    error::problem::{IntoProblem, Problem, ProblemType, refusal_problem, refusal_response},
     extract::body::limit::{BodyLimit, Capped, collect_capped, declared_length},
     http::{
         self, HeaderValue, Version,
@@ -55,11 +55,20 @@ impl<T> BodySizeExceeded<T> {
     }
 }
 
-impl<T: ProblemType> IntoResponse for BodySizeExceeded<T> {
-    fn into_response(self) -> http::Response {
+impl<T: ProblemType> IntoProblem for BodySizeExceeded<T> {
+    fn into_problem(self) -> Problem {
         refusal_problem::<T>(http::StatusCode::PAYLOAD_TOO_LARGE)
             .with_detail(format!("the request body exceeds {} bytes", self.limit))
-            .into_response()
+    }
+
+    fn statuses() -> &'static [http::StatusCode] {
+        &[http::StatusCode::PAYLOAD_TOO_LARGE]
+    }
+}
+
+impl<T: ProblemType> IntoResponse for BodySizeExceeded<T> {
+    fn into_response(self) -> http::Response {
+        self.into_problem().into_response()
     }
 }
 
@@ -119,14 +128,20 @@ impl<U> BodyTooSlow<U> {
     }
 }
 
+impl<U: ProblemType> BodyTooSlow<U> {
+    /// The problem this refusal sends, without the `Connection` field that
+    /// only [`into_response`](IntoResponse::into_response) writes.
+    fn problem(&self) -> Problem {
+        refusal_problem::<U>(http::StatusCode::REQUEST_TIMEOUT).with_detail(format!(
+            "the request body did not arrive within {:?}",
+            self.after
+        ))
+    }
+}
+
 impl<U: ProblemType> IntoResponse for BodyTooSlow<U> {
     fn into_response(self) -> http::Response {
-        let mut response = refusal_problem::<U>(http::StatusCode::REQUEST_TIMEOUT)
-            .with_detail(format!(
-                "the request body did not arrive within {:?}",
-                self.after
-            ))
-            .into_response();
+        let mut response = self.problem().into_response();
         if self.closes {
             response
                 .headers_mut()
@@ -147,6 +162,25 @@ pub enum BodyRefused<T = (), U = ()> {
     TooLarge(BodySizeExceeded<T>),
     /// The body did not arrive within the deadline: 408.
     TooSlow(BodyTooSlow<U>),
+}
+
+/// The problem either refusal sends. A held [`BodyTooSlow`]'s
+/// `Connection: close` is a header, so only
+/// [`into_response`](IntoResponse::into_response) writes it.
+impl<T: ProblemType, U: ProblemType> IntoProblem for BodyRefused<T, U> {
+    fn into_problem(self) -> Problem {
+        match self {
+            Self::TooLarge(refusal) => refusal.into_problem(),
+            Self::TooSlow(refusal) => refusal.problem(),
+        }
+    }
+
+    fn statuses() -> &'static [http::StatusCode] {
+        &[
+            http::StatusCode::REQUEST_TIMEOUT,
+            http::StatusCode::PAYLOAD_TOO_LARGE,
+        ]
+    }
 }
 
 impl<T: ProblemType, U: ProblemType> IntoResponse for BodyRefused<T, U> {

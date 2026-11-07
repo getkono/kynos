@@ -5333,6 +5333,75 @@ fn a_transparent_only_enum_describes_what_it_holds() {
     );
 }
 
+/// An interceptor's answer that is one of Kynos' refusals or the
+/// application's own failure. The refusals implement no `Display`, so each
+/// variant names its own message.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum UploadRefused {
+    #[error("the upload is too large")]
+    #[problem(transparent)]
+    TooLarge(kynos::middleware::limits::body_size::BodySizeExceeded),
+
+    #[error("the uploader is rate limited")]
+    #[problem(transparent)]
+    Throttled(kynos::middleware::rate_limit::refusal::RateLimited),
+
+    #[error("the upload did not finish within {0:?}")]
+    #[problem(status = 408, title = "Upload timed out")]
+    TooSlow(std::time::Duration),
+}
+
+/// A transparent variant holds a refusal Kynos ships: it claims and describes
+/// the refusal's status, answers with the refusal's problem, and still sends
+/// the headers only the refusal's `into_response` writes.
+#[tokio::test]
+async fn a_transparent_variant_holds_a_refusal_kynos_ships() {
+    use std::time::Duration;
+
+    use kynos::{
+        error::problem::IntoProblem,
+        middleware::{limits::body_size::BodySizeExceeded, rate_limit::refusal::RateLimited},
+        response::ShortCircuit,
+    };
+
+    assert_eq!(UploadRefused::STATUSES, &[413, 429, 408]);
+
+    let responses = emitted_responses::<UploadRefused>();
+    assert_eq!(
+        responses["413"],
+        emitted_responses::<BodySizeExceeded>()["413"],
+        "{responses}"
+    );
+    assert_eq!(
+        responses["429"],
+        emitted_responses::<RateLimited>()["429"],
+        "{responses}"
+    );
+
+    let throttled = || UploadRefused::Throttled(RateLimited::new(Duration::from_secs(7), 10));
+    let Answered {
+        status,
+        headers,
+        body,
+    } = answered(throttled().into_response()).await;
+
+    assert_eq!(status, 429);
+    assert_eq!(headers["retry-after"], "7");
+    assert_eq!(headers["x-ratelimit-limit"], "10");
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("a JSON body");
+    assert_eq!(
+        body,
+        serde_json::to_value(throttled().into_problem()).expect("a problem serializes")
+    );
+    assert_eq!(body["detail"], "the client has exceeded its request rate");
+
+    let too_large = UploadRefused::TooLarge(BodySizeExceeded::new(64)).into_problem();
+    assert_eq!(
+        serde_json::to_value(too_large).expect("a problem serializes")["detail"],
+        "the request body exceeds 64 bytes"
+    );
+}
+
 /// A transparent variant's problem is the held error's, `detail` and extension
 /// members included, and `#[from]` reaches it.
 #[test]

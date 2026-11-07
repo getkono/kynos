@@ -15,6 +15,7 @@
 
 use kynos::{
     Router,
+    error::problem::PointerError,
     extract::params::header::Headers,
     http::{Method, StatusCode},
     prelude::*,
@@ -189,6 +190,41 @@ async fn head_and_options_are_reachable() {
     );
 }
 
+/// Reports the filter a `QUERY` carried as its content.
+#[cfg(feature = "openapi32")]
+#[kynos::query("/search")]
+async fn search(Json(filter): Json<Filter>) -> Json<Filter> {
+    Json(filter)
+}
+
+/// `query` sends a `QUERY` with its content, which reaches the operation
+/// `#[kynos::query]` declared, and the response names the method it answers.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn query_is_reachable_with_its_content() {
+    let client = TestClient::new(
+        Router::<()>::new()
+            .mount(kynos::routes![search])
+            .build(())
+            .expect("a describable router"),
+    );
+
+    let response = client
+        .query("/search")
+        .json(&Filter {
+            limit: Some(3),
+            label: Some("weekly".to_owned()),
+        })
+        .send()
+        .await;
+
+    response.assert_status(200);
+    assert_eq!(response.method().as_str(), "QUERY");
+    let echoed: Filter = response.json();
+    assert_eq!(echoed.limit, Some(3));
+    assert_eq!(echoed.label.as_deref(), Some("weekly"));
+}
+
 /// A method Kynos routes but this type does not name is still sendable.
 #[tokio::test]
 async fn any_method_can_be_sent() {
@@ -224,6 +260,33 @@ async fn a_request_carries_a_query_a_cookie_a_body_and_a_peer() {
     assert_eq!(seen.cookie.as_deref(), Some("session=abc123; theme=dark"));
     assert_eq!(seen.peer, "203.0.113.7:4242");
     assert_eq!(seen.query.as_deref(), Some("limit=10&label=a+b"));
+}
+
+/// What a client sets once reaches the service on each request, and the
+/// `Cookie` field a request assembles replaces a default one whole.
+#[tokio::test]
+async fn client_defaults_reach_the_service_until_a_request_sets_its_own() {
+    let client = client()
+        .with_peer(([192, 0, 2, 10], 40000).into())
+        .with_default_header("cookie", "session=default")
+        .with_default_header("x-query", "from-client");
+
+    let defaulted: Seen = client.post("/echo").text("").send().await.json();
+    assert_eq!(defaulted.peer, "192.0.2.10:40000");
+    assert_eq!(defaulted.cookie.as_deref(), Some("session=default"));
+    assert_eq!(defaulted.query.as_deref(), Some("from-client"));
+
+    let own: Seen = client
+        .post("/echo")
+        .text("")
+        .cookie("session", "abc123")
+        .peer(([203, 0, 113, 7], 4242).into())
+        .send()
+        .await
+        .json();
+    assert_eq!(own.peer, "203.0.113.7:4242");
+    assert_eq!(own.cookie.as_deref(), Some("session=abc123"));
+    assert_eq!(own.query.as_deref(), Some("from-client"));
 }
 
 /// A value `header` cannot spell, `obs-text` that is not UTF-8, reaches the
@@ -266,6 +329,22 @@ async fn a_form_body_is_sent_as_a_form() {
 
     assert_eq!(seen.body, "3");
     assert_eq!(seen.query.as_deref(), Some("weekly"));
+}
+
+/// A refusal the framework renders is asserted as a problem whole, and its
+/// `errors` extension read as the type that wrote it rather than as raw JSON.
+#[tokio::test]
+async fn a_problem_is_asserted_whole_and_read_typed() {
+    let reply = client()
+        .post("/form")
+        .body("application/x-www-form-urlencoded", "limit=many")
+        .send()
+        .await;
+
+    let problem = reply.assert_problem(422, "about:blank").problem();
+    assert_eq!(problem.status, Some(422));
+    let errors: Vec<PointerError> = problem.extension("errors").expect("an `errors` member");
+    assert_eq!(errors.len(), 1, "{errors:?}");
 }
 
 // --- A body sent in parts -------------------------------------------------
@@ -406,6 +485,39 @@ async fn a_header_can_be_read_and_asserted() {
 
     assert_eq!(reply.header("nonexistent"), None);
     assert!(reply.header("set-cookie").is_some());
+    reply.assert_no_header("nonexistent").assert_status(204);
+}
+
+/// A response names the request it answers as sent: the method, and the target
+/// with the query string appended.
+#[tokio::test]
+async fn a_response_names_the_request_it_answers() {
+    let reply = client()
+        .post("/echo?page=2")
+        .query_string(&Filter {
+            limit: Some(1),
+            label: None,
+        })
+        .text("")
+        .send()
+        .await;
+
+    assert_eq!(reply.method(), Method::POST);
+    assert_eq!(reply.path(), "/echo?page=2&limit=1");
+}
+
+/// A failing assertion opens with the request, so a loop over operations
+/// reports which one failed.
+#[tokio::test]
+#[should_panic(
+    expected = "PUT /probe -> 501: expected 204 No Content, received 501 Not Implemented"
+)]
+async fn a_failed_assertion_names_the_request() {
+    client()
+        .method(Method::PUT, "/probe")
+        .send()
+        .await
+        .assert_status(204);
 }
 
 // --- Ranged and streamed responses ----------------------------------------

@@ -86,6 +86,49 @@ fn each_body_failure_has_its_own_status() {
     declares(&statuses, BodyRejection::statuses());
 }
 
+/// A read that failed with a stall is the 408 naming the limit it passed,
+/// however deep a reader wrapped it -- `multer` keeps the body's error as its
+/// own `source` -- and any other failed read is the 400 saying what failed.
+#[cfg(feature = "server")]
+#[test]
+fn a_stalled_read_is_the_408_and_any_other_failed_read_the_400() {
+    use std::time::Duration;
+
+    use crate::http::body::BodyStalled;
+
+    /// A reader's own error, keeping the body's as its source.
+    #[derive(Debug, thiserror::Error)]
+    #[error("failed to read stream")]
+    struct Wrapping(#[source] Box<dyn std::error::Error + Send + Sync>);
+
+    let after = Duration::from_secs(30);
+    for failure in [
+        Box::new(BodyStalled::new(after)) as Box<dyn std::error::Error + Send + Sync>,
+        Box::new(Wrapping(Box::new(BodyStalled::new(after)))),
+    ] {
+        let rejection = BodyRejection::read_failed(&*failure);
+        assert!(
+            matches!(rejection, BodyRejection::Stalled { after: passed } if passed == after),
+            "{failure}: {rejection:?}"
+        );
+        let problem = rejection.into_problem();
+        assert_eq!(problem.status, StatusCode::REQUEST_TIMEOUT);
+        assert_eq!(
+            problem.detail.as_deref(),
+            Some("the request body sent nothing for 30s")
+        );
+    }
+
+    let reset = Wrapping(Box::new(std::io::Error::from(
+        std::io::ErrorKind::ConnectionReset,
+    )));
+    let rejection = BodyRejection::read_failed(&reset);
+    assert!(
+        matches!(&rejection, BodyRejection::Syntax { detail } if detail == "failed to read stream"),
+        "{rejection:?}"
+    );
+}
+
 /// A schema failure is a set, so it travels as RFC 9457's `errors` extension:
 /// one `{pointer, detail}` entry per failing pointer, in pointer order, with
 /// the variant's sentence alone as `detail`.
@@ -921,6 +964,8 @@ fn body(expected: StatusCode, rejection: &BodyRejection) -> Row {
         BodyRejection::UnsupportedMediaType { .. } => "BodyRejection::UnsupportedMediaType",
         BodyRejection::UnsupportedCoding { .. } => "BodyRejection::UnsupportedCoding",
         BodyRejection::TooLarge { .. } => "BodyRejection::TooLarge",
+        #[cfg(feature = "server")]
+        BodyRejection::Stalled { .. } => "BodyRejection::Stalled",
     };
     let statuses = (rejection.status(), BodyRejection::statuses());
     Row::new(name, expected, statuses, rejection)
@@ -1076,6 +1121,13 @@ fn content_ledger() -> Vec<Row> {
             StatusCode::PAYLOAD_TOO_LARGE,
             &BodyRejection::TooLarge { limit: 1_024 },
         ),
+        #[cfg(feature = "server")]
+        body(
+            StatusCode::REQUEST_TIMEOUT,
+            &BodyRejection::Stalled {
+                after: std::time::Duration::from_secs(30),
+            },
+        ),
         negotiation(
             StatusCode::BAD_REQUEST,
             &NegotiationRejection::MalformedAccept {
@@ -1128,6 +1180,8 @@ fn every_variant_produces_a_status_its_type_declares() {
         "BodyRejection::UnsupportedMediaType",
         "BodyRejection::UnsupportedCoding",
         "BodyRejection::TooLarge",
+        #[cfg(feature = "server")]
+        "BodyRejection::Stalled",
         "NegotiationRejection::MalformedAccept",
         "NegotiationRejection::NotAcceptable",
         "RangeRejection::NotSatisfiable",

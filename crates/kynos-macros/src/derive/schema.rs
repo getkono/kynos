@@ -34,7 +34,8 @@
 //! (bounded by `OpenMap` rather than `Flatten`; see `flatten::witnesses`).
 //!
 //! Nor is `as`: it resolves the field's schema from another type, and its
-//! check runs on that type's value, converted through `From<&F>`.
+//! check runs on that type's value, converted through `From<&F>`, or through
+//! the function its `via` names.
 
 pub(crate) mod aliases;
 pub(crate) mod attributes;

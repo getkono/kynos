@@ -5,7 +5,7 @@ use std::{marker::PhantomData, num::NonZeroUsize, sync::Arc, time::Duration};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::{
-    error::problem::{ProblemType, refusal_problem, refusal_response},
+    error::problem::{IntoProblem, Problem, ProblemType, refusal_problem, refusal_response},
     http::{self, retry_after_header, set_retry_after},
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
@@ -36,12 +36,24 @@ impl<T> AtCapacity<T> {
     }
 }
 
+/// The problem alone: `Retry-After` is a header, so only
+/// [`into_response`](IntoResponse::into_response) writes it.
+impl<T: ProblemType> IntoProblem for AtCapacity<T> {
+    fn into_problem(self) -> Problem {
+        refusal_problem::<T>(http::StatusCode::SERVICE_UNAVAILABLE)
+            .with_detail("the service is at its concurrency limit")
+    }
+
+    fn statuses() -> &'static [http::StatusCode] {
+        &[http::StatusCode::SERVICE_UNAVAILABLE]
+    }
+}
+
 impl<T: ProblemType> IntoResponse for AtCapacity<T> {
     fn into_response(self) -> http::Response {
-        let mut response = refusal_problem::<T>(http::StatusCode::SERVICE_UNAVAILABLE)
-            .with_detail("the service is at its concurrency limit")
-            .into_response();
-        if let Some(delay) = self.retry_after {
+        let retry_after = self.retry_after;
+        let mut response = self.into_problem().into_response();
+        if let Some(delay) = retry_after {
             set_retry_after(&mut response, delay);
         }
         response

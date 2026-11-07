@@ -816,8 +816,18 @@ struct Case {
     /// variants driven to reach them.
     status: u16,
     media_type: Option<String>,
-    body_len: usize,
+    body: bytes::Bytes,
     declared: kynos::openapi::Responses,
+    /// What `IntoProblem` yields for the same value, for a short circuit that
+    /// implements it; `None` for one that carries no problem.
+    held: Option<Held>,
+}
+
+/// A refusal's `IntoProblem` half: what a `#[problem(transparent)]` variant
+/// holding it would read.
+struct Held {
+    statuses: Vec<u16>,
+    problem: serde_json::Value,
 }
 
 /// Drives one short circuit and records both halves of its promise.
@@ -860,8 +870,26 @@ async fn case<S: kynos::response::ShortCircuit>(
         claimed: S::STATUSES,
         status: parts.status.as_u16(),
         media_type,
-        body_len: body.len(),
+        body,
         declared,
+        held: None,
+    }
+}
+
+/// Drives one refusal as [`case`] does, and records what `IntoProblem` yields
+/// for a copy of the same value beside it.
+async fn refusal<S>(registry: &mut kynos::schema::registry::Registry, value: S) -> Case
+where
+    S: kynos::response::ShortCircuit + kynos::error::problem::IntoProblem + Clone,
+{
+    let held = Held {
+        statuses: S::statuses().iter().map(StatusCode::as_u16).collect(),
+        problem: serde_json::to_value(value.clone().into_problem()).expect("a problem serializes"),
+    };
+
+    Case {
+        held: Some(held),
+        ..case(registry, value).await
     }
 }
 
@@ -886,33 +914,33 @@ async fn every_case() -> Vec<Case> {
     let registry = &mut kynos::schema::registry::Registry::new();
     let mut cases = Vec::new();
 
-    cases.push(case(registry, BodySizeExceeded::<()>::new(64)).await);
+    cases.push(refusal(registry, BodySizeExceeded::<()>::new(64)).await);
     cases.push(
-        case(
+        refusal(
             registry,
             BodyRefused::<(), ()>::TooLarge(BodySizeExceeded::new(64)),
         )
         .await,
     );
     cases.push(
-        case(
+        refusal(
             registry,
             BodyRefused::<(), ()>::TooSlow(BodyTooSlow::new(Duration::from_secs(1))),
         )
         .await,
     );
-    cases.push(case(registry, TimedOut::<()>::new(Duration::from_secs(1))).await);
+    cases.push(refusal(registry, TimedOut::<()>::new(Duration::from_secs(1))).await);
     cases.push(
-        case(
+        refusal(
             registry,
             AtCapacity::<()>::new(Some(Duration::from_secs(1))),
         )
         .await,
     );
-    cases.push(case(registry, CrossSite::<()>::new()).await);
-    cases.push(case(registry, RateLimited::<()>::new(Duration::from_secs(1), 10)).await);
+    cases.push(refusal(registry, CrossSite::<()>::new()).await);
+    cases.push(refusal(registry, RateLimited::<()>::new(Duration::from_secs(1), 10)).await);
     cases.push(
-        case(
+        refusal(
             registry,
             RateLimitedFields::<()>::new(Duration::from_secs(1), Vec::new(), Vec::new()),
         )
@@ -923,10 +951,10 @@ async fn every_case() -> Vec<Case> {
     {
         use kynos::middleware::{compression::NotAcceptable, decompression::Undecodable};
 
-        cases.push(case(registry, NotAcceptable::<()>::new()).await);
-        cases.push(case(registry, Undecodable::<(), (), ()>::unsupported_coding()).await);
-        cases.push(case(registry, Undecodable::<(), (), ()>::malformed()).await);
-        cases.push(case(registry, Undecodable::<(), (), ()>::too_large(64)).await);
+        cases.push(refusal(registry, NotAcceptable::<()>::new()).await);
+        cases.push(refusal(registry, Undecodable::<(), (), ()>::unsupported_coding()).await);
+        cases.push(refusal(registry, Undecodable::<(), (), ()>::malformed()).await);
+        cases.push(refusal(registry, Undecodable::<(), (), ()>::too_large(64)).await);
     }
 
     #[cfg(feature = "cache")]
@@ -1024,11 +1052,11 @@ async fn every_short_circuit_declares_the_content_it_sends() {
             );
         } else {
             assert!(
-                case.body_len == 0,
+                case.body.is_empty(),
                 "`{}`'s {} sends {} bytes with no `Content-Type`",
                 case.name,
                 case.status,
-                case.body_len
+                case.body.len()
             );
             assert!(
                 declared.content.is_empty(),
@@ -1037,6 +1065,82 @@ async fn every_short_circuit_declares_the_content_it_sends() {
                 case.status
             );
         }
+    }
+}
+
+/// The members of `SHORT_CIRCUITS` that carry no problem, and so implement no
+/// `IntoProblem`: `Infallible` sends nothing, and `NotModified`'s 304 has no
+/// content (RFC 9110 section 15.4.5).
+const PROBLEMLESS: &[&str] = &["Infallible", "NotModified"];
+
+/// Every short circuit Kynos ships that sends a problem implements
+/// `IntoProblem`, so a `#[problem(transparent)]` variant can hold any of them.
+///
+/// Read off disk, as the set above is, so a refusal added without the
+/// implementation fails here at every feature set rather than only where the
+/// sweep below compiles it. `IntoProblem` is implemented across the crate, by
+/// every extractor rejection too, so the claim is over the intersection.
+#[test]
+fn every_short_circuit_sending_a_problem_implements_into_problem() {
+    let short_circuits = impls_of("ShortCircuit");
+    let problems = impls_of("IntoProblem");
+
+    assert_eq!(
+        short_circuits
+            .intersection(&problems)
+            .cloned()
+            .collect::<BTreeSet<_>>(),
+        SHORT_CIRCUITS
+            .iter()
+            .filter(|name| !PROBLEMLESS.contains(name))
+            .map(|name| (*name).to_owned())
+            .collect::<BTreeSet<_>>(),
+        "a short circuit sends a problem a `#[problem(transparent)]` variant cannot hold, or \
+         one that carries none implements `IntoProblem`"
+    );
+}
+
+/// Every refusal's `IntoProblem` is the problem its `into_response` sends, and
+/// claims the statuses its `ShortCircuit` does.
+///
+/// A transparent variant reads the first and answers through the second, so
+/// the two parting company is a variant whose `into_problem` describes a
+/// different failure than the one it put on the wire. The comparison is of the
+/// whole document, so a header-only field such as `Retry-After` stays off it.
+#[tokio::test]
+async fn every_refusal_yields_the_problem_it_sends() {
+    let cases = every_case().await;
+
+    let held: BTreeSet<&str> = cases
+        .iter()
+        .filter(|case| case.held.is_some())
+        .map(|case| case.name)
+        .collect();
+    assert_eq!(
+        held,
+        expected_names()
+            .into_iter()
+            .filter(|name| !PROBLEMLESS.contains(name))
+            .collect(),
+        "a refusal the sweep drives without reading its `IntoProblem`"
+    );
+
+    for case in &cases {
+        let Some(held) = &case.held else { continue };
+
+        assert_eq!(
+            held.statuses, case.claimed,
+            "`{}`'s `IntoProblem::statuses` and `ShortCircuit::STATUSES` disagree",
+            case.name
+        );
+
+        let sent: serde_json::Value =
+            serde_json::from_slice(&case.body).expect("a refusal sends a JSON problem");
+        assert_eq!(
+            sent, held.problem,
+            "`{}`'s {} sends a problem other than the one `into_problem` yields",
+            case.name, case.status
+        );
     }
 }
 

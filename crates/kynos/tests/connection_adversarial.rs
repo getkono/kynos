@@ -5,8 +5,8 @@
 //! descriptor, a connection slot -- by doing nothing, and that is only visible
 //! on a socket, where `docs/testing.md` allocates runtime I/O. The silent,
 //! `PRI`-only, slow-body and idle HTTP/2 clients the server's internals reach
-//! are in `src/server/tests.rs`; these are the two cases that need nothing
-//! from inside the crate.
+//! are in `src/server/tests.rs`; these are the cases that need nothing from
+//! inside the crate, a stalled body answered through a router among them.
 //!
 //! Short real timers rather than a paused clock: a paused clock does not pause
 //! the kernel, and what is asserted here is the kernel's socket closing.
@@ -208,4 +208,87 @@ async fn a_client_that_never_starts_its_tls_handshake_is_let_go() {
         .await
         .expect("the server task joins")
         .expect("the server exits cleanly");
+}
+
+/// A client that stops sending its body part-way is answered by the operation
+/// that was reading it: the 408 its document declares, through the chain, so
+/// the request id an interceptor added survives, and over HTTP/1 the server
+/// adds `Connection: close` and lets the socket go (RFC 9110 §15.5.9).
+#[cfg(feature = "macros")]
+mod stalled_body {
+    use kynos::{extract::body::text::Text, middleware::request_id::RequestId, routes};
+
+    use super::*;
+
+    /// The idle timeout the case configures, far below [`BOUND`].
+    const IDLE: Duration = Duration::from_millis(200);
+
+    /// Echoes the body.
+    #[kynos::post("/echo")]
+    async fn echo(body: Text) -> Text {
+        body
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_body_that_stalls_is_answered_by_its_operation_through_the_chain() {
+        let service = Router::<()>::new()
+            .mount(routes![echo])
+            .intercept(RequestId::new())
+            .build(())
+            .expect("a describable router");
+        let declared = service.openapi().paths.items["/echo"]
+            .post
+            .as_ref()
+            .expect("the operation exists")
+            .responses
+            .responses
+            .contains_key("408");
+        assert!(declared, "an operation reading a body declares the 408");
+
+        let server = Server::new(service)
+            .request_body_idle_timeout(Some(IDLE))
+            .bind((Ipv4Addr::LOCALHOST, 0));
+        let (address, shutdown, serving) = serve(server).await;
+
+        let mut client = TcpStream::connect(address)
+            .await
+            .expect("the server accepts");
+        client
+            .write_all(
+                b"POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Type: text/plain\r\n\
+                  Content-Length: 10\r\n\r\nabc",
+            )
+            .await
+            .expect("the head and part of the body write");
+        let mut response = Vec::new();
+        tokio::time::timeout(BOUND, client.read_to_end(&mut response))
+            .await
+            .expect("the server answers and closes within the bound")
+            .expect("the response reads");
+        let response = String::from_utf8_lossy(&response).to_ascii_lowercase();
+
+        assert!(
+            response.starts_with("http/1.1 408 request timeout\r\n"),
+            "{response}"
+        );
+        assert!(
+            response.contains("\r\nx-request-id: "),
+            "the interceptor's header survives the stall: {response}"
+        );
+        assert!(response.contains("\r\nconnection: close\r\n"), "{response}");
+        assert!(
+            response.contains("\r\ncontent-type: application/problem+json\r\n"),
+            "{response}"
+        );
+        assert!(
+            response.contains(r#""detail":"the request body sent nothing for 200ms""#),
+            "the 408 names the limit the body passed: {response}"
+        );
+
+        let _ = shutdown.send(());
+        serving
+            .await
+            .expect("the server task joins")
+            .expect("the server exits cleanly");
+    }
 }

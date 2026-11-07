@@ -158,7 +158,8 @@ pub(crate) async fn collect_capped(mut body: Body, limit: u64) -> Capped {
 
 impl Capped {
     /// A body read whole, or the rejection an extractor raises: the 413 past
-    /// the limit, and a 400 for a transport failure part-way.
+    /// the limit, and for a transport failure part-way the 408 of a stall or
+    /// else a 400.
     ///
     /// Applied to [`collect_capped`]'s result rather than wrapping it in an
     /// `async fn`, whose future would keep a second slot for the body under
@@ -166,9 +167,7 @@ impl Capped {
     pub(crate) fn into_read(self) -> Result<Bytes, BodyRejection> {
         match self {
             Self::Whole(bytes) => Ok(bytes),
-            Self::FailedPartWay { error, .. } => Err(BodyRejection::Syntax {
-                detail: error.to_string(),
-            }),
+            Self::FailedPartWay { error, .. } => Err(BodyRejection::read_failed(&*error)),
             Self::Exceeded { limit } => Err(BodyRejection::TooLarge { limit }),
         }
     }

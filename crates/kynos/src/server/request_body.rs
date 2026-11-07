@@ -1,8 +1,10 @@
-//! The idle timeout the server holds a request body to, and the 408 a stalled
-//! one is answered with.
+//! The idle timeout the server holds a request body to, and what it adds to
+//! the answer to a stalled one.
 //!
 //! The server applies it, since only it has a peer to wait on; wrapping the body
-//! before the chain sees it bounds every reader at once.
+//! before the chain sees it bounds every reader at once. The read fails with
+//! [`BodyStalled`], which a body extractor answers with its declared 408, so the
+//! response is the chain's own.
 
 use std::{
     pin::Pin,
@@ -19,9 +21,11 @@ use http_body::{Body as HttpBody, Frame, SizeHint};
 use tokio::time::{Instant, Sleep};
 
 use crate::{
-    error::problem::Problem,
-    http::{self, HeaderValue, StatusCode, Version, body::BoxError, header},
-    response::IntoResponse,
+    http::{
+        self, HeaderValue, Version,
+        body::{BodyStalled, BoxError},
+        header,
+    },
     server::{error::ServerError, protocol::non_zero},
 };
 
@@ -41,8 +45,9 @@ pub(crate) fn validate_request_body_idle_timeout(
     )
 }
 
-/// `body`, failing once its reader has waited `limit` for a frame, and the
-/// stall that [`answer`] reads back after the chain has returned.
+/// `body`, failing with [`BodyStalled`] once its reader has waited `limit` for
+/// a frame, and the stall that [`answer`] reads back after the chain has
+/// returned.
 ///
 /// A body that is already over, or that no limit applies to, is handed to
 /// `unbounded` unwrapped.
@@ -74,15 +79,28 @@ where
     (body, Some(stall))
 }
 
-/// `response`, unless the body of the request it answers stalled.
+/// The chain's `response`, closing an HTTP/1 connection whose request body
+/// stalled.
+///
+/// Whatever the chain made of the stall stands — the 408 a body extractor
+/// declares, or what a reader of its own chose — so the interceptors' headers
+/// and the operation's problem type survive. RFC 9110 §15.5.9: the server
+/// "SHOULD send the `close` connection option", and the body's unread rest
+/// would otherwise be framed as the next request. HTTP/2 has no such field, and
+/// the stall held only one stream.
 ///
 /// Read after the chain returned, so a full-duplex handler's response that
-/// predates the stall stands: its head may be on the wire.
-pub(crate) fn answer(response: http::Response, stall: Option<Stall>) -> http::Response {
-    match stall {
-        Some(stall) if stall.stalled.load(Ordering::Acquire) => stall.response(),
-        _ => response,
+/// predates the stall is untouched: its head may be on the wire.
+pub(crate) fn answer(mut response: http::Response, stall: Option<Stall>) -> http::Response {
+    if let Some(stall) = stall
+        && stall.version < Version::HTTP_2
+        && stall.stalled.load(Ordering::Acquire)
+    {
+        response
+            .headers_mut()
+            .insert(header::CONNECTION, HeaderValue::from_static("close"));
     }
+    response
 }
 
 /// What one request's bounded body shares with the connection serving it.
@@ -90,54 +108,11 @@ pub(crate) fn answer(response: http::Response, stall: Option<Stall>) -> http::Re
 pub(crate) struct Stall {
     /// Set by the body once its timer fired.
     stalled: Arc<AtomicBool>,
-    /// The limit the body passed, which the 408 reports.
+    /// The limit the body is held to, which the error reports.
     limit: Duration,
-    /// The request's protocol, which decides whether the 408 closes.
+    /// The request's protocol, which decides whether the answer closes.
     version: Version,
 }
-
-impl Stall {
-    /// The 408 a stalled request is answered with.
-    ///
-    /// RFC 9110 §15.5.9: the server "SHOULD send the `close` connection
-    /// option", so HTTP/1 closes; HTTP/2 has no such field, and the stall
-    /// held only one stream.
-    fn response(&self) -> http::Response {
-        let mut response = Problem::new(StatusCode::REQUEST_TIMEOUT)
-            .with_detail(format!(
-                "the request body sent nothing for {:?}",
-                self.limit
-            ))
-            .into_response();
-        if self.version < Version::HTTP_2 {
-            response
-                .headers_mut()
-                .insert(header::CONNECTION, HeaderValue::from_static("close"));
-        }
-        response
-    }
-}
-
-/// The error a stalled body ends with.
-///
-/// The reader sees a failed read; [`answer`] then replaces its refusal with
-/// the 408, since the chain cannot tell a stall from a reset.
-#[derive(Debug)]
-struct Stalled {
-    after: Duration,
-}
-
-impl std::fmt::Display for Stalled {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "no request body frame arrived within {:?}",
-            self.after
-        )
-    }
-}
-
-impl std::error::Error for Stalled {}
 
 /// A request body that fails once its reader has waited its limit for a frame.
 ///
@@ -202,7 +177,7 @@ where
 
         this.spent = true;
         this.stall.stalled.store(true, Ordering::Release);
-        Poll::Ready(Some(Err(Box::new(Stalled { after: limit }))))
+        Poll::Ready(Some(Err(Box::new(BodyStalled::new(limit)))))
     }
 
     fn is_end_stream(&self) -> bool {

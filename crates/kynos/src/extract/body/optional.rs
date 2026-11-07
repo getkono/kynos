@@ -31,9 +31,7 @@ async fn carries_content(parts: &Parts, mut body: Body) -> Result<bool, BodyReje
     }
 
     while let Some(frame) = body.frame().await {
-        let frame = frame.map_err(|error| BodyRejection::Syntax {
-            detail: error.to_string(),
-        })?;
+        let frame = frame.map_err(|error| BodyRejection::read_failed(&*error))?;
         if frame.data_ref().is_some_and(|data| !data.is_empty()) {
             return Ok(true);
         }

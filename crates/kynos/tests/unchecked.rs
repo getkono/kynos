@@ -737,6 +737,67 @@ async fn an_unchecked_method_beside_a_described_one_is_served() {
     );
 }
 
+// --- QUERY, which only OpenAPI 3.2 has a Path Item field for ----------------
+
+/// `QUERY`, which no `http` constant names in every release Kynos admits.
+fn query() -> Method {
+    Method::from_bytes(b"QUERY").expect("a method token")
+}
+
+/// Under `openapi32` a `QUERY` has a Path Item field, so an unchecked route
+/// serves it and records it like any other method.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn an_unchecked_query_is_served_and_recorded() {
+    let router = Router::<()>::new().route_unchecked([query()], "/search/{*rest}", echo_path);
+
+    let document = router.openapi().expect("a describable router");
+    let recorded = OpaqueRoute::all(&document).expect("a readable record");
+    assert_eq!(recorded[0].methods, ["QUERY"]);
+    assert_eq!(recorded[0].note, None);
+
+    let service = router.build(()).expect("a buildable router");
+    let reply = support::send(&service, query(), "/search/books")
+        .call()
+        .await;
+    assert_eq!(reply.status, StatusCode::OK);
+    assert_eq!(reply.text(), "/search/books");
+}
+
+/// Without `openapi32` a `QUERY` has no Path Item field: the route serves the
+/// methods beside it, its record names the `QUERY` it dropped, and a `QUERY`
+/// sent to it is refused.
+#[cfg(not(feature = "openapi32"))]
+#[tokio::test]
+async fn an_unchecked_query_is_recorded_as_unmodelled_and_not_served() {
+    let router =
+        Router::<()>::new().route_unchecked([Method::GET, query()], "/search/{*rest}", echo_path);
+
+    let document = router.openapi().expect("a describable router");
+    let recorded = OpaqueRoute::all(&document).expect("a readable record");
+    assert_eq!(recorded[0].methods, ["GET"]);
+    assert_eq!(
+        recorded[0].note.as_deref(),
+        Some("not served: QUERY has no Path Item field, so Kynos will not route it")
+    );
+
+    let service = router.build(()).expect("a buildable router");
+    assert_eq!(
+        get(&service, "/search/books").call().await.status,
+        StatusCode::OK
+    );
+    // Nothing in the service implements `QUERY`, so it is RFC 9110 section
+    // 15.6.2's 501, not the handler's 200.
+    assert_eq!(
+        support::send(&service, query(), "/search/books")
+            .call()
+            .await
+            .status,
+        StatusCode::NOT_IMPLEMENTED,
+        "a QUERY the record calls unserved was not refused as unimplemented"
+    );
+}
+
 // --- What an upgrade does on the wire ---------------------------------------
 
 /// Answers `101 Switching Protocols`, then echoes every byte the client sends

@@ -25,15 +25,15 @@ error[E0277]: the trait bound `std::io::Error: IntoProblem` is not satisfied
    |                ^^^^^^^^^^^^^^ the trait `IntoProblem` is not implemented for `std::io::Error`
    |
    = help: the following other types implement trait `IntoProblem`:
+             AtCapacity<T>
              AuthRejection
+             BodyRefused<T, U>
              BodyRejection
+             BodySizeExceeded<T>
              CookieRejection
+             CrossSite<T>
              HeaderRejection
-             NegotiationRejection
-             PathRejection
-             QueryRejection
-             RangeRejection
-             StoreError
+           and $N others
 
 error[E0277]: `std::io::Error` cannot be turned into a response
   --> tests/ui/macros/api_error_transparent_not_an_api_error.rs:10:16

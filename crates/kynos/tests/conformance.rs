@@ -151,7 +151,9 @@ async fn a_head_exercises_none_of_the_get_responses() {
 /// Coverage over the contract rather than over the code. This is the assertion
 /// that finds the 409 a description promises and no test has ever exercised —
 /// a gap line coverage cannot see, because the promise lives in the document.
-#[tokio::test]
+///
+/// The clock is paused, so the stalled body's idle timeout costs no real time.
+#[tokio::test(start_paused = true)]
 async fn every_declared_response_is_exercised() {
     let client = TestClient::new(service().expect("a describable router"));
 
@@ -233,11 +235,43 @@ async fn exercise_writes(client: &TestClient<()>) {
         .send()
         .await
         .assert_status(StatusCode::PAYLOAD_TOO_LARGE);
+
+    // A body that stops part-way is answered with the 408 `BodyRejection`
+    // declares, once a served body's idle timeout passes.
+    #[cfg(feature = "server")]
+    client
+        .post("/users")
+        .body_stream(
+            "application/json",
+            Stalls(Some(b"{\"id\": 1, ".as_slice().into())),
+        )
+        .send()
+        .await
+        .assert_status(StatusCode::REQUEST_TIMEOUT);
+}
+
+/// Yields its one chunk, then waits for good.
+#[cfg(feature = "server")]
+struct Stalls(Option<bytes::Bytes>);
+
+#[cfg(feature = "server")]
+impl futures_core::Stream for Stalls {
+    type Item = bytes::Bytes;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<bytes::Bytes>> {
+        match self.get_mut().0.take() {
+            Some(chunk) => std::task::Poll::Ready(Some(chunk)),
+            None => std::task::Poll::Pending,
+        }
+    }
 }
 
 /// Responses exercised through two clients are covered by the two together,
 /// for a description no one client's service can produce all of.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn coverage_shared_by_two_clients_covers_what_both_exercised() {
     let coverage = Coverage::new();
     let reads = TestClient::new(service().expect("a describable router")).with_coverage(&coverage);
@@ -252,11 +286,22 @@ async fn coverage_shared_by_two_clients_covers_what_both_exercised() {
 
 /// A client not built over the coverage records nothing into it, so what it
 /// exercised is still reported missing, and only that.
-#[tokio::test]
-#[should_panic(expected = "6 responses declared but never exercised:\n  \
-                           POST /users -> 400\n  POST /users -> 413\n  \
-                           POST /users -> 415\n  POST /users -> 422\n  \
-                           POST /users -> 201\n  POST /users -> 409")]
+#[tokio::test(start_paused = true)]
+#[cfg_attr(
+    feature = "server",
+    should_panic(expected = "7 responses declared but never exercised:\n  \
+                             POST /users -> 400\n  POST /users -> 408\n  \
+                             POST /users -> 413\n  POST /users -> 415\n  \
+                             POST /users -> 422\n  POST /users -> 201\n  \
+                             POST /users -> 409")
+)]
+#[cfg_attr(
+    not(feature = "server"),
+    should_panic(expected = "6 responses declared but never exercised:\n  \
+                             POST /users -> 400\n  POST /users -> 413\n  \
+                             POST /users -> 415\n  POST /users -> 422\n  \
+                             POST /users -> 201\n  POST /users -> 409")
+)]
 async fn a_client_without_the_coverage_does_not_count_toward_it() {
     let coverage = Coverage::new();
     let reads = TestClient::new(service().expect("a describable router")).with_coverage(&coverage);
@@ -272,7 +317,7 @@ async fn a_client_without_the_coverage_does_not_count_toward_it() {
 /// An absolute-form target (RFC 9112 section 3.2.2) is routed by its path, so
 /// the harness matches it to the template its path instantiates: it conforms,
 /// and it counts toward coverage, in the client and in a shared `Coverage`.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn an_absolute_form_target_is_matched_by_its_path() {
     let coverage = Coverage::new();
     let client = TestClient::new(service().expect("a describable router")).with_coverage(&coverage);

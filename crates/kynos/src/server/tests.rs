@@ -264,6 +264,11 @@ fn tcp_keepalive_defaults_are_owned_by_kynos() {
     assert_eq!(keepalive.idle, Duration::from_secs(60));
     assert_eq!(keepalive.interval, Duration::from_secs(15));
     assert_eq!(
+        keepalive.user_timeout,
+        Some(keepalive.idle + 9 * keepalive.interval),
+        "a peer lost mid-response is released within the idle bound"
+    );
+    assert_eq!(
         crate::server::Server::new(test_service()).tcp_keepalive,
         Some(keepalive),
         "a server keeps accepted sockets alive unless told not to"
@@ -311,6 +316,46 @@ fn a_tcp_keepalive_the_kernel_would_refuse_is_refused() {
                 .interval(Duration::from_secs(bound)),
         ))
         .expect("both bounds are accepted");
+    }
+}
+
+/// A user timeout the kernel would refuse or read as its default is refused.
+///
+/// Under a millisecond reaches `TCP_USER_TIMEOUT` as zero, which the kernel
+/// reads as "use the system default", and past `i32::MAX` milliseconds the
+/// kernel reads it as negative and refuses it; either way the socket would be
+/// served without the bound it was configured with.
+#[test]
+fn a_tcp_user_timeout_the_kernel_would_not_honor_is_refused() {
+    use std::time::Duration;
+
+    use crate::server::{
+        error::ServerError,
+        tcp::{TcpKeepAlive, validate_tcp_keepalive},
+    };
+
+    for timeout in [
+        Duration::ZERO,
+        Duration::from_micros(999),
+        Duration::from_millis(2_147_483_648),
+    ] {
+        assert!(
+            matches!(
+                validate_tcp_keepalive(Some(TcpKeepAlive::default().user_timeout(Some(timeout)))),
+                Err(ServerError::InvalidConfiguration(
+                    "TCP user_timeout must be between 1 and 2147483647 milliseconds"
+                ))
+            ),
+            "{timeout:?} must be refused"
+        );
+    }
+    for timeout in [
+        None,
+        Some(Duration::from_millis(1)),
+        Some(Duration::from_millis(2_147_483_647)),
+    ] {
+        validate_tcp_keepalive(Some(TcpKeepAlive::default().user_timeout(timeout)))
+            .expect("both bounds, and no user timeout, are accepted");
     }
 }
 
@@ -367,7 +412,8 @@ async fn an_accepted_socket_carries_the_configured_keepalive() {
 
     let keepalive = TcpKeepAlive::default()
         .idle(Duration::from_secs(42))
-        .interval(Duration::from_secs(7));
+        .interval(Duration::from_secs(7))
+        .user_timeout(Some(Duration::from_millis(12_345)));
     let (accepted, _client) = accepted_with(&SocketOptions::new(Some(keepalive))).await;
     let socket = socket2::SockRef::from(&accepted);
 
@@ -382,7 +428,30 @@ async fn an_accepted_socket_carries_the_configured_keepalive() {
             .expect("TCP_KEEPINTVL reads"),
         Duration::from_secs(7)
     );
+    assert_eq!(
+        socket.tcp_user_timeout().expect("TCP_USER_TIMEOUT reads"),
+        Some(Duration::from_millis(12_345))
+    );
     assert!(accepted.nodelay().expect("TCP_NODELAY reads"));
+}
+
+/// A keepalive without a user timeout leaves the kernel's default, which reads
+/// back as none set.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn no_user_timeout_leaves_the_kernel_default() {
+    use crate::server::tcp::{SocketOptions, TcpKeepAlive};
+
+    for keepalive in [Some(TcpKeepAlive::default().user_timeout(None)), None] {
+        let (accepted, _client) = accepted_with(&SocketOptions::new(keepalive)).await;
+        assert_eq!(
+            socket2::SockRef::from(&accepted)
+                .tcp_user_timeout()
+                .expect("TCP_USER_TIMEOUT reads"),
+            None,
+            "keepalive {keepalive:?}"
+        );
+    }
 }
 
 /// The kernel's timer for the server's end of a loopback connection, read from
@@ -4991,6 +5060,10 @@ const CONFIGURATION_REFUSALS: &[(&str, &str)] = &[
         "server/tcp.rs",
         "TCP keepalive durations must be between 1 and 32767 seconds",
     ),
+    (
+        "server/tcp.rs",
+        "TCP user_timeout must be between 1 and 2147483647 milliseconds",
+    ),
 ];
 
 /// The configuration refusals in `src/`, read from the source, are exactly
@@ -5730,6 +5803,12 @@ mod request_body_idle {
             StatusCode::OK,
             "a body that only waited is not a stall"
         );
+        assert!(
+            !response
+                .headers()
+                .contains_key(crate::http::header::CONNECTION),
+            "a connection whose body only waited stays open"
+        );
     }
 
     /// The bound body reports its inner body's end and size, so a reader that
@@ -5773,16 +5852,18 @@ mod request_body_idle {
         assert_eq!(body.size_hint().exact(), Some(0));
     }
 
-    /// A body that stalls ends with an error naming the limit it passed, and
-    /// its request is answered 408 -- closing an HTTP/1 connection, and
-    /// carrying no `Connection` field on HTTP/2, which hyper would strip before
-    /// a client could see it.
+    /// A body that stalls ends with a [`BodyStalled`] naming the limit it
+    /// passed, and the chain's answer stands -- status and headers alike --
+    /// closing an HTTP/1 connection, and carrying no `Connection` field on
+    /// HTTP/2, which hyper would strip before a client could see it.
+    ///
+    /// [`BodyStalled`]: crate::http::body::BodyStalled
     #[tokio::test]
     async fn a_stalled_body_names_its_limit_and_closes_only_http1() {
         use http_body_util::BodyExt as _;
 
         use crate::{
-            http::{HeaderValue, StatusCode, Version, header},
+            http::{HeaderValue, StatusCode, Version, body::BodyStalled, header},
             server::request_body::{answer, bounded},
         };
 
@@ -5801,17 +5882,39 @@ mod request_body_idle {
                 .expect("a stall ends the body with a frame")
                 .expect_err("the frame is the stall");
             assert_eq!(
+                error.downcast_ref::<BodyStalled>(),
+                Some(&BodyStalled::new(limit)),
+                "{error}"
+            );
+            assert_eq!(
                 error.to_string(),
                 "no request body frame arrived within 1ms"
             );
 
-            let response = answer(crate::http::Response::default(), stall);
-            assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
-            assert_eq!(
-                response.headers().get(header::CONNECTION),
-                connection.as_ref(),
-                "{version:?}"
-            );
+            // A handler reading the stall itself may answer any status; the
+            // unread rest of the body still loses HTTP/1's framing.
+            for status in [
+                StatusCode::REQUEST_TIMEOUT,
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ] {
+                let mut chained = crate::http::Response::default();
+                *chained.status_mut() = status;
+                chained
+                    .headers_mut()
+                    .insert("x-request-id", HeaderValue::from_static("7"));
+                let response = answer(chained, stall.clone());
+                assert_eq!(response.status(), status);
+                assert_eq!(
+                    response.headers().get("x-request-id"),
+                    Some(&HeaderValue::from_static("7")),
+                    "the chain's headers survive"
+                );
+                assert_eq!(
+                    response.headers().get(header::CONNECTION),
+                    connection.as_ref(),
+                    "{version:?} {status}"
+                );
+            }
         }
     }
 
@@ -5833,31 +5936,33 @@ mod request_body_idle {
     /// A limit no unit test waits out.
     const IDLE_UNREACHED: Duration = Duration::from_secs(60);
 
-    /// A service that reads its whole body, as every buffering codec does, and
-    /// answers with its length -- or 400 when the read failed, which is what
-    /// the codecs make of a failed read and what a stall must not reach the
-    /// client as.
+    /// Reads the whole body, as every buffering codec does, and answers with
+    /// its length -- or with what a codec makes of a failed read: the 408 of a
+    /// stall.
     #[cfg(any(feature = "http1", feature = "http2"))]
-    fn reading_service() -> crate::router::service::Service<()> {
+    async fn read_whole(request: crate::http::Request) -> crate::http::Response {
         use http_body_util::BodyExt as _;
 
+        use crate::response::IntoResponse as _;
+
+        match request.into_body().collect().await {
+            Ok(collected) => crate::http::Response::new(crate::http::body::Body::from(
+                collected.to_bytes().len().to_string(),
+            )),
+            Err(error) => {
+                crate::error::rejection::BodyRejection::read_failed(&*error).into_response()
+            }
+        }
+    }
+
+    /// A service answering with [`read_whole`].
+    #[cfg(any(feature = "http1", feature = "http2"))]
+    fn reading_service() -> crate::router::service::Service<()> {
         let document = kynos_openapi::Document::new(
             kynos_openapi::SpecVersion::V3_1,
             kynos_openapi::Info::new("Test", "1"),
         );
-        crate::router::service::Service::new(document, |request: crate::http::Request| async move {
-            let (status, body) = match request.into_body().collect().await {
-                Ok(collected) => (
-                    crate::http::StatusCode::OK,
-                    collected.to_bytes().len().to_string(),
-                ),
-                Err(error) => (crate::http::StatusCode::BAD_REQUEST, error.to_string()),
-            };
-            let mut response =
-                crate::http::Response::new(crate::http::body::Body::from_bytes(body.into()));
-            *response.status_mut() = status;
-            response
-        })
+        crate::router::service::Service::new(document, read_whole)
     }
 
     /// A plaintext server over [`reading_service`] with `idle` as its limit.
@@ -5957,8 +6062,6 @@ mod request_body_idle {
         delay: Duration,
         reading: std::sync::Arc<tokio::sync::Notify>,
     ) -> crate::router::service::Service<()> {
-        use http_body_util::BodyExt as _;
-
         let document = kynos_openapi::Document::new(
             kynos_openapi::SpecVersion::V3_1,
             kynos_openapi::Info::new("Test", "1"),
@@ -5968,17 +6071,7 @@ mod request_body_idle {
             async move {
                 tokio::time::sleep(delay).await;
                 reading.notify_one();
-                let (status, body) = match request.into_body().collect().await {
-                    Ok(collected) => (
-                        crate::http::StatusCode::OK,
-                        collected.to_bytes().len().to_string(),
-                    ),
-                    Err(error) => (crate::http::StatusCode::BAD_REQUEST, error.to_string()),
-                };
-                let mut response =
-                    crate::http::Response::new(crate::http::body::Body::from_bytes(body.into()));
-                *response.status_mut() = status;
-                response
+                read_whole(request).await
             }
         })
     }

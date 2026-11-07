@@ -249,13 +249,12 @@ fn boundary(headers: &HeaderMap) -> Result<String, BodyRejection> {
         })
 }
 
-/// A parser failure is a 400, except passing the limit, which is the 413.
+/// A parser failure is a 400, except passing the limit, which is the 413, and
+/// a read that stalled, which is the 408.
 fn malformed_body(error: &multer::Error) -> BodyRejection {
     match error {
         multer::Error::StreamSizeExceeded { limit } => BodyRejection::TooLarge { limit: *limit },
-        _ => BodyRejection::Syntax {
-            detail: error.to_string(),
-        },
+        _ => BodyRejection::read_failed(error),
     }
 }
 

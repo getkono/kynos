@@ -19,8 +19,10 @@ use std::{
 
 use bytes::Bytes;
 use http_body_util::BodyExt;
-use kynos_openapi::{Document, Method};
-use serde_json::Value;
+use kynos_openapi::{
+    Document, Method, model::body::mime_names::APPLICATION_PROBLEM_JSON as PROBLEM_JSON,
+};
+use serde_json::{Map, Value};
 
 use crate::{
     http::{
@@ -56,6 +58,10 @@ pub struct TestClient<C> {
     observed: Mutex<Vec<Observed>>,
     /// Where every exchange is also recorded, when the client shares one.
     coverage: Option<Arc<Mutex<Vec<Exchange>>>>,
+    /// The peer every request starts from.
+    peer: Option<std::net::SocketAddr>,
+    /// The fields every request starts from.
+    headers: HeaderMap,
 }
 
 impl<C> TestClient<C> {
@@ -66,6 +72,8 @@ impl<C> TestClient<C> {
             service,
             observed: Mutex::new(Vec::new()),
             coverage: None,
+            peer: None,
+            headers: HeaderMap::new(),
         }
     }
 
@@ -77,6 +85,37 @@ impl<C> TestClient<C> {
     #[must_use]
     pub fn with_coverage(mut self, coverage: &Coverage) -> Self {
         self.coverage = Some(Arc::clone(&coverage.exchanges));
+        self
+    }
+
+    /// Sends every request from `peer`, unless the request sets its own with
+    /// [`TestRequest::peer`].
+    ///
+    /// For a service every request of a suite reaches through the same
+    /// client address: a rate limiter keyed by client, or a trusted-proxy
+    /// policy. A second call replaces the first.
+    #[must_use]
+    pub fn with_peer(mut self, peer: std::net::SocketAddr) -> Self {
+        self.peer = Some(peer);
+        self
+    }
+
+    /// Sends the field `name: value` on every request, unless the request
+    /// sets a field of the same name itself.
+    ///
+    /// A request's own field replaces the default whole, whichever setter
+    /// wrote it: [`TestRequest::header`], [`bearer`](TestRequest::bearer) for
+    /// `Authorization`, a body's `Content-Type`, or the `Cookie` field
+    /// [`cookie`](TestRequest::cookie) assembles. A second call naming the
+    /// same field replaces the first.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `name` or `value` is not one HTTP can carry.
+    #[must_use]
+    pub fn with_default_header(mut self, name: &str, value: &str) -> Self {
+        let (name, value) = field(name, value);
+        self.headers.insert(name, value);
         self
     }
 
@@ -155,10 +194,10 @@ impl<C> TestClient<C> {
             client: self,
             method,
             path: path.to_owned(),
-            headers: HeaderMap::new(),
+            headers: self.headers.clone(),
             body: RequestBody::Whole(Bytes::new()),
             content_length: None,
-            peer: None,
+            peer: self.peer,
             cookies: Vec::new(),
         }
     }
@@ -345,12 +384,23 @@ impl<C> TestRequest<'_, C> {
     /// Panics when `name` or `value` is not one HTTP can carry.
     #[must_use]
     pub fn header(mut self, name: &str, value: &str) -> Self {
-        let name = HeaderName::from_bytes(name.as_bytes())
-            .unwrap_or_else(|_| panic!("`{name}` is not a header name"));
-        let value = HeaderValue::from_str(value)
-            .unwrap_or_else(|_| panic!("`{value}` is not a header value"));
+        let (name, value) = field(name, value);
         self.headers.insert(name, value);
         self
+    }
+
+    /// Presents `token` as `Authorization: Bearer <token>` (RFC 6750
+    /// section 2.1).
+    ///
+    /// The token is sent as written, not held to the section's `b64token`
+    /// grammar, so a test can also send one a service must refuse.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `token` leaves the field no header value.
+    #[must_use]
+    pub fn bearer(self, token: &str) -> Self {
+        self.header("authorization", &format!("Bearer {token}"))
     }
 
     /// Sets a header to a value given as octets.
@@ -429,9 +479,10 @@ impl<C> TestRequest<'_, C> {
 
     /// Says who the request came from.
     ///
-    /// Without one, a service reading a peer address sees the in-process
-    /// default; set it to test a rate limiter keyed by client, or a
-    /// trusted-proxy policy.
+    /// Without one, a service reading a peer address sees the client's
+    /// [`with_peer`](TestClient::with_peer), or the in-process default where
+    /// the client sets none; set it to test a rate limiter keyed by client, or
+    /// a trusted-proxy policy.
     #[must_use]
     pub fn peer(mut self, address: std::net::SocketAddr) -> Self {
         self.peer = Some(address);
@@ -454,7 +505,10 @@ impl<C> TestRequest<'_, C> {
     ///
     /// Each chunk reaches the service as one frame when the stream yields it,
     /// so a stream that waits between chunks is a slow client and one that
-    /// never yields again is a stalled one. Without
+    /// never yields again is a stalled one. With the `server` feature, a read
+    /// that waits as long as a server's default `request_body_idle_timeout`
+    /// fails as a served body's does, so the stall is answered with the
+    /// operation's 408; pause the clock to reach it at once. Without
     /// [`content_length`](Self::content_length) the body declares no length,
     /// as a chunked one does, and ends when the stream does.
     ///
@@ -534,6 +588,15 @@ impl<C> TestRequest<'_, C> {
                 failed: false,
             }),
         };
+        // Held to the idle timeout a server holds it to by default, so a
+        // stalled body is answered as a served one is.
+        #[cfg(feature = "server")]
+        let (body, stall) = crate::server::request_body::bounded(
+            body,
+            Some(crate::server::request_body::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT),
+            crate::http::Version::HTTP_11,
+            std::convert::identity,
+        );
         let mut request = Request::new(body);
         *request.method_mut() = self.method.clone();
         let uri = self
@@ -567,6 +630,8 @@ impl<C> TestRequest<'_, C> {
         }
 
         let response = self.client.service.call(request).await;
+        #[cfg(feature = "server")]
+        let response = crate::server::request_body::answer(response, stall);
 
         let (parts, body) = response.into_parts();
         let bytes = body
@@ -587,8 +652,8 @@ impl<C> TestRequest<'_, C> {
         }
 
         self.client.recorded().push(Observed {
-            method: self.method,
-            target: self.path,
+            method: self.method.clone(),
+            target: self.path.clone(),
             uri,
             status: parts.status,
             headers: parts.headers.clone(),
@@ -596,21 +661,44 @@ impl<C> TestRequest<'_, C> {
         });
 
         TestResponse {
+            method: self.method,
+            path: self.path,
             response: Response::from_parts(parts, Body::from_bytes(bytes.clone())),
             body: bytes,
         }
     }
 }
 
-/// A response received by a [`TestClient`].
+/// A response received by a [`TestClient`], with the request it answers.
+///
+/// Every panic a method here raises opens with that request and the status it
+/// received, as `GET /v1/items -> 404: `, so a failure in a loop over
+/// operations names the one that failed.
 #[derive(Debug)]
 pub struct TestResponse {
+    method: HttpMethod,
+    /// The target as the test wrote it.
+    path: String,
     response: Response,
     /// The drained body, kept so the response stays readable after assertions.
     body: Bytes,
 }
 
 impl TestResponse {
+    /// The method the request was sent with.
+    #[must_use]
+    pub fn method(&self) -> &HttpMethod {
+        &self.method
+    }
+
+    /// The request target as the test wrote it: the path given to the
+    /// [`TestClient`], with whatever
+    /// [`query_string`](TestRequest::query_string) appended.
+    #[must_use]
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
     /// The status code.
     #[must_use]
     pub fn status(&self) -> StatusCode {
@@ -627,7 +715,8 @@ impl TestResponse {
     pub fn json<T: serde::de::DeserializeOwned>(&self) -> T {
         serde_json::from_slice(&self.body).unwrap_or_else(|error| {
             panic!(
-                "the body is not valid JSON for `{}`: {error}\n{}",
+                "{}: the body is not valid JSON for `{}`: {error}\n{}",
+                self.exchange(),
                 std::any::type_name::<T>(),
                 self.rendered_body()
             )
@@ -640,16 +729,33 @@ impl TestResponse {
         &self.body
     }
 
-    /// Asserts the status.
+    /// Asserts the status, given as a [`StatusCode`] or as its number.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// use kynos::http::StatusCode;
+    ///
+    /// let reply = client.get("/items/7").send().await;
+    /// reply.assert_status(StatusCode::NOT_FOUND).assert_status(404);
+    /// # }
+    /// ```
     ///
     /// # Panics
     ///
-    /// Panics, with the body included, when the status differs.
-    pub fn assert_status(&self, expected: StatusCode) -> &Self {
+    /// Panics, with the body included, when the status differs, and when a
+    /// number is outside 100 to 999, which no status can be.
+    pub fn assert_status(&self, expected: impl IntoStatus) -> &Self {
+        let expected = expected.status().unwrap_or_else(|code| {
+            panic!(
+                "{}: `{code}` is not a status code, which is 100 to 999",
+                self.exchange()
+            )
+        });
         let actual = self.status();
         assert!(
             actual == expected,
-            "expected {expected}, received {actual}\n{}",
+            "{}: expected {expected}, received {actual}\n{}",
+            self.exchange(),
             self.rendered_body()
         );
         self
@@ -666,7 +772,8 @@ impl TestResponse {
     pub fn assert_problem_type(&self, expected: &str) -> &Self {
         let document: Value = serde_json::from_slice(&self.body).unwrap_or_else(|error| {
             panic!(
-                "the body is not a problem document: {error}\n{}",
+                "{}: the body is not a problem document: {error}\n{}",
+                self.exchange(),
                 self.rendered_body()
             )
         });
@@ -676,17 +783,168 @@ impl TestResponse {
             .map_or(Some("about:blank"), Value::as_str)
             .unwrap_or_else(|| {
                 panic!(
-                    "the problem document's `type` is not a string\n{}",
+                    "{}: the problem document's `type` is not a string\n{}",
+                    self.exchange(),
                     self.rendered_body()
                 )
             });
 
         assert!(
             actual == expected,
-            "expected problem type `{expected}`, received `{actual}`\n{}",
+            "{}: expected problem type `{expected}`, received `{actual}`\n{}",
+            self.exchange(),
             self.rendered_body()
         );
         self
+    }
+
+    /// Asserts that this response is an RFC 9457 problem of a given status and
+    /// type, whole.
+    ///
+    /// Checks, in order: the status, as
+    /// [`assert_status`](Self::assert_status) does; that `Content-Type` is
+    /// `application/problem+json` (RFC 9457 section 6.1), its parameters aside;
+    /// that the body's `type` is `type_uri`, an omitted one being
+    /// `about:blank` (section 3.1.1); and that a `status` member, where the
+    /// document carries one, names the status line, which section 3.1.2 binds a
+    /// generator to.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// client
+    ///     .get("/items/7")
+    ///     .send()
+    ///     .await
+    ///     .assert_problem(404, "https://errors.example.com/no-such-item");
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when the status differs or names no status; when `Content-Type`
+    /// is absent or another media type; when the body is not a problem
+    /// document, as [`problem`](Self::problem) reads one; when its `type`
+    /// differs; and when its `status` member disagrees with the status line.
+    pub fn assert_problem(&self, status: impl IntoStatus, type_uri: &str) -> &Self {
+        self.assert_status(status);
+
+        match self
+            .response
+            .headers()
+            .get(crate::http::header::CONTENT_TYPE)
+        {
+            Some(value) => {
+                assert!(
+                    crate::http::eq_ignore_ascii_case(
+                        crate::http::media::split_essence(value.as_bytes()).0,
+                        PROBLEM_JSON.as_bytes()
+                    ),
+                    "{}: expected `Content-Type: {PROBLEM_JSON}`, received `Content-Type: {}`\n{}",
+                    self.exchange(),
+                    value.as_bytes().escape_ascii(),
+                    self.rendered_body()
+                );
+            }
+            None => panic!(
+                "{}: expected `Content-Type: {PROBLEM_JSON}`, and the response carries none\n{}",
+                self.exchange(),
+                self.rendered_body()
+            ),
+        }
+
+        let problem = self.problem();
+        assert!(
+            problem.type_uri == type_uri,
+            "{}: expected problem type `{type_uri}`, received `{}`\n{}",
+            self.exchange(),
+            problem.type_uri,
+            self.rendered_body()
+        );
+        if let Some(member) = problem.status {
+            assert!(
+                member == self.status().as_u16(),
+                "{}: the problem document's `status` is {member}, and the status line {}\n{}",
+                self.exchange(),
+                self.status().as_u16(),
+                self.rendered_body()
+            );
+        }
+        self
+    }
+
+    /// The body read as an RFC 9457 problem document.
+    ///
+    /// Reads the body alone: [`assert_problem`](Self::assert_problem) is what
+    /// also holds the status and the media type.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// use kynos::error::problem::PointerError;
+    ///
+    /// let problem = client.post("/items").send().await.problem();
+    /// assert_eq!(problem.detail.as_deref(), Some("the body is not valid"));
+    /// let errors: Option<Vec<PointerError>> = problem.extension("errors");
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when the body is not a JSON object, and when a member RFC 9457
+    /// section 3.1 registers is not of the type it registers: a recipient
+    /// ignores such a member, which in a test would hide the defect that
+    /// produced it.
+    #[must_use]
+    pub fn problem(&self) -> TestProblem {
+        let mut members = match serde_json::from_slice(&self.body) {
+            Ok(Value::Object(members)) => members,
+            Ok(_) => panic!(
+                "{}: the body is not a problem document, which is a JSON object\n{}",
+                self.exchange(),
+                self.rendered_body()
+            ),
+            Err(error) => panic!(
+                "{}: the body is not a problem document: {error}\n{}",
+                self.exchange(),
+                self.rendered_body()
+            ),
+        };
+
+        let mut string = |name: &str| match members.remove(name) {
+            None => None,
+            Some(Value::String(value)) => Some(value),
+            Some(_) => panic!(
+                "{}: the problem document's `{name}` is not a string\n{}",
+                self.exchange(),
+                self.rendered_body()
+            ),
+        };
+        let type_uri = string("type").unwrap_or_else(|| "about:blank".to_owned());
+        let title = string("title");
+        let detail = string("detail");
+        let instance = string("instance");
+
+        let status = members.remove("status").map(|value| {
+            value
+                .as_u64()
+                .and_then(|number| u16::try_from(number).ok())
+                .filter(|number| StatusCode::from_u16(*number).is_ok())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{}: the problem document's `status` is not a status code\n{}",
+                        self.exchange(),
+                        self.rendered_body()
+                    )
+                })
+        });
+
+        TestProblem {
+            type_uri,
+            title,
+            status,
+            detail,
+            instance,
+            extensions: members,
+        }
     }
 
     /// The body as text.
@@ -697,7 +955,11 @@ impl TestResponse {
     #[must_use]
     pub fn text(&self) -> &str {
         std::str::from_utf8(&self.body).unwrap_or_else(|_| {
-            panic!("the body is not text\n{}", self.rendered_body());
+            panic!(
+                "{}: the body is not text\n{}",
+                self.exchange(),
+                self.rendered_body()
+            );
         })
     }
 
@@ -747,10 +1009,37 @@ impl TestResponse {
         match self.header(name) {
             Some(actual) => assert!(
                 actual == expected,
-                "expected `{name}: {expected}`, received `{name}: {actual}`"
+                "{}: expected `{name}: {expected}`, received `{name}: {actual}`",
+                self.exchange()
             ),
-            None => panic!("`{name}` is not on the response"),
+            None => panic!("{}: `{name}` is not on the response", self.exchange()),
         }
+        self
+    }
+
+    /// Asserts no field `name` is on the response.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `name` is not a header name, which no response could carry
+    /// and so would pass whatever was sent, and when the response carries the
+    /// field, naming every value it carries.
+    pub fn assert_no_header(&self, name: &str) -> &Self {
+        let field = HeaderName::from_bytes(name.as_bytes())
+            .unwrap_or_else(|_| panic!("{}: `{name}` is not a header name", self.exchange()));
+        let values: Vec<String> = self
+            .response
+            .headers()
+            .get_all(&field)
+            .iter()
+            .map(|value| format!("`{name}: {}`", value.as_bytes().escape_ascii()))
+            .collect();
+        assert!(
+            values.is_empty(),
+            "{}: expected no `{name}`, received {}",
+            self.exchange(),
+            values.join(", ")
+        );
         self
     }
 
@@ -764,10 +1053,12 @@ impl TestResponse {
         match cookies.iter().find(|(set, _)| *set == name) {
             Some((_, actual)) => assert!(
                 *actual == expected,
-                "expected cookie `{name}={expected}`, received `{name}={actual}`"
+                "{}: expected cookie `{name}={expected}`, received `{name}={actual}`",
+                self.exchange()
             ),
             None => panic!(
-                "no `Set-Cookie` names `{name}`; the response set {:?}",
+                "{}: no `Set-Cookie` names `{name}`; the response set {:?}",
+                self.exchange(),
                 cookies.iter().map(|(set, _)| *set).collect::<Vec<_>>()
             ),
         }
@@ -783,7 +1074,8 @@ impl TestResponse {
     pub fn assert_redirect(&self, location: &str) -> &Self {
         assert!(
             self.status().is_redirection(),
-            "expected a redirect, received {}",
+            "{}: expected a redirect, received {}",
+            self.exchange(),
             self.status()
         );
         self.assert_header("location", location);
@@ -803,11 +1095,13 @@ impl TestResponse {
     pub fn assert_part(&self, first: u64, last: u64, complete_length: u64) -> &Self {
         assert!(
             first <= last,
-            "`bytes {first}-{last}` names no octets: its last position precedes its first"
+            "{}: `bytes {first}-{last}` names no octets: its last position precedes its first",
+            self.exchange()
         );
         assert!(
             self.status() == StatusCode::PARTIAL_CONTENT,
-            "expected 206, received {}",
+            "{}: expected 206, received {}",
+            self.exchange(),
             self.status()
         );
 
@@ -818,7 +1112,8 @@ impl TestResponse {
         let enclosed = u128::from(last - first) + 1;
         assert!(
             self.body.len() as u128 == enclosed,
-            "`Content-Range` names {enclosed} octet(s) and the body carries {}",
+            "{}: `Content-Range` names {enclosed} octet(s) and the body carries {}",
+            self.exchange(),
             self.body.len()
         );
         self
@@ -881,6 +1176,16 @@ impl TestResponse {
         self.response
     }
 
+    /// The request and the status it received, as every panic here opens.
+    fn exchange(&self) -> String {
+        format!(
+            "{} {} -> {}",
+            self.method,
+            self.path,
+            self.status().as_u16()
+        )
+    }
+
     /// The body as an assertion message shows it.
     fn rendered_body(&self) -> String {
         match std::str::from_utf8(&self.body) {
@@ -888,6 +1193,67 @@ impl TestResponse {
             Err(_) => format!("body: {} bytes, not UTF-8", self.body.len()),
         }
     }
+}
+
+/// A status [`TestResponse::assert_status`] expects: a [`StatusCode`], or its
+/// number, which a table of expected outcomes holds more naturally.
+///
+/// Sealed: implemented for [`StatusCode`] and [`u16`], so an integer literal
+/// is inferred as a `u16` without a suffix.
+pub trait IntoStatus: sealed::Sealed {
+    /// The status this names.
+    ///
+    /// # Panics
+    ///
+    /// Panics when a number is outside 100 to 999, which no status can be.
+    fn into_status(self) -> StatusCode;
+}
+
+mod sealed {
+    use crate::http::StatusCode;
+
+    pub trait Sealed: Sized {
+        /// The status, or the number that names none.
+        fn status(self) -> Result<StatusCode, u16>;
+    }
+}
+
+impl sealed::Sealed for StatusCode {
+    fn status(self) -> Result<StatusCode, u16> {
+        Ok(self)
+    }
+}
+
+impl sealed::Sealed for u16 {
+    fn status(self) -> Result<StatusCode, u16> {
+        StatusCode::from_u16(self).map_err(|_| self)
+    }
+}
+
+impl IntoStatus for StatusCode {
+    fn into_status(self) -> StatusCode {
+        self
+    }
+}
+
+impl IntoStatus for u16 {
+    fn into_status(self) -> StatusCode {
+        sealed::Sealed::status(self)
+            .unwrap_or_else(|code| panic!("`{code}` is not a status code, which is 100 to 999"))
+    }
+}
+
+/// A header field a test wrote as text.
+///
+/// # Panics
+///
+/// Panics when `name` or `value` is not one HTTP can carry.
+fn field(name: &str, value: &str) -> (HeaderName, HeaderValue) {
+    let name = HeaderName::from_bytes(name.as_bytes())
+        .unwrap_or_else(|_| panic!("`{name}` is not a header name"));
+    let value =
+        HeaderValue::from_str(value).unwrap_or_else(|_| panic!("`{value}` is not a header value"));
+    (name, value)
 }
 
 /// `n responses`, or `1 response`, for an assertion message that counts them.
@@ -923,5 +1289,52 @@ impl TestEvent {
     pub fn json<T: serde::de::DeserializeOwned>(&self) -> T {
         serde_json::from_str(&self.data)
             .unwrap_or_else(|error| panic!("`{}` is not the expected JSON: {error}", self.data))
+    }
+}
+
+/// An RFC 9457 problem document, as [`TestResponse::problem`] read it.
+///
+/// The members section 3.1 registers are typed; every other member is an
+/// extension, read by [`extension`](Self::extension).
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct TestProblem {
+    /// The `type` URI, `about:blank` where the document omits it (RFC 9457
+    /// section 3.1.1).
+    pub type_uri: String,
+    /// The `title`.
+    pub title: Option<String>,
+    /// The `status` member, which is not necessarily the status line.
+    pub status: Option<u16>,
+    /// The `detail`.
+    pub detail: Option<String>,
+    /// The `instance` URI.
+    pub instance: Option<String>,
+    /// Every member the five above are not.
+    extensions: Map<String, Value>,
+}
+
+impl TestProblem {
+    /// The extension member `name`, deserialized; `None` when the document
+    /// does not carry it.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `name` is one of the five registered members, which are
+    /// read from their fields and would otherwise read as absent here, and
+    /// when the member is present but not a `T`.
+    #[must_use]
+    pub fn extension<T: serde::de::DeserializeOwned>(&self, name: &str) -> Option<T> {
+        assert!(
+            !["type", "title", "status", "detail", "instance"].contains(&name),
+            "`{name}` is a member RFC 9457 registers, not an extension; read its field"
+        );
+        let value = self.extensions.get(name)?;
+        Some(T::deserialize(value).unwrap_or_else(|error| {
+            panic!(
+                "the problem document's `{name}` is not a `{}`: {error}\n{name}: {value}",
+                std::any::type_name::<T>()
+            )
+        }))
     }
 }

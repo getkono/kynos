@@ -446,6 +446,54 @@ async fn keying_by_route_gives_each_operation_its_own_bucket() {
     );
 }
 
+/// A `QUERY` on `/counted`, beside its `GET`.
+#[cfg(feature = "openapi32")]
+#[kynos::query("/counted")]
+async fn search_counted() -> NoContent {
+    NoContent
+}
+
+/// Keyed by route, a `QUERY` and a `GET` on one path are two operations, so
+/// two buckets: exhausting one leaves the other whole.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn keying_by_route_gives_a_query_a_bucket_apart_from_the_get_beside_it() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![counted, search_counted])
+        .intercept(RateLimit::new(
+            Quotas::new(ByRoute, Counters::default()).quota(Quota::new(
+                "fixed",
+                1,
+                Duration::from_secs(600),
+            )),
+        ))
+        .build(())
+        .expect("a describable router");
+    let query = || {
+        support::send(
+            &service,
+            kynos::http::Method::from_bytes(b"QUERY").expect("a method token"),
+            "/counted",
+        )
+    };
+
+    assert_eq!(
+        get(&service, "/counted").call().await.status,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        get(&service, "/counted").call().await.status,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+
+    assert_eq!(
+        query().call().await.status,
+        StatusCode::NO_CONTENT,
+        "the GET's quota refused a QUERY on the same path"
+    );
+    assert_eq!(query().call().await.status, StatusCode::TOO_MANY_REQUESTS);
+}
+
 /// Keyed by a header, so two callers do not share a bucket.
 #[tokio::test]
 async fn keying_by_a_header_separates_two_callers() {

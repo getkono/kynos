@@ -9,7 +9,9 @@ use crate::derive::attribute::{Keys, key_name};
 use crate::derive::common::non_token_message;
 use crate::derive::schema::{
     COUNTS, NUMERIC,
-    attributes::{as_literal, described_as_keys, is_flattened, is_phantom, open_span},
+    attributes::{
+        as_literal, described_as_keys, described_via_keys, is_flattened, is_phantom, open_span,
+    },
     container::Container,
     flatten::internally_tagged_payloads,
     members::field_groups,
@@ -33,11 +35,11 @@ pub(super) fn check_constraints(input: &DeriveInput, container: &Container) -> s
         let mut opened: Option<Span> = None;
 
         for field in named {
-            // A second `as` is left to `check_described_as`, which names the
-            // type it duplicates.
+            // A second `as` or `via` is left to `check_described_as`, which
+            // says why one field takes one of each.
             let mut keys =
                 Keys::new("is already set, and a field's `#[schema(...)]` takes each key once")
-                    .except(|key| key == "as");
+                    .except(|key| key == "as" || key == "via");
             for attr in &field.attrs {
                 if attr.path().is_ident("schema") {
                     attr.parse_nested_meta(|meta| {
@@ -80,12 +82,32 @@ pub(super) fn check_constraints(input: &DeriveInput, container: &Container) -> s
 }
 
 /// A field's `as`: written once, and never where serde does not write the
-/// field as one value of its type. `payload` marks an internally tagged
-/// newtype variant's payload, whose members serde writes beside the tag.
+/// field as one value of its type; and its `via`: written once, and only
+/// beside an `as`. `payload` marks an internally tagged newtype variant's
+/// payload, whose members serde writes beside the tag.
 fn check_described_as(field: &Field, payload: bool) -> syn::Result<()> {
     let keys = described_as_keys(field);
+    let vias = described_via_keys(field);
+
+    if let Some((again, _)) = vias.get(1) {
+        return Err(syn::Error::new(
+            *again,
+            "`via` may appear once per field: it names the one function the field converts \
+             through, so a second `via` could only overwrite the first. Keep the one that \
+             gives what serde writes",
+        ));
+    }
+
     let Some((span, _)) = keys.first() else {
-        return Ok(());
+        return match vias.first() {
+            Some((via, _)) => Err(syn::Error::new(
+                *via,
+                "`via` names the function converting a field into the type its `as` describes \
+                 it as, and this field has no `as`: its check already runs on its own type. \
+                 Add `as = T` for the type `via` returns, or drop the key",
+            )),
+            None => Ok(()),
+        };
     };
 
     if let Some((again, _)) = keys.get(1) {
@@ -242,6 +264,11 @@ fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
         return Ok(());
     }
 
+    if name == "via" {
+        let _: syn::ExprPath = meta.value()?.parse()?;
+        return Ok(());
+    }
+
     Err(syn::Error::new(
         span,
         format!(
@@ -250,8 +277,8 @@ fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
              `exclusive_minimum`, `exclusive_maximum`, `multiple_of`, `min_length`, \
              `max_length`, `pattern`, `min_items`, `max_items`, `unique_items`, \
              `content_encoding` and `content_media_type`; plus `open`, which says a flattened \
-             field's members are not named, and `as = T`, which describes a field as the type \
-             `T`"
+             field's members are not named, `as = T`, which describes a field as the type \
+             `T`, and `via = path`, which names the function converting it into that `T`"
         ),
     ))
 }
