@@ -642,7 +642,7 @@ The budget is the honest record of what stayed. A path leaves it when its module
 is split, and one joins it only with the argument for why that module needs the
 room, in the same commit.
 
-Fourteen of them crossed the line after v0.1.0, and each was argued for as it did.
+Fifteen of them crossed the line after v0.1.0, and each was argued for as it did.
 `response/status.rs` is the shape above rather than a new argument. It declares
 seven public types — `Location`, `InvalidLocation`, `NoContent`, `Created`,
 `Accepted`, `Redirect` and `ValidRedirectCode` — so splitting it would turn
@@ -768,6 +768,17 @@ count. The two are one concern — refusing a request body before the handler
 trusts it — and the deadline's private body wrapper is the declared-length
 half of the same `intercept`, which reads back what the wrapper recorded.
 
+`extract/connection.rs` is `status.rs`'s shape. It declares `MatchedPath`,
+`ConnectInfo`, `TransportAddress`, `UnixAddress`, `TlsIdentity` and
+`Connection`, so a split would turn `connection::TransportAddress` into
+`connection::address::TransportAddress` and do the same to the rest. What
+pushed it over was #1130's transport address: a Unix peer has no
+`SocketAddr`, so `Connection` reports a `TransportAddress` and `ConnectInfo`
+refuses what is not IP. The types are one concern, what a connection says
+about where a request came from. An address family, a TLS identity or a
+credential added later lands on `Connection` and changes it with the type
+that describes it.
+
 The budget, which may only shrink:
 
 - `crates/kynos-macros/src/derive/schema/attributes.rs`
@@ -781,6 +792,7 @@ The budget, which may only shrink:
 - `crates/kynos-profile/src/lib.rs`
 - `crates/kynos/src/error/problem.rs`
 - `crates/kynos/src/error/rejection.rs`
+- `crates/kynos/src/extract/connection.rs`
 - `crates/kynos/src/http/forwarded.rs`
 - `crates/kynos/src/middleware/cache/mod.rs`
 - `crates/kynos/src/middleware/compression/mod.rs`
