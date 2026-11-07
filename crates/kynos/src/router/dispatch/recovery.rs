@@ -26,16 +26,16 @@ use crate::{
 /// polled again. Boxed on the call rather than on the first poll, so the
 /// future this returns is a pointer wide and an enclosing future that awaits
 /// it reserves no room for `future` itself.
-pub(crate) fn recover<F>(future: F) -> impl Future<Output = Result<Response, Box<dyn Any + Send>>>
+pub(crate) fn recover<F>(future: F) -> impl Future<Output = Result<F::Output, Box<dyn Any + Send>>>
 where
-    F: Future<Output = Response>,
+    F: Future,
 {
     let mut future = Box::pin(future);
 
     std::future::poll_fn(move |context| {
         match std::panic::catch_unwind(AssertUnwindSafe(|| future.as_mut().poll(context))) {
             Ok(Poll::Pending) => Poll::Pending,
-            Ok(Poll::Ready(response)) => Poll::Ready(Ok(response)),
+            Ok(Poll::Ready(output)) => Poll::Ready(Ok(output)),
             Err(payload) => Poll::Ready(Err(payload)),
         }
     })

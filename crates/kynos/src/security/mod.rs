@@ -187,7 +187,7 @@ mod sealed {
 ///
 /// is_handler::<App, _, _>(read);
 /// ```
-pub trait Guard<C>: sealed::Sealed + Describe + Sized + Send {
+pub trait Guard<C>: sealed::Sealed + Describe + Sized + Send + 'static {
     /// How this guard refuses.
     ///
     /// The guard's own [`Describe`] declares its refusals, from its schemes,
@@ -204,6 +204,44 @@ pub trait Guard<C>: sealed::Sealed + Describe + Sized + Send {
         parts: &Parts,
         context: &C,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send;
+}
+
+/// A guard run ahead of its operation's interceptors, waiting in the request's
+/// extensions for the handler's guard slot.
+///
+/// Only this crate names it, so nothing outside can forge an admission. A
+/// clone is empty: a copy of the request is not the request the guard
+/// admitted, and its handler checks again.
+pub(crate) struct Admitted<G>(std::sync::Mutex<Option<G>>);
+
+impl<G> Clone for Admitted<G> {
+    fn clone(&self) -> Self {
+        Self(std::sync::Mutex::new(None))
+    }
+}
+
+/// Runs guard `G` on `parts`, keeping what it admits for [`admitted`] to take;
+/// its rejection's response where it refuses.
+pub(crate) async fn guard_ahead<C, G: Guard<C>>(
+    parts: &mut Parts,
+    context: &C,
+) -> Option<crate::http::Response> {
+    match G::guard(parts, context).await {
+        Ok(guard) => {
+            parts
+                .extensions
+                .insert(Admitted(std::sync::Mutex::new(Some(guard))));
+            None
+        }
+        Err(rejection) => Some(rejection.into_response()),
+    }
+}
+
+/// The guard [`guard_ahead`] admitted this request with, taken off it.
+pub(crate) fn admitted<C, G: Guard<C>>(parts: &mut Parts) -> Option<G> {
+    let Admitted(slot) = parts.extensions.remove::<Admitted<G>>()?;
+    // Nothing panics while the slot is held, so it is never poisoned.
+    slot.into_inner().ok().flatten()
 }
 
 /// Compares two secrets without returning on the first byte that differs.
@@ -289,7 +327,10 @@ pub trait SecurityScheme: Send + Sync + 'static {
     const FORBIDS: bool = true;
 
     /// What a successful authentication yields to the handler.
-    type Credential: Send;
+    ///
+    /// `'static`, as the scheme itself is, so a guard run ahead of an
+    /// operation's interceptors can hand it on in the request's extensions.
+    type Credential: Send + 'static;
 
     /// What one scope of this scheme is, as a value.
     ///

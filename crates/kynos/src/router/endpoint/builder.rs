@@ -320,6 +320,33 @@ where
             .iter()
             .find_map(|interceptor| install::cors_conflict(interceptor))
     }
+
+    fn __guarded(&self) -> bool {
+        H::__GUARDED
+    }
+
+    // This operation's recovery covers its guard wherever the guard runs.
+    fn __guard_ahead(
+        &self,
+        request: Request,
+        context: &C,
+    ) -> impl Future<Output = Result<Request, Response>> + Send {
+        let (mut parts, body) = request.into_parts();
+        async move {
+            let refused = if install::catches::<P>() {
+                dispatch::recovery::recover(H::__guard_ahead(&mut parts, context))
+                    .await
+                    .unwrap_or_else(|payload| Some(dispatch::recovery::recovered_response(payload)))
+            } else {
+                H::__guard_ahead(&mut parts, context).await
+            };
+
+            match refused {
+                Some(refused) => Err(refused),
+                None => Ok(Request::from_parts(parts, body)),
+            }
+        }
+    }
 }
 
 impl<C, H, A, P, I: 'static> EndpointBuilder<C, H, A, P, I>

@@ -10,12 +10,9 @@ use std::collections::HashSet;
 use super::install::record_accept_query;
 use super::install::{catches, install_preflight, invalid};
 use super::{
-    Arc, Dispatch, EndpointTerminal, HashMap, PanicPolicy, PathEntry, Result, Router, RouterError,
-    Service, TrailingSlashPolicy, dispatch,
+    Arc, Dispatch, EndpointTerminal, ErasedInterceptor, HashMap, Mounted, PanicPolicy, PathEntry,
+    Result, Router, RouterError, Service, TrailingSlashPolicy, dispatch,
 };
-
-#[cfg(feature = "unchecked")]
-use super::ErasedInterceptor;
 
 #[cfg(feature = "docs")]
 use super::docs;
@@ -79,8 +76,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 .unwrap_or_default();
             let secured = described.is_some_and(declares_security);
 
-            let mut interceptors = self.interceptors.clone();
-            interceptors.extend(mounted.interceptors);
+            let interceptors = covering(&self.interceptors, self.guard_first, &mounted);
 
             #[cfg(feature = "unchecked")]
             let unchecked_layers = {
@@ -158,6 +154,25 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         let service = service.with_published(published);
         Ok(service)
     }
+}
+
+/// Every interceptor covering `mounted`, outermost first: the router's own,
+/// then the enclosing scopes', with the endpoint's guard among them where a
+/// scope asked for it first and the handler takes one.
+fn covering<C: Send + Sync + 'static>(
+    router: &[Arc<dyn ErasedInterceptor<C>>],
+    router_guard: Option<usize>,
+    mounted: &Mounted<C>,
+) -> Vec<Arc<dyn ErasedInterceptor<C>>> {
+    let mut interceptors = router.to_vec();
+    interceptors.extend(mounted.interceptors.iter().cloned());
+
+    if let Some(at) = super::guard_point(router_guard, router.len(), mounted.guard_at) {
+        if let Some(guard) = Arc::clone(&mounted.endpoint).guard_ahead() {
+            interceptors.insert(at, guard);
+        }
+    }
+    interceptors
 }
 
 /// Adds the routes no path template expresses to the match table.

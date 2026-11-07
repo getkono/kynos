@@ -46,7 +46,9 @@ mod sealed {
 /// combinators are the only other shapes.
 pub trait Requirement: sealed::Sealed + Send + Sync + 'static {
     /// What satisfying the requirement yields the handler.
-    type Credential: Send;
+    ///
+    /// `'static` for the reason [`SecurityScheme::Credential`] is.
+    type Credential: Send + 'static;
 
     /// Whether a guard over this requirement may answer 503: any scheme's
     /// [`SecurityScheme::MAY_BE_UNAVAILABLE`], since each one's authenticator
