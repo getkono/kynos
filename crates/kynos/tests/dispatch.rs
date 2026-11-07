@@ -1341,6 +1341,35 @@ async fn a_declared_query_implies_no_other_method() {
 
 // --- `Accept-Query`, the media types a `QUERY` reads ----------------------
 
+/// Records the `Accept-Query` each response it wraps carries, and changes
+/// nothing.
+#[cfg(feature = "openapi32")]
+#[derive(Clone, Default)]
+struct AcceptQuerySeen(Arc<Mutex<Vec<Option<String>>>>);
+
+#[cfg(feature = "openapi32")]
+impl Interceptor<()> for AcceptQuerySeen {
+    type Reads = ();
+    type Adds = ();
+    type Short = Infallible;
+
+    async fn intercept(
+        &self,
+        request: Request,
+        (): (),
+        (): &(),
+        next: Next<'_, ()>,
+    ) -> Result<Continued<()>, Infallible> {
+        let continued = next.run(request).await;
+        let seen = continued
+            .headers()
+            .get("accept-query")
+            .map(|value| value.to_str().expect("a printable field").to_owned());
+        self.0.lock().expect("an unpoisoned record").push(seen);
+        Ok(continued)
+    }
+}
+
 /// RFC 10008 section 2.1: the 415 a `QUERY` answers a media type it does not
 /// read with names, in `Accept-Query`, the ones it does: its described
 /// `requestBody` content keys. Added before the router's interceptors see the
@@ -1353,7 +1382,12 @@ async fn a_declared_query_implies_no_other_method() {
 #[cfg(feature = "openapi32")]
 #[tokio::test]
 async fn a_query_refusing_a_media_type_names_the_ones_it_reads() {
-    let service = searching();
+    let seen = AcceptQuerySeen::default();
+    let service = Router::<()>::new()
+        .intercept(seen.clone())
+        .mount(kynos::routes![search])
+        .build(())
+        .expect("a describable router");
 
     let refused = send(&service, query(), "/search")
         .header("content-type", "application/xml")
@@ -1362,7 +1396,10 @@ async fn a_query_refusing_a_media_type_names_the_ones_it_reads() {
         .await;
     assert_eq!(refused.status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
     assert_eq!(refused.field("accept-query").as_deref(), Some("text/plain"));
-    assert!(refused.field("x-request-id").is_some());
+    assert_eq!(
+        *seen.0.lock().expect("an unpoisoned record"),
+        [Some("text/plain".to_owned())]
+    );
 
     let served = send(&service, query(), "/search")
         .header("content-type", "text/plain")
