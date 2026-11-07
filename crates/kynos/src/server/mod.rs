@@ -21,18 +21,19 @@
 //! `request_body` module the idle timeout every request body is read under,
 //! and [`shutdown`] the signal; timers live with the work they bound.
 //! [`protocol`], [`tcp`] and
-//! [`tls`] are configuration; the private `lifecycle` module is the state every
-//! part observes.
+//! [`tls`] are configuration; [`lifecycle`] is the state every part observes,
+//! and the [`Draining`](lifecycle::Draining) extractor a handler observes it
+//! through.
 
 mod accept;
 mod connection;
 mod describe;
-mod lifecycle;
 // Crate-visible so the test client bounds a body as a served one is.
 pub(crate) mod request_body;
 
 pub mod address;
 pub mod error;
+pub mod lifecycle;
 pub mod protocol;
 pub mod shutdown;
 pub mod tcp;

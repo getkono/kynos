@@ -27,7 +27,7 @@ use crate::{
     server::{
         TransportConfig,
         address::Shown,
-        lifecycle::{Lifecycle, wait_until_stopping},
+        lifecycle::{Draining, Lifecycle, wait_until_stopping},
         request_body,
     },
 };
@@ -47,6 +47,9 @@ pub(in crate::server) async fn serve_connection<C, I>(
     I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let deadline = first_head_deadline_from_now(&config);
+    // Carried on the connection's shared record, so a request pays nothing
+    // for it until a handler extracts it.
+    let draining = Draining::of(lifecycle.clone());
 
     #[cfg(feature = "tls")]
     let mut lifecycle = lifecycle;
@@ -62,7 +65,8 @@ pub(in crate::server) async fn serve_connection<C, I>(
             Ok(Ok(stream)) => {
                 // Built once and reference-counted onto every request.
                 let identity = crate::server::tls::identity(stream.get_ref().1);
-                let connection = Connection::from_tls_peer(peer_addr, local_addr, identity);
+                let connection =
+                    Connection::accepted(peer_addr, local_addr, Some(identity), draining);
                 let record = connection.clone();
                 let served = serve_http(stream, service, config, connection, lifecycle, deadline);
                 if let Err(error) = served.await {
@@ -89,7 +93,7 @@ pub(in crate::server) async fn serve_connection<C, I>(
         return;
     }
 
-    let connection = Connection::from_peer(peer_addr, local_addr);
+    let connection = Connection::accepted(peer_addr, local_addr, None, draining);
     // One reference count, so a failure can still be logged with its addresses.
     let record = connection.clone();
     let served = serve_http(stream, service, config, connection, lifecycle, deadline);
