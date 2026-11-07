@@ -1,11 +1,14 @@
 //! What `#[derive(ApiError)]` declares each status with, joins a `const` type
 //! URI prefix with, unions a transparent variant's statuses with, and sends
-//! and declares a failure's `#[problem(headers)]` group with.
+//! and declares a failure's `#[problem(headers)]` group with, and logs a 5xx
+//! failure through before its problem consumes it.
 //!
 //! [`response`] forwards to [`error::problem`](crate::error::problem), where
 //! the shape is built, and the header helpers to
 //! [`response::headers`](crate::response::headers), where `WithHeaders` writes
-//! and declares its own; a `pub use` would give each a second path.
+//! and declares its own; a `pub use` would give each a second path. The 5xx
+//! event is emitted by `middleware::trace::reported`, next to the request
+//! log, so the logging facade stays named where the runtime allowance lists.
 
 use kynos_openapi::{Header, Map, RefOr, Response, Schema as OpenApiSchema};
 
@@ -139,6 +142,57 @@ const fn first_sighting(parts: &[&[u16]], part: usize, index: usize) -> bool {
         earlier += 1;
     }
     true
+}
+
+/// A server failure a derived `into_response` is about to consume, held so
+/// it can be logged first.
+///
+/// The expansion calls `(&Failed(&self)).report(status, type_uri)` with
+/// [`ReportSource`] and [`ReportDisplay`] both in scope: method resolution
+/// takes the first where `E` is an `Error`, so its `source()` chain is logged,
+/// and the second, one autoref later, where `E` is only `Display`.
+pub struct Failed<'a, E: ?Sized>(pub &'a E);
+
+impl<E: ?Sized> core::fmt::Debug for Failed<'_, E> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_struct("Failed").finish_non_exhaustive()
+    }
+}
+
+/// Logs a failure with its `source()` chain; see [`Failed`].
+pub trait ReportSource {
+    /// Emits the event where `trace` is enabled, and nothing otherwise.
+    fn report(&self, status: u16, type_uri: &'static str);
+}
+
+/// Logs a failure by its `Display` alone; see [`Failed`].
+pub trait ReportDisplay {
+    /// Emits the event where `trace` is enabled, and nothing otherwise.
+    fn report(&self, status: u16, type_uri: &'static str);
+}
+
+impl<E: std::error::Error + ?Sized> ReportSource for Failed<'_, E> {
+    #[inline]
+    fn report(&self, status: u16, type_uri: &'static str) {
+        #[cfg(feature = "trace")]
+        crate::middleware::trace::reported::emit(status, type_uri, || {
+            crate::middleware::trace::reported::Chain::of(self.0)
+        });
+        #[cfg(not(feature = "trace"))]
+        let _ = (status, type_uri);
+    }
+}
+
+impl<E: core::fmt::Display + ?Sized> ReportDisplay for &Failed<'_, E> {
+    #[inline]
+    fn report(&self, status: u16, type_uri: &'static str) {
+        #[cfg(feature = "trace")]
+        crate::middleware::trace::reported::emit(status, type_uri, || {
+            crate::middleware::trace::reported::Chain::alone(self.0)
+        });
+        #[cfg(not(feature = "trace"))]
+        let _ = (status, type_uri);
+    }
 }
 
 /// The `&str` [`join`]'s bytes spell.

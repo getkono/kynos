@@ -1,12 +1,12 @@
 //! Collecting the schemas a description refers to.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map::Entry};
 
 use kynos_openapi::{ComponentName, Components, Schema as OpenApiSchema};
 
 use crate::{
     middleware::contribution::ContributionConflict,
-    schema::{MapKey, Schema},
+    schema::{MapKey, NamedInstantiation, Schema},
 };
 
 /// Collects the schemas a description refers to.
@@ -40,6 +40,14 @@ pub struct Registry {
     /// The same type again under the same count reached itself with no named
     /// type between, which nothing can stand in for.
     inlining: Vec<(&'static str, usize)>,
+
+    /// The names [`Registry::name_instantiation`] gave, under the component
+    /// name each replaces.
+    renamed: HashMap<String, Renamed>,
+
+    /// Instantiation names [`Registry::name_instantiation`] refused,
+    /// deduplicated.
+    instantiation_names: Vec<InstantiationNameRefusal>,
 
     /// Conflicts [`Registry::resolve`] found, which it cannot return.
     conflicts: Vec<SchemaConflict>,
@@ -78,9 +86,17 @@ impl Registry {
     /// derived types referring to one another, whose description would have no
     /// end; named instantiations are `$ref`s to each other. `#[derive(Schema)]`
     /// refuses the direct case, a generic type naming itself, at compile time.
+    ///
+    /// A name [`Router::name_instantiation`](crate::router::Router::name_instantiation)
+    /// declared replaces the one `T` returns, and its description the body's
+    /// own.
     pub fn resolve<T: Schema>(&mut self) -> OpenApiSchema {
         let Some(name) = T::name() else {
             return self.inline::<T>();
+        };
+        let (name, description) = match self.renamed.get(name.as_str()) {
+            Some(renamed) => (renamed.name.clone(), renamed.description),
+            None => (name, None),
         };
 
         let key = name.as_str().to_owned();
@@ -107,7 +123,10 @@ impl Registry {
             origin,
             rivals: Vec::new(),
         });
-        let schema = T::schema(self);
+        let mut schema = T::schema(self);
+        if let (Some(description), OpenApiSchema::Object(keywords)) = (description, &mut schema) {
+            keywords.description = Some(description.to_owned());
+        }
         let Some(reservation) = self.reserved.pop() else {
             unreachable!("the reservation pushed above is the innermost one");
         };
@@ -161,6 +180,46 @@ impl Registry {
         let schema = T::schema(self);
         self.inlining.pop();
         schema
+    }
+
+    /// Publishes `A`'s instantiation under [`A::NAME`](NamedInstantiation::NAME)
+    /// wherever [`resolve`](Registry::resolve) would have used the component
+    /// name `A` mangles, carrying [`A::DESCRIPTION`](NamedInstantiation::DESCRIPTION).
+    ///
+    /// Takes effect for what is resolved after it, so it precedes every
+    /// operation's description. Idempotent for one name; a refusal is recorded
+    /// rather than returned, for `resolve`'s reason, and the router reports it
+    /// when it is built.
+    pub(crate) fn name_instantiation<A: NamedInstantiation>(&mut self) {
+        let instantiation = std::any::type_name::<A>();
+        let refusal = match (ComponentName::new(A::NAME), A::name()) {
+            (Err(_), _) => InstantiationNameRefusal::Invalid {
+                instantiation: instantiation.to_owned(),
+                name: A::NAME.to_owned(),
+            },
+            (Ok(_), None) => InstantiationNameRefusal::Anonymous {
+                instantiation: instantiation.to_owned(),
+                name: A::NAME.to_owned(),
+            },
+            (Ok(name), Some(mangled)) => match self.renamed.entry(mangled.as_str().to_owned()) {
+                Entry::Vacant(vacant) => {
+                    vacant.insert(Renamed {
+                        name,
+                        description: A::DESCRIPTION,
+                    });
+                    return;
+                }
+                Entry::Occupied(named) if named.get().name == name => return,
+                Entry::Occupied(named) => InstantiationNameRefusal::Contested {
+                    instantiation: mangled.as_str().to_owned(),
+                    first: named.get().name.as_str().to_owned(),
+                    second: name.as_str().to_owned(),
+                },
+            },
+        };
+        if !self.instantiation_names.contains(&refusal) {
+            self.instantiation_names.push(refusal);
+        }
     }
 
     /// Registers a schema under an explicit name and returns a `$ref` to it.
@@ -252,6 +311,12 @@ impl Registry {
         &self.key_patterns
     }
 
+    /// Every name [`name_instantiation`](Registry::name_instantiation)
+    /// refused, in the order it found them.
+    pub(crate) fn instantiation_name_refusals(&self) -> &[InstantiationNameRefusal] {
+        &self.instantiation_names
+    }
+
     /// Every conflict [`resolve`](Registry::resolve) discovered, in the order
     /// it found them.
     pub(crate) fn schema_conflicts(&self) -> &[SchemaConflict] {
@@ -283,6 +348,68 @@ struct Reservation {
     /// Bodies other types described under the same name meanwhile, compared
     /// against this one once it is registered.
     rivals: Vec<OpenApiSchema>,
+}
+
+/// A name [`NamedInstantiation`] gave one instantiation.
+#[derive(Debug)]
+struct Renamed {
+    /// The component name published in place of the mangled one.
+    name: ComponentName,
+
+    /// The component's description, in place of the body's own.
+    description: Option<&'static str>,
+}
+
+/// A [`NamedInstantiation`] the registry could not honour.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum InstantiationNameRefusal {
+    /// Two names were given to one component: two types sharing a mangled
+    /// name, such as an instantiation and a `Box` of it, each named.
+    #[error(
+        "the instantiation published as `{instantiation}` is named both `{first}` and \
+         `{second}`; a component has one name, so drop one `name_instantiation!`"
+    )]
+    Contested {
+        /// The mangled component name both replace.
+        instantiation: String,
+
+        /// The name registered first.
+        first: String,
+
+        /// The name registered second.
+        second: String,
+    },
+
+    /// The type has no component name to replace: it is inlined wherever it
+    /// is used, as an instantiation over a type argument with no name of its
+    /// own is.
+    #[error(
+        "`{instantiation}` is inlined, so it has no component name for `{name}` to replace; \
+         name its type arguments, or give it a hand `Schema` implementation returning a \
+         `name()`"
+    )]
+    Anonymous {
+        /// The instantiation, as [`std::any::type_name`] spells it.
+        instantiation: String,
+
+        /// The name it was given.
+        name: String,
+    },
+
+    /// The name is not a legal component name, which matches
+    /// `^[a-zA-Z0-9._-]+$`.
+    #[error(
+        "`{name}`, given to `{instantiation}`, is not a component name, which is ASCII \
+         letters, digits, `.`, `-` and `_`"
+    )]
+    Invalid {
+        /// The instantiation, as [`std::any::type_name`] spells it.
+        instantiation: String,
+
+        /// The name it was given.
+        name: String,
+    },
 }
 
 /// Two different types claimed the same component name.

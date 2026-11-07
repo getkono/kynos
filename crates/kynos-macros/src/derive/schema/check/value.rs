@@ -1,9 +1,9 @@
 //! The checks one value gets: its field's bounds, then its type's, on the value
 //! itself or on the type its `as` describes it as.
 
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{quote, quote_spanned};
-use syn::{Field, Type, spanned::Spanned};
+use syn::{Field, Ident, Type, spanned::Spanned};
 
 use crate::derive::schema::attributes::{Bound, bounds, described_as, described_via};
 
@@ -16,14 +16,22 @@ pub(super) fn described_checks(field: &Field) -> TokenStream2 {
         return value_checks(field);
     };
     let (ty, checks) = (&field.ty, checks_on(field, &described));
-    if let Some(via) = described_via(field) {
-        return quote_spanned! {via.span()=>
-            let value: &#described = &#via(value);
-            #checks
-        };
-    }
-    quote_spanned! {described.span()=>
-        let value: &#described = &<#described as ::core::convert::From<&#ty>>::from(value);
+    // Only the conversion takes the user's span. Both `value`s keep the
+    // derive's hygiene, the argument merely located at the conversion, so the
+    // one `checks` reads is the converted one however a `macro_rules!` hands
+    // the field's tokens in.
+    let (convert, at) = match described_via(field) {
+        Some(via) => (quote!(#via), via.span()),
+        None => (
+            quote_spanned! {described.span()=>
+                <#described as ::core::convert::From<&#ty>>::from
+            },
+            described.span(),
+        ),
+    };
+    let argument = Ident::new("value", Span::call_site().located_at(at));
+    quote! {
+        let value: &#described = &#convert(#argument);
         #checks
     }
 }

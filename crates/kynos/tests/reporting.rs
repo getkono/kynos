@@ -111,6 +111,7 @@ reportable! {
         kynos::Error;
         kynos::router::error::RouterError;
         kynos::schema::registry::SchemaConflict;
+        kynos::schema::registry::InstantiationNameRefusal;
         kynos::schema::registry::UnenforceableKeyPattern;
         kynos::middleware::contribution::ContributionConflict;
         kynos::middleware::MiddlewareError;

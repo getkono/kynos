@@ -70,6 +70,58 @@ pub(super) fn into_problem(failures: &[&Failure], delegates: &[&Transparent]) ->
 ///
 /// Where nothing sends a header group, the problem rendered alone.
 pub(super) fn into_response(failures: &[&Failure], delegates: &[&Transparent]) -> TokenStream2 {
+    let report = report(failures, delegates);
+    let respond = respond(failures, delegates);
+    quote! {
+        #report
+        #respond
+    }
+}
+
+/// The statement logging a 5xx failure before it is consumed, through
+/// `kynos::__private::problem::Failed`, which is a no-op without `trace`.
+///
+/// Rendered only where this type declares a 5xx; a transparent variant is left
+/// to its field's own `into_response`, so one failure is logged at most once,
+/// and only where that field is itself a derived `ApiError`.
+fn report(failures: &[&Failure], delegates: &[&Transparent]) -> TokenStream2 {
+    let server: Vec<&&Failure> = failures
+        .iter()
+        .filter(|failure| failure.status >= 500)
+        .collect();
+    if server.is_empty() {
+        return TokenStream2::new();
+    }
+
+    let arms = server.iter().map(|failure| {
+        let path = &failure.path;
+        let status = failure.status;
+        let uri = failure
+            .type_uri
+            .as_ref()
+            .map_or_else(|| quote!("about:blank"), |uri| quote!(#uri));
+        quote! {
+            #path { .. } => (&::kynos::__private::problem::Failed(&self)).report(#status, #uri),
+        }
+    });
+    // A catch-all only where something is left to catch, so none is
+    // unreachable.
+    let rest = (server.len() < failures.len() || !delegates.is_empty()).then(|| quote!(_ => {}));
+
+    quote! {
+        {
+            #[allow(unused_imports)]
+            use ::kynos::__private::problem::{ReportDisplay as _, ReportSource as _};
+            match &self {
+                #(#arms)*
+                #rest
+            }
+        }
+    }
+}
+
+/// [`into_response`] after the failure is logged.
+fn respond(failures: &[&Failure], delegates: &[&Transparent]) -> TokenStream2 {
     if delegates.is_empty() && failures.iter().all(|failure| failure.headers.is_none()) {
         return quote! {
             ::kynos::response::IntoResponse::into_response(

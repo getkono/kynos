@@ -19,7 +19,7 @@ use tokio::time::{Instant, Sleep};
 
 use crate::{
     error::problem::{IntoProblem, Problem, ProblemType, refusal_problem, refusal_response},
-    extract::body::limit::{BodyLimit, Capped, collect_capped, declared_length},
+    extract::body::limit::{BodyLimit, collect_capped, declared_length},
     http::{
         self, HeaderValue, Version,
         body::{Body, BoxError},
@@ -421,17 +421,6 @@ impl<T> BodySize<T, BodyTooSlow> {
     }
 }
 
-/// What a capped read hands on: the body read whole, or as it failed, so the
-/// extractor beneath refuses a truncated payload rather than parsing it; or
-/// the limit it passed.
-fn handed_on(capped: Capped) -> Result<Body, u64> {
-    match capped {
-        Capped::Whole(bytes) => Ok(Body::from_bytes(bytes)),
-        Capped::FailedPartWay { arrived, error } => Ok(Body::failed_after(arrived, error)),
-        Capped::Exceeded { limit } => Err(limit),
-    }
-}
-
 impl<C, T> Interceptor<C> for BodySize<T>
 where
     C: Sync + 'static,
@@ -464,8 +453,10 @@ where
         }
 
         let (parts, body) = request.into_parts();
-        let body =
-            handed_on(collect_capped(body, self.limit).await).map_err(BodySizeExceeded::new)?;
+        let body = collect_capped(body, self.limit)
+            .await
+            .into_body()
+            .ok_or_else(|| BodySizeExceeded::new(self.limit))?;
 
         let request = http::Request::from_parts(parts, body);
         Ok(next.run(request).await)
@@ -534,8 +525,9 @@ where
         let capped = tokio::time::timeout(total, collect_capped(body, self.limit))
             .await
             .map_err(|_elapsed| late())?;
-        let body = handed_on(capped)
-            .map_err(|limit| BodyRefused::TooLarge(BodySizeExceeded::new(limit)))?;
+        let body = capped
+            .into_body()
+            .ok_or_else(|| BodyRefused::TooLarge(BodySizeExceeded::new(self.limit)))?;
 
         Ok(next.run(http::Request::from_parts(parts, body)).await)
     }

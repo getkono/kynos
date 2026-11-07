@@ -3,8 +3,8 @@ use kynos_openapi::{
     model::schema::types::{SchemaType, TypeSet},
 };
 
-use super::{Registry, SchemaConflict};
-use crate::schema::Schema;
+use super::{InstantiationNameRefusal, Registry, SchemaConflict};
+use crate::schema::{NamedInstantiation, Schema};
 
 /// An object schema with one property, which is all these fixtures need to
 /// tell two bodies apart.
@@ -372,4 +372,139 @@ fn a_key_pattern_is_refused_without_the_pattern_feature() {
         "{}",
         refused.reason
     );
+}
+
+/// A generic type as the derive implements it: named by
+/// [`instantiation_name`](crate::schema::instantiation_name), and described
+/// with prose of its own.
+struct Page<T>(std::marker::PhantomData<T>);
+
+impl<T: Schema> Schema for Page<T> {
+    fn schema(registry: &mut Registry) -> OpenApiSchema {
+        let mut page = object_with("items", registry.resolve::<Vec<T>>());
+        if let OpenApiSchema::Object(keywords) = &mut page {
+            keywords.description = Some("Any page.".to_owned());
+        }
+        page
+    }
+
+    fn name() -> Option<ComponentName> {
+        crate::schema::instantiation_name("Page", &[T::name()])
+    }
+}
+
+impl NamedInstantiation for Page<Line> {
+    const NAME: &'static str = "LinePage";
+    const DESCRIPTION: Option<&'static str> = Some("One page of lines.");
+}
+
+/// Shares `Page<Line>`'s mangled name under another type, so naming it too
+/// gives one component two names.
+impl NamedInstantiation for Box<Page<Line>> {
+    const NAME: &'static str = "BoxedLinePage";
+}
+
+/// Inlined wherever it is used, so it has no name to replace.
+impl NamedInstantiation for Page<u32> {
+    const NAME: &'static str = "CountPage";
+}
+
+/// Named with no prose of its own, and a name no component may carry.
+impl NamedInstantiation for Page<Order> {
+    const NAME: &'static str = "Order Page";
+}
+
+/// The mangled name is replaced wherever it would have been written, through a
+/// wrapper sharing it too, and the alias's description replaces the generic
+/// type's own.
+#[test]
+fn a_named_instantiation_replaces_the_mangled_name_everywhere() {
+    let mut registry = Registry::new();
+    registry.name_instantiation::<Page<Line>>();
+
+    assert_eq!(
+        registry.resolve::<Page<Line>>(),
+        OpenApiSchema::component("LinePage")
+    );
+    assert_eq!(
+        registry.resolve::<Box<Page<Line>>>(),
+        OpenApiSchema::component("LinePage")
+    );
+
+    assert!(registry.instantiation_name_refusals().is_empty());
+    assert!(registry.schema_conflicts().is_empty());
+    let components = registry.into_components();
+    assert!(!components.schemas.contains_key("Page_Line"));
+    let Some(OpenApiSchema::Object(page)) = components.schemas.get("LinePage") else {
+        panic!("`LinePage` is an object component: {components:?}");
+    };
+    assert_eq!(page.description.as_deref(), Some("One page of lines."));
+}
+
+/// Registering one name twice, as two merged routers each declaring it do, is
+/// no conflict.
+#[test]
+fn naming_an_instantiation_twice_alike_is_idempotent() {
+    let mut registry = Registry::new();
+    registry.name_instantiation::<Page<Line>>();
+    registry.name_instantiation::<Page<Line>>();
+
+    assert_eq!(
+        registry.resolve::<Page<Line>>(),
+        OpenApiSchema::component("LinePage")
+    );
+    assert!(registry.instantiation_name_refusals().is_empty());
+}
+
+/// Each name the registry cannot give is recorded once, naming what it was
+/// given to, and leaves the mangled name in place.
+#[test]
+fn a_name_the_registry_cannot_give_is_refused_once() {
+    let mut registry = Registry::new();
+    registry.name_instantiation::<Page<Line>>();
+    for _ in 0..2 {
+        registry.name_instantiation::<Box<Page<Line>>>();
+        registry.name_instantiation::<Page<u32>>();
+        registry.name_instantiation::<Page<Order>>();
+    }
+
+    assert_eq!(
+        registry.instantiation_name_refusals(),
+        [
+            InstantiationNameRefusal::Contested {
+                instantiation: "Page_Line".to_owned(),
+                first: "LinePage".to_owned(),
+                second: "BoxedLinePage".to_owned(),
+            },
+            InstantiationNameRefusal::Anonymous {
+                instantiation: std::any::type_name::<Page<u32>>().to_owned(),
+                name: "CountPage".to_owned(),
+            },
+            InstantiationNameRefusal::Invalid {
+                instantiation: std::any::type_name::<Page<Order>>().to_owned(),
+                name: "Order Page".to_owned(),
+            },
+        ]
+    );
+    assert_eq!(
+        registry.resolve::<Page<Order>>(),
+        OpenApiSchema::component("Page_Order")
+    );
+}
+
+/// A refused name fails the build as the refusal, before the component
+/// conflict a contested name could also leave.
+#[test]
+fn a_refused_instantiation_name_refuses_the_build() {
+    let built = crate::Router::<()>::new()
+        .name_instantiation::<Page<u32>>()
+        .build(());
+
+    let Err(crate::Error::InstantiationName(refused)) = built else {
+        panic!("an unnamed instantiation was given a name");
+    };
+    assert!(matches!(
+        *refused,
+        InstantiationNameRefusal::Anonymous { .. }
+    ));
 }

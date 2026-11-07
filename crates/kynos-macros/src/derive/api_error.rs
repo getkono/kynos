@@ -34,6 +34,10 @@
 //! that type's, and its statuses and responses join the enum's, the statuses
 //! in `const` items of the expansion's own. Its response is that type's too,
 //! so the headers the held error sends reach the wire.
+//!
+//! `into_response` first hands a 5xx failure to
+//! `kynos::__private::problem::Failed`, which logs it under `trace`; the
+//! feature is the facade's, so the expansion emits the call either way.
 
 mod args;
 mod emit;

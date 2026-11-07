@@ -1,0 +1,17 @@
+error: `name_instantiation!` names one instantiation, so its alias takes no generic parameters; write each instantiation as its own alias
+  --> tests/ui/macros/name_instantiation_refusals.rs:15:33
+   |
+15 | kynos::name_instantiation!(Pages<T> = Page<T>);
+   |                                 ^
+
+error: `name_instantiation!` accepts only a doc comment on an alias, which becomes the component's description
+  --> tests/ui/macros/name_instantiation_refusals.rs:18:5
+   |
+18 |     #[cfg(test)]
+   |     ^
+
+error: a component name is ASCII letters, digits, `.`, `-` and `_`, so the alias naming one must be spelled in ASCII
+  --> tests/ui/macros/name_instantiation_refusals.rs:22:28
+   |
+22 | kynos::name_instantiation!(Séite = Page<Torrent>);
+   |                            ^^^^^

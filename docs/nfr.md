@@ -315,7 +315,19 @@ means resolving on first read, which the decision on the origin above refuses.
 `HeaderValue::from_str`, which copies into a `Vec`-backed `Bytes`. The first
 clone of such a `Bytes` promotes it by boxing a shared header, and every later
 clone is a reference count. So the one-time block is per path rather than per
-process, and nothing lazy in the router causes it.
+process, and nothing lazy in the router causes it. A plain `OPTIONS` a
+`QUERY` path answers clones its `Allow` and its `Accept-Query` the same way.
+
+**A `QUERY` naming an `Accept-Query` boxes its endpoint's future once more.**
+The 415 for an unsupported media type gains the field at the endpoint's
+terminal, so the router's interceptors see it as they see the 415, and the
+terminal awaits the endpoint inside a box of its own to do it: one block per
+request on such an operation, by construction and unmeasured, since no
+[`kynos-profile`](../crates/kynos-profile/) row serves a `QUERY`. Every other
+operation pays a branch. The body extractor marks that 415 in the response's
+extensions, which allocates the map on a response that carries no extension
+yet; only a refusal pays it. Adding the field after the chain would cost no
+box and would hide it from the router's and its groups' interceptors.
 
 **One suspect is off the list rather than unconvicted.** The body wrapper that
 reports a disconnect was the third name here, and erasing a body is none of the
@@ -779,6 +791,15 @@ about where a request came from. An address family, a TLS identity or a
 credential added later lands on `Connection` and changes it with the type
 that describes it.
 
+`schema/registry.rs` is `status.rs`'s shape. It declares `Registry` and the
+three refusals it records, `SchemaConflict`, `UnenforceableKeyPattern` and
+`InstantiationNameRefusal`, so a split would turn `registry::SchemaConflict`,
+the type `Error::Schema` carries, into a longer path. What pushed it over was
+issue #1149's named instantiations, which replace a component name inside
+`resolve` itself: renaming is part of resolving, not beside it, and the
+refusal is the registry's to record for `resolve`'s reason. One concern, so one
+file.
+
 The budget, which may only shrink:
 
 - `crates/kynos-macros/src/derive/schema/attributes.rs`
@@ -807,6 +828,7 @@ The budget, which may only shrink:
 - `crates/kynos/src/router/mod.rs`
 - `crates/kynos/src/schema/constraints.rs`
 - `crates/kynos/src/schema/mod.rs`
+- `crates/kynos/src/schema/registry.rs`
 - `crates/kynos/src/security/auth.rs`
 - `crates/kynos/src/security/mod.rs`
 - `crates/kynos/src/security/requirement.rs`

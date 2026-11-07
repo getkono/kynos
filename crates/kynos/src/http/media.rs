@@ -302,7 +302,7 @@ impl<M: MediaRanges + ?Sized> WellFormedRanges for M {}
 /// A media type's parameters as a name and a value, skipping the empty ones
 /// RFC 9110 section 5.6.6 allows. Read only of what
 /// [`has_well_formed_parameters`] passed, so each has its `=`.
-fn parameters(media_type: &str) -> impl Iterator<Item = (&str, &str)> {
+pub(crate) fn parameters(media_type: &str) -> impl Iterator<Item = (&str, &str)> {
     let after_essence = media_type.split_once(';').map_or("", |(_, rest)| rest);
     super::unquoted_split(after_essence, b';')
         .filter_map(|parameter| parameter.trim_matches([' ', '\t']).split_once('='))

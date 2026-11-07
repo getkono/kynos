@@ -6800,3 +6800,207 @@ mod no_prelude {
         name: String,
     }
 }
+
+// --- A derived 5xx logs its cause, and only a 5xx ---------------------------
+//
+// The other runtime exception: the event `into_response` emits before the
+// failure is consumed is invisible to every description, and `detail` keeps
+// only the `Display` the client is owed.
+#[cfg(feature = "trace")]
+mod logged {
+    use kynos::{ApiError, response::IntoResponse};
+
+    use super::{Answered, answered};
+
+    /// The lines a `fmt` subscriber writes while `emitting` runs on this
+    /// thread.
+    fn captured<T>(emitting: impl FnOnce() -> T) -> (T, String) {
+        #[derive(Clone, Default)]
+        struct Sink(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+        impl std::io::Write for Sink {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0
+                    .lock()
+                    .expect("an unpoisoned sink")
+                    .extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let sink = Sink::default();
+        let writer = sink.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_ansi(false)
+            .without_time()
+            .with_writer(move || writer.clone())
+            .finish();
+        let value = tracing::subscriber::with_default(subscriber, emitting);
+
+        let bytes = sink.0.lock().expect("an unpoisoned sink").clone();
+        (value, String::from_utf8(bytes).expect("UTF-8 log lines"))
+    }
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("the disk is full")]
+    struct DiskFull;
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("writing the journal failed")]
+    struct JournalError(#[source] DiskFull);
+
+    const BASE: &str = "https://errors.example.com/";
+
+    #[derive(Debug, thiserror::Error, ApiError)]
+    #[problem(base = BASE)]
+    enum PauseError {
+        #[error("pausing the torrent failed; the log has the cause")]
+        #[problem(status = 500, title = "Internal error")]
+        Internal(#[source] JournalError),
+
+        #[error("no torrent with that hash")]
+        #[problem(status = 404)]
+        Unknown,
+    }
+
+    #[derive(Debug, thiserror::Error, ApiError)]
+    enum Outer {
+        #[error(transparent)]
+        #[problem(transparent)]
+        Pause(PauseError),
+    }
+
+    /// Only `Display`: no `source()` to walk, so its message alone is logged.
+    #[derive(Debug, ApiError)]
+    #[problem(status = 503)]
+    struct Unavailable;
+
+    impl std::fmt::Display for Unavailable {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("the store is unavailable")
+        }
+    }
+
+    /// An `Error` that borrows, which `tracing` could not record as the
+    /// `'static` error it asks for without the chain being copied out.
+    #[derive(Debug, thiserror::Error, ApiError)]
+    #[error("the {0} shard is unreachable")]
+    #[problem(status = 502)]
+    struct Unreachable<'a>(&'a str);
+
+    /// One `ERROR` event, carrying the status, the type URI and the whole
+    /// chain, while `detail` on the wire keeps the cause out.
+    #[tokio::test]
+    async fn a_server_failure_logs_its_source_chain_and_withholds_it_from_detail() {
+        let (response, lines) =
+            captured(|| PauseError::Internal(JournalError(DiskFull)).into_response());
+
+        assert_eq!(lines.lines().count(), 1, "{lines}");
+        assert!(
+            lines.contains("ERROR kynos::error: operation failed"),
+            "{lines}"
+        );
+        assert!(lines.contains("status=500"), "{lines}");
+        assert!(
+            lines.contains("problem_type=\"https://errors.example.com/internal\""),
+            "{lines}"
+        );
+        assert!(
+            lines.contains("error=pausing the torrent failed; the log has the cause"),
+            "{lines}"
+        );
+        assert!(
+            lines.contains("error.sources=[writing the journal failed, the disk is full]"),
+            "{lines}"
+        );
+
+        let Answered { status, body, .. } = answered(response).await;
+        assert_eq!(status, 500);
+        let body: serde_json::Value = serde_json::from_slice(&body).expect("a JSON body");
+        assert_eq!(
+            body["detail"],
+            "pausing the torrent failed; the log has the cause"
+        );
+    }
+
+    /// A client failure is the client's to read, so nothing is logged for it.
+    #[test]
+    fn a_client_failure_logs_nothing() {
+        let (response, lines) = captured(|| PauseError::Unknown.into_response());
+
+        assert_eq!(response.status(), 404);
+        assert_eq!(lines, "");
+    }
+
+    /// A transparent variant is logged by the error it holds, once.
+    #[test]
+    fn a_transparent_server_failure_is_logged_once() {
+        let (response, lines) =
+            captured(|| Outer::Pause(PauseError::Internal(JournalError(DiskFull))).into_response());
+
+        assert_eq!(response.status(), 500);
+        assert_eq!(lines.matches("operation failed").count(), 1, "{lines}");
+        assert!(
+            lines.contains("error.sources=[writing the journal failed"),
+            "{lines}"
+        );
+    }
+
+    /// A built-in refusal held transparently is sent by its own
+    /// `into_response`, which logs nothing; the derive adds no event of its
+    /// own for it.
+    #[test]
+    fn a_transparent_built_in_server_refusal_logs_nothing() {
+        #[derive(ApiError)]
+        enum Shed {
+            #[problem(transparent)]
+            Full(kynos::middleware::limits::concurrency::AtCapacity),
+        }
+
+        impl std::fmt::Display for Shed {
+            fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("the service is at capacity")
+            }
+        }
+
+        let (response, lines) = captured(|| {
+            Shed::Full(kynos::middleware::limits::concurrency::AtCapacity::new(
+                None,
+            ))
+            .into_response()
+        });
+
+        assert_eq!(response.status(), 503);
+        assert_eq!(lines, "");
+    }
+
+    /// A failure that is only `Display` is logged by it, under `about:blank`.
+    #[test]
+    fn a_display_only_server_failure_logs_its_message() {
+        let (response, lines) = captured(|| Unavailable.into_response());
+
+        assert_eq!(response.status(), 503);
+        assert!(lines.contains("status=503"), "{lines}");
+        assert!(lines.contains("problem_type=\"about:blank\""), "{lines}");
+        assert!(lines.contains("error=the store is unavailable"), "{lines}");
+        assert!(!lines.contains("error.sources"), "{lines}");
+    }
+
+    /// A borrowing failure is logged like any other.
+    #[test]
+    fn a_borrowing_server_failure_is_logged() {
+        let shard = String::from("east");
+        let (response, lines) = captured(|| Unreachable(&shard).into_response());
+
+        assert_eq!(response.status(), 502);
+        assert!(
+            lines.contains("error=the east shard is unreachable"),
+            "{lines}"
+        );
+    }
+}

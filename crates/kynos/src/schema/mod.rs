@@ -198,7 +198,7 @@ pub trait Schema {
     /// Anonymous types — tuples, `Option<T>`, `Vec<T>` — return `None` and are
     /// inlined. Named structs and enums return a name and are `$ref`'d; a
     /// generic one takes the name [`instantiation_name`] mangles for each
-    /// instantiation.
+    /// instantiation, which a [`NamedInstantiation`] replaces.
     #[must_use]
     fn name() -> Option<ComponentName> {
         None
@@ -255,6 +255,70 @@ pub fn instantiation_name(
         mangled.push_str(argument.as_ref()?.as_str());
     }
     ComponentName::sanitized(&mangled).ok()
+}
+
+/// One instantiation of a generic type, published under a component name of
+/// its own in place of the one [`instantiation_name`] mangles.
+///
+/// Declared with `kynos::name_instantiation!`, which writes the type alias and
+/// this implementation from one line, and registered with
+/// [`Router::name_instantiation`](crate::router::Router::name_instantiation):
+///
+/// ```
+/// # #[cfg(feature = "macros")]
+/// # {
+/// #[derive(kynos::Schema, serde::Serialize)]
+/// struct Page<T> {
+///     items: Vec<T>,
+///     next_cursor: Option<String>,
+/// }
+///
+/// #[derive(kynos::Schema, serde::Serialize)]
+/// struct TorrentSummary {
+///     name: String,
+/// }
+///
+/// kynos::name_instantiation! {
+///     /// One page of torrents, ordered by infohash.
+///     pub TorrentPage = Page<TorrentSummary>;
+/// }
+///
+/// let router = kynos::Router::<()>::new().name_instantiation::<TorrentPage>();
+/// # let _ = router;
+/// # }
+/// ```
+///
+/// Every `$ref` the registry would have written to `Page_TorrentSummary`
+/// then names `TorrentPage`, and no `Page_TorrentSummary` component exists.
+/// The replacement is keyed by that mangled name, so `Box<TorrentPage>` and
+/// `Arc<TorrentPage>` are renamed with it. A name mangled *from* it is not:
+/// `Wrapper<TorrentPage>` is still `Wrapper_Page_TorrentSummary`, since the
+/// derive reads its arguments' names without a registry.
+///
+/// One implementation per type is all coherence allows, so one instantiation
+/// cannot be given two names in one program; two types sharing a mangled name
+/// can, and that is refused when the document is built, as is a type with no
+/// component name to replace and a [`NAME`](Self::NAME) that is not one.
+///
+/// Implementing a foreign trait for an instantiation is subject to the orphan
+/// rule: the generic type must be declared in the crate naming its
+/// instantiation.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a named instantiation",
+    label = "no component name of its own",
+    note = "declare one with `kynos::name_instantiation!(Name = {Self});`"
+)]
+pub trait NamedInstantiation: Schema {
+    /// The component name the instantiation is published under.
+    ///
+    /// `name_instantiation!` takes it from the alias's identifier.
+    const NAME: &'static str;
+
+    /// The component's `description`, in place of the generic type's own.
+    ///
+    /// `name_instantiation!` takes it from the alias's doc comment, and leaves
+    /// the generic type's own prose where the alias has none.
+    const DESCRIPTION: Option<&'static str> = None;
 }
 
 /// A type usable as a JSON object key.

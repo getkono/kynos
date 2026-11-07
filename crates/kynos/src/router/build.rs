@@ -6,6 +6,8 @@
 
 use std::collections::HashSet;
 
+#[cfg(feature = "openapi32")]
+use super::install::record_accept_query;
 use super::install::{catches, install_preflight, invalid};
 use super::{
     Arc, Dispatch, EndpointTerminal, HashMap, PanicPolicy, PathEntry, Result, Router, RouterError,
@@ -87,10 +89,18 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 layers
             };
 
+            let terminal = EndpointTerminal::new(mounted.endpoint);
+            #[cfg(feature = "openapi32")]
+            let terminal = terminal.with_accept_query(record_accept_query(
+                &mut paths[index],
+                method,
+                described,
+            ));
+
             paths[index].operations.push(dispatch::Served {
                 method,
                 operation_id,
-                terminal: Arc::new(EndpointTerminal::new(mounted.endpoint)),
+                terminal: Arc::new(terminal),
                 interceptors,
                 catch_panics: mounted.catch_panics || catches::<P>(),
                 secured,
@@ -230,6 +240,8 @@ fn path_entry<C>(
         // Interned as the names are: leaked once per path a router builds.
         variables: Box::leak(variables().into_boxed_slice()),
         allow: dispatch::allow_header(&[]),
+        #[cfg(feature = "openapi32")]
+        accept_query: None,
         operations: Vec::new(),
     });
     index_of.insert(key.to_owned(), index);

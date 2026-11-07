@@ -15,6 +15,9 @@ pub mod etag;
 pub mod forwarded;
 pub mod media;
 
+// Private: the router derives it from the description; no handler builds one.
+#[cfg(feature = "openapi32")]
+pub(crate) mod accept_query;
 // Private: a handler only ever sees a coding already chosen.
 #[cfg(any(feature = "compression", feature = "assets"))]
 pub(crate) mod coding;

@@ -501,7 +501,40 @@ impl IntoProblem for BodyRejection {
     }
 }
 
-rejection_response!(BodyRejection, errors: StatusCode::UNPROCESSABLE_ENTITY => true);
+/// The problem, and on the 415 for a media type the marker a `QUERY`
+/// operation's terminal reads to add the `Accept-Query` naming its types.
+impl IntoResponse for BodyRejection {
+    fn into_response(self) -> crate::http::Response {
+        #[cfg(feature = "openapi32")]
+        if matches!(self, Self::UnsupportedMediaType { .. }) {
+            let mut response = IntoProblem::into_problem(self).into_response();
+            response.extensions_mut().insert(MediaTypeRefused);
+            return response;
+        }
+
+        IntoProblem::into_problem(self).into_response()
+    }
+}
+
+impl Responses for BodyRejection {
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        problem_responses(
+            registry,
+            <Self as IntoProblem>::statuses(),
+            Some((StatusCode::UNPROCESSABLE_ENTITY, true)),
+        )
+    }
+}
+
+/// Marks the 415 a body extractor raises for a media type it does not read,
+/// as against one for a content coding (RFC 9110 section 15.5.16), so only
+/// the first gains `Accept-Query` (RFC 10008 section 2.1).
+///
+/// Taken off the response by the `QUERY` operation's terminal that reads it;
+/// elsewhere it rides along unread.
+#[cfg(feature = "openapi32")]
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct MediaTypeRefused;
 
 /// No offered representation satisfied the request's `Accept`.
 #[derive(Debug, thiserror::Error)]

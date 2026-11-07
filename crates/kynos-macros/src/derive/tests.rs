@@ -7308,3 +7308,89 @@ mod param_value {
         );
     }
 }
+
+/// `name_instantiation!` is a function-like macro, so its cases are token
+/// streams rather than `DeriveInput`s; it is counted the same way.
+mod name_instantiation {
+    use proc_macro2::TokenStream as TokenStream2;
+
+    use super::every_diagnostic_has_a_case;
+    use crate::derive::schema::instantiation::{Instantiations, expand_inner};
+
+    /// What was written, and a fragment of what the macro must say about it.
+    fn ledger() -> Vec<(&'static str, TokenStream2, &'static str)> {
+        vec![
+            (
+                "an alias with generic parameters, which names no one instantiation",
+                quote::quote!(pub Pages<T> = Page<T>;),
+                "takes no generic parameters",
+            ),
+            (
+                "an attribute other than a doc comment",
+                quote::quote!(
+                    #[cfg(test)]
+                    pub TorrentPage = Page<TorrentSummary>;
+                ),
+                "accepts only a doc comment",
+            ),
+            (
+                "an identifier no component name can spell",
+                quote::quote!(pub Seite = Page<Torrent>; pub Séite = Page<Torrent>;),
+                "spelled in ASCII",
+            ),
+        ]
+    }
+
+    fn expand(tokens: TokenStream2) -> syn::Result<TokenStream2> {
+        syn::parse2::<Instantiations>(tokens).and_then(|input| expand_inner(&input))
+    }
+
+    #[test]
+    fn each_case_raises_the_diagnostic_it_names() {
+        for (description, tokens, expects) in ledger() {
+            let Err(error) = expand(tokens) else {
+                panic!("{description} must be rejected");
+            };
+            let reported = error.to_string();
+            assert!(
+                reported.contains(expects),
+                "{description}: expected a diagnostic containing {expects:?}, got {reported:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_name_instantiation_diagnostic_has_a_case() {
+        every_diagnostic_has_a_case(
+            "schema/instantiation.rs",
+            include_str!("schema/instantiation.rs"),
+            ledger().len(),
+        );
+    }
+
+    /// Each entry is its alias and its implementation, named by the alias's
+    /// identifier without a raw identifier's `r#`, described by its doc
+    /// comment, and with no description where it has none.
+    #[test]
+    fn each_entry_is_an_alias_and_its_name() {
+        let expanded = expand(quote::quote!(
+            /// One page of torrents.
+            pub TorrentPage = Page<TorrentSummary>;
+            r#PlanPage = Page<Plan>;
+        ))
+        .expect("two well-formed entries")
+        .to_string();
+
+        for fragment in [
+            "pub type TorrentPage = Page < TorrentSummary > ;",
+            "impl :: kynos :: schema :: NamedInstantiation for TorrentPage",
+            "const NAME : & 'static str = \"TorrentPage\" ;",
+            ":: core :: option :: Option :: Some (\"One page of torrents.\")",
+            "type r#PlanPage = Page < Plan > ;",
+            "const NAME : & 'static str = \"PlanPage\" ;",
+            "= :: core :: option :: Option :: None ;",
+        ] {
+            assert!(expanded.contains(fragment), "{fragment:?} in {expanded}");
+        }
+    }
+}
