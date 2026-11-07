@@ -1,28 +1,78 @@
-//! The per-listener accept loop.
+//! The listeners and their accept loop.
 //!
 //! One task per listener. It holds the connection semaphore, backs off on a
 //! failing accept, and stops accepting the moment the lifecycle leaves
 //! `Running` or its backoff gives up — then waits for its own connections
 //! rather than the server waiting for all of them at once.
+//!
+//! The loop is generic over [`Acceptor`], the kinds of listener it serves: a
+//! TCP one and, on Unix, a Unix domain socket one. Both are tokio's, so this is
+//! not a runtime seam; it keeps each kind's loop monomorphic, so a TCP
+//! connection pays for no dispatch the Unix kind brings.
 
-use std::{io, net::SocketAddr, sync::Arc, time::Duration};
+use std::{future::Future, io, net::SocketAddr, sync::Arc, time::Duration};
 
 use tokio::{
-    net::TcpListener,
+    io::{AsyncRead, AsyncWrite},
+    net::{TcpListener, TcpStream},
     sync::{Semaphore, mpsc, watch},
     task::JoinSet,
 };
 
 use crate::{
+    extract::connection::TransportAddress,
     router::service::Service,
     server::{
         TransportConfig,
+        address::Shown,
         connection::serve_connection,
         error::ServerError,
         lifecycle::{Lifecycle, wait_until_forced, wait_until_stopping},
         tcp::SocketOptions,
     },
 };
+
+/// A bound listener the accept loop takes connections from.
+pub(in crate::server) trait Acceptor: Send + 'static {
+    /// What one accepted connection is read from and written to.
+    type Stream: AsyncRead + AsyncWrite + Unpin + Send + 'static;
+
+    /// Accepts one connection, prepared to be served, and its peer's address.
+    fn accept(&self) -> impl Future<Output = io::Result<(Self::Stream, TransportAddress)>> + Send;
+}
+
+/// A TCP listener, and the options every socket it accepts is given.
+#[derive(Debug)]
+pub(in crate::server) struct TcpAcceptor {
+    pub(in crate::server) listener: TcpListener,
+    pub(in crate::server) local_addr: SocketAddr,
+    pub(in crate::server) socket: SocketOptions,
+}
+
+impl Acceptor for TcpAcceptor {
+    type Stream = TcpStream;
+
+    async fn accept(&self) -> io::Result<(TcpStream, TransportAddress)> {
+        let (stream, peer_addr) = self.listener.accept().await?;
+        self.socket.apply(&stream, self.local_addr, peer_addr);
+        Ok((stream, peer_addr.into()))
+    }
+}
+
+/// A Unix domain socket listener. No socket option applies to what it
+/// accepts: TCP keepalive and `TCP_NODELAY` are TCP's.
+#[cfg(unix)]
+impl Acceptor for tokio::net::UnixListener {
+    type Stream = tokio::net::UnixStream;
+
+    async fn accept(&self) -> io::Result<(tokio::net::UnixStream, TransportAddress)> {
+        let (stream, peer_addr) = Self::accept(self).await?;
+        Ok((
+            stream,
+            std::os::unix::net::SocketAddr::from(peer_addr).into(),
+        ))
+    }
+}
 
 const ACCEPT_RETRY_INITIAL: Duration = Duration::from_millis(10);
 const ACCEPT_RETRY_MAX: Duration = Duration::from_secs(1);
@@ -98,12 +148,10 @@ impl AcceptBackoff {
 /// A listener that gives up reports [`ServerError::Accept`] on `failures`
 /// before it drains, so the shutdown deadline starts while its connections are
 /// still in flight.
-#[allow(clippy::too_many_arguments)]
-pub(in crate::server) async fn accept_loop<C: 'static>(
-    listener: TcpListener,
-    local_addr: SocketAddr,
+pub(in crate::server) async fn accept_loop<C: 'static, A: Acceptor>(
+    listener: A,
+    local_addr: TransportAddress,
     service: Arc<Service<C>>,
-    socket: SocketOptions,
     config: TransportConfig,
     permits: Arc<Semaphore>,
     mut lifecycle: watch::Receiver<Lifecycle>,
@@ -115,7 +163,7 @@ pub(in crate::server) async fn accept_loop<C: 'static>(
     loop {
         while let Some(result) = connections.try_join_next() {
             if let Err(error) = result {
-                tracing::debug!(%error, %local_addr, "connection task failed");
+                tracing::debug!(%error, local_addr = %Shown(&local_addr), "connection task failed");
             }
         }
 
@@ -141,16 +189,16 @@ pub(in crate::server) async fn accept_loop<C: 'static>(
         match accepted {
             Ok((stream, peer_addr)) => {
                 backoff.succeed();
-                socket.apply(&stream, local_addr, peer_addr);
                 let service = Arc::clone(&service);
                 let connection_config = config.clone();
                 let connection_lifecycle = lifecycle.clone();
+                let connection_local = local_addr.clone();
                 connections.spawn(async move {
                     let _permit = permit;
                     serve_connection(
                         stream,
                         peer_addr,
-                        local_addr,
+                        connection_local,
                         service,
                         connection_config,
                         connection_lifecycle,
@@ -167,13 +215,13 @@ pub(in crate::server) async fn accept_loop<C: 'static>(
                         // A send fails only once the server stopped listening,
                         // and then nobody is left to tell.
                         let _ = failures.send(ServerError::Accept {
-                            address: local_addr,
+                            address: local_addr.clone(),
                             source,
                         });
                         break;
                     }
                 };
-                tracing::warn!(%source, %local_addr, ?delay, "retrying failed accept");
+                tracing::warn!(%source, local_addr = %Shown(&local_addr), ?delay, "retrying failed accept");
                 tokio::select! {
                     biased;
                     _ = wait_until_stopping(&mut lifecycle) => {

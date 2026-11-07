@@ -7,7 +7,7 @@
 //! accept loop and that method's bound.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::{convert::Infallible, future::Future, net::SocketAddr, pin::Pin, sync::Arc};
+use std::{convert::Infallible, future::Future, pin::Pin, sync::Arc};
 
 use hyper::service::service_fn;
 use hyper_util::{
@@ -21,11 +21,12 @@ use tokio::{
 };
 
 use crate::{
-    extract::connection::Connection,
+    extract::connection::{Connection, TransportAddress},
     http::body::BoxError,
     router::service::Service,
     server::{
         TransportConfig,
+        address::Shown,
         lifecycle::{Lifecycle, wait_until_stopping},
         request_body,
     },
@@ -34,14 +35,17 @@ use crate::{
 #[cfg(feature = "http2")]
 use crate::server::protocol::http2::{Http2FlowControl, InFlight, Streams};
 
-pub(in crate::server) async fn serve_connection<C: 'static>(
-    stream: tokio::net::TcpStream,
-    peer_addr: SocketAddr,
-    local_addr: SocketAddr,
+pub(in crate::server) async fn serve_connection<C, I>(
+    stream: I,
+    peer_addr: TransportAddress,
+    local_addr: TransportAddress,
     service: Arc<Service<C>>,
     config: TransportConfig,
     lifecycle: watch::Receiver<Lifecycle>,
-) {
+) where
+    C: 'static,
+    I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     let deadline = first_head_deadline_from_now(&config);
 
     #[cfg(feature = "tls")]
@@ -59,23 +63,43 @@ pub(in crate::server) async fn serve_connection<C: 'static>(
                 // Built once and reference-counted onto every request.
                 let identity = crate::server::tls::identity(stream.get_ref().1);
                 let connection = Connection::from_tls_peer(peer_addr, local_addr, identity);
+                let record = connection.clone();
                 let served = serve_http(stream, service, config, connection, lifecycle, deadline);
                 if let Err(error) = served.await {
-                    tracing::debug!(%error, %local_addr, %peer_addr, "TLS connection failed");
+                    tracing::debug!(
+                        %error,
+                        local_addr = %Shown(record.local()),
+                        peer_addr = %Shown(record.peer()),
+                        "TLS connection failed"
+                    );
                 }
             }
-            Ok(Err(error)) => {
-                tracing::debug!(%error, %local_addr, %peer_addr, "TLS handshake failed");
-            }
-            Err(_) => tracing::debug!(%local_addr, %peer_addr, "TLS handshake timed out"),
+            Ok(Err(error)) => tracing::debug!(
+                %error,
+                local_addr = %Shown(&local_addr),
+                peer_addr = %Shown(&peer_addr),
+                "TLS handshake failed"
+            ),
+            Err(_) => tracing::debug!(
+                local_addr = %Shown(&local_addr),
+                peer_addr = %Shown(&peer_addr),
+                "TLS handshake timed out"
+            ),
         }
         return;
     }
 
     let connection = Connection::from_peer(peer_addr, local_addr);
+    // One reference count, so a failure can still be logged with its addresses.
+    let record = connection.clone();
     let served = serve_http(stream, service, config, connection, lifecycle, deadline);
     if let Err(error) = served.await {
-        tracing::debug!(%error, %local_addr, %peer_addr, "HTTP connection failed");
+        tracing::debug!(
+            %error,
+            local_addr = %Shown(record.local()),
+            peer_addr = %Shown(record.peer()),
+            "HTTP connection failed"
+        );
     }
 }
 

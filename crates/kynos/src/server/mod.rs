@@ -1,9 +1,10 @@
 //! Serving a built router.
 //!
 //! Kynos supports HTTP/1 and HTTP/2, and HTTP/3 is outside the current server
-//! contract. Listeners are TCP; a stream accepted any other way, such as from
-//! a Unix socket or an in-memory pipe, is served by [`Server::serve_io`], one
-//! connection per call.
+//! contract. Listeners are TCP, bound from an address or handed over pre-bound,
+//! and on Unix also Unix domain sockets, handed over pre-bound. A stream
+//! accepted any other way, such as an in-memory pipe, is served by
+//! [`Server::serve_io`], one connection per call.
 //!
 //! Kynos runs on tokio and does not abstract over it, so serving requires a
 //! tokio runtime. Apart from the I/O bound on [`Server::serve_io`], no public
@@ -48,11 +49,13 @@ use tokio::{
     task::{JoinError, JoinSet},
 };
 
+#[cfg(unix)]
+use crate::extract::connection::TransportAddress;
 use crate::{
     error::Result,
     router::service::Service,
     server::{
-        accept::accept_loop,
+        accept::{TcpAcceptor, accept_loop},
         address::{BindAddress, resolve},
         error::ServerError,
         lifecycle::{Drain, Lifecycle},
@@ -80,6 +83,8 @@ pub struct Server<C> {
     service: Arc<Service<C>>,
     addresses: Vec<BindAddress>,
     listeners: Vec<std::net::TcpListener>,
+    #[cfg(unix)]
+    unix_listeners: Vec<std::os::unix::net::UnixListener>,
     #[cfg(feature = "http1")]
     http1: Http1Config,
     #[cfg(feature = "http2")]
@@ -101,6 +106,8 @@ impl<C: 'static> Server<C> {
             service: Arc::new(service),
             addresses: Vec::new(),
             listeners: Vec::new(),
+            #[cfg(unix)]
+            unix_listeners: Vec::new(),
             #[cfg(feature = "http1")]
             http1: Http1Config::default(),
             #[cfg(feature = "http2")]
@@ -135,6 +142,57 @@ impl<C: 'static> Server<C> {
         self
     }
 
+    /// Adds an already-bound Unix domain socket listener, taken as the
+    /// standard library's type: anything that converts into one, such as a
+    /// `socket2::Socket`.
+    ///
+    /// [`prepare`](Self::prepare) sets it nonblocking and registers it with
+    /// the runtime. A `tokio::net::UnixListener` is handed over through its own
+    /// `into_std`.
+    ///
+    /// The caller owns the socket file: Kynos binds none, never removes a
+    /// stale one, sets no permissions, and leaves the file in place when the
+    /// server stops. On Linux and Android an abstract-namespace socket, which
+    /// has no file, is handed over the same way.
+    ///
+    /// Its connections are served under the connection limit, graceful
+    /// shutdown and every protocol setting, as a TCP listener's are; TCP
+    /// keepalive does not apply to them. Handlers read the peer through
+    /// [`Connection::peer`](crate::extract::connection::Connection::peer),
+    /// since [`ConnectInfo`](crate::extract::connection::ConnectInfo) promises
+    /// an IP one. [`BoundServer::local_addrs`] does not list the listener,
+    /// whose address its caller bound. [`prepare`](Self::prepare) refuses it
+    /// alongside [`tls`](Self::tls): Kynos serves no TLS over a Unix socket.
+    ///
+    /// ```
+    /// use kynos::{Router, server::Server};
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> kynos::Result<()> {
+    /// # let directory = std::env::temp_dir().join(format!("kynos-doc-{}", std::process::id()));
+    /// # std::fs::create_dir_all(&directory).expect("a scratch directory");
+    /// let path = directory.join("api.sock");
+    /// // Binding, permissions and removal are the caller's.
+    /// let listener = std::os::unix::net::UnixListener::bind(&path).expect("the path is free");
+    ///
+    /// let bound = Server::new(Router::<()>::new().build(())?)
+    ///     .unix_listener(listener)
+    ///     .prepare()
+    ///     .await?;
+    /// assert!(bound.local_addrs().is_empty());
+    /// # drop(bound);
+    /// std::fs::remove_file(&path).expect("the socket file is still there");
+    /// # std::fs::remove_dir(&directory).expect("the scratch directory empties");
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(unix)]
+    #[must_use]
+    pub fn unix_listener(mut self, listener: impl Into<std::os::unix::net::UnixListener>) -> Self {
+        self.unix_listeners.push(listener.into());
+        self
+    }
+
     /// Configures HTTP/1.
     #[cfg(feature = "http1")]
     #[must_use]
@@ -151,7 +209,9 @@ impl<C: 'static> Server<C> {
         self
     }
 
-    /// Serves every listener over TLS.
+    /// Serves every listener over TLS. Every listener is then a TCP one:
+    /// [`prepare`](Self::prepare) refuses TLS alongside a Unix domain socket
+    /// listener.
     #[cfg(feature = "tls")]
     #[must_use]
     pub fn tls(mut self, config: TlsConfig) -> Self {
@@ -193,7 +253,8 @@ impl<C: 'static> Server<C> {
         self
     }
 
-    /// Sets TCP keepalive on accepted sockets, or `None` to leave it off.
+    /// Sets TCP keepalive on the sockets a TCP listener accepts, or `None` to
+    /// leave it off.
     ///
     /// On by default at [`TcpKeepAlive::default`], which bounds how long a peer
     /// that vanished without closing its connection holds a connection permit.
@@ -249,7 +310,10 @@ impl<C: 'static> Server<C> {
     ///   [`ServerError::InvalidConfiguration`] when a required client
     ///   certificate would change the description of a service a connection
     ///   from [`serve_io`](Self::serve_io) is still serving, and
-    ///   `ServerError::Tls` when the TLS configuration cannot be built.
+    ///   `ServerError::Tls` when the TLS configuration cannot be built. On
+    ///   Unix, [`ServerError::InvalidConfiguration`] too when a Unix domain
+    ///   socket listener was added, checked with the settings so no socket is
+    ///   bound.
     /// - [`ServerError::Listener`], [`ServerError::Resolve`] or
     ///   [`ServerError::Bind`] when a supplied listener, an address, or a
     ///   resolved address fails; every listener already bound is dropped.
@@ -257,6 +321,13 @@ impl<C: 'static> Server<C> {
     pub async fn prepare(self) -> Result<BoundServer<C>> {
         self.validate()?;
         validate_tcp_keepalive(self.tcp_keepalive)?;
+        #[cfg(all(unix, feature = "tls"))]
+        if self.tls.is_some() && !self.unix_listeners.is_empty() {
+            return Err(ServerError::InvalidConfiguration(
+                "TLS is not served over a Unix socket listener",
+            )
+            .into());
+        }
         #[cfg(feature = "tls")]
         let mut config = self.transport();
         #[cfg(not(feature = "tls"))]
@@ -299,7 +370,23 @@ impl<C: 'static> Server<C> {
             }
         }
 
-        if listeners.is_empty() {
+        #[cfg(unix)]
+        let mut unix_listeners = Vec::with_capacity(self.unix_listeners.len());
+        #[cfg(unix)]
+        for listener in self.unix_listeners {
+            listener
+                .set_nonblocking(true)
+                .map_err(ServerError::Listener)?;
+            let local_addr = listener.local_addr().map_err(ServerError::Listener)?;
+            let listener =
+                tokio::net::UnixListener::from_std(listener).map_err(ServerError::Listener)?;
+            unix_listeners.push((listener, TransportAddress::from(local_addr)));
+        }
+        #[cfg(unix)]
+        let unlistened = listeners.is_empty() && unix_listeners.is_empty();
+        #[cfg(not(unix))]
+        let unlistened = listeners.is_empty();
+        if unlistened {
             return Err(ServerError::NoListeners.into());
         }
 
@@ -313,6 +400,8 @@ impl<C: 'static> Server<C> {
             service,
             listeners,
             local_addrs,
+            #[cfg(unix)]
+            unix_listeners,
             socket: SocketOptions::new(self.tcp_keepalive),
             config,
             shutdown: self.shutdown,
@@ -328,9 +417,9 @@ impl<C: 'static> Server<C> {
         self.prepare().await?.serve().await
     }
 
-    /// Serves one plaintext connection over `io`, a stream accepted from
-    /// somewhere other than a TCP listener: a Unix socket, an in-memory pipe,
-    /// or a custom acceptor.
+    /// Serves one plaintext connection over `io`, a stream no listener of this
+    /// server accepted: an in-memory pipe, one end of a socket pair, or a
+    /// stream from a custom acceptor.
     ///
     /// The connection runs under the transport settings a listener's would:
     /// the protocol configs, including the header-read and idle timeouts, and
@@ -338,7 +427,7 @@ impl<C: 'static> Server<C> {
     /// through [`Connection`](crate::extract::connection::Connection) and,
     /// where its peer is an IP address,
     /// [`ConnectInfo`](crate::extract::connection::ConnectInfo): record the
-    /// addresses `io` really connected between, such as a Unix stream's own
+    /// addresses `io` really connected between, such as a socket's own
     /// `peer_addr` and `local_addr`, rather than inventing IP ones. A
     /// connection recorded through
     /// [`from_tls_peer`](crate::extract::connection::Connection::from_tls_peer)
@@ -459,6 +548,8 @@ pub struct BoundServer<C> {
     service: Arc<Service<C>>,
     listeners: Vec<TcpListener>,
     local_addrs: Vec<SocketAddr>,
+    #[cfg(unix)]
+    unix_listeners: Vec<(tokio::net::UnixListener, TransportAddress)>,
     /// Held once per listener, unlike the per-socket `TransportConfig`.
     socket: SocketOptions,
     config: TransportConfig,
@@ -479,7 +570,11 @@ pub(in crate::server) struct TransportConfig {
 }
 
 impl<C: 'static> BoundServer<C> {
-    /// The addresses actually bound, including operating-system-selected ports.
+    /// The addresses the TCP listeners are bound to, including
+    /// operating-system-selected ports.
+    ///
+    /// A Unix domain socket listener is not listed: its caller bound it, and
+    /// so already knows its address.
     #[must_use]
     pub fn local_addrs(&self) -> &[SocketAddr] {
         &self.local_addrs
@@ -507,11 +602,27 @@ impl<C: 'static> BoundServer<C> {
         let mut accept_loops = JoinSet::new();
 
         for (listener, local_addr) in self.listeners.into_iter().zip(self.local_addrs) {
+            let acceptor = TcpAcceptor {
+                listener,
+                local_addr,
+                socket: self.socket.clone(),
+            };
+            accept_loops.spawn(accept_loop(
+                acceptor,
+                local_addr.into(),
+                Arc::clone(&self.service),
+                self.config.clone(),
+                Arc::clone(&permits),
+                lifecycle_receiver.clone(),
+                failure_sender.clone(),
+            ));
+        }
+        #[cfg(unix)]
+        for (listener, local_addr) in self.unix_listeners {
             accept_loops.spawn(accept_loop(
                 listener,
                 local_addr,
                 Arc::clone(&self.service),
-                self.socket.clone(),
                 self.config.clone(),
                 Arc::clone(&permits),
                 lifecycle_receiver.clone(),

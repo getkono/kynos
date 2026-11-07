@@ -703,6 +703,203 @@ async fn prepare_makes_a_converted_blocking_listener_nonblocking() {
     assert!(duplicate.nonblocking().expect("O_NONBLOCK reads"));
 }
 
+/// A directory of this test process's own for a Unix socket file, removed with
+/// whatever is left in it when dropped.
+///
+/// Short, since a socket path must fit in `sun_path`.
+#[cfg(unix)]
+struct SocketDirectory(std::path::PathBuf);
+
+#[cfg(unix)]
+impl SocketDirectory {
+    fn new(test: &str) -> Self {
+        let path = std::env::temp_dir().join(format!("kynos-{}-{test}", std::process::id()));
+        std::fs::create_dir_all(&path).expect("a scratch directory");
+        Self(path)
+    }
+}
+
+#[cfg(unix)]
+impl Drop for SocketDirectory {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A service answering with the peer and local address of the connection it
+/// was reached over, as the standard library's Unix address reads them.
+#[cfg(all(unix, feature = "http1"))]
+fn unix_addresses_service() -> crate::router::service::Service<()> {
+    use crate::extract::connection::{Connection, TransportAddress};
+
+    let document = kynos_openapi::Document::new(
+        kynos_openapi::SpecVersion::V3_1,
+        kynos_openapi::Info::new("Test", "1"),
+    );
+    crate::router::service::Service::new(document, |request: crate::http::Request| {
+        let connection = request
+            .extensions()
+            .get::<Connection>()
+            .expect("a served request carries its connection")
+            .clone();
+        async move {
+            let show = |address: &TransportAddress| match address {
+                TransportAddress::Unix(address) => format!("{:?}", address.as_std().as_pathname()),
+                TransportAddress::Ip(address) => format!("ip {address}"),
+            };
+            let body = format!("{} {}", show(connection.peer()), show(connection.local()));
+            crate::http::Response::new(crate::http::body::Body::from_bytes(bytes::Bytes::from(
+                body,
+            )))
+        }
+    })
+}
+
+/// A pre-bound Unix domain socket listener is served as a TCP one is: its
+/// connections reach the handler as the Unix peer and local address they
+/// are, it is not listed among the TCP addresses, and graceful shutdown
+/// stops it. The socket file is its caller's, so it is left in place.
+#[cfg(all(unix, feature = "http1"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_unix_listener_serves_unix_peers_and_leaves_its_socket_file() {
+    use std::{
+        io::{Read as _, Write as _},
+        os::unix::fs::FileTypeExt as _,
+    };
+
+    let directory = SocketDirectory::new("serve");
+    let path = directory.0.join("api.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&path).expect("the socket binds");
+
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let bound = crate::server::Server::new(unix_addresses_service())
+        .unix_listener(listener)
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+            let _ = shutdown_receiver.await;
+        }))
+        .prepare()
+        .await
+        .expect("a Unix listener alone is something to listen on");
+    assert!(bound.local_addrs().is_empty(), "{:?}", bound.local_addrs());
+    let server = tokio::spawn(bound.serve());
+
+    let client_path = path.clone();
+    let response = tokio::task::spawn_blocking(move || {
+        let mut stream =
+            std::os::unix::net::UnixStream::connect(client_path).expect("server accepts");
+        stream
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .expect("request writes");
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .expect("response reads");
+        response
+    })
+    .await
+    .expect("blocking client joins");
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(
+        response.ends_with(&format!("None Some({path:?})")),
+        "an unnamed peer, accepted on the bound path: {response}"
+    );
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+    assert!(
+        std::fs::symlink_metadata(&path)
+            .expect("the socket file outlives the server")
+            .file_type()
+            .is_socket(),
+        "the file at the path is still the socket"
+    );
+}
+
+/// Kynos serves no TLS over a Unix socket, and says so before binding anything
+/// rather than serving the listener in plaintext.
+#[cfg(all(unix, feature = "tls"))]
+#[tokio::test]
+async fn prepare_refuses_tls_alongside_a_unix_listener() {
+    let identity = server_identity();
+    let directory = SocketDirectory::new("tls");
+    let listener = std::os::unix::net::UnixListener::bind(directory.0.join("tls.sock"))
+        .expect("the socket binds");
+    let error = crate::server::Server::new(test_service())
+        .unix_listener(listener)
+        .tls(
+            crate::server::tls::TlsConfig::from_pem(
+                identity.certificate.as_bytes(),
+                identity.key.as_bytes(),
+            )
+            .expect("TLS identity parses"),
+        )
+        .prepare()
+        .await
+        .expect_err("TLS over a Unix socket is refused");
+    assert!(
+        matches!(
+            error,
+            crate::Error::Server(crate::server::error::ServerError::InvalidConfiguration(
+                "TLS is not served over a Unix socket listener"
+            ))
+        ),
+        "{error:?}"
+    );
+}
+
+/// A listener that stops accepting is named as its transport writes it: an IP
+/// one as its socket address, a Unix one as its path, an abstract one as `@`
+/// and its escaped name, and an unnamed one as such.
+#[test]
+fn a_failed_listener_is_named_as_its_transport_writes_it() {
+    use crate::{extract::connection::TransportAddress, server::error::ServerError};
+
+    let named = |address: TransportAddress| {
+        ServerError::Accept {
+            address,
+            source: std::io::Error::from(std::io::ErrorKind::InvalidInput),
+        }
+        .to_string()
+    };
+
+    assert_eq!(
+        named(std::net::SocketAddr::from(([127, 0, 0, 1], 8080)).into()),
+        "listener `127.0.0.1:8080` can no longer accept connections"
+    );
+    #[cfg(unix)]
+    {
+        let path =
+            std::os::unix::net::SocketAddr::from_pathname("/run/api.sock").expect("a path fits");
+        assert_eq!(
+            named(path.into()),
+            "listener `/run/api.sock` can no longer accept connections"
+        );
+        let (unnamed, _other) = std::os::unix::net::UnixStream::pair().expect("a socket pair");
+        assert_eq!(
+            named(unnamed.local_addr().expect("a pair has addresses").into()),
+            "listener `(unnamed)` can no longer accept connections"
+        );
+    }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        #[cfg(target_os = "android")]
+        use std::os::android::net::SocketAddrExt as _;
+        #[cfg(target_os = "linux")]
+        use std::os::linux::net::SocketAddrExt as _;
+
+        let abstract_name =
+            std::os::unix::net::SocketAddr::from_abstract_name(b"kynos\n").expect("a name fits");
+        assert_eq!(
+            named(abstract_name.into()),
+            "listener `@kynos\\n` can no longer accept connections"
+        );
+    }
+}
+
 /// A listener tokio already owns is handed over through its own `into_std`.
 #[tokio::test]
 async fn prepare_accepts_a_tokio_listener_through_into_std() {
@@ -1334,7 +1531,7 @@ fn only_an_incomplete_drain_is_a_requested_shutdown() {
         },
         ServerError::Listener(io_error()),
         ServerError::Accept {
-            address,
+            address: address.into(),
             source: io_error(),
         },
         ServerError::AcceptLoop { panicked: true },
@@ -1471,8 +1668,10 @@ async fn a_listener_that_stops_accepting_drains_what_it_accepted() {
     assert!(
         matches!(
             error,
-            crate::Error::Server(crate::server::error::ServerError::Accept { address: failed, .. })
-                if failed == address
+            crate::Error::Server(crate::server::error::ServerError::Accept {
+                address: crate::extract::connection::TransportAddress::Ip(failed),
+                ..
+            }) if failed == address
         ),
         "{error:?}"
     );
@@ -1499,8 +1698,10 @@ async fn a_listener_that_stops_accepting_drains_under_the_shutdown_timeout() {
     assert!(
         matches!(
             error,
-            crate::Error::Server(crate::server::error::ServerError::Accept { address: failed, .. })
-                if failed == address
+            crate::Error::Server(crate::server::error::ServerError::Accept {
+                address: crate::extract::connection::TransportAddress::Ip(failed),
+                ..
+            }) if failed == address
         ),
         "{error:?}"
     );
@@ -2409,8 +2610,8 @@ async fn shutdown_cancels_an_incomplete_tls_handshake() {
     let (stop_sender, stop_receiver) = tokio::sync::watch::channel(super::Lifecycle::Running);
     let mut connection = tokio::spawn(crate::server::connection::serve_connection(
         stream,
-        peer_addr,
-        address,
+        peer_addr.into(),
+        address.into(),
         Arc::new(test_service()),
         config,
         stop_receiver,
@@ -5065,11 +5266,16 @@ mod protocol_configuration {
 ///
 /// Each message is asserted exactly by the case that reaches it: the
 /// `protocol_configuration` table, the TCP keepalive and request-body idle
-/// timeout cases, the mutual-TLS case here, and `tests/serve_io.rs`.
+/// timeout cases, the mutual-TLS and TLS-over-Unix cases here, and
+/// `tests/serve_io.rs`.
 const CONFIGURATION_REFUSALS: &[(&str, &str)] = &[
     (
         "server/request_body.rs",
         "request_body_idle_timeout must be non-zero when enabled",
+    ),
+    (
+        "server/mod.rs",
+        "TLS is not served over a Unix socket listener",
     ),
     (
         "server/mod.rs",

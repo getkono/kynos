@@ -11,7 +11,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
 };
 
-use crate::server::error::ServerError;
+use crate::{extract::connection::TransportAddress, server::error::ServerError};
 
 /// An owned address resolved when a server is prepared.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -79,6 +79,41 @@ impl From<(String, u16)> for BindAddress {
 impl From<(&str, u16)> for BindAddress {
     fn from((host, port): (&str, u16)) -> Self {
         (host.to_owned(), port).into()
+    }
+}
+
+/// A transport address as a log line or an error message shows it: an IP one
+/// as its socket address, a Unix one as its path, `@` and its escaped name
+/// where it is abstract, or `(unnamed)`.
+///
+/// Private, since a Unix path need not be UTF-8 and showing one is lossy: a
+/// caller that needs the address matches on it.
+pub(in crate::server) struct Shown<'a>(pub(in crate::server) &'a TransportAddress);
+
+impl fmt::Display for Shown<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            TransportAddress::Ip(address) => address.fmt(formatter),
+            #[cfg(unix)]
+            TransportAddress::Unix(address) => {
+                let address = address.as_std();
+                if let Some(path) = address.as_pathname() {
+                    return path.display().fmt(formatter);
+                }
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                {
+                    #[cfg(target_os = "android")]
+                    use std::os::android::net::SocketAddrExt as _;
+                    #[cfg(target_os = "linux")]
+                    use std::os::linux::net::SocketAddrExt as _;
+
+                    if let Some(name) = address.as_abstract_name() {
+                        return write!(formatter, "@{}", name.escape_ascii());
+                    }
+                }
+                formatter.write_str("(unnamed)")
+            }
+        }
     }
 }
 

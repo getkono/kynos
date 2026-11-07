@@ -2,7 +2,10 @@
 
 use std::{io, net::SocketAddr, time::Duration};
 
-use crate::server::address::BindAddress;
+use crate::{
+    extract::connection::TransportAddress,
+    server::address::{BindAddress, Shown},
+};
 
 #[cfg(feature = "tls")]
 use crate::server::tls::error::TlsError;
@@ -41,10 +44,11 @@ pub enum ServerError {
     /// A listener failed in a way waiting cannot clear: it is no longer
     /// listening. Running out of file descriptors or memory is not this; the
     /// listener waits and retries instead.
-    #[error("listener `{address}` can no longer accept connections")]
+    #[error("listener `{}` can no longer accept connections", Shown(.address))]
     Accept {
-        /// The listener address.
-        address: SocketAddr,
+        /// The listener address: an IP one for a TCP listener, a Unix one for
+        /// a Unix domain socket listener.
+        address: TransportAddress,
         /// The accept failure.
         #[source]
         source: io::Error,
