@@ -2643,8 +2643,8 @@ fn a_named_instantiation_declared_on_a_nested_router_names_its_component() {
         .openapi()
         .expect("a describable router");
 
-    let operation = serde_json::to_value(operation(&document, "/v1/books"))
-        .expect("an operation serializes");
+    let operation =
+        serde_json::to_value(operation(&document, "/v1/books")).expect("an operation serializes");
     assert_eq!(
         operation["requestBody"]["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/Bookshelf",
@@ -2656,5 +2656,8 @@ fn a_named_instantiation_declared_on_a_nested_router_names_its_component() {
     let Some(kynos::openapi::Schema::Object(shelf)) = schemas.get("Bookshelf") else {
         panic!("`Bookshelf` is an object component: {schemas:?}");
     };
-    assert_eq!(shelf.description.as_deref(), Some("The books on one shelf."));
+    assert_eq!(
+        shelf.description.as_deref(),
+        Some("The books on one shelf.")
+    );
 }
