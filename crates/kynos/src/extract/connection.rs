@@ -109,6 +109,83 @@ impl From<std::os::unix::net::SocketAddr> for UnixAddress {
     }
 }
 
+/// The credentials of the process at the other end of a Unix domain socket, as
+/// the kernel recorded them when it connected.
+///
+/// Read through [`Connection::peer_credentials`]. A Unix listener records them
+/// once per accepted socket; an embedding that serves a stream itself records
+/// its own through [`Connection::with_peer_credentials`].
+///
+/// They name the process that called `connect(2)`, as it was at that moment:
+/// a later `setuid` in that process, or a descriptor it passed to another
+/// process, changes nothing here. Behind a proxy, they are the proxy's.
+///
+/// ```
+/// use kynos::extract::connection::PeerCredentials;
+///
+/// let credentials = PeerCredentials::new(1000, 1000).with_pid(4242);
+/// assert_eq!(credentials.uid(), 1000);
+/// assert_eq!(credentials.pid(), Some(4242));
+/// assert_eq!(PeerCredentials::new(0, 0).pid(), None);
+/// ```
+#[cfg(unix)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PeerCredentials {
+    uid: u32,
+    gid: u32,
+    pid: Option<u32>,
+}
+
+#[cfg(unix)]
+impl PeerCredentials {
+    /// The credentials of a peer running as user `uid` and group `gid`, with
+    /// no process ID.
+    #[must_use]
+    pub const fn new(uid: u32, gid: u32) -> Self {
+        Self {
+            uid,
+            gid,
+            pid: None,
+        }
+    }
+
+    /// Records the peer's process ID.
+    #[must_use]
+    pub const fn with_pid(mut self, pid: u32) -> Self {
+        self.pid = Some(pid);
+        self
+    }
+
+    /// The peer's effective user ID: what to authorize a local caller by.
+    #[must_use]
+    pub const fn uid(&self) -> u32 {
+        self.uid
+    }
+
+    /// The peer's effective group ID. Its supplementary groups are not
+    /// reported.
+    #[must_use]
+    pub const fn gid(&self) -> u32 {
+        self.gid
+    }
+
+    /// The peer's process ID, where the platform reports one.
+    ///
+    /// A Unix listener reports one wherever the kernel does — Linux, Android,
+    /// the Apple platforms, FreeBSD 13 and later, NetBSD, OpenBSD, illumos and
+    /// Solaris among them — and `None` where it does not, such as on
+    /// `DragonFly` BSD and AIX, or where the peer runs in a PID namespace the server cannot
+    /// see into.
+    ///
+    /// It names a process at the moment it connected and proves nothing after:
+    /// the process may have exited and its ID been reused. Log it; authorize
+    /// by [`uid`](Self::uid).
+    #[must_use]
+    pub const fn pid(&self) -> Option<u32> {
+        self.pid
+    }
+}
+
 /// The path template this request matched.
 ///
 /// Exactly the `paths` key from the description, which makes it the correct
@@ -205,12 +282,14 @@ impl TlsIdentity {
 #[derive(Clone, Debug)]
 pub struct Connection(Arc<Inner>);
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Inner {
     peer: TransportAddress,
     local: TransportAddress,
     in_process: bool,
     tls: Option<TlsIdentity>,
+    #[cfg(unix)]
+    credentials: Option<PeerCredentials>,
     /// The lifecycle of the server whose listener accepted the connection;
     /// one that never resolves for any other.
     #[cfg(feature = "server")]
@@ -225,6 +304,8 @@ static IN_PROCESS_CONNECTION: LazyLock<Connection> = LazyLock::new(|| {
         local: TransportAddress::Ip(IN_PROCESS),
         in_process: true,
         tls: None,
+        #[cfg(unix)]
+        credentials: None,
         #[cfg(feature = "server")]
         draining: crate::server::lifecycle::Draining::never(),
     }))
@@ -315,6 +396,8 @@ impl Connection {
             local,
             in_process: false,
             tls,
+            #[cfg(unix)]
+            credentials: None,
             #[cfg(feature = "server")]
             draining: crate::server::lifecycle::Draining::never(),
         }))
@@ -334,8 +417,55 @@ impl Connection {
             local,
             in_process: false,
             tls,
+            #[cfg(unix)]
+            credentials: None,
             draining,
         }))
+    }
+
+    /// Records the credentials of the process at the other end of a Unix
+    /// domain socket.
+    ///
+    /// A Unix listener records them itself. This is for an embedding, and for
+    /// [`Server::serve_io`](crate::server::Server::serve_io), where whoever
+    /// accepted the socket read them: record only what the kernel reported for
+    /// it, since a handler authorizing by [`PeerCredentials::uid`] checks
+    /// nothing else.
+    ///
+    /// Builds on a connection no request has seen yet; called on one already
+    /// shared, it records them on a copy and leaves the other handles as they
+    /// were.
+    ///
+    /// ```
+    /// use kynos::extract::connection::{Connection, PeerCredentials};
+    ///
+    /// # fn main() -> std::io::Result<()> {
+    /// let (stream, _client) = std::os::unix::net::UnixStream::pair()?;
+    /// # let (uid, gid) = (1000, 1000);
+    /// // `uid` and `gid` as the kernel reported them for `stream`'s peer.
+    /// let connection = Connection::from_peer(stream.peer_addr()?, stream.local_addr()?)
+    ///     .with_peer_credentials(PeerCredentials::new(uid, gid));
+    /// assert_eq!(connection.peer_credentials().map(|peer| peer.uid()), Some(uid));
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(unix)]
+    #[must_use]
+    pub fn with_peer_credentials(mut self, credentials: PeerCredentials) -> Self {
+        Arc::make_mut(&mut self.0).credentials = Some(credentials);
+        self
+    }
+
+    /// The credentials of the process at the other end of a Unix domain
+    /// socket.
+    ///
+    /// `None` over any other transport, for a request no socket carried, where
+    /// the platform reports none, and on a connection an embedding recorded
+    /// without [`with_peer_credentials`](Self::with_peer_credentials).
+    #[cfg(unix)]
+    #[must_use]
+    pub fn peer_credentials(&self) -> Option<PeerCredentials> {
+        self.0.credentials
     }
 
     /// The lifecycle of the server that accepted this connection.

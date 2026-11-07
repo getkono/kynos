@@ -96,6 +96,52 @@ fn a_unix_pathname_is_kept_as_given() {
 ///
 /// The other half is `a_connection_clone_shares_its_payload` below, which is
 /// the assertion that rules out `Box`.
+/// Nothing records credentials but a Unix listener or an embedding that read
+/// them: a socket recorded by address alone, and no socket at all, report none.
+#[cfg(unix)]
+#[test]
+fn a_connection_reports_no_credentials_unless_some_were_recorded() {
+    let (stream, _other) = std::os::unix::net::UnixStream::pair().expect("a socket pair");
+    let unix = Connection::from_peer(
+        stream.peer_addr().expect("a peer address"),
+        stream.local_addr().expect("a local address"),
+    );
+    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, 8080));
+
+    assert_eq!(unix.peer_credentials(), None);
+    assert_eq!(
+        Connection::from_peer(address, address).peer_credentials(),
+        None
+    );
+    let parts = http::Request::new(()).into_parts().0;
+    assert_eq!(Connection::of(&parts).peer_credentials(), None);
+}
+
+/// Recording credentials on a handle already shared leaves the other handles,
+/// and the in-process connection every unsocketed request shares, as they
+/// were.
+#[cfg(unix)]
+#[test]
+fn recorded_credentials_reach_only_the_handle_they_were_recorded_on() {
+    use super::PeerCredentials;
+
+    let credentials = PeerCredentials::new(1000, 100).with_pid(4242);
+    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, 8080));
+    let shared = Connection::from_peer(address, address);
+    let other = shared.clone();
+
+    let recorded = shared.with_peer_credentials(credentials);
+    assert_eq!(recorded.peer_credentials(), Some(credentials));
+    assert_eq!(recorded.peer_addr(), Some(address));
+    assert_eq!(other.peer_credentials(), None);
+
+    let parts = http::Request::new(()).into_parts().0;
+    let in_process = Connection::of(&parts).with_peer_credentials(credentials);
+    assert_eq!(in_process.peer_credentials(), Some(credentials));
+    assert!(in_process.is_in_process());
+    assert_eq!(Connection::of(&parts).peer_credentials(), None);
+}
+
 #[test]
 fn a_connection_handle_is_one_pointer() {
     let handle = size_of::<Connection>();
@@ -117,7 +163,7 @@ fn a_connection_handle_is_one_pointer() {
 /// A transport address is as wide as the IP address it most often holds: the
 /// Unix variant is held out of line, so an IP connection's record does not
 /// grow to the width of a `sockaddr_un`, which is what keeps `Inner` at the
-/// 144 bytes measured below.
+/// 176 bytes measured below.
 #[test]
 fn a_transport_address_is_as_wide_as_an_ip_one() {
     assert_eq!(
@@ -159,11 +205,12 @@ fn a_connection_clone_shares_its_payload() {
 ///
 /// `Inner` carries `Option<TlsIdentity>` at every feature set, including a build
 /// with no TLS at all, so a field added to the TLS half widens every plaintext
-/// connection too.
+/// connection too. On Unix it carries `Option<PeerCredentials>` the same way, so
+/// a TCP connection pays its 16 bytes as well.
 ///
 /// The measurements these ceilings were set from, since
-/// `docs/nfr.md#thresholds` asks for a recorded one: `Inner` 144 bytes,
-/// `TlsIdentity` 72. Each is rounded up to the next multiple of 64 so an
+/// `docs/nfr.md#thresholds` asks for a recorded one: `Inner` 176 bytes on
+/// 64-bit Linux with `server` (160 without), `TlsIdentity` 72. Each is rounded up to the next multiple of 64 so an
 /// unrelated layout change does not disable the gate, which is the step every
 /// other per-connection ceiling in the crate uses. A tighter step on
 /// `TlsIdentity` would bind first on a toolchain that reorders one field, and
