@@ -26,6 +26,7 @@ use crate::{
     router::service::Service,
     server::{
         TransportConfig,
+        accept::Peer,
         address::Shown,
         lifecycle::{Draining, Lifecycle, wait_until_stopping},
         request_body,
@@ -37,7 +38,7 @@ use crate::server::protocol::http2::{Http2FlowControl, InFlight, Streams};
 
 pub(in crate::server) async fn serve_connection<C, I>(
     stream: I,
-    peer_addr: TransportAddress,
+    peer: Peer,
     local_addr: TransportAddress,
     service: Arc<Service<C>>,
     config: TransportConfig,
@@ -65,8 +66,7 @@ pub(in crate::server) async fn serve_connection<C, I>(
             Ok(Ok(stream)) => {
                 // Built once and reference-counted onto every request.
                 let identity = crate::server::tls::identity(stream.get_ref().1);
-                let connection =
-                    Connection::accepted(peer_addr, local_addr, Some(identity), draining);
+                let connection = peer.connection(local_addr, Some(identity), draining);
                 let record = connection.clone();
                 let served = serve_http(stream, service, config, connection, lifecycle, deadline);
                 if let Err(error) = served.await {
@@ -81,19 +81,19 @@ pub(in crate::server) async fn serve_connection<C, I>(
             Ok(Err(error)) => tracing::debug!(
                 %error,
                 local_addr = %Shown(&local_addr),
-                peer_addr = %Shown(&peer_addr),
+                peer_addr = %Shown(&peer.address),
                 "TLS handshake failed"
             ),
             Err(_) => tracing::debug!(
                 local_addr = %Shown(&local_addr),
-                peer_addr = %Shown(&peer_addr),
+                peer_addr = %Shown(&peer.address),
                 "TLS handshake timed out"
             ),
         }
         return;
     }
 
-    let connection = Connection::accepted(peer_addr, local_addr, None, draining);
+    let connection = peer.connection(local_addr, None, draining);
     // One reference count, so a failure can still be logged with its addresses.
     let record = connection.clone();
     let served = serve_http(stream, service, config, connection, lifecycle, deadline);

@@ -19,15 +19,17 @@ use tokio::{
     task::JoinSet,
 };
 
+#[cfg(unix)]
+use crate::extract::connection::PeerCredentials;
 use crate::{
-    extract::connection::TransportAddress,
+    extract::connection::{Connection, TlsIdentity, TransportAddress},
     router::service::Service,
     server::{
         TransportConfig,
         address::Shown,
         connection::serve_connection,
         error::ServerError,
-        lifecycle::{Lifecycle, wait_until_forced, wait_until_stopping},
+        lifecycle::{Draining, Lifecycle, wait_until_forced, wait_until_stopping},
         tcp::SocketOptions,
     },
 };
@@ -37,8 +39,47 @@ pub(in crate::server) trait Acceptor: Send + 'static {
     /// What one accepted connection is read from and written to.
     type Stream: AsyncRead + AsyncWrite + Unpin + Send + 'static;
 
-    /// Accepts one connection, prepared to be served, and its peer's address.
-    fn accept(&self) -> impl Future<Output = io::Result<(Self::Stream, TransportAddress)>> + Send;
+    /// Accepts one connection, prepared to be served, and what is known of its
+    /// peer.
+    fn accept(&self) -> impl Future<Output = io::Result<(Self::Stream, Peer)>> + Send;
+}
+
+/// What a listener learned of an accepted connection's peer, read once per
+/// socket.
+#[derive(Debug)]
+pub(in crate::server) struct Peer {
+    pub(in crate::server) address: TransportAddress,
+    /// The credentials the kernel recorded for a Unix domain socket's peer.
+    #[cfg(unix)]
+    pub(in crate::server) credentials: Option<PeerCredentials>,
+}
+
+impl From<TransportAddress> for Peer {
+    fn from(address: TransportAddress) -> Self {
+        Self {
+            address,
+            #[cfg(unix)]
+            credentials: None,
+        }
+    }
+}
+
+impl Peer {
+    /// The record every request on this connection reads it back through.
+    pub(in crate::server) fn connection(
+        self,
+        local: TransportAddress,
+        tls: Option<TlsIdentity>,
+        draining: Draining,
+    ) -> Connection {
+        let connection = Connection::accepted(self.address, local, tls, draining);
+        #[cfg(unix)]
+        let connection = match self.credentials {
+            Some(credentials) => connection.with_peer_credentials(credentials),
+            None => connection,
+        };
+        connection
+    }
 }
 
 /// A TCP listener, and the options every socket it accepts is given.
@@ -52,10 +93,10 @@ pub(in crate::server) struct TcpAcceptor {
 impl Acceptor for TcpAcceptor {
     type Stream = TcpStream;
 
-    async fn accept(&self) -> io::Result<(TcpStream, TransportAddress)> {
+    async fn accept(&self) -> io::Result<(TcpStream, Peer)> {
         let (stream, peer_addr) = self.listener.accept().await?;
         self.socket.apply(&stream, self.local_addr, peer_addr);
-        Ok((stream, peer_addr.into()))
+        Ok((stream, TransportAddress::from(peer_addr).into()))
     }
 }
 
@@ -65,12 +106,103 @@ impl Acceptor for TcpAcceptor {
 impl Acceptor for tokio::net::UnixListener {
     type Stream = tokio::net::UnixStream;
 
-    async fn accept(&self) -> io::Result<(tokio::net::UnixStream, TransportAddress)> {
+    async fn accept(&self) -> io::Result<(tokio::net::UnixStream, Peer)> {
         let (stream, peer_addr) = Self::accept(self).await?;
+        let credentials = peer_credentials(&stream);
         Ok((
             stream,
-            std::os::unix::net::SocketAddr::from(peer_addr).into(),
+            Peer {
+                address: std::os::unix::net::SocketAddr::from(peer_addr).into(),
+                credentials,
+            },
         ))
+    }
+}
+
+/// The credentials the kernel recorded for `stream`'s peer, or `None` where it
+/// could not report them.
+///
+/// Read only on the platforms whose kernel reports them. tokio answers on a few
+/// more, with a fixed uid and gid of zero, and recording that would hand every
+/// peer root's identity.
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "redox",
+    target_os = "openbsd",
+    target_os = "haiku",
+    target_os = "cygwin",
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "watchos",
+    target_os = "visionos",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "dragonfly",
+    target_os = "nto",
+    target_os = "solaris",
+    target_os = "illumos",
+    target_os = "aix",
+))]
+fn peer_credentials(stream: &tokio::net::UnixStream) -> Option<PeerCredentials> {
+    match stream.peer_cred() {
+        Ok(credentials) => Some(kernel_credentials(
+            credentials.uid(),
+            credentials.gid(),
+            credentials.pid(),
+        )),
+        Err(error) => {
+            tracing::debug!(%error, "peer credentials unreadable");
+            None
+        }
+    }
+}
+
+/// No kernel this build targets reports a Unix peer's credentials.
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "redox",
+        target_os = "openbsd",
+        target_os = "haiku",
+        target_os = "cygwin",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos",
+        target_os = "visionos",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "dragonfly",
+        target_os = "nto",
+        target_os = "solaris",
+        target_os = "illumos",
+        target_os = "aix",
+    ))
+))]
+fn peer_credentials(_stream: &tokio::net::UnixStream) -> Option<PeerCredentials> {
+    None
+}
+
+/// Credentials as the kernel reported them, keeping a process ID only where it
+/// names one: Linux reports zero for a peer in a PID namespace the server
+/// cannot see into, and no process has a negative one.
+#[cfg(unix)]
+pub(in crate::server) fn kernel_credentials(
+    uid: u32,
+    gid: u32,
+    pid: Option<i32>,
+) -> PeerCredentials {
+    let credentials = PeerCredentials::new(uid, gid);
+    match pid
+        .and_then(|pid| u32::try_from(pid).ok())
+        .filter(|&pid| pid != 0)
+    {
+        Some(pid) => credentials.with_pid(pid),
+        None => credentials,
     }
 }
 
@@ -187,7 +319,7 @@ pub(in crate::server) async fn accept_loop<C: 'static, A: Acceptor>(
         };
 
         match accepted {
-            Ok((stream, peer_addr)) => {
+            Ok((stream, peer)) => {
                 backoff.succeed();
                 let service = Arc::clone(&service);
                 let connection_config = config.clone();
@@ -197,7 +329,7 @@ pub(in crate::server) async fn accept_loop<C: 'static, A: Acceptor>(
                     let _permit = permit;
                     serve_connection(
                         stream,
-                        peer_addr,
+                        peer,
                         connection_local,
                         service,
                         connection_config,
