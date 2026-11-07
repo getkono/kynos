@@ -3,7 +3,8 @@
 //! One reason: `Server::serve_io` is the public way onto the connection driver
 //! without a socket, and whether it serves what a listener's connection would
 //! — both protocols under the settings a listener's connection runs under,
-//! the connection it was handed, over IP or a Unix socket, a client that
+//! the connection it was handed, over IP or a Unix socket, with the TLS
+//! handshake its caller terminated and the protocol that pinned, a client that
 //! breaks the protocol, and a configuration `prepare` refuses — is only
 //! visible by composing it as a caller does.
 
@@ -388,6 +389,162 @@ fn a_server_configured_for_tls_is_refused() {
             ))
         ),
         "{refused:?}"
+    );
+}
+
+// --- A stream whose TLS the caller terminated --------------------------------
+
+/// The SNI name every TLS case records.
+#[cfg(feature = "http2")]
+const SERVER_NAME: &str = "api.example.com";
+
+/// Answers with the handshake the connection reports: the SNI name, the ALPN
+/// protocol, and how many peer certificates it carries.
+#[cfg(feature = "http2")]
+#[kynos::get("/tls")]
+async fn tls(connection: Connection) -> Text {
+    Text(format!(
+        "{} {} {}",
+        connection.server_name().unwrap_or("none"),
+        connection.alpn_protocol().map_or_else(
+            || "none".to_owned(),
+            |alpn| String::from_utf8_lossy(alpn).into_owned()
+        ),
+        connection.peer_certificates().len()
+    ))
+}
+
+/// A connection between [`PEER`] and [`LOCAL`] whose handshake settled
+/// `alpn` for [`SERVER_NAME`], with a one-certificate chain.
+#[cfg(feature = "http2")]
+fn tls_connection(alpn: &'static [u8]) -> Connection {
+    use kynos::extract::connection::TlsIdentity;
+
+    Connection::from_tls_peer(
+        PEER.parse::<SocketAddr>().expect("a socket address"),
+        LOCAL.parse().expect("a socket address"),
+        TlsIdentity::default()
+            .with_server_name(SERVER_NAME)
+            .with_alpn_protocol(alpn)
+            .with_peer_certificates([bytes::Bytes::from_static(b"DER")]),
+    )
+}
+
+/// A handler on a stream recorded through `from_tls_peer` sees that
+/// handshake, as on a TLS listener.
+#[cfg(feature = "http2")]
+#[tokio::test]
+async fn a_handler_sees_the_handshake_its_caller_recorded() {
+    let (client, io) = tokio::io::duplex(64 * 1024);
+    let served = tokio::spawn(
+        Server::new(
+            Router::<()>::new()
+                .mount(kynos::routes![tls])
+                .build(())
+                .expect("a describable router"),
+        )
+        .serve_io(io, tls_connection(b"h2"))
+        .expect("the default configuration is accepted"),
+    );
+
+    let (mut sender, connection) =
+        hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(client))
+            .await
+            .expect("HTTP/2 handshake completes");
+    let client = tokio::spawn(connection);
+
+    let version = hyper::Version::HTTP_2;
+    let response = sender
+        .send_request(get("/tls", version))
+        .await
+        .expect("request succeeds");
+    assert_eq!(
+        read(response, version).await,
+        (http::StatusCode::OK, format!("{SERVER_NAME} h2 1"))
+    );
+
+    drop(sender);
+    client.await.expect("client task").expect("client closes");
+    tokio::time::timeout(Duration::from_secs(5), served)
+        .await
+        .expect("the connection ends once the client closes")
+        .expect("server task")
+        .expect("the connection ends cleanly");
+}
+
+/// Writes `bytes` to a connection served as `connection` over a duplex, and
+/// returns the first [`OPENING`] octets the server sends, or fewer where it
+/// closes first, bounded.
+///
+/// The client's side stays open while it reads: an HTTP/1 connection whose
+/// client half-closes is closed before it answers.
+#[cfg(all(feature = "http1", feature = "http2"))]
+async fn raw(connection: Connection, bytes: &[u8]) -> Vec<u8> {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    let (mut client, io) = tokio::io::duplex(64 * 1024);
+    let served = tokio::spawn(
+        Server::new(service())
+            .serve_io(io, connection)
+            .expect("the default configuration is accepted"),
+    );
+
+    client
+        .write_all(bytes)
+        .await
+        .expect("the bytes are written");
+    let mut response = Vec::new();
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        (&mut client)
+            .take(OPENING as u64)
+            .read_to_end(&mut response),
+    )
+    .await
+    .expect("the server answers within the bound")
+    .expect("the response reads");
+    drop(client);
+    let _ = tokio::time::timeout(Duration::from_secs(5), served)
+        .await
+        .expect("the connection ends once the client closes");
+    response
+}
+
+/// How much of a response [`raw`] reads: enough for an HTTP/1.1 status line
+/// and for an HTTP/2 frame header.
+#[cfg(all(feature = "http1", feature = "http2"))]
+const OPENING: usize = b"HTTP/1.1 200 OK\r\n".len();
+
+/// Whether `response` opens with an HTTP/2 SETTINGS frame, which a server
+/// serving HTTP/2 sends first: a 9-octet frame header whose type octet is 4.
+#[cfg(all(feature = "http1", feature = "http2"))]
+fn opens_with_settings(response: &[u8]) -> bool {
+    response.len() >= 9 && response[3] == 0x4
+}
+
+/// The ALPN protocol a caller recorded pins the protocol rather than the
+/// first bytes choosing it: a stream that settled `h2` is served as HTTP/2
+/// even when HTTP/1 arrives, and one that settled `http/1.1` as HTTP/1 even
+/// when the HTTP/2 preface arrives. The control is each byte sequence on a
+/// stream recorded without a handshake, which the first bytes decide.
+#[cfg(all(feature = "http1", feature = "http2"))]
+#[tokio::test]
+async fn the_alpn_its_caller_recorded_pins_the_protocol() {
+    const HTTP1: &[u8] = b"GET /peer HTTP/1.1\r\nhost: example\r\nconnection: close\r\n\r\n";
+    // The client preface, then an empty SETTINGS frame.
+    const HTTP2: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n\0\0\0\x04\0\0\0\0\0";
+
+    let sniffed = raw(ip_connection(), HTTP1).await;
+    assert!(sniffed.starts_with(b"HTTP/1.1 200 OK\r\n"), "{sniffed:?}");
+    let pinned = raw(tls_connection(b"h2"), HTTP1).await;
+    assert!(opens_with_settings(&pinned), "{pinned:?}");
+
+    let sniffed = raw(ip_connection(), HTTP2).await;
+    assert!(opens_with_settings(&sniffed), "{sniffed:?}");
+    let pinned = raw(tls_connection(b"http/1.1"), HTTP2).await;
+    assert!(
+        !opens_with_settings(&pinned) && (pinned.is_empty() || pinned.starts_with(b"HTTP/1.1 ")),
+        "{pinned:?}"
     );
 }
 
