@@ -465,6 +465,7 @@ fn every_interceptor_kynos_ships_is_accounted_for() {
         "Conditional",
         "Cors",
         "Csrf",
+        "CsrfWhen",
         "Decompression",
         "RateLimit",
         "RequestId",

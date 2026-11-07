@@ -121,11 +121,65 @@ impl<T> Csrf<T> {
         self
     }
 
+    /// Decides only where `enabled` says so of the context, and declares its
+    /// 403 either way.
+    ///
+    /// For a deployment whose credential is ambient in one posture and not in
+    /// another, decided at run time: the document describes what an operation
+    /// *may* answer in any deployment, so the 403 stays declared where the
+    /// check is off.
+    ///
+    /// ```
+    /// use kynos::middleware::csrf::Csrf;
+    ///
+    /// struct App {
+    ///     /// Requests carry a bearer token, which no other site can forge.
+    ///     token_required: bool,
+    /// }
+    ///
+    /// let csrf = Csrf::new().when(|app: &App| !app.token_required);
+    /// # let _ = csrf;
+    /// ```
+    #[must_use]
+    pub fn when<C>(self, enabled: fn(&C) -> bool) -> CsrfWhen<C, T> {
+        CsrfWhen {
+            csrf: self,
+            enabled,
+        }
+    }
+
+    /// Whether this configuration permits the request whose head is `parts`.
+    ///
+    /// The decision the interceptor makes, for an application that must make
+    /// it somewhere an interceptor does not reach, such as inside an
+    /// authenticator that alone knows whether the credential was ambient.
+    #[must_use]
+    pub fn permits(&self, parts: &http::Parts) -> bool {
+        self.decides(
+            &parts.method,
+            &parts.headers,
+            parts.uri.authority().map(::http::uri::Authority::as_str),
+        )
+    }
+
+    /// [`permits`](Csrf::permits) over a whole request, which an interceptor
+    /// holds without its head apart.
+    fn permits_request(&self, request: &http::Request) -> bool {
+        self.decides(
+            request.method(),
+            request.headers(),
+            request
+                .uri()
+                .authority()
+                .map(::http::uri::Authority::as_str),
+        )
+    }
+
     /// Whether `headers` describe a request this configuration permits.
     ///
     /// `authority` is the request target's own, which is where HTTP/2 and
     /// HTTP/3 put what HTTP/1.1 puts in `Host`.
-    fn permits(&self, method: &http::Method, headers: &HeaderMap, authority: Option<&str>) -> bool {
+    fn decides(&self, method: &http::Method, headers: &HeaderMap, authority: Option<&str>) -> bool {
         if is_safe(method) {
             return true;
         }
@@ -245,18 +299,64 @@ where
     ) -> Result<Continued<()>, CrossSite<T>> {
         let _ = (reads, context);
 
-        if self.permits(
-            request.method(),
-            request.headers(),
-            request
-                .uri()
-                .authority()
-                .map(::http::uri::Authority::as_str),
-        ) {
+        if self.permits_request(&request) {
             Ok(next.run(request).await)
         } else {
             Err(CrossSite::new())
         }
+    }
+}
+
+/// A [`Csrf`] that decides only where the context says so.
+///
+/// Built by [`Csrf::when`]. Its `Short` is [`CrossSite`] whether or not it is
+/// enabled, so every operation it covers declares the 403.
+pub struct CsrfWhen<C, T = ()> {
+    csrf: Csrf<T>,
+    enabled: fn(&C) -> bool,
+}
+
+impl<C, T> Interceptor<C> for CsrfWhen<C, T>
+where
+    C: Sync + 'static,
+    T: ProblemType,
+{
+    type Reads = ();
+    type Adds = ();
+    type Short = CrossSite<T>;
+
+    async fn intercept(
+        &self,
+        request: http::Request,
+        (): (),
+        context: &C,
+        next: Next<'_, C>,
+    ) -> Result<Continued<()>, CrossSite<T>> {
+        if !(self.enabled)(context) || self.csrf.permits_request(&request) {
+            Ok(next.run(request).await)
+        } else {
+            Err(CrossSite::new())
+        }
+    }
+}
+
+// Not derived: a derive would bound each on `C` and the marker.
+impl<C, T> Clone for CsrfWhen<C, T> {
+    fn clone(&self) -> Self {
+        Self {
+            csrf: self.csrf.clone(),
+            enabled: self.enabled,
+        }
+    }
+}
+
+impl<C, T> std::fmt::Debug for CsrfWhen<C, T> {
+    /// The `Csrf` it applies; the predicate is code, and prints as nothing.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CsrfWhen")
+            .field("csrf", &self.csrf)
+            .finish_non_exhaustive()
     }
 }
 

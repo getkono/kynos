@@ -1121,6 +1121,17 @@ that re-resolves its own name to `127.0.0.1` sends its requests with
 a check of the authority against the hosts the service answers for, which
 `TrustedHosts` makes; a loopback service with no credentials needs both.
 
+**A posture decided at run time.** The cross-site risk exists only while the
+credential is ambient, and a service that runs with or without one learns which
+from its configuration, after the router is built. `Csrf::when(fn(&C) -> bool)`
+decides only where the context says so, and still declares the 403: the
+document describes what an operation *may* answer in any deployment, and a
+description that changed with configuration would be one no client could be
+generated against. `Csrf::permits(&Parts)` is the same decision, public, for an
+application that has to make it where no interceptor reaches — inside an
+authenticator, say, which alone knows whether the credential it was handed was
+ambient.
+
 ## Trusted hosts
 
 `TrustedHosts` refuses a request whose authority — the target's, else `Host`,

@@ -21,9 +21,9 @@ type Case = (
     bool,
 );
 
-/// `permits` over a request that states its authority in `Host` alone.
+/// `decides` over a request that states its authority in `Host` alone.
 fn permits(csrf: &Csrf, method: &Method, fields: &[(&str, &str)]) -> bool {
-    csrf.permits(method, &map(fields), None)
+    csrf.decides(method, &map(fields), None)
 }
 
 /// The cases where `Sec-Fetch-Site` decides, or the method does.
@@ -219,7 +219,7 @@ fn a_request_stating_its_authority_on_the_target_matches_its_own_origin() {
     let csrf = Csrf::new();
 
     assert!(
-        csrf.permits(
+        csrf.decides(
             &Method::POST,
             &map(&[("origin", "https://api.example.com")]),
             Some("api.example.com"),
@@ -235,7 +235,7 @@ fn a_request_stating_its_authority_on_the_target_matches_its_own_origin() {
 fn a_target_authority_does_not_admit_another_origin() {
     let csrf = Csrf::new();
 
-    assert!(!csrf.permits(
+    assert!(!csrf.decides(
         &Method::POST,
         &map(&[("origin", "https://evil.example.com")]),
         Some("api.example.com"),
@@ -253,7 +253,7 @@ fn a_target_authority_does_not_admit_another_origin() {
 fn the_target_authority_decides_where_a_request_states_both() {
     let csrf = Csrf::new();
 
-    assert!(csrf.permits(
+    assert!(csrf.decides(
         &Method::POST,
         &map(&[
             ("origin", "https://api.example.com"),
@@ -262,7 +262,7 @@ fn the_target_authority_decides_where_a_request_states_both() {
         Some("api.example.com"),
     ));
     assert!(
-        !csrf.permits(
+        !csrf.decides(
             &Method::POST,
             &map(&[
                 ("origin", "https://other.example.com"),
@@ -352,6 +352,49 @@ fn a_trusted_origin_is_matched_whatever_its_case() {
     ));
 }
 
+/// `permits` reads the method, the fields and the target's authority off a
+/// request head, as the interceptor reads them off the request.
+#[test]
+fn permits_decides_over_a_request_head() {
+    let csrf = Csrf::new();
+    let head = |method: &str, origin: &str, site: Option<&str>| {
+        let mut request = http::Request::builder()
+            .method(method)
+            .uri("http://api.example.com/submit")
+            .header("host", "other.example.com")
+            .header("origin", origin);
+        if let Some(site) = site {
+            request = request.header("sec-fetch-site", site);
+        }
+        request
+            .body(())
+            .expect("a well-formed request")
+            .into_parts()
+            .0
+    };
+
+    // The target's authority, not `Host`, is what `Origin` is held to.
+    assert!(csrf.permits(&head("POST", "http://api.example.com", None)));
+    assert!(!csrf.permits(&head("POST", "http://other.example.com", None)));
+    // `Sec-Fetch-Site` is read from the head's fields.
+    assert!(!csrf.permits(&head("POST", "http://api.example.com", Some("cross-site"))));
+    // And the method from its method.
+    assert!(csrf.permits(&head("GET", "http://evil.example", Some("cross-site"))));
+}
+
+/// What `CsrfWhen` prints: the `Csrf` it applies, and not the predicate.
+#[test]
+fn a_csrf_when_prints_the_csrf_it_applies() {
+    let csrf = Csrf::new()
+        .trusting_origin("https://a.example")
+        .when(|enabled: &bool| *enabled);
+
+    assert_eq!(
+        format!("{:?}", csrf.clone()),
+        r#"CsrfWhen { csrf: Csrf { trusted: ["https://a.example"] }, .. }"#
+    );
+}
+
 /// What `Csrf` answers on the wire, where the authority it compares comes
 /// from the request target rather than from an argument.
 mod wire {
@@ -434,5 +477,60 @@ mod wire {
                 "detail": "this request came from another site",
             })
         );
+    }
+
+    /// The posture a [`Csrf::when`] predicate reads.
+    struct Posture {
+        ambient: bool,
+    }
+
+    /// A service checking cross-site requests only where `ambient` says so.
+    fn conditional(ambient: bool) -> Service<Posture> {
+        let endpoint = EndpointBuilder::new(
+            Method::Post,
+            PathTemplate::parse("/submit").expect("a valid path"),
+            submit,
+        );
+        Router::<Posture>::new()
+            .mount(endpoint)
+            .intercept(Csrf::new().when(|posture: &Posture| posture.ambient))
+            .build(Posture { ambient })
+            .expect("a describable router")
+    }
+
+    /// A cross-site `POST`.
+    fn cross_site() -> Request {
+        http::Request::builder()
+            .method("POST")
+            .uri("/submit")
+            .header("sec-fetch-site", "cross-site")
+            .body(Body::empty())
+            .expect("a well-formed request")
+    }
+
+    /// Enabled by the context, it refuses what `Csrf` refuses; disabled, it
+    /// lets the same request through.
+    #[tokio::test]
+    async fn csrf_when_decides_only_where_the_context_enables_it() {
+        let enabled = conditional(true).call(cross_site()).await;
+        assert_eq!(enabled.status(), StatusCode::FORBIDDEN);
+
+        let disabled = conditional(false).call(cross_site()).await;
+        assert_eq!(disabled.status(), StatusCode::OK);
+    }
+
+    /// The 403 is declared whether or not the context enables the check: the
+    /// document describes what the operation may answer in any deployment.
+    #[test]
+    fn csrf_when_declares_its_403_either_way() {
+        for ambient in [true, false] {
+            let document = serde_json::to_value(conditional(ambient).openapi())
+                .expect("a serializable document");
+
+            assert!(
+                document["paths"]["/submit"]["post"]["responses"]["403"].is_object(),
+                "ambient: {ambient}: {document}"
+            );
+        }
     }
 }
