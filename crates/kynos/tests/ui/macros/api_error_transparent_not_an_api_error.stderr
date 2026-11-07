@@ -30,9 +30,9 @@ error[E0277]: the trait bound `std::io::Error: IntoProblem` is not satisfied
              BodyRefused<T, U>
              BodyRejection
              BodySizeExceeded<T>
+             ConnectInfoRejection
              CookieRejection
              CrossSite<T>
-             HeaderRejection
            and $N others
 
 error[E0277]: `std::io::Error` cannot be turned into a response
