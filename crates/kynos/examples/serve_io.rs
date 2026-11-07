@@ -4,9 +4,12 @@
 //! cargo run -p kynos --example serve_io
 //! ```
 //!
-//! `Server::serve_io` takes any `AsyncRead + AsyncWrite` stream: a Unix socket
-//! your own loop accepted, a pipe, or, as here, one end of a Unix socket pair
-//! with the client on the other. Three things are worth noticing:
+//! `Server::serve_io` takes any `AsyncRead + AsyncWrite` stream no listener
+//! accepted: a pipe, a stream from a custom acceptor, or, as here, one end of
+//! a Unix socket pair with the client on the other. A listening Unix socket is
+//! not one of them: hand it to `Server::unix_listener`, as `unix_socket.rs`
+//! does, and it gets the connection limit and graceful shutdown too. Three
+//! things are worth noticing:
 //!
 //! * The connection runs under the server's transport settings, so the
 //!   header-read and body idle timeouts configured below bound it exactly as
