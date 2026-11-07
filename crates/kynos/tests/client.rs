@@ -157,21 +157,23 @@ async fn old() -> Redirect<308> {
     Redirect::to(Location::from_static("/new"))
 }
 
+fn service() -> kynos::router::service::Service<()> {
+    Router::<()>::new()
+        .mount(kynos::routes![
+            echo,
+            form,
+            probe,
+            probe_options,
+            session,
+            opaque,
+            old
+        ])
+        .build(())
+        .expect("a describable router")
+}
+
 fn client() -> TestClient<()> {
-    TestClient::new(
-        Router::<()>::new()
-            .mount(kynos::routes![
-                echo,
-                form,
-                probe,
-                probe_options,
-                session,
-                opaque,
-                old
-            ])
-            .build(())
-            .expect("a describable router"),
-    )
+    TestClient::new(service())
 }
 
 // --- Methods the router accepted and nothing could send -------------------
@@ -287,6 +289,58 @@ async fn client_defaults_reach_the_service_until_a_request_sets_its_own() {
     assert_eq!(own.peer, "203.0.113.7:4242");
     assert_eq!(own.cookie.as_deref(), Some("session=abc123"));
     assert_eq!(own.query.as_deref(), Some("from-client"));
+}
+
+// --- Through a server -----------------------------------------------------
+
+/// Through a server, a request reaches the handler with its fields, its body
+/// and its peer; with no peer set, the connection is from loopback.
+#[cfg(feature = "server")]
+#[tokio::test]
+async fn a_request_through_a_server_carries_its_fields_body_and_peer() {
+    let client = TestClient::through_server(kynos::server::Server::new(service()));
+
+    let own: Seen = client
+        .post("/echo")
+        .cookie("session", "abc123")
+        .header("x-query", "limit=10")
+        .body_stream("text/plain; charset=utf-8", chunks(&["hel", "lo"]))
+        .peer(([203, 0, 113, 7], 4242).into())
+        .send()
+        .await
+        .json();
+    assert_eq!(own.body, "hello");
+    assert_eq!(own.cookie.as_deref(), Some("session=abc123"));
+    assert_eq!(own.query.as_deref(), Some("limit=10"));
+    assert_eq!(own.peer, "203.0.113.7:4242");
+
+    let defaulted: Seen = client.post("/echo").text("").send().await.json();
+    assert_eq!(defaulted.peer, "127.0.0.1:0");
+}
+
+/// A body ending short of its declared length breaks the message off, as a
+/// client whose connection broke does, so no response arrives to assert on.
+#[cfg(feature = "server")]
+#[tokio::test]
+#[should_panic(expected = "POST /echo: no response arrived")]
+async fn a_body_short_of_its_length_through_a_server_gets_no_response() {
+    let _ = TestClient::through_server(kynos::server::Server::new(service()))
+        .post("/echo")
+        .body_stream("text/plain; charset=utf-8", chunks(&["hi"]))
+        .content_length(5)
+        .send()
+        .await;
+}
+
+/// A server `serve_io` would refuse is refused when the client is built,
+/// before any request is written.
+#[cfg(feature = "server")]
+#[test]
+#[should_panic(expected = "a server `serve_io` refuses cannot be tested through: ")]
+fn a_server_serve_io_refuses_cannot_be_tested_through() {
+    let server = kynos::server::Server::new(service())
+        .request_body_idle_timeout(Some(std::time::Duration::ZERO));
+    let _ = TestClient::through_server(server);
 }
 
 /// A value `header` cannot spell, `obs-text` that is not UTF-8, reaches the

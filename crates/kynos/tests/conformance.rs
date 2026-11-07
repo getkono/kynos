@@ -340,6 +340,61 @@ async fn an_absolute_form_target_is_matched_by_its_path() {
     coverage.assert_declared_responses_covered(&document);
 }
 
+/// An exchange no client made counts once recorded by hand, its concrete path
+/// matched to the template as a client's own is, so one client and the
+/// recorded responses cover the description together.
+#[tokio::test]
+async fn an_exchange_recorded_by_hand_counts_toward_coverage() {
+    let coverage = Coverage::new();
+    let reads = TestClient::new(service().expect("a describable router")).with_coverage(&coverage);
+    exercise_reads(&reads).await;
+
+    let written = [201, 400, 409, 413, 415, 422];
+    #[cfg(feature = "server")]
+    let written = [written.as_slice(), &[408]].concat();
+    for status in written {
+        let status = StatusCode::from_u16(status).expect("a status code");
+        coverage.record(&kynos::http::Method::POST, "/users?dry-run=1", status);
+    }
+
+    let document = service().expect("a describable router").openapi().clone();
+    coverage.assert_declared_responses_covered(&document);
+}
+
+/// A client driven through a configured server is answered by that server:
+/// a stalled body waits out the server's own request-body idle timeout, not
+/// the in-process default, and observation, conformance and shared coverage
+/// hold as over the service directly.
+#[cfg(feature = "server")]
+#[tokio::test(start_paused = true)]
+async fn a_client_through_a_server_is_answered_under_its_settings() {
+    const IDLE: std::time::Duration = std::time::Duration::from_secs(3);
+    let coverage = Coverage::new();
+    let server = kynos::server::Server::new(service().expect("a describable router"))
+        .request_body_idle_timeout(Some(IDLE));
+    let client = TestClient::through_server(server).with_coverage(&coverage);
+
+    exercise_reads(&client).await;
+    exercise_writes(&client).await;
+    let started = tokio::time::Instant::now();
+    client
+        .post("/users")
+        .body_stream("application/json", Stalls(Some(b"{".as_slice().into())))
+        .send()
+        .await
+        .assert_status(StatusCode::REQUEST_TIMEOUT);
+    let waited = started.elapsed();
+    assert!(
+        (IDLE..IDLE * 2).contains(&waited),
+        "answered after {waited:?}"
+    );
+
+    client.assert_conformance();
+    client.assert_declared_responses_covered();
+    let document = service().expect("a describable router").openapi().clone();
+    coverage.assert_declared_responses_covered(&document);
+}
+
 /// A failure on an absolute-form target is reported with the target as the
 /// test wrote it, not only its path.
 #[tokio::test]

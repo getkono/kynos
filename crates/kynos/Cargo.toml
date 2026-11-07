@@ -343,7 +343,9 @@ trace = ["dep:tracing"]
 yaml = ["kynos-openapi/yaml"]
 
 # --- Testing ---------------------------------------------------------------
-test-util = ["dep:jsonschema"]
+# With `server`, hyper's client half and tokio's `duplex` let
+# `TestClient::through_server` drive `Server::serve_io` in-process.
+test-util = ["dep:jsonschema", "hyper/client", "tokio/io-util"]
 
 # --- Response cache --------------------------------------------------------
 # `Cache` and `Conditional`; the store is the application's.
