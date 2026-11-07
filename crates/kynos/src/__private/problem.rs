@@ -6,7 +6,9 @@
 //! [`response`] forwards to [`error::problem`](crate::error::problem), where
 //! the shape is built, and the header helpers to
 //! [`response::headers`](crate::response::headers), where `WithHeaders` writes
-//! and declares its own; a `pub use` would give each a second path.
+//! and declares its own; a `pub use` would give each a second path. The 5xx
+//! event is emitted by `middleware::trace::reported`, next to the request
+//! log, so the logging facade stays named where the runtime allowance lists.
 
 use kynos_openapi::{Header, Map, RefOr, Response, Schema as OpenApiSchema};
 
@@ -173,7 +175,9 @@ impl<E: std::error::Error + ?Sized> ReportSource for Failed<'_, E> {
     #[inline]
     fn report(&self, status: u16, type_uri: &'static str) {
         #[cfg(feature = "trace")]
-        reported::emit(status, type_uri, || reported::Chain::of(self.0));
+        crate::middleware::trace::reported::emit(status, type_uri, || {
+            crate::middleware::trace::reported::Chain::of(self.0)
+        });
         #[cfg(not(feature = "trace"))]
         let _ = (status, type_uri);
     }
@@ -183,82 +187,11 @@ impl<E: core::fmt::Display + ?Sized> ReportDisplay for &Failed<'_, E> {
     #[inline]
     fn report(&self, status: u16, type_uri: &'static str) {
         #[cfg(feature = "trace")]
-        reported::emit(status, type_uri, || reported::Chain::alone(self.0));
+        crate::middleware::trace::reported::emit(status, type_uri, || {
+            crate::middleware::trace::reported::Chain::alone(self.0)
+        });
         #[cfg(not(feature = "trace"))]
         let _ = (status, type_uri);
-    }
-}
-
-/// The event [`Failed`] emits, and the owned chain it records.
-#[cfg(feature = "trace")]
-pub(crate) mod reported {
-    use std::{error::Error, fmt};
-
-    /// The target the event is filtered by: the module the policy is
-    /// documented in, rather than this one, which is not public API.
-    pub(crate) const TARGET: &str = "kynos::error";
-
-    /// A failure's message and its sources', owned, so a chain borrowed from
-    /// an error with a lifetime is recorded as the `'static` error `tracing`
-    /// asks for.
-    #[derive(Debug)]
-    pub(crate) struct Chain {
-        message: String,
-        source: Option<Box<Chain>>,
-    }
-
-    impl Chain {
-        /// `error`'s message, then each `source()` in turn.
-        pub(crate) fn of<E: Error + ?Sized>(error: &E) -> Self {
-            let mut messages = vec![error.to_string()];
-            let mut next = error.source();
-            while let Some(source) = next {
-                messages.push(source.to_string());
-                next = source.source();
-            }
-            let mut chain = None;
-            while let Some(message) = messages.pop() {
-                chain = Some(Box::new(Self {
-                    message,
-                    source: chain,
-                }));
-            }
-            *chain.expect("the failure's own message is the first")
-        }
-
-        /// A failure with no `source()` to walk: its message alone.
-        pub(crate) fn alone<E: fmt::Display + ?Sized>(failure: &E) -> Self {
-            Self {
-                message: failure.to_string(),
-                source: None,
-            }
-        }
-    }
-
-    impl fmt::Display for Chain {
-        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-            formatter.write_str(&self.message)
-        }
-    }
-
-    impl Error for Chain {
-        fn source(&self) -> Option<&(dyn Error + 'static)> {
-            self.source.as_deref().map(|source| source as _)
-        }
-    }
-
-    /// One `ERROR` event, whatever level `Trace` is set to, as a panic's is:
-    /// a server failure is never filtered out by the request log's verbosity.
-    /// The chain is built only where a subscriber listens: `tracing` evaluates
-    /// a field only once the event is enabled.
-    pub(crate) fn emit(status: u16, type_uri: &'static str, chain: impl FnOnce() -> Chain) {
-        tracing::error!(
-            target: TARGET,
-            status,
-            problem_type = type_uri,
-            error = &chain() as &(dyn Error + 'static),
-            "operation failed",
-        );
     }
 }
 
