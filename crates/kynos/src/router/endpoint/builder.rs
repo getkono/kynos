@@ -331,21 +331,7 @@ where
         request: Request,
         context: &C,
     ) -> impl Future<Output = Result<Request, Response>> + Send {
-        let (mut parts, body) = request.into_parts();
-        async move {
-            let refused = if install::catches::<P>() {
-                dispatch::recovery::recover(H::__guard_ahead(&mut parts, context))
-                    .await
-                    .unwrap_or_else(|payload| Some(dispatch::recovery::recovered_response(payload)))
-            } else {
-                H::__guard_ahead(&mut parts, context).await
-            };
-
-            match refused {
-                Some(refused) => Err(refused),
-                None => Ok(Request::from_parts(parts, body)),
-            }
-        }
+        super::guard_ahead::<C, H, A>(request, context, install::catches::<P>())
     }
 }
 

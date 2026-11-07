@@ -14,9 +14,10 @@ use std::{convert::Infallible, future::Future, pin::Pin, sync::Arc};
 use kynos_openapi::{Method, PathTemplate};
 
 use crate::{
+    handler::Handler,
     http::{Request, Response},
     middleware::{Continued, Interceptor, MiddlewareError, Next, erased::ErasedInterceptor},
-    router::operation::OperationCx,
+    router::{dispatch::recovery, operation::OperationCx},
 };
 
 /// A declared API operation.
@@ -80,6 +81,30 @@ pub trait Endpoint<C>: Send + Sync + 'static {
     ) -> impl Future<Output = Result<Request, Response>> + Send {
         let _ = context;
         std::future::ready(Ok(request))
+    }
+}
+
+/// Runs handler `H`'s guard from `request`'s head, under recovery where
+/// `catches`: the request, carrying what the guard admitted, or the response
+/// that refused it.
+async fn guard_ahead<C: Sync, H: Handler<C, A>, A>(
+    request: Request,
+    context: &C,
+    catches: bool,
+) -> Result<Request, Response> {
+    let (mut parts, body) = request.into_parts();
+
+    let refused = if catches {
+        recovery::recover(H::__guard_ahead(&mut parts, context))
+            .await
+            .unwrap_or_else(|payload| Some(recovery::recovered_response(payload)))
+    } else {
+        H::__guard_ahead(&mut parts, context).await
+    };
+
+    match refused {
+        Some(refused) => Err(refused),
+        None => Ok(Request::from_parts(parts, body)),
     }
 }
 
