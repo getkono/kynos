@@ -210,11 +210,24 @@ pub(in crate::server) mod test_client {
     }
 
     /// The absolute target a prior-knowledge HTTP/2 request is sent with,
-    /// since HTTP/2 carries the scheme and authority as pseudo-headers.
+    /// since HTTP/2 carries the scheme and authority as pseudo-headers: an
+    /// absolute-form target as it is, otherwise `http` and the `Host` header,
+    /// then `localhost`.
     #[cfg(any(test, not(feature = "http1")))]
     pub(in crate::server) fn http2_target(request: &Request) -> std::io::Result<crate::http::Uri> {
-        format!("http://localhost{}", request.uri())
-            .parse()
+        let uri = request.uri();
+        if uri.scheme().is_some() && uri.authority().is_some() {
+            return Ok(uri.clone());
+        }
+        let authority = match request.headers().get(crate::http::header::HOST) {
+            Some(host) => host.as_bytes(),
+            None => b"localhost",
+        };
+        crate::http::Uri::builder()
+            .scheme("http")
+            .authority(authority)
+            .path_and_query(uri.path_and_query().map_or("/", |target| target.as_str()))
+            .build()
             .map_err(std::io::Error::other)
     }
 }
