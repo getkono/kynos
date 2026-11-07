@@ -7,19 +7,23 @@
 
 #![cfg(all(feature = "macros", feature = "json"))]
 
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    any::Any,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
 };
 
 use kynos::{
     Router,
     error::rejection::AuthRejection,
     extract::body::text::Text,
-    http::{Request, StatusCode, header},
-    middleware::{Continued, Interceptor, Next, limits::body_size::BodySize},
+    http::{Request, Response, StatusCode, header},
+    middleware::{Continued, Interceptor, Next, Observer, limits::body_size::BodySize},
     response::status::NoContent,
-    router::group::Group,
+    router::{group::Group, operation::Route},
     security::{
         Authenticates, Authenticator, Unscoped,
         auth::{Auth, MaybeAuth},
@@ -106,6 +110,41 @@ impl Interceptor<Gate> for Witness {
     ) -> Result<Continued, std::convert::Infallible> {
         gate.passed.lock().expect("an unpoisoned log").push(self.0);
         Ok(next.run(request).await)
+    }
+}
+
+/// Hands on a copy of the request rather than the request itself, as an
+/// interceptor that rebuilds one does.
+struct Copies;
+
+impl Interceptor<Gate> for Copies {
+    type Reads = ();
+    type Adds = ();
+    type Short = std::convert::Infallible;
+
+    async fn intercept(
+        &self,
+        request: Request,
+        (): (),
+        _: &Gate,
+        next: Next<'_, Gate>,
+    ) -> Result<Continued, std::convert::Infallible> {
+        let (parts, body) = request.into_parts();
+        Ok(next.run(Request::from_parts(parts.clone(), body)).await)
+    }
+}
+
+/// Counts the panics reported to it.
+#[derive(Clone, Default)]
+struct Heard(Arc<AtomicUsize>);
+
+impl Observer<Gate> for Heard {
+    fn on_request(&self, _: &Request, _: Option<Route<'_>>, _: &Gate) {}
+
+    fn on_response(&self, _: &Response, _: Option<Route<'_>>, _: Duration) {}
+
+    fn on_panic(&self, _: &(dyn Any + Send), _: Option<Route<'_>>) {
+        self.0.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -220,6 +259,52 @@ async fn an_admitted_request_is_checked_once() {
     assert_eq!(admitted.status, StatusCode::NO_CONTENT);
     assert_eq!(gate.checks(), 1);
     assert_eq!(gate.passed(), ["inner"]);
+}
+
+/// A copy of the admitted request is not the request the guard admitted: its
+/// handler checks the credential again rather than inheriting the admission.
+#[tokio::test]
+async fn a_copied_request_is_checked_again() {
+    let gate = Gate::default();
+    let service = served!(Group::new("/api").guard_first().intercept(Copies), gate);
+
+    let admitted = post(&service, "/api/uploads")
+        .header("x-api-key", "k_ok")
+        .header("content-type", "text/plain")
+        .body("payload")
+        .call()
+        .await;
+
+    assert_eq!(admitted.status, StatusCode::NO_CONTENT);
+    assert_eq!(gate.checks(), 2);
+}
+
+/// A repeated `guard_first` keeps its first point, on a group and on a router
+/// alike: the interceptor between the two calls never sees the refusal.
+#[tokio::test]
+async fn a_repeated_call_keeps_its_first_point() {
+    let gate = Gate::default();
+    let group = Group::new("/api")
+        .intercept(Witness("outer"))
+        .guard_first()
+        .intercept(Witness("between"))
+        .guard_first();
+    let refused = post(&served!(group, gate), "/api/uploads").call().await;
+    assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(gate.passed(), ["outer"], "a group");
+
+    let gate = Gate::default();
+    let router = Router::new()
+        .intercept(Witness("outer"))
+        .guard_first()
+        .intercept(Witness("between"))
+        .guard_first()
+        .mount(kynos::routes![upload])
+        .build(gate.clone())
+        .expect("a describable router");
+    let refused = post(&router, "/uploads").call().await;
+    assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(gate.passed(), ["outer"], "a router");
 }
 
 /// An optional guard run first hands the handler what it found, absence
@@ -340,7 +425,8 @@ fn the_description_is_unchanged() {
 }
 
 /// An endpoint's own recovery covers its guard wherever the guard runs: a
-/// panicking authenticator is the operation's 500, not an unwind.
+/// panicking authenticator is the operation's 500, not an unwind, and an
+/// observer hears of the panic once.
 #[test]
 fn an_endpoints_recovery_covers_its_guard_run_first() {
     let endpoint = kynos::router::endpoint::builder::EndpointBuilder::new(
@@ -350,8 +436,10 @@ fn an_endpoints_recovery_covers_its_guard_run_first() {
     )
     .catch_panics();
     let gate = Gate::default();
+    let heard = Heard::default();
     let service = Router::new()
         .group(Group::new("/api").guard_first().mount(endpoint))
+        .observe(heard.clone())
         .build(gate)
         .expect("a describable router");
 
@@ -372,4 +460,9 @@ fn an_endpoints_recovery_covers_its_guard_run_first() {
 
     let reply = caught.expect("the endpoint's recovery caught the guard's panic");
     assert_eq!(reply.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        heard.0.load(Ordering::SeqCst),
+        1,
+        "the recovered panic was not reported exactly once"
+    );
 }
