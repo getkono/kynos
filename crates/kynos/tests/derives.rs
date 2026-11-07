@@ -6951,6 +6951,34 @@ mod logged {
         );
     }
 
+    /// A built-in refusal held transparently is sent by its own
+    /// `into_response`, which logs nothing; the derive adds no event of its
+    /// own for it.
+    #[test]
+    fn a_transparent_built_in_server_refusal_logs_nothing() {
+        #[derive(ApiError)]
+        enum Shed {
+            #[problem(transparent)]
+            Full(kynos::middleware::limits::concurrency::AtCapacity),
+        }
+
+        impl std::fmt::Display for Shed {
+            fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("the service is at capacity")
+            }
+        }
+
+        let (response, lines) = captured(|| {
+            Shed::Full(kynos::middleware::limits::concurrency::AtCapacity::new(
+                None,
+            ))
+            .into_response()
+        });
+
+        assert_eq!(response.status(), 503);
+        assert_eq!(lines, "");
+    }
+
     /// A failure that is only `Display` is logged by it, under `about:blank`.
     #[test]
     fn a_display_only_server_failure_logs_its_message() {

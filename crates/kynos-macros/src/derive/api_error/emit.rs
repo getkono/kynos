@@ -82,7 +82,8 @@ pub(super) fn into_response(failures: &[&Failure], delegates: &[&Transparent]) -
 /// `kynos::__private::problem::Failed`, which is a no-op without `trace`.
 ///
 /// Rendered only where this type declares a 5xx; a transparent variant is left
-/// to its field's own `into_response`, so one failure is logged once.
+/// to its field's own `into_response`, so one failure is logged at most once,
+/// and only where that field is itself a derived `ApiError`.
 fn report(failures: &[&Failure], delegates: &[&Transparent]) -> TokenStream2 {
     let server: Vec<&&Failure> = failures
         .iter()

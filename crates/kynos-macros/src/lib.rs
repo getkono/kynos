@@ -585,7 +585,10 @@ pub fn derive_schema(item: TokenStream) -> TokenStream {
 /// With the `trace` feature, a failure declaring a 5xx is logged as it is
 /// turned into a response: one `ERROR` event on the `kynos::error` target with
 /// its `status`, `problem_type` and, where the type is a `std::error::Error`,
-/// its `source()` chain, which `detail` never carries. A 4xx logs nothing.
+/// its `source()` chain, which `detail` never carries. A 4xx logs nothing. A
+/// transparent variant logs nothing itself: its held error is logged only
+/// where it is a derived `ApiError`, so a built-in refusal or a hand-written
+/// `ShortCircuit` held that way is sent unlogged.
 ///
 /// A field is published as an extension member only when it says
 /// `#[problem(extension)]`, so error-site context stays off the wire by

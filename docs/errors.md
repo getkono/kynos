@@ -158,8 +158,10 @@ problem consumes it: one `ERROR` event on the `kynos::error` target, carrying
 failure as a `std::error::Error` whose sources the subscriber walks. It is
 `ERROR` whatever level `Trace` is set to, as a panic's event is, so no request
 log verbosity hides a server failure. A 4xx is the client's to read and logs
-nothing. A transparent variant is logged by the error it holds, so a failure is
-logged once. A type that is only `Display` is logged by its message; a generic
+nothing. A transparent variant is left to the error it holds, so a failure is
+logged at most once: by that error where it is itself a derived `ApiError`, and
+not at all where it is a built-in refusal such as `AtCapacity` or a
+hand-written `ShortCircuit`, whose `into_response` emits nothing. A type that is only `Display` is logged by its message; a generic
 type is logged by its chain only where its `Error` impl holds under the
 derive's own bounds. The event inherits whatever span the application entered;
 Kynos opens none per request, so the operation is joined through that span or
