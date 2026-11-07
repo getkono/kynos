@@ -15,7 +15,7 @@
 //! What Kynos does supply is everything around the token, which is the part
 //! that is the same for everyone and the part that is easy to get wrong.
 //!
-//! Seven things are worth noticing:
+//! Eight things are worth noticing:
 //!
 //! * **Nothing here finds the token.** `#[security(bearer(format = "JWT"))]`
 //!   already said where a bearer token travels, so the carrier is emitted from
@@ -49,8 +49,15 @@
 //!   secret with `==` leaks how much of it was right. The token it answers with
 //!   is a credential, so the operation sits under [`SecurityHeaders`] and the
 //!   response says `Cache-Control: no-store`, as RFC 6749 section 5.1 requires.
+//! * **A caller without a token never sends a body anyone reads.** `POST
+//!   /notes` sits under a [`BodySize`] limit, and its group calls
+//!   [`guard_first`] before applying it, so the guard runs from the request
+//!   head and its 401 is answered before the limit buffers a byte. The
+//!   handler's `Auth` argument receives the token already checked.
 //!
 //! [`BearerToken`]: kynos::security::carrier::BearerToken
+//! [`BodySize`]: kynos::middleware::limits::body_size::BodySize
+//! [`guard_first`]: kynos::router::group::Group::guard_first
 //! [`constant_time_eq`]: kynos::security::constant_time_eq
 
 use std::{
@@ -62,7 +69,8 @@ use std::{
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use kynos::{
     error::rejection::AuthRejection,
-    middleware::security_headers::SecurityHeaders,
+    extract::body::text::Text,
+    middleware::{limits::body_size::BodySize, security_headers::SecurityHeaders},
     prelude::*,
     router::service::Service,
     security::{
@@ -447,6 +455,13 @@ async fn feed(caller: MaybeAuth<AccessToken>) -> Json<Subject> {
     })
 }
 
+/// Keeps a note, which only a caller holding a token may send.
+#[kynos::post("/notes")]
+async fn note(Auth(claims): Auth<AccessToken>, Text(note): Text) -> NoContent {
+    let _ = (claims, note);
+    NoContent
+}
+
 /// The whole API, built over a seeded key store.
 fn service() -> kynos::Result<Service<App>> {
     let router = Router::<App>::new()
@@ -458,6 +473,14 @@ fn service() -> kynos::Result<Service<App>> {
             Group::new("/")
                 .intercept(SecurityHeaders::new())
                 .mount(kynos::routes![sign_in]),
+        )
+        // The guard first, then the limit: an anonymous caller is refused
+        // from the head, before the limit reads the body it sent.
+        .group(
+            Group::new("/")
+                .guard_first()
+                .intercept(BodySize::new(64 * 1024))
+                .mount(kynos::routes![note]),
         )
         .mount(kynos::routes![me, reports, feed]);
 
