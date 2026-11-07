@@ -672,6 +672,52 @@ async fn prepare_accepts_a_standard_library_listener() {
     assert_eq!(bound.local_addrs(), [expected]);
 }
 
+/// Anything that converts into the standard library's listener is taken, and a
+/// blocking one is made nonblocking before the runtime polls it: a blocking
+/// accept would stall the worker thread it ran on.
+///
+/// The flag belongs to the open file description, so a duplicate reads it.
+#[cfg(unix)]
+#[tokio::test]
+async fn prepare_makes_a_converted_blocking_listener_nonblocking() {
+    let socket = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None)
+        .expect("socket opens");
+    socket
+        .bind(&std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 0)).into())
+        .expect("socket binds");
+    socket.listen(16).expect("socket listens");
+    let duplicate = socket.try_clone().expect("socket duplicates");
+    assert!(!duplicate.nonblocking().expect("O_NONBLOCK reads"));
+    let expected = socket
+        .local_addr()
+        .expect("socket has an address")
+        .as_socket()
+        .expect("an IPv4 socket has an IP address");
+
+    let bound = crate::server::Server::new(test_service())
+        .listener(socket)
+        .prepare()
+        .await
+        .expect("a socket2 listener converts");
+    assert_eq!(bound.local_addrs(), [expected]);
+    assert!(duplicate.nonblocking().expect("O_NONBLOCK reads"));
+}
+
+/// A listener tokio already owns is handed over through its own `into_std`.
+#[tokio::test]
+async fn prepare_accepts_a_tokio_listener_through_into_std() {
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("tokio listener binds");
+    let expected = listener.local_addr().expect("listener has an address");
+    let bound = crate::server::Server::new(test_service())
+        .listener(listener.into_std().expect("tokio releases the listener"))
+        .prepare()
+        .await
+        .expect("the released listener is registered again");
+    assert_eq!(bound.local_addrs(), [expected]);
+}
+
 /// A failed bind names the address that failed, and lets go of every listener
 /// prepared before it: a supplied one and one bound from an earlier address
 /// can both be bound again at once.

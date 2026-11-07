@@ -1,5 +1,6 @@
-//! Where a server accepts traffic: configured addresses and pre-bound
-//! listeners.
+//! Where a server accepts traffic: the addresses it resolves and binds itself.
+//! A listener bound elsewhere is handed over as the standard library's own
+//! type, through [`Server::listener`](crate::server::Server::listener).
 //!
 //! Deliberately separate from the public server URLs in the OpenAPI document.
 //! A listener address says where this process accepts traffic; a `servers`
@@ -9,8 +10,6 @@ use std::{
     fmt, io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
 };
-
-use tokio::net::TcpListener;
 
 use crate::server::error::ServerError;
 
@@ -80,31 +79,6 @@ impl From<(String, u16)> for BindAddress {
 impl From<(&str, u16)> for BindAddress {
     fn from((host, port): (&str, u16)) -> Self {
         (host.to_owned(), port).into()
-    }
-}
-
-/// A supported pre-bound TCP listener.
-///
-/// The closed enum preserves Kynos's TCP transport guarantees while accepting
-/// either standard-library or Tokio ownership.
-#[derive(Debug)]
-#[non_exhaustive]
-pub enum Listener {
-    /// A standard-library listener, converted to nonblocking Tokio ownership.
-    Standard(std::net::TcpListener),
-    /// A listener already owned by Tokio.
-    Tokio(TcpListener),
-}
-
-impl From<std::net::TcpListener> for Listener {
-    fn from(listener: std::net::TcpListener) -> Self {
-        Self::Standard(listener)
-    }
-}
-
-impl From<TcpListener> for Listener {
-    fn from(listener: TcpListener) -> Self {
-        Self::Tokio(listener)
     }
 }
 

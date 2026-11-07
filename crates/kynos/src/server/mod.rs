@@ -6,15 +6,16 @@
 //! connection per call.
 //!
 //! Kynos runs on tokio and does not abstract over it, so serving requires a
-//! tokio runtime. Apart from [`address::Listener::Tokio`], its
-//! `From<tokio::net::TcpListener>` conversion and the I/O bound on
-//! [`Server::serve_io`], no public item mentions a tokio type. This module tree
-//! is not the only place the runtime is named: `docs/architecture.md`'s runtime
-//! allowance table lists every site that is.
+//! tokio runtime. Apart from the I/O bound on [`Server::serve_io`], no public
+//! item mentions a tokio type: a pre-bound listener is handed over as the
+//! standard library's, and the server registers it with the runtime. This
+//! module tree is not the only place the runtime is named:
+//! `docs/architecture.md`'s runtime allowance table lists every site that is.
 //!
 //! # How this module is laid out
 //!
-//! [`address`] holds the listener, the private `accept` module the accept loop,
+//! [`address`] holds the addresses bound, the private `accept` module the
+//! listeners and their accept loop,
 //! the private `connection` module socket read and write, the private
 //! `request_body` module the idle timeout every request body is read under,
 //! and [`shutdown`] the signal; timers live with the work they bound.
@@ -52,7 +53,7 @@ use crate::{
     router::service::Service,
     server::{
         accept::accept_loop,
-        address::{BindAddress, Listener, resolve},
+        address::{BindAddress, resolve},
         error::ServerError,
         lifecycle::{Drain, Lifecycle},
         protocol::validate_protocol_config,
@@ -78,7 +79,7 @@ pub struct Server<C> {
     /// Shared with every connection [`serve_io`](Self::serve_io) returns.
     service: Arc<Service<C>>,
     addresses: Vec<BindAddress>,
-    listeners: Vec<Listener>,
+    listeners: Vec<std::net::TcpListener>,
     #[cfg(feature = "http1")]
     http1: Http1Config,
     #[cfg(feature = "http2")]
@@ -122,9 +123,14 @@ impl<C: 'static> Server<C> {
         self
     }
 
-    /// Adds an already-bound standard-library or Tokio TCP listener.
+    /// Adds an already-bound TCP listener, taken as the standard library's
+    /// type: anything that converts into one, such as a `socket2::Socket`.
+    ///
+    /// [`prepare`](Self::prepare) sets it nonblocking and registers it with
+    /// the runtime. A `tokio::net::TcpListener` is handed over through its own
+    /// `into_std`.
     #[must_use]
-    pub fn listener(mut self, listener: impl Into<Listener>) -> Self {
+    pub fn listener(mut self, listener: impl Into<std::net::TcpListener>) -> Self {
         self.listeners.push(listener.into());
         self
     }
@@ -274,16 +280,11 @@ impl<C: 'static> Server<C> {
         }
 
         let mut listeners = Vec::new();
-        for source in self.listeners {
-            let listener = match source {
-                Listener::Standard(listener) => {
-                    listener
-                        .set_nonblocking(true)
-                        .map_err(ServerError::Listener)?;
-                    TcpListener::from_std(listener).map_err(ServerError::Listener)?
-                }
-                Listener::Tokio(listener) => listener,
-            };
+        for listener in self.listeners {
+            listener
+                .set_nonblocking(true)
+                .map_err(ServerError::Listener)?;
+            let listener = TcpListener::from_std(listener).map_err(ServerError::Listener)?;
             listener.local_addr().map_err(ServerError::Listener)?;
             listeners.push(listener);
         }

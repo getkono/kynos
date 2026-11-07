@@ -21,16 +21,17 @@ buffer that consumes much of what it came for.
 
 - tokio is a hard dependency, not a generic parameter. No runtime abstraction
   trait exists — not public, not internal. The server calls tokio directly.
-- tokio types appear in zero handler-facing signatures. The two deliberate
-  exceptions anywhere in the public API are
-  [`server::address::Listener::Tokio`](../crates/kynos/src/server/address.rs)
-  together with its `From<tokio::net::TcpListener>` conversion, which exist so
-  an already-bound `tokio::net::TcpListener` can be handed to the server, and
-  the `tokio::io::{AsyncRead, AsyncWrite}` bound on
+- tokio types appear in zero handler-facing signatures. The one deliberate
+  exception anywhere in the public API is the
+  `tokio::io::{AsyncRead, AsyncWrite}` bound on
   [`Server::serve_io`](../crates/kynos/src/server/mod.rs), which hands the
   server one stream no listener accepted. Naming the runtime there is the
-  point, not a leak. A surface check counts all three, because the conversion
-  names the type as plainly as the variant does.
+  point, not a leak. A pre-bound listener is not an exception: `Server::listener`
+  takes anything that converts into the standard library's listener, and the
+  server makes it nonblocking and registers it with the runtime while
+  preparing. A listener tokio already owns comes back out through its own
+  `into_std`, which costs one deregistration and registration at startup and
+  nothing per connection, so no listener type of the runtime's is ever named.
 - The runtime coupling surface is exactly five points, and they all live in
   `crates/kynos/src/server/`: the accept loop and listener, connection socket
   read and write (the `tokio::io::{AsyncRead, AsyncWrite}` bound on the
