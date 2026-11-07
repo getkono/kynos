@@ -2,7 +2,7 @@
 
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{quote, quote_spanned};
-use syn::{Ident, Type, spanned::Spanned};
+use syn::{Ident, Lifetime, Type, spanned::Spanned};
 
 use super::{Extension, Failure, HEADERS_BINDING, Outcome, Transparent};
 use crate::derive::common::optional;
@@ -225,21 +225,41 @@ fn problem(failure: &Failure) -> TokenStream2 {
         .as_ref()
         .map(|title| quote!(problem.title = ::std::borrow::Cow::Borrowed(#title);));
     // An `Option` member is sent only when it holds a value, as `detail` is.
+    let label = Lifetime::new(PROBLEM_LABEL, Span::call_site());
     let with_extensions = failure.extensions.iter().map(|extension| {
         let binding = &extension.name;
         let name = binding.to_string();
+        let (ty, value) = extension.optional().map_or_else(
+            || (&extension.ty, quote!(#binding)),
+            |inner| (inner, quote!(value)),
+        );
+        // Spanned to the field, so a type that is not `Serialize` is reported
+        // where it is named.
+        let to_member = quote_spanned!(ty.span()=> ::kynos::__private::problem::to_member::<#ty>);
+        // A `match`, so `member` is scoped to its arm and shadows no later
+        // field bound under that name.
+        let send = quote! {
+            match #to_member(&#value) {
+                ::core::option::Option::Some(member) => {
+                    problem = problem.with_extension(#name, member);
+                }
+                ::core::option::Option::None => {
+                    break #label ::kynos::__private::problem::unserializable_member();
+                }
+            }
+        };
         if extension.optional().is_some() {
             quote! {
                 if let ::core::option::Option::Some(value) = #binding {
-                    problem = problem.with_extension(#name, value);
+                    #send
                 }
             }
         } else {
-            quote!(problem = problem.with_extension(#name, #binding);)
+            send
         }
     });
 
-    quote! {{
+    let build = quote! {
         let status = ::kynos::http::StatusCode::from_u16(#status)
             .expect("the derive checked this code");
         // `new` titles it with the reason phrase, as RFC 9457 asks of
@@ -250,8 +270,19 @@ fn problem(failure: &Failure) -> TokenStream2 {
         problem.detail = detail;
         #(#with_extensions)*
         problem
-    }}
+    };
+    // Labelled only where a member can refuse to serialize, so no label goes
+    // unused.
+    if failure.extensions.is_empty() {
+        quote!({ #build })
+    } else {
+        quote!(#label: { #build })
+    }
 }
+
+/// The label of a problem block an unserializable extension member breaks out
+/// of with the 500 that replaces it.
+const PROBLEM_LABEL: &str = "'__kynos_problem";
 
 /// The `responses` body: one response per distinct status, over the `Problem`
 /// component, shaped by `kynos::__private::problem::response`, then each

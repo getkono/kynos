@@ -3,14 +3,8 @@
 
 use kynos::ApiError;
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 struct Quota(u64);
-
-impl From<Quota> for serde_json::Value {
-    fn from(quota: Quota) -> Self {
-        quota.0.into()
-    }
-}
 
 #[derive(Debug, thiserror::Error, ApiError)]
 enum StoreError {

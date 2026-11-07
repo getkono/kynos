@@ -1,7 +1,8 @@
 //! What `#[derive(ApiError)]` declares each status with, joins a `const` type
-//! URI prefix with, unions a transparent variant's statuses with, and sends
-//! and declares a failure's `#[problem(headers)]` group with, and logs a 5xx
-//! failure through before its problem consumes it.
+//! URI prefix with, unions a transparent variant's statuses with, sends its
+//! extension members through, and sends and declares a failure's
+//! `#[problem(headers)]` group with, and logs a 5xx failure through before its
+//! problem consumes it.
 //!
 //! [`response`] forwards to [`error::problem`](crate::error::problem), where
 //! the shape is built, and the header helpers to
@@ -56,6 +57,22 @@ pub fn union_responses(responses: &mut kynos_openapi::Responses, held: &kynos_op
 /// 500 in its place.
 pub fn write_headers<H: EncodeHeaders>(response: &mut crate::http::Response, group: &H) {
     crate::response::headers::write_or_refuse(response, group);
+}
+
+/// An extension member as its type serializes it, so the wire follows the
+/// serde attributes its `Schema` declares it by; `None` where the type
+/// refuses, and the derive answers [`unserializable_member`] instead.
+#[must_use]
+pub fn to_member<T: serde::Serialize + ?Sized>(value: &T) -> Option<serde_json::Value> {
+    serde_json::to_value(value).ok()
+}
+
+/// The 500 a derived problem answers with in place of one whose extension
+/// member refused to serialize, as a JSON body that cannot be serialized does.
+#[must_use]
+pub fn unserializable_member() -> crate::error::problem::Problem {
+    crate::error::problem::Problem::new(crate::http::StatusCode::INTERNAL_SERVER_ERROR)
+        .with_detail("a problem extension member could not be serialized")
 }
 
 /// `base` followed by `slug`, as the bytes of a `const`: how a type URI under
