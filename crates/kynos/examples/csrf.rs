@@ -9,7 +9,7 @@
 //! cargo run -p kynos --example csrf --features openapi31,macros,json,cookie
 //! ```
 //!
-//! Five things are worth noticing:
+//! Six things are worth noticing:
 //!
 //! * **There is no token, no session and no randomness.** The defence is the
 //!   W3C's Fetch Metadata: a browser sets `Sec-Fetch-Site` itself and script
@@ -34,13 +34,18 @@
 //!   client rather than enforced by the server: `Lax` still admits a top-level
 //!   navigation, an agent that ignores the attribute ignores it silently, and
 //!   neither failure is visible from here. The two are worth having together.
+//! * **A loopback service needs `TrustedHosts`, which `Csrf` cannot stand in
+//!   for.** A page that rebinds its own name to `127.0.0.1` sends requests the
+//!   browser calls same-origin, so only the authority they name gives them
+//!   away. The second router below refuses those with 421, and switches `Csrf`
+//!   on with [`Csrf::when`] only in the posture where its credential is ambient.
 
 use std::time::Duration;
 
 use kynos::{
     Router,
     http::{Method, Request, Response, StatusCode, header},
-    middleware::{cookies::SetCookies, csrf::Csrf},
+    middleware::{cookies::SetCookies, csrf::Csrf, trusted_hosts::TrustedHosts},
     openapi::RefOr,
     prelude::*,
     response::cookie::{Cookie, SameSite},
@@ -162,7 +167,105 @@ async fn main() -> kynos::Result<()> {
     a_client_that_is_not_a_browser_is_not_subject(&service).await;
     logging_out_removes_the_cookie(&service).await;
 
+    on_loopback().await
+}
+
+/// How a loopback deployment authenticates, which decides whether a browser
+/// can be made to spend its credential.
+struct Posture {
+    /// The credential is a cookie, which a browser attaches to any request,
+    /// forged or not. Otherwise it is a token the client sends explicitly.
+    cookie_session: bool,
+}
+
+/// The same operations served on `127.0.0.1`, as a local tool would serve them.
+///
+/// `TrustedHosts` goes outermost, so a rebound request is refused before
+/// anything else reads it. `Csrf::when` decides from the context, so one router
+/// serves both postures and declares the 403 in either.
+async fn on_loopback() -> kynos::Result<()> {
+    let router = || {
+        Router::<Posture>::new()
+            .mount(kynos::routes![profile, rename])
+            .intercept(TrustedHosts::new().allow_loopback())
+            .intercept(Csrf::new().when(|posture: &Posture| posture.cookie_session))
+    };
+
+    let token = router().build(Posture {
+        cookie_session: false,
+    })?;
+    let cookie = router().build(Posture {
+        cookie_session: true,
+    })?;
+
+    a_rebound_request_is_misdirected(&token).await;
+    a_token_posture_skips_the_check(&token).await;
+    a_cookie_posture_applies_the_check(&cookie).await;
+
     Ok(())
+}
+
+/// `attacker.example`, rebound to `127.0.0.1`: same-origin to the browser, and
+/// for a safe method, so `Csrf` would admit it in any posture. The authority
+/// is the only field that tells, and it names a host this service does not
+/// answer for.
+async fn a_rebound_request_is_misdirected(service: &Service<Posture>) {
+    let response = send(
+        service,
+        Method::GET,
+        "/profile",
+        &[
+            ("sec-fetch-site", "same-origin"),
+            ("host", "attacker.example:8080"),
+        ],
+    )
+    .await;
+
+    println!("\nGET for attacker.example -> {}", response.status());
+    assert_eq!(response.status(), StatusCode::MISDIRECTED_REQUEST);
+
+    // The port is never compared: a rebinding page names the one the service
+    // listens on, so it is the host alone that is checked.
+    let response = send(
+        service,
+        Method::GET,
+        "/profile",
+        &[("host", "localhost:8080")],
+    )
+    .await;
+
+    println!("GET for localhost -> {}", response.status());
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+/// With a token, a forged request carries nothing worth refusing: the other
+/// site cannot attach the token, so `Csrf` stays off.
+async fn a_token_posture_skips_the_check(service: &Service<Posture>) {
+    let response = send(
+        service,
+        Method::POST,
+        "/profile",
+        &[("sec-fetch-site", "cross-site"), ("host", "127.0.0.1:8080")],
+    )
+    .await;
+
+    println!("\nPOST, cross-site, token posture -> {}", response.status());
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+}
+
+/// With a cookie, the same request would spend the visitor's session, so the
+/// same router refuses it.
+async fn a_cookie_posture_applies_the_check(service: &Service<Posture>) {
+    let response = send(
+        service,
+        Method::POST,
+        "/profile",
+        &[("sec-fetch-site", "cross-site"), ("host", "127.0.0.1:8080")],
+    )
+    .await;
+
+    println!("POST, cross-site, cookie posture -> {}", response.status());
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
 
 /// Both interceptors reached the document, and neither was written down twice.
@@ -335,8 +438,8 @@ async fn logging_out_removes_the_cookie(service: &Service<()>) {
 }
 
 /// Drives the built service directly, which is all an exchange is here.
-async fn send(
-    service: &Service<()>,
+async fn send<C>(
+    service: &Service<C>,
     method: Method,
     path: &str,
     fields: &[(&str, &str)],
