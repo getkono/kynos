@@ -1,6 +1,6 @@
 use super::{
-    AuthRejection, BodyRejection, HeaderRejection, NegotiationRejection, PathRejection,
-    QueryRejection, RangeRejection,
+    AuthRejection, BodyRejection, ConnectInfoRejection, HeaderRejection, NegotiationRejection,
+    PathRejection, QueryRejection, RangeRejection,
 };
 use serde_json::Value;
 
@@ -858,7 +858,7 @@ fn every_rejection_a_caller_can_receive_has_a_case() {
     const SOURCE: &str = include_str!("../rejection.rs");
 
     /// Every rejection witnessed above, transcribed in declaration order.
-    const WITNESSED: [&str; 8] = [
+    const WITNESSED: [&str; 9] = [
         "PathRejection",
         "QueryRejection",
         "HeaderRejection",
@@ -866,6 +866,7 @@ fn every_rejection_a_caller_can_receive_has_a_case() {
         "BodyRejection",
         "NegotiationRejection",
         "RangeRejection",
+        "ConnectInfoRejection",
         "AuthRejection",
     ];
 
@@ -985,6 +986,14 @@ fn range(expected: StatusCode, rejection: RangeRejection) -> Row {
         RangeRejection::NotSatisfiable { .. } => "RangeRejection::NotSatisfiable",
     };
     let statuses = (rejection.status(), RangeRejection::statuses());
+    Row::new(name, expected, statuses, &rejection)
+}
+
+fn connect_info(expected: StatusCode, rejection: ConnectInfoRejection) -> Row {
+    let name = match rejection {
+        ConnectInfoRejection::NotIp => "ConnectInfoRejection::NotIp",
+    };
+    let statuses = (rejection.status(), ConnectInfoRejection::statuses());
     Row::new(name, expected, statuses, &rejection)
 }
 
@@ -1144,6 +1153,10 @@ fn content_ledger() -> Vec<Row> {
                 complete_length: 1234,
             },
         ),
+        connect_info(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ConnectInfoRejection::NotIp,
+        ),
         auth(StatusCode::UNAUTHORIZED, &AuthRejection::unauthenticated()),
         auth(StatusCode::FORBIDDEN, &AuthRejection::forbidden()),
         auth(
@@ -1185,6 +1198,7 @@ fn every_variant_produces_a_status_its_type_declares() {
         "NegotiationRejection::MalformedAccept",
         "NegotiationRejection::NotAcceptable",
         "RangeRejection::NotSatisfiable",
+        "ConnectInfoRejection::NotIp",
         "AuthRejection::Unauthenticated",
         "AuthRejection::Forbidden",
         "AuthRejection::Unavailable",
@@ -1302,6 +1316,10 @@ fn every_rejection_declares_the_type_its_problems_carry() {
             declared_types::<NegotiationRejection>(),
         ),
         ("RangeRejection", declared_types::<RangeRejection>()),
+        (
+            "ConnectInfoRejection",
+            declared_types::<ConnectInfoRejection>(),
+        ),
         #[cfg(feature = "cookie")]
         (
             "CookieRejection",

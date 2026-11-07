@@ -25,7 +25,9 @@ pub trait RateLimitKey<C>: Send + Sync + 'static {
 ///
 /// A request that arrived on no socket — a `TestClient`, a directly driven
 /// `Service::call` — counts against one shared bucket rather than being
-/// exempted, so a limit is never silently absent.
+/// exempted, so a limit is never silently absent. So does every request on a
+/// connection with no IP peer, such as a Unix domain socket's, in a bucket of
+/// its own: such a peer has no address that tells two clients apart.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ByPeerAddress;
 
@@ -46,7 +48,12 @@ impl<C> RateLimitKey<C> for ByPeerAddress {
                     || "peer:none".to_owned(),
                     // An IPv4 peer is one bucket on either listener, as
                     // `Forwarded::client` names it.
-                    |connection| format!("peer:{}", connection.peer_addr().ip().to_canonical()),
+                    |connection| {
+                        connection.peer_addr().map_or_else(
+                            || "peer:unaddressed".to_owned(),
+                            |peer| format!("peer:{}", peer.ip().to_canonical()),
+                        )
+                    },
                 ),
         ))
     }

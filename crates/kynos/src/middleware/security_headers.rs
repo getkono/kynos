@@ -296,7 +296,9 @@ pub(crate) fn conveyed_securely(
     connection.is_some_and(|connection| {
         connection.is_tls()
             && forwarded.is_none_or(|forwarded| {
-                forwarded.client() == Some(connection.peer_addr().ip().to_canonical())
+                connection
+                    .peer_addr()
+                    .is_some_and(|peer| forwarded.client() == Some(peer.ip().to_canonical()))
             })
     })
 }

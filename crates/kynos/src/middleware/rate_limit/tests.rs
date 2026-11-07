@@ -899,6 +899,31 @@ fn a_peer_key_names_an_ipv4_mapped_peer_by_its_ipv4_host() {
     assert_eq!(partition(plain).as_deref(), Some("peer:203.0.113.7"));
 }
 
+/// A Unix peer has no address that tells two clients apart, so every such
+/// connection counts against one bucket of its own, apart from the bucket of
+/// requests that arrived on no socket.
+#[cfg(unix)]
+#[test]
+fn a_peer_key_counts_every_unix_peer_in_one_bucket() {
+    let (stream, _other) = std::os::unix::net::UnixStream::pair().expect("a socket pair");
+    let mut request = crate::http::Request::new(Body::empty());
+    request
+        .extensions_mut()
+        .insert(crate::extract::connection::Connection::from_peer(
+            stream.peer_addr().expect("a peer address"),
+            stream.local_addr().expect("a local address"),
+        ));
+
+    let partition = super::key::RateLimitKey::<()>::partition(
+        &super::key::ByPeerAddress,
+        &request,
+        Route::new("/counted", "counted", Method::Get),
+        &(),
+    );
+
+    assert_eq!(partition.as_deref(), Some("peer:unaddressed"));
+}
+
 /// `And` joins two partitions, and either half exempting the request exempts
 /// it: a key with a missing part is not a key.
 #[test]
@@ -939,7 +964,8 @@ fn the_peer_key_names_the_peer_ip() {
     let from = |peer: &str| {
         let mut request = crate::http::Request::new(Body::empty());
         request.extensions_mut().insert(Connection::from_peer(
-            peer.parse().expect("a socket address"),
+            peer.parse::<std::net::SocketAddr>()
+                .expect("a socket address"),
             "192.0.2.2:443".parse().expect("a socket address"),
         ));
         super::key::RateLimitKey::<()>::partition(

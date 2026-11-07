@@ -634,6 +634,44 @@ impl Responses for RangeRejection {
     }
 }
 
+/// The connection has no IP peer for
+/// [`ConnectInfo`](crate::extract::connection::ConnectInfo) to report.
+///
+/// A deployment fault rather than a client's: the handler assumed IP and was
+/// served over another transport, such as a Unix domain socket. Read
+/// [`Connection::peer`](crate::extract::connection::Connection::peer) where
+/// either can arrive.
+#[derive(Clone, Copy, Debug, thiserror::Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ConnectInfoRejection {
+    /// The connection arrived over a transport with no IP address. Produces
+    /// 500.
+    #[error("the connection has no IP peer address")]
+    NotIp,
+}
+
+impl ConnectInfoRejection {
+    /// The status this rejection produces.
+    #[must_use]
+    pub fn status(&self) -> StatusCode {
+        match self {
+            Self::NotIp => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
+
+impl IntoProblem for ConnectInfoRejection {
+    fn into_problem(self) -> Problem {
+        Problem::new(self.status()).with_detail(self.to_string())
+    }
+
+    fn statuses() -> &'static [StatusCode] {
+        &[StatusCode::INTERNAL_SERVER_ERROR]
+    }
+}
+
+rejection_response!(ConnectInfoRejection);
+
 /// A credential was absent, invalid, or insufficient, or could not be checked.
 ///
 /// The only rejection carrying 401 or 403, which is what keeps an endpoint with

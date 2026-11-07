@@ -1,7 +1,86 @@
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
-use super::{Connection, Inner, TlsIdentity};
+use super::{ConnectInfo, Connection, Inner, TlsIdentity, TransportAddress};
+use crate::{error::rejection::ConnectInfoRejection, extract::FromRequestParts};
+
+/// What `ConnectInfo` extracts from a request that arrived on `connection`, or
+/// on no socket at all.
+async fn connect_info(connection: Option<Connection>) -> Result<ConnectInfo, ConnectInfoRejection> {
+    let mut parts = http::Request::new(()).into_parts().0;
+    if let Some(connection) = connection {
+        parts.extensions.insert(connection);
+    }
+    ConnectInfo::from_request_parts(&mut parts, &()).await
+}
+
+#[tokio::test]
+async fn an_ip_connection_reports_its_peer_through_every_reader() {
+    let peer = SocketAddr::from((Ipv4Addr::new(192, 0, 2, 1), 50_000));
+    let local = SocketAddr::from((Ipv4Addr::new(192, 0, 2, 2), 80));
+    let connection = Connection::from_peer(peer, local);
+
+    assert!(matches!(connection.peer(), TransportAddress::Ip(at) if *at == peer));
+    assert!(matches!(connection.local(), TransportAddress::Ip(at) if *at == local));
+    assert_eq!(connection.peer_addr(), Some(peer));
+    assert_eq!(connection.local_addr(), Some(local));
+    assert_eq!(connect_info(Some(connection)).await, Ok(ConnectInfo(peer)));
+}
+
+/// No socket is not a transport without IP: the in-process sentinel stays an
+/// IP address, so a handler taking `ConnectInfo` still runs under `TestClient`.
+#[tokio::test]
+async fn a_request_on_no_socket_reports_the_in_process_address() {
+    let unspecified = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
+
+    assert_eq!(connect_info(None).await, Ok(ConnectInfo(unspecified)));
+}
+
+/// A Unix peer has no IP address, so `ConnectInfo` refuses rather than
+/// inventing one, and the IP readers say `None` while the transport readers
+/// keep the address.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_unix_connection_has_no_ip_peer_for_connect_info() {
+    let (stream, _other) = std::os::unix::net::UnixStream::pair().expect("a socket pair");
+    let connection = Connection::from_peer(
+        stream.peer_addr().expect("a peer address"),
+        stream.local_addr().expect("a local address"),
+    );
+
+    assert!(matches!(
+        connection.peer(),
+        TransportAddress::Unix(address) if address.as_std().is_unnamed()
+    ));
+    assert!(matches!(connection.local(), TransportAddress::Unix(_)));
+    assert_eq!(connection.peer_addr(), None);
+    assert_eq!(connection.local_addr(), None);
+    assert!(!connection.is_in_process());
+    assert_eq!(
+        connect_info(Some(connection)).await,
+        Err(ConnectInfoRejection::NotIp)
+    );
+}
+
+/// A pathname address survives the record, so a handler can tell which socket
+/// file a connection was accepted on.
+#[cfg(unix)]
+#[test]
+fn a_unix_pathname_is_kept_as_given() {
+    let path = std::path::Path::new("/run/kynos/api.sock");
+    let named = std::os::unix::net::SocketAddr::from_pathname(path).expect("a short path");
+    let unnamed = std::os::unix::net::UnixStream::pair()
+        .expect("a socket pair")
+        .0
+        .peer_addr()
+        .expect("a peer address");
+    let connection = Connection::from_peer(unnamed, named);
+
+    assert!(matches!(
+        connection.local(),
+        TransportAddress::Unix(address) if address.as_std().as_pathname() == Some(path)
+    ));
+}
 
 /// Half of what makes the clone handed to every request a reference-count bump:
 /// the handle is one pointer. A field added to [`Connection`] rather than to

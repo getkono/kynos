@@ -324,13 +324,24 @@ mod security_headers {
     const PROXY: &str = "10.0.0.1";
 
     fn plain() -> Connection {
-        Connection::from_peer(PEER.parse().unwrap(), LOCAL.parse().unwrap())
+        Connection::from_peer(PEER.parse::<SocketAddr>().unwrap(), LOCAL.parse().unwrap())
     }
 
     fn tls() -> Connection {
         Connection::from_tls_peer(
-            PEER.parse().unwrap(),
+            PEER.parse::<SocketAddr>().unwrap(),
             LOCAL.parse().unwrap(),
+            TlsIdentity::default(),
+        )
+    }
+
+    /// A TLS connection an embedding terminated over a Unix socket pair.
+    #[cfg(unix)]
+    fn unix_tls() -> Connection {
+        let (stream, _other) = std::os::unix::net::UnixStream::pair().unwrap();
+        Connection::from_tls_peer(
+            stream.peer_addr().unwrap(),
+            stream.local_addr().unwrap(),
             TlsIdentity::default(),
         )
     }
@@ -535,6 +546,19 @@ mod security_headers {
                 false,
             ),
         ];
+
+        #[cfg(unix)]
+        let cases = cases.into_iter().chain([(
+            // No IP peer, so the TLS cannot be shown to be the client's own.
+            "TLS socket over Unix, nobody trusted",
+            Some(Forwarded::resolve(
+                &HeaderMap::new(),
+                None,
+                &TrustedProxies::none(),
+            )),
+            Some(unix_tls()),
+            false,
+        )]);
 
         for (case, forwarded, connection, secure) in cases {
             assert_eq!(

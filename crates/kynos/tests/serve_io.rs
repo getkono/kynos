@@ -38,7 +38,7 @@ const PEER_SEEN: &str = "192.0.2.7:50123 0.0.0.0:0 false";
 async fn peer(ConnectInfo(peer): ConnectInfo, connection: Connection) -> Text {
     Text(format!(
         "{peer} {} {}",
-        connection.local_addr(),
+        connection.local_addr().expect("an IP connection"),
         connection.is_in_process()
     ))
 }

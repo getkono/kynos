@@ -154,6 +154,7 @@ reportable! {
         kynos::error::rejection::BodyRejection;
         kynos::error::rejection::NegotiationRejection;
         kynos::error::rejection::RangeRejection;
+        kynos::error::rejection::ConnectInfoRejection;
         kynos::error::rejection::AuthRejection;
         kynos::error::rejection::ScopedRejection<ReadOnly>;
     }
