@@ -250,6 +250,26 @@ a server to fail one without a `Content-Type`. Two checks hold that:
   inside the operation, do not. A value that is present but unsupported or
   malformed is left to the body extractor's 415.
 
+### A `QUERY` names the media types it reads
+
+RFC 10008 section 3's `Accept-Query` is rendered once, at build, from the
+operation's `requestBody` content keys: an RFC 9651 List of Tokens, or Strings
+where a type is no Token, with each parameter as a structured-field Parameter.
+A key with a wildcard other than `*/*` or `type/*`, or a parameter no
+structured-field key can name, is left out whole. Two responses carry it, and
+no others:
+
+- **The body extractor's 415 for a media type.** Added before any interceptor
+  sees it, and declared on the operation's 415 as an optional header. The 415
+  for a content coding and the 400 for a missing `Content-Type` carry none.
+- **A plain `OPTIONS` on the path.** Where the path declares no `OPTIONS` of its
+  own, it answers 200 with `Allow`, `Accept-Query` and `Content-Length: 0`,
+  out-of-document like the `HEAD` a `GET` implies, through the root router's
+  interceptors as the dispatcher's 405 does. Its `Allow`, and every 405 on that
+  path, names `OPTIONS`, and the service counts `OPTIONS` as implemented, so a
+  plain `OPTIONS` on another path is a 405 rather than a 501. A declared
+  `OPTIONS` keeps its own answer.
+
 ## Typed URIs
 
 A route attribute emits an inherent `relative_uri` constructor beside the

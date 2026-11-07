@@ -948,7 +948,9 @@ after the description has been assembled. That ordering is the whole design:
 An `OPTIONS` that is *not* a preflight — no `Origin`, or no
 `Access-Control-Request-Method` — is answered exactly as it was before CORS was
 mounted: the same `method_not_allowed` policy, and the same answer — a 405 with
-the same `Allow`, or a 501 where no operation implements `OPTIONS`.
+the same `Allow`, a 501 where no operation implements `OPTIONS`, or the 200 a
+path whose `QUERY` names an `Accept-Query` answers (see
+[`routing.md`](routing.md#a-query-names-the-media-types-it-reads)).
 
 The methods a preflight advertises are the ones the covering scope declares, and
 the HEAD each of its GETs implies where the path declares no `head` — the Fetch
