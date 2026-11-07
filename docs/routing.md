@@ -259,8 +259,10 @@ A key with a wildcard other than `*/*` or `type/*`, or a parameter no
 structured-field key can name, is left out whole. Two responses carry it, and
 no others:
 
-- **The body extractor's 415 for a media type.** Added before any interceptor
-  sees it, and declared on the operation's 415 as an optional header. The 415
+- **The body extractor's 415 for a media type.** Added before the router's and
+  its groups' interceptors see it (the operation's own run inside the endpoint,
+  and see it without), and declared on the operation's 415 as an optional
+  header. The 415
   for a content coding and the 400 for a missing `Content-Type` carry none.
 - **A plain `OPTIONS` on the path.** Where the path declares no `OPTIONS` of its
   own, it answers 200 with `Allow`, `Accept-Query` and `Content-Length: 0`,

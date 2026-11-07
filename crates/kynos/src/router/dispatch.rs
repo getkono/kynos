@@ -49,7 +49,8 @@ impl<C> EndpointTerminal<C> {
     }
 
     /// Adds `accept_query` to the 415 the endpoint answers an unsupported
-    /// media type with, before any interceptor sees it.
+    /// media type with, before the router's and its groups' interceptors see
+    /// it; the operation's own run inside the endpoint, so they see it without.
     #[cfg(feature = "openapi32")]
     pub(crate) fn with_accept_query(mut self, accept_query: Option<HeaderValue>) -> Self {
         self.accept_query = accept_query;

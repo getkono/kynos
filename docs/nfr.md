@@ -327,7 +327,7 @@ request on such an operation, by construction and unmeasured, since no
 operation pays a branch. The body extractor marks that 415 in the response's
 extensions, which allocates the map on a response that carries no extension
 yet; only a refusal pays it. Adding the field after the chain would cost no
-box and would hide it from every interceptor.
+box and would hide it from the router's and its groups' interceptors.
 
 **One suspect is off the list rather than unconvicted.** The body wrapper that
 reports a disconnect was the third name here, and erasing a body is none of the
