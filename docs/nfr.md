@@ -768,6 +768,15 @@ count. The two are one concern — refusing a request body before the handler
 trusts it — and the deadline's private body wrapper is the declared-length
 half of the same `intercept`, which reads back what the wrapper recorded.
 
+`schema/registry.rs` is `status.rs`'s shape. It declares `Registry` and the
+three refusals it records, `SchemaConflict`, `UnenforceableKeyPattern` and
+`InstantiationNameRefusal`, so a split would turn `registry::SchemaConflict`,
+the type `Error::Schema` carries, into a longer path. What pushed it over was
+issue #1149's named instantiations, which replace a component name inside
+`resolve` itself: renaming is part of resolving, not beside it, and the
+refusal is the registry's to record for `resolve`'s reason. One concern, so one
+file.
+
 The budget, which may only shrink:
 
 - `crates/kynos-macros/src/derive/schema/attributes.rs`
@@ -795,6 +804,7 @@ The budget, which may only shrink:
 - `crates/kynos/src/router/mod.rs`
 - `crates/kynos/src/schema/constraints.rs`
 - `crates/kynos/src/schema/mod.rs`
+- `crates/kynos/src/schema/registry.rs`
 - `crates/kynos/src/security/auth.rs`
 - `crates/kynos/src/security/mod.rs`
 - `crates/kynos/src/security/requirement.rs`

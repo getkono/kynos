@@ -97,10 +97,10 @@ fn expand_entry(entry: &Entry) -> syn::Result<TokenStream2> {
         ));
     }
 
-    let description = match doc_string(attrs) {
-        Some(doc) => quote!(::core::option::Option::Some(#doc)),
-        None => quote!(::core::option::Option::None),
-    };
+    let description = doc_string(attrs).map_or_else(
+        || quote!(::core::option::Option::None),
+        |doc| quote!(::core::option::Option::Some(#doc)),
+    );
 
     Ok(quote! {
         #(#attrs)*

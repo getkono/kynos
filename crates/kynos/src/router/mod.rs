@@ -613,9 +613,14 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     ///
     /// [`NamedInstantiation`]: crate::schema::NamedInstantiation
     #[must_use]
+    #[expect(
+        clippy::redundant_closure_for_method_calls,
+        reason = "the method's path names `Registry` by value, which containment allows only \
+                  where a registry is minted"
+    )]
     pub fn name_instantiation<A: crate::schema::NamedInstantiation>(mut self) -> Self {
         self.instantiation_names
-            .push(crate::schema::registry::Registry::name_instantiation::<A>);
+            .push(|registry| registry.name_instantiation::<A>());
         self
     }
 

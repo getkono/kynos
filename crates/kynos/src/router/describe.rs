@@ -108,6 +108,14 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         }
     }
 
+    /// Registers every declared instantiation name, before any operation
+    /// resolves an instantiation one renames.
+    fn name_instantiations(&self, registry: &mut Registry) {
+        for name_instantiation in &self.instantiation_names {
+            name_instantiation(registry);
+        }
+    }
+
     /// Reports every pattern the match table would refuse, and every unchecked
     /// route repeating a declared operation, so `validate` sees what `build`
     /// would be refused.
@@ -225,11 +233,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         self.refuse_unhonourable_interceptors()?;
 
         self.declare_security_schemes(&mut registry, &mut violations);
-
-        // Before any operation resolves the instantiations they rename.
-        for name_instantiation in &self.instantiation_names {
-            name_instantiation(&mut registry);
-        }
+        self.name_instantiations(&mut registry);
 
         // Scope-declared metadata first, so the document lists it in
         // declaration order and a tag covering no operation is still
