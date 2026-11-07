@@ -106,10 +106,10 @@ fn encode_body(params: &[Param<'_>]) -> TokenStream2 {
     let entries = params.iter().map(|param| {
         let name = param.name();
         let ident = param.ident();
-        let span = param.ty().span();
-        quote_spanned! {span=>
-            (#name, ::std::string::ToString::to_string(&self.#ident))
-        }
+        // Only the path is spanned to the field, so a type that does not
+        // display is reported there; `self` keeps the derive's hygiene context.
+        let to_string = quote_spanned!(param.ty().span()=> ::std::string::ToString::to_string);
+        quote!((#name, #to_string(&self.#ident)))
     });
 
     quote!(::std::vec![#(#entries),*])

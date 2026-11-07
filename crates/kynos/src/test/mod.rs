@@ -58,6 +58,10 @@ pub struct TestClient<C> {
     observed: Mutex<Vec<Observed>>,
     /// Where every exchange is also recorded, when the client shares one.
     coverage: Option<Arc<Mutex<Vec<Exchange>>>>,
+    /// The peer every request starts from.
+    peer: Option<std::net::SocketAddr>,
+    /// The fields every request starts from.
+    headers: HeaderMap,
 }
 
 impl<C> TestClient<C> {
@@ -68,6 +72,8 @@ impl<C> TestClient<C> {
             service,
             observed: Mutex::new(Vec::new()),
             coverage: None,
+            peer: None,
+            headers: HeaderMap::new(),
         }
     }
 
@@ -79,6 +85,37 @@ impl<C> TestClient<C> {
     #[must_use]
     pub fn with_coverage(mut self, coverage: &Coverage) -> Self {
         self.coverage = Some(Arc::clone(&coverage.exchanges));
+        self
+    }
+
+    /// Sends every request from `peer`, unless the request sets its own with
+    /// [`TestRequest::peer`].
+    ///
+    /// For a service every request of a suite reaches through the same
+    /// client address: a rate limiter keyed by client, or a trusted-proxy
+    /// policy. A second call replaces the first.
+    #[must_use]
+    pub fn with_peer(mut self, peer: std::net::SocketAddr) -> Self {
+        self.peer = Some(peer);
+        self
+    }
+
+    /// Sends the field `name: value` on every request, unless the request
+    /// sets a field of the same name itself.
+    ///
+    /// A request's own field replaces the default whole, whichever setter
+    /// wrote it: [`TestRequest::header`], [`bearer`](TestRequest::bearer) for
+    /// `Authorization`, a body's `Content-Type`, or the `Cookie` field
+    /// [`cookie`](TestRequest::cookie) assembles. A second call naming the
+    /// same field replaces the first.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `name` or `value` is not one HTTP can carry.
+    #[must_use]
+    pub fn with_default_header(mut self, name: &str, value: &str) -> Self {
+        let (name, value) = field(name, value);
+        self.headers.insert(name, value);
         self
     }
 
@@ -157,10 +194,10 @@ impl<C> TestClient<C> {
             client: self,
             method,
             path: path.to_owned(),
-            headers: HeaderMap::new(),
+            headers: self.headers.clone(),
             body: RequestBody::Whole(Bytes::new()),
             content_length: None,
-            peer: None,
+            peer: self.peer,
             cookies: Vec::new(),
         }
     }
@@ -347,12 +384,23 @@ impl<C> TestRequest<'_, C> {
     /// Panics when `name` or `value` is not one HTTP can carry.
     #[must_use]
     pub fn header(mut self, name: &str, value: &str) -> Self {
-        let name = HeaderName::from_bytes(name.as_bytes())
-            .unwrap_or_else(|_| panic!("`{name}` is not a header name"));
-        let value = HeaderValue::from_str(value)
-            .unwrap_or_else(|_| panic!("`{value}` is not a header value"));
+        let (name, value) = field(name, value);
         self.headers.insert(name, value);
         self
+    }
+
+    /// Presents `token` as `Authorization: Bearer <token>` (RFC 6750
+    /// section 2.1).
+    ///
+    /// The token is sent as written, not held to the section's `b64token`
+    /// grammar, so a test can also send one a service must refuse.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `token` leaves the field no header value.
+    #[must_use]
+    pub fn bearer(self, token: &str) -> Self {
+        self.header("authorization", &format!("Bearer {token}"))
     }
 
     /// Sets a header to a value given as octets.
@@ -431,9 +479,10 @@ impl<C> TestRequest<'_, C> {
 
     /// Says who the request came from.
     ///
-    /// Without one, a service reading a peer address sees the in-process
-    /// default; set it to test a rate limiter keyed by client, or a
-    /// trusted-proxy policy.
+    /// Without one, a service reading a peer address sees the client's
+    /// [`with_peer`](TestClient::with_peer), or the in-process default where
+    /// the client sets none; set it to test a rate limiter keyed by client, or
+    /// a trusted-proxy policy.
     #[must_use]
     pub fn peer(mut self, address: std::net::SocketAddr) -> Self {
         self.peer = Some(address);
@@ -1178,6 +1227,19 @@ impl IntoStatus for u16 {
         sealed::Sealed::status(self)
             .unwrap_or_else(|code| panic!("`{code}` is not a status code, which is 100 to 999"))
     }
+}
+
+/// A header field a test wrote as text.
+///
+/// # Panics
+///
+/// Panics when `name` or `value` is not one HTTP can carry.
+fn field(name: &str, value: &str) -> (HeaderName, HeaderValue) {
+    let name = HeaderName::from_bytes(name.as_bytes())
+        .unwrap_or_else(|_| panic!("`{name}` is not a header name"));
+    let value =
+        HeaderValue::from_str(value).unwrap_or_else(|_| panic!("`{value}` is not a header value"));
+    (name, value)
 }
 
 /// `n responses`, or `1 response`, for an assertion message that counts them.
