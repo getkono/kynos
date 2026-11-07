@@ -42,6 +42,7 @@ pub(crate) mod attributes;
 pub(crate) mod check;
 mod container;
 mod flatten;
+pub(crate) mod instantiation;
 mod kinds;
 pub(crate) mod members;
 #[cfg(feature = "pattern")]

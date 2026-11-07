@@ -48,6 +48,10 @@
 //! The ninth is what a broken bound publishes when the type holding it names
 //! a problem type: the extractor's rejection declares `about:blank` alone, so
 //! a document that never consulted the type would still validate.
+//!
+//! The tenth is which components a named instantiation reaches. A name declared
+//! on a nested router applies to the whole document, and a document still
+//! carrying the mangled name would validate against everything else here.
 
 #![cfg(all(feature = "macros", feature = "json"))]
 
@@ -2601,4 +2605,59 @@ fn a_named_constraint_type_is_declared_beside_about_blank() {
 
     let schema = declared_problem_schema(&document, "/untyped", "422");
     assert_eq!(published(&schema), ["about:blank"], "{schema}");
+}
+
+/// Any shelf, which a named instantiation describes instead.
+#[derive(Schema, serde::Deserialize)]
+struct Shelf<T> {
+    items: Vec<T>,
+}
+
+#[derive(Schema, serde::Deserialize)]
+struct Book {
+    title: String,
+}
+
+kynos::name_instantiation! {
+    /// The books on one shelf.
+    Bookshelf = Shelf<Book>;
+}
+
+#[kynos::post("/books")]
+async fn shelve(_: kynos::extract::body::json::Json<Bookshelf>) -> NoContent {
+    NoContent
+}
+
+/// A name declared on a nested router reaches the whole document: the
+/// operation's body refers to it, it carries the alias's prose, and the mangled
+/// name is in no component.
+#[test]
+fn a_named_instantiation_declared_on_a_nested_router_names_its_component() {
+    let document = Router::<()>::new()
+        .nest(
+            "/v1",
+            Router::<()>::new()
+                .name_instantiation::<Bookshelf>()
+                .mount(kynos::routes![shelve]),
+        )
+        .openapi()
+        .expect("a describable router");
+
+    let operation =
+        serde_json::to_value(operation(&document, "/v1/books")).expect("an operation serializes");
+    assert_eq!(
+        operation["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/Bookshelf",
+        "{operation}"
+    );
+
+    let schemas = &document.components.schemas;
+    assert!(!schemas.contains_key("Shelf_Book"), "{schemas:?}");
+    let Some(kynos::openapi::Schema::Object(shelf)) = schemas.get("Bookshelf") else {
+        panic!("`Bookshelf` is an object component: {schemas:?}");
+    };
+    assert_eq!(
+        shelf.description.as_deref(),
+        Some("The books on one shelf.")
+    );
 }

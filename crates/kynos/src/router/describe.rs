@@ -108,6 +108,13 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         }
     }
 
+    /// Registers every instantiation name before an operation resolves one.
+    fn name_instantiations(&self, registry: &mut Registry) {
+        for name_instantiation in &self.instantiation_names {
+            name_instantiation(registry);
+        }
+    }
+
     /// Reports every pattern the match table would refuse, and every unchecked
     /// route repeating a declared operation, so `validate` sees what `build`
     /// would be refused.
@@ -225,6 +232,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         self.refuse_unhonourable_interceptors()?;
 
         self.declare_security_schemes(&mut registry, &mut violations);
+        self.name_instantiations(&mut registry);
 
         // Scope-declared metadata first, so the document lists it in
         // declaration order and a tag covering no operation is still
@@ -298,6 +306,10 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             }
         }
 
+        // First, since a contested name can leave a component conflict behind.
+        if let Some(refused) = registry.instantiation_name_refusals().first() {
+            return Err(Error::InstantiationName(Box::new(refused.clone())));
+        }
         if let Some(conflict) = registry.schema_conflicts().first() {
             return Err(Error::Schema(conflict.clone()));
         }

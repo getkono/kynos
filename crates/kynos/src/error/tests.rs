@@ -134,6 +134,7 @@ mod variants {
             Error::Invalid { .. } => "Invalid",
             Error::Path(_) => "Path",
             Error::Schema(_) => "Schema",
+            Error::InstantiationName(_) => "InstantiationName",
             Error::KeyPattern(_) => "KeyPattern",
             Error::Contribution(_) => "Contribution",
             Error::Middleware(_) => "Middleware",
@@ -158,6 +159,11 @@ mod variants {
         };
         let schema = || crate::schema::registry::SchemaConflict {
             name: "Order".to_owned(),
+        };
+        let instantiation_name = || crate::schema::registry::InstantiationNameRefusal::Contested {
+            instantiation: "Page_Torrent".to_owned(),
+            first: "TorrentPage".to_owned(),
+            second: "Torrents".to_owned(),
         };
         let key_pattern = || crate::schema::registry::UnenforceableKeyPattern {
             key: "app::Sku".to_owned(),
@@ -187,6 +193,10 @@ mod variants {
             ),
             (Error::Path(path()), path().to_string()),
             (Error::Schema(schema()), schema().to_string()),
+            (
+                Error::InstantiationName(Box::new(instantiation_name())),
+                instantiation_name().to_string(),
+            ),
             (
                 Error::KeyPattern(Box::new(key_pattern())),
                 key_pattern().to_string(),
@@ -245,6 +255,18 @@ mod variants {
              `name()`"
         );
         assert_eq!(
+            Error::InstantiationName(Box::new(
+                crate::schema::registry::InstantiationNameRefusal::Contested {
+                    instantiation: "Page_Torrent".to_owned(),
+                    first: "TorrentPage".to_owned(),
+                    second: "Torrents".to_owned(),
+                }
+            ))
+            .to_string(),
+            "the instantiation published as `Page_Torrent` is named both `TorrentPage` and \
+             `Torrents`; a component has one name, so drop one `name_instantiation!`"
+        );
+        assert_eq!(
             Error::KeyPattern(Box::new(crate::schema::registry::UnenforceableKeyPattern {
                 key: "app::Sku".to_owned(),
                 pattern: "a(?=b)".to_owned(),
@@ -295,6 +317,7 @@ mod variants {
             "Invalid",
             "Path",
             "Schema",
+            "InstantiationName",
             "KeyPattern",
             "Contribution",
             "Middleware",
