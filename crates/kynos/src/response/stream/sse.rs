@@ -13,6 +13,8 @@ use kynos_openapi::{
     },
 };
 
+#[cfg(feature = "server")]
+use crate::server::lifecycle::Draining;
 use crate::{
     http::{
         HeaderValue, Response,
@@ -83,6 +85,8 @@ pub struct Sse<S> {
     /// The stream of events.
     pub events: S,
     keep_alive: Option<KeepAlive>,
+    #[cfg(feature = "server")]
+    draining: Draining,
 }
 
 impl<S> Sse<S> {
@@ -92,6 +96,8 @@ impl<S> Sse<S> {
         Self {
             events,
             keep_alive: None,
+            #[cfg(feature = "server")]
+            draining: Draining::never(),
         }
     }
 
@@ -99,6 +105,34 @@ impl<S> Sse<S> {
     #[must_use]
     pub fn keep_alive(mut self, keep_alive: KeepAlive) -> Self {
         self.keep_alive = Some(keep_alive);
+        self
+    }
+
+    /// Ends the stream cleanly once the server serving the request begins its
+    /// graceful shutdown, and at once where it already has.
+    ///
+    /// A drain lets a response already streaming finish rather than ending
+    /// it, so an event stream left open holds the drain until the shutdown
+    /// timeout. Ended this way, the body stops between two events, its last
+    /// one whole: an `EventSource` reconnects, with the `Last-Event-ID` of
+    /// the last event it read, to whichever instance serves next. `events`
+    /// is dropped with the body, as it is when the client leaves.
+    ///
+    /// `draining` is the handler's own argument. A request no server listener
+    /// accepted reads one that never resolves, so the stream then ends only
+    /// as it would have without this.
+    ///
+    /// ```no_run
+    /// use kynos::{response::stream::sse::Sse, server::lifecycle::Draining};
+    ///
+    /// fn events<S>(draining: Draining, stream: S) -> Sse<S> {
+    ///     Sse::new(stream).end_on_shutdown(draining)
+    /// }
+    /// ```
+    #[cfg(feature = "server")]
+    #[must_use]
+    pub fn end_on_shutdown(mut self, draining: Draining) -> Self {
+        self.draining = draining;
         self
     }
 }
@@ -229,6 +263,13 @@ struct Records<S> {
     /// Each event's data as JSON, before [`field`] frames it; kept so that
     /// it grows once per stream rather than once per event.
     data: Vec<u8>,
+    /// Resolves once the server begins draining; `None` when nothing ends
+    /// the stream early, or once it has.
+    #[cfg(feature = "server")]
+    shutdown: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
+    /// Set once the shutdown ended the stream, so it stays ended.
+    #[cfg(feature = "server")]
+    ended: bool,
 }
 
 /// The timer that keeps an idle stream from being reaped.
@@ -282,6 +323,24 @@ where
 
     fn poll_next(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let records = self.get_mut();
+
+        // Before the events, so a stream busy enough never to be pending
+        // still ends; between two records, so the last one sent is whole.
+        #[cfg(feature = "server")]
+        {
+            if records.ended {
+                return Poll::Ready(None);
+            }
+            let began = records
+                .shutdown
+                .as_mut()
+                .is_some_and(|shutdown| shutdown.as_mut().poll(context).is_ready());
+            if began {
+                records.shutdown = None;
+                records.ended = true;
+                return Poll::Ready(None);
+            }
+        }
 
         // Events first: each resets the silence, so a busy stream sends no comment.
         match records.events.as_mut().poll_next(context) {
@@ -403,6 +462,10 @@ where
             keep_alive: self.keep_alive.as_ref().map(Heartbeat::new),
             buffer: RecordBuffer::new(),
             data: Vec::new(),
+            #[cfg(feature = "server")]
+            shutdown: self.draining.into_signal(),
+            #[cfg(feature = "server")]
+            ended: false,
         };
 
         with_content_type(

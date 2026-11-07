@@ -9,8 +9,9 @@
 //! An argument that contributes nothing says so, by implementing `Describe`
 //! with an empty body. [`Inject`](crate::di::inject::Inject),
 //! [`MatchedPath`](connection::MatchedPath),
-//! [`ConnectInfo`](connection::ConnectInfo) and
-//! [`Forwarded`](crate::http::forwarded::Forwarded) all do: none of them is
+//! [`ConnectInfo`](connection::ConnectInfo),
+//! [`Forwarded`](crate::http::forwarded::Forwarded) and, under `server`,
+//! [`Draining`](crate::server::lifecycle::Draining) all do: none of them is
 //! visible to a consumer.
 //!
 //! **There is no extractor that yields the whole request**: no `Request`, no

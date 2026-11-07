@@ -16,6 +16,7 @@ An argument that contributes nothing to the contract says so, by implementing
 | [`ConnectInfo`](../crates/kynos/src/extract/connection.rs) | nothing | it is a property of the connection, not the API |
 | [`Connection`](../crates/kynos/src/extract/connection.rs) | nothing | it is the connection itself — peer, local address, TLS — not the API |
 | [`Forwarded`](../crates/kynos/src/http/forwarded.rs) | nothing | it is what the deployment's proxies say about the connection, not the API |
+| [`Draining`](../crates/kynos/src/server/lifecycle.rs) | nothing | it is the server's state, not the API |
 
 [`Link<E>`](../crates/kynos/src/extract/link.rs) adds nothing to the document
 either — another operation's `paths` key is already there — but its body is not

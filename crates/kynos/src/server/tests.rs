@@ -1224,6 +1224,128 @@ async fn shutdown_closes_listeners_while_an_http1_request_drains() {
         .expect("server exits cleanly");
 }
 
+/// A handler waiting on [`Draining`](super::lifecycle::Draining) is woken when
+/// the drain begins, having read it as not begun before, and the response it
+/// then sends lets the drain finish long before its timeout.
+#[cfg(feature = "http1")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_handler_waiting_on_draining_is_woken_by_the_drain() {
+    use crate::{extract::FromRequestParts as _, server::lifecycle::Draining};
+
+    let started = std::sync::Arc::new(tokio::sync::Notify::new());
+    let service: crate::router::service::Service<()> = {
+        let started = std::sync::Arc::clone(&started);
+        let document = kynos_openapi::Document::new(
+            kynos_openapi::SpecVersion::V3_1,
+            kynos_openapi::Info::new("Test", "1"),
+        );
+        crate::router::service::Service::new(document, move |request: crate::http::Request| {
+            let started = std::sync::Arc::clone(&started);
+            async move {
+                let (mut parts, _) = request.into_parts();
+                let Ok(mut draining) = Draining::from_request_parts(&mut parts, &()).await;
+                let before = draining.is_draining();
+                started.notify_one();
+                draining.wait().await;
+                let body = format!("{before} {}", draining.is_draining());
+                crate::http::Response::new(crate::http::body::Body::from_bytes(bytes::Bytes::from(
+                    body,
+                )))
+            }
+        })
+    };
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let bound = crate::server::Server::new(service)
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+            let _ = shutdown_receiver.await;
+        }))
+        .shutdown_timeout(std::time::Duration::from_secs(600))
+        .prepare()
+        .await
+        .expect("loopback listener binds");
+    let address = bound.local_addrs()[0];
+    let server = tokio::spawn(bound.serve());
+
+    let response = tokio::task::spawn_blocking(move || request_http1(address));
+    tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
+        .await
+        .expect("the request reaches the handler");
+    let _ = shutdown_sender.send(());
+
+    let response = tokio::time::timeout(std::time::Duration::from_secs(10), response)
+        .await
+        .expect("the drain wakes the handler")
+        .expect("blocking client joins");
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(response.ends_with("false true"), "{response}");
+    tokio::time::timeout(std::time::Duration::from_secs(10), server)
+        .await
+        .expect("the drain completes rather than waiting out its timeout")
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// `Draining` is a latch: one made after the drain began — a request accepted
+/// mid-drain on a kept-alive connection — reads it as begun and resolves at
+/// once, one made before it is woken by it, and neither is spent by a wait.
+#[tokio::test(start_paused = true)]
+async fn draining_is_a_latch_a_late_reader_still_sees() {
+    use super::lifecycle::Draining;
+
+    let (sender, receiver) = tokio::sync::watch::channel(super::Lifecycle::Running);
+    let mut early = Draining::of(receiver.clone());
+    assert!(!early.is_draining());
+    let waiting = tokio::spawn(async move {
+        early.wait().await;
+        early
+    });
+    tokio::task::yield_now().await;
+    assert!(!waiting.is_finished(), "nothing has begun to drain");
+
+    sender.send_replace(super::Lifecycle::Draining);
+    let mut late = Draining::of(receiver);
+    assert!(late.is_draining());
+    let hour = std::time::Duration::from_secs(3600);
+    for _ in 0..2 {
+        tokio::time::timeout(hour, late.wait())
+            .await
+            .expect("a wait after the drain began resolves at once");
+    }
+    let mut early = tokio::time::timeout(hour, waiting)
+        .await
+        .expect("the drain wakes a waiter made before it")
+        .expect("the waiter joins");
+    assert!(early.is_draining());
+    tokio::time::timeout(hour, early.wait())
+        .await
+        .expect("a resolved wait resolves again");
+}
+
+/// A request no server listener accepted — in process, or through
+/// `serve_io` or an embedding's own loop with a `Connection` it built — reads
+/// a `Draining` that has not begun and never resolves.
+#[tokio::test(start_paused = true)]
+async fn draining_outside_a_server_lifecycle_never_resolves() {
+    use crate::{extract::FromRequestParts as _, server::lifecycle::Draining};
+
+    for connection in [None, Some(documentation_peer())] {
+        let mut request = crate::http::Request::new(crate::http::body::Body::empty());
+        if let Some(connection) = connection {
+            request.extensions_mut().insert(connection);
+        }
+        let (mut parts, _) = request.into_parts();
+        let Ok(mut draining) = Draining::from_request_parts(&mut parts, &()).await;
+        assert!(!draining.is_draining());
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(3600), draining.wait())
+                .await
+                .is_err(),
+            "nothing outside a server's lifecycle drains"
+        );
+    }
+}
+
 #[cfg(feature = "http1")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn connection_limit_applies_before_accepting_another_socket() {

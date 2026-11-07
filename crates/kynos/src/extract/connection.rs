@@ -211,6 +211,10 @@ struct Inner {
     local: TransportAddress,
     in_process: bool,
     tls: Option<TlsIdentity>,
+    /// The lifecycle of the server whose listener accepted the connection;
+    /// one that never resolves for any other.
+    #[cfg(feature = "server")]
+    draining: crate::server::lifecycle::Draining,
 }
 
 /// The one shared answer for every request that arrived on no socket, so the
@@ -221,6 +225,8 @@ static IN_PROCESS_CONNECTION: LazyLock<Connection> = LazyLock::new(|| {
         local: TransportAddress::Ip(IN_PROCESS),
         in_process: true,
         tls: None,
+        #[cfg(feature = "server")]
+        draining: crate::server::lifecycle::Draining::never(),
     }))
 });
 
@@ -268,12 +274,7 @@ impl Connection {
     /// ```
     #[must_use]
     pub fn from_peer<A: Into<TransportAddress>>(peer: A, local: A) -> Self {
-        Self(Arc::new(Inner {
-            peer: peer.into(),
-            local: local.into(),
-            in_process: false,
-            tls: None,
-        }))
+        Self::socket(peer.into(), local.into(), None)
     }
 
     /// Records the same, for a connection that completed a TLS handshake.
@@ -304,12 +305,43 @@ impl Connection {
     /// ```
     #[must_use]
     pub fn from_tls_peer<A: Into<TransportAddress>>(peer: A, local: A, tls: TlsIdentity) -> Self {
+        Self::socket(peer.into(), local.into(), Some(tls))
+    }
+
+    /// A connection a socket carried, outside any server's lifecycle.
+    fn socket(peer: TransportAddress, local: TransportAddress, tls: Option<TlsIdentity>) -> Self {
         Self(Arc::new(Inner {
-            peer: peer.into(),
-            local: local.into(),
+            peer,
+            local,
             in_process: false,
-            tls: Some(tls),
+            tls,
+            #[cfg(feature = "server")]
+            draining: crate::server::lifecycle::Draining::never(),
         }))
+    }
+
+    /// A connection a server listener accepted, which its requests read the
+    /// server's lifecycle through.
+    #[cfg(feature = "server")]
+    pub(crate) fn accepted(
+        peer: TransportAddress,
+        local: TransportAddress,
+        tls: Option<TlsIdentity>,
+        draining: crate::server::lifecycle::Draining,
+    ) -> Self {
+        Self(Arc::new(Inner {
+            peer,
+            local,
+            in_process: false,
+            tls,
+            draining,
+        }))
+    }
+
+    /// The lifecycle of the server that accepted this connection.
+    #[cfg(feature = "server")]
+    pub(crate) fn draining(&self) -> crate::server::lifecycle::Draining {
+        self.0.draining.clone()
     }
 
     /// The address the peer connected from, in its transport's family.
@@ -391,7 +423,7 @@ impl Connection {
     }
 
     /// Reads the connection back, or reports that there was none.
-    fn of(parts: &Parts) -> Self {
+    pub(crate) fn of(parts: &Parts) -> Self {
         parts
             .extensions
             .get::<Self>()
