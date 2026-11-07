@@ -26,9 +26,11 @@
 //!   above it is the version of this example that should not be copied.
 //! * **The body type is opaque, and deliberately.** Kynos exposes exactly two
 //!   operations on it: it implements `http_body::Body`, and it can be rebuilt
-//!   from bytes. There is no reader, no `to_bytes` helper and no `Vec<u8>`
-//!   accessor, because a handler that could reach one would be a handler reading
-//!   something its description never mentioned.
+//!   from bytes — whole, or with the failure a read ended in. There is no
+//!   extractor for it and no `Vec<u8>` accessor, because a handler that could
+//!   reach one would be a handler reading something its description never
+//!   mentioned. An interceptor that must hand a failed read on rather than
+//!   answer it reads under `kynos::extract::body::limit::collect_capped`.
 //! * **`http-body-util` is the application's dependency, not Kynos's.** It is
 //!   what supplies `BodyExt::collect` below. Kynos uses it internally and does
 //!   not re-export it, so an application writing this interceptor adds

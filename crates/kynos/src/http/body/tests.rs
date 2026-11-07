@@ -265,10 +265,7 @@ fn a_watched_body_whose_release_panics_still_reports_once() {
 #[tokio::test]
 async fn a_watched_failed_body_reports_an_interruption() {
     let reports = Reports::default();
-    let body = reports.watching(Body::failed_after(
-        Bytes::new(),
-        "upstream went away".into(),
-    ));
+    let body = reports.watching(Body::failed_after(Bytes::new(), "upstream went away"));
 
     assert!(body.collect().await.is_err());
     assert_eq!(reports.taken(), vec![Delivery::Interrupted]);
@@ -281,10 +278,7 @@ async fn a_watched_failed_body_reports_an_interruption() {
 async fn a_watched_body_that_failed_part_way_reports_an_interruption() {
     let reports = Reports::default();
     let error = io::Error::new(io::ErrorKind::ConnectionReset, "peer went away");
-    let mut body = reports.watching(Body::failed_after(
-        Bytes::from_static(b"1234"),
-        Box::new(error),
-    ));
+    let mut body = reports.watching(Body::failed_after(Bytes::from_static(b"1234"), error));
 
     let arrived = body.frame().await.expect("the bytes that arrived");
     assert_eq!(

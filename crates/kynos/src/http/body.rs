@@ -14,7 +14,11 @@ use bytes::Bytes;
 use http_body::{Body as HttpBody, Frame, SizeHint};
 use http_body_util::{BodyExt, Empty, Full, combinators::UnsyncBoxBody};
 
-pub(crate) type BoxError = Box<dyn StdError + Send + Sync>;
+/// The error a [`Body`]'s read fails with.
+///
+/// Any error converts into one, so a reader of its own hands its failure on
+/// through [`Body::failed_after`] without wrapping it first.
+pub type BoxError = Box<dyn StdError + Send + Sync>;
 
 /// The body of a request or a response.
 ///
@@ -53,12 +57,32 @@ impl Body {
     /// A body that yields `arrived` and then fails with `error`.
     ///
     /// For a buffering interceptor whose read failed part-way, so the extractor
-    /// beneath sees the same failure rather than a truncated whole body.
-    pub(crate) fn failed_after(arrived: Bytes, error: BoxError) -> Self {
+    /// beneath sees the same failure rather than a truncated whole body: handed
+    /// on through [`Body::from_bytes`], the bytes so far would parse as a
+    /// complete payload. `error` reaches the extractor as it is, so a stalled
+    /// read is still answered with its 408. An empty `arrived` yields no data
+    /// frame, and the body never states its end.
+    ///
+    /// [`collect_capped`](crate::extract::body::limit::collect_capped) and
+    /// [`Capped::into_body`](crate::extract::body::limit::Capped::into_body)
+    /// make this choice for a read under a limit.
+    ///
+    /// ```
+    /// use bytes::Bytes;
+    /// use http_body_util::BodyExt;
+    /// use kynos::http::body::Body;
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() {
+    /// let body = Body::failed_after(Bytes::from_static(b"{\"name\":"), "connection reset");
+    /// assert!(body.collect().await.is_err());
+    /// # }
+    /// ```
+    pub fn failed_after(arrived: Bytes, error: impl Into<BoxError>) -> Self {
         Self::from_body(FailedAfter {
             // No empty data frame: nothing arrived, so nothing is replayed.
             arrived: (!arrived.is_empty()).then_some(arrived),
-            error: Some(error),
+            error: Some(error.into()),
         })
     }
 
