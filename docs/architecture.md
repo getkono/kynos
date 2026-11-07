@@ -554,8 +554,12 @@ peer and refuses any other with a declared 500, so no handler is handed an
 address nobody connected from. The listener follows
 ([#1131](https://github.com/getkono/kynos/issues/1131)). A stream no listener
 accepts, such as an in-memory pipe or one from a custom acceptor, is served
-by `Server::serve_io`, one connection per call, as plaintext, described by
-the `Connection` its caller records. That exposes the connection driver's
+by `Server::serve_io`, one connection per call, described by the
+`Connection` its caller records. Kynos terminates no TLS on it: a caller that
+terminated TLS itself records the handshake through
+`Connection::from_tls_peer`, whose ALPN then pins the protocol as a TLS
+listener's would, and a stream recorded without one is sniffed as plaintext.
+That exposes the connection driver's
 existing `AsyncRead + AsyncWrite` bound rather than adding a coupling point,
 and accepting those streams stays the application's job.
 

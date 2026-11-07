@@ -342,8 +342,9 @@ impl<C: 'static> Server<C> {
     /// connection recorded through
     /// [`from_tls_peer`](crate::extract::connection::Connection::from_tls_peer)
     /// reports that handshake, for a stream whose TLS the caller terminated.
-    /// HTTP/1 and HTTP/2 are told apart from the first bytes, as on any
-    /// plaintext listener.
+    /// Where that handshake's ALPN settled `h2` or `http/1.1`, the connection
+    /// is served as that protocol, as on a TLS listener; otherwise HTTP/1 and
+    /// HTTP/2 are told apart from the first bytes, as on a plaintext listener.
     ///
     /// Nothing that belongs to listeners applies: no address is bound, and the
     /// connection limit, TCP keepalive, graceful shutdown and its timeout are
