@@ -94,6 +94,157 @@ fn an_undeclared_length_promises_nothing() {
     assert_eq!(next(&mut body), None);
 }
 
+/// What a client sets once seeds every request it begins, and what a request
+/// sets itself replaces it, read off the request `send` would assemble.
+mod defaults {
+    use std::net::SocketAddr;
+
+    use crate::{
+        Router,
+        http::{HeaderValue, header},
+        test::TestClient,
+    };
+
+    fn client() -> TestClient<()> {
+        TestClient::new(
+            Router::<()>::new()
+                .build(())
+                .expect("an empty router is describable"),
+        )
+    }
+
+    fn address(port: u16) -> SocketAddr {
+        SocketAddr::from(([192, 0, 2, 10], port))
+    }
+
+    /// Every request a client begins starts from its peer and its fields, not
+    /// only the first.
+    #[test]
+    fn every_request_starts_from_the_client_defaults() {
+        let client = client()
+            .with_peer(address(40000))
+            .with_default_header("x-tenant", "acme");
+
+        for request in [client.get("/a"), client.post("/b")] {
+            assert_eq!(request.peer, Some(address(40000)));
+            assert_eq!(
+                request.headers.get("x-tenant"),
+                Some(&HeaderValue::from_static("acme"))
+            );
+        }
+    }
+
+    /// A client that sets nothing leaves its requests as empty as before.
+    #[test]
+    fn a_client_without_defaults_begins_empty_requests() {
+        let client = client();
+        let request = client.get("/a");
+
+        assert_eq!(request.peer, None);
+        assert!(request.headers.is_empty());
+    }
+
+    /// A request's own peer and field win, and only for the name it sets: the
+    /// default under another name still goes.
+    #[test]
+    fn a_request_overrides_the_default_it_names() {
+        let client = client()
+            .with_peer(address(40000))
+            .with_default_header("x-tenant", "acme")
+            .with_default_header("x-trace", "on");
+
+        let request = client
+            .get("/a")
+            .peer(address(50000))
+            .header("X-Tenant", "globex");
+
+        assert_eq!(request.peer, Some(address(50000)));
+        assert_eq!(
+            request
+                .headers
+                .get_all("x-tenant")
+                .iter()
+                .collect::<Vec<_>>(),
+            [&HeaderValue::from_static("globex")]
+        );
+        assert_eq!(
+            request.headers.get("x-trace"),
+            Some(&HeaderValue::from_static("on"))
+        );
+    }
+
+    /// A second default under one name replaces the first, as a second
+    /// `header` does, rather than sending both.
+    #[test]
+    fn a_second_default_for_a_name_replaces_the_first() {
+        let client = client()
+            .with_default_header("x-tenant", "acme")
+            .with_default_header("x-tenant", "globex")
+            .with_peer(address(1))
+            .with_peer(address(2));
+        let request = client.get("/a");
+
+        assert_eq!(
+            request
+                .headers
+                .get_all("x-tenant")
+                .iter()
+                .collect::<Vec<_>>(),
+            [&HeaderValue::from_static("globex")]
+        );
+        assert_eq!(request.peer, Some(address(2)));
+    }
+
+    /// RFC 6750 section 2.1: `Bearer`, one space, then the token, replacing a
+    /// default credential.
+    #[test]
+    fn bearer_presents_the_token_in_authorization() {
+        let client = client().with_default_header("authorization", "Bearer default");
+        let request = client.get("/a").bearer("mF_9.B5f-4.1JqM");
+
+        assert_eq!(
+            request
+                .headers
+                .get_all(header::AUTHORIZATION)
+                .iter()
+                .collect::<Vec<_>>(),
+            [&HeaderValue::from_static("Bearer mF_9.B5f-4.1JqM")]
+        );
+    }
+
+    /// A token outside `b64token` is still sent, so a test can present one a
+    /// service must refuse.
+    #[test]
+    fn bearer_sends_a_token_outside_the_grammar_as_written() {
+        let client = client();
+        let request = client.get("/a").bearer("not a b64token");
+
+        assert_eq!(
+            request.headers.get(header::AUTHORIZATION),
+            Some(&HeaderValue::from_static("Bearer not a b64token"))
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "`a b` is not a header name")]
+    fn a_default_header_name_http_cannot_carry_panics() {
+        let _ = client().with_default_header("a b", "c");
+    }
+
+    #[test]
+    #[should_panic(expected = "`a\nb` is not a header value")]
+    fn a_default_header_value_http_cannot_carry_panics() {
+        let _ = client().with_default_header("x-a", "a\nb");
+    }
+
+    #[test]
+    #[should_panic(expected = "`Bearer a\nb` is not a header value")]
+    fn a_bearer_token_no_field_can_carry_panics() {
+        let client = client();
+        let _ = client.get("/a").bearer("a\nb");
+    }
+}
+
 /// Each `assert_*` helper fails, once per way its `# Panics` section names,
 /// with the message a test author reads.
 ///
