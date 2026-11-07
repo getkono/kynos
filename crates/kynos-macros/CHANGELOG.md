@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/getkono/kynos/compare/kynos-macros-v0.5.0...kynos-macros-v0.6.0) - 2026-11-07
+
+### Added
+
+- *(macros)* [**breaking**] send #[problem(extension)] members through Serialize ([#1199](https://github.com/getkono/kynos/pull/1199))
+- *(schema)* name one generic instantiation with name_instantiation! ([#1196](https://github.com/getkono/kynos/pull/1196))
+- *(error)* log a derived 5xx ApiError's source chain ([#1179](https://github.com/getkono/kynos/pull/1179))
+- *(macros)* let #[schema(as = T)] convert through a function named by via ([#1178](https://github.com/getkono/kynos/pull/1178))
+- *(macros)* let #[schema] numeric and count bounds name a const ([#1165](https://github.com/getkono/kynos/pull/1165))
+- *(error)* [**breaking**] let a broken declared bound answer with the application's problem type ([#1169](https://github.com/getkono/kynos/pull/1169))
+
+### Fixed
+
+- *(macros)* keep the Schema `as` conversion out of the field type's hygiene ([#1192](https://github.com/getkono/kynos/pull/1192))
+- *(router)* fail a QUERY without Content-Type and require a QUERY operation's body ([#1177](https://github.com/getkono/kynos/pull/1177))
+- *(macros)* keep Reply, MultipartForm and parameter group bindings out of the field type's hygiene ([#1187](https://github.com/getkono/kynos/pull/1187))
+- *(macros)* keep ApiError's bindings out of the field type's hygiene ([#1173](https://github.com/getkono/kynos/pull/1173))
+
 ## [0.5.0](https://github.com/getkono/kynos/compare/kynos-macros-v0.4.0...kynos-macros-v0.5.0) - 2026-10-31
 
 ### Added
