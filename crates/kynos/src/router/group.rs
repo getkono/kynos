@@ -36,6 +36,10 @@ pub struct Group<C, P = Propagate, I = (), S = ()> {
     pub(super) endpoints: Vec<Arc<dyn DynEndpoint<C>>>,
     pub(super) interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
     pub(super) short_circuit_checks: Vec<ShortCircuitCheck>,
+    /// Where in `interceptors` each covered operation's guard runs, once
+    /// [`guard_first`](Group::guard_first) asked: the number of them outside
+    /// it.
+    pub(super) guard_first: Option<usize>,
     pub(super) tags: Vec<DeclaredTag>,
     /// Kept beside `tags`, as on `Router`, so a tag covering nothing is still
     /// documented.
@@ -80,6 +84,7 @@ impl<C> Group<C, Propagate, ()> {
             endpoints: Vec::new(),
             interceptors: Vec::new(),
             short_circuit_checks: Vec::new(),
+            guard_first: None,
             tags: Vec::new(),
             tag_metadata: Vec::new(),
             violations,
@@ -98,6 +103,7 @@ impl<C, P, I, S> Group<C, P, I, S> {
             endpoints: self.endpoints,
             interceptors: self.interceptors,
             short_circuit_checks: self.short_circuit_checks,
+            guard_first: self.guard_first,
             tags: self.tags,
             tag_metadata: self.tag_metadata,
             violations: self.violations,
@@ -199,6 +205,41 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
     #[must_use]
     pub fn intercept_all<L: InterceptorList<C, I, S>>(self, chain: L) -> Group<C, P, L::Stack, S> {
         crate::middleware::stack::sealed::Apply::apply(chain, self)
+    }
+
+    /// Runs each covered operation's guard at this point of the group's chain,
+    /// from the request head: inside the interceptors applied before this
+    /// call, and outside those applied after it.
+    ///
+    /// So an anonymous caller is refused before a byte of its body is read:
+    /// called before a [`BodySize`](crate::middleware::limits::body_size::BodySize),
+    /// the guard's 401 is answered without buffering what that limit allows.
+    /// The handler's guard argument then receives the credential already
+    /// checked, so nothing is checked twice.
+    ///
+    /// Only *when* the guard runs moves. It is declared by the handler's
+    /// argument exactly as before, so the description is unchanged, and an
+    /// operation taking no guard is left as it was. A CORS preflight runs no
+    /// interceptor and so no guard; a `Cors` meant to cover the guard's
+    /// refusal is applied before this call.
+    ///
+    /// A guard runs once. Where an enclosing scope also called this —
+    /// [`Router::guard_first`](crate::router::Router::guard_first), or a
+    /// router this group's is nested in — the outermost point wins; a second
+    /// call here keeps the first.
+    ///
+    /// ```no_run
+    /// use kynos::{middleware::limits::body_size::BodySize, router::group::Group};
+    ///
+    /// let uploads = Group::<()>::new("/uploads")
+    ///     .guard_first()
+    ///     .intercept(BodySize::new(96 << 20));
+    /// # let _ = uploads;
+    /// ```
+    #[must_use]
+    pub fn guard_first(mut self) -> Self {
+        self.guard_first.get_or_insert(self.interceptors.len());
+        self
     }
 
     /// Mounts operations into this group.

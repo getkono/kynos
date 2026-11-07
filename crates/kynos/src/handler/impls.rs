@@ -25,6 +25,32 @@ macro_rules! or_respond {
     };
 }
 
+/// The guard `$guard` admitted the request with ahead of its interceptors, or,
+/// where none ran there, the guard run now.
+macro_rules! guard {
+    ($guard:ident, $parts:expr, $context:expr) => {
+        match crate::security::admitted::<C, $guard>($parts) {
+            Some(admitted) => admitted,
+            None => or_respond!($guard::guard($parts, $context)),
+        }
+    };
+}
+
+/// The two hidden [`Handler`] items a guarded implementation answers, which
+/// run guard `$guard` ahead of the interceptors covering the operation.
+macro_rules! guard_ahead {
+    ($guard:ident) => {
+        const __GUARDED: bool = true;
+
+        fn __guard_ahead(
+            parts: &mut Parts,
+            context: &C,
+        ) -> impl Future<Output = Option<Response>> + Send {
+            crate::security::guard_ahead::<C, $guard>(parts, context)
+        }
+    };
+}
+
 /// Merges one argument's description and the responses of the rejection it
 /// raises as `$extractor`.
 macro_rules! describe_argument {
@@ -111,7 +137,7 @@ macro_rules! impl_handler {
         {
             #[allow(non_snake_case, unused_variables)]
             async fn call(self, parts: &mut Parts, body: Body, context: &C) -> Response {
-                let G = or_respond!(G::guard(parts, context));
+                let G = guard!(G, parts, context);
                 $( let $head = or_respond!($head::from_request_parts(parts, context)); )*
                 let $last = or_respond!($last::from_request(parts, body, context));
                 self(G, $($head,)* $last).await.into_response()
@@ -124,6 +150,8 @@ macro_rules! impl_handler {
                 let returned = <Res as Responses>::responses(operation.registry());
                 operation.add_responses(&returned);
             }
+
+            guard_ahead!(G);
         }
 
         // --- a guard, then every argument reads the head only --------------
@@ -140,7 +168,7 @@ macro_rules! impl_handler {
         {
             #[allow(non_snake_case, unused_variables)]
             async fn call(self, parts: &mut Parts, _body: Body, context: &C) -> Response {
-                let G = or_respond!(G::guard(parts, context));
+                let G = guard!(G, parts, context);
                 $( let $head = or_respond!($head::from_request_parts(parts, context)); )*
                 let $last = or_respond!($last::from_request_parts(parts, context));
                 self(G, $($head,)* $last).await.into_response()
@@ -153,6 +181,8 @@ macro_rules! impl_handler {
                 let returned = <Res as Responses>::responses(operation.registry());
                 operation.add_responses(&returned);
             }
+
+            guard_ahead!(G);
         }
     };
 }
@@ -189,7 +219,7 @@ where
 {
     #[allow(non_snake_case)]
     async fn call(self, parts: &mut Parts, _body: Body, context: &C) -> Response {
-        let G = or_respond!(G::guard(parts, context));
+        let G = guard!(G, parts, context);
         self(G).await.into_response()
     }
 
@@ -199,6 +229,8 @@ where
         let returned = <Res as Responses>::responses(operation.registry());
         operation.add_responses(&returned);
     }
+
+    guard_ahead!(G);
 }
 
 impl_handler!(; T1);

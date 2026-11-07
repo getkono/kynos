@@ -320,6 +320,19 @@ where
             .iter()
             .find_map(|interceptor| install::cors_conflict(interceptor))
     }
+
+    fn __guarded(&self) -> bool {
+        H::__GUARDED
+    }
+
+    // This operation's recovery covers its guard wherever the guard runs.
+    fn __guard_ahead(
+        &self,
+        request: Request,
+        context: &C,
+    ) -> impl Future<Output = Result<Request, Response>> + Send {
+        super::guard_ahead::<C, H, A>(request, context, install::catches::<P>())
+    }
 }
 
 impl<C, H, A, P, I: 'static> EndpointBuilder<C, H, A, P, I>

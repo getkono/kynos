@@ -58,6 +58,36 @@ satisfying it means authenticating *and* holding them: see
   is written once, not once per alternative. An `AllOf` is refused, since its
   set would be demanded of every scheme in it, mutual TLS's included.
 
+### A scope may run the guard before its interceptors
+
+A guard is an argument, so by default it runs after every interceptor covering
+the operation has let the request through. One that reads the body first —
+`BodySize` buffers a chunked body whole — then makes the server buffer an
+anonymous caller's upload, or wait out its body deadline, before the 401.
+
+`Group::guard_first` and `Router::guard_first` move *when* the guard runs, and
+nothing else. Each covered operation's guard runs from the request head at the
+point in the scope's chain where the call sits: inside the interceptors applied
+before it, outside those applied after. Its refusal is the guard's own
+response, challenge included, and what it admits is handed to the handler's
+guard argument, so a request is checked once.
+
+- **The guard is still the only door.** The handler's argument still declares
+  it, so the description is the same with or without the call, and an
+  operation taking no guard is left as it was.
+- **Where the call sits is the point.** An interceptor applied before it wraps
+  the refusal: a `RequestId` or a `Cors` meant to reach the 401 goes first, a
+  `BodySize` after.
+- **A guard runs once.** Where a router and a group covering one operation both
+  ask, the outermost point wins.
+- **A CORS preflight runs no guard**, since it runs no interceptor.
+- **An endpoint's own `catch_panics` still covers its guard**, wherever it
+  runs.
+
+Moving the guard into an interceptor of the application's own, which this
+replaces, checks twice and has to restate the guard's challenges to keep them
+`required` in the merged 401.
+
 ### A scheme says where its credential travels, once
 
 `#[derive(SecurityScheme)]` writes two implementations from one attribute.

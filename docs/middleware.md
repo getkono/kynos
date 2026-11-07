@@ -1102,7 +1102,10 @@ slot, implemented in [`security/auth.rs`](../crates/kynos/src/security/auth.rs)
 the document through `OperationCx::add_responses`, never through a `const`.
 `CompatibleWith` compares only interceptor `Short`s, and `Auth<S>` has none, so
 `Csrf`'s 403 (`CrossSite`) never meets the credential guard's in that comparison
-and the two compile beside each other.
+and the two compile beside each other. `guard_first` does not change that: it
+runs the guard at a point of a scope's chain, as an interceptor would, but
+declares nothing there, so the guard stays out of `CompatibleWith` — see
+[`security.md`](security.md#a-scope-may-run-the-guard-before-its-interceptors).
 
 The overlap is about *description* rather than compilation: a CSRF 403 and an
 `Auth` 403 on one operation are one entry, since a description files one

@@ -69,6 +69,9 @@ pub(crate) struct Mounted<C> {
     /// Group- and nested-router interceptors, outermost first. The router's own
     /// are held separately, because `intercept` may be called after `mount`.
     interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
+    /// Where in `interceptors` the endpoint's guard runs, where an enclosing
+    /// scope asked for `guard_first`: the number of them outside it.
+    guard_at: Option<usize>,
     tags: Vec<DeclaredTag>,
     catch_panics: bool,
     /// Undescribed layers an enclosing scope wrapped this operation in,
@@ -131,6 +134,10 @@ pub(crate) struct Mounted<C> {
 pub struct Router<C, P = Propagate, I = (), S = ()> {
     pub(crate) mounted: Vec<Mounted<C>>,
     pub(crate) interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
+    /// Where in `interceptors` each operation's guard runs, once
+    /// [`guard_first`](Router::guard_first) asked: the number of them outside
+    /// it.
+    pub(crate) guard_first: Option<usize>,
     pub(crate) short_circuit_checks: Vec<ShortCircuitCheck>,
     pub(crate) observers: Vec<Arc<dyn Observer<C>>>,
     pub(crate) info: Option<Info>,
@@ -195,6 +202,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
         Self {
             mounted: Vec::new(),
             interceptors: Vec::new(),
+            guard_first: None,
             short_circuit_checks: Vec::new(),
             observers: Vec::new(),
             info: None,
@@ -225,6 +233,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
         Router {
             mounted: self.mounted,
             interceptors: self.interceptors,
+            guard_first: self.guard_first,
             short_circuit_checks: self.short_circuit_checks,
             observers: self.observers,
             info: self.info,
@@ -283,6 +292,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
         prefix: &str,
         tags: &[DeclaredTag],
         interceptors: &[Arc<dyn ErasedInterceptor<C>>],
+        guard_at: Option<usize>,
         catch_panics: bool,
     ) where
         C: 'static,
@@ -296,6 +306,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
                 endpoint,
                 path,
                 interceptors: interceptors.to_vec(),
+                guard_at,
                 tags: tags.to_vec(),
                 catch_panics,
                 #[cfg(feature = "unchecked")]
@@ -324,6 +335,11 @@ impl<C, P, I, S> Router<C, P, I, S> {
             // The absorbed router's interceptors and tags covered only these
             // operations, so each carries them, outermost first.
             prepend(&mut mounted.interceptors, &other.interceptors);
+            mounted.guard_at = guard_point(
+                other.guard_first,
+                other.interceptors.len(),
+                mounted.guard_at,
+            );
             prepend(&mut mounted.tags, &other.tags);
             #[cfg(feature = "unchecked")]
             prepend(&mut mounted.unchecked_layers, &other.unchecked.layers);
@@ -446,7 +462,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
         let mut sink = endpoint::set::Endpoints::new();
         endpoints.into_endpoints(&mut sink);
-        self.absorb(sink.into_inner(), "", &[], &[], false);
+        self.absorb(sink.into_inner(), "", &[], &[], None, false);
         self.retype()
     }
 
@@ -488,7 +504,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         // drops the entry.
         for (endpoint, role) in docs.into_halves() {
             let first = self.mounted.len();
-            self.absorb(vec![endpoint], "", &[], &[], false);
+            self.absorb(vec![endpoint], "", &[], &[], None, false);
             for mounted in &mut self.mounted[first..] {
                 mounted.docs = Some(role.clone());
             }
@@ -525,6 +541,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             endpoints,
             interceptors,
             short_circuit_checks,
+            guard_first,
             tags,
             tag_metadata,
             violations,
@@ -539,7 +556,14 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         #[cfg(feature = "unchecked")]
         let first = self.mounted.len();
 
-        self.absorb(endpoints, &prefix, &tags, &interceptors, catches::<GP>());
+        self.absorb(
+            endpoints,
+            &prefix,
+            &tags,
+            &interceptors,
+            guard_first,
+            catches::<GP>(),
+        );
 
         // A group's layers cover only its operations, so they land per endpoint.
         #[cfg(feature = "unchecked")]
@@ -663,6 +687,34 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         router
     }
 
+    /// Runs each operation's guard at this point of the router's chain, from
+    /// the request head: inside the interceptors applied before this call, and
+    /// outside those applied after it.
+    ///
+    /// [`Group::guard_first`] at router scope, covering every operation this
+    /// router mounts, groups and nested routers included; a fallback has no
+    /// guard to run. Where an enclosing router also called it, the outermost
+    /// point wins; a second call here keeps the first.
+    ///
+    /// ```no_run
+    /// use kynos::{
+    ///     Router,
+    ///     middleware::{limits::body_size::BodySize, request_id::RequestId},
+    /// };
+    ///
+    /// // Every refusal carries a request ID, and none waits on a body.
+    /// let router = Router::<()>::new()
+    ///     .intercept(RequestId::new())
+    ///     .guard_first()
+    ///     .intercept(BodySize::new(1 << 20));
+    /// # let _ = router;
+    /// ```
+    #[must_use]
+    pub fn guard_first(mut self) -> Self {
+        self.guard_first.get_or_insert(self.interceptors.len());
+        self
+    }
+
     /// Installs an observer.
     ///
     /// Observers see everything and change nothing, so they contribute nothing
@@ -767,6 +819,17 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 /// Puts what an enclosing scope contributed ahead of `inner`'s own.
 fn prepend<T: Clone>(inner: &mut Vec<T>, outer: &[T]) {
     inner.splice(0..0, outer.iter().cloned());
+}
+
+/// Where an operation's guard runs once an enclosing scope's `outer_len`
+/// interceptors are put ahead of the ones it ran at `inner_at` among; that
+/// scope's own `outer_at` wins, being the outermost point asked for.
+fn guard_point(
+    outer_at: Option<usize>,
+    outer_len: usize,
+    inner_at: Option<usize>,
+) -> Option<usize> {
+    outer_at.or_else(|| inner_at.map(|at| at + outer_len))
 }
 
 #[cfg(test)]

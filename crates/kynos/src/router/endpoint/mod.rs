@@ -9,14 +9,15 @@ pub mod builder;
 pub mod meta;
 pub mod set;
 
-use std::{future::Future, pin::Pin};
+use std::{convert::Infallible, future::Future, pin::Pin, sync::Arc};
 
 use kynos_openapi::{Method, PathTemplate};
 
 use crate::{
+    handler::Handler,
     http::{Request, Response},
-    middleware::MiddlewareError,
-    router::operation::OperationCx,
+    middleware::{Continued, Interceptor, MiddlewareError, Next, erased::ErasedInterceptor},
+    router::{dispatch::recovery, operation::OperationCx},
 };
 
 /// A declared API operation.
@@ -54,6 +55,90 @@ pub trait Endpoint<C>: Send + Sync + 'static {
     fn __unhonourable_interceptor(&self) -> Option<MiddlewareError> {
         None
     }
+
+    /// Whether this operation's handler takes a guard, which
+    /// [`__guard_ahead`](Endpoint::__guard_ahead) then runs.
+    ///
+    /// Not part of the stable API: [`EndpointBuilder`](builder::EndpointBuilder)
+    /// answers it from its handler, and an endpoint holding no guard has
+    /// nothing to answer.
+    #[doc(hidden)]
+    fn __guarded(&self) -> bool {
+        false
+    }
+
+    /// Runs this operation's guard from the request head, ahead of the
+    /// interceptors a [`guard_first`](crate::router::group::Group::guard_first)
+    /// scope puts it before, handing the request on with what the guard
+    /// admitted or answering with its rejection.
+    ///
+    /// Not part of the stable API, as [`__guarded`](Endpoint::__guarded).
+    #[doc(hidden)]
+    fn __guard_ahead(
+        &self,
+        request: Request,
+        context: &C,
+    ) -> impl Future<Output = Result<Request, Response>> + Send {
+        let _ = context;
+        std::future::ready(Ok(request))
+    }
+}
+
+/// Runs handler `H`'s guard from `request`'s head, under recovery where
+/// `catches`: the request, carrying what the guard admitted, or the response
+/// that refused it.
+async fn guard_ahead<C: Sync, H: Handler<C, A>, A>(
+    request: Request,
+    context: &C,
+    catches: bool,
+) -> Result<Request, Response> {
+    let (mut parts, body) = request.into_parts();
+
+    let refused = if catches {
+        recovery::recover(H::__guard_ahead(&mut parts, context))
+            .await
+            .unwrap_or_else(|payload| Some(recovery::recovered_response(payload)))
+    } else {
+        H::__guard_ahead(&mut parts, context).await
+    };
+
+    match refused {
+        Some(refused) => Err(refused),
+        None => Ok(Request::from_parts(parts, body)),
+    }
+}
+
+/// An operation's guard, run as an interceptor at the point of the chain a
+/// [`guard_first`](crate::router::group::Group::guard_first) scope chose.
+///
+/// Installed only when the service is built, and reading, adding and
+/// short-circuiting with nothing it declares, so it contributes nothing to the
+/// description: the guard argument has declared its refusals already. Its
+/// refusal is the guard's response, handed through as the chain's own.
+struct GuardAhead<E>(Arc<E>);
+
+impl<C, E> Interceptor<C> for GuardAhead<E>
+where
+    C: Send + Sync + 'static,
+    E: Endpoint<C>,
+{
+    type Reads = ();
+    type Adds = ();
+    type Short = Infallible;
+
+    async fn intercept(
+        &self,
+        request: Request,
+        reads: (),
+        context: &C,
+        next: Next<'_, C>,
+    ) -> Result<Continued<()>, Infallible> {
+        let () = reads;
+        Ok(match self.0.__guard_ahead(request, context).await {
+            Ok(admitted) => next.run(admitted).await,
+            Err(refused) => Continued::new(refused),
+        })
+    }
 }
 
 /// The object-safe form of [`Endpoint`], so a router can hold a heterogeneous
@@ -72,6 +157,9 @@ pub(crate) trait DynEndpoint<C>: Send + Sync + 'static {
     ) -> Pin<Box<dyn Future<Output = Response> + Send + 'a>>;
 
     fn unhonourable_interceptor(&self) -> Option<MiddlewareError>;
+
+    /// This operation's guard as an interceptor, where its handler takes one.
+    fn guard_ahead(self: Arc<Self>) -> Option<Arc<dyn ErasedInterceptor<C>>>;
 }
 
 impl<C: Send + Sync + 'static, E: Endpoint<C>> DynEndpoint<C> for E {
@@ -97,6 +185,12 @@ impl<C: Send + Sync + 'static, E: Endpoint<C>> DynEndpoint<C> for E {
 
     fn unhonourable_interceptor(&self) -> Option<MiddlewareError> {
         Endpoint::__unhonourable_interceptor(self)
+    }
+
+    fn guard_ahead(self: Arc<Self>) -> Option<Arc<dyn ErasedInterceptor<C>>> {
+        // Concrete, so the one box the interceptor's future takes holds the
+        // guard's own.
+        Endpoint::__guarded(&*self).then(|| Arc::new(GuardAhead(self)) as _)
     }
 }
 

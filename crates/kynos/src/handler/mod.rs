@@ -87,4 +87,27 @@ pub trait Handler<C, A>: Clone + Send + Sync + 'static {
     /// Rejections are described here, not in `Describe`, because `Rejection`
     /// depends on the context type, which `Describe` cannot name.
     fn describe(operation: &mut OperationCx<'_>);
+
+    /// Whether the handler takes a guard, which
+    /// [`__guard_ahead`](Handler::__guard_ahead) then runs.
+    ///
+    /// Not part of the stable API: the guarded implementations answer it, and
+    /// [`Group::guard_first`](crate::router::group::Group::guard_first) reads
+    /// it.
+    #[doc(hidden)]
+    const __GUARDED: bool = false;
+
+    /// Runs the handler's guard from the head alone, ahead of the interceptors
+    /// covering it, keeping what it admits for [`call`](Handler::call); the
+    /// guard's rejection where it refuses.
+    ///
+    /// Not part of the stable API, as [`__GUARDED`](Handler::__GUARDED).
+    #[doc(hidden)]
+    fn __guard_ahead(
+        parts: &mut Parts,
+        context: &C,
+    ) -> impl Future<Output = Option<Response>> + Send {
+        let _ = (parts, context);
+        std::future::ready(None)
+    }
 }
