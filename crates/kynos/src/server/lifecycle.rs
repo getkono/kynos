@@ -7,6 +7,8 @@
 //! [`Draining`] is a handler's read of it.
 
 use core::convert::Infallible;
+#[cfg(feature = "openapi32")]
+use std::{future::Future, pin::Pin};
 
 use tokio::sync::watch;
 
@@ -51,7 +53,9 @@ pub(in crate::server) async fn wait_until_forced(lifecycle: &mut watch::Receiver
 /// A latch rather than an event: [`wait`](Self::wait) resolves once the drain
 /// begins, and at once for a request accepted after it began, so a stream
 /// opened mid-drain on a kept-alive connection still sees it. A long-lived
-/// response ends itself on it, because the drain is protocol-level: HTTP/2's
+/// response ends itself on it — under `openapi32`,
+/// [`Sse::end_on_shutdown`](crate::response::stream::sse::Sse::end_on_shutdown)
+/// does so for an event stream — because the drain is protocol-level: HTTP/2's
 /// GOAWAY lets streams already open finish (RFC 9113 §6.8), and HTTP/1 closes
 /// only after the response in flight, so neither ends a body still streaming,
 /// and the drain waits on it until the shutdown timeout.
@@ -113,6 +117,16 @@ impl Draining {
             }
             None => std::future::pending::<()>().await,
         }
+    }
+
+    /// The wait as a future a body polls by hand, or `None` where it would
+    /// never resolve.
+    #[cfg(feature = "openapi32")]
+    pub(crate) fn into_signal(self) -> Option<Pin<Box<dyn Future<Output = ()> + Send>>> {
+        let mut lifecycle = self.0?;
+        Some(Box::pin(async move {
+            let _ = wait_until_stopping(&mut lifecycle).await;
+        }))
     }
 }
 

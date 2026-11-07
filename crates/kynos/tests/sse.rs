@@ -29,7 +29,7 @@ use kynos::{
     middleware::Observer,
     response::stream::sse::{Event, KeepAlive, Sse},
     router::operation::Route,
-    server::{Server, shutdown::Shutdown},
+    server::{Server, error::ServerError, lifecycle::Draining, shutdown::Shutdown},
 };
 
 /// A stream that yields one event and then never again, so what arrives after
@@ -430,5 +430,114 @@ async fn a_client_that_leaves_after_a_complete_response_is_not_reported() {
     assert_eq!(
         disconnects, 0,
         "a response the client received in full was reported as one it did not"
+    );
+}
+
+/// The silent stream, ended once the server begins its graceful shutdown.
+#[kynos::get("/until-shutdown")]
+async fn until_shutdown(draining: Draining) -> Sse<OneEventThenSilence> {
+    Sse::new(one_event_then_silence()).end_on_shutdown(draining)
+}
+
+/// Opens `path`, triggers the shutdown once its event arrives, and returns
+/// what the client read after it — until the server closed the connection or
+/// ten seconds passed — with how the server's run ended.
+async fn shut_down_during(
+    path: &'static str,
+    shutdown_timeout: Duration,
+) -> (String, kynos::Result<()>) {
+    let (shutdown, receiver) = tokio::sync::oneshot::channel();
+    let (event_read, event_arrived) = tokio::sync::oneshot::channel();
+
+    let bound = Server::new(
+        Router::<()>::new()
+            .mount(kynos::routes![until_shutdown, quiet])
+            .build(())
+            .expect("a describable router"),
+    )
+    .bind((Ipv4Addr::LOCALHOST, 0))
+    .graceful_shutdown(Shutdown::on(async move {
+        let _ = receiver.await;
+    }))
+    .shutdown_timeout(shutdown_timeout)
+    .prepare()
+    .await
+    .expect("a bound server");
+
+    let address = bound.local_addrs()[0];
+    let serving = tokio::spawn(bound.serve());
+
+    let client = tokio::task::spawn_blocking(move || {
+        let mut stream = TcpStream::connect(address).expect("a connection");
+        stream
+            .write_all(format!("GET {path} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes())
+            .expect("a written request");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .expect("a read timeout");
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        while matches!(reader.read_line(&mut line), Ok(read) if read > 0) {
+            if line.starts_with("data:") {
+                break;
+            }
+            line.clear();
+        }
+        let _ = event_read.send(());
+
+        let mut rest = String::new();
+        while matches!(reader.read_line(&mut rest), Ok(read) if read > 0) {}
+        rest
+    });
+
+    tokio::time::timeout(Duration::from_secs(5), event_arrived)
+        .await
+        .expect("the event arrives")
+        .expect("the client reads it");
+    let _ = shutdown.send(());
+
+    let served = tokio::time::timeout(Duration::from_secs(10), serving)
+        .await
+        .expect("the server ends within its shutdown timeout")
+        .expect("the server task joins");
+    let rest = client.await.expect("the client joins");
+    (rest, served)
+}
+
+/// An event stream ended on shutdown ends the moment the drain begins: the
+/// body closes after the event already sent, and the server's drain completes
+/// rather than waiting out a shutdown timeout far longer than the test.
+///
+/// The drain is protocol-level, so without this the stream holds it: the
+/// control below is that case.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stream_ended_on_shutdown_ends_when_the_drain_begins() {
+    let (rest, served) = shut_down_during("/until-shutdown", Duration::from_secs(600)).await;
+
+    // The blank line ending the event, its chunk's CRLF, and the last chunk:
+    // nothing after the event, and the body ended.
+    assert_eq!(
+        rest, "\n\r\n0\r\n\r\n",
+        "the body did not end cleanly after its event"
+    );
+    served.expect("the drain completes");
+}
+
+/// The pass control, differing only in `end_on_shutdown`: the same silent
+/// stream holds the drain until its timeout, and its body never ends.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stream_not_ended_on_shutdown_holds_the_drain_to_its_timeout() {
+    let (rest, served) = shut_down_during("/quiet", Duration::from_millis(200)).await;
+
+    assert!(
+        !rest.ends_with("0\r\n\r\n"),
+        "the body ended though nothing ended it: {rest:?}"
+    );
+    assert!(
+        matches!(
+            served.expect_err("the drain times out"),
+            kynos::Error::Server(ServerError::ShutdownTimeout { .. })
+        ),
+        "the drain did not end on its timeout"
     );
 }

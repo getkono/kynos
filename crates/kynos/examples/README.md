@@ -44,7 +44,7 @@ as reading the authenticated caller in a handler, which is
 | [`localization.rs`](localization.rs) | Choosing a language from `Accept-Language`, and why that field *is* a parameter where `Accept` is not | — |
 | [`errors.rs`](errors.rs) | `#[derive(ApiError)]`, RFC 9457 problem documents, a header only one failure sends, and every other way a status reaches an operation | — |
 | [`localized_errors.rs`](localized_errors.rs) | Translating a problem's `title` from the application's own catalogue, including the rejections Kynos raises | — |
-| [`sse.rs`](sse.rs) | Server-Sent Events: discriminated event types, resumption, reconnection advice, keep-alive | `openapi32`, `compression` |
+| [`sse.rs`](sse.rs) | Server-Sent Events: discriminated event types, resumption, reconnection advice, keep-alive, ending on shutdown | `openapi32`, `compression` |
 | [`streaming.rs`](streaming.rs) | JSON Lines, JSON text sequences, byte streams, and the whole-query-string parameter | `openapi32` |
 
 ## Structure

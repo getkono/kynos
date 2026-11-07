@@ -11,7 +11,7 @@
 //! JSON framings and raw byte streams. This file is the one protocol among them
 //! with rules of its own.
 //!
-//! Four things are worth noticing:
+//! Five things are worth noticing:
 //!
 //! * **An event names its type twice, and the two must agree.** SSE's `event`
 //!   field is what a browser's `addEventListener` selects on; a serde tag inside
@@ -35,6 +35,13 @@
 //!   requires a client to ignore comment lines, which is exactly what makes them
 //!   usable to stop an idle connection being reaped by an intermediary. Nothing
 //!   about the contract changes, so nothing about the contract records it.
+//! * **A stream outlives a graceful shutdown unless it is told to end.** The
+//!   drain lets a response already streaming finish, and an event stream never
+//!   does, so every restart would wait out the whole shutdown timeout.
+//!   [`Sse::end_on_shutdown`] ends the body between two events once the drain
+//!   begins, and the client reconnects, with its `Last-Event-ID`, to whichever
+//!   instance serves next. [`Draining`] is the handler argument it reads that
+//!   from; it describes nothing.
 //!
 //! 3.1 is not merely inconvenient here: it has no `itemSchema`, so an event
 //! stream can only be described as an opaque string. Kynos would rather not
@@ -56,7 +63,7 @@ use kynos::{
         Stream,
         sse::{Event, KeepAlive, Sse},
     },
-    server::Server,
+    server::{Server, lifecycle::Draining},
 };
 use serde::{Deserialize, Serialize};
 
@@ -199,12 +206,14 @@ impl Stream for Feed {
 /// service expects to sit behind. That is the only thing it has to be shorter
 /// than, and picking it is a deployment question rather than a protocol one.
 #[kynos::get("/updates")]
-async fn updates(LastEventId(resume): LastEventId) -> Sse<Feed> {
-    Sse::new(Feed::resuming_after(resume.as_deref())).keep_alive(
-        KeepAlive::new()
-            .interval(Duration::from_secs(15))
-            .comment("still connected"),
-    )
+async fn updates(LastEventId(resume): LastEventId, draining: Draining) -> Sse<Feed> {
+    Sse::new(Feed::resuming_after(resume.as_deref()))
+        .keep_alive(
+            KeepAlive::new()
+                .interval(Duration::from_secs(15))
+                .comment("still connected"),
+        )
+        .end_on_shutdown(draining)
 }
 
 /// Streams a fixed, short burst of updates.
