@@ -875,8 +875,25 @@ async fn a_unix_listener_records_its_peers_credentials() {
     let uid = rustix::process::geteuid().as_raw();
     let gid = rustix::process::getegid().as_raw();
     let credentials = crate::extract::connection::PeerCredentials::new(uid, gid);
-    // Where the kernel reports a peer's process ID, this process is the peer.
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    // Where the kernel reports a peer's process ID, this process is the peer:
+    // every target whose tokio read returns one (FreeBSD from 13).
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "redox",
+        target_os = "openbsd",
+        target_os = "haiku",
+        target_os = "cygwin",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos",
+        target_os = "visionos",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "solaris",
+        target_os = "illumos",
+    ))]
     let credentials = credentials.with_pid(std::process::id());
     assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
     assert!(
