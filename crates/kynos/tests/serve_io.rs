@@ -3,9 +3,9 @@
 //! One reason: `Server::serve_io` is the public way onto the connection driver
 //! without a socket, and whether it serves what a listener's connection would
 //! — both protocols under the settings a listener's connection runs under,
-//! the peer it was handed, the local address standing in for a listener's, a
-//! client that breaks the protocol, and a configuration `prepare` refuses — is
-//! only visible by composing it as a caller does.
+//! the connection it was handed, over IP or a Unix socket, a client that
+//! breaks the protocol, and a configuration `prepare` refuses — is only
+//! visible by composing it as a caller does.
 
 #![cfg(all(feature = "server", feature = "macros"))]
 
@@ -18,19 +18,21 @@ use kynos::{
     error::Error,
     extract::{
         body::text::Text,
-        connection::{ConnectInfo, Connection},
+        connection::{ConnectInfo, Connection, TransportAddress},
     },
     router::service::Service,
     server::{Server, error::ServerError},
 };
 
-/// The peer every case hands the server, which no socket could have reported.
+/// The peer every IP case hands the server.
 const PEER: &str = "192.0.2.7:50123";
 
-/// What `peer` answers for [`PEER`]: no listener accepted the stream, so the
-/// local address is the unspecified IPv4 one with port zero, and a stream is
-/// not in-process.
-const PEER_SEEN: &str = "192.0.2.7:50123 0.0.0.0:0 false";
+/// The local address every IP case hands the server beside [`PEER`].
+const LOCAL: &str = "192.0.2.8:8080";
+
+/// What `peer` answers for [`ip_connection`]: both addresses as handed over,
+/// and a stream is not in-process.
+const PEER_SEEN: &str = "192.0.2.7:50123 192.0.2.8:8080 false";
 
 /// Answers with the peer the request arrived from, the local address its
 /// connection reports, and whether that connection calls itself in-process.
@@ -43,21 +45,38 @@ async fn peer(ConnectInfo(peer): ConnectInfo, connection: Connection) -> Text {
     ))
 }
 
+/// Answers with the transport the request arrived over, which a handler
+/// serving more than IP reads instead of `ConnectInfo`.
+#[kynos::get("/transport")]
+async fn transport(connection: Connection) -> Text {
+    Text(match connection.peer() {
+        TransportAddress::Ip(peer) => format!("ip {peer}"),
+        #[cfg(unix)]
+        TransportAddress::Unix(peer) => format!("unix unnamed={}", peer.as_std().is_unnamed()),
+        _ => "another transport".to_owned(),
+    })
+}
+
 fn service() -> Service<()> {
     Router::<()>::new()
-        .mount(kynos::routes![peer])
+        .mount(kynos::routes![peer, transport])
         .build(())
         .expect("a describable router")
 }
 
-fn peer_addr() -> SocketAddr {
-    PEER.parse().expect("a socket address")
+/// The connection every IP case hands the server, between [`PEER`] and
+/// [`LOCAL`].
+fn ip_connection() -> Connection {
+    Connection::from_peer(
+        PEER.parse::<SocketAddr>().expect("a socket address"),
+        LOCAL.parse().expect("a socket address"),
+    )
 }
 
-/// `GET /peer` over `version`.
-fn get_peer(version: hyper::Version) -> hyper::Request<Empty<bytes::Bytes>> {
+/// `GET path` over `version`.
+fn get(path: &str, version: hyper::Version) -> hyper::Request<Empty<bytes::Bytes>> {
     hyper::Request::builder()
-        .uri("http://localhost/peer")
+        .uri(format!("http://localhost{path}"))
         .version(version)
         .body(Empty::new())
         .expect("request builds")
@@ -85,30 +104,64 @@ async fn read(
 #[cfg(feature = "http1")]
 #[tokio::test]
 async fn an_http1_request_is_served_and_sees_the_peer_it_was_handed() {
-    assert_eq!(http1_get_peer(peer_addr()).await, PEER_SEEN);
+    let (client, io) = tokio::io::duplex(64 * 1024);
+    let (status, body) = http1_get(client, io, ip_connection(), "/peer").await;
+
+    assert_eq!(status, http::StatusCode::OK);
+    assert_eq!(body, PEER_SEEN);
 }
 
-/// An IPv6 peer is given the unspecified IPv6 address as its local one, not
-/// IPv4's.
-#[cfg(feature = "http1")]
+/// A real Unix socket's own addresses reach the handler as a Unix peer, and
+/// `ConnectInfo`, which promises an IP peer, refuses with its declared 500
+/// rather than reporting an address nobody connected from.
+#[cfg(all(unix, feature = "http1"))]
 #[tokio::test]
-async fn an_ipv6_peer_sees_the_unspecified_ipv6_local_address() {
-    let peer = "[2001:db8::7]:50123".parse().expect("a socket address");
+async fn a_unix_socket_is_served_as_the_unix_peer_it_is() {
+    /// One request over a fresh Unix socket pair, served as the connection
+    /// between the server end's own addresses.
+    async fn over_unix(path: &str) -> (http::StatusCode, String) {
+        let (client, server) = std::os::unix::net::UnixStream::pair().expect("a socket pair");
+        let connection = Connection::from_peer(
+            server.peer_addr().expect("a peer address"),
+            server.local_addr().expect("a local address"),
+        );
+        let [client, server] = [client, server].map(|stream| {
+            stream.set_nonblocking(true).expect("a non-blocking socket");
+            tokio::net::UnixStream::from_std(stream).expect("registered with the runtime")
+        });
+        http1_get(client, server, connection, path).await
+    }
+
     assert_eq!(
-        http1_get_peer(peer).await,
-        "[2001:db8::7]:50123 [::]:0 false"
+        over_unix("/transport").await,
+        (http::StatusCode::OK, "unix unnamed=true".to_owned())
+    );
+
+    let (status, body) = over_unix("/peer").await;
+    assert_eq!(status, http::StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        body.contains(r#""detail":"the connection has no IP peer address""#),
+        "{body}"
     );
 }
 
-/// Serves one HTTP/1.1 `GET /peer` over a duplex handed to the server as
-/// coming from `peer`, and returns the body once the connection has ended
-/// cleanly.
+/// Serves one HTTP/1.1 `GET path` over `io` handed to the server as
+/// `connection`, with the client on `client`, and returns the answer once the
+/// connection has ended cleanly.
 #[cfg(feature = "http1")]
-async fn http1_get_peer(peer: SocketAddr) -> String {
-    let (client, io) = tokio::io::duplex(64 * 1024);
+async fn http1_get<T, I>(
+    client: T,
+    io: I,
+    connection: Connection,
+    path: &str,
+) -> (http::StatusCode, String)
+where
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
     let served = tokio::spawn(
         Server::new(service())
-            .serve_io(io, peer)
+            .serve_io(io, connection)
             .expect("the default configuration is accepted"),
     );
 
@@ -119,11 +172,10 @@ async fn http1_get_peer(peer: SocketAddr) -> String {
 
     let version = hyper::Version::HTTP_11;
     let response = sender
-        .send_request(get_peer(version))
+        .send_request(get(path, version))
         .await
         .expect("request succeeds");
-    let (status, body) = read(response, version).await;
-    assert_eq!(status, http::StatusCode::OK);
+    let answer = read(response, version).await;
 
     drop(sender);
     client.await.expect("client task").expect("client closes");
@@ -132,7 +184,7 @@ async fn http1_get_peer(peer: SocketAddr) -> String {
         .expect("the connection ends once the client closes")
         .expect("server task")
         .expect("the connection ends cleanly");
-    body
+    answer
 }
 
 /// A client that sends no HTTP at all ends the connection, and the future
@@ -145,7 +197,7 @@ async fn a_client_breaking_the_protocol_resolves_the_connection_with_an_error() 
     let (mut client, io) = tokio::io::duplex(64 * 1024);
     let served = tokio::spawn(
         Server::new(service())
-            .serve_io(io, peer_addr())
+            .serve_io(io, ip_connection())
             .expect("the default configuration is accepted"),
     );
 
@@ -168,7 +220,7 @@ async fn a_prior_knowledge_http2_request_is_served_and_sees_the_peer_it_was_hand
     let (client, io) = tokio::io::duplex(64 * 1024);
     let served = tokio::spawn(
         Server::new(service())
-            .serve_io(io, peer_addr())
+            .serve_io(io, ip_connection())
             .expect("the default configuration is accepted"),
     );
 
@@ -180,7 +232,7 @@ async fn a_prior_knowledge_http2_request_is_served_and_sees_the_peer_it_was_hand
 
     let version = hyper::Version::HTTP_2;
     let response = sender
-        .send_request(get_peer(version))
+        .send_request(get("/peer", version))
         .await
         .expect("request succeeds");
     let (status, body) = read(response, version).await;
@@ -201,7 +253,7 @@ fn a_configuration_prepare_refuses_is_refused_before_the_stream_is_read() {
     let (_client, io) = tokio::io::duplex(64);
     let refused = Server::new(service())
         .request_body_idle_timeout(Some(Duration::ZERO))
-        .serve_io(io, peer_addr())
+        .serve_io(io, ip_connection())
         .err()
         .expect("a zero request-body idle timeout is refused");
     assert!(
@@ -231,7 +283,7 @@ fn a_server_configured_for_tls_is_refused() {
     let (_client, io) = tokio::io::duplex(64);
     let refused = Server::new(service())
         .tls(tls)
-        .serve_io(io, peer_addr())
+        .serve_io(io, ip_connection())
         .err()
         .expect("a TLS server is refused");
     assert!(
@@ -263,7 +315,7 @@ async fn exchange(configured: Server<()>, request: &[u8]) -> String {
     let (mut client, io) = tokio::io::duplex(64 * 1024);
     let served = tokio::spawn(
         configured
-            .serve_io(io, peer_addr())
+            .serve_io(io, ip_connection())
             .expect("the configuration is accepted"),
     );
 
@@ -356,7 +408,7 @@ async fn the_http2_settings_reach_the_connection() {
         let (client, io) = tokio::io::duplex(64 * 1024);
         let served = tokio::spawn(
             configured
-                .serve_io(io, peer_addr())
+                .serve_io(io, ip_connection())
                 .expect("the configuration is accepted"),
         );
 
@@ -366,7 +418,7 @@ async fn the_http2_settings_reach_the_connection() {
                 .expect("HTTP/2 handshake completes");
         let client = tokio::spawn(connection);
 
-        let mut request = get_peer(hyper::Version::HTTP_2);
+        let mut request = get("/peer", hyper::Version::HTTP_2);
         request.headers_mut().insert(
             "x-padding",
             http::HeaderValue::from_str(&"p".repeat(2048)).expect("a field value"),

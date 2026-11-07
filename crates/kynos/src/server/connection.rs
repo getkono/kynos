@@ -83,7 +83,7 @@ pub(in crate::server) async fn serve_connection<C: 'static>(
 /// lifecycle, reporting its failure rather than logging it.
 pub(in crate::server) async fn serve_io<C, I>(
     io: I,
-    peer_addr: SocketAddr,
+    connection: Connection,
     service: Arc<Service<C>>,
     config: TransportConfig,
 ) -> std::io::Result<()>
@@ -94,20 +94,9 @@ where
     let deadline = first_head_deadline_from_now(&config);
     // Held until the connection ends: a dropped sender reads as `Forced`.
     let (_running, lifecycle) = watch::channel(Lifecycle::Running);
-    let connection = Connection::from_peer(peer_addr, unbound_local_addr(peer_addr));
     serve_http(io, service, config, connection, lifecycle, deadline)
         .await
         .map_err(std::io::Error::other)
-}
-
-/// The local address of a connection no listener accepted: the unspecified
-/// address of the peer's family, port zero.
-fn unbound_local_addr(peer_addr: SocketAddr) -> SocketAddr {
-    let ip: std::net::IpAddr = match peer_addr {
-        SocketAddr::V4(_) => std::net::Ipv4Addr::UNSPECIFIED.into(),
-        SocketAddr::V6(_) => std::net::Ipv6Addr::UNSPECIFIED.into(),
-    };
-    SocketAddr::new(ip, 0)
 }
 
 /// When a connection accepted at `accepted` must have sent its first request

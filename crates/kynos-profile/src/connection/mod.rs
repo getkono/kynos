@@ -27,7 +27,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 
 use bytes::BytesMut;
-use kynos::http::StatusCode;
+use kynos::{extract::connection::Connection, http::StatusCode};
 use tokio::io::{AsyncRead, AsyncWrite, DuplexStream, ReadBuf};
 
 use self::wire::{
@@ -161,6 +161,9 @@ pub fn connected(name: &str) -> Connected {
 /// The address the server is told its peer has, which no socket reported.
 const PEER: SocketAddr = SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 50000);
 
+/// The address the server is told it accepted on.
+const LOCAL: SocketAddr = SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(192, 0, 2, 2)), 80);
+
 /// How many octets each direction of the duplex holds: more than any row's
 /// request or response, so that neither side waits on the other.
 const CAPACITY: usize = 256 * 1024;
@@ -212,7 +215,9 @@ impl Connected {
         let request = (self.scenario.request)();
         let (mut client, mut io) = tokio::io::duplex(CAPACITY);
         warm(&mut io, &mut client);
-        let connection = service.connect(io, PEER);
+        // Recorded in setup: `serve_io` takes it built, so the region counts
+        // the per-request clone onto each request and not its allocation.
+        let connection = service.connect(io, Connection::from_peer(PEER, LOCAL));
         let mut open = Open {
             connection,
             client,

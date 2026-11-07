@@ -3,12 +3,12 @@
 //! at a narrower scope, with panic recovery, or watched by an observer.
 
 use std::convert::Infallible;
-use std::net::SocketAddr;
 use std::time::Duration;
 
 use bytes::Bytes;
 use http_body::Frame;
 use kynos::{
+    extract::connection::Connection,
     http::{Request, Response},
     middleware::{Continued, Interceptor, Next, Observer, trace::Trace},
     prelude::*,
@@ -199,8 +199,8 @@ impl Served for Subscribed {
         self.service.serve(runner, request, frames)
     }
 
-    fn connect(self: Box<Self>, io: DuplexStream, peer: SocketAddr) -> Connecting {
-        let Connecting { future, server } = Box::new(self.service).connect(io, peer);
+    fn connect(self: Box<Self>, io: DuplexStream, connection: Connection) -> Connecting {
+        let Connecting { future, server } = Box::new(self.service).connect(io, connection);
         Connecting {
             future: Box::pin(future.with_subscriber(Discarding)),
             server,
