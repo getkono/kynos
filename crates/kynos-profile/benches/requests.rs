@@ -502,6 +502,7 @@ fn closed((runner, mut open, ended, expected): Closed) {
 #[bench::echo_cl("conn-h1-echo-cl")]
 #[bench::echo_chunked("conn-h1-echo-chunked")]
 #[bench::second("conn-h1-second")]
+#[bench::kept("conn-h1-kept")]
 fn http1(opened: Opened) -> Closed {
     let (runner, mut open, expected) = opened;
     let ended = black_box(&mut open).serve(black_box(&runner));

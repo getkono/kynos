@@ -19,6 +19,12 @@
 //! request says `connection: close`, and an HTTP/2 client sends `GOAWAY`
 //! behind its last stream. A connection still waiting on its client would
 //! leave the region pending forever rather than miscount it.
+//!
+//! [`Wire::Http1Kept`] is the one exception to both. Its request keeps the
+//! connection alive, so its region ends once the response is whole and the
+//! connection is back to waiting for a head, and reading the response is the
+//! only way to know it is whole: the client reads inside that region, into a
+//! buffer reserved in setup, so it adds instructions to the row and no block.
 
 use std::future::poll_fn;
 use std::io;
@@ -51,6 +57,14 @@ pub enum Wire {
     /// HTTP/1.1, the request as the second on a keep-alive connection whose
     /// first request was served in setup.
     Http1Second,
+    /// HTTP/1.1, as [`Wire::Http1Second`], but the request keeps the
+    /// connection alive, and the region ends once it is answered and the
+    /// server has started reading the next head. Starting that read is paid
+    /// once per request on a kept-alive connection, and
+    /// [`Wire::Http1Second`]'s region never reaches it: its request closes the
+    /// connection, and its setup already started the read its request arrives
+    /// on.
+    Http1Kept,
     /// HTTP/2 with prior knowledge: the preface, the handshake and the
     /// request as the connection's only stream.
     Http2,
@@ -121,6 +135,17 @@ pub(crate) const CONNECTION: &[Connected] = &[
     },
     Connected {
         scenario: Scenario {
+            name: "conn-h1-kept",
+            service,
+            request: || get("/plaintext"),
+            expected: StatusCode::OK,
+            driver: Driver::Runtime,
+            base: Some("conn-h1-second"),
+        },
+        wire: Wire::Http1Kept,
+    },
+    Connected {
+        scenario: Scenario {
             name: "conn-h2-plaintext",
             service,
             request: || get("/plaintext"),
@@ -173,15 +198,30 @@ const CAPACITY: usize = 256 * 1024;
 /// than counting one a socket's send would not make.
 const WARMED: usize = 64 * 1024;
 
+/// How many requests [`Wire::Http1Kept`] serves on its connection in setup:
+/// past the point where hyper's first read buffer is spent.
+///
+/// hyper reads heads into one 8 KiB buffer and splits each off it, so the
+/// heads of the first requests on a connection share that allocation. Once
+/// they have spent it, hyper reserves a fresh 8 KiB buffer on every request
+/// after, in the read it makes to see the stream end while the request is in
+/// flight and that request's head still holds the buffer before. A long-lived
+/// connection spends nearly all its requests in that state, so the row
+/// measures a request in it rather than one of the first.
+pub(crate) const KEPT_AFTER: usize = 256;
+
 /// A connection made ready outside the region: its future unpolled, or, for
-/// [`Wire::Http1Second`] and [`Wire::Http2Second`], polled until the first
-/// request was answered, and the client's end of the duplex with every
-/// request octet already written.
+/// [`Wire::Http1Second`], [`Wire::Http1Kept`] and [`Wire::Http2Second`],
+/// polled until the first request was answered, and the client's end of the
+/// duplex with every request octet already written.
 pub struct Open {
     connection: Connecting,
     client: DuplexStream,
     /// The stream the measured request travels on; `0` for HTTP/1.1.
     stream: u32,
+    /// Whether the region ends with the measured response rather than with
+    /// the connection: [`Wire::Http1Kept`].
+    kept: bool,
     /// What the client has read: in setup for a second request's first, then
     /// everything after the region in [`Open::status`].
     received: BytesMut,
@@ -222,20 +262,28 @@ impl Connected {
             connection,
             client,
             stream: 0,
+            kept: self.wire == Wire::Http1Kept,
             received: BytesMut::new(),
         };
         match self.wire {
             Wire::Http1 => write(&mut open.client, &http1(request, false, true)),
             Wire::Http1Chunked => write(&mut open.client, &http1(request, true, true)),
-            Wire::Http1Second => {
-                write(
-                    &mut open.client,
-                    &http1((self.scenario.request)(), false, false),
-                );
-                open.answer_first(runner, http1_answered);
-                // The first response is read; only the second's is checked.
-                open.received.clear();
-                write(&mut open.client, &http1(request, false, true));
+            Wire::Http1Second | Wire::Http1Kept => {
+                let before = if open.kept { KEPT_AFTER } else { 1 };
+                for _ in 0..before {
+                    write(
+                        &mut open.client,
+                        &http1((self.scenario.request)(), false, false),
+                    );
+                    open.answer(runner, http1_answered);
+                    // Each earlier response is read; only the measured one's is
+                    // checked.
+                    open.received.clear();
+                }
+                // What a kept row's region reads its response into, never grown
+                // inside it.
+                open.received.reserve(WARMED);
+                write(&mut open.client, &http1(request, false, !open.kept));
             }
             Wire::Http2 => {
                 let mut octets = handshake();
@@ -248,7 +296,7 @@ impl Connected {
                 let mut octets = handshake();
                 octets.extend_from_slice(&http2((self.scenario.request)(), 1));
                 write(&mut open.client, &octets);
-                open.answer_first(runner, |received| {
+                open.answer(runner, |received| {
                     frames(received).any(|frame| frame.stream == 1 && frame.ends_stream())
                 });
                 let mut octets = http2(request, 3);
@@ -262,14 +310,19 @@ impl Connected {
 }
 
 impl Open {
-    /// Drives the connection until it ends: the whole of what a connection
-    /// row measures.
+    /// Drives the connection until it ends, or for [`Wire::Http1Kept`] until
+    /// its request is answered and it waits for the next: the whole of what a
+    /// connection row measures.
     ///
     /// # Errors
     ///
     /// What ended the connection, if not its client's close; no profiled
     /// connection should end with one.
     pub fn serve(&mut self, runner: &Runner) -> io::Result<()> {
+        if self.kept {
+            self.answer(runner, http1_answered);
+            return Ok(());
+        }
         runner.run(self.connection.future.as_mut())
     }
 
@@ -290,9 +343,10 @@ impl Open {
     }
 
     /// Polls the connection, reading what it writes, until `answered` finds
-    /// the first request's response whole; for the setup of
-    /// [`Wire::Http1Second`] and [`Wire::Http2Second`].
-    fn answer_first(&mut self, runner: &Runner, answered: fn(&[u8]) -> bool) {
+    /// the response whole: the first request's, for the setup of
+    /// [`Wire::Http1Second`], [`Wire::Http1Kept`] and [`Wire::Http2Second`],
+    /// and the measured one's, for [`Wire::Http1Kept`]'s region.
+    fn answer(&mut self, runner: &Runner, answered: fn(&[u8]) -> bool) {
         let Self {
             connection,
             client,
@@ -302,7 +356,7 @@ impl Open {
         runner.run(poll_fn(|context| {
             assert!(
                 connection.future.as_mut().poll(context).is_pending(),
-                "the connection ended before its first request was answered"
+                "the connection ended before its request was answered"
             );
             while let Poll::Ready(true) = read(client, received, context) {}
             if answered(received) {
