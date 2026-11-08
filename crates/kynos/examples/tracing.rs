@@ -61,7 +61,7 @@ use kynos::{
     middleware::{
         Observer,
         request_id::{Random, RequestId},
-        trace::Trace,
+        trace::{Level, Trace},
     },
     prelude::*,
     router::operation::Route,
@@ -220,7 +220,7 @@ async fn main() -> kynos::Result<()> {
         // and not every header a request might carry.
         .observe(
             Trace::new()
-                .level(tracing::Level::DEBUG)
+                .level(Level::Debug)
                 .record_headers(&["x-request-id"]),
         )
         // What this application adds. Observers compose: both run, and neither
