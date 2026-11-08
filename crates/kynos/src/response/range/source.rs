@@ -167,8 +167,8 @@ impl ByteSource for InMemory {
 
 /// A body that reads one span at a time.
 ///
-/// An [`http_body::Body`] rather than a `Stream`: `futures_core` is gated on
-/// `openapi32` and ranged delivery is not.
+/// An [`http_body::Body`] rather than a `Stream`: `futures_core` may not be
+/// named under `response/range/`, while `http_body` may.
 pub(crate) struct Spans<S: ByteSource> {
     source: std::sync::Arc<S>,
     /// The next offset to read, and the last one enclosed.
