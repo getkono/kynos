@@ -84,6 +84,18 @@ is what `cargo publish` will do. CI runs the same task in `full.yml`'s
   `release-plz.toml` matches it before any skip rule does, and it has to, because
   breaking changes in this history are routinely `refactor!:`.
 
+## Dependency bumps
+
+An incompatible bump of a [public API
+dependency](architecture.md#what-an-upstream-fix-may-change) is a breaking
+release: its commit is a `!` commit, whatever its type. Any other incompatible
+bump is `chore(deps)` and stays under the paths its row of [the
+graph](architecture.md#the-graph) names. The Impact options of the
+[dependency issue template](../.github/ISSUE_TEMPLATE/dependency.yml) are these
+tiers: "breaking but contained under the path the table gives it" is an
+auxiliary or core crate, and "breaking and it reaches Kynos's public API" is a
+public API one.
+
 ## Trusted Publishing
 
 Release-plz authenticates to crates.io with a short-lived registry token it
