@@ -127,3 +127,10 @@ panic = "unwind"
 [profile.bench]
 debug = true
 lto = "thin"
+
+# The shipped artifact with file and line per frame, for a timed profile; frame
+# pointers come from `RUSTFLAGS`, since a profile cannot set them on stable
+# (docs/performance.md, "Profiling locally").
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"

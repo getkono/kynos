@@ -420,6 +420,37 @@ benchmark binary, which `[profile.bench]` builds with symbols — is the
 corroboration a count cannot give, and it stays on the machine that took it
 for the reason the section above gives.
 
+**A timed profile is taken over the shipped build, with frame pointers.**
+`[profile.profiling]` is `release` — fat LTO, one codegen unit — plus
+`debug = "line-tables-only"`, so each frame has a file and line without full
+DWARF. Without frame pointers, `perf record -g` has nothing to walk an
+optimized stack with; `--call-graph dwarf` copies stack per sample instead,
+which is large and slow and truncates deep async stacks. A profile cannot set
+them on stable cargo, and a `rustflags` key in `.cargo/config.toml` — even
+under a `[target.'cfg(…)']` table — would reach every build rather than this
+profile's, which is why that file holds the dev profile alone
+([`nfr.md`](nfr.md)). So they come from `RUSTFLAGS`. The build lands
+in `target/profiling/`, apart from every other profile, so the flag changes
+nothing else that is built:
+
+```bash
+RUSTFLAGS="-C force-frame-pointers=yes" \
+  cargo build --profile profiling -p kynos --example hello
+perf record -F 999 -g -- target/profiling/examples/hello
+# drive load from another shell, then Ctrl-C
+perf script | inferno-collapse-perf | inferno-flamegraph > flame.svg
+```
+
+`-F 999` stays off a multiple of the kernel's timer tick, so samples do not
+lock step with periodic work. Any `perf script` collapser works; `inferno` is
+`cargo install inferno`. Read the graph by crate: a frame's path prefix —
+`kynos::`, `hyper::`, `tokio::`, `serde_json::` — says whose code spent it, and
+the flamegraph's search highlights one prefix and reports its share of samples.
+Async code shows as the task's `poll` frames under tokio's worker, not as the
+`await` chain the source reads as. The same settings take a profile of an
+application's own binary, which is what getkono/kynos-bench's per-cell
+profiles use.
+
 **An ablation is a scenario and its base.** A scenario's `base` names the one
 it differs from in exactly one variable — a layer, a coding, a method — and
 `profile-report.md` gives the difference as that variable's marginal cost. A
