@@ -476,7 +476,13 @@ a client `GOAWAY` over HTTP/2 — and the server's direction of the duplex is
 grown in setup, so writing the response reuses memory as a socket's send
 would. Its difference from its in-process base is the server path's;
 [`nfr.md`](nfr.md#routing) attributes it. A socket, a syscall and a kernel
-buffer stay `kynos-bench`'s.
+buffer stay `kynos-bench`'s. `connection_h1.kept` is the one row whose
+connection outlives its region: its setup serves 256 requests on the
+connection, and the region ends once the next is answered and the server
+waits for another head, so the client reads that response inside it, into a
+buffer reserved in setup, adding instructions and no block. It is what a
+request costs on a long-lived connection, which no row that closes its
+connection reaches.
 
 ### Why the measurements live beside the features
 
