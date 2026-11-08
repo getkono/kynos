@@ -4,7 +4,9 @@ The [README](README.md) has the install line and a quickstart. This page is
 the next hour: where each common task is shown, and the three things people
 coming from other frameworks ask first. [`docs/`](docs/README.md) is design
 law for contributors, not a guide; the [API reference](https://docs.rs/kynos)
-and the examples are.
+and the examples are. Its two exceptions are written for applications:
+[production](docs/production.md), on what a deployment needs, and
+[migrating](docs/migrating.md), on upgrading.
 
 Every example runs with `cargo run -p kynos --example <name>`, plus the
 features its [index](crates/kynos/examples/README.md) lists.

@@ -89,6 +89,8 @@ the examples, each about a page and all listed in
 
 - [Getting started](GETTING_STARTED.md) — the examples by task, middleware
   data, tower layers, and a note for axum users
+- [Production](docs/production.md) — what the server bounds by default, and
+  what an application must still do itself
 - [API reference](https://docs.rs/kynos), built with every feature enabled
 - [Design documentation](docs/README.md) — the decisions, and what binds
   implementation work
