@@ -809,6 +809,27 @@ by seccomp policy by default on many managed platforms. That makes it a
 deployment-restricted optimization, which is a poor thing to build a foundation
 on.
 
+### Why accept sharding is opt-in
+
+Each listener has one accept task, so a bound address accepts serially. A
+very high accept rate on a many-core host is where that could bound
+throughput: clients that do not keep connections alive, or TLS at the edge.
+`Server::accept_shards` binds each address the server resolves on that many
+`SO_REUSEPORT` sockets, each with its own accept task, and the kernel spreads
+new connections across them. It stays opt-in at one until a measurement shows
+accept is the bottleneck ([getkono/kynos-bench#124](https://github.com/getkono/kynos-bench/issues/124)).
+A default tied to the worker count would change every deployment's
+sockets on a guess, and would let any process of the same user join the port.
+
+It ships on Linux and Android only, whose kernels balance connections across
+`SO_REUSEPORT` sockets. Elsewhere the option does not balance, as on the
+Apple platforms, is spelled differently, as FreeBSD's `SO_REUSEPORT_LB`, or
+does not exist, as on Windows, so there the method does not exist either
+rather than doing nothing; another platform is an addition, not a break. A listener bound elsewhere cannot be
+sharded once bound, so more than one shard beside one is refused. An
+application sharding its own sockets binds each with `SO_REUSEPORT` and hands
+each to `Server::listener`, which gives every listener its own accept task.
+
 ### Why hyper stays
 
 The case for owning the HTTP/1 codec rests on a category error: `httparse` is
