@@ -466,7 +466,7 @@ where
 }
 
 /// Drives `connection` to its end: `drain` asks it to stop gracefully once
-/// `lifecycle` says to stop or it stays quiet for a whole idle period, and it
+/// `lifecycle` reaches `Draining` or it stays quiet for a whole idle period, and it
 /// is dropped once `unheard` resolves or the stop is forced.
 async fn drive<D, E, R>(
     connection: D,
@@ -561,10 +561,11 @@ enum Protocol {
     Http2,
 }
 
-/// Waits for the client to send one byte, or for shutdown to start or
-/// `deadline` to pass first.
+/// Waits for the client to send one byte, or for the drain to begin or
+/// `deadline` to pass first. The deregistration delay is no drain: a
+/// connection accepted through it is served.
 ///
-/// `None` when shutdown started, the deadline passed, the peer closed, or the
+/// `None` when the drain began, the deadline passed, the peer closed, or the
 /// read failed: a socket to drop rather than a codec to build.
 async fn first_byte<I>(
     mut io: I,

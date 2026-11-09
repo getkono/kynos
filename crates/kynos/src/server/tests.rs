@@ -1607,6 +1607,195 @@ async fn draining_outside_a_server_lifecycle_never_resolves() {
     }
 }
 
+/// `Deregistering` is not ready and not yet draining: `Readiness` flips at
+/// it, and the `Draining` latch, the accept loops' and connections' stop, and
+/// a waiter on it all ignore it until `Draining`.
+#[tokio::test(start_paused = true)]
+async fn deregistering_is_not_ready_and_not_draining() {
+    use super::lifecycle::{Draining, Readiness, wait_until_stopping};
+
+    let (sender, receiver) = tokio::sync::watch::channel(super::Lifecycle::Running);
+    let readiness = Readiness::of(receiver.clone());
+    let draining = Draining::of(receiver.clone());
+    let mut stopping = receiver.clone();
+    let stopping = tokio::spawn(async move { wait_until_stopping(&mut stopping).await });
+    assert!(readiness.is_ready());
+
+    sender.send_replace(super::Lifecycle::Deregistering);
+    tokio::task::yield_now().await;
+    assert!(!readiness.is_ready(), "the first signal leaves rotation");
+    assert!(!draining.is_draining(), "nothing drains through the delay");
+    assert!(
+        !stopping.is_finished(),
+        "accepting goes on through the delay"
+    );
+
+    sender.send_replace(super::Lifecycle::Draining);
+    let state = tokio::time::timeout(std::time::Duration::from_secs(3600), stopping)
+        .await
+        .expect("the drain stops accepting")
+        .expect("the waiter joins");
+    assert_eq!(state, super::Lifecycle::Draining);
+    assert!(!readiness.is_ready());
+    assert!(draining.is_draining());
+}
+
+/// A request no server listener accepted reads a `Readiness` that is ready,
+/// as its `Draining` never begins.
+#[tokio::test]
+async fn readiness_outside_a_server_lifecycle_is_ready() {
+    use crate::{extract::FromRequestParts as _, server::lifecycle::Readiness};
+
+    for connection in [None, Some(documentation_peer())] {
+        let mut request = crate::http::Request::new(crate::http::body::Body::empty());
+        if let Some(connection) = connection {
+            request.extensions_mut().insert(connection);
+        }
+        let (mut parts, _) = request.into_parts();
+        let Ok(readiness) = Readiness::from_request_parts(&mut parts, &()).await;
+        assert!(readiness.is_ready());
+    }
+}
+
+/// A service answering every request with its `Readiness` and `Draining`, as
+/// `"{ready} {draining}"`.
+#[cfg(feature = "http1")]
+fn lifecycle_service() -> crate::router::service::Service<()> {
+    use crate::{
+        extract::FromRequestParts as _,
+        server::lifecycle::{Draining, Readiness},
+    };
+
+    let document = kynos_openapi::Document::new(
+        kynos_openapi::SpecVersion::V3_1,
+        kynos_openapi::Info::new("Test", "1"),
+    );
+    crate::router::service::Service::new(document, |request: crate::http::Request| async move {
+        let (mut parts, _) = request.into_parts();
+        let Ok(readiness) = Readiness::from_request_parts(&mut parts, &()).await;
+        let Ok(draining) = Draining::from_request_parts(&mut parts, &()).await;
+        let body = format!("{} {}", readiness.is_ready(), draining.is_draining());
+        crate::http::Response::new(crate::http::body::Body::from_bytes(bytes::Bytes::from(
+            body,
+        )))
+    })
+}
+
+/// Through the deregistration delay a connection opened after the shutdown
+/// signal is still accepted and served, its handler reading not-ready and not
+/// draining.
+#[cfg(feature = "http1")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_deregistration_delay_accepts_and_serves_while_not_ready() {
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let bound = crate::server::Server::new(lifecycle_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+            let _ = shutdown_receiver.await;
+        }))
+        .deregistration_delay(std::time::Duration::from_secs(3600))
+        .prepare()
+        .await
+        .expect("loopback listener binds");
+    let address = bound.local_addrs()[0];
+    let server = tokio::spawn(bound.serve());
+
+    let before = tokio::task::spawn_blocking(move || request_http1(address))
+        .await
+        .expect("blocking client joins");
+    assert!(before.ends_with("true false"), "{before}");
+
+    let _ = shutdown_sender.send(());
+    // A fresh connection per request, so each is one the listener accepted
+    // after the signal reached it.
+    let during = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let response = tokio::task::spawn_blocking(move || request_http1(address))
+                .await
+                .expect("blocking client joins");
+            if !response.ends_with("true false") {
+                return response;
+            }
+        }
+    })
+    .await
+    .expect("the signal reaches the server");
+    assert!(during.starts_with("HTTP/1.1 200 OK"), "{during}");
+    assert!(during.ends_with("false false"), "{during}");
+    assert!(!server.is_finished(), "the delay holds the drain back");
+    server.abort();
+}
+
+/// Once the deregistration delay passes the server drains as it would have at
+/// the signal, and exits cleanly no sooner than the delay.
+#[cfg(feature = "http1")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_deregistration_delay_ends_in_the_drain() {
+    let delay = std::time::Duration::from_millis(200);
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let bound = crate::server::Server::new(lifecycle_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+            let _ = shutdown_receiver.await;
+        }))
+        .deregistration_delay(delay)
+        .prepare()
+        .await
+        .expect("loopback listener binds");
+    let server = tokio::spawn(bound.serve());
+
+    let signalled = std::time::Instant::now();
+    let _ = shutdown_sender.send(());
+    tokio::time::timeout(std::time::Duration::from_secs(10), server)
+        .await
+        .expect("the drain follows the delay")
+        .expect("server task joins")
+        .expect("server exits cleanly");
+    assert!(
+        signalled.elapsed() >= delay,
+        "the drain waited out the delay"
+    );
+}
+
+/// A built-in trigger's second signal forces shutdown during the delay, as it
+/// does during the drain.
+#[tokio::test]
+async fn a_second_signal_forces_shutdown_during_the_deregistration_delay() {
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let (force_sender, force_receiver) = tokio::sync::oneshot::channel();
+    let shutdown = crate::server::shutdown::Shutdown {
+        future: Box::pin(async move {
+            let _ = shutdown_receiver.await;
+            Ok(Box::pin(async move {
+                let _ = force_receiver.await;
+            }) as crate::server::shutdown::ForceFuture)
+        }),
+    };
+    let bound = crate::server::Server::new(test_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(shutdown)
+        .deregistration_delay(std::time::Duration::from_secs(3600))
+        .prepare()
+        .await
+        .expect("loopback listener binds");
+    let server = tokio::spawn(bound.serve());
+
+    let _ = shutdown_sender.send(());
+    tokio::task::yield_now().await;
+    assert!(!server.is_finished(), "the delay holds the drain back");
+    let _ = force_sender.send(());
+
+    let error = tokio::time::timeout(std::time::Duration::from_secs(10), server)
+        .await
+        .expect("forced shutdown is prompt")
+        .expect("server task joins")
+        .expect_err("the repeated trigger is reported");
+    assert!(matches!(
+        &error,
+        crate::Error::Server(crate::server::error::ServerError::ShutdownForced)
+    ));
+}
+
 #[cfg(feature = "http1")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn connection_limit_applies_before_accepting_another_socket() {

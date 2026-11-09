@@ -43,7 +43,12 @@ Server::new(service)
 Unix and the console events on Windows. On the first, the server stops
 accepting and drains in-flight requests for up to 25 seconds, under the common
 30-second orchestrator termination window; a second forces it.
-`server::Server::shutdown_timeout` moves the deadline. A long-lived response
+`server::Server::shutdown_timeout` moves the deadline. Behind a load balancer,
+`server::Server::deregistration_delay` keeps accepting for a while after the
+first signal and only then drains, and a readiness probe answered from the
+`server::lifecycle::Readiness` extractor reports not-ready for that while, so
+the instance leaves rotation before any connection is refused; the delay and
+the deadline add up. A long-lived response
 ends itself on the `server::lifecycle::Draining` extractor, which
 `response::stream::sse::Sse::end_on_shutdown` does for an event stream under `openapi32`.
 [`graceful_shutdown`](../crates/kynos/examples/graceful_shutdown.rs) shows each
