@@ -246,6 +246,27 @@ async fn the_description_route_serves_the_document_this_router_emits() {
     assert_eq!(reply.text(), expected);
 }
 
+/// A `map_openapi` edit reaches the description a built service serves, as it
+/// reaches the one `openapi` emits.
+#[tokio::test]
+async fn the_description_route_serves_the_mapped_document() {
+    let router = support::router()
+        .info(Info::new("Example API", "1.0.0"))
+        .docs(Docs::scalar())
+        .map_openapi(|document| document.info.description = Some("mapped".to_owned()));
+    let emitted = router.openapi().expect("a describable router");
+    // The premise: the edit is in what `openapi` emits.
+    assert_eq!(emitted.info.description.as_deref(), Some("mapped"));
+    let expected = emitted.to_json().expect("a serializable document");
+
+    let service = router.build(App::new()).expect("a describable router");
+    assert_eq!(*service.openapi(), emitted);
+    let reply = get(&service, "/openapi.json").call().await;
+
+    assert_eq!(reply.status, StatusCode::OK);
+    assert_eq!(reply.text(), expected);
+}
+
 /// An edit made to a built service reaches the description it serves.
 ///
 /// `into_tower_unchecked` flags every operation after `Router::build` rendered

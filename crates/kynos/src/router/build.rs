@@ -365,7 +365,7 @@ fn mounted_links<C>(paths: &[PathEntry<C>]) -> crate::extract::link::Links {
 
 /// Whether `operation` declares a security requirement: a non-empty list does,
 /// even one holding the empty (anonymous) requirement beside a scheme.
-fn declares_security(operation: &kynos_openapi::Operation) -> bool {
+pub(super) fn declares_security(operation: &kynos_openapi::Operation) -> bool {
     operation
         .security
         .as_ref()
