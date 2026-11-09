@@ -472,6 +472,56 @@ async fn an_observer_hears_a_dropped_body_under_the_operation_that_sent_it() {
     );
 }
 
+/// Records the `elapsed` each closing hook is handed.
+#[derive(Clone, Default)]
+struct Timings(Arc<Mutex<(Option<Duration>, Option<Duration>)>>);
+
+impl Observer<App> for Timings {
+    fn on_request(&self, _: &Request, _: Option<Route<'_>>, _: &App) {}
+
+    fn on_response(&self, _: &Response, _: Option<Route<'_>>, elapsed: Duration) {
+        self.0.lock().expect("an unpoisoned record").0 = Some(elapsed);
+    }
+
+    fn on_complete(&self, _: Option<Route<'_>>, completion: &Completion) {
+        self.0.lock().expect("an unpoisoned record").1 = Some(completion.elapsed);
+    }
+}
+
+/// `Completion::elapsed` is measured when the body's last frame is read, not
+/// when the head was ready: a body read only after a pause reports at least
+/// that pause beyond what `on_response` was handed.
+#[tokio::test]
+async fn a_completion_measures_up_to_the_last_frame_not_the_head() {
+    use http_body_util::BodyExt as _;
+
+    const PAUSE: Duration = Duration::from_millis(20);
+    let timings = Timings::default();
+    let service = support::router()
+        .observe(timings.clone())
+        .build(App::new())
+        .expect("a describable router");
+
+    let mut request = Request::new(kynos::http::body::Body::empty());
+    *request.uri_mut() = "/users/42".parse().expect("a usable request target");
+    let response = service.call(request).await;
+    // Real time, not a paused clock: the dispatcher reads `std::time::Instant`.
+    tokio::time::sleep(PAUSE).await;
+    response
+        .into_body()
+        .collect()
+        .await
+        .expect("an infallible body");
+
+    let (head, complete) = *timings.0.lock().expect("an unpoisoned record");
+    let head = head.expect("on_response was called");
+    let complete = complete.expect("on_complete was called");
+    assert!(
+        complete >= head + PAUSE,
+        "on_complete's {complete:?} is not {PAUSE:?} past on_response's {head:?}"
+    );
+}
+
 /// A path declaring `post` and nothing else.
 #[kynos::post("/submissions")]
 async fn submit() -> NoContent {
