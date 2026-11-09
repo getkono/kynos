@@ -287,6 +287,94 @@ mod zstd_window {
     }
 }
 
+/// Every brotli quality, on both encoding paths, declares a 2^20 window.
+mod brotli_window {
+    use bytes::Bytes;
+    use http_body_util::BodyExt as _;
+
+    use crate::{
+        http::body::Body,
+        middleware::compression::{
+            codec::{Coding, Levels, encode},
+            levels::BrotliLevel,
+            streaming::{LatencyMode, Streamed},
+        },
+    };
+
+    /// The base-2 logarithm of the window the encoders are built with.
+    const WINDOW_LOG: u32 = 20;
+
+    /// A body of a few kilobytes: a streaming encoder declares its configured
+    /// window whatever it is handed, so a larger one would only slow the
+    /// sweep's qualities 10 and 11.
+    fn body() -> Bytes {
+        use std::fmt::Write as _;
+
+        let mut body = String::new();
+        for line in 0..256 {
+            writeln!(
+                body,
+                "line {line} of a response, {}",
+                line * 7_919 % 104_729
+            )
+            .expect("writing to a String");
+        }
+        body.into()
+    }
+
+    /// `WBITS`, as RFC 7932 section 9.1's stream header encodes it in the
+    /// stream's first bits, least significant first.
+    fn window_bits(encoded: &[u8]) -> u32 {
+        let header = u32::from(encoded[0]) | u32::from(encoded[1]) << 8;
+        if header & 1 == 0 {
+            return 16;
+        }
+        match (header >> 1) & 0b111 {
+            0 => match (header >> 4) & 0b111 {
+                0 => 17,
+                m => 8 + m,
+            },
+            n => 17 + n,
+        }
+    }
+
+    /// The window bounds what an encoder holds unflushed: brotli keeps a
+    /// meta-block's input, up to twice the window, until it emits one. Swept
+    /// rather than sampled, since qualities 0 and 1 and those from 9 size
+    /// their blocks off the window differently.
+    #[tokio::test]
+    async fn every_brotli_quality_declares_a_window_of_one_mebibyte() {
+        for quality in 0..=11 {
+            let levels = Levels {
+                brotli: BrotliLevel::new(quality).expect("a quality brotli defines"),
+                ..Levels::default()
+            };
+
+            let buffered = encode(Coding::Brotli, body(), levels)
+                .await
+                .expect("an encodable body");
+            let streamed = Streamed::new(
+                Body::from_bytes(body()),
+                Coding::Brotli,
+                levels,
+                LatencyMode::Throughput,
+            )
+            .collect()
+            .await
+            .expect("an encodable body")
+            .to_bytes();
+
+            for (path, encoded) in [("buffered", buffered), ("streamed", streamed)] {
+                assert_eq!(
+                    window_bits(&encoded),
+                    WINDOW_LOG,
+                    "quality {quality}, {path}"
+                );
+            }
+        }
+    }
+}
+
 /// A response body that fails while `Compression` buffers it.
 ///
 /// In-crate because no public surface builds a body that fails on demand:

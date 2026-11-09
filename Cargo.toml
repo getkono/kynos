@@ -22,7 +22,8 @@ kynos-openapi = { version = "0.5.0", path = "crates/kynos-openapi", default-feat
 
 # See `docs/architecture.md` (Dependencies). `std` carries `AllocCounterSystem`.
 alloc_counter = { version = "0.0.4", default-features = false, features = ["std"] }
-async-compression = "0.4.19"
+# 0.4.28 is the first with `BrotliEncoder::with_params`, which sets brotli's window.
+async-compression = "0.4.28"
 # Scalar-format crates are keyed by the major Kynos implements for, so the next
 # one can sit beside it (docs/architecture.md), and declared without defaults:
 # only the type is wanted.
