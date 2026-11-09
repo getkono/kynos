@@ -211,6 +211,29 @@ and no describe-then-finish split ships, because the language already expresses
 this; an opaque stack cannot be checked against another interceptor, so a
 router returned that way is finished, which is what such a function means.
 
+### Editing the description
+
+`map_openapi(edit)` registers an edit the four readers all run, after the
+document is assembled and before it is checked. A post-processed copy of
+`openapi`'s result reaches only that copy; the edit also reaches the document a
+built `Service` holds, validates responses against in `assert_conformance` and
+serves through `docs`. Validation reads the edited document, so an edit that
+breaks it fails `build` like any other violation, and the version is chosen
+after it, from what it uses.
+
+An edit may describe an operation differently, but not change which operations
+there are. The router mounted them and dispatches by what the document says of
+each one, so adding, removing or moving one, changing its `operationId`, or
+removing its `x-kynos-opaque` marker is a `RouterError::MappedOperation`
+violation. Edits run in call order. An edit sees the whole document, so it is
+set on the root router: on an absorbed one it is a
+`RouterError::NestedRouterPolicy` violation, like the policies
+[below](#application-level-policies).
+
+No marker records that a document was mapped. The edit is the application's own
+declaration, checked like the rest of the document, which `Opaque` marks are
+not: they record what Kynos cannot check.
+
 ### Which version `openapi` emits
 
 The lowest one that expresses the API without loss: 3.1 for an API using no
