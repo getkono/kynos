@@ -28,6 +28,8 @@ base64 = "0.23.1"
 brotli = "9.0.0"
 flate2 = "1.1.10"
 libfuzzer-sys = "0.4.13"
+# The struct the `strict_json` target reads, which only an object may become.
+serde = { version = "1.0.229", features = ["derive"] }
 # The values the `json_lines` target expects each framed record to decode to.
 serde_json = "1.0.145"
 zstd = "0.14.2"
@@ -35,12 +37,13 @@ zstd = "0.14.2"
 # The baseline, plus only the features a fuzzed parser lives behind, since a
 # smaller graph is a faster instrumented build: `multipart` for its
 # `Content-Disposition` reader, `compression` for request decompression,
-# `json` with `openapi32` for the `JsonLines` and `JsonSeq` record framer, and
-# `form` for `Form<T>`'s in-place UTF-8 check.
+# `json` with `openapi32` for the `JsonLines` and `JsonSeq` record framer,
+# `form` for `Form<T>`'s in-place UTF-8 check, and `cache` for the request
+# `Cache-Control` reader. `openapi32` also brings `QueryString`.
 [dependencies.kynos]
 path = "../crates/kynos"
 default-features = false
-features = ["openapi32", "multipart", "compression", "json", "form"]
+features = ["openapi32", "multipart", "compression", "json", "form", "cache"]
 
 [[bin]]
 name = "accept"
@@ -57,8 +60,36 @@ doc = false
 bench = false
 
 [[bin]]
+name = "cache_control"
+path = "fuzz_targets/cache_control.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "coding"
+path = "fuzz_targets/coding.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "cookie"
 path = "fuzz_targets/cookie.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cors"
+path = "fuzz_targets/cors.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "csrf"
+path = "fuzz_targets/csrf.rs"
 test = false
 doc = false
 bench = false
@@ -120,6 +151,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "multipart_boundary"
+path = "fuzz_targets/multipart_boundary.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "query"
 path = "fuzz_targets/query.rs"
 test = false
@@ -127,8 +165,29 @@ doc = false
 bench = false
 
 [[bin]]
+name = "querystring"
+path = "fuzz_targets/querystring.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "range"
 path = "fuzz_targets/range.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "strict_json"
+path = "fuzz_targets/strict_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "trusted_hosts"
+path = "fuzz_targets/trusted_hosts.rs"
 test = false
 doc = false
 bench = false

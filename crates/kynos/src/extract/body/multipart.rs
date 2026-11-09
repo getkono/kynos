@@ -287,7 +287,7 @@ fn owned_text(part: Part) -> Result<String, BodyRejection> {
 /// skipped here as it is there, and a `;` inside a quoted value ends nothing. An unacceptable media type is the 415; an
 /// accepted one without a `boundary`, or with an empty one, is a 400, since no
 /// parser can find the parts.
-fn boundary(headers: &HeaderMap) -> Result<String, BodyRejection> {
+pub(crate) fn boundary(headers: &HeaderMap) -> Result<String, BodyRejection> {
     if !super::offers(headers, MEDIA_TYPE) {
         return Err(super::unsupported_media_type(headers));
     }

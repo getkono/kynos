@@ -383,7 +383,7 @@ rewrite.
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
-| reliability | No extractor panics on any input | `cargo-fuzz` targets in [`fuzz/`](../fuzz/), one per hand-written parser of untrusted input, each asserting no panic and a round trip or an independent oracle where one exists; [`fuzz.yml`](../.github/workflows/fuzz.yml) searches each nightly, and [`full.yml`](../.github/workflows/full.yml) replays the committed [`fuzz/corpus/`](../fuzz/corpus/) | `partial`: a release fails only on a committed input, while a new one fails the nightly job, which no merge waits on; and the targets are Kynos's own parsers, not every extractor — a codec whose parser is a dependency's (`serde_json`, `serde_html_form`, `multer`'s part framing, `prost`) is not fuzzed here. [`testing.md`](testing.md#fuzzing) lists them |
+| reliability | No extractor panics on any input | `cargo-fuzz` targets in [`fuzz/`](../fuzz/), one per hand-written parser of untrusted input, each asserting no panic and a round trip or an independent oracle where one exists; [`fuzz.yml`](../.github/workflows/fuzz.yml) searches each nightly, and [`full.yml`](../.github/workflows/full.yml) replays the committed [`fuzz/corpus/`](../fuzz/corpus/) | `enforced` for Kynos's own parsers of client input, each header field and body framing a client controls having a target: a committed input that panics or breaks its oracle fails the release, and a new one found by the search fails the nightly job, which no merge waits on, and lands as a bug fix whose input joins the corpus ([`testing.md`](testing.md#fuzzing) gives the reason the search gates nothing). A codec whose parser is a dependency's (`serde_json`, `serde_html_form`, `multer`'s part framing, `prost`) is not fuzzed here, though what Kynos builds on one is, such as the strict JSON reader over `serde_json`. [`testing.md`](testing.md#fuzzing) lists them |
 | security | Header count and header-list size are bounded by default | The driver is configured from [`Http1Config`](../crates/kynos/src/server/protocol/http1.rs) and [`Http2Config`](../crates/kynos/src/server/protocol/http2.rs) on every connection; [`server/tests.rs`](../crates/kynos/src/server/tests.rs) asserts over a real socket that a head at the default and at a configured HTTP/1 header count is served and one field more is answered 431, and that an HTTP/2 header list past the default and past a configured size is answered 431 on its stream | `enforced` |
 | security | Every buffered request body is capped by default, the cap is declared wherever a body is read, and a mounted limit replaces it per operation | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) asserting a 2 MiB default refuses at default+1 counted and declared, accepts at the default, declares its 413 only on operations reading a body, is raised past itself by a `BodySize` on one operation, and holds for multipart, where a text part is also refused past `TEXT_PART_LIMIT` under any body limit and a closed form refuses an undeclared part before reading it; a mounted limit asserted at limit+1 and refused from a declared length before the body is read; [`json_lines/tests.rs`](../crates/kynos/src/extract/body/json_lines/tests.rs) bounding a streamed body as a whole, counted, cut mid-frame and declared, and `read_all` with it | `enforced`; `planned` for the allocation bound |
 | security | Per-IP connection caps | none yet — see below | `planned` |
@@ -879,6 +879,15 @@ how a request is logged. A private module for the callsite alone would cost no
 path, but would be a second site under `middleware/` naming `tracing`, which
 the dependency rows below allow nowhere under `middleware/` but this file.
 
+`__private/fuzz.rs` is compiled only under `cfg(fuzzing)`, so a split would
+cost no path an application can name, and it is one concern: the door each
+`fuzz/` target opens into a parser with no public path. Every function forwards
+to the parser it is named after, adapting a crate-private type to one a target
+can hold, and none shares state with another. What pushed it over was issue
+#1220's eight targets over the rest of the client-facing parsers. Split by
+parser, each file would hold one forwarding function, a module per target that
+the targets already are.
+
 The budget, which may only shrink:
 
 - `crates/kynos-macros/src/derive/schema/attributes.rs`
@@ -890,6 +899,7 @@ The budget, which may only shrink:
 - `crates/kynos-openapi/src/pattern.rs`
 - `crates/kynos-openapi/src/validate/violation.rs`
 - `crates/kynos-profile/src/lib.rs`
+- `crates/kynos/src/__private/fuzz.rs`
 - `crates/kynos/src/error/problem.rs`
 - `crates/kynos/src/error/rejection.rs`
 - `crates/kynos/src/extract/body/multipart.rs`

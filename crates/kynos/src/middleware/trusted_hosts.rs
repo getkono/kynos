@@ -142,7 +142,7 @@ impl<T> TrustedHosts<T> {
     /// `Csrf` and `Cache`: RFC 9112 section 3.2.2 has a server ignore `Host`
     /// beside an absolute-form target, and RFC 9113 section 8.3.1 puts a
     /// version-2 request's `:authority` there.
-    fn admits(&self, headers: &HeaderMap, authority: Option<&Authority>) -> bool {
+    pub(crate) fn admits(&self, headers: &HeaderMap, authority: Option<&Authority>) -> bool {
         let field;
         let host = if let Some(authority) = authority {
             authority.host()
