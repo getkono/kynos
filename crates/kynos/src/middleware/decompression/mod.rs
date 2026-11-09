@@ -19,7 +19,7 @@ use crate::{
     http::{self, body::Body},
     middleware::{
         Continued, Interceptor, Next,
-        compression::codec::{Coding, DrainError, drain},
+        compression::codec::{Coding, DrainError, decoded_capacity, drain},
     },
     response::{IntoResponse, Responses, ShortCircuit},
     schema::registry::Registry,
@@ -205,8 +205,14 @@ fn accepted_encoding_header() -> kynos_openapi::Header {
 }
 
 /// Reads `decoder` to its end, producing no more than `limit` bytes.
-async fn drain_capped<R: AsyncRead + Unpin>(decoder: R, limit: u64) -> Result<Bytes, Reason> {
-    drain(decoder, Some(limit))
+///
+/// The output is presized from the `arrived` octets the decoder reads.
+async fn drain_capped<R: AsyncRead + Unpin>(
+    decoder: R,
+    arrived: usize,
+    limit: u64,
+) -> Result<Bytes, Reason> {
+    drain(decoder, Some(limit), decoded_capacity(arrived, limit))
         .await
         .map_err(|error| match error {
             DrainError::Read(_) => Reason::Malformed,
@@ -221,6 +227,7 @@ async fn drain_capped<R: AsyncRead + Unpin>(decoder: R, limit: u64) -> Result<By
 /// brotli is one stream (RFC 7932). Any input left after the stream is
 /// [`Reason::Malformed`].
 async fn decode(coding: Coding, bytes: Bytes, limit: u64) -> Result<Bytes, Reason> {
+    let arrived = bytes.len();
     let input = io::Cursor::new(bytes);
 
     let (decoded, rest) = match coding {
@@ -228,7 +235,7 @@ async fn decode(coding: Coding, bytes: Bytes, limit: u64) -> Result<Bytes, Reaso
             let mut decoder = ZstdDecoder::new(input);
             decoder.multiple_members(true);
             (
-                drain_capped(&mut decoder, limit).await?,
+                drain_capped(&mut decoder, arrived, limit).await?,
                 decoder.into_inner(),
             )
         }
@@ -236,7 +243,7 @@ async fn decode(coding: Coding, bytes: Bytes, limit: u64) -> Result<Bytes, Reaso
         Coding::Brotli => {
             let mut decoder = Box::new(BrotliDecoder::new(input));
             (
-                drain_capped(&mut decoder, limit).await?,
+                drain_capped(&mut decoder, arrived, limit).await?,
                 decoder.into_inner(),
             )
         }
@@ -244,7 +251,7 @@ async fn decode(coding: Coding, bytes: Bytes, limit: u64) -> Result<Bytes, Reaso
             let mut decoder = GzipDecoder::new(input);
             decoder.multiple_members(true);
             (
-                drain_capped(&mut decoder, limit).await?,
+                drain_capped(&mut decoder, arrived, limit).await?,
                 decoder.into_inner(),
             )
         }

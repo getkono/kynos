@@ -300,6 +300,12 @@ to measure. Until it says otherwise nothing moves to a blocking thread, which
 would add a hand-off to every encode to spare the few large ones.
 The levels are the knob that bounds an encode's cost today.
 
+**Each output starts at a guess of its size.** An encode presizes its output to
+a quarter of the body, the shrinkage above, and a decode to four times what
+arrived, never past its cap. An output expected to fit one 8 KiB read is not
+presized: that read's own allocation is then exactly its length, and a guess
+could only add a second one.
+
 **An encoder's fixed cost is mostly the memory it sets up, and zstd's is the
 largest.** Each encode allocates its context afresh — megabytes for zstd,
 hundreds of kilobytes for gzip and brotli — and most of what glibc executes for

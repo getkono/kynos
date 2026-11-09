@@ -661,3 +661,23 @@ mod wire {
         assert_eq!(response.headers().get(header::CONTENT_ENCODING), None);
     }
 }
+
+/// Where a codec's output starts: the guess at its size each direction makes.
+mod presizing {
+    use crate::middleware::compression::codec::{DRAIN_CHUNK, decoded_capacity, encoded_capacity};
+
+    /// An output expected within one read is left to that read to size, and
+    /// a decode's presize never passes the cap the decode may not cross.
+    #[test]
+    fn an_output_is_presized_only_past_one_read_and_never_past_its_cap() {
+        let chunk = u64::try_from(DRAIN_CHUNK).expect("a chunk fits u64");
+
+        assert_eq!(encoded_capacity(4 * DRAIN_CHUNK - 1), 0);
+        assert_eq!(encoded_capacity(4 * DRAIN_CHUNK), DRAIN_CHUNK);
+
+        assert_eq!(decoded_capacity(DRAIN_CHUNK / 4 - 1, u64::MAX), 0);
+        assert_eq!(decoded_capacity(DRAIN_CHUNK / 4, u64::MAX), DRAIN_CHUNK);
+        assert_eq!(decoded_capacity(usize::MAX, 2 * chunk), 2 * DRAIN_CHUNK);
+        assert_eq!(decoded_capacity(DRAIN_CHUNK, chunk - 1), 0);
+    }
+}

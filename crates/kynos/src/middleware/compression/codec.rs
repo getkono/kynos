@@ -57,7 +57,7 @@ impl Coding {
 /// How much of a codec's output one read takes.
 ///
 /// Mirrored by `DRAIN_CHUNK` in `tests/alloc_codecs.rs`; change both together.
-const DRAIN_CHUNK: usize = 8 * 1024;
+pub(super) const DRAIN_CHUNK: usize = 8 * 1024;
 
 /// Why [`drain`] stopped before its source ended.
 #[derive(Debug)]
@@ -79,16 +79,49 @@ impl From<DrainError> for io::Error {
     }
 }
 
+/// How many times smaller than its input an encode's output is expected to
+/// be, and a decode's larger: the ratio both directions presize their output
+/// from.
+///
+/// `docs/middleware.md` records API JSON shrinking by 70–85%, so a quarter of
+/// the input holds a typical encode in its first allocation, and one doubling
+/// covers the rest of that range.
+const TYPICAL_RATIO: usize = 4;
+
+/// The capacity an output `expected` octets long starts at.
+///
+/// None below one [`DRAIN_CHUNK`]: such an output is likely emptied in one
+/// read, whose own allocation is then exactly its length, and a guess could
+/// only add a second allocation to it.
+const fn presized(expected: usize) -> usize {
+    if expected < DRAIN_CHUNK { 0 } else { expected }
+}
+
+/// What an encode of `input` octets presizes its output to.
+pub(super) const fn encoded_capacity(input: usize) -> usize {
+    presized(input / TYPICAL_RATIO)
+}
+
+/// What a decode of `input` octets presizes its output to: the typical
+/// expansion, never past the `cap` the decode may not cross.
+pub(crate) fn decoded_capacity(input: usize, cap: u64) -> usize {
+    let cap = usize::try_from(cap).unwrap_or(usize::MAX);
+    presized(input.saturating_mul(TYPICAL_RATIO).min(cap))
+}
+
 /// Reads an encoder or a decoder to its end, by hand so neither direction
 /// needs anything of tokio beyond `AsyncRead`.
 ///
 /// With a `cap`, refuses to produce more than that many bytes. Checked per
 /// chunk, so a decompression bomb is refused while still small.
+///
+/// The output starts at `capacity`.
 pub(crate) async fn drain<R: AsyncRead + Unpin>(
     mut source: R,
     cap: Option<u64>,
+    capacity: usize,
 ) -> Result<Bytes, DrainError> {
-    let mut drained = BytesMut::new();
+    let mut drained = BytesMut::with_capacity(capacity);
     let mut chunk = [0_u8; DRAIN_CHUNK];
 
     loop {
@@ -121,6 +154,8 @@ pub(crate) async fn drain<R: AsyncRead + Unpin>(
 /// kilobytes, and inline they would widen the interceptor's future, which is
 /// held for the whole exchange, on every response it declines too.
 pub(super) async fn encode(coding: Coding, bytes: Bytes, levels: Levels) -> io::Result<Bytes> {
+    let capacity = encoded_capacity(bytes.len());
+
     let encoded = match coding {
         Coding::Zstd => {
             Box::pin(drain(
@@ -130,6 +165,7 @@ pub(super) async fn encode(coding: Coding, bytes: Bytes, levels: Levels) -> io::
                     zstd_window(levels.zstd).as_slice(),
                 ),
                 None,
+                capacity,
             ))
             .await
         }
@@ -137,6 +173,7 @@ pub(super) async fn encode(coding: Coding, bytes: Bytes, levels: Levels) -> io::
             Box::pin(drain(
                 BrotliEncoder::with_quality(io::Cursor::new(bytes), levels.for_coding(coding)),
                 None,
+                capacity,
             ))
             .await
         }
@@ -144,6 +181,7 @@ pub(super) async fn encode(coding: Coding, bytes: Bytes, levels: Levels) -> io::
             Box::pin(drain(
                 GzipEncoder::with_quality(io::Cursor::new(bytes), levels.for_coding(coding)),
                 None,
+                capacity,
             ))
             .await
         }

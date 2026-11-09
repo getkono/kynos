@@ -170,10 +170,10 @@ fn a_ratio_that_would_overflow_falls_back_to_the_absolute_limit() {
 async fn encode(coding: Coding, plain: &[u8]) -> Bytes {
     let input = io::Cursor::new(plain);
     let encoded = match coding {
-        Coding::Zstd => drain_capped(ZstdEncoder::new(input), u64::MAX).await,
+        Coding::Zstd => drain_capped(ZstdEncoder::new(input), 0, u64::MAX).await,
         // Boxed for the reason `decode` boxes its decoder.
-        Coding::Brotli => drain_capped(Box::new(BrotliEncoder::new(input)), u64::MAX).await,
-        Coding::Gzip => drain_capped(GzipEncoder::new(input), u64::MAX).await,
+        Coding::Brotli => drain_capped(Box::new(BrotliEncoder::new(input)), 0, u64::MAX).await,
+        Coding::Gzip => drain_capped(GzipEncoder::new(input), 0, u64::MAX).await,
     };
     encoded.expect("an encoder over memory does not fail")
 }
