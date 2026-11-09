@@ -69,7 +69,14 @@ pub mod tcp;
 #[cfg(feature = "tls")]
 pub mod tls;
 
-use std::{future::pending, io, net::SocketAddr, num::NonZeroUsize, sync::Arc, time::Duration};
+use std::{
+    future::pending,
+    io,
+    net::SocketAddr,
+    num::{NonZeroU32, NonZeroUsize},
+    sync::Arc,
+    time::Duration,
+};
 
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -87,7 +94,7 @@ use crate::{
     router::service::Service,
     server::{
         accept::{TcpAcceptor, accept_loop},
-        address::{BindAddress, resolve},
+        address::{BindAddress, bind_listener, resolve},
         error::ServerError,
         lifecycle::{Drain, Lifecycle},
         protocol::validate_protocol_config,
@@ -125,6 +132,7 @@ pub struct Server<C> {
     max_connections: NonZeroUsize,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     accept_shards: NonZeroUsize,
+    listen_backlog: NonZeroU32,
     tcp_keepalive: Option<TcpKeepAlive>,
     request_body_idle_timeout: Option<Duration>,
 }
@@ -146,6 +154,15 @@ impl Server<()> {
     /// deadline: 25 seconds, leaving a margin under the common 30-second
     /// orchestrator termination window.
     pub const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(25);
+
+    /// The default [`listen_backlog`](Self::listen_backlog): as long a queue
+    /// as the kernel allows, so its own ceiling is the limit.
+    ///
+    /// ```
+    /// # use kynos::server::Server;
+    /// assert_eq!(Server::DEFAULT_LISTEN_BACKLOG.get(), u32::MAX);
+    /// ```
+    pub const DEFAULT_LISTEN_BACKLOG: NonZeroU32 = NonZeroU32::MAX;
 }
 
 impl<C: 'static> Server<C> {
@@ -170,6 +187,7 @@ impl<C: 'static> Server<C> {
             max_connections: Server::DEFAULT_MAX_CONNECTIONS,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             accept_shards: NonZeroUsize::MIN,
+            listen_backlog: Server::DEFAULT_LISTEN_BACKLOG,
             tcp_keepalive: Some(TcpKeepAlive::default()),
             request_body_idle_timeout: Some(DEFAULT_REQUEST_BODY_IDLE_TIMEOUT),
         }
@@ -425,6 +443,32 @@ impl<C: 'static> Server<C> {
         self
     }
 
+    /// Sets the listen backlog of every socket the server binds: how many
+    /// connections the kernel completes and queues for an accept that has not
+    /// yet taken them. The default is
+    /// [`DEFAULT_LISTEN_BACKLOG`](Server::DEFAULT_LISTEN_BACKLOG), as long as
+    /// the kernel allows.
+    ///
+    /// At the [`max_connections`](Self::max_connections) cap the server stops
+    /// accepting, so a burst waits in this queue until a connection closes.
+    /// Once it is full, Linux drops further connection attempts, and their
+    /// clients retry only after a retransmission delay of a second or more.
+    ///
+    /// The kernel caps the value: `net.core.somaxconn` on Linux, 4096 by
+    /// default since 5.4, and `kern.ipc.somaxconn` on the BSDs and the Apple
+    /// platforms. Raise that limit to queue more. A value past `i32::MAX`
+    /// reaches the kernel as `i32::MAX`.
+    ///
+    /// Every [`accept_shards`](Self::accept_shards) socket has a queue of
+    /// this length. A listener added through [`listener`](Self::listener) or
+    /// [`unix_listener`](Self::unix_listener) keeps the backlog it was bound
+    /// with.
+    #[must_use]
+    pub fn listen_backlog(mut self, backlog: NonZeroU32) -> Self {
+        self.listen_backlog = backlog;
+        self
+    }
+
     /// Sets TCP keepalive on the sockets a TCP listener accepts, or `None` to
     /// leave it off.
     ///
@@ -551,14 +595,13 @@ impl<C: 'static> Server<C> {
             for address in resolved {
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 if self.accept_shards > NonZeroUsize::MIN {
-                    let (local_addr, shards) = bind_shards(address, self.accept_shards)?;
+                    let (local_addr, shards) =
+                        bind_shards(address, self.accept_shards, self.listen_backlog)?;
                     listeners.extend(shards.into_iter().map(|shard| (shard, local_addr)));
                     local_addrs.push(local_addr);
                     continue;
                 }
-                let listener = TcpListener::bind(address)
-                    .await
-                    .map_err(|source| ServerError::Bind { address, source })?;
+                let listener = bind_listener(address, self.listen_backlog)?;
                 let local_addr = listener.local_addr().map_err(ServerError::Listener)?;
                 listeners.push((listener, local_addr));
                 local_addrs.push(local_addr);

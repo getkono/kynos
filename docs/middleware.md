@@ -720,6 +720,7 @@ four different answers depending on which layer is asked.
 | Response body stall | — | — | — | `BodyTimeout::idle`, when mounted | **no** |
 | Response body total time | — | — | — | `BodyTimeout::deadline`, when mounted | **no** |
 | Total connections | — | — | `max_connections`, 10 000 | — | yes |
+| Connections queued past the cap | — | — | `listen_backlog`, as many as the kernel allows (`somaxconn`) | — | yes, by the kernel |
 | Per-IP connections | — | — | — | — | **no**, and see below |
 | Per-IP request rate | — | — | — | `RateLimit` keyed `ByClientAddress`, with a trust policy set | no |
 | Concurrent in flight | — | `max_concurrent_streams`, 200 per connection | — | `Concurrency`, when mounted | partial |
