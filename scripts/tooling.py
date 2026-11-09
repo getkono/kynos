@@ -85,7 +85,8 @@ def cargo_config_failures(text):
 
 # --- The Python floor --------------------------------------------------------
 # The grammar `scripts/` is held to, matched by every script task's `python`
-# pin in mise.toml (`python_pin_failures`). `import tomllib` at the head of this
+# pin in mise.toml (`python_pin_failures`) and by its `[tools]` pin
+# (`python_tools_pin_failures`). `import tomllib` at the head of this
 # file needs 3.11 whatever the grammar allows; that runtime floor is held only
 # by running the gate under the pin, so raise this by hand with the stdlib.
 PYTHON_FLOOR = (3, 11)
@@ -252,6 +253,64 @@ def python_pin_failures(text, scripts, floor=PYTHON_FLOOR):
     return problems
 
 
+def python_tools_pin_failures(text, floor=PYTHON_FLOOR):
+    """What `mise.toml`'s `[tools]` `python` pin does not hold.
+
+    The setup step installs and caches `[tools]` only, so the interpreter the
+    `scripts/` tasks pin must be pinned there too, at the same version and at
+    `floor`; otherwise each job downloads it at task time. `text` is the file;
+    unparseable TOML is reported rather than raised.
+    """
+    try:
+        config = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as error:
+        return [f"mise.toml is not readable TOML: {error}"]
+
+    stated = f"3.{floor[1]}"
+    pin = config.get("tools", {}).get("python")
+    if isinstance(pin, dict):
+        pin = pin.get("version")
+    if pin is None:
+        return [
+            "mise.toml pins no `python` under `[tools]`. The CI setup step "
+            "installs and caches that table only, so every job running a "
+            "scripts/ task downloads its interpreter at task time with no cache "
+            "in front of it, and a transient error from the download host fails "
+            "the job. Pin the version the script tasks carry, at the "
+            f"{stated} floor"
+        ]
+
+    read = re.match(r"(\d+)\.(\d+)", str(pin))
+    if read is None:
+        return [
+            f'mise.toml pins `python = "{pin}"` under `[tools]` and nothing here '
+            "can read a minor version out of it, so it cannot be compared "
+            f"against the floor. Pin a version, at {stated}"
+        ]
+
+    problems = []
+    if (int(read[1]), int(read[2])) != floor:
+        problems.append(
+            f"mise.toml pins python {pin} under `[tools]` and tooling.py "
+            f"declares a floor of {stated}. Move both, and every script task's "
+            "pin, in the same commit"
+        )
+
+    differing = sorted(
+        f"{name}: {task['tools']['python']}"
+        for name, task in config.get("tasks", {}).items()
+        if "python" in task.get("tools", {}) and task["tools"]["python"] != pin
+    )
+    if differing:
+        problems.append(
+            f"mise.toml pins python {pin} under `[tools]` and a different one on "
+            "these tasks, so the interpreter the setup step caches is not the "
+            "one they run and each job still downloads theirs at task time. "
+            "Pin one version in both places:\n    " + "\n    ".join(differing)
+        )
+    return problems
+
+
 def main(cargo_config=None, scripts=None, mise=None):
     """Run every rule over this repository, and report what does not hold.
 
@@ -274,6 +333,7 @@ def main(cargo_config=None, scripts=None, mise=None):
     failures += python_pin_failures(
         mise, {path.removeprefix("scripts/") for path, _ in scripts}
     )
+    failures += python_tools_pin_failures(mise)
 
     for failure in failures:
         print(f"tooling: {failure}", file=sys.stderr)
