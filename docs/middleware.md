@@ -352,9 +352,13 @@ first, and reaches between the 1 MiB and unflushed columns.
 ([#1302](https://github.com/getkono/kynos/issues/1302)).** Under 2^22 a
 meta-block runs to 8 MiB, and the same three brotli columns read 8.8, 27.3 and
 30.7 MiB. Its input block, `lgblock`, is not the lever: at quality 4 it already
-resolves to 2^16, and a larger one only grows the meta-block further. The
-window costs ratio only on a body with repeats more than a window apart. Encoded
-octets at quality 4, by window:
+resolves to 2^16, and a larger one only grows the meta-block further. A smaller
+window loses ratio steadily only on a body with repeats more than a window
+apart. Elsewhere it moves the output about 1% either way and not monotonically,
+because the window also sets the meta-block size, and each meta-block carries
+its own block split and prefix codes. The 16 MiB row is that case: its shape
+repeats locally, as the 59395-octet row encoding identically at every window
+shows, and 2^20 lands 1.1% above 2^22 while 2^18 lands 1.5% below it. Encoded octets at quality 4, by window:
 
 | Body | 2^22 | 2^21 | 2^20 | 2^19 | 2^18 |
 | --- | ---: | ---: | ---: | ---: | ---: |
