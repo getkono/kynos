@@ -286,6 +286,29 @@ class Main(unittest.TestCase):
         self.assertEqual(stderr.count("public-api: "), 1)
         self.assertIn("mio", stderr)
 
+    def test_overwrite_records_every_crate_after_the_first(self):
+        listings = {
+            "kynos-openapi": "pub fn kynos_openapi::a(serde_core::X)",
+            "kynos": self.LISTING,
+        }
+        with tempfile.TemporaryDirectory() as root:
+            root = pathlib.Path(root)
+            for crate in listings:
+                (root / "crates" / crate).mkdir(parents=True)
+            with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(
+                io.StringIO()
+            ):
+                status = gate.main(
+                    architecture=self.ARCHITECTURE,
+                    listings=listings,
+                    recorded={},
+                    overwrite=True,
+                    root=root,
+                )
+            for crate, listing in listings.items():
+                self.assertEqual((root / "crates" / crate / gate.SNAPSHOT).read_text(), listing)
+        self.assertEqual(status, 0)
+
     def test_a_listing_matching_its_snapshot_and_the_documents_passes(self):
         self.assertEqual(self.run_main(self.LISTING), (0, ""))
 
