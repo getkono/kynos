@@ -917,10 +917,13 @@ connections. It wins nothing where the workload is dominated by a database
 round-trip or by serde CPU time, which describes most JSON APIs — including most
 of what Kynos is for.
 
-The diagnostic is therefore syscalls per request. At roughly four syscalls per
-request there is nothing left to win, which is why the runtime question is
-closed rather than deferred: the alternative was never going to pay for the
-abstraction it would have cost.
+The diagnostic is therefore syscalls per request. A kept-alive `plaintext`
+request costs three — one `epoll_wait`, one read and one vectored write — which
+is what hyper alone and axum pay on the same path
+([`nfr.md`](nfr.md#runtime)), and one wait returns every connection that is
+ready at once. At three there is nothing left to win, which is why the runtime
+question is closed rather than deferred: the alternative was never going to pay
+for the abstraction it would have cost.
 
 Two deployment facts compound this. io_uring is Linux-only, and it is disabled
 by seccomp policy by default on many managed platforms. That makes it a
