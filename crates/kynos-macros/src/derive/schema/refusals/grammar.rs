@@ -177,9 +177,9 @@ fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
             span,
             "`format` says what a value *is*, which follows from its type rather than from the \
              field carrying it. Use a type that already claims the format -- `uuid::Uuid` behind \
-             the `uuid` feature, a date or time type behind `time-chrono` or `time-jiff`, a \
-             decimal behind `decimal-rust` or `decimal-big` -- or give the value a newtype with \
-             its own `Schema` implementation. `pattern` is here if what you meant is a \
+             the `uuid1` feature, a date or time type behind `time-chrono04` or `time-jiff02`, \
+             a decimal behind `decimal-rust1` or `decimal-big04` -- or give the value a newtype \
+             with its own `Schema` implementation. `pattern` is here if what you meant is a \
              constraint on this field rather than a claim about the type",
         ));
     }
