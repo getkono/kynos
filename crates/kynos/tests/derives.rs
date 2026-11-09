@@ -5434,8 +5434,8 @@ fn a_transparent_only_enum_describes_what_it_holds() {
 }
 
 /// The wider enum `subset_of` cases narrow: an extension member, a status two
-/// variants share, a header group, and a transparent variant whose 404 joins
-/// one of its own.
+/// variants share, a header group on one of two variants sharing a status,
+/// and a transparent variant whose 404 joins one of its own.
 #[derive(Debug, thiserror::Error, ApiError)]
 #[problem(base = "https://errors.example.com/")]
 enum ChunkRejection {
@@ -5457,6 +5457,10 @@ enum ChunkRejection {
     #[error("chunks are unavailable")]
     #[problem(status = 503)]
     Unavailable(#[problem(headers)] RetryAfter),
+
+    #[error("the chunk store is draining")]
+    #[problem(status = 503, title = "Draining")]
+    Draining,
 
     #[error(transparent)]
     #[problem(transparent)]
@@ -5480,6 +5484,13 @@ enum ConflictSubset {
     Conflict,
 }
 
+/// The one of the two variants sharing 503 that sends no header group.
+#[derive(Debug, ApiError)]
+#[problem(subset_of = ChunkRejection)]
+enum DrainingSubset {
+    Draining,
+}
+
 /// A subset of a subset.
 #[derive(Debug, ApiError)]
 #[problem(subset_of = HeadRejection)]
@@ -5492,6 +5503,7 @@ enum MissingChunk {
 #[problem(subset_of = ChunkRejection)]
 enum EveryChunkRejection {
     Lookup(LookupError),
+    Draining,
     Unavailable(RetryAfter),
     RangeConflict(u64),
     Conflict,
@@ -5570,7 +5582,8 @@ async fn a_subset_answers_as_the_wider_variant() {
 
 /// A subset declares the statuses its variants answer with and no other, in
 /// its declaration order without repeats, and describes each as the wider
-/// enum does where it holds every variant answering with it.
+/// enum does where it holds every variant answering with it, as it holds the
+/// 404's.
 #[test]
 fn a_subset_declares_only_what_its_variants_answer_with() {
     use kynos::{error::problem::IntoProblem, response::ShortCircuit};
@@ -5591,7 +5604,30 @@ fn a_subset_declares_only_what_its_variants_answer_with() {
         .collect();
     assert_eq!(described, ["404", "503"], "{subset}");
     assert_eq!(subset["404"], wide["404"], "{subset}");
-    assert_eq!(subset["503"], wide["503"], "{subset}");
+}
+
+/// A header group only some of a status's wider variants send is declared by
+/// the ones a subset keeps: required where every kept variant sends it, and
+/// not declared where none does.
+#[test]
+fn a_subset_declares_a_shared_status_header_by_the_variants_it_holds() {
+    let wide = emitted_responses::<ChunkRejection>();
+    assert_eq!(
+        wide["503"]["headers"],
+        retry_after_declared(false),
+        "{wide}"
+    );
+
+    let sending = emitted_responses::<HeadRejection>();
+    assert_eq!(
+        sending["503"]["headers"],
+        retry_after_declared(true),
+        "{sending}"
+    );
+
+    let silent = emitted_responses::<DrainingSubset>();
+    assert!(silent["503"].is_object(), "{silent}");
+    assert_eq!(silent["503"].get("headers"), None, "{silent}");
 }
 
 /// A status two wider variants share, or one a held error joins, is described
