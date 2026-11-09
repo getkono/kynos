@@ -424,9 +424,10 @@ where nothing implements `OPTIONS` — see
   syntax without a translation step.
 - A capture is a borrowed slice of the request path, not an owned `String`.
   The routing path's allocation requirements in [`nfr.md`](nfr.md#routing) rest
-  on this property: zero heap allocations is recorded there as `absent` and
-  unmet, beside what a static match measures, and the enforced ceilings bound
-  the path in the meantime, lowered as the gap closes.
+  on this property: zero heap allocations is recorded there as `absent`, and
+  as decided rather than open, since each block a static match still
+  allocates is attributed and kept, and the enforced ceilings hold the path at
+  that count.
 - Catch-all patterns are understood by `matchit` and rejected by Kynos above it,
   which is why the anti-pattern and the crate can coexist.
 
