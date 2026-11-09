@@ -1071,9 +1071,13 @@ qualifier is the condition
 [`dispatch.rs`](../crates/kynos/src/router/dispatch.rs)'s `finish` branches on
 — a router with an observer erases the response body a second time through a
 `Watched` that is not zero-sized and holds the disconnect report inline, for
-one more. No gated test counts that figure, since `Body::from_incoming` is
-`pub(crate)`; the `connection_*` groups of [`nfr.md`](nfr.md)'s profile row
-count it to the duplex, as a trend.
+one more. `Body::from_incoming` is `pub(crate)`, so that figure is gated
+where a request crosses a connection:
+[`alloc_serve.rs`](../crates/kynos/tests/alloc_serve.rs) serves the second
+request on an HTTP/1.1 connection through `Server::serve_io` over a duplex,
+without a body and with one, and holds each exactly beside the same request's
+in-process count. The `connection_*` groups of [`nfr.md`](nfr.md)'s profile row
+count the rest of the connection path to the duplex, as a trend.
 [`alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) counts both constructors
 — zero for `Body::empty`, one for `Body::from_bytes` — and
 [`size.rs`](../crates/kynos/tests/size.rs) holds the zero-sized reason as a
