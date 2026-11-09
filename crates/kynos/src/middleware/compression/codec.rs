@@ -9,7 +9,7 @@ use std::{io, pin::Pin, task::Poll};
 use async_compression::{
     Level,
     tokio::bufread::{BrotliEncoder, GzipEncoder, ZstdEncoder},
-    zstd::CParameter,
+    zstd::{CParameter, DParameter},
 };
 use bytes::{Bytes, BytesMut};
 use tokio::io::{AsyncRead, ReadBuf};
@@ -246,10 +246,23 @@ pub(super) async fn encode(coding: Coding, bytes: Bytes, levels: Levels) -> io::
 pub(super) fn zstd_window(level: ZstdLevel) -> Option<CParameter> {
     /// The highest level whose own window fits in 8 MB.
     const WITHIN_WINDOW: i32 = 19;
-    /// 8 MB, as the base-2 logarithm zstd takes.
-    const HTTP_WINDOW_LOG: u32 = 23;
 
-    (level.get() > WITHIN_WINDOW).then(|| CParameter::window_log(HTTP_WINDOW_LOG))
+    (level.get() > WITHIN_WINDOW).then(|| CParameter::window_log(ZSTD_HTTP_WINDOW_LOG))
+}
+
+/// RFC 9659 section 3's 8 MB `Window_Size`, as the base-2 logarithm zstd
+/// takes: the most an encoder may require, and the least a decoder may refuse.
+const ZSTD_HTTP_WINDOW_LOG: u32 = 23;
+
+/// What the request-body zstd decoder is built with: a frame whose header
+/// declares a window past [`ZSTD_HTTP_WINDOW_LOG`] fails before that window is
+/// allocated, rather than under libzstd's own 2^27 default.
+///
+/// Not narrowed to the route's limit: section 3 has a decoder support the full
+/// 8 MB, and an encoder that does not know its input's size declares its
+/// level's window however short the body turns out to be.
+pub(crate) fn zstd_decoder_window() -> [DParameter; 1] {
+    [DParameter::window_log_max(ZSTD_HTTP_WINDOW_LOG)]
 }
 
 /// The level as `async-compression` spells one. The fallback is unreachable:
