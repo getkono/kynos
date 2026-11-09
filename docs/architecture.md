@@ -1065,15 +1065,22 @@ Erasure costs one step further out, on the server path, where
 on a router with no observer registered, one allocation per request that
 arrives over a socket, and one more for a response body that is not empty. A
 request body that is not already over is erased inside its idle timer instead,
-which is the same one allocation, plus one for the timer the first time a read
-of it has to wait. The
+which is the same one allocation, plus one for the `Arc<AtomicBool>` stall flag
+the bound shares with the connection, and one more for the timer the first time
+a read of it has to wait. The
 qualifier is the condition
 [`dispatch.rs`](../crates/kynos/src/router/dispatch.rs)'s `finish` branches on
 — a router with an observer erases the response body a second time through a
 `Watched` that is not zero-sized and holds the disconnect report inline, for
-one more. No gated test counts that figure, since `Body::from_incoming` is
-`pub(crate)`; the `connection_*` groups of [`nfr.md`](nfr.md)'s profile row
-count it to the duplex, as a trend.
+one more. That observer's allocation and the timer's are ungated. The rest, on
+a router with no observer — the erasure box and, for a body not yet over, the
+stall flag — sits behind `pub(crate)` constructors, so it is gated where a
+request crosses a connection:
+[`alloc_serve.rs`](../crates/kynos/tests/alloc_serve.rs) serves the second
+request on an HTTP/1.1 connection through `Server::serve_io` over a duplex,
+without a body and with one, and holds each exactly beside the same request's
+in-process count. The `connection_*` groups of [`nfr.md`](nfr.md)'s profile row
+count the rest of the connection path to the duplex, as a trend.
 [`alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) counts both constructors
 — zero for `Body::empty`, one for `Body::from_bytes` — and
 [`size.rs`](../crates/kynos/tests/size.rs) holds the zero-sized reason as a

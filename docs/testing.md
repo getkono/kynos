@@ -40,12 +40,14 @@ rather than by the table above. The two documents divide by question — this on
 says what a guarantee owes, that one says what a *feature costs the request
 path* — and `alloc.rs` is filed here as well because the inventory above claims
 to be every integration target, and a claim of completeness is worth only as
-much as its exceptions. [`alloc_body.rs`](../crates/kynos/tests/alloc_body.rs)
-and [`alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) are filed here
+much as its exceptions. [`alloc_body.rs`](../crates/kynos/tests/alloc_body.rs),
+[`alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) and
+[`alloc_serve.rs`](../crates/kynos/tests/alloc_serve.rs) are filed here
 under the same exception and for the same reason: they assert a cost too, and
 each is a target of its own rather than more rows in `alloc.rs` because a
 `#[global_allocator]` measures the whole binary it is installed in, so a body
-constructor's number and a codec's cannot share a file with the routing path's.
+constructor's number, a codec's and a served request's cannot share a file with
+the routing path's.
 
 | File | Asserts |
 | --- | --- |
@@ -62,6 +64,7 @@ constructor's number and a codec's cannot share a file with the routing path's.
 | [`alloc.rs`](../crates/kynos/tests/alloc.rs) | what the routing path allocates per route shape, that a replayed request costs what the first one did, and what one interceptor adds to a request, at stack depth 0/4/8, with the width of the future dispatch returns guarded beside it, and one characterization of a dependency rather than of Kynos: that `http`'s header map costs the same two blocks presized as grown, the premise for responses growing theirs. It owns a `#[global_allocator]`, which is why it is a target of its own rather than a sibling `tests.rs`: installed in the library's unit-test binary the counter would reach every unit test in it. Its counting harness is [`tests/support/counting.rs`](../crates/kynos/tests/support/counting.rs), included by `#[path]` so a second counting target can own its own allocator without a second copy of the rationale. It also carries the two assertions that hold the *instrument* rather than the router, once for both counted targets — that a count is the measuring thread's alone, and that a driver which stopped counting reallocations, or fresh allocations, goes red |
 | [`alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) | what erasing a body through `UnsyncBoxBody` costs: nothing for an empty body, which erases a zero-sized type, and one allocation for any body that does not. A second `#[global_allocator]` target, for the reason the first one is one; the zero-sized facts behind both numbers are size guards and live in `size.rs` |
 | [`alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) | what each opt-in payload codec adds to an operation that mounts it, against the same service's bodyless and transport floors — and how compression's cost grows with the body it holds. A further `#[global_allocator]` target rather than a second module of `alloc.rs`, because a `#[global_allocator]` is per process and each integration target is one process, installing the same counter `alloc.rs` does by including [`tests/support/counting.rs`](../crates/kynos/tests/support/counting.rs), so one driver decides what both files' numbers mean. It deliberately does not restate `work_on_another_thread_is_not_counted` |
+| [`alloc_serve.rs`](../crates/kynos/tests/alloc_serve.rs) | what a request served through `Server::serve_io` over a duplex costs — the second on a kept-alive HTTP/1.1 connection, without a body and with one — held exactly beside the same request's in-process count, so the server path's body erasure, which `alloc_body.rs` cannot reach behind `pub(crate)`, is gated. Another `#[global_allocator]` target, including [`tests/support/counting.rs`](../crates/kynos/tests/support/counting.rs) for its in-process half; its served half is driven by `block_on` on a current-thread runtime, because the counter is per-thread and a connection is never ready on one poll |
 | [`conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs) | that the committed corpus is what this build emits, and that it still carries the 3.2 constructs it exists to pin — asserted against the committed *text*, since what a downstream repository reads is the file |
 | [`conformance.rs`](../crates/kynos/tests/conformance.rs) | that the responses a suite observed match what the document promises, and that every declared response was exercised, by one client or by several sharing a `Coverage`, with exchanges recorded into it by hand, or through a configured server whose own request-body idle timeout answers a stalled body |
 | [`matrix.rs`](../crates/kynos/tests/matrix.rs) | the same two assertions over the operations, a guard, the response shapes and the interceptors that need no target of their own — the only place a wrong *document* fails against responses that actually happened. A static assertion about the document belongs in `description.rs` even when the matrix found it — see [below](#the-sweep-and-the-matrix-assert-one-property-over-two-sets) |
