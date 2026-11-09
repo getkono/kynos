@@ -258,8 +258,9 @@ where
     loop {
         match parse(&buffer[..filled]) {
             Ok(Parsed::Complete(header, length)) => {
-                buffer.truncate(filled);
-                let unread = Bytes::from(buffer).slice(length..);
+                // Copied, so a header's TLVs are not held for the connection's
+                // lifetime alongside the few bytes read past it.
+                let unread = Bytes::copy_from_slice(&buffer[length..filled]);
                 return Ok((header, Rewound { unread, io }));
             }
             Ok(Parsed::Partial) => {}
@@ -304,6 +305,10 @@ impl<I: AsyncRead + Unpin> AsyncRead for Rewound<I> {
         let taken = self.unread.len().min(buf.remaining());
         buf.put_slice(&self.unread[..taken]);
         self.unread.advance(taken);
+        if self.unread.is_empty() {
+            // Releases the copy rather than holding it empty.
+            self.unread = Bytes::new();
+        }
         Poll::Ready(Ok(()))
     }
 }
