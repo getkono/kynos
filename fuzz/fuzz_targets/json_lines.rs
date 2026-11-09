@@ -5,12 +5,12 @@
 //! how many chunk lengths follow, each one byte; the rest is the body, split
 //! into chunks of those lengths and a last one holding what remains.
 //!
-//! However the body is split, it reads as the whole buffer framed at once
-//! reads: every delimited record in order, a blank one skipped, each decoded
-//! record a JSON value or a 422 under its index that reading continues past,
-//! and the stream ending on a record that is not JSON (400), on a record
-//! longer than the limit (413), or, for a sequence, on a body that does not
-//! open with a separator (400).
+//! However the body is split, it reads as its first `limit` bytes framed at
+//! once read: every delimited record in order, a blank one skipped, each
+//! decoded record a JSON value or a 422 under its index that reading continues
+//! past, and the stream ending on a record that is not JSON (400), for a
+//! sequence on a body that does not open with a separator (400), or, where the
+//! body is longer than the limit, on the record the limit cuts (413).
 
 #![no_main]
 
@@ -58,7 +58,7 @@ fuzz_target!(|data: &[u8]| {
         .into_iter()
         .map(|record| match record {
             Ok(value) => Expected::Value(value),
-            Err(BodyRejection::Schema { failures }) => {
+            Err(BodyRejection::Schema { failures, .. }) => {
                 let pointers: Vec<String> = failures.into_keys().collect();
                 assert_eq!(pointers.len(), 1, "one pointer per record: {pointers:?}");
                 Expected::Schema(pointers.into_iter().next().unwrap_or_default())
@@ -74,8 +74,14 @@ fuzz_target!(|data: &[u8]| {
 
 /// What `body`, framed as one buffer, reads as.
 fn whole(sequence: bool, body: &[u8], limit: u64) -> Vec<Expected> {
+    // Only the first `limit` bytes are framed; past them, the last record they
+    // hold is cut, and is the 413.
+    let within = usize::try_from(limit).map_or(body.len(), |limit| limit.min(body.len()));
+    let exceeded = within < body.len();
+    let body = &body[..within];
+
     // Each record as delimited, before any whitespace is trimmed.
-    let delimited: Vec<&[u8]> = if sequence {
+    let mut delimited: Vec<&[u8]> = if sequence {
         match body
             .split(|&byte| byte == RECORD_SEPARATOR)
             .collect::<Vec<_>>()[..]
@@ -87,14 +93,14 @@ fn whole(sequence: bool, body: &[u8], limit: u64) -> Vec<Expected> {
     } else {
         body.split(|&byte| byte == b'\n').collect()
     };
+    // The record after the last delimiter is complete only once the body ends.
+    if exceeded {
+        delimited.pop();
+    }
 
     let mut read = Vec::new();
     let mut index = 0;
     for record in delimited {
-        if u64::try_from(record.len()).expect("a record's length") > limit {
-            read.push(Expected::TooLarge(limit));
-            break;
-        }
         let record = record.trim_ascii();
         if record.is_empty() {
             continue;
@@ -104,10 +110,13 @@ fn whole(sequence: bool, body: &[u8], limit: u64) -> Vec<Expected> {
             Err(error) if error.is_data() => read.push(Expected::Schema(format!("/{index}"))),
             Err(_) => {
                 read.push(Expected::Syntax);
-                break;
+                return read;
             }
         }
         index += 1;
+    }
+    if exceeded {
+        read.push(Expected::TooLarge(limit));
     }
     read
 }
