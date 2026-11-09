@@ -4,7 +4,7 @@
 //! hyper's protocol driver is handed the socket, or the stream
 //! [`Server::serve_io`](crate::server::Server::serve_io) was given. The
 //! runtime's read and write halves are named here and nowhere else outside the
-//! accept loop and that method's bound.
+//! accept loop, the PROXY protocol reader and that method's bound.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{convert::Infallible, future::Future, pin::Pin, sync::Arc};
@@ -29,7 +29,7 @@ use crate::{
         accept::Peer,
         address::Shown,
         lifecycle::{Draining, Lifecycle, wait_until_stopping},
-        request_body,
+        proxy_protocol, request_body,
     },
 };
 
@@ -48,6 +48,52 @@ pub(in crate::server) async fn serve_connection<C, I>(
     I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let deadline = first_head_deadline_from_now(&config);
+    if !peer.proxied {
+        return serve_accepted(
+            stream, peer, local_addr, service, config, lifecycle, deadline,
+        )
+        .await;
+    }
+
+    // Before TLS and before the first request head, and under its deadline:
+    // the header is the first thing the proxy sends.
+    let mut stopping = lifecycle.clone();
+    let received = tokio::select! {
+        biased;
+        _ = wait_until_stopping(&mut stopping) => return,
+        () = unheard(deadline, None) => Err(std::io::ErrorKind::TimedOut.into()),
+        received = proxy_protocol::receive(stream) => received,
+    };
+    match received {
+        Ok((header, stream)) => {
+            let peer = peer.relayed(header);
+            serve_accepted(
+                stream, peer, local_addr, service, config, lifecycle, deadline,
+            )
+            .await;
+        }
+        Err(error) => tracing::debug!(
+            %error,
+            local_addr = %Shown(&local_addr),
+            peer_addr = %Shown(&peer.address),
+            "PROXY protocol header refused"
+        ),
+    }
+}
+
+/// Serves a connection whose peer is settled, from the TLS handshake on.
+async fn serve_accepted<C, I>(
+    stream: I,
+    peer: Peer,
+    local_addr: TransportAddress,
+    service: Arc<Service<C>>,
+    config: TransportConfig,
+    lifecycle: watch::Receiver<Lifecycle>,
+    deadline: Option<Instant>,
+) where
+    C: 'static,
+    I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     // Carried on the connection's shared record, so a request pays nothing
     // for it until a handler extracts it.
     let draining = Draining::of(lifecycle.clone());

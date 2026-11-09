@@ -18,6 +18,8 @@
 //! [`address`] holds the addresses bound, the private `accept` module the
 //! listeners and their accept loop,
 //! the private `connection` module socket read and write, the private
+//! `proxy_protocol` module the PROXY protocol header a trusted proxy opens a
+//! connection with, the private
 //! `request_body` module the idle timeout every request body is read under,
 //! the private `descriptors` module the open-file limit the connection cap
 //! needs, and [`shutdown`] the signal; timers live with the work they bound.
@@ -58,6 +60,8 @@ mod descriptors {
 }
 // Crate-visible so the test client bounds a body as a served one is.
 pub(crate) mod request_body;
+// Crate-visible so the fuzz entry reaches its parser.
+pub(crate) mod proxy_protocol;
 
 pub mod address;
 pub mod error;
@@ -91,6 +95,7 @@ use crate::extract::connection::TransportAddress;
 use crate::server::address::bind_shards;
 use crate::{
     error::Result,
+    http::forwarded::TrustedProxies,
     router::service::Service,
     server::{
         accept::{TcpAcceptor, accept_loop},
@@ -135,6 +140,7 @@ pub struct Server<C> {
     listen_backlog: NonZeroU32,
     tcp_keepalive: Option<TcpKeepAlive>,
     request_body_idle_timeout: Option<Duration>,
+    proxy_protocol: TrustedProxies,
 }
 
 /// The defaults [`Server::new`] starts from, whatever the context type.
@@ -190,6 +196,7 @@ impl<C: 'static> Server<C> {
             listen_backlog: Server::DEFAULT_LISTEN_BACKLOG,
             tcp_keepalive: Some(TcpKeepAlive::default()),
             request_body_idle_timeout: Some(DEFAULT_REQUEST_BODY_IDLE_TIMEOUT),
+            proxy_protocol: TrustedProxies::none(),
         }
     }
 
@@ -484,6 +491,60 @@ impl<C: 'static> Server<C> {
         self
     }
 
+    /// Requires a PROXY protocol header, version 1 or 2, on every connection a
+    /// TCP listener accepts from a peer `trusted` believes, and serves that
+    /// connection as from the client the header names. The default trusts
+    /// nobody, and reads no header.
+    ///
+    /// A load balancer that relays TCP rather than HTTP — an AWS Network Load
+    /// Balancer, HAProxy in TCP mode — can name the client only this way. The
+    /// header is read before the TLS handshake and before the first request
+    /// head, within the first-head deadline the protocol configs set. A
+    /// connection from a trusted peer that sends no header, or one the
+    /// specification does not admit, is closed unanswered; one from any other
+    /// peer is served as it is, so a client cannot claim an address by sending
+    /// a header of its own.
+    ///
+    /// Only whom `trusted` believes is read: a peer it names by address or
+    /// network, or any peer where it counts a hop. The [`ProxyHeader`] it
+    /// names is not, since nothing here is a header field.
+    ///
+    /// The client becomes the
+    /// [`Connection::peer`](crate::extract::connection::Connection::peer), and
+    /// so the socket peer [`Router::trusted_proxies`](crate::Router::trusted_proxies)
+    /// resolves forwarding fields from. A header that names no client — a
+    /// version 1 `UNKNOWN`, a version 2 `LOCAL` such as a health check, or a
+    /// family other than IPv4 and IPv6 — leaves the socket's peer. The local
+    /// address stays the socket's, and version 2 TLVs are ignored.
+    ///
+    /// A Unix domain socket listener and [`serve_io`](Self::serve_io) read no
+    /// header: their peers have no address to trust.
+    ///
+    /// [`ProxyHeader`]: crate::http::forwarded::ProxyHeader
+    ///
+    /// ```
+    /// use kynos::{
+    ///     Router,
+    ///     http::forwarded::{ProxyHeader, TrustedProxies},
+    ///     server::Server,
+    /// };
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// // The load balancer's subnet, the only peer that may relay.
+    /// let balancers = TrustedProxies::networks(ProxyHeader::Forwarded, ["10.0.0.0/16".parse()?]);
+    /// let server = Server::new(Router::<()>::new().build(())?)
+    ///     .bind(("0.0.0.0", 3000))
+    ///     .proxy_protocol(balancers);
+    /// # drop(server);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn proxy_protocol(mut self, trusted: TrustedProxies) -> Self {
+        self.proxy_protocol = trusted;
+        self
+    }
+
     /// Sets how long a request body may go without a frame, or `None` to wait
     /// indefinitely.
     ///
@@ -636,6 +697,8 @@ impl<C: 'static> Server<C> {
             #[cfg(unix)]
             unix_listeners,
             socket: SocketOptions::new(self.tcp_keepalive),
+            proxy_protocol: (!self.proxy_protocol.trusts_nobody())
+                .then(|| Arc::new(self.proxy_protocol)),
             config,
             shutdown: self.shutdown,
             deregistration_delay: self.deregistration_delay,
@@ -671,8 +734,8 @@ impl<C: 'static> Server<C> {
     /// HTTP/2 are told apart from the first bytes, as on a plaintext listener.
     ///
     /// Nothing that belongs to listeners applies: no address is bound, and the
-    /// connection limit, TCP keepalive, graceful shutdown, its deregistration
-    /// delay and its timeout are ignored. The connection ends when the client closes `io` or when the
+    /// connection limit, TCP keepalive, the PROXY protocol, graceful shutdown,
+    /// its deregistration delay and its timeout are ignored. The connection ends when the client closes `io` or when the
     /// returned future is dropped, which closes it without draining. A
     /// connection upgraded by a `Router::upgrade_unchecked` route is the
     /// exception: the future resolves once the `101` is written, handing `io`
@@ -794,6 +857,8 @@ pub struct BoundServer<C> {
     unix_listeners: Vec<(tokio::net::UnixListener, TransportAddress)>,
     /// Held once per listener, unlike the per-socket `TransportConfig`.
     socket: SocketOptions,
+    /// The TCP peers whose PROXY protocol header is required, where any are.
+    proxy_protocol: Option<Arc<TrustedProxies>>,
     config: TransportConfig,
     shutdown: Option<Shutdown>,
     deregistration_delay: Duration,
@@ -850,6 +915,7 @@ impl<C: 'static> BoundServer<C> {
                 listener,
                 local_addr,
                 socket: self.socket.clone(),
+                proxy_protocol: self.proxy_protocol.clone(),
             };
             accept_loops.spawn(accept_loop(
                 acceptor,

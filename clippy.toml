@@ -5,6 +5,7 @@
 doc-valid-idents = [
   "..",
   "CommonMark",
+  "HAProxy",
   "JSONPath",
   "MessagePack",
   "OpenAPI",
