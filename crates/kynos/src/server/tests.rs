@@ -633,6 +633,8 @@ fn a_new_server_starts_from_its_documented_limits() {
 
     assert_eq!(server.shutdown_timeout, std::time::Duration::from_secs(25));
     assert_eq!(server.max_connections.get(), 10_000);
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    assert_eq!(server.accept_shards.get(), 1);
 }
 
 #[tokio::test]
@@ -701,6 +703,157 @@ async fn prepare_makes_a_converted_blocking_listener_nonblocking() {
         .expect("a socket2 listener converts");
     assert_eq!(bound.local_addrs(), [expected]);
     assert!(duplicate.nonblocking().expect("O_NONBLOCK reads"));
+}
+
+/// An unsharded address is bound as before sharding existed: one socket, and
+/// no `SO_REUSEPORT` for another socket to join it through.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[tokio::test]
+async fn an_unsharded_address_is_one_socket_without_reuse_port() {
+    let bound = crate::server::Server::new(test_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .prepare()
+        .await
+        .expect("loopback listener binds");
+
+    let [(listener, _)] = bound.listeners.as_slice() else {
+        panic!("one socket: {:?}", bound.listeners);
+    };
+    assert!(
+        !socket2::SockRef::from(listener)
+            .reuse_port()
+            .expect("SO_REUSEPORT reads")
+    );
+}
+
+/// Each shard is a socket of its own with `SO_REUSEPORT`, on the one port the
+/// first shard settled, and the address is listed once.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[tokio::test]
+async fn accept_shards_bind_one_reuse_port_socket_each_on_one_port() {
+    let bound = crate::server::Server::new(test_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .accept_shards(std::num::NonZeroUsize::new(3).expect("three is non-zero"))
+        .prepare()
+        .await
+        .expect("loopback shards bind");
+
+    let [address] = bound.local_addrs() else {
+        panic!("one address: {:?}", bound.local_addrs());
+    };
+    assert_ne!(address.port(), 0);
+    assert_eq!(bound.listeners.len(), 3);
+    for (listener, local_addr) in &bound.listeners {
+        assert_eq!(
+            listener.local_addr().expect("a shard has an address"),
+            *address
+        );
+        assert_eq!(local_addr, address);
+        assert!(
+            socket2::SockRef::from(listener)
+                .reuse_port()
+                .expect("SO_REUSEPORT reads")
+        );
+    }
+}
+
+/// A port a socket without `SO_REUSEPORT` holds cannot be shared, and the
+/// failure names the address: sharding never joins a socket it did not bind.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[tokio::test]
+async fn accept_shards_refuse_a_port_held_without_reuse_port() {
+    let held = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .expect("a plain listener binds");
+    let address = held.local_addr().expect("listener has an address");
+
+    let error = crate::server::Server::new(test_service())
+        .bind(address)
+        .accept_shards(std::num::NonZeroUsize::new(2).expect("two is non-zero"))
+        .prepare()
+        .await
+        .expect_err("the port is held");
+    assert!(
+        matches!(
+            &error,
+            crate::Error::Server(crate::server::error::ServerError::Bind { address: failed, source })
+                if *failed == address && source.kind() == std::io::ErrorKind::AddrInUse
+        ),
+        "{error:?}"
+    );
+}
+
+/// A listener bound elsewhere cannot be sharded once bound, so more than one
+/// shard alongside one is refused rather than silently serving it unsharded.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[tokio::test]
+async fn accept_shards_refuse_a_listener_bound_elsewhere() {
+    let refused = |error: crate::Error| {
+        matches!(
+            error,
+            crate::Error::Server(crate::server::error::ServerError::InvalidConfiguration(
+                "accept_shards shards only the addresses the server binds, so no listener bound elsewhere may be added"
+            ))
+        )
+    };
+    let shards = std::num::NonZeroUsize::new(2).expect("two is non-zero");
+
+    let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .expect("standard listener binds");
+    let error = crate::server::Server::new(test_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .listener(listener)
+        .accept_shards(shards)
+        .prepare()
+        .await
+        .expect_err("a TCP listener bound elsewhere is refused");
+    assert!(refused(error));
+
+    let directory = SocketDirectory::new("shards");
+    let listener = std::os::unix::net::UnixListener::bind(directory.0.join("shards.sock"))
+        .expect("the socket binds");
+    let error = crate::server::Server::new(test_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .unix_listener(listener)
+        .accept_shards(shards)
+        .prepare()
+        .await
+        .expect_err("a Unix listener is refused");
+    assert!(refused(error));
+}
+
+/// Every shard accepts and serves under one graceful shutdown. Which shard the
+/// kernel hands a connection is its hash's choice, so each request may land on
+/// any of them; a shard with no accept task would leave its share unanswered.
+#[cfg(all(any(target_os = "linux", target_os = "android"), feature = "http1"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn accept_shards_serve_and_shut_down_together() {
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let bound = crate::server::Server::new(test_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .accept_shards(std::num::NonZeroUsize::new(4).expect("four is non-zero"))
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+            let _ = shutdown_receiver.await;
+        }))
+        .prepare()
+        .await
+        .expect("loopback shards bind");
+    let address = bound.local_addrs()[0];
+    let server = tokio::spawn(bound.serve());
+
+    let responses = tokio::task::spawn_blocking(move || {
+        (0..16).map(|_| request_http1(address)).collect::<Vec<_>>()
+    })
+    .await
+    .expect("blocking client joins");
+
+    for response in responses {
+        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    }
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
 }
 
 /// A directory of this test process's own for a Unix socket file, removed with
