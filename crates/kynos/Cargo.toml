@@ -25,6 +25,7 @@ exclude = [
   "cost/binary.tsv",
   "cost/codec.tsv",
   "cost/codegen.tsv",
+  "public-api.txt",
   "tests/ledger.rs",
   "tests/metaschema.rs",
 ]

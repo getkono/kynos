@@ -245,14 +245,23 @@ keep:
 - `tokio` — the `Server::serve_io` bound.
 - `tower-service` and `tower-layer` — `unchecked`.
 
-Seven crates are public API today without being in the allowance, and each has
+Six crates are public API today without being in the allowance, and each has
 an issue moving it down a tier: `uuid`, `chrono`, `jiff`, `rust_decimal` and
 `bigdecimal` as trait impls on their types under `schema/impls/`
-([#1214](https://github.com/getkono/kynos/issues/1214)); `prost` as the
+([#1214](https://github.com/getkono/kynos/issues/1214)); and `prost` as the
 `T: prost::Message` bound on `Protobuf<T>`
-([#1215](https://github.com/getkono/kynos/issues/1215)); and `tracing` as the
-`tracing::Level` that `Trace::level` takes
-([#1216](https://github.com/getkono/kynos/issues/1216)).
+([#1215](https://github.com/getkono/kynos/issues/1215)).
+
+`mise run api:check` reads the list and that paragraph, the count included,
+and holds `cargo public-api --all-features` for `kynos-openapi` and `kynos` to
+them both ways: a foreign crate the listing names that neither holds fails, and
+so does one they hold that nothing names, so the issue that moves a crate down
+a tier also deletes it here. A type the listing names by its defining crate
+counts as the crate Kynos depends on (`serde_core` as `serde`, `tracing_core`
+as `tracing`). The `tokio` bullet's item is the only one that may name `tokio`.
+Each listing is committed as `public-api.txt` beside its crate, so a new public
+dependency is a change to this list and to a snapshot, both in review;
+`mise run api:record` rewrites the snapshots.
 
 ### The graph
 
@@ -274,7 +283,7 @@ an issue moving it down a tier: `uuid`, `chrono`, `jiff`, `rust_decimal` and
 | Regular expressions, for `pattern` | `regex`, `regex-syntax` | [`__private/constraints/pattern.rs`](../crates/kynos/src/__private/constraints/pattern.rs) and `kynos-openapi`'s [`pattern.rs`](../crates/kynos-openapi/src/pattern.rs), the one translator the derive and the router both call, gated on `pattern` | auxiliary | built |
 | Percent-encoding | `percent-encoding` | [`__private/uri.rs`](../crates/kynos/src/__private/uri.rs) | core | built |
 | Errors | `thiserror` | ambient | core | built |
-| Observability facade | `tracing` | [`server/`](../crates/kynos/src/server/), [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) | public API | built |
+| Observability facade | `tracing` | [`server/`](../crates/kynos/src/server/), [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) | core | built |
 | Streaming bodies | `futures-core` | [`response/stream/mod.rs`](../crates/kynos/src/response/stream/mod.rs), whose re-export is the path an application names, [`response/stream/binary.rs`](../crates/kynos/src/response/stream/binary.rs) and [`http/body.rs`](../crates/kynos/src/http/body.rs), in every build; the rest of [`response/stream/`](../crates/kynos/src/response/stream/) and [`extract/body/json_lines/`](../crates/kynos/src/extract/body/json_lines/), gated on `openapi32`; [`test/mod.rs`](../crates/kynos/src/test/mod.rs) and [`test/body.rs`](../crates/kynos/src/test/body.rs), whose request body a test may stream, gated on `test-util` | public API | built |
 | JSON | `serde_json` | ambient | public API | built |
 | Form codec | `serde_html_form` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs), [`test/mod.rs`](../crates/kynos/src/test/mod.rs) | auxiliary | built |
