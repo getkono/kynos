@@ -23,7 +23,8 @@
 //! needs, and [`shutdown`] the signal; timers live with the work they bound.
 //! [`protocol`], [`tcp`] and
 //! [`tls`] are configuration; [`lifecycle`] is the state every part observes,
-//! and the [`Draining`](lifecycle::Draining) extractor a handler observes it
+//! and the [`Draining`](lifecycle::Draining) and
+//! [`Readiness`](lifecycle::Readiness) extractors a handler observes it
 //! through.
 
 mod accept;
