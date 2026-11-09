@@ -697,7 +697,7 @@ The budget is the honest record of what stayed. A path leaves it when its module
 is split, and one joins it only with the argument for why that module needs the
 room, in the same commit.
 
-Fifteen of them crossed the line after v0.1.0, and each was argued for as it did.
+Sixteen of them crossed the line after v0.1.0, and each was argued for as it did.
 `response/status.rs` is the shape above rather than a new argument. It declares
 seven public types — `Location`, `InvalidLocation`, `NoContent`, `Created`,
 `Accepted`, `Redirect` and `ValidRedirectCode` — so splitting it would turn
@@ -843,6 +843,15 @@ issue #1149's named instantiations, which replace a component name inside
 refusal is the registry's to record for `resolve`'s reason. One concern, so one
 file.
 
+`extract/body/multipart.rs` is `status.rs`'s shape. It declares
+`MultipartForm`, `FilePart`, `Part`, `FromMultipart`, `FromPart`, `Admission`
+and `TEXT_PART_LIMIT`, so a split would turn `multipart::FromPart`, the trait a
+form field's type implements, into a longer path. What pushed it over was
+issue #1218's per-part bounds: `admit` and `FromPart::LIMIT` are how a part is
+read, and the reader beside them is their one consumer. Its part-header parser
+already sits in `multipart/disposition.rs`, the one piece that changes for a
+reason of its own.
+
 The budget, which may only shrink:
 
 - `crates/kynos-macros/src/derive/schema/attributes.rs`
@@ -856,6 +865,7 @@ The budget, which may only shrink:
 - `crates/kynos-profile/src/lib.rs`
 - `crates/kynos/src/error/problem.rs`
 - `crates/kynos/src/error/rejection.rs`
+- `crates/kynos/src/extract/body/multipart.rs`
 - `crates/kynos/src/extract/connection.rs`
 - `crates/kynos/src/http/forwarded.rs`
 - `crates/kynos/src/middleware/cache/mod.rs`
