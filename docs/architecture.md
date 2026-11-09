@@ -583,6 +583,89 @@ without one. `criterion` and `divan` were the alternatives, and both time: the
 exclusion [`nfr.md`](nfr.md#tooling-gaps) records is of a wall-clock gate, and
 a count taken under Callgrind is not one.
 
+### JSON codecs other than serde_json, refused
+
+**`Json<T>` is serde_json, and Kynos ships no feature that swaps it.** Decided
+in November 2026 on measurement, not preference: the
+[serde-json-contenders report](https://github.com/getkono/serde-json-contenders/blob/90ec52bffb9cc45f6daa548b724262ab7a44f73f/report/README.md#rules)
+put sonic-rs, simd-json, flexon and jiter behind `Json<T>`'s own contract,
+x86-64 Linux only, and none answers every request as serde_json does. A swap
+behind `Json<T>` would change responses clients already see, so speed alone
+cannot decide it. What each one gets wrong:
+
+- **sonic-rs** aborts the process with a stack overflow on a deeply nested
+  value it skips (an unknown field), accepts an invalid `\u` escape inside one,
+  and decodes `-0.0` into `f64` as `0.0`.
+- **simd-json** decodes a lone surrogate escape as U+0000 where serde_json
+  refuses it, writes NaN and the infinities as numbers serde_json refuses to
+  read back, and answers some shape errors 400 rather than 422 and the reverse.
+- **flexon** accepts trailing bytes after a document, which RFC 8259 forbids,
+  refuses integer map keys serde_json reads, overflows the stack decoding a
+  `Value` 10,000 levels deep on a tokio worker's stack, and Miri reports
+  undefined behaviour in it.
+- **jiter** refuses every integer above `i64::MAX`, and has no encoder.
+
+What this gives up is real but narrow, and it grows with the body
+([codec share](https://github.com/getkono/serde-json-contenders/blob/90ec52bffb9cc45f6daa548b724262ab7a44f73f/report/README.md#e2e-counted),
+[throughput](https://github.com/getkono/serde-json-contenders/blob/90ec52bffb9cc45f6daa548b724262ab7a44f73f/report/README.md#e2e-timed)).
+The codec is 29 % of a 1 KiB request, where sonic-rs and flexon raised
+throughput by about 5 %; it is 93 % of a 64 KiB request, where sonic-rs,
+simd-json and flexon raised it by 18 % to 53 %. Responses gain less: simd-json
+lost a fifth of the throughput of a 64 KiB response. The question reopens for
+a codec the report recommends, which takes passing its conformance
+differential, soundness review and end-to-end threshold as well as a CPU or
+heap win; nothing else reopens it.
+
+**An application that wants the win anyway brings its own codec.** A
+[`BodyCodec<T>`](../crates/kynos/src/extract/body/codec.rs) may name
+`application/json`, and `Encoded<C, T>` then carries `T` through it in place
+of `Json<T>`, on the request and the response. Kynos still owns the 415, the
+body limit, the content-coding refusal, the 400/422 split, `T`'s bounds, the
+500 and the description, and it hands `decode` the `Bytes` it read:
+
+```rust
+struct SonicJson;
+
+impl<T: Serialize + DeserializeOwned> BodyCodec<T> for SonicJson {
+    const MEDIA_TYPE: &'static str = "application/json";
+
+    fn decode(bytes: &Bytes) -> Result<T, DecodeError> {
+        sonic_rs::from_slice(bytes).map_err(|e| {
+            if e.is_syntax() || e.is_eof() {
+                DecodeError::Syntax("the body is not JSON".to_owned())
+            } else {
+                DecodeError::Data("the body does not fit the type".to_owned())
+            }
+        })
+    }
+
+    fn encode(value: &T, out: &mut impl Write) -> std::io::Result<()> {
+        out.write_all(&sonic_rs::to_vec(value).map_err(std::io::Error::other)?)
+    }
+}
+```
+
+What the application takes on in exchange:
+
+- **Its codec's answers.** Every divergence above becomes its own, and so does
+  bounding them. The default 2 MiB body limit does not: the nesting that aborts
+  sonic-rs fits in about 2 MB, and the report shows it surviving only up to
+  10,000 levels. A route mounting such a codec lowers its own limit with
+  [`BodySize`](../crates/kynos/src/middleware/limits/body_size.rs), or checks
+  depth before decoding.
+- **Its codec's error text.** A `DecodeError` reaches the client verbatim, and
+  sonic-rs's errors quote the body they failed on, which the detail must not
+  repeat; hence the fixed messages above.
+- **A root pointer.** A shape error is a 422 at `""`, where `Json<T>` names the
+  member that failed.
+- **One more copy on encode.** `encode` is handed `impl Write`, and sonic-rs's
+  `to_writer` takes only its own writer trait, so the value is written to a
+  `Vec` first.
+- **One codec per media type.** The `Encoded` cannot sit beside a `Json<T>` in
+  a `OneOf` or a `Negotiated` offer, both being `application/json`. `JsonAs`,
+  problem documents, JSON Lines, Server-Sent Events and the description stay
+  serde_json.
+
 ### What each feature gates
 
 The [README](../README.md#feature-flags) says what a flag *adds*, which is what
