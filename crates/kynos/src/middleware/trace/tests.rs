@@ -1,4 +1,4 @@
-use super::{DEFAULT_CORRELATION, REDACTED, Trace};
+use super::{DEFAULT_CORRELATION, Level, REDACTED, Trace};
 use crate::{
     extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http::{HeaderMap, HeaderValue},
@@ -163,7 +163,7 @@ fn captured(emitting: impl FnOnce()) -> String {
 #[test]
 fn the_opening_event_carries_the_echoed_identifier() {
     let trace = Trace::new()
-        .level(tracing::Level::DEBUG)
+        .level(Level::Debug)
         .correlating(&RequestId::new().trust_client(true));
     let mut request = crate::http::Request::new(crate::http::body::Body::empty());
     *request.headers_mut() = map(&[("x-request-id", "echoed")]);
@@ -173,6 +173,35 @@ fn the_opening_event_carries_the_echoed_identifier() {
     assert!(lines.contains("DEBUG"), "{lines}");
     assert!(lines.contains("request received"), "{lines}");
     assert!(lines.contains("request_id=\"echoed\""), "{lines}");
+}
+
+/// Each `Level` is emitted as the `tracing` level of the same name, on both
+/// events.
+#[test]
+fn each_level_is_emitted_as_the_tracing_level_of_its_name() {
+    let levels = [
+        (Level::Trace, "TRACE"),
+        (Level::Debug, "DEBUG"),
+        (Level::Info, "INFO"),
+        (Level::Warn, "WARN"),
+        (Level::Error, "ERROR"),
+    ];
+    let request = crate::http::Request::new(crate::http::body::Body::empty());
+    let response = crate::http::Response::new(crate::http::body::Body::empty());
+
+    for (level, name) in levels {
+        let trace = Trace::new().level(level);
+        let lines = captured(|| {
+            Observer::<()>::on_request(&trace, &request, None, &());
+            Observer::<()>::on_response(&trace, &response, None, std::time::Duration::ZERO);
+        });
+
+        let prefixes: Vec<&str> = lines
+            .lines()
+            .map(|line| line.split_whitespace().next().unwrap_or_default())
+            .collect();
+        assert_eq!(prefixes, [name, name], "{lines}");
+    }
 }
 
 /// The closing event carries the identifier the response does, and its status.
@@ -237,7 +266,7 @@ fn recorded_headers_are_joined_in_the_order_listed() {
 /// each payload shape `panic!` makes as well as one it does not.
 #[test]
 fn a_panic_is_reported_at_error_with_its_operation_and_message() {
-    let trace = Trace::new().level(tracing::Level::DEBUG);
+    let trace = Trace::new().level(Level::Debug);
     let route = Route::new("/users/{id}", "deleteUser", Method::Delete);
     let payloads: [(Box<dyn std::any::Any + Send>, &str); 3] = [
         (Box::new("a static message"), "a static message"),
