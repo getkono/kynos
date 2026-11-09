@@ -56,8 +56,9 @@ http-body = { workspace = true }
 # `protobuf-echo`'s message, which `prost::Message`'s derive names by path.
 prost = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-# Builds the `echo-post` body outside the measured region; the region itself
-# reaches serde_json only through `kynos`.
+# Builds the `echo-post` body outside the measured region, and writes the
+# `json-small-bare` and `json-large-bare` control bodies inside it; every other
+# row reaches serde_json only through `kynos`.
 serde_json = { workspace = true }
 # `Driver::Runtime`'s current-thread runtime and its timer, named in
 # `src/driver.rs`, and the in-memory duplex `src/connection/` serves a
