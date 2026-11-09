@@ -201,8 +201,9 @@ fn socket(address: SocketAddr) -> io::Result<tokio::net::TcpSocket> {
 
 /// Binds `socket` to `address` and listens with `backlog`.
 ///
-/// A backlog past `i32::MAX` reaches `listen(2)` as `i32::MAX`, and the kernel
-/// caps whatever reaches it at its own ceiling.
+/// A backlog past `i32::MAX` reaches `listen(2)` as `i32::MAX` (see
+/// [`kernel_backlog`]), and the kernel caps whatever reaches it at its own
+/// ceiling.
 fn listen(
     socket: tokio::net::TcpSocket,
     address: SocketAddr,
@@ -212,7 +213,12 @@ fn listen(
     socket.listen(kernel_backlog(backlog))
 }
 
-/// The backlog handed to `TcpSocket::listen`.
+/// The backlog handed to `TcpSocket::listen`: `backlog`, clamped to
+/// `i32::MAX`.
+///
+/// `listen(2)` takes an `int`, and tokio before 1.54 casts the `u32` it is
+/// handed with `as`, so anything past `i32::MAX`, the default `u32::MAX`
+/// included, would reach the kernel negative.
 pub(in crate::server) fn kernel_backlog(backlog: NonZeroU32) -> u32 {
-    backlog.get()
+    backlog.get().min(i32::MAX.unsigned_abs())
 }
