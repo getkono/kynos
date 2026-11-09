@@ -1,4 +1,5 @@
-//! Where a server accepts traffic: the addresses it resolves and binds itself.
+//! Where a server accepts traffic: the addresses it resolves and binds itself,
+//! on one socket each or, on Linux and Android, on one per accept shard.
 //! A listener bound elsewhere is handed over as the standard library's own
 //! type, through [`Server::listener`](crate::server::Server::listener).
 //!
@@ -142,4 +143,46 @@ pub(in crate::server) async fn resolve(
         )));
     }
     Ok(resolved)
+}
+
+/// The listen backlog of each accept shard: the one `tokio::net::TcpListener::bind`
+/// gives an unsharded address, which is the standard library's.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const SHARD_BACKLOG: u32 = 128;
+
+/// Binds `address` once per shard, every socket with `SO_REUSEPORT`, and
+/// returns the address they share with them.
+///
+/// The first socket settles a zero port and the rest join it, so the shards
+/// are one address the kernel spreads connections across, not several. The
+/// first failure drops every socket already bound.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub(in crate::server) fn bind_shards(
+    address: SocketAddr,
+    shards: std::num::NonZeroUsize,
+) -> std::result::Result<(SocketAddr, Vec<tokio::net::TcpListener>), ServerError> {
+    let failed = |address| move |source| ServerError::Bind { address, source };
+    let first = bind_shard(address).map_err(failed(address))?;
+    let shared = first.local_addr().map_err(failed(address))?;
+    let mut listeners = Vec::with_capacity(shards.get());
+    listeners.push(first);
+    for _ in 1..shards.get() {
+        listeners.push(bind_shard(shared).map_err(failed(shared))?);
+    }
+    Ok((shared, listeners))
+}
+
+/// One accept shard, bound as `tokio::net::TcpListener::bind` binds an
+/// unsharded address but for `SO_REUSEPORT`.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn bind_shard(address: SocketAddr) -> io::Result<tokio::net::TcpListener> {
+    let socket = if address.is_ipv4() {
+        tokio::net::TcpSocket::new_v4()
+    } else {
+        tokio::net::TcpSocket::new_v6()
+    }?;
+    socket.set_reuseaddr(true)?;
+    socket.set_reuseport(true)?;
+    socket.bind(address)?;
+    socket.listen(SHARD_BACKLOG)
 }
