@@ -81,7 +81,8 @@ pub struct Connected {
 }
 
 /// The connection group: catalog rows sent over the wire, each based on the
-/// row it differs from in one variable.
+/// row it differs from in one variable, except `conn-h1-kept`, which differs
+/// from every other row in more than one and so names no base.
 pub(crate) const CONNECTION: &[Connected] = &[
     Connected {
         scenario: Scenario {
