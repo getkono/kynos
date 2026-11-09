@@ -1,7 +1,7 @@
 //! Writing `application/protobuf` as a response.
 
 use crate::{
-    extract::body::protobuf::{MEDIA_TYPE, Protobuf},
+    extract::body::protobuf::{MEDIA_TYPE, Message, Protobuf},
     http::{HeaderValue, Response, body::Body},
     response::{
         IntoResponse, Responses,
@@ -11,10 +11,9 @@ use crate::{
     schema::{Schema, registry::Registry},
 };
 
-impl<T: prost::Message> IntoResponse for Protobuf<T> {
+impl<T: Message> IntoResponse for Protobuf<T> {
     fn into_response(self) -> Response {
-        // Infallible: `prost`'s only error is insufficient capacity.
-        let encoded = self.0.encode_to_vec();
+        let encoded = self.0.encode();
 
         with_content_type(
             Body::from_bytes(bytes::Bytes::from(encoded)),
@@ -36,6 +35,5 @@ impl<T> SealedRepresentation for Protobuf<T> {
     const MEDIA_TYPE: &'static str = MEDIA_TYPE;
 }
 
-// Bound through the codec so the protobuf crate stays named only where
-// `containment:check` allows it.
+// Bound through the codec, so the bound is stated once.
 impl<T> Representation for Protobuf<T> where Protobuf<T>: IntoResponse + Responses {}

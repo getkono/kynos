@@ -16,7 +16,9 @@
 //! ASCII, its reading of an absent optional header as `None`, the value a
 //! fixed header is written, compared and described as, and the 500 a value
 //! that is no field value is refused with; the text a derived `ParamValue`
-//! reads and writes; and the response a derived `Reply` or `ApiError` writes.
+//! reads and writes; the octets a derived `ProtobufMessage` reads and writes,
+//! and the syntax error it makes of a body `prost` refuses; and the response a
+//! derived `Reply` or `ApiError` writes.
 //! Their tests call the derived code directly, with no server. What *is*
 //! checked beyond compiling is the description a derive emits, and what the
 //! default `QueryParams::parameters` makes of a derived schema.
@@ -111,6 +113,16 @@ struct Upload {
     caption: Option<String>,
     #[serde(default)]
     images: Vec<kynos::extract::body::multipart::FilePart>,
+}
+
+/// A protobuf message, which `prost` encodes and Kynos only carries.
+#[cfg(feature = "protobuf")]
+#[derive(Clone, PartialEq, prost::Message, kynos::ProtobufMessage)]
+struct Sample {
+    #[prost(uint64, tag = "1")]
+    value: u64,
+    #[prost(string, tag = "2")]
+    series: String,
 }
 
 #[derive(Tag)]
@@ -245,6 +257,8 @@ fn implements_multipart<
         + kynos::response::codec::multipart::IntoMultipart,
 >() {
 }
+#[cfg(feature = "protobuf")]
+fn implements_protobuf_message<T: kynos::extract::body::protobuf::Message>() {}
 
 #[test]
 fn every_derive_implements_its_trait() {
@@ -260,12 +274,45 @@ fn every_derive_implements_its_trait() {
     implements_cookie_params::<Session>();
     #[cfg(feature = "multipart")]
     implements_multipart::<Upload>();
+    #[cfg(feature = "protobuf")]
+    implements_protobuf_message::<Sample>();
     implements_tag::<Users>();
     implements_tag::<Admin>();
     implements_security_scheme::<BearerAuth>();
     implements_security_scheme::<SessionCookie>();
     implements_responses::<StoreError>();
     implements_responses::<CreateReply>();
+}
+
+/// A derived `Message` is `prost`'s encoding and `prost`'s decoding, and a
+/// body `prost` refuses is a syntax error carrying `prost`'s own sentence.
+#[cfg(feature = "protobuf")]
+#[test]
+fn a_derived_protobuf_message_is_the_one_prost_reads_and_writes() {
+    use kynos::extract::body::{codec::DecodeError, protobuf::Message};
+
+    let sample = Sample {
+        value: 7,
+        series: "cpu".to_owned(),
+    };
+    let encoded = Message::encode(&sample);
+
+    assert_eq!(encoded, prost::Message::encode_to_vec(&sample));
+    assert_eq!(encoded.capacity(), encoded.len());
+    assert_eq!(
+        <Sample as Message>::decode(bytes::Bytes::from(encoded)),
+        Ok(sample)
+    );
+
+    // Field 1, varint wire type, and then no varint: the buffer ends first.
+    let truncated = bytes::Bytes::from_static(&[0x08]);
+    let prost_says = <Sample as prost::Message>::decode(truncated.clone())
+        .expect_err("a truncated message")
+        .to_string();
+    assert_eq!(
+        <Sample as Message>::decode(truncated),
+        Err(DecodeError::Syntax(prost_says))
+    );
 }
 
 fn presents<S: Carries<Presented = P>, P>() {}

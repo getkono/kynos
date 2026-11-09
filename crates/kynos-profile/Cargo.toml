@@ -53,7 +53,8 @@ futures-core = { workspace = true }
 # The response head and the frame type a drained body leaves the region as.
 http = { workspace = true }
 http-body = { workspace = true }
-# `protobuf-echo`'s message, which `prost::Message`'s derive names by path.
+# `protobuf-echo`'s message, which `prost::Message`'s derive and
+# `kynos::ProtobufMessage`'s expansion name by path, as an application's would.
 prost = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 # Builds the `echo-post` body outside the measured region; the region itself

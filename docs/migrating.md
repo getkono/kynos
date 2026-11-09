@@ -26,6 +26,7 @@ the section for the release that ships it.
 | A coverage record of your own, with its own template matcher, for responses no `test::TestClient` received | `test::Coverage::record` | #1152 |
 | A loopback socket, a hand-written request head and a status-line parser, to test what a configured server's timeouts answer | `test::TestClient::through_server`, which sends each request over `server::Server::serve_io` | #1152 |
 | The `uuid`, `time-chrono`, `time-jiff`, `decimal-rust` or `decimal-big` feature | `uuid1`, `time-chrono04`, `time-jiff02`, `decimal-rust1` or `decimal-big04`: each names the crate major its impls are for, so the next major arrives beside it | #1214 |
+| `#[derive(prost::Message)]` alone on a `Protobuf<T>` message, or a `prost` pinned to the version Kynos compiled | `#[derive(prost::Message, ProtobufMessage)]`, or `type_attribute(".", "#[derive(kynos::ProtobufMessage)]")` in `prost-build`: `extract::body::protobuf::Message` is Kynos's, and the `prost` it calls is your own, at any version | #1215 |
 
 ## 0.4 to 0.5
 
