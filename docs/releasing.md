@@ -99,6 +99,11 @@ tiers: "breaking but contained under the path the table gives it" is an
 auxiliary or core crate, and "breaking and it reaches Kynos's public API" is a
 public API one.
 
+Dependabot never raises a requirement, so a new major arrives through the
+nightly `outdated.yml` report instead: its job summary lists every direct
+dependency with a newer incompatible version. Each line is one of the bumps
+above for someone to schedule; the report files nothing itself.
+
 ## Trusted Publishing
 
 Release-plz authenticates to crates.io with a short-lived registry token it

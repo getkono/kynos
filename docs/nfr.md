@@ -44,9 +44,10 @@ Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`,
 `gungraun` over Valgrind, `cargo-fuzz`, rustdoc with
 `missing_docs = "deny"`, and `cargo-semver-checks` — the last through both
 release-plz, at default features and fail-open, and `mise run semver:check`, at
-every feature — `cargo-deny`, and `cargo-public-api` on `KYNOS_NIGHTLY`'s
-rustdoc. Not yet present: `cargo-udeps`. `criterion` is
-not on this list and will not be: benchmarks live in `kynos-bench`.
+every feature — `cargo-deny`, `cargo-public-api` on `KYNOS_NIGHTLY`'s
+rustdoc, and `cargo-edit`'s `cargo upgrade`, as a report. Not yet present:
+`cargo-udeps`. `criterion` is not on this list and will not be: benchmarks live
+in `kynos-bench`.
 
 ## Thresholds
 
@@ -971,6 +972,7 @@ the application's to assert against its own instrumentation.
 | compatibility | Every dependency is under a licence an MIT application can redistribute | `mise run deny:check`, against `deny.toml`'s permissive allow list | `enforced` |
 | reliability | Every dependency comes from crates.io, and no requirement is a wildcard | `mise run deny:check` | `enforced` |
 | reliability | Every declared dependency lower bound builds | `mise run minimal-versions:check` (`cargo -Z direct-minimal-versions`, then `cargo check --workspace --all-features`), the nightly `minimal-versions.yml` job | `partial`: a scheduled job, not a pull-request gate, so a bound a change leaves stale surfaces the next night. Direct dependencies only, the library targets only, and `kynos-profile` excluded: a transitive minimum is another crate's promise, and neither a dev-dependency's bound nor the unpublished harness's reaches an application |
+| reliability | A newer incompatible version of a direct dependency is visible before the version Kynos requires stops receiving fixes | `mise run deps:outdated` (`cargo upgrade --dry-run --incompatible allow` from `cargo-edit`), the nightly `outdated.yml` job, to its job summary and an artifact | `partial`: a report, never a failure, and it files nothing, so a major is seen only by whoever reads the run. Dependabot is `lockfile-only` and never shows one. What adopting it is follows the dependency's tier in [`architecture.md`](architecture.md#what-an-upstream-fix-may-change) |
 | reliability | Every reachable feature combination compiles | `mise run features:check` (`cargo hack --feature-powerset`) | `enforced` |
 | reliability | Every test target compiles and runs at baseline features, not only `--all-features` | `mise run test:baseline` | `enforced` |
 | reliability | Every test target is built at the feature sets its own `#[cfg]` gates decide, not only at all-on, default and baseline | `mise run lint:codecs`, six `-p kynos --all-targets` Clippy runs over `openapi31 + macros` and each optional codec in turn | `enforced` for the codec flags, which is where a per-feature-gated target lives today; a target gated on some other flag would need its set added to that list |

@@ -401,6 +401,49 @@ cargo +"$KYNOS_NIGHTLY" update -Z direct-minimal-versions
 cargo +"$KYNOS_NIGHTLY" check --workspace --all-features --exclude kynos-profile
 '''
 
+[tasks."deps:outdated"]
+description = "List every direct dependency with a newer incompatible version"
+# Dependabot is `lockfile-only`, so it never rewrites a requirement and a new
+# major of a direct dependency reaches nobody's screen. This is that signal,
+# reported and never failed on: its tier in docs/architecture.md decides what
+# adopting it is. `--ignore-rust-version`, so a major above the MSRV is listed
+# rather than hidden; `--pinned` lists an `=` requirement too. A dry run
+# writes nothing. `target/outdated-report.md` is what CI publishes.
+#
+# `cargo-edit` publishes no release binaries, so the pin is task-scoped, as
+# `cost:features`'s `cargo-llvm-lines` is.
+tools = { "cargo:cargo-edit" = "0.13.14" }
+run = '''
+set -eu
+raw="$(mktemp)"
+trap 'rm -f "$raw"' EXIT
+
+# Not through `tee`, whose exit status would stand in for the tool's.
+status=0
+cargo upgrade --dry-run --recursive false --ignore-rust-version \
+  --compatible ignore --incompatible allow --pinned allow >"$raw" 2>&1 \
+  || status=$?
+cat "$raw"
+if [ "$status" -ne 0 ]; then
+  exit "$status"
+fi
+
+mkdir -p target
+{
+  echo "## Direct dependencies with a newer incompatible version"
+  echo
+  echo "Report only. Adopting one is a \`chore(deps)\` for an auxiliary or"
+  echo "core crate and a \`!\` commit for a public API one; the tiers are"
+  echo "docs/architecture.md's."
+  echo
+  echo '```'
+  sed -E 's/\x1b\[[0-9;]*m//g' "$raw" \
+    | grep -vE '^[[:space:]]*Checking |^note: Re-run |^warning: aborting upgrade' \
+    || echo "None."
+  echo '```'
+} >target/outdated-report.md
+'''
+
 [tasks."publish:check"]
 description = "Package every crate exactly as crates.io will receive it"
 # Rebuilds each crate from its tarball, the only check that sees a file the
