@@ -879,6 +879,15 @@ how a request is logged. A private module for the callsite alone would cost no
 path, but would be a second site under `middleware/` naming `tracing`, which
 the dependency rows below allow nowhere under `middleware/` but this file.
 
+`__private/fuzz.rs` is compiled only under `cfg(fuzzing)`, so a split would
+cost no path an application can name, and it is one concern: the door each
+`fuzz/` target opens into a parser with no public path. Every function forwards
+to the parser it is named after, adapting a crate-private type to one a target
+can hold, and none shares state with another. What pushed it over was issue
+#1220's eight targets over the rest of the client-facing parsers. Split by
+parser, each file would hold one forwarding function, a module per target that
+the targets already are.
+
 The budget, which may only shrink:
 
 - `crates/kynos-macros/src/derive/schema/attributes.rs`
@@ -890,6 +899,7 @@ The budget, which may only shrink:
 - `crates/kynos-openapi/src/pattern.rs`
 - `crates/kynos-openapi/src/validate/violation.rs`
 - `crates/kynos-profile/src/lib.rs`
+- `crates/kynos/src/__private/fuzz.rs`
 - `crates/kynos/src/error/problem.rs`
 - `crates/kynos/src/error/rejection.rs`
 - `crates/kynos/src/extract/body/multipart.rs`
