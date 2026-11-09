@@ -209,5 +209,10 @@ fn listen(
     backlog: NonZeroU32,
 ) -> io::Result<tokio::net::TcpListener> {
     socket.bind(address)?;
-    socket.listen(backlog.get())
+    socket.listen(kernel_backlog(backlog))
+}
+
+/// The backlog handed to `TcpSocket::listen`.
+pub(in crate::server) fn kernel_backlog(backlog: NonZeroU32) -> u32 {
+    backlog.get()
 }
