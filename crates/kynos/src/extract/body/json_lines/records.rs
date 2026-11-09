@@ -107,7 +107,7 @@ enum State {
 ///
 /// The operation's body limit —
 /// [`DEFAULT_LIMIT`](crate::extract::body::limit::DEFAULT_LIMIT), or the figure
-/// a covering `BodySize` names — bounds the whole body, as it does a buffered
+/// a covering `BodySize` or `Decompression` names — bounds the whole body, as it does a buffered
 /// one, and so every record in it and the `Vec` that
 /// [`read_all`](Records::read_all) builds. A declared `Content-Length` past it
 /// is refused at extraction, before a byte is read and before the handler
