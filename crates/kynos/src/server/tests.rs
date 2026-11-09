@@ -1659,6 +1659,7 @@ async fn readiness_outside_a_server_lifecycle_is_ready() {
 
 /// A service answering every request with its `Readiness` and `Draining`, as
 /// `"{ready} {draining}"`.
+#[cfg(feature = "http1")]
 fn lifecycle_service() -> crate::router::service::Service<()> {
     use crate::{
         extract::FromRequestParts as _,
