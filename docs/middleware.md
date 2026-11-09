@@ -317,15 +317,55 @@ arrived, never past its cap. An output expected to fit one 8 KiB read is not
 presized: that read's own allocation is then exactly its length, and a guess
 could only add a second one.
 
-**An encoder's fixed cost is mostly the memory it sets up, and zstd's is the
-largest.** Each encode allocates its context afresh — megabytes for zstd,
-hundreds of kilobytes for gzip and brotli — and most of what glibc executes for
-an encode is that memory being prepared. So at the small end zstd is the most
-expensive coding in total, whatever the body, and brotli the cheapest;
+**An encoder's fixed cost is mostly the memory it sets up.** Each encode
+allocates its context afresh, and most of what glibc executes for an encode is
+that memory being prepared. So at the small end zstd is the most expensive
+coding in total, whatever the body, and brotli the cheapest;
 only at the large end, where the fixed cost is amortised, does zstd's program
-work — the smallest per octet saved — make it the cheapest. On a service
-answering many concurrent compressed requests zstd's context is also resident
-memory to budget for.
+work — the smallest per octet saved — make it the cheapest.
+
+**What one encoder keeps resident grows with what it has been fed, up to a
+plateau.** Measured as the resident-set growth per encoder of 32 held at once,
+at the default levels, over JSON, on x86_64 glibc:
+
+| Coding | 2 KiB fed | 64 KiB | 1 MiB | 16 MiB, flushed per 16 KiB | 16 MiB, unflushed |
+| --- | --- | --- | --- | --- | --- |
+| zstd 3 | 0.8 MiB | 0.9 MiB | 1.9 MiB | 2.9 MiB | 3.1 MiB |
+| brotli 4 | 0.6 MiB | 1.4 MiB | 9.0 MiB | 8.8 MiB | 36.5 MiB |
+| gzip 6 | 0.3 MiB | 0.3 MiB | 0.3 MiB | 0.3 MiB | 0.4 MiB |
+
+So brotli, not zstd, is the largest past the first few kilobytes. Its unflushed
+column is a collected body of several megabytes, or a `Throughput` stream:
+brotli holds the input of a meta-block, up to 16 MiB of it, until it emits one.
+`Interactive` flushes after every frame, which closes the meta-block, so an
+event stream stays in the flushed column.
+
+**How many encoders are resident at once is bounded by what bounds requests,
+and by nothing of its own.** A collected body up to 1 MiB is encoded in the poll
+that starts it, so at most one such encoder is live per runtime worker however
+many requests are in flight. A collected body past 1 MiB yields between reads,
+and a streamed body holds its encoder until the stream ends, so those are
+bounded only by the responses in flight: by default the connection cap times
+200 streams on each HTTP/2 connection, and `Concurrency` where it is mounted.
+The sizing rule is the worker count times the 1 MiB column, plus the large or
+streamed responses the deployment lets be in flight at once times the widest
+column they can reach for the codings they negotiate. Where that does not fit
+the memory budget, cap those responses with `Concurrency` outside `Compression`
+— intercepted before it, or at an enclosing scope — since its slot is held
+until the body it sees ends, and inside `Compression` that is the handler's
+body, which a collected encode has already read. A stream keeps brotli out of
+the unflushed column under `Interactive`; a collected body of several megabytes
+does not.
+
+There is no cap on concurrent encodes. One that passed responses through
+uncompressed when full would drop compression at peak load, when bandwidth
+matters most, and would hold a slot for the life of every event stream; it
+could not apply to `Encoding::Required`, which excludes identity; and
+`Concurrency` already bounds the responses an encoder belongs to. Nor are
+contexts pooled: `async-compression` builds each encoder's context itself and
+offers no way to hand it one to reuse. What would reopen this is
+`kynos-bench`'s compression scenario (getkono/kynos-bench#121) finding a peak
+that `Concurrency` and this rule do not predict.
 
 **A body still being produced is encoded as it arrives.** A response whose
 length is known is collected and encoded once. One whose length is not — an
@@ -729,6 +769,7 @@ four different answers depending on which layer is asked.
 | Reset flood | — | `max_pending_accept_reset_streams`, `max_local_error_reset_streams` | — | — | yes |
 | TLS handshake stall | — | — | `handshake_timeout`, 10 s | — | yes, with `tls` |
 | Decompression bomb | — | — | — | `Decompression`, when mounted | **no** |
+| Response encoders resident at once | — | — | — | `Concurrency` outside `Compression`, when mounted; one per worker for a collected body up to 1 MiB | partial |
 
 Five rows are worth reading twice.
 
