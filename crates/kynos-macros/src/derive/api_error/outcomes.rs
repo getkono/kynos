@@ -15,8 +15,7 @@ use super::{
 use crate::doc::doc_string;
 
 /// Every way the type can fail, read from the `#[problem(...)]` declarations.
-pub(super) fn outcomes(input: &DeriveInput) -> syn::Result<Vec<Outcome>> {
-    let args = parse_problem(&input.attrs, Position::Type)?;
+pub(super) fn outcomes(input: &DeriveInput, args: &ProblemArgs) -> syn::Result<Vec<Outcome>> {
     let base = args.base.as_ref();
 
     match &input.data {
@@ -56,6 +55,7 @@ pub(super) fn outcomes(input: &DeriveInput) -> syn::Result<Vec<Outcome>> {
 
                     Ok(Outcome::Declared(Failure {
                         path: quote!(Self::#name),
+                        variant: Some(name.clone()),
                         extensions: extensions(&variant.fields, &markers),
                         headers: header_field(&variant.fields, &markers)?,
                         status,
@@ -80,11 +80,12 @@ pub(super) fn outcomes(input: &DeriveInput) -> syn::Result<Vec<Outcome>> {
 
             Ok(vec![Outcome::Declared(Failure {
                 path: quote!(Self),
+                variant: None,
                 extensions: extensions(&data.fields, &markers),
                 headers: header_field(&data.fields, &markers)?,
                 status,
-                type_uri: type_uri(&args, base, &input.ident),
-                title: args.title,
+                type_uri: type_uri(args, base, &input.ident),
+                title: args.title.clone(),
                 doc: doc_string(&input.attrs),
             })])
         }
@@ -161,7 +162,7 @@ fn transparent(
 }
 
 /// The first of `generics`' parameters `ty` names, if any.
-fn generic_named_in(ty: &Type, generics: &Generics) -> Option<String> {
+pub(super) fn generic_named_in(ty: &Type, generics: &Generics) -> Option<String> {
     let params: Vec<String> = generics
         .params
         .iter()

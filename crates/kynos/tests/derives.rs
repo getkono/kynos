@@ -5433,6 +5433,225 @@ fn a_transparent_only_enum_describes_what_it_holds() {
     );
 }
 
+/// The wider enum `subset_of` cases narrow: an extension member, a status two
+/// variants share, a header group, and a transparent variant whose 404 joins
+/// one of its own.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = "https://errors.example.com/")]
+enum ChunkRejection {
+    #[error("no chunk {id}")]
+    #[problem(status = 404, title = "Chunk unknown")]
+    NotFound {
+        #[problem(extension)]
+        id: u64,
+    },
+
+    #[error("the chunk was written concurrently")]
+    #[problem(status = 409, title = "Chunk conflict")]
+    Conflict,
+
+    #[error("the range overlaps chunk {0}")]
+    #[problem(status = 409, title = "Range conflict")]
+    RangeConflict(u64),
+
+    #[error("chunks are unavailable")]
+    #[problem(status = 503)]
+    Unavailable(#[problem(headers)] RetryAfter),
+
+    #[error(transparent)]
+    #[problem(transparent)]
+    Lookup(LookupError),
+}
+
+/// What a `HEAD` answers: every status but 409. No `Display`, since the
+/// problem's `detail` is the wider enum's.
+#[derive(Debug, ApiError)]
+#[problem(subset_of = ChunkRejection)]
+enum HeadRejection {
+    NotFound { id: u64 },
+    Unavailable(RetryAfter),
+    Lookup(LookupError),
+}
+
+/// One of the two variants sharing 409.
+#[derive(Debug, ApiError)]
+#[problem(subset_of = ChunkRejection)]
+enum ConflictSubset {
+    Conflict,
+}
+
+/// A subset of a subset.
+#[derive(Debug, ApiError)]
+#[problem(subset_of = HeadRejection)]
+enum MissingChunk {
+    NotFound { id: u64 },
+}
+
+/// Every variant, in another order.
+#[derive(Debug, ApiError)]
+#[problem(subset_of = ChunkRejection)]
+enum EveryChunkRejection {
+    Lookup(LookupError),
+    Unavailable(RetryAfter),
+    RangeConflict(u64),
+    Conflict,
+    NotFound { id: u64 },
+}
+
+/// `ChunkRejection`'s `Conflict` and `NotFound` declared without the rest, as
+/// the references a subset holding one of them is described against.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = "https://errors.example.com/")]
+enum ChunkAlone {
+    #[error("the chunk was written concurrently")]
+    #[problem(status = 409, title = "Chunk conflict")]
+    Conflict,
+}
+
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = "https://errors.example.com/")]
+enum NotFoundAlone {
+    #[error("no chunk {id}")]
+    #[problem(status = 404, title = "Chunk unknown")]
+    NotFound {
+        #[problem(extension)]
+        id: u64,
+    },
+}
+
+/// A subset answers as the wider enum's variant it converts into: status,
+/// type, title, `detail` from the wider `Display`, extension members, header
+/// group, and a transparent variant's held error.
+#[tokio::test]
+async fn a_subset_answers_as_the_wider_variant() {
+    use kynos::error::problem::IntoProblem;
+
+    async fn same(subset: HeadRejection, wide: ChunkRejection) {
+        let subset = answered(subset.into_response()).await;
+        let wide = answered(wide.into_response()).await;
+        assert_eq!(subset.status, wide.status);
+        assert_eq!(subset.headers, wide.headers);
+        assert_eq!(subset.body, wide.body);
+    }
+
+    same(
+        HeadRejection::NotFound { id: 7 },
+        ChunkRejection::NotFound { id: 7 },
+    )
+    .await;
+    same(
+        HeadRejection::Unavailable(RetryAfter { retry_after: 9 }),
+        ChunkRejection::Unavailable(RetryAfter { retry_after: 9 }),
+    )
+    .await;
+    same(
+        HeadRejection::Lookup(LookupError::UserUnknown),
+        ChunkRejection::Lookup(LookupError::UserUnknown),
+    )
+    .await;
+
+    let problem = serde_json::to_value(HeadRejection::NotFound { id: 7 }.into_problem())
+        .expect("a problem serializes");
+    assert_eq!(
+        problem,
+        serde_json::json!({
+            "type": "https://errors.example.com/not-found",
+            "title": "Chunk unknown",
+            "status": 404,
+            "detail": "no chunk 7",
+            "id": 7,
+        })
+    );
+    assert_eq!(
+        retry_after(&HeadRejection::Unavailable(RetryAfter { retry_after: 9 }).into_response()),
+        (503, Some("9".to_owned()))
+    );
+}
+
+/// A subset declares the statuses its variants answer with and no other, in
+/// its declaration order without repeats, and describes each as the wider
+/// enum does where it holds every variant answering with it.
+#[test]
+fn a_subset_declares_only_what_its_variants_answer_with() {
+    use kynos::{error::problem::IntoProblem, response::ShortCircuit};
+
+    assert_eq!(HeadRejection::STATUSES, &[404, 503]);
+    let codes: Vec<u16> = HeadRejection::statuses()
+        .iter()
+        .map(kynos::http::StatusCode::as_u16)
+        .collect();
+    assert_eq!(codes, [404, 503]);
+
+    let subset = emitted_responses::<HeadRejection>();
+    let wide = emitted_responses::<ChunkRejection>();
+    let described: Vec<&String> = subset
+        .as_object()
+        .expect("responses serialize as an object")
+        .keys()
+        .collect();
+    assert_eq!(described, ["404", "503"], "{subset}");
+    assert_eq!(subset["404"], wide["404"], "{subset}");
+    assert_eq!(subset["503"], wide["503"], "{subset}");
+}
+
+/// A status two wider variants share, or one a held error joins, is described
+/// by the variants a subset holds, as those variants declared alone are; a
+/// subset of a subset included.
+#[test]
+fn a_subset_describes_a_shared_status_by_the_variants_it_holds() {
+    use kynos::response::ShortCircuit;
+
+    let wide = emitted_responses::<ChunkRejection>();
+
+    let conflict = emitted_responses::<ConflictSubset>();
+    assert_eq!(conflict, emitted_responses::<ChunkAlone>());
+    assert_ne!(conflict["409"], wide["409"]);
+
+    let missing = emitted_responses::<MissingChunk>();
+    assert_eq!(MissingChunk::STATUSES, &[404]);
+    assert_eq!(missing, emitted_responses::<NotFoundAlone>());
+    assert_ne!(missing["404"], wide["404"]);
+}
+
+/// A subset holding every variant is described as the wider enum is, whatever
+/// order it lists them in.
+#[test]
+fn a_subset_of_every_variant_is_the_wider_enum() {
+    use kynos::response::ShortCircuit;
+
+    assert_eq!(
+        emitted_responses::<EveryChunkRejection>(),
+        emitted_responses::<ChunkRejection>()
+    );
+    let mut every = EveryChunkRejection::STATUSES.to_vec();
+    every.sort_unstable();
+    let mut wide = ChunkRejection::STATUSES.to_vec();
+    wide.sort_unstable();
+    assert_eq!(every, wide);
+}
+
+/// The conversion moves each variant's fields into the wider variant of its
+/// name, and a subset of a subset converts into the subset.
+#[test]
+fn a_subset_converts_into_the_wider_enum() {
+    assert!(matches!(
+        ChunkRejection::from(HeadRejection::NotFound { id: 3 }),
+        ChunkRejection::NotFound { id: 3 }
+    ));
+    assert!(matches!(
+        ChunkRejection::from(EveryChunkRejection::RangeConflict(4)),
+        ChunkRejection::RangeConflict(4)
+    ));
+    assert!(matches!(
+        ChunkRejection::from(ConflictSubset::Conflict),
+        ChunkRejection::Conflict
+    ));
+    assert!(matches!(
+        HeadRejection::from(MissingChunk::NotFound { id: 5 }),
+        HeadRejection::NotFound { id: 5 }
+    ));
+}
+
 /// An interceptor's answer that is one of Kynos' refusals or the
 /// application's own failure. The refusals implement no `Display`, so each
 /// variant names its own message.

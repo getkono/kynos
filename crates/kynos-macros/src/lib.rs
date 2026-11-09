@@ -703,6 +703,28 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// its field's type cannot name the enum's generic parameters, since the
 /// statuses are a `const`.
 ///
+/// An operation that fails only some of a derived enum's ways returns a
+/// subset of it, so it declares no status it cannot send:
+///
+/// ```ignore
+/// #[derive(Debug, ApiError)]
+/// #[problem(subset_of = ChunkRejection)]
+/// enum HeadRejection {
+///     NotFound { id: ChunkId },
+///     Unavailable(RetryAfter),
+/// }
+/// ```
+///
+/// Each variant names a variant of the wider enum and its fields, and the
+/// derive generates `From<HeadRejection> for ChunkRejection` moving them
+/// across, so a name, field or type the wider enum does not have is a compile
+/// error. The subset answers by that conversion: its problem, `detail` from the
+/// wider `Display`, and headers are the wider variant's, so no
+/// `#[problem(...)]` is written below it and `subset_of` stands alone. It
+/// declares only its variants' statuses, each described as the wider enum
+/// describes the variants it keeps. The wider enum is a derived `ApiError`
+/// enum, a subset included, and cannot name the subset's generic parameters.
+///
 /// Also emits the `IntoResponse` and `Responses` implementations, so the
 /// statuses the error produces and the description advertises cannot diverge.
 /// It is the only supported way to implement `IntoProblem`.
