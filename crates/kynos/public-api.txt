@@ -6112,6 +6112,7 @@ impl<S, R> core::panic::unwind_safe::RefUnwindSafe for kynos::security::auth::Sc
 impl<S, R> core::panic::unwind_safe::UnwindSafe for kynos::security::auth::Scoped<S, R> where <S as kynos::security::requirement::Requirement>::Credential: core::panic::unwind_safe::UnwindSafe, R: core::panic::unwind_safe::UnwindSafe
 pub struct kynos::prelude::Server<C>
 impl kynos::server::Server<()>
+pub const kynos::server::Server<()>::DEFAULT_LISTEN_BACKLOG: core::num::nonzero::NonZeroU32
 pub const kynos::server::Server<()>::DEFAULT_MAX_CONNECTIONS: core::num::nonzero::NonZeroUsize
 pub const kynos::server::Server<()>::DEFAULT_SHUTDOWN_TIMEOUT: core::time::Duration
 impl<C: 'static> kynos::server::Server<C>
@@ -6121,6 +6122,7 @@ pub fn kynos::server::Server<C>::deregistration_delay(self, core::time::Duration
 pub fn kynos::server::Server<C>::graceful_shutdown(self, kynos::server::shutdown::Shutdown) -> Self
 pub fn kynos::server::Server<C>::http1(self, kynos::server::protocol::http1::Http1Config) -> Self
 pub fn kynos::server::Server<C>::http2(self, kynos::server::protocol::http2::Http2Config) -> Self
+pub fn kynos::server::Server<C>::listen_backlog(self, core::num::nonzero::NonZeroU32) -> Self
 pub fn kynos::server::Server<C>::listener(self, impl core::convert::Into<std::net::tcp::TcpListener>) -> Self
 pub fn kynos::server::Server<C>::max_connections(self, core::num::nonzero::NonZeroUsize) -> Self
 pub fn kynos::server::Server<C>::new(kynos::router::service::Service<C>) -> Self
@@ -10181,6 +10183,7 @@ impl<C> !core::panic::unwind_safe::RefUnwindSafe for kynos::server::BoundServer<
 impl<C> !core::panic::unwind_safe::UnwindSafe for kynos::server::BoundServer<C>
 pub struct kynos::server::Server<C>
 impl kynos::server::Server<()>
+pub const kynos::server::Server<()>::DEFAULT_LISTEN_BACKLOG: core::num::nonzero::NonZeroU32
 pub const kynos::server::Server<()>::DEFAULT_MAX_CONNECTIONS: core::num::nonzero::NonZeroUsize
 pub const kynos::server::Server<()>::DEFAULT_SHUTDOWN_TIMEOUT: core::time::Duration
 impl<C: 'static> kynos::server::Server<C>
@@ -10190,6 +10193,7 @@ pub fn kynos::server::Server<C>::deregistration_delay(self, core::time::Duration
 pub fn kynos::server::Server<C>::graceful_shutdown(self, kynos::server::shutdown::Shutdown) -> Self
 pub fn kynos::server::Server<C>::http1(self, kynos::server::protocol::http1::Http1Config) -> Self
 pub fn kynos::server::Server<C>::http2(self, kynos::server::protocol::http2::Http2Config) -> Self
+pub fn kynos::server::Server<C>::listen_backlog(self, core::num::nonzero::NonZeroU32) -> Self
 pub fn kynos::server::Server<C>::listener(self, impl core::convert::Into<std::net::tcp::TcpListener>) -> Self
 pub fn kynos::server::Server<C>::max_connections(self, core::num::nonzero::NonZeroUsize) -> Self
 pub fn kynos::server::Server<C>::new(kynos::router::service::Service<C>) -> Self

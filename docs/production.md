@@ -14,7 +14,7 @@ another framework.
 
 | Concern | Default | Setter |
 | --- | --- | --- |
-| Open connections | At most 10,000 across every listener, TLS handshakes included. At the cap the server stops accepting, and new connections wait in the kernel's listen queue until one closes. | `server::Server::max_connections` |
+| Open connections | At most 10,000 across every listener, TLS handshakes included. At the cap the server stops accepting, and new connections wait in the kernel's listen queue until one closes. Each socket the server binds asks for as long a queue as the kernel allows, so its ceiling governs: `net.core.somaxconn` on Linux, 4096 by default since 5.4. Past it, Linux drops new connection attempts, and their clients retry after a second or more. | `server::Server::max_connections`, `listen_backlog` |
 | A client slow to send its request head | 30 seconds from accept for a connection's first head, under either protocol, and for each later HTTP/1 head, so an idle kept-alive HTTP/1 connection closes 30 seconds after its last response. | `server::protocol::http1::Http1Config::header_read_timeout` |
 | An idle HTTP/2 connection | Sent a GOAWAY and closed after 30 seconds with no stream in flight. A PING after 30 seconds of silence must be answered within 20. | `server::protocol::http2::Http2Config::idle_timeout`, `keep_alive` |
 | A request body that stalls | Fails after 30 seconds without a frame, answered with a declared `408`. A steady upload is never cut short. | `server::Server::request_body_idle_timeout` |

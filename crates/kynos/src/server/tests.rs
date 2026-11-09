@@ -626,13 +626,15 @@ fn a_transport_config_is_cheap_to_clone_per_connection() {
 /// What `Server::new` starts from, read off the server it builds rather than
 /// off the constants it was meant to read: the drain deadline its setter
 /// documents, leaving a margin under a 30-second termination window, and the
-/// connection cap `max_connections` documents.
+/// connection cap `max_connections` documents, and the backlog
+/// `listen_backlog` leaves to the kernel's ceiling.
 #[test]
 fn a_new_server_starts_from_its_documented_limits() {
     let server = crate::server::Server::new(test_service());
 
     assert_eq!(server.shutdown_timeout, std::time::Duration::from_secs(25));
     assert_eq!(server.max_connections.get(), 10_000);
+    assert_eq!(server.listen_backlog.get(), u32::MAX);
     #[cfg(any(target_os = "linux", target_os = "android"))]
     assert_eq!(server.accept_shards.get(), 1);
 }
@@ -819,6 +821,85 @@ async fn accept_shards_refuse_a_listener_bound_elsewhere() {
         .await
         .expect_err("a Unix listener is refused");
     assert!(refused(error));
+}
+
+/// Connects to `address`, which nothing accepts from, until an attempt goes
+/// unanswered, and returns how many completed first.
+///
+/// Linux completes one connection past the listen backlog and then drops each
+/// further SYN while the queue stays full, so the count reads the backlog the
+/// socket was given back off the kernel. A SYN is retransmitted only after a
+/// second, so half a second unanswered is the drop.
+#[cfg(target_os = "linux")]
+async fn connections_queued_before_overflow(address: std::net::SocketAddr) -> usize {
+    tokio::task::spawn_blocking(move || {
+        let mut queued = Vec::new();
+        while let Ok(stream) =
+            std::net::TcpStream::connect_timeout(&address, std::time::Duration::from_millis(500))
+        {
+            queued.push(stream);
+            assert!(queued.len() <= 64, "the queue never overflowed");
+        }
+        queued.len()
+    })
+    .await
+    .expect("the connecting task joins")
+}
+
+/// The backlog `listen_backlog` sets is the one the kernel queues to, rather
+/// than the fixed 128 `tokio::net::TcpListener::bind` would give.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn listen_backlog_sets_the_queue_of_a_bound_address() {
+    let bound = crate::server::Server::new(test_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .listen_backlog(std::num::NonZeroU32::new(2).expect("two is non-zero"))
+        .prepare()
+        .await
+        .expect("loopback listener binds");
+
+    assert_eq!(
+        connections_queued_before_overflow(bound.local_addrs()[0]).await,
+        3
+    );
+}
+
+/// Every accept shard is given the backlog too. One shard, since the kernel
+/// spreads connections across several by hash, and which of them a connection
+/// joins is not the test's to choose.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn listen_backlog_sets_the_queue_of_each_accept_shard() {
+    let (address, shards) = crate::server::address::bind_shards(
+        (std::net::Ipv4Addr::LOCALHOST, 0).into(),
+        std::num::NonZeroUsize::MIN,
+        std::num::NonZeroU32::new(2).expect("two is non-zero"),
+    )
+    .expect("a loopback shard binds");
+
+    assert_eq!(connections_queued_before_overflow(address).await, 3);
+    drop(shards);
+}
+
+/// The backlog `TcpSocket::listen` is handed never passes `i32::MAX`: tokio
+/// before 1.54 casts it to the `int` `listen(2)` takes, so the default
+/// `u32::MAX` would reach the kernel as -1 under the workspace's tokio floor.
+#[test]
+fn the_backlog_handed_to_listen_is_clamped_to_i32_max() {
+    use crate::server::address::kernel_backlog;
+    use std::num::NonZeroU32;
+
+    let ceiling = i32::MAX.unsigned_abs();
+    assert_eq!(kernel_backlog(NonZeroU32::MAX), ceiling);
+    assert_eq!(
+        kernel_backlog(NonZeroU32::new(ceiling + 1).expect("non-zero")),
+        ceiling
+    );
+    assert_eq!(
+        kernel_backlog(NonZeroU32::new(ceiling).expect("non-zero")),
+        ceiling
+    );
+    assert_eq!(kernel_backlog(NonZeroU32::MIN), 1);
 }
 
 /// Every shard accepts and serves under one graceful shutdown. Which shard the
