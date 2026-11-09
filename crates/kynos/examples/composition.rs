@@ -1,13 +1,14 @@
 //! Assembling a router from parts, and where a tag comes from.
 //!
-//! Run it without the JSON codec, since nothing here has a body:
+//! Run it without the JSON codec, since no body here is a codec's: the one
+//! body, `/ready`'s 503 problem document, is the framework's own:
 //!
 //! ```text
 //! cargo run -p kynos --example composition --no-default-features \
 //!   --features openapi31,macros,server,http1
 //! ```
 //!
-//! Six things are worth noticing:
+//! Seven things are worth noticing:
 //!
 //! * **Scope in the document matches scope in the router, exactly.** A group's
 //!   prefix joins each path beneath it, its tag lands on each operation, and
@@ -34,6 +35,11 @@
 //!   the group names reaches the `Location`. A link to an operation the router
 //!   does not mount fails `validate` and `build`, which is also why the admin
 //!   router is only ever validated nested.
+//! * **Readiness leaves before the listeners do.** `/ready` answers from the
+//!   `Readiness` extractor, which reads not-ready from the first shutdown
+//!   signal, while `deregistration_delay` keeps the server accepting for five
+//!   more seconds. A load balancer probing `/ready` stops routing here before
+//!   any connection is refused; only then does the drain begin.
 //!
 //! `api` returns the finished router with its type parameters left opaque.
 //! Every `intercept` changes them, so they are not worth spelling out; `impl`
@@ -57,6 +63,7 @@ use kynos::{
         policy::{FallbackPolicy, TrailingSlashPolicy},
     },
     server::Server,
+    server::{lifecycle::Readiness, shutdown::Shutdown},
 };
 
 /// Everything a consumer does with their own account.
@@ -82,14 +89,24 @@ async fn live() -> NoContent {
     NoContent
 }
 
+/// Why `/ready` refuses: the server has been told to shut down.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[error("the server is shutting down")]
+#[problem(status = 503)]
+struct NotReady;
+
 /// Reports readiness.
 ///
 /// The fourth tag scope: written on the attribute, so it is a fact about the
 /// operation rather than about what encloses it — and the only one readable
 /// without building a router, as `EndpointMeta::TAGS`.
 #[kynos::get("/ready", tag = Ops)]
-async fn ready() -> NoContent {
-    NoContent
+async fn ready(readiness: Readiness) -> Result<NoContent, NotReady> {
+    if readiness.is_ready() {
+        Ok(NoContent)
+    } else {
+        Err(NotReady)
+    }
 }
 
 /// Lists users.
@@ -206,6 +223,11 @@ async fn main() -> kynos::Result<()> {
 
     Server::new(router.build(())?)
         .bind((Ipv4Addr::UNSPECIFIED, 3000))
+        .graceful_shutdown(Shutdown::signals())
+        // Out of rotation for five seconds, then up to twenty to drain: the
+        // two add up, inside a 30-second termination window.
+        .deregistration_delay(Duration::from_secs(5))
+        .shutdown_timeout(Duration::from_secs(20))
         .serve()
         .await
 }
