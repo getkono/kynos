@@ -291,8 +291,8 @@ impl<C: Sync> Authenticator<AccessToken, C> for Keys {
 
 /// `AccessToken` names a scope type of its own, so its authenticator also
 /// says how a credential meets a demanded scope. `Passwords` below has no such
-/// impl: `Basic` demands no scope, and every authenticator of a scheme that
-/// demands none admits all of them.
+/// impl: `Basic` names no scope type, and an authenticator of such a scheme is
+/// already an `Authorizer`, one that admits every credential.
 impl<C: Sync> Authorizer<AccessToken, C, Grant> for Keys {
     async fn authorize(
         &self,
