@@ -21,7 +21,7 @@
 
 pub mod store;
 
-mod freshness;
+pub(crate) mod freshness;
 
 use std::{borrow::Cow, convert::Infallible, marker::PhantomData, time::Duration};
 

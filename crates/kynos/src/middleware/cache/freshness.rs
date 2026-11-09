@@ -58,7 +58,7 @@ pub(super) enum Unstorable {
 /// What the rules read from a request's own fields, taken before the request is
 /// handed on so that its map is not kept across the handler.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) struct Requested {
+pub(crate) struct Requested {
     /// It said `no-cache`.
     no_cache: bool,
     /// It said `no-store`.
@@ -70,7 +70,7 @@ pub(super) struct Requested {
 impl Requested {
     /// Reads `request`'s `Cache-Control` once, and whether it carries
     /// `Authorization`.
-    pub(super) fn of(request: &HeaderMap) -> Self {
+    pub(crate) fn of(request: &HeaderMap) -> Self {
         let mut requested = Self {
             authorized: request.contains_key(header::AUTHORIZATION),
             ..Self::default()
@@ -89,13 +89,13 @@ impl Requested {
     ///
     /// RFC 9111 section 5.2.1.4 `no-cache`, since this cache does not
     /// validate. `Pragma` is not read (section 5.4 deprecates it).
-    pub(super) fn forbids_reuse(self) -> bool {
+    pub(crate) fn forbids_reuse(self) -> bool {
         self.no_cache
     }
 
     /// Whether the request forbids storing its response (RFC 9111 section
     /// 5.2.1.5 `no-store`).
-    pub(super) fn forbids_storing(self) -> bool {
+    pub(crate) fn forbids_storing(self) -> bool {
         self.no_store
     }
 }
