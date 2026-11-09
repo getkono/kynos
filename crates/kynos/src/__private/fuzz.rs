@@ -62,6 +62,35 @@ pub fn percent_decoded_utf8(text: &str) -> Result<(), usize> {
     crate::__private::uri::check_percent_decoded_utf8(text)
 }
 
+/// How far the start of a connection reads as a PROXY protocol header.
+#[cfg(feature = "server")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProxyRead {
+    /// A header may still follow.
+    Partial,
+    /// A whole header this long, naming the client where it names one.
+    Complete(Option<std::net::SocketAddr>, usize),
+    /// No header the specification admits starts the connection.
+    Malformed,
+}
+
+/// What `bytes`, the start of a connection, reads as: a PROXY protocol header
+/// of either version, part of one, or none.
+#[cfg(feature = "server")]
+#[must_use]
+pub fn proxy_header(bytes: &[u8]) -> ProxyRead {
+    use crate::server::proxy_protocol::{Header, Parsed, parse};
+
+    match parse(bytes) {
+        Ok(Parsed::Partial) => ProxyRead::Partial,
+        Ok(Parsed::Complete(Header::Local, length)) => ProxyRead::Complete(None, length),
+        Ok(Parsed::Complete(Header::Relayed(client), length)) => {
+            ProxyRead::Complete(Some(client), length)
+        }
+        Err(_) => ProxyRead::Malformed,
+    }
+}
+
 /// The weight an `Accept-Encoding` field `accept` gives the coding `token`,
 /// its own or else `*`'s, in thousandths; `None` where neither appears.
 #[cfg(any(feature = "compression", feature = "assets"))]
