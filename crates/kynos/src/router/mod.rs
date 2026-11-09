@@ -11,6 +11,7 @@
 mod build;
 mod describe;
 mod install;
+mod map;
 
 use error::RouterError;
 use install::{catches, error_at, path_location, unroutable};

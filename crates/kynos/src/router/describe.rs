@@ -5,9 +5,8 @@
 //! `openapi` describe it, `build` (in `build.rs`) turns it into something that
 //! serves, and `describe` is the one walk both go through.
 
-use std::collections::{HashMap, HashSet};
-
-use kynos_openapi::Method;
+#[cfg(feature = "unchecked")]
+use std::collections::HashSet;
 
 use super::build::TrialTable;
 use super::install::{
@@ -222,41 +221,6 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         Ok(())
     }
 
-    /// Runs every [`map_openapi`](Router::map_openapi) edit, reporting each
-    /// operation whose identity one changed.
-    fn apply_edits(&self, document: &mut Document, violations: &mut Vec<Violation<RouterError>>) {
-        if self.document_edits.is_empty() {
-            return;
-        }
-
-        let assembled = operation_identities(document);
-        for edit in &self.document_edits {
-            edit(document);
-        }
-        let edited: HashMap<(String, Method), Identity> = operation_identities(document)
-            .into_iter()
-            .map(|(path, method, identity)| ((path, method), identity))
-            .collect();
-
-        let mut held = HashSet::new();
-        for (path, method, identity) in assembled {
-            let kept = edited
-                .get(&(path.clone(), method))
-                .is_some_and(|after| identity.kept_by(after));
-            if !kept {
-                violations.push(mapped_operation(&path, method));
-            }
-            held.insert((path, method));
-        }
-
-        // Added by an edit: nothing serves it. In document order.
-        for (path, method, _) in operation_identities(document) {
-            if !held.contains(&(path.clone(), method)) {
-                violations.push(mapped_operation(&path, method));
-            }
-        }
-    }
-
     /// Assembles the description, plus every violation found on the way.
     pub(super) fn describe(&self) -> Result<Described>
     where
@@ -358,7 +322,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
         // Before the version is chosen and the document validated, so both
         // read what the application publishes.
-        self.apply_edits(&mut document, &mut violations);
+        super::map::apply(&self.document_edits, &mut document, &mut violations);
 
         // From what the document uses, never from a (unified) cargo feature.
         let document = lowest_expressing(&document)?;
@@ -394,54 +358,6 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             linked,
         })
     }
-}
-
-/// What a [`map_openapi`](Router::map_openapi) edit may not change about an
-/// operation.
-struct Identity {
-    operation_id: Option<String>,
-    opaque: bool,
-}
-
-impl Identity {
-    /// Whether `edited` is still this operation: the same `operationId`, and
-    /// still opaque if it was. Flagging one opaque is the edit's to declare.
-    fn kept_by(&self, edited: &Self) -> bool {
-        self.operation_id == edited.operation_id && (!self.opaque || edited.opaque)
-    }
-}
-
-/// Every operation in `document`, in document order.
-fn operation_identities(document: &Document) -> Vec<(String, Method, Identity)> {
-    document
-        .paths
-        .items
-        .iter()
-        .flat_map(|(path, item)| {
-            item.operations().map(move |(method, operation)| {
-                let identity = Identity {
-                    operation_id: operation.operation_id.clone(),
-                    opaque: kynos_openapi::Opaque::is_annotated(operation),
-                };
-                (path.clone(), method, identity)
-            })
-        })
-        .collect()
-}
-
-/// The violation for an edit changing the operation at `method` and `path`.
-fn mapped_operation(path: &str, method: Method) -> Violation<RouterError> {
-    error_at(
-        format!(
-            "{}/{}",
-            path_location(path),
-            method.as_wire_str().to_lowercase()
-        ),
-        RouterError::MappedOperation {
-            method,
-            path: path.to_owned(),
-        },
-    )
 }
 
 /// A described router: the document it produces, and everything wrong with it.
