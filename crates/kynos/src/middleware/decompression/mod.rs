@@ -19,7 +19,7 @@ use crate::{
     http::{self, body::Body},
     middleware::{
         Continued, Interceptor, Next,
-        compression::codec::{Coding, DrainError, decoded_capacity, drain},
+        compression::codec::{Coding, DrainError, YIELD_ABOVE, decoded_capacity, drain},
     },
     response::{IntoResponse, Responses, ShortCircuit},
     schema::registry::Registry,
@@ -206,18 +206,24 @@ fn accepted_encoding_header() -> kynos_openapi::Header {
 
 /// Reads `decoder` to its end, producing no more than `limit` bytes.
 ///
-/// The output is presized from the `arrived` octets the decoder reads.
+/// The output is presized from the `arrived` octets the decoder reads, and
+/// past [`YIELD_ABOVE`] octets of it each further read yields first.
 async fn drain_capped<R: AsyncRead + Unpin>(
     decoder: R,
     arrived: usize,
     limit: u64,
 ) -> Result<Bytes, Reason> {
-    drain(decoder, Some(limit), decoded_capacity(arrived, limit))
-        .await
-        .map_err(|error| match error {
-            DrainError::Read(_) => Reason::Malformed,
-            DrainError::PastCap => Reason::TooLarge { limit },
-        })
+    drain(
+        decoder,
+        Some(limit),
+        decoded_capacity(arrived, limit),
+        YIELD_ABOVE,
+    )
+    .await
+    .map_err(|error| match error {
+        DrainError::Read(_) => Reason::Malformed,
+        DrainError::PastCap => Reason::TooLarge { limit },
+    })
 }
 
 /// Removes `coding` from `bytes`, producing no more than `limit` bytes.

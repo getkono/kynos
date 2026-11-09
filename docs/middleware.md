@@ -293,12 +293,23 @@ threshold at all: an 83-octet body costs gzip many times what the whole request
 costs unencoded, to come out fourteen octets larger. What an octet saved is
 worth is still a deployment's call, and `min_size` is where it makes it.
 
-**Encoding stays on the worker serving the request, and that is a decision.**
-The sweep counts what an encode costs; whether a 60 KB gzip encode holds up the
-other tasks queued on that worker is a latency question, and latencies are [`kynos-bench`](performance.md#the-boundary)'s
-to measure. Until it says otherwise nothing moves to a blocking thread, which
-would add a hand-off to every encode to spare the few large ones.
-The levels are the knob that bounds an encode's cost today.
+**Encoding stays on the worker serving the request, and past 1 MiB it yields.**
+A collected body is encoded from memory, which never makes a reader wait, so
+without a yield the whole encode runs in one poll and every task queued behind
+it on that worker waits for it; at the default levels a megabyte is
+milliseconds. An encode of more than 1 MiB of input, and a request decode past
+1 MiB of output, hand the worker back before each further 8 KiB read of the
+codec's output. A decode is paced by what it produces because a small body can
+inflate to any size within its cap. Up to 1 MiB both run to their end in the
+poll that starts them, as before: a yield is a reschedule and a re-poll of the
+whole exchange, and the bodies most responses carry are far below the point
+where that pays. Nothing moves to a blocking thread, which would add a hand-off
+to every large encode, needs the body moved out of the request's future, and
+takes a decode beyond the reach of the exchange being dropped. The 1 MiB is a
+chosen bound rather than a measured one: where the tail latency of cheap
+requests beside large encodes starts to suffer is [`kynos-bench`](performance.md#the-boundary)'s
+to measure, and its compression scenario (getkono/kynos-bench#121) is what
+moves it. The levels remain the knob that bounds an encode's cost below it.
 
 **Each output starts at a guess of its size.** An encode presizes its output to
 a quarter of the body, the shrinkage above, and a decode to four times what
