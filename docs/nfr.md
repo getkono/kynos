@@ -44,7 +44,8 @@ Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`,
 `gungraun` over Valgrind, `cargo-fuzz`, rustdoc with
 `missing_docs = "deny"`, and `cargo-semver-checks` — the last through both
 release-plz, at default features and fail-open, and `mise run semver:check`, at
-every feature — and `cargo-deny`. Not yet present: `cargo-public-api`, `cargo-udeps`. `criterion` is
+every feature — `cargo-deny`, and `cargo-public-api` on `KYNOS_NIGHTLY`'s
+rustdoc. Not yet present: `cargo-udeps`. `criterion` is
 not on this list and will not be: benchmarks live in `kynos-bench`.
 
 ## Thresholds
@@ -88,14 +89,14 @@ half and the timed half are separate rows, and only the timed one carries the
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
-| compatibility | Public API surface is diffed on every change; an addition requires explicit budget approval, a removal fails the build | `cargo-public-api` | `needs-tooling` |
+| compatibility | Public API surface is diffed on every change; an addition requires explicit budget approval, a removal fails the build | `mise run api:check`, comparing `cargo public-api --all-features` for `kynos-openapi` and `kynos`, on `x86_64-unknown-linux-gnu` and without blanket impls, against the snapshot committed beside each crate | `enforced`: an addition or a removal fails until `mise run api:record` writes it into `public-api.txt` in the same change, so the approval is the reviewed snapshot diff. A removal still passes once recorded; `semver:check` is what calls it a break |
 | correctness | The IR round-trips through serialization losslessly | `proptest` over generated IR values | `enforced`, with one exclusion below, characterized |
 | correctness | Every model type emits the field names and nesting the specification gives it | One exact-JSON case per type in `tests/wire.rs`, counted against the type list | `enforced` |
 | correctness | The corpus a downstream generator is built against is the one this build emits | [`tests/conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs), comparing every committed document against a freshly emitted one | `enforced` |
 | correctness | Emitted documents validate against both 3.1 and 3.2 validators | [`tests/metaschema.rs`](../crates/kynos/tests/metaschema.rs), checking a fixture app's 3.1 and 3.2 emissions and the committed corpus against the OAI's own vendored schemas, with a control asserting the 3.1 file rejects a 3.2-only root field | `enforced` in the repository, for the structure; the Schema Object is out of its reach, below, and the vendored schemas are above the package root so the target is excluded from the published archive rather than shipped unable to run |
 | correctness | Emitted documents are byte-deterministic across runs | [`tests/determinism.rs`](../crates/kynos/tests/determinism.rs), emitting one fixture description in three separate processes and byte-comparing | `enforced` |
 | correctness | Emitted documents are byte-deterministic across platforms | [`tests/conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs), run on Linux, Windows and macOS against the one committed corpus | `enforced`, for what the corpus describes |
-| dx | No public item exposes `Pin` or `BoxFuture`, and none names a tokio type but the I/O bound on `Server::serve_io`, the one exception [`architecture.md`](architecture.md#runtime-policy) makes | `cargo-public-api` assertion | `needs-tooling` |
+| dx | No public item exposes `Pin` or `BoxFuture`, and none names a tokio type but the I/O bound on `Server::serve_io`, the one exception [`architecture.md`](architecture.md#runtime-policy) makes | `mise run api:check` over the listing: a `Pin` or `BoxFuture` only in a member of a foreign trait's impl — a method, whose signature the trait fixes, or the associated type of a type [`architecture.md`](architecture.md#public-api-surface) names — and a `tokio` path only in the item the `tokio` bullet of its Public dependencies list names | `enforced` |
 | operability | `--check` mode exits nonzero on drift from the committed document | A binary target, used as a required gate on the framework's own examples | `blocked-on-impl` |
 | performance | Generation allocations and output size scale sub-quadratically in operation count | [`kynos-openapi/tests/alloc.rs`](../crates/kynos-openapi/tests/alloc.rs), counting one `to_json` and one `emit` at 10/100/1000 operations: per-size ceilings recorded from the first measurement over all three series — one `to_json`'s allocations, one `emit`'s, and the emitted document's size in bytes, in JSON — and a per-decade integer relation `a(n)·m² < a(m)·n²` over the same three. **Not** a fitted slope: a pure quadratic fits at exactly 2.0, so a gate there turns on the last bit of a logarithm and any ceiling below it is a number nobody measured, which [Thresholds](#thresholds) refuses | `enforced`, with the division of labour recorded in the file and held by a control rather than assumed: the relation cancels an added exactly-quadratic term algebraically, in bytes exactly as in allocations, so a nested walk over `paths` is caught by the recorded ceilings and not by the relation — dropping either set would leave that half of the requirement caught by nothing. A synthetic series drives both halves in the target itself, so an assertion that stops asserting is red. Counting allocation *calls* still leaves a quadratic that allocates nothing to the timed twin below |
 | performance | Generation time scales sub-quadratically in operation count | Measured at 10/100/1000 operations with a fitted-slope assertion | `kynos-bench` |
@@ -552,7 +553,7 @@ which [`tests/panics.rs`](../crates/kynos/tests/panics.rs) holds.
 | performance | Syscalls per request ≤ TBD | `strace -c` assertion over a fixed request count | `kynos-bench` |
 | performance | Idle memory per connection ≤ TBD at 100k connections | Nightly load test measuring RSS delta | `kynos-bench` |
 | performance | The per-connection state Kynos itself holds inline stays within its recorded ceilings | [`extract/connection/tests.rs`](../crates/kynos/src/extract/connection/tests.rs), asserting `Connection` one pointer wide, narrower than `Inner`, and shared rather than copied on clone, `Inner` ≤ 192 from a measured 176 and `TlsIdentity` ≤ 128 from a measured 72; and [`server/tests.rs`](../crates/kynos/src/server/tests.rs), asserting the configuration cloned per accepted socket — `Http1Config` ≤ 64 from 40, `Http2Config` ≤ 128 from 96, `TransportConfig` ≤ 256 from 200. Every reading is a `size_of`, so what a certificate chain or a server name points at is counted by none of them | `enforced` for the ceilings; the relation to the smallest transport buffer is prose in the same doc comments, since it cannot fail while a ceiling holds |
-| compatibility | The I/O bound on `Server::serve_io` is the only public item naming a tokio type; a pre-bound listener is taken as the standard library's | `cargo-public-api` assertion over the framework surface | `needs-tooling` |
+| compatibility | The I/O bound on `Server::serve_io` is the only public item naming a tokio type; a pre-bound listener is taken as the standard library's | `mise run api:check`, refusing a `tokio` path in any listed item but the one the `tokio` bullet of [`architecture.md`](architecture.md#what-an-upstream-fix-may-change)'s Public dependencies list names | `enforced` |
 | compatibility | Every `tokio` mention in a published crate outside `crates/kynos/src/server/` appears in the allowance table in [`architecture.md`](architecture.md#runtime-policy), and the table has exactly six rows | `mise run containment:check`, which reads the table rather than restating it, over source stripped of comments, string literals and `#[cfg(test)]` modules | `enforced` |
 
 The last two rows are the enforcement of the tokio-only policy in
@@ -872,7 +873,7 @@ member's name, and one ending in `/` is a tree.
 | compatibility | `indexmap` is named only under `kynos-openapi/` | `mise run containment:check` | `enforced` |
 | compatibility | `proc-macro2`, `quote` and `syn` are named only under `kynos-macros/` | `mise run containment:check` | `enforced` |
 | dx | Every crate in `[workspace.dependencies]` is consumed by a member | `cargo-udeps` or an equivalent manifest check | `needs-tooling` |
-| compatibility | Every crate in the graph has a [tier](architecture.md#what-an-upstream-fix-may-change), and the public set is exactly what `cargo public-api --all-features` names | `cargo-public-api` against the Public dependencies allowance | `needs-tooling` |
+| compatibility | Every crate in the graph has a [tier](architecture.md#what-an-upstream-fix-may-change), and the public set is exactly what `cargo public-api --all-features` names | `mise run api:check`: every graph row with a crate names a tier; every foreign crate the listing names is in the Public dependencies list or the paragraph counting those awaiting their issue, and every crate in either is named; a crate tiered public API is in one of them, and one tiered lower is named by no public item | `enforced` |
 
 ## Macros
 
@@ -960,7 +961,7 @@ the application's to assert against its own instrumentation.
 | dx | Every flag `crates/kynos` declares is graded in exactly one row of [`performance.md`](performance.md#the-feature-grading), and every graded flag is declared | `mise run containment:check`, holding the table's set against `[features]` rather than against a stated count, so the failure names the flag that is unaccounted for | `enforced` |
 | dx | Every public item is documented | `missing_docs = "deny"` plus `mise run docs:check` | `enforced` |
 | dx | Every public item has a compiling doc example | Doctests already run via `mise run test:doc`; *presence* of an example per item is unenforced | `planned` |
-| compatibility | Public API item count is tracked as a budget | `cargo-public-api` count with a committed baseline | `needs-tooling` |
+| compatibility | Public API item count is tracked as a budget | A ceiling on the line count of the `public-api.txt` snapshots `mise run api:check` already holds | `planned` |
 | performance | The benchmark suite runs nightly with regression alerting | `kynos-bench`, so erosion surfaces as a trend rather than at release | `kynos-bench` |
 | performance | What each feature costs a linked artifact and in monomorphized IR | `mise run cost:features` over a fixed fixture at each feature, in `full.yml` as a trend once master settles and as a release pull request's gate, deltas and the floor against a committed baseline | `partial`: a release is refused only for numbers nobody recorded, never a pull request for a cost, and no ceiling is set — one is set from a first recorded measurement, which is what the committed baselines are. That fixture mounts no codec, so the codec question is [Extraction](#extraction)'s row over a second one |
 
@@ -1006,12 +1007,10 @@ can write.
 
 ## Tooling gaps
 
-Two crates stand between this document and its enforcement. In order of what
-they unblock:
+One crate stands between this document and its enforcement:
 
 | Tool | Unblocks | Notes |
 | --- | --- | --- |
-| `cargo-public-api` | Five `compatibility`/`dx` rows across the document model, runtime, dependencies and workspace | The single highest-leverage addition: it enforces the architecture policy mechanically rather than by review |
 | `cargo-udeps` | The unused-`[workspace.dependencies]` row under dependencies | An equivalent manifest check would do as well |
 
 `criterion` is intentionally absent from this list, and stays absent now that

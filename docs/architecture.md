@@ -254,6 +254,17 @@ an issue moving it down a tier: `uuid`, `chrono`, `jiff`, `rust_decimal` and
 `tracing::Level` that `Trace::level` takes
 ([#1216](https://github.com/getkono/kynos/issues/1216)).
 
+`mise run api:check` reads the list and that paragraph, the count included,
+and holds `cargo public-api --all-features` for `kynos-openapi` and `kynos` to
+them both ways: a foreign crate the listing names that neither holds fails, and
+so does one they hold that nothing names, so the issue that moves a crate down
+a tier also deletes it here. A type the listing names by its defining crate
+counts as the crate Kynos depends on (`serde_core` as `serde`, `tracing_core`
+as `tracing`). The `tokio` bullet's item is the only one that may name `tokio`.
+Each listing is committed as `public-api.txt` beside its crate, so a new public
+dependency is a change to this list and to a snapshot, both in review;
+`mise run api:record` rewrites the snapshots.
+
 ### The graph
 
 | Layer | Crate | Named in | Fix reaches | Status |
