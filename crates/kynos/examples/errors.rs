@@ -196,7 +196,8 @@ enum StoreError {
 
 /// What listing can fail with: some of `StoreError`'s ways, and no other.
 ///
-/// Returning `StoreError` would declare a 404 and a 409 no listing can send.
+/// Returning `StoreError` would declare a 404, a 409, a 422 and a 507 no
+/// listing can send.
 /// Each variant names a `StoreError` variant and its fields, the derive
 /// generates `From<ListError> for StoreError`, and the problem, headers and
 /// description are that variant's, so the two enums cannot disagree.
