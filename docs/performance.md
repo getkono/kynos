@@ -403,9 +403,10 @@ steps.
 Counting avoids the trade rather than splitting it. An allocation count is the
 same integer on a loaded machine and an idle one, so the gate can be exact, and
 an exact gate fails on the change that caused it rather than three merges later.
-`[profile.bench]` in the workspace manifest keeps debug info under optimization
-for anyone who does want a profile locally — that affordance already exists and
-this document does not replace it.
+`[profile.profiling]` in the workspace manifest builds the shipped artifact with
+line tables for anyone who does want a timed profile locally, as the next
+section shows — that affordance stays local and this document does not replace
+it.
 
 ### Profiling locally
 
@@ -415,10 +416,43 @@ for each scenario, the fifteen frames `callgrind_annotate --inclusive=yes`
 ranks highest, and DHAT's allocation sites by the innermost frame in a
 workspace crate. The Callgrind files beside it under
 `target/gungraun/kynos-profile/` hold the rest — `--tree=caller` over one says
-who called the allocator. A timed profile — `perf record` over the same
-benchmark binary, which `[profile.bench]` builds with symbols — is the
-corroboration a count cannot give, and it stays on the machine that took it
-for the reason the section above gives.
+who called the allocator. `[profile.bench]` builds those Callgrind runs with
+debug info so their frames are named, but it has no frame pointers and is not
+the build to time. A timed profile — `perf record` over the
+`[profile.profiling]` build below — is the corroboration a count cannot give,
+and it stays on the machine that took it for the reason the section above
+gives.
+
+**A timed profile is taken over the shipped build, with frame pointers.**
+`[profile.profiling]` is `release` — fat LTO, one codegen unit — plus
+`debug = "line-tables-only"`, so each frame has a file and line without full
+DWARF. Without frame pointers, `perf record -g` has nothing to walk an
+optimized stack with; `--call-graph dwarf` copies stack per sample instead,
+which is large and slow and truncates deep async stacks. A profile cannot set
+them on stable cargo, and a `rustflags` key in `.cargo/config.toml` — even
+under a `[target.'cfg(…)']` table — would reach every build rather than this
+profile's, which is why that file holds the dev profile alone
+([`nfr.md`](nfr.md)). So they come from `RUSTFLAGS`. The build lands
+in `target/profiling/`, apart from every other profile, so the flag changes
+nothing else that is built:
+
+```bash
+RUSTFLAGS="-C force-frame-pointers=yes" \
+  cargo build --profile profiling -p kynos --example hello
+perf record -F 999 -g -- target/profiling/examples/hello
+# drive load from another shell, then Ctrl-C
+perf script | inferno-collapse-perf | inferno-flamegraph > flame.svg
+```
+
+`-F 999` stays off a multiple of the kernel's timer tick, so samples do not
+lock step with periodic work. Any `perf script` collapser works; `inferno` is
+`cargo install inferno`. Read the graph by crate: a frame's path prefix —
+`kynos::`, `hyper::`, `tokio::`, `serde_json::` — says whose code spent it, and
+the flamegraph's search highlights one prefix and reports its share of samples.
+Async code shows as the task's `poll` frames under tokio's worker, not as the
+`await` chain the source reads as. The same settings take a profile of an
+application's own binary, which is what getkono/kynos-bench's per-cell
+profiles use.
 
 **An ablation is a scenario and its base.** A scenario's `base` names the one
 it differs from in exactly one variable — a layer, a coding, a method — and
