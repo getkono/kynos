@@ -395,35 +395,123 @@ async fn an_empty_body_carries_no_records() {
     );
 }
 
-/// A record is held whole before it is decoded, so the body limit bounds each
-/// one: a record exactly at it decodes, and one past it is the 413 that ends
-/// the stream, since the rest of it was never read.
+/// An NDJSON body of `count` nine-byte records, `{"at":N}\n`, one per frame,
+/// read under a body limit of `limit`.
+async fn limited(count: u32, limit: u64) -> Records<Reading> {
+    let frames = (1..=count)
+        .map(|at| Ok(Bytes::from(format!("{{\"at\":{at}}}\n"))))
+        .collect();
+    let mut request = request(Some(NDJSON), frames, false);
+    request.extensions_mut().insert(BodyLimit(limit));
+    extract::<JsonLines<Records<Reading>>>(request)
+        .await
+        .expect("the media type is the one this body extracts")
+        .items
+}
+
+/// The limit bounds the body, not each record: records each well under it
+/// decode until their total passes it, and then the 413 ends the stream. A
+/// body exactly at the limit is the control, read to its end.
 #[tokio::test]
-async fn a_record_past_the_limit_ends_the_stream() {
+async fn a_body_past_the_limit_ends_the_stream() {
+    let mut at_the_limit = limited(2, 18).await;
+    assert_eq!(expect_record(&mut at_the_limit).await, Reading { at: 1 });
+    assert_eq!(expect_record(&mut at_the_limit).await, Reading { at: 2 });
+    assert!(at_the_limit.next().await.is_none());
+
+    let mut records = limited(3, 18).await;
+    assert_eq!(expect_record(&mut records).await, Reading { at: 1 });
+    assert_eq!(expect_record(&mut records).await, Reading { at: 2 });
+
+    let rejection = records
+        .next()
+        .await
+        .expect("the record past the limit is reported")
+        .expect_err("a body past the limit is a rejection");
+    assert_eq!(rejection.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(
+        matches!(rejection, BodyRejection::TooLarge { limit: 18 }),
+        "{rejection:?}"
+    );
+    assert!(records.next().await.is_none());
+}
+
+/// A record the limit cuts is refused even when every byte of it arrived in
+/// the frame that also carried the records before it: what is read does not
+/// depend on where the frames split.
+#[tokio::test]
+async fn a_record_the_limit_cuts_is_refused_whatever_the_framing() {
     let mut request = request(
         Some(NDJSON),
-        one_frame(b"{\"at\":1}\n{\"at\":123}\n{\"at\":3}\n"),
+        one_frame(b"{\"at\":1}\n{\"at\":2}\n{\"at\":3}\n"),
         false,
     );
-    request.extensions_mut().insert(BodyLimit(8));
+    request.extensions_mut().insert(BodyLimit(22));
     let mut records = extract::<JsonLines<Records<Reading>>>(request)
         .await
         .expect("the media type is the one this body extracts")
         .items;
 
     assert_eq!(expect_record(&mut records).await, Reading { at: 1 });
-
+    assert_eq!(expect_record(&mut records).await, Reading { at: 2 });
     let rejection = records
         .next()
         .await
-        .expect("the oversized record is reported")
+        .expect("the cut record is reported")
         .expect_err("a record past the limit is a rejection");
     assert_eq!(rejection.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(records.next().await.is_none());
+}
+
+/// `read_all` collects no more than the limit admits: a body of records each
+/// under it, whose total passes it, is the 413 rather than a growing `Vec`.
+#[tokio::test]
+async fn read_all_refuses_a_body_past_the_limit() {
+    assert_eq!(
+        limited(2, 18)
+            .await
+            .read_all()
+            .await
+            .expect("within the limit"),
+        vec![Reading { at: 1 }, Reading { at: 2 }]
+    );
+
+    let rejection = limited(64, 18)
+        .await
+        .read_all()
+        .await
+        .expect_err("the body passes the limit");
     assert!(
-        matches!(rejection, BodyRejection::TooLarge { limit: 8 }),
+        matches!(rejection, BodyRejection::TooLarge { limit: 18 }),
         "{rejection:?}"
     );
-    assert!(records.next().await.is_none());
+}
+
+/// A declared length past the limit is refused at extraction, before a byte
+/// is read and so before the handler runs: the body here never delivers one.
+/// A declared length at the limit is the control.
+#[tokio::test]
+async fn a_declared_length_past_the_limit_is_refused_before_reading() {
+    for (declared, refused) in [("18", false), ("19", true)] {
+        let mut request = request(Some(NDJSON), Vec::new(), true);
+        request.extensions_mut().insert(BodyLimit(18));
+        request.headers_mut().insert(
+            header::CONTENT_LENGTH,
+            http::HeaderValue::from_static(declared),
+        );
+
+        let extracted = extract::<JsonLines<Records<Reading>>>(request).await;
+        match extracted {
+            Err(rejection) => {
+                assert!(refused, "{declared} is within the limit");
+                assert!(
+                    matches!(rejection, BodyRejection::TooLarge { limit: 18 }),
+                    "{rejection:?}"
+                );
+            }
+            Ok(_) => assert!(!refused, "{declared} passes the limit"),
+        }
+    }
 }
 
 /// A record with no delimiter in sight is refused as soon as what arrived
@@ -701,7 +789,7 @@ fn every_streamed_rejection_has_a_case() {
         "a_transport_failure_mid_body_is_a_bad_request",
         "a_record_that_does_not_fit_the_type_does_not_end_the_stream",
         "a_record_that_is_not_json_ends_the_stream",
-        "a_record_past_the_limit_ends_the_stream",
+        "a_body_past_the_limit_ends_the_stream",
     ];
 
     let sites = SOURCE.matches("BodyRejection::").count();
