@@ -245,6 +245,40 @@ checksum = "sha256:a2e5c6131d01cfd6d62204872798f97fc933e7f142d718b3e191434e2d31e
 url = "https://github.com/jdx/hk/releases/download/v1.53.0/hk-x86_64-pc-windows-msvc.zip"
 url_api = "https://api.github.com/repos/jdx/hk/releases/assets/487429261"
 
+[[tools.python]]
+version = "3.11.16"
+backend = "core:python"
+
+[tools.python."platforms.linux-arm64"]
+checksum = "sha256:0fe7a9925be231f38c7dffc92eb7f5cf47b121661899ffdb9bc77adfdc74ad2f"
+url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260929/cpython-3.11.16+20260929-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz"
+provenance = "github-attestations"
+
+[tools.python."platforms.linux-arm64-musl"]
+checksum = "sha256:1a38e436fa144149c8d9562ceac8b243c97013058d61903cde591a8216461679"
+url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260929/cpython-3.11.16+20260929-aarch64-unknown-linux-musl-install_only_stripped.tar.gz"
+provenance = "github-attestations"
+
+[tools.python."platforms.linux-x64"]
+checksum = "sha256:f05084f3fbd7a0c7ed762ea6fd2455976a463952bb5c3253fc6cdc777f84728d"
+url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260929/cpython-3.11.16+20260929-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+provenance = "github-attestations"
+
+[tools.python."platforms.linux-x64-musl"]
+checksum = "sha256:88df3ffae0ba380ed54c1f6c08697681ba70612fb44fbe7f2e7d122927c1ae31"
+url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260929/cpython-3.11.16+20260929-x86_64-unknown-linux-musl-install_only_stripped.tar.gz"
+provenance = "github-attestations"
+
+[tools.python."platforms.macos-arm64"]
+checksum = "sha256:53141f31b7cfb2bccf89c2a877827128657dbb8650db06a9a08c7886c28a45ed"
+url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260929/cpython-3.11.16+20260929-aarch64-apple-darwin-install_only_stripped.tar.gz"
+provenance = "github-attestations"
+
+[tools.python."platforms.windows-x64"]
+checksum = "sha256:7b0e380ea5690cef71edbaa282e585ec08ffbece7ea8155546939adeb3377e44"
+url = "https://github.com/astral-sh/python-build-standalone/releases/download/20260929/cpython-3.11.16+20260929-x86_64-pc-windows-msvc-install_only_stripped.tar.gz"
+provenance = "github-attestations"
+
 [[tools.rust]]
 version = "1.97.1"
 backend = "core:rust"

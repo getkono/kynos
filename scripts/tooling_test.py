@@ -343,6 +343,53 @@ class PythonPins(unittest.TestCase):
         self.assertIn("cost:features", failures[0])
 
 
+class PythonToolsPin(unittest.TestCase):
+    """Whether `mise.toml` pins the scripts' interpreter under `[tools]` too.
+
+    The CI setup step installs and caches `[tools]` only. Without this pin,
+    or with one that differs from the task pins, every job downloads CPython
+    at task time, and nothing else notices until a download host blips.
+    """
+
+    TASK = '[tasks."probe"]\ntools = {{ python = "{pin}" }}\nrun = "python3 scripts/probe.py"\n'
+
+    def failures(self, tools_pin, task_pin="3.11.16", floor=(3, 11)):
+        config = "" if tools_pin is None else f"[tools]\npython = {tools_pin}\n\n"
+        return gate.python_tools_pin_failures(config + self.TASK.format(pin=task_pin), floor)
+
+    def test_a_pin_matching_the_tasks_and_the_floor_holds(self):
+        self.assertEqual(self.failures('"3.11.16"'), [])
+
+    def test_a_table_pin_is_read_by_its_version(self):
+        self.assertEqual(self.failures('{ version = "3.11.16" }'), [])
+
+    def test_a_missing_pin_is_named(self):
+        failures = self.failures(None)
+        self.assertEqual(len(failures), 1)
+        self.assertIn("pins no `python` under `[tools]`", failures[0])
+
+    def test_a_pin_off_the_floor_is_named(self):
+        failures = self.failures('"3.13.2"', task_pin="3.13.2")
+        self.assertEqual(len(failures), 1)
+        self.assertIn("declares a floor of 3.11", failures[0])
+
+    def test_a_pin_that_names_no_minor_version_is_named(self):
+        failures = self.failures('"latest"')
+        self.assertEqual(len(failures), 1)
+        self.assertIn("can read a minor version out of it", failures[0])
+
+    def test_a_task_pinning_another_patch_is_named(self):
+        # Same floor, different interpreter: the cached one is not what runs.
+        failures = self.failures('"3.11.16"', task_pin="3.11.15")
+        self.assertEqual(len(failures), 1)
+        self.assertIn("probe: 3.11.15", failures[0])
+
+    def test_a_file_that_is_not_toml_fails_rather_than_raising(self):
+        failures = gate.python_tools_pin_failures("[tools\npython =\n")
+        self.assertEqual(len(failures), 1)
+        self.assertIn("TOML", failures[0])
+
+
 class Main(unittest.TestCase):
     """That `main` still calls each helper, over this repository's own files.
 
@@ -428,6 +475,16 @@ class Main(unittest.TestCase):
         reported = self.naming(failures, "pins no `python`")
         self.assertEqual(len(reported), 1)
         self.assertIn("commits:test", reported[0])
+
+    def test_a_dropped_tools_python_pin_is_reported(self):
+        broken = self.rewriting(
+            gate.MISE_CONFIG.read_text(), '\npython = "3.11.16"\n', "\n"
+        )
+        status, failures = self.report(mise=broken)
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            len(self.naming(failures, "pins no `python` under `[tools]`")), 1
+        )
 
 
 if __name__ == "__main__":

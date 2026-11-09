@@ -23,6 +23,10 @@ hk = "1.53.0"
 "github:convco/convco" = "0.7.0"
 "github:obi1kenobi/cargo-semver-checks" = "0.50.0"
 "github:EmbarkStudios/cargo-deny" = "0.20.2"
+# The interpreter every `scripts/` task also pins. Here as well so the CI setup
+# step installs and caches it, and no job downloads it at task time;
+# `tooling:check` holds it equal to those pins and to `PYTHON_FLOOR`.
+python = "3.11.16"
 
 [env]
 # The nightly every task needing one installs and runs: `fuzz` and
@@ -170,7 +174,8 @@ description = "Measure what each feature costs a linked artifact and monomorphiz
 #
 # Task-scoped pins stay out of every other job, and `mise lock` does not lock
 # them. `cargo-llvm-lines` has no release binaries. `python` matches
-# `PYTHON_FLOOR` in `scripts/tooling.py`; raise both in one commit.
+# `PYTHON_FLOOR` in `scripts/tooling.py` and the `[tools]` pin; raise all three
+# in one commit.
 tools = { "cargo:cargo-llvm-lines" = "0.4.48", python = "3.11.16" }
 run = "python3 scripts/cost_features.py"
 
