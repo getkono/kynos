@@ -385,7 +385,7 @@ rewrite.
 | --- | --- | --- | --- |
 | reliability | No extractor panics on any input | `cargo-fuzz` targets in [`fuzz/`](../fuzz/), one per hand-written parser of untrusted input, each asserting no panic and a round trip or an independent oracle where one exists; [`fuzz.yml`](../.github/workflows/fuzz.yml) searches each nightly, and [`full.yml`](../.github/workflows/full.yml) replays the committed [`fuzz/corpus/`](../fuzz/corpus/) | `partial`: a release fails only on a committed input, while a new one fails the nightly job, which no merge waits on; and the targets are Kynos's own parsers, not every extractor — a codec whose parser is a dependency's (`serde_json`, `serde_html_form`, `multer`'s part framing, `prost`) is not fuzzed here. [`testing.md`](testing.md#fuzzing) lists them |
 | security | Header count and header-list size are bounded by default | The driver is configured from [`Http1Config`](../crates/kynos/src/server/protocol/http1.rs) and [`Http2Config`](../crates/kynos/src/server/protocol/http2.rs) on every connection; [`server/tests.rs`](../crates/kynos/src/server/tests.rs) asserts over a real socket that a head at the default and at a configured HTTP/1 header count is served and one field more is answered 431, and that an HTTP/2 header list past the default and past a configured size is answered 431 on its stream | `enforced` |
-| security | Every buffered request body is capped by default, the cap is declared wherever a body is read, and a mounted limit replaces it per operation | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) asserting a 2 MiB default refuses at default+1 counted and declared, accepts at the default, declares its 413 only on operations reading a body, is raised past itself by a `BodySize` on one operation, and holds for multipart, where a text part is also refused past `TEXT_PART_LIMIT` under any body limit and a closed form refuses an undeclared part before reading it; a mounted limit asserted at limit+1 and refused from a declared length before the body is read; [`json_lines/tests.rs`](../crates/kynos/src/extract/body/json_lines/tests.rs) bounding each streamed record | `enforced`; `planned` for the allocation bound |
+| security | Every buffered request body is capped by default, the cap is declared wherever a body is read, and a mounted limit replaces it per operation | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) asserting a 2 MiB default refuses at default+1 counted and declared, accepts at the default, declares its 413 only on operations reading a body, is raised past itself by a `BodySize` on one operation, and holds for multipart, where a text part is also refused past `TEXT_PART_LIMIT` under any body limit and a closed form refuses an undeclared part before reading it; a mounted limit asserted at limit+1 and refused from a declared length before the body is read; [`json_lines/tests.rs`](../crates/kynos/src/extract/body/json_lines/tests.rs) bounding a streamed body as a whole, counted, cut mid-frame and declared, and `read_all` with it | `enforced`; `planned` for the allocation bound |
 | security | Per-IP connection caps | none yet — see below | `planned` |
 | correctness | Every Rust type expressible as a handler input has a valid JSON Schema projection | Property test over a macro fixture set, validated against 3.1 and 3.2 validators | `planned` |
 | dx | Every rejection produces an error naming the field and the fix | `trybuild` UI tests, plus [`error/rejection/tests.rs`](../crates/kynos/src/error/rejection/tests.rs) counting every variant and asserting each renders a sentence rather than a debug dump | `enforced` for the counting; `planned` for the snapshots |
@@ -421,8 +421,22 @@ extractor that holds a body in memory reads it under
 `extract::body::limit::DEFAULT_LIMIT`, 2 MiB, the figure axum also ships, and refuses
 past it with `BodyRejection::TooLarge`: a declared `Content-Length` from the
 head, a length-less body on the frame that passes it. Multipart bounds its
-whole stream through multer's own count, and a streamed JSON body bounds each
-record rather than the body, since a record is all it holds.
+whole stream through multer's own count, and a streamed JSON body bounds the
+whole body too, though it holds one record at a time: a client could otherwise
+send records under the limit without end, and `read_all` would collect every
+one. `Records` refuses a declared length from the head at extraction, and frames
+only a length-less body's first `limit` bytes, so its 413 replaces the record
+the limit cuts wherever the frames split, after every record before it.
+
+**A streamed request body gets no default total deadline.** With the byte
+bound, a streamed body is bounded exactly as a buffered one is: at most the
+limit in octets, and at most the server's 30 s request-body idle timeout
+between frames. A total deadline would bound both kinds or neither, since
+nothing about framing makes a slow record cheaper to hold than a slow buffer,
+and its default would be a figure no measurement under
+[Thresholds](#thresholds) supports. The worst case stays a client sending one
+octet just inside every idle gap, which the connection permits bound in number
+and `BodySize::deadline` bounds in time for an operation that mounts it.
 
 **Multipart bounds each part by its field, from Kynos's reading of its name.**
 `FromMultipart::admit` decides a part from the name `disposition` read, before
@@ -457,7 +471,7 @@ own `BodySize` a `const` compile error against `CompatibleWith`*: that check
 compares interceptors, and the cap is a rejection, so a `BodySize` mounts beside
 it exactly as before. *It would buffer a length-less body, the streaming upload
 the limit exists to leave alone*: the codecs that buffer already did, and the
-one that streams, `Records`, is bounded per record and still streams.
+one that streams, `Records`, is bounded in total and still streams.
 
 What the placement costs is precision under a named problem type. The 413
 `BodyRejection` declares is `about:blank`, and a `BodySize` naming its own type
