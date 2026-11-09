@@ -661,3 +661,139 @@ mod wire {
         assert_eq!(response.headers().get(header::CONTENT_ENCODING), None);
     }
 }
+
+/// Where a codec's output starts: the guess at its size each direction makes.
+mod presizing {
+    use crate::middleware::compression::codec::{DRAIN_CHUNK, decoded_capacity, encoded_capacity};
+
+    /// An output expected within one read is left to that read to size, and
+    /// a decode's presize never passes the cap the decode may not cross.
+    #[test]
+    fn an_output_is_presized_only_past_one_read_and_never_past_its_cap() {
+        let chunk = u64::try_from(DRAIN_CHUNK).expect("a chunk fits u64");
+
+        assert_eq!(encoded_capacity(4 * DRAIN_CHUNK - 1), 0);
+        assert_eq!(encoded_capacity(4 * DRAIN_CHUNK), DRAIN_CHUNK);
+
+        assert_eq!(decoded_capacity(DRAIN_CHUNK / 4 - 1, u64::MAX), 0);
+        assert_eq!(decoded_capacity(DRAIN_CHUNK / 4, u64::MAX), DRAIN_CHUNK);
+        assert_eq!(decoded_capacity(usize::MAX, 2 * chunk), 2 * DRAIN_CHUNK);
+        assert_eq!(decoded_capacity(DRAIN_CHUNK, chunk - 1), 0);
+    }
+}
+
+/// How long a codec holds the worker: one poll up to `YIELD_ABOVE`, a yield
+/// between reads past it, in both directions.
+mod pacing {
+    use std::{
+        fmt::Write as _,
+        pin::pin,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        task::{Context, Poll, Wake, Waker},
+    };
+
+    use bytes::Bytes;
+
+    use crate::middleware::{
+        compression::codec::{Coding, Levels, YIELD_ABOVE, encode},
+        decompression::Decompression,
+    };
+
+    /// Counts the wakes a future asks for.
+    struct Wakes(AtomicUsize);
+
+    impl Wake for Wakes {
+        fn wake(self: Arc<Self>) {
+            self.wake_by_ref();
+        }
+
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// Runs `future` to its end with no runtime, returning its output and how
+    /// many polls that took.
+    ///
+    /// Repolled only after a wake: a `Pending` that asked for none would stall
+    /// a real task, so it fails here rather than spinning.
+    fn polled<F: Future>(future: F) -> (F::Output, usize) {
+        let counted = Arc::new(Wakes(AtomicUsize::new(0)));
+        let waker = Waker::from(Arc::clone(&counted));
+        let mut context = Context::from_waker(&waker);
+        let mut future = pin!(future);
+        let mut polls = 0;
+
+        loop {
+            polls += 1;
+            if let Poll::Ready(output) = future.as_mut().poll(&mut context) {
+                return (output, polls);
+            }
+            assert_eq!(
+                counted.0.load(Ordering::SeqCst),
+                polls,
+                "a codec returned Pending without waking its task"
+            );
+        }
+    }
+
+    /// `length` octets that every coding shrinks, but not to nothing.
+    fn body(length: usize) -> Bytes {
+        let mut body = String::with_capacity(length + 64);
+        let mut line = 0_usize;
+        while body.len() < length {
+            writeln!(
+                body,
+                "line {line} of a response, {}",
+                line * 7_919 % 104_729
+            )
+            .expect("writing to a String");
+            line += 1;
+        }
+        body.truncate(length);
+        body.into()
+    }
+
+    /// An encode of up to `YIELD_ABOVE` octets runs in the poll that starts
+    /// it; one octet past it yields between reads, and still decodes to the
+    /// body.
+    #[test]
+    fn an_encode_yields_between_reads_only_past_the_threshold() {
+        let within = body(YIELD_ABOVE);
+        let past = body(YIELD_ABOVE + 1);
+
+        for coding in Coding::ALL {
+            let (_, polls) = polled(encode(coding, within.clone(), Levels::default()));
+            assert_eq!(polls, 1, "{coding:?} at the threshold");
+
+            let (encoded, polls) = polled(encode(coding, past.clone(), Levels::default()));
+            assert!(polls > 1, "{coding:?} past the threshold ran in one poll");
+
+            let encoded = encoded.expect("an encode of memory");
+            let (decoded, _) = polled(Decompression::new(u64::MAX).undo(&[coding], encoded));
+            assert_eq!(decoded.expect("its own encoding"), past, "{coding:?}");
+        }
+    }
+
+    /// A decode is paced by what it produces, since what arrived can be any
+    /// fraction of that: up to `YIELD_ABOVE` decoded octets in one poll, and
+    /// a yield before every read past it.
+    #[test]
+    fn a_decode_yields_between_reads_only_past_the_threshold() {
+        for coding in Coding::ALL {
+            for (length, yields) in [(YIELD_ABOVE, false), (YIELD_ABOVE + 1, true)] {
+                let plain = body(length);
+                let (encoded, _) = polled(encode(coding, plain.clone(), Levels::default()));
+                let encoded = encoded.expect("an encode of memory");
+
+                let (decoded, polls) =
+                    polled(Decompression::new(u64::MAX).undo(&[coding], encoded));
+                assert_eq!(decoded.expect("its own encoding"), plain, "{coding:?}");
+                assert_eq!(polls > 1, yields, "{coding:?} decoding {length} octets");
+            }
+        }
+    }
+}

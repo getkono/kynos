@@ -57,7 +57,7 @@ impl Coding {
 /// How much of a codec's output one read takes.
 ///
 /// Mirrored by `DRAIN_CHUNK` in `tests/alloc_codecs.rs`; change both together.
-const DRAIN_CHUNK: usize = 8 * 1024;
+pub(super) const DRAIN_CHUNK: usize = 8 * 1024;
 
 /// Why [`drain`] stopped before its source ended.
 #[derive(Debug)]
@@ -79,19 +79,86 @@ impl From<DrainError> for io::Error {
     }
 }
 
+/// How many times smaller than its input an encode's output is expected to
+/// be, and a decode's larger: the ratio both directions presize their output
+/// from.
+///
+/// `docs/middleware.md` records API JSON shrinking by 70–85%, so a quarter of
+/// the input holds a typical encode in its first allocation, and one doubling
+/// covers the rest of that range.
+const TYPICAL_RATIO: usize = 4;
+
+/// How many octets a codec processes in one poll before it starts handing the
+/// worker back between reads: an encode's input, a decode's output.
+///
+/// Up to it, an encode or a decode runs to its end in the poll that starts
+/// it, as it always has; past it, every further read of [`DRAIN_CHUNK`] is
+/// preceded by a [`yield_now`]. `docs/middleware.md` records why the size is
+/// this one, and why a yield rather than the blocking pool.
+pub(crate) const YIELD_ABOVE: usize = 1024 * 1024;
+
+/// The capacity an output `expected` octets long starts at.
+///
+/// None below one [`DRAIN_CHUNK`]: such an output is likely emptied in one
+/// read, whose own allocation is then exactly its length, and a guess could
+/// only add a second allocation to it.
+const fn presized(expected: usize) -> usize {
+    if expected < DRAIN_CHUNK { 0 } else { expected }
+}
+
+/// What an encode of `input` octets presizes its output to.
+pub(super) const fn encoded_capacity(input: usize) -> usize {
+    presized(input / TYPICAL_RATIO)
+}
+
+/// What a decode of `input` octets presizes its output to: the typical
+/// expansion, never past the `cap` the decode may not cross.
+pub(crate) fn decoded_capacity(input: usize, cap: u64) -> usize {
+    let cap = usize::try_from(cap).unwrap_or(usize::MAX);
+    presized(input.saturating_mul(TYPICAL_RATIO).min(cap))
+}
+
+/// Hands the worker back once: wakes its own task and returns `Pending`, so
+/// that whatever else is queued runs before this task continues.
+///
+/// By hand rather than `tokio::task::yield_now`, so the drain still needs
+/// nothing of tokio beyond `AsyncRead`: tokio requeues a task woken during its
+/// own poll behind the tasks already queued, which is what a yield is.
+async fn yield_now() {
+    let mut yielded = false;
+    std::future::poll_fn(|context| {
+        if yielded {
+            return Poll::Ready(());
+        }
+        yielded = true;
+        context.waker().wake_by_ref();
+        Poll::Pending
+    })
+    .await;
+}
+
 /// Reads an encoder or a decoder to its end, by hand so neither direction
 /// needs anything of tokio beyond `AsyncRead`.
 ///
 /// With a `cap`, refuses to produce more than that many bytes. Checked per
 /// chunk, so a decompression bomb is refused while still small.
+///
+/// The output starts at `capacity`. Once more than `yield_after` octets of it
+/// have been drained, every further read is preceded by a [`yield_now`].
 pub(crate) async fn drain<R: AsyncRead + Unpin>(
     mut source: R,
     cap: Option<u64>,
+    capacity: usize,
+    yield_after: usize,
 ) -> Result<Bytes, DrainError> {
-    let mut drained = BytesMut::new();
+    let mut drained = BytesMut::with_capacity(capacity);
     let mut chunk = [0_u8; DRAIN_CHUNK];
 
     loop {
+        if drained.len() > yield_after {
+            yield_now().await;
+        }
+
         let read = std::future::poll_fn(|context| {
             let mut buffer = ReadBuf::new(&mut chunk);
             std::task::ready!(Pin::new(&mut source).poll_read(context, &mut buffer))?;
@@ -120,7 +187,17 @@ pub(crate) async fn drain<R: AsyncRead + Unpin>(
 /// Each drain is boxed: its 8 KiB buffer and the encoder's state come to
 /// kilobytes, and inline they would widen the interceptor's future, which is
 /// held for the whole exchange, on every response it declines too.
+///
+/// A body past [`YIELD_ABOVE`] yields between every read of its output; one
+/// within it is encoded in the poll that starts it.
 pub(super) async fn encode(coding: Coding, bytes: Bytes, levels: Levels) -> io::Result<Bytes> {
+    let capacity = encoded_capacity(bytes.len());
+    let yield_after = if bytes.len() > YIELD_ABOVE {
+        0
+    } else {
+        usize::MAX
+    };
+
     let encoded = match coding {
         Coding::Zstd => {
             Box::pin(drain(
@@ -130,6 +207,8 @@ pub(super) async fn encode(coding: Coding, bytes: Bytes, levels: Levels) -> io::
                     zstd_window(levels.zstd).as_slice(),
                 ),
                 None,
+                capacity,
+                yield_after,
             ))
             .await
         }
@@ -137,6 +216,8 @@ pub(super) async fn encode(coding: Coding, bytes: Bytes, levels: Levels) -> io::
             Box::pin(drain(
                 BrotliEncoder::with_quality(io::Cursor::new(bytes), levels.for_coding(coding)),
                 None,
+                capacity,
+                yield_after,
             ))
             .await
         }
@@ -144,6 +225,8 @@ pub(super) async fn encode(coding: Coding, bytes: Bytes, levels: Levels) -> io::
             Box::pin(drain(
                 GzipEncoder::with_quality(io::Cursor::new(bytes), levels.for_coding(coding)),
                 None,
+                capacity,
+                yield_after,
             ))
             .await
         }
