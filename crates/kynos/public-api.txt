@@ -6127,6 +6127,7 @@ pub fn kynos::server::Server<C>::listener(self, impl core::convert::Into<std::ne
 pub fn kynos::server::Server<C>::max_connections(self, core::num::nonzero::NonZeroUsize) -> Self
 pub fn kynos::server::Server<C>::new(kynos::router::service::Service<C>) -> Self
 pub async fn kynos::server::Server<C>::prepare(self) -> kynos::error::Result<kynos::server::BoundServer<C>>
+pub fn kynos::server::Server<C>::proxy_protocol(self, kynos::http::forwarded::TrustedProxies) -> Self
 pub fn kynos::server::Server<C>::request_body_idle_timeout(self, core::option::Option<core::time::Duration>) -> Self
 pub async fn kynos::server::Server<C>::serve(self) -> kynos::error::Result<()>
 pub fn kynos::server::Server<C>::serve_io<I>(&self, I, kynos::extract::connection::Connection) -> kynos::error::Result<impl core::future::future::Future<Output = std::io::error::Result<()>> + core::marker::Send + 'static> where I: tokio::io::async_read::AsyncRead + tokio::io::async_write::AsyncWrite + core::marker::Unpin + core::marker::Send + 'static
@@ -10198,6 +10199,7 @@ pub fn kynos::server::Server<C>::listener(self, impl core::convert::Into<std::ne
 pub fn kynos::server::Server<C>::max_connections(self, core::num::nonzero::NonZeroUsize) -> Self
 pub fn kynos::server::Server<C>::new(kynos::router::service::Service<C>) -> Self
 pub async fn kynos::server::Server<C>::prepare(self) -> kynos::error::Result<kynos::server::BoundServer<C>>
+pub fn kynos::server::Server<C>::proxy_protocol(self, kynos::http::forwarded::TrustedProxies) -> Self
 pub fn kynos::server::Server<C>::request_body_idle_timeout(self, core::option::Option<core::time::Duration>) -> Self
 pub async fn kynos::server::Server<C>::serve(self) -> kynos::error::Result<()>
 pub fn kynos::server::Server<C>::serve_io<I>(&self, I, kynos::extract::connection::Connection) -> kynos::error::Result<impl core::future::future::Future<Output = std::io::error::Result<()>> + core::marker::Send + 'static> where I: tokio::io::async_read::AsyncRead + tokio::io::async_write::AsyncWrite + core::marker::Unpin + core::marker::Send + 'static
