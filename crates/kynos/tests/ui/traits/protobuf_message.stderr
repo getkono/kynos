@@ -1,0 +1,24 @@
+error[E0277]: `Reading` is not a protobuf message Kynos can carry
+  --> tests/ui/traits/protobuf_message.rs:21:24
+   |
+21 |     from_request::<(), Protobuf<Reading>>();
+   |                        ^^^^^^^^^^^^^^^^^ not a `kynos::extract::body::protobuf::Message`
+   |
+help: the trait `kynos::extract::body::protobuf::Message` is not implemented for `Reading`
+  --> tests/ui/traits/protobuf_message.rs:13:1
+   |
+13 | struct Reading {
+   | ^^^^^^^^^^^^^^
+   = note: derive it beside the protobuf derive: `#[derive(prost::Message, kynos::ProtobufMessage)]`
+   = note: `Reading` implements similarly named trait `prost::Message`, but not `kynos::extract::body::protobuf::Message`
+help: the trait `FromRequest<C>` is implemented for `Protobuf<T>`
+  --> src/extract/body/protobuf.rs
+   |
+   | impl<C: Sync, T: Message + Schema + Send> FromRequest<C> for Protobuf<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: required for `Protobuf<Reading>` to implement `FromRequest<()>`
+note: required by a bound in `from_request`
+  --> tests/ui/traits/protobuf_message.rs:18:23
+   |
+18 | fn from_request<C, T: FromRequest<C>>() {}
+   |                       ^^^^^^^^^^^^^^ required by this bound in `from_request`
