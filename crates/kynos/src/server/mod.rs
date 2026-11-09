@@ -278,8 +278,9 @@ impl<C: 'static> Server<C> {
     /// A port of 0 is chosen once, by the first shard, and the rest bind the
     /// same one, so [`BoundServer::local_addrs`] lists each address once. A
     /// shard is a listener like any other: one that stops accepting stops the
-    /// server, as [`BoundServer::serve`] says. While serving, any socket of the same user that sets `SO_REUSEPORT` may bind the same
-    /// port and take a share of its connections.
+    /// server, as [`BoundServer::serve`] says. While serving, any socket of
+    /// the same user that sets `SO_REUSEPORT` may bind the same port and take
+    /// a share of its connections.
     ///
     /// Linux and Android only, whose kernels balance connections across
     /// `SO_REUSEPORT` sockets.
