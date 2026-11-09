@@ -195,6 +195,12 @@ impl Describe for Draining {
 pub struct Readiness(Option<watch::Receiver<Lifecycle>>);
 
 impl Readiness {
+    /// What a connection a server listener accepted reads.
+    #[cfg(test)]
+    pub(in crate::server) fn of(lifecycle: watch::Receiver<Lifecycle>) -> Self {
+        Self(Some(lifecycle))
+    }
+
     /// Whether the server has yet to receive a shutdown signal.
     ///
     /// Always `true` for a request no server listener accepted.
