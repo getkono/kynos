@@ -7,8 +7,9 @@
 //! document, a security scheme is registered in the document, and
 //! `deny_unchecked_schemas` refuses the whole build.
 //!
-//! Below those, what a router makes of a malformed mount site, and the
-//! `operationId`s a mounted reference publishes.
+//! Below those, what a router makes of a malformed mount site, the
+//! `operationId`s a mounted reference publishes, and what a `map_openapi` edit
+//! reaches and may not change.
 
 use std::{
     sync::{Arc, Mutex},
@@ -366,6 +367,229 @@ fn a_reference_publishes_its_operation_ids_under_its_prefix() {
         .expect("two references under two prefixes");
 }
 
+/// What `map_openapi` edits, and what it may not.
+mod map_openapi {
+    use kynos_openapi::{
+        Method, PathTemplate, Responses, Severity, SpecError, SpecVersion, Violation,
+    };
+
+    use super::{Router, RouterError, absorbed, handled};
+    use crate::router::{endpoint::builder::EndpointBuilder, install::path_location};
+
+    /// The router every case edits: one `GET /held`.
+    fn router() -> Router<()> {
+        Router::<()>::new().mount(at!("/held"))
+    }
+
+    /// An error-level violation at the operation `method` on `path`.
+    fn at_operation(path: &str, method: Method, error: RouterError) -> Violation<RouterError> {
+        Violation {
+            location: format!(
+                "{}/{}",
+                path_location(path),
+                method.as_wire_str().to_lowercase()
+            ),
+            severity: Severity::Error,
+            error,
+        }
+    }
+
+    fn mapped(path: &str, method: Method) -> Violation<RouterError> {
+        at_operation(
+            path,
+            method,
+            RouterError::MappedOperation {
+                method,
+                path: path.to_owned(),
+            },
+        )
+    }
+
+    /// The `MappedOperation` violations `router` reports.
+    fn mapped_violations(router: &Router<()>) -> Vec<Violation<RouterError>> {
+        router
+            .validate()
+            .expect("a describable router")
+            .into_iter()
+            .filter(|violation| matches!(violation.error, RouterError::MappedOperation { .. }))
+            .collect()
+    }
+
+    /// `openapi`, `openapi_as` and a built service's document agree, each
+    /// holding the edit, which may describe an operation differently.
+    #[test]
+    fn an_edit_reaches_every_document_a_router_produces() {
+        let router = router().map_openapi(|document| {
+            document.info.description = Some("edited".to_owned());
+            let held = document.paths.items.get_mut("/held").expect("the mount");
+            held.get.as_mut().expect("its GET").summary = Some("held".to_owned());
+        });
+
+        let emitted = router.openapi().expect("a describable router");
+        assert_eq!(emitted.info.description.as_deref(), Some("edited"));
+        assert_eq!(
+            emitted.paths.items["/held"]
+                .get
+                .as_ref()
+                .and_then(|operation| operation.summary.as_deref()),
+            Some("held")
+        );
+        assert_eq!(
+            router.openapi_as(SpecVersion::V3_1).expect("a 3.1 API"),
+            emitted
+        );
+        assert_eq!(
+            *router.build(()).expect("a describable router").openapi(),
+            emitted
+        );
+    }
+
+    /// Each call adds an edit rather than replacing one, and they run in call
+    /// order.
+    #[test]
+    fn edits_run_in_call_order() {
+        let document = router()
+            .map_openapi(|document| document.info.description = Some("first".to_owned()))
+            .map_openapi(|document| {
+                let first = document.info.description.take().unwrap_or_default();
+                document.info.description = Some(format!("{first}, then second"));
+            })
+            .openapi()
+            .expect("a describable router");
+
+        assert_eq!(
+            document.info.description.as_deref(),
+            Some("first, then second")
+        );
+    }
+
+    /// The edited document is what is validated, so an edit that breaks it
+    /// fails every reader, the build included.
+    #[test]
+    fn an_edit_breaking_the_document_fails_every_reader() {
+        let router = || {
+            router().map_openapi(|document| {
+                let held = document.paths.items.get_mut("/held").expect("the mount");
+                held.get.as_mut().expect("its GET").responses = Responses::new();
+            })
+        };
+        let refused = at_operation("/held", Method::Get, SpecError::NoResponses.into());
+
+        assert!(
+            router()
+                .validate()
+                .expect("a describable router")
+                .contains(&refused)
+        );
+        for (reader, result) in [
+            ("openapi", router().openapi().map(drop)),
+            (
+                "openapi_as",
+                router().openapi_as(SpecVersion::V3_1).map(drop),
+            ),
+            ("build", router().build(()).map(drop)),
+        ] {
+            let Err(crate::Error::Invalid { violations }) = result else {
+                panic!("`{reader}` accepted a document without responses");
+            };
+            assert!(violations.contains(&refused), "{reader}: {violations:?}");
+        }
+    }
+
+    /// The router mounts the operations and dispatches by what the document
+    /// says of them, so an edit may not remove, rename, move or add one.
+    #[test]
+    fn an_edit_may_not_change_which_operations_the_router_serves() {
+        let removed = router().map_openapi(|document| {
+            document.paths.items.shift_remove("/held");
+        });
+        assert_eq!(mapped_violations(&removed), [mapped("/held", Method::Get)]);
+
+        let renamed = router().map_openapi(|document| {
+            let held = document.paths.items.get_mut("/held").expect("the mount");
+            held.get.as_mut().expect("its GET").operation_id = Some("renamed".to_owned());
+        });
+        assert_eq!(mapped_violations(&renamed), [mapped("/held", Method::Get)]);
+
+        let moved = router().map_openapi(|document| {
+            let held = document
+                .paths
+                .items
+                .shift_remove("/held")
+                .expect("the mount");
+            document.paths.items.insert("/moved".to_owned(), held);
+        });
+        assert_eq!(
+            mapped_violations(&moved),
+            [mapped("/held", Method::Get), mapped("/moved", Method::Get)]
+        );
+
+        let added = router().map_openapi(|document| {
+            let held = document.paths.items.get_mut("/held").expect("the mount");
+            let mut copy = held.get.as_deref().expect("its GET").clone();
+            copy.operation_id = Some("added".to_owned());
+            held.set_operation(Method::Post, copy);
+        });
+        assert_eq!(mapped_violations(&added), [mapped("/held", Method::Post)]);
+    }
+
+    /// An `x-kynos-opaque` marker records a waiver, so an edit may not remove
+    /// it, and with it the document's not-authoritative stamp.
+    #[cfg(feature = "unchecked")]
+    #[test]
+    fn an_edit_may_not_hide_an_unverified_operation() {
+        let unmarked = router()
+            .layer_unchecked(tower_layer::Identity::new())
+            .map_openapi(|document| {
+                let held = document.paths.items.get_mut("/held").expect("the mount");
+                held.get
+                    .as_mut()
+                    .expect("its GET")
+                    .extensions
+                    .remove(kynos_openapi::annotation::OPAQUE_OPERATION_ANNOTATION);
+            });
+
+        assert_eq!(mapped_violations(&unmarked), [mapped("/held", Method::Get)]);
+    }
+
+    /// The version is chosen from what the edited document uses, so the
+    /// `openapi` field an edit writes is not kept.
+    #[test]
+    fn the_version_is_chosen_after_the_edit() {
+        let document = router()
+            .map_openapi(|document| "3.2.0".clone_into(&mut document.openapi))
+            .openapi()
+            .expect("a describable router");
+
+        assert_eq!(document.spec_version(), Some(SpecVersion::V3_1));
+    }
+
+    /// An edit sees the whole document, which only the root router assembles,
+    /// so an absorbed router's is refused rather than run against a document
+    /// it was not written for.
+    #[test]
+    fn an_absorbed_edit_is_a_violation() {
+        for how in ["nest", "merge"] {
+            let inner = router().map_openapi(|_| {});
+            let violations = absorbed(Router::<()>::new(), inner, how)
+                .validate()
+                .expect("a describable router");
+
+            assert_eq!(
+                violations,
+                [Violation {
+                    location: "#".to_owned(),
+                    severity: Severity::Error,
+                    error: RouterError::NestedRouterPolicy {
+                        policy: "map_openapi",
+                    },
+                }],
+                "{how}"
+            );
+        }
+    }
+}
+
 /// One case per variant of [`RouterError`], what a router's violation says is
 /// wrong.
 mod router_errors {
@@ -385,6 +609,7 @@ mod router_errors {
             RouterError::RouteConflict { .. } => "RouteConflict",
             RouterError::InvalidRoutePattern { .. } => "InvalidRoutePattern",
             RouterError::NestedRouterPolicy { .. } => "NestedRouterPolicy",
+            RouterError::MappedOperation { .. } => "MappedOperation",
         }
     }
 
@@ -435,6 +660,15 @@ mod router_errors {
                 "a nested or merged router sets `trusted_proxies`, which only the root router's \
                  applies; set it on the root router instead",
             ),
+            (
+                RouterError::MappedOperation {
+                    method: Method::Get,
+                    path: "/users".to_owned(),
+                },
+                "a `map_openapi` edit changed operation `GET /users`; an edit may describe an \
+                 operation differently, but not add, remove, move or rename it, or remove its \
+                 `x-kynos-opaque` marker",
+            ),
         ]
     }
 
@@ -462,6 +696,7 @@ mod router_errors {
             "RouteConflict",
             "InvalidRoutePattern",
             "NestedRouterPolicy",
+            "MappedOperation",
         ]
         .into_iter()
         .collect();

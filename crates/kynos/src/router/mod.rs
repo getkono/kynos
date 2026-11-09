@@ -58,6 +58,9 @@ use crate::{
     security::SecurityScheme,
 };
 
+/// An application's edit to the assembled description.
+pub(crate) type DocumentEdit = Box<dyn Fn(&mut Document) + Send + Sync>;
+
 /// A `ShortCircuit`'s two halves, compared once the registry exists.
 pub(crate) type ShortCircuitCheck = fn(&mut Registry) -> Option<RouterError>;
 
@@ -160,6 +163,8 @@ pub struct Router<C, P = Propagate, I = (), S = ()> {
     pub(crate) trailing_slashes: Option<TrailingSlashPolicy>,
     pub(crate) trusted_proxies: Option<crate::http::forwarded::TrustedProxies>,
     pub(crate) deny_unchecked_schemas: bool,
+    /// Each [`map_openapi`](Router::map_openapi) edit, in call order.
+    pub(crate) document_edits: Vec<DocumentEdit>,
     /// The waivers taken here: routes no template expresses, and layers whose
     /// effect nothing declares.
     #[cfg(feature = "unchecked")]
@@ -218,6 +223,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
             trailing_slashes: None,
             trusted_proxies: None,
             deny_unchecked_schemas: false,
+            document_edits: Vec::new(),
             #[cfg(feature = "unchecked")]
             unchecked: crate::unchecked::Unchecked::default(),
             _private: PhantomData,
@@ -249,6 +255,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
             trailing_slashes: self.trailing_slashes,
             trusted_proxies: self.trusted_proxies,
             deny_unchecked_schemas: self.deny_unchecked_schemas,
+            document_edits: self.document_edits,
             #[cfg(feature = "unchecked")]
             unchecked: self.unchecked,
             _private: PhantomData,
@@ -366,6 +373,8 @@ impl<C, P, I, S> Router<C, P, I, S> {
             (other.method_not_allowed.is_some(), "method_not_allowed"),
             (other.trailing_slashes.is_some(), "trailing_slashes"),
             (other.trusted_proxies.is_some(), "trusted_proxies"),
+            // An edit sees the whole document, which only the root assembles.
+            (!other.document_edits.is_empty(), "map_openapi"),
         ] {
             if set {
                 self.violations
@@ -812,6 +821,40 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     #[must_use]
     pub fn deny_unchecked_schemas(mut self) -> Self {
         self.deny_unchecked_schemas = true;
+        self
+    }
+
+    /// Edits the description after it is assembled and before it is checked,
+    /// wherever it is produced: [`validate`](Router::validate),
+    /// [`openapi`](Router::openapi), [`openapi_as`](Router::openapi_as) and
+    /// [`build`](Router::build) alike.
+    ///
+    /// So the document a built [`Service`] serves, validates responses against
+    /// and publishes through [`docs`](Router::docs) is the one the application
+    /// publishes, and an edit that breaks it fails the build with every
+    /// violation it caused. Each call adds an edit, and edits run in call
+    /// order.
+    ///
+    /// An edit may describe an operation differently, but the operations
+    /// themselves are the router's: adding, removing or moving one, changing
+    /// its `operationId`, or removing an `x-kynos-opaque` marker is a
+    /// [`MappedOperation`](RouterError::MappedOperation) violation. The
+    /// version the document claims is chosen after the edit, from what it
+    /// uses, so the `openapi` field an edit writes is not kept.
+    ///
+    /// Set on the root router: an edit sees the whole document, so on a
+    /// router that is then nested or merged it is a
+    /// [`NestedRouterPolicy`](RouterError::NestedRouterPolicy) violation.
+    ///
+    /// ```no_run
+    /// let router = kynos::Router::<()>::new().map_openapi(|document| {
+    ///     document.info.summary = Some("Every pet, every owner".to_owned());
+    /// });
+    /// # let _ = router;
+    /// ```
+    #[must_use]
+    pub fn map_openapi(mut self, edit: impl Fn(&mut Document) + Send + Sync + 'static) -> Self {
+        self.document_edits.push(Box::new(edit));
         self
     }
 }

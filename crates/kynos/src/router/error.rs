@@ -86,4 +86,25 @@ pub enum RouterError {
         /// (`trusted_proxies`).
         policy: &'static str,
     },
+
+    /// A [`map_openapi`](crate::Router::map_openapi) edit changed which
+    /// operation the document describes at a method and path, where the
+    /// router serves one, or no longer flags one opaque.
+    ///
+    /// The router mounts the operations and dispatches by what the document
+    /// says of them, so an edit may describe one differently but not add,
+    /// remove, move or rename (`operationId`) one, or hide that it is
+    /// unverified. Located at the operation as the router assembled it, or as
+    /// the edit added it.
+    #[error(
+        "a `map_openapi` edit changed operation `{method} {path}`; an edit may describe an \
+         operation differently, but not add, remove, move or rename it, or remove its \
+         `x-kynos-opaque` marker"
+    )]
+    MappedOperation {
+        /// The operation's method.
+        method: kynos_openapi::Method,
+        /// The `paths` key it is at.
+        path: String,
+    },
 }
