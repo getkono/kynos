@@ -448,20 +448,27 @@ async fn a_body_limit_on_one_operation_raises_it_past_the_default() {
 }
 
 /// Multipart parses as it reads rather than through one buffered read, so it
-/// is held to the same default by its parser's own count.
+/// is held to the same default by its parser's own count, and each part to the
+/// bound its field's type declares within it.
 #[cfg(feature = "multipart")]
 mod multipart {
     use kynos::{
-        Router, Schema, extract::body::multipart::MultipartForm,
-        middleware::limits::body_size::BodySize, response::status::NoContent,
+        Router, Schema,
+        extract::body::multipart::{FilePart, MultipartForm},
+        middleware::limits::body_size::BodySize,
+        response::status::NoContent,
     };
 
     use super::{DEFAULT_LIMIT, StatusCode, support};
 
-    /// The one field the bodies below carry.
+    /// 408 KiB, the default HTTP/1 head buffer.
+    const TEXT_PART_LIMIT: u64 = 8 * 1024 + 100 * 4 * 1024;
+
+    /// The one field the bodies below carry: a file, so only the body's limit
+    /// bounds it.
     #[derive(Debug, Schema, kynos::MultipartForm)]
     struct Upload {
-        name: String,
+        file: FilePart,
     }
 
     #[kynos::post("/uploads")]
@@ -470,9 +477,139 @@ mod multipart {
         NoContent
     }
 
+    /// A text field beside an optional file, in an open form.
+    #[derive(Debug, Schema, kynos::MultipartForm)]
+    struct Captioned {
+        caption: String,
+        #[serde(default)]
+        image: Option<FilePart>,
+    }
+
+    #[kynos::post("/captions")]
+    async fn caption(MultipartForm(captioned): MultipartForm<Captioned>) -> NoContent {
+        drop(captioned);
+        NoContent
+    }
+
+    /// A form closed by `deny_unknown_fields`.
+    #[derive(Debug, Schema, kynos::MultipartForm)]
+    #[serde(deny_unknown_fields)]
+    struct Closed {
+        name: String,
+    }
+
+    #[kynos::post("/closed")]
+    async fn closed(MultipartForm(closed): MultipartForm<Closed>) -> NoContent {
+        drop(closed);
+        NoContent
+    }
+
+    /// One part named `name` holding `length` octets, closing the body.
+    fn one_part(name: &str, length: u64) -> Vec<u8> {
+        let mut body =
+            format!("--x\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n").into_bytes();
+        let head = body.len();
+        body.resize(
+            head + usize::try_from(length).expect("a part that fits in memory"),
+            b'n',
+        );
+        body.extend_from_slice(b"\r\n--x--\r\n");
+        body
+    }
+
+    #[tokio::test]
+    async fn a_text_part_past_its_bound_is_refused() {
+        let service = Router::<()>::new()
+            .mount(kynos::routes![caption])
+            .build(())
+            .expect("a describable router");
+
+        let past = support::post(&service, "/captions")
+            .header("content-type", "multipart/form-data; boundary=x")
+            .body(one_part("caption", TEXT_PART_LIMIT + 1))
+            .call()
+            .await;
+        assert_eq!(
+            past.status,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "{}",
+            past.text()
+        );
+
+        let at = support::post(&service, "/captions")
+            .header("content-type", "multipart/form-data; boundary=x")
+            .body(one_part("caption", TEXT_PART_LIMIT))
+            .call()
+            .await;
+        assert_eq!(at.status, StatusCode::NO_CONTENT, "{}", at.text());
+    }
+
+    /// The bound is the field's, not the body's: a raised body limit leaves
+    /// it, and a file part beside it is read past it.
+    #[tokio::test]
+    async fn a_text_part_bound_holds_under_a_raised_body_limit() {
+        let service = Router::<()>::new()
+            .mount(
+                kynos::routes![caption]
+                    .0
+                    .intercept(BodySize::new(DEFAULT_LIMIT * 2)),
+            )
+            .build(())
+            .expect("a describable router");
+
+        let reply = support::post(&service, "/captions")
+            .header("content-type", "multipart/form-data; boundary=x")
+            .body(one_part("caption", TEXT_PART_LIMIT + 1))
+            .call()
+            .await;
+        assert_eq!(
+            reply.status,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "{}",
+            reply.text()
+        );
+
+        let mut body = one_part("image", TEXT_PART_LIMIT * 2);
+        body.truncate(body.len() - b"--x--\r\n".len());
+        body.extend_from_slice(
+            b"--x\r\nContent-Disposition: form-data; name=\"caption\"\r\n\r\nc\r\n--x--\r\n",
+        );
+        let reply = support::post(&service, "/captions")
+            .header("content-type", "multipart/form-data; boundary=x")
+            .body(body)
+            .call()
+            .await;
+        assert_eq!(reply.status, StatusCode::NO_CONTENT, "{}", reply.text());
+    }
+
+    /// A part no field of a closed form declares is refused from its head:
+    /// its octets never end, which reading them would answer with a 400.
+    #[tokio::test]
+    async fn a_closed_form_refuses_an_undeclared_part_unread() {
+        let service = Router::<()>::new()
+            .mount(kynos::routes![closed])
+            .build(())
+            .expect("a describable router");
+
+        let reply = support::post(&service, "/closed")
+            .header("content-type", "multipart/form-data; boundary=x")
+            .body(
+                b"--x\r\nContent-Disposition: form-data; name=\"extra\"\r\n\r\nunterminated"
+                    .to_vec(),
+            )
+            .call()
+            .await;
+        assert_eq!(
+            reply.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{}",
+            reply.text()
+        );
+    }
+
     /// One part whose value pads the whole body to `length` bytes.
     fn body_of_length(length: u64) -> Vec<u8> {
-        let head = b"--x\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\n";
+        let head = b"--x\r\nContent-Disposition: form-data; name=\"file\"\r\n\r\n";
         let tail = b"\r\n--x--\r\n";
         let padding =
             usize::try_from(length).expect("a body that fits in memory") - head.len() - tail.len();
