@@ -24,6 +24,7 @@ use tokio::{
 use crate::extract::connection::PeerCredentials;
 use crate::{
     extract::connection::{Connection, TlsIdentity, TransportAddress},
+    http::forwarded::TrustedProxies,
     router::service::Service,
     server::{
         TransportConfig,
@@ -53,6 +54,9 @@ pub(in crate::server) struct Peer {
     /// The credentials the kernel recorded for a Unix domain socket's peer.
     #[cfg(unix)]
     pub(in crate::server) credentials: Option<PeerCredentials>,
+    /// Whether the peer is a trusted proxy whose PROXY protocol header must
+    /// open the connection.
+    pub(in crate::server) proxied: bool,
 }
 
 impl From<TransportAddress> for Peer {
@@ -61,6 +65,7 @@ impl From<TransportAddress> for Peer {
             address,
             #[cfg(unix)]
             credentials: None,
+            proxied: false,
         }
     }
 }
@@ -83,12 +88,15 @@ impl Peer {
     }
 }
 
-/// A TCP listener, and the options every socket it accepts is given.
+/// A TCP listener, the options every socket it accepts is given, and the
+/// proxies whose PROXY protocol header it requires.
 #[derive(Debug)]
 pub(in crate::server) struct TcpAcceptor {
     pub(in crate::server) listener: TcpListener,
     pub(in crate::server) local_addr: SocketAddr,
     pub(in crate::server) socket: SocketOptions,
+    /// `None` where no peer is trusted to send one.
+    pub(in crate::server) proxy_protocol: Option<Arc<TrustedProxies>>,
 }
 
 impl Acceptor for TcpAcceptor {
@@ -97,7 +105,12 @@ impl Acceptor for TcpAcceptor {
     async fn accept(&self) -> io::Result<(TcpStream, Peer)> {
         let (stream, peer_addr) = self.listener.accept().await?;
         self.socket.apply(&stream, self.local_addr, peer_addr);
-        Ok((stream, TransportAddress::from(peer_addr).into()))
+        let mut peer = Peer::from(TransportAddress::from(peer_addr));
+        peer.proxied = self
+            .proxy_protocol
+            .as_deref()
+            .is_some_and(|trusted| trusted.trusts_peer(peer_addr.ip()));
+        Ok((stream, peer))
     }
 }
 
@@ -115,6 +128,7 @@ impl Acceptor for tokio::net::UnixListener {
             Peer {
                 address: std::os::unix::net::SocketAddr::from(peer_addr).into(),
                 credentials,
+                proxied: false,
             },
         ))
     }
