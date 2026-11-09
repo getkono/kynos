@@ -71,7 +71,7 @@ pub(crate) fn json_bytes<T: serde::Serialize + ?Sized>(
 ) -> serde_json::Result<bytes::Bytes> {
     let mut writer = BodyWriter::new();
     serde_json::to_writer(&mut writer, value)?;
-    Ok(writer.into_bytes())
+    Ok(writer.finish())
 }
 
 /// How many octets a body is written on the stack before any heap is touched.
@@ -94,7 +94,10 @@ const STACK_OCTETS: usize = 1024;
 /// thousandth does, which is the property the counting harness holds.
 struct BodyWriter {
     stack: [u8; STACK_OCTETS],
+    /// Octets on the stack; `STACK_OCTETS` once spilled, so the stack's
+    /// leftover room is never written again.
     len: usize,
+    /// Empty and unallocated until the body outgrows the stack.
     spilled: Vec<u8>,
 }
 
@@ -107,25 +110,38 @@ impl BodyWriter {
         }
     }
 
-    fn into_bytes(self) -> bytes::Bytes {
-        if self.spilled.is_empty() {
+    /// What was written, as a body.
+    ///
+    /// Borrowed rather than consumed: taking `self` by value moves the whole
+    /// stack buffer, a kibibyte copied for nothing on every response.
+    fn finish(&mut self) -> bytes::Bytes {
+        if self.spilled.capacity() == 0 {
             bytes::Bytes::copy_from_slice(&self.stack[..self.len])
         } else {
-            bytes::Bytes::from(self.spilled)
+            bytes::Bytes::from(std::mem::take(&mut self.spilled))
         }
     }
 
-    /// Moves what the stack holds to the heap, with room for `more` after it.
+    /// Writes `octets` where neither buffer has room for them: the first time,
+    /// by moving what the stack holds to the heap and closing the stack; after
+    /// that, by growing the heap.
     #[cold]
     #[inline(never)]
-    fn spill(&mut self, more: usize) {
-        self.spilled = Vec::with_capacity((self.len + more).max(2 * STACK_OCTETS));
-        self.spilled.extend_from_slice(&self.stack[..self.len]);
+    fn grow(&mut self, octets: &[u8]) {
+        if self.spilled.capacity() == 0 {
+            self.spilled = Vec::with_capacity((self.len + octets.len()).max(2 * STACK_OCTETS));
+            self.spilled.extend_from_slice(&self.stack[..self.len]);
+            self.len = STACK_OCTETS;
+        }
+        self.spilled.extend_from_slice(octets);
     }
 }
 
 // Inlined, as `Vec<u8>`'s are: `serde_json` writes in pieces of a few octets,
-// and an out-of-line call per piece costs more than the piece.
+// and an out-of-line call per piece costs more than the piece. The heap's room
+// is tested first and in the form `Vec` tests it, so a spilled body's piece
+// costs the one comparison `Vec<u8>`'s own writer makes rather than a second
+// one ahead of it; an unspilled body's heap has no room, so it falls through.
 impl std::io::Write for BodyWriter {
     #[inline]
     fn write(&mut self, octets: &[u8]) -> std::io::Result<usize> {
@@ -135,15 +151,14 @@ impl std::io::Write for BodyWriter {
 
     #[inline]
     fn write_all(&mut self, octets: &[u8]) -> std::io::Result<()> {
-        if self.spilled.is_empty() {
-            if let Some(free) = self.stack.get_mut(self.len..self.len + octets.len()) {
-                free.copy_from_slice(octets);
-                self.len += octets.len();
-                return Ok(());
-            }
-            self.spill(octets.len());
+        if self.spilled.capacity() - self.spilled.len() >= octets.len() {
+            self.spilled.extend_from_slice(octets);
+        } else if let Some(free) = self.stack.get_mut(self.len..self.len + octets.len()) {
+            free.copy_from_slice(octets);
+            self.len += octets.len();
+        } else {
+            self.grow(octets);
         }
-        self.spilled.extend_from_slice(octets);
         Ok(())
     }
 

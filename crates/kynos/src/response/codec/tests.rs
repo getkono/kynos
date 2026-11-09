@@ -76,6 +76,26 @@ fn json_writes_a_body_whole_on_either_side_of_the_stack_buffer() {
     }
 }
 
+/// Once a body has spilled, the stack's leftover room is closed: a piece
+/// arriving when the heap is exactly full grows the heap rather than landing
+/// in the stack, where it would be lost or written out of order.
+#[test]
+fn a_spilled_body_never_writes_into_the_stack_again() {
+    use std::io::Write as _;
+
+    // One octet on the stack, a spill to a heap of exactly 2 KiB, the heap
+    // filled, and one piece the stack still has room for.
+    let pieces: [&[u8]; 4] = [b"[", &[b'a'; 2000], &[b'b'; 47], b"]"];
+    let mut writer = super::BodyWriter::new();
+    for piece in pieces {
+        writer
+            .write_all(piece)
+            .expect("a write into memory succeeds");
+    }
+
+    assert_eq!(writer.finish(), pieces.concat());
+}
+
 /// An application's format, a decimal tally that refuses to encode zero,
 /// which stands in for a value the format cannot carry.
 struct Tally;
