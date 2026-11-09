@@ -620,7 +620,8 @@ pub(crate) const CODECS: &[Scenario] = &[
 ];
 
 /// Responses: `plaintext`'s octets as a representation answering ranges and
-/// preconditions, and `json-small`'s negotiated or created.
+/// preconditions, `json-small`'s negotiated or created, and both JSON
+/// documents serialized by `serde_json` alone.
 pub(crate) const RESPOND: &[Scenario] = &[
     row!(
         "binary-full",
@@ -661,6 +662,25 @@ pub(crate) const RESPOND: &[Scenario] = &[
         CREATED,
         Poll,
         Some("json-small")
+    ),
+    // The bare-`serde_json` controls: the same document and headers, written by
+    // `serde_json::to_vec` rather than `Json`'s writer, so the difference from
+    // the base is what `Json` spends past serialization itself.
+    row!(
+        "json-small-bare",
+        service,
+        || get("/json/small/bare"),
+        OK,
+        Poll,
+        Some("json-small")
+    ),
+    row!(
+        "json-large-bare",
+        service,
+        || get("/json/large/bare"),
+        OK,
+        Poll,
+        Some("json-large")
     ),
 ];
 

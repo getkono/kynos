@@ -1,11 +1,16 @@
 //! The response group's handlers: `plaintext`'s octets as a ranged binary
-//! representation, and `json-small`'s document negotiated or created.
+//! representation, `json-small`'s document negotiated or created, and
+//! `json-small`'s and `json-large`'s documents serialized by `serde_json`
+//! alone.
 
 use bytes::Bytes;
 use kynos::{
     error::rejection::NegotiationRejection,
-    extract::body::text::Text,
-    http::{etag::ETag, media::OctetStream},
+    extract::body::{binary::Binary, text::Text},
+    http::{
+        etag::ETag,
+        media::{Json as JsonMedia, OctetStream},
+    },
     prelude::*,
     response::{
         negotiate::{Accept, Negotiated},
@@ -16,7 +21,7 @@ use kynos::{
     },
 };
 
-use super::{App, Small, small};
+use super::{App, Small, large, small};
 
 /// The entity tag `/binary` is served under, as `If-None-Match` names it.
 pub(crate) const BINARY_TAG: &str = "\"plaintext-v1\"";
@@ -55,7 +60,32 @@ async fn created() -> Created<Json<Small>> {
     Created::at(Location::from_static("/json/small"), Json(small()))
 }
 
+/// `value` as `serde_json::to_vec` writes it, under `application/json`: what
+/// an application spends serializing with no framework in between, against
+/// which [`Json`]'s own writer is read.
+fn bare(value: &impl serde::Serialize) -> Binary<JsonMedia> {
+    Binary::new(serde_json::to_vec(value).expect("a struct of plain fields serializes"))
+}
+
+/// `json-small`'s document, serialized by `serde_json` alone.
+#[kynos::get("/json/small/bare")]
+async fn json_small_bare() -> Binary<JsonMedia> {
+    bare(&small())
+}
+
+/// `json-large`'s document, serialized by `serde_json` alone.
+#[kynos::get("/json/large/bare")]
+async fn json_large_bare() -> Binary<JsonMedia> {
+    bare(&large())
+}
+
 /// Mounts this group's handlers.
 pub(crate) fn mount(router: Router<App>) -> Router<App> {
-    router.mount(kynos::routes![binary, negotiated, created])
+    router.mount(kynos::routes![
+        binary,
+        negotiated,
+        created,
+        json_small_bare,
+        json_large_bare
+    ])
 }

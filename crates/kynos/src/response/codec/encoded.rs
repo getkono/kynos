@@ -22,7 +22,7 @@ impl<C: BodyCodec<T>, T> IntoResponse for Encoded<C, T> {
         }
 
         with_content_type(
-            Body::from_bytes(writer.into_bytes()),
+            Body::from_bytes(writer.finish()),
             HeaderValue::from_static(C::MEDIA_TYPE),
         )
     }
