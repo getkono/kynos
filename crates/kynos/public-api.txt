@@ -6019,6 +6019,7 @@ pub fn kynos::router::Router<C, P, I, S>::group<GP: kynos::middleware::catch_pan
 pub fn kynos::router::Router<C, P, I, S>::guard_first(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::info(self, kynos_openapi::model::info::Info) -> Self
 pub fn kynos::router::Router<C, P, I, S>::intercept<N: kynos::middleware::Interceptor<C>>(self, N) -> kynos::router::Router<C, P, kynos::middleware::stack::Cons<N, I>, S> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<N, C>, S: kynos::middleware::stack::CompatibleWith<N, C>
+pub fn kynos::router::Router<C, P, I, S>::map_openapi(self, impl core::ops::function::Fn(&mut kynos_openapi::model::document::Document) + core::marker::Send + core::marker::Sync + 'static) -> Self
 pub fn kynos::router::Router<C, P, I, S>::merge<OP: kynos::middleware::catch_panic::PanicPolicy, OI, OS>(self, kynos::router::Router<C, OP, OI, OS>) -> kynos::router::Router<C, P, I, <OI as kynos::middleware::stack::Flatten<<OS as kynos::middleware::stack::Flatten<S>>::Out>>::Out> where C: 'static, OS: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>, OI: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<<OS as kynos::middleware::stack::Flatten<S>>::Out>
 pub fn kynos::router::Router<C, P, I, S>::method_not_allowed(self, kynos::router::policy::FallbackPolicy) -> Self
 pub fn kynos::router::Router<C, P, I, S>::mount<E: kynos::router::endpoint::set::IntoEndpoints<C>>(self, E) -> kynos::router::Router<C, P, I, <<E as kynos::router::endpoint::set::IntoEndpoints>::Stacks as kynos::middleware::stack::Flatten<S>>::Out> where C: 'static, <E as kynos::router::endpoint::set::IntoEndpoints>::Stacks: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>
@@ -8077,6 +8078,9 @@ pub kynos::router::error::RouterError::DuplicateOperation::method: kynos_openapi
 pub kynos::router::error::RouterError::DuplicateOperation::path: alloc::string::String
 pub kynos::router::error::RouterError::InvalidRoutePattern
 pub kynos::router::error::RouterError::InvalidRoutePattern::pattern: alloc::string::String
+pub kynos::router::error::RouterError::MappedOperation
+pub kynos::router::error::RouterError::MappedOperation::method: kynos_openapi::model::paths::method::Method
+pub kynos::router::error::RouterError::MappedOperation::path: alloc::string::String
 pub kynos::router::error::RouterError::NestedRouterPolicy
 pub kynos::router::error::RouterError::NestedRouterPolicy::policy: &'static str
 pub kynos::router::error::RouterError::RouteConflict
@@ -8277,6 +8281,7 @@ pub fn kynos::router::Router<C, P, I, S>::group<GP: kynos::middleware::catch_pan
 pub fn kynos::router::Router<C, P, I, S>::guard_first(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::info(self, kynos_openapi::model::info::Info) -> Self
 pub fn kynos::router::Router<C, P, I, S>::intercept<N: kynos::middleware::Interceptor<C>>(self, N) -> kynos::router::Router<C, P, kynos::middleware::stack::Cons<N, I>, S> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<N, C>, S: kynos::middleware::stack::CompatibleWith<N, C>
+pub fn kynos::router::Router<C, P, I, S>::map_openapi(self, impl core::ops::function::Fn(&mut kynos_openapi::model::document::Document) + core::marker::Send + core::marker::Sync + 'static) -> Self
 pub fn kynos::router::Router<C, P, I, S>::merge<OP: kynos::middleware::catch_panic::PanicPolicy, OI, OS>(self, kynos::router::Router<C, OP, OI, OS>) -> kynos::router::Router<C, P, I, <OI as kynos::middleware::stack::Flatten<<OS as kynos::middleware::stack::Flatten<S>>::Out>>::Out> where C: 'static, OS: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>, OI: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<<OS as kynos::middleware::stack::Flatten<S>>::Out>
 pub fn kynos::router::Router<C, P, I, S>::method_not_allowed(self, kynos::router::policy::FallbackPolicy) -> Self
 pub fn kynos::router::Router<C, P, I, S>::mount<E: kynos::router::endpoint::set::IntoEndpoints<C>>(self, E) -> kynos::router::Router<C, P, I, <<E as kynos::router::endpoint::set::IntoEndpoints>::Stacks as kynos::middleware::stack::Flatten<S>>::Out> where C: 'static, <E as kynos::router::endpoint::set::IntoEndpoints>::Stacks: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>
@@ -10440,6 +10445,7 @@ pub fn kynos::router::Router<C, P, I, S>::group<GP: kynos::middleware::catch_pan
 pub fn kynos::router::Router<C, P, I, S>::guard_first(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::info(self, kynos_openapi::model::info::Info) -> Self
 pub fn kynos::router::Router<C, P, I, S>::intercept<N: kynos::middleware::Interceptor<C>>(self, N) -> kynos::router::Router<C, P, kynos::middleware::stack::Cons<N, I>, S> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<N, C>, S: kynos::middleware::stack::CompatibleWith<N, C>
+pub fn kynos::router::Router<C, P, I, S>::map_openapi(self, impl core::ops::function::Fn(&mut kynos_openapi::model::document::Document) + core::marker::Send + core::marker::Sync + 'static) -> Self
 pub fn kynos::router::Router<C, P, I, S>::merge<OP: kynos::middleware::catch_panic::PanicPolicy, OI, OS>(self, kynos::router::Router<C, OP, OI, OS>) -> kynos::router::Router<C, P, I, <OI as kynos::middleware::stack::Flatten<<OS as kynos::middleware::stack::Flatten<S>>::Out>>::Out> where C: 'static, OS: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>, OI: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<<OS as kynos::middleware::stack::Flatten<S>>::Out>
 pub fn kynos::router::Router<C, P, I, S>::method_not_allowed(self, kynos::router::policy::FallbackPolicy) -> Self
 pub fn kynos::router::Router<C, P, I, S>::mount<E: kynos::router::endpoint::set::IntoEndpoints<C>>(self, E) -> kynos::router::Router<C, P, I, <<E as kynos::router::endpoint::set::IntoEndpoints>::Stacks as kynos::middleware::stack::Flatten<S>>::Out> where C: 'static, <E as kynos::router::endpoint::set::IntoEndpoints>::Stacks: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>
