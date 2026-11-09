@@ -119,6 +119,7 @@ pub struct Server<C> {
     #[cfg(feature = "tls")]
     tls: Option<TlsConfig>,
     shutdown: Option<Shutdown>,
+    deregistration_delay: Duration,
     shutdown_timeout: Duration,
     max_connections: NonZeroUsize,
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -163,6 +164,7 @@ impl<C: 'static> Server<C> {
             #[cfg(feature = "tls")]
             tls: None,
             shutdown: None,
+            deregistration_delay: Duration::ZERO,
             shutdown_timeout: Server::DEFAULT_SHUTDOWN_TIMEOUT,
             max_connections: Server::DEFAULT_MAX_CONNECTIONS,
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -271,7 +273,9 @@ impl<C: 'static> Server<C> {
         self
     }
 
-    /// Stops accepting when `shutdown` resolves, then drains active requests.
+    /// Stops accepting when `shutdown` resolves, or once the
+    /// [`deregistration_delay`](Self::deregistration_delay) after it has
+    /// passed, then drains active requests.
     ///
     /// A connection upgraded by a `Router::upgrade_unchecked` route leaves the
     /// drain once its `101` is written: the socket then belongs to the
@@ -279,6 +283,54 @@ impl<C: 'static> Server<C> {
     #[must_use]
     pub fn graceful_shutdown(mut self, shutdown: Shutdown) -> Self {
         self.shutdown = Some(shutdown);
+        self
+    }
+
+    /// Keeps accepting and serving for `delay` after the first shutdown
+    /// signal, reporting not-ready through
+    /// [`Readiness`](lifecycle::Readiness) all the while, and only then stops
+    /// accepting and drains. The default is [`Duration::ZERO`], which drains
+    /// at the signal.
+    ///
+    /// A load balancer takes a while to stop routing to an instance once told
+    /// to — Kubernetes removing it from a Service's endpoints, or a target
+    /// group deregistering it — and a connection that arrives in that window
+    /// is refused by a server that has already closed its listeners. Set
+    /// `delay` to that propagation time, and answer the readiness probe from
+    /// [`Readiness`](lifecycle::Readiness), so the instance leaves rotation
+    /// while it still serves. [`Draining`](lifecycle::Draining) does not
+    /// resolve until the delay has passed.
+    ///
+    /// The [`shutdown_timeout`](Self::shutdown_timeout) bounds the drain
+    /// alone and starts when the delay ends, so the two add up: fit their sum
+    /// in the orchestrator's termination window. A second signal from a
+    /// built-in trigger forces shutdown during the delay as during the drain,
+    /// and a listener that stops accepting ends the delay and drains at once.
+    /// Without a [`graceful_shutdown`](Self::graceful_shutdown) trigger there
+    /// is no signal to delay.
+    ///
+    /// ```
+    /// use std::time::Duration;
+    ///
+    /// use kynos::{
+    ///     Router,
+    ///     server::{Server, shutdown::Shutdown},
+    /// };
+    ///
+    /// # fn main() -> kynos::Result<()> {
+    /// let server = Server::new(Router::<()>::new().build(())?)
+    ///     .bind(("0.0.0.0", 3000))
+    ///     .graceful_shutdown(Shutdown::signals())
+    ///     // Five seconds out of rotation, then up to twenty to drain.
+    ///     .deregistration_delay(Duration::from_secs(5))
+    ///     .shutdown_timeout(Duration::from_secs(20));
+    /// # drop(server);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn deregistration_delay(mut self, delay: Duration) -> Self {
+        self.deregistration_delay = delay;
         self
     }
 
@@ -542,6 +594,7 @@ impl<C: 'static> Server<C> {
             socket: SocketOptions::new(self.tcp_keepalive),
             config,
             shutdown: self.shutdown,
+            deregistration_delay: self.deregistration_delay,
         })
     }
 
@@ -574,8 +627,8 @@ impl<C: 'static> Server<C> {
     /// HTTP/2 are told apart from the first bytes, as on a plaintext listener.
     ///
     /// Nothing that belongs to listeners applies: no address is bound, and the
-    /// connection limit, TCP keepalive, graceful shutdown and its timeout are
-    /// ignored. The connection ends when the client closes `io` or when the
+    /// connection limit, TCP keepalive, graceful shutdown, its deregistration
+    /// delay and its timeout are ignored. The connection ends when the client closes `io` or when the
     /// returned future is dropped, which closes it without draining. A
     /// connection upgraded by a `Router::upgrade_unchecked` route is the
     /// exception: the future resolves once the `101` is written, handing `io`
@@ -699,6 +752,7 @@ pub struct BoundServer<C> {
     socket: SocketOptions,
     config: TransportConfig,
     shutdown: Option<Shutdown>,
+    deregistration_delay: Duration,
 }
 
 #[derive(Clone, Debug)]
@@ -782,21 +836,40 @@ impl<C: 'static> BoundServer<C> {
         );
         tokio::pin!(shutdown);
 
-        let (root_error, force) = tokio::select! {
+        let (mut root_error, mut force, signalled) = tokio::select! {
             biased;
-            Some(error) = failures.recv() => (Some(error), Box::pin(pending()) as ForceFuture),
+            Some(error) = failures.recv() => (Some(error), Box::pin(pending()) as ForceFuture, false),
             completed = accept_loops.join_next() => match completed {
-                Some(Ok(())) | None => (None, Box::pin(pending()) as ForceFuture),
-                Some(Err(error)) => (Some(accept_loop_failure(&error)), Box::pin(pending()) as ForceFuture),
+                Some(Ok(())) | None => (None, Box::pin(pending()) as ForceFuture, false),
+                Some(Err(error)) => (Some(accept_loop_failure(&error)), Box::pin(pending()) as ForceFuture, false),
             },
             signal = &mut shutdown => match signal {
-                Ok(force) => (None, force),
-                Err(error) => (Some(ServerError::Signal(error)), Box::pin(pending()) as ForceFuture),
+                Ok(force) => (None, force, true),
+                Err(error) => (Some(ServerError::Signal(error)), Box::pin(pending()) as ForceFuture, false),
             },
         };
 
+        // Only a signal is delayed: a failed listener drains at once.
+        let mut forced = false;
+        if signalled && !self.deregistration_delay.is_zero() {
+            lifecycle_sender.send_replace(Lifecycle::Deregistering);
+            tokio::select! {
+                biased;
+                () = &mut force => forced = true,
+                Some(error) = failures.recv() => root_error = Some(error),
+                completed = accept_loops.join_next() => {
+                    if let Some(Err(error)) = completed {
+                        root_error = Some(accept_loop_failure(&error));
+                    }
+                }
+                () = tokio::time::sleep(self.deregistration_delay) => {}
+            }
+        }
+
         lifecycle_sender.send_replace(Lifecycle::Draining);
-        let drain = if self.config.shutdown_timeout.is_zero() {
+        let drain = if forced {
+            Drain::Forced
+        } else if self.config.shutdown_timeout.is_zero() {
             Drain::TimedOut
         } else {
             let wait_for_accept_loops = async { while accept_loops.join_next().await.is_some() {} };
