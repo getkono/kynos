@@ -6082,6 +6082,9 @@ impl<S, R> core::marker::UnsafeUnpin for kynos::security::auth::Scoped<S, R> whe
 impl<S, R> core::panic::unwind_safe::RefUnwindSafe for kynos::security::auth::Scoped<S, R> where <S as kynos::security::requirement::Requirement>::Credential: core::panic::unwind_safe::RefUnwindSafe, R: core::panic::unwind_safe::RefUnwindSafe
 impl<S, R> core::panic::unwind_safe::UnwindSafe for kynos::security::auth::Scoped<S, R> where <S as kynos::security::requirement::Requirement>::Credential: core::panic::unwind_safe::UnwindSafe, R: core::panic::unwind_safe::UnwindSafe
 pub struct kynos::prelude::Server<C>
+impl kynos::server::Server<()>
+pub const kynos::server::Server<()>::DEFAULT_MAX_CONNECTIONS: core::num::nonzero::NonZeroUsize
+pub const kynos::server::Server<()>::DEFAULT_SHUTDOWN_TIMEOUT: core::time::Duration
 impl<C: 'static> kynos::server::Server<C>
 pub fn kynos::server::Server<C>::accept_shards(self, core::num::nonzero::NonZeroUsize) -> Self
 pub fn kynos::server::Server<C>::bind(self, impl core::convert::Into<kynos::server::address::BindAddress>) -> Self
@@ -9844,6 +9847,7 @@ pub kynos::server::protocol::http1::Http1Config::keep_alive: bool
 pub kynos::server::protocol::http1::Http1Config::max_buffer_size: usize
 pub kynos::server::protocol::http1::Http1Config::max_headers: usize
 impl kynos::server::protocol::http1::Http1Config
+pub const kynos::server::protocol::http1::Http1Config::DEFAULT_HEADER_READ_TIMEOUT: core::time::Duration
 pub fn kynos::server::protocol::http1::Http1Config::header_read_timeout(self, core::option::Option<core::time::Duration>) -> Self
 pub fn kynos::server::protocol::http1::Http1Config::keep_alive(self, bool) -> Self
 pub fn kynos::server::protocol::http1::Http1Config::max_buffer_size(self, usize) -> Self
@@ -10118,6 +10122,9 @@ impl<C> core::marker::UnsafeUnpin for kynos::server::BoundServer<C>
 impl<C> !core::panic::unwind_safe::RefUnwindSafe for kynos::server::BoundServer<C>
 impl<C> !core::panic::unwind_safe::UnwindSafe for kynos::server::BoundServer<C>
 pub struct kynos::server::Server<C>
+impl kynos::server::Server<()>
+pub const kynos::server::Server<()>::DEFAULT_MAX_CONNECTIONS: core::num::nonzero::NonZeroUsize
+pub const kynos::server::Server<()>::DEFAULT_SHUTDOWN_TIMEOUT: core::time::Duration
 impl<C: 'static> kynos::server::Server<C>
 pub fn kynos::server::Server<C>::accept_shards(self, core::num::nonzero::NonZeroUsize) -> Self
 pub fn kynos::server::Server<C>::bind(self, impl core::convert::Into<kynos::server::address::BindAddress>) -> Self
