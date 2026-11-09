@@ -242,6 +242,15 @@ async fn a_zstd_window_past_eight_megabytes_is_malformed() {
             "window descriptor {descriptor:#04x}"
         );
     }
+
+    // The bound outlives the first frame: each later one is read afresh.
+    let mut frames = zstd_frame(0x68).to_vec();
+    frames.extend_from_slice(&zstd_frame(0x88));
+    assert_eq!(
+        decode(Coding::Zstd, Bytes::from(frames), 1024).await,
+        Err(Reason::Malformed),
+        "a 2^27 window after an 8 MB one"
+    );
 }
 
 /// RFC 9659 section 3: a decoder MUST support an 8 MB window, so one decodes
