@@ -454,15 +454,15 @@ async fn a_body_limit_on_one_operation_raises_it_past_the_default() {
 mod multipart {
     use kynos::{
         Router, Schema,
-        extract::body::multipart::{FilePart, MultipartForm},
+        error::rejection::BodyRejection,
+        extract::body::multipart::{
+            Admission, FilePart, FromMultipart, MultipartForm, TEXT_PART_LIMIT,
+        },
         middleware::limits::body_size::BodySize,
         response::status::NoContent,
     };
 
     use super::{DEFAULT_LIMIT, StatusCode, support};
-
-    /// 408 KiB, the default HTTP/1 head buffer.
-    const TEXT_PART_LIMIT: u64 = 8 * 1024 + 100 * 4 * 1024;
 
     /// The one field the bodies below carry: a file, so only the body's limit
     /// bounds it.
@@ -515,6 +515,31 @@ mod multipart {
         );
         body.extend_from_slice(b"\r\n--x--\r\n");
         body
+    }
+
+    /// A declared part is read under its element's `FromPart::LIMIT`, and a
+    /// part no field declares is dropped, or in a closed form refused, before
+    /// it is read.
+    #[test]
+    fn the_derive_admits_each_part_by_its_field() {
+        assert_eq!(
+            Captioned::admit("caption").expect("a declared part"),
+            Admission::Read {
+                limit: Some(TEXT_PART_LIMIT)
+            }
+        );
+        assert_eq!(
+            Captioned::admit("image").expect("a declared part"),
+            Admission::Read { limit: None }
+        );
+        assert_eq!(
+            Captioned::admit("other").expect("an open form"),
+            Admission::Skip
+        );
+        assert!(matches!(
+            Closed::admit("other"),
+            Err(BodyRejection::Schema { .. })
+        ));
     }
 
     #[tokio::test]

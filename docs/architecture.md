@@ -172,7 +172,10 @@ by naming the row X displaces rather than by arguing that X is good.
   closes rather than defers. `httparse` has a second dependent: with
   `multipart` on, `multer` parses each part's headers with it, from request
   body bytes a reverse proxy does not parse. Not naming it still holds; it is
-  not reached through `hyper` alone.
+  not reached through `hyper` alone. `multer` is named only in the multipart
+  module, so an advisory reached only on that second path is fixed within the
+  multipart codec's auxiliary row; the field a part carries is still decided by
+  Kynos's own `Content-Disposition` reader, never by `multer`'s.
 - A new dependency arrives feature-gated and additive, never as a widening of
   the default build. A corollary that has already bitten: a capability in the
   *default* build cannot be gated, so it cannot take a dependency at all —

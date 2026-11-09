@@ -385,7 +385,7 @@ rewrite.
 | --- | --- | --- | --- |
 | reliability | No extractor panics on any input | `cargo-fuzz` targets in [`fuzz/`](../fuzz/), one per hand-written parser of untrusted input, each asserting no panic and a round trip or an independent oracle where one exists; [`fuzz.yml`](../.github/workflows/fuzz.yml) searches each nightly, and [`full.yml`](../.github/workflows/full.yml) replays the committed [`fuzz/corpus/`](../fuzz/corpus/) | `partial`: a release fails only on a committed input, while a new one fails the nightly job, which no merge waits on; and the targets are Kynos's own parsers, not every extractor — a codec whose parser is a dependency's (`serde_json`, `serde_html_form`, `multer`'s part framing, `prost`) is not fuzzed here. [`testing.md`](testing.md#fuzzing) lists them |
 | security | Header count and header-list size are bounded by default | The driver is configured from [`Http1Config`](../crates/kynos/src/server/protocol/http1.rs) and [`Http2Config`](../crates/kynos/src/server/protocol/http2.rs) on every connection; [`server/tests.rs`](../crates/kynos/src/server/tests.rs) asserts over a real socket that a head at the default and at a configured HTTP/1 header count is served and one field more is answered 431, and that an HTTP/2 header list past the default and past a configured size is answered 431 on its stream | `enforced` |
-| security | Every buffered request body is capped by default, the cap is declared wherever a body is read, and a mounted limit replaces it per operation | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) asserting a 2 MiB default refuses at default+1 counted and declared, accepts at the default, declares its 413 only on operations reading a body, is raised past itself by a `BodySize` on one operation, and holds for multipart; a mounted limit asserted at limit+1 and refused from a declared length before the body is read; [`json_lines/tests.rs`](../crates/kynos/src/extract/body/json_lines/tests.rs) bounding each streamed record | `enforced`; `planned` for the allocation bound |
+| security | Every buffered request body is capped by default, the cap is declared wherever a body is read, and a mounted limit replaces it per operation | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) asserting a 2 MiB default refuses at default+1 counted and declared, accepts at the default, declares its 413 only on operations reading a body, is raised past itself by a `BodySize` on one operation, and holds for multipart, where a text part is also refused past `TEXT_PART_LIMIT` under any body limit and a closed form refuses an undeclared part before reading it; a mounted limit asserted at limit+1 and refused from a declared length before the body is read; [`json_lines/tests.rs`](../crates/kynos/src/extract/body/json_lines/tests.rs) bounding each streamed record | `enforced`; `planned` for the allocation bound |
 | security | Per-IP connection caps | none yet — see below | `planned` |
 | correctness | Every Rust type expressible as a handler input has a valid JSON Schema projection | Property test over a macro fixture set, validated against 3.1 and 3.2 validators | `planned` |
 | dx | Every rejection produces an error naming the field and the fix | `trybuild` UI tests, plus [`error/rejection/tests.rs`](../crates/kynos/src/error/rejection/tests.rs) counting every variant and asserting each renders a sentence rather than a debug dump | `enforced` for the counting; `planned` for the snapshots |
@@ -422,7 +422,25 @@ extractor that holds a body in memory reads it under
 past it with `BodyRejection::TooLarge`: a declared `Content-Length` from the
 head, a length-less body on the frame that passes it. Multipart bounds its
 whole stream through multer's own count, and a streamed JSON body bounds each
-record rather than the body, since a record is all it holds. A `BodySize`
+record rather than the body, since a record is all it holds.
+
+**Multipart bounds each part by its field, from Kynos's reading of its name.**
+`FromMultipart::admit` decides a part from the name `disposition` read, before
+any of its octets: the derive drops a part no field declares unread, refuses one
+under `deny_unknown_fields` as a 422, and reads a declared one under its
+element's `FromPart::LIMIT`. A `ParamValue` part is read under
+`TEXT_PART_LIMIT`, 408 KiB, and past it is the 413; a `FilePart` or `Bytes` part
+is bounded by the body alone. `multer`'s `allowed_fields` and per-field limits
+would do the same work keyed by its own name scan, which is not quote-aware and
+is why `disposition` exists, so a part could be admitted under one name and
+read as another. The figure is not a measurement, and [Thresholds](#thresholds)
+does not ask for one: it is a refusal bound, set where a parameter already
+stands. A text part becomes its field through the `FromStr` a parameter does,
+and a parameter arrives in a head a default HTTP/1 connection holds to the same
+408 KiB, so a form field costs its parser no more than its parameter twin could.
+It does not move with a `BodySize`: a large text value is a `Bytes` field the
+handler parses. No part-count bound is set: an undeclared part is no longer
+held, and a declared repeated field holds what the body limit lets it. A `BodySize`
 covering an operation replaces the figure for it in either direction, and so
 does `Decompression`, whose limit is the route's; each hands it on as a
 crate-private request extension, so nothing that does not declare its own 413

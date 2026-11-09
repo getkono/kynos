@@ -47,6 +47,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let bindings = declared.iter().map(Declared::binding);
     let closed = serde_key_span(&input.attrs, &["deny_unknown_fields"]).is_some();
     let dispatch = dispatch(&declared, closed);
+    let admit = admit(&declared, closed);
     let reads = declared.iter().map(Declared::read);
     let idents = declared.iter().map(Declared::ident);
     let writes = declared.iter().map(Declared::write);
@@ -79,6 +80,8 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 #(#reads)*
                 ::core::result::Result::Ok(Self { #(#idents),* })
             }
+
+            #admit
         }
 
         impl #impl_generics ::kynos::response::codec::multipart::IntoMultipart
@@ -95,26 +98,72 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
     })
 }
 
+/// The 422 a closed form answers a part named `name` with, which no field
+/// declares.
+fn undeclared_refusal(name: &TokenStream2) -> TokenStream2 {
+    quote! {
+        ::kynos::error::rejection::BodyRejection::Schema {
+            failures: ::core::iter::FromIterator::from_iter([(
+                ::std::string::ToString::to_string(
+                    &::kynos::schema::constraints::Pointer::root().member(#name),
+                ),
+                <::std::string::String as ::core::convert::From<_>>::from(
+                    "the part is not declared",
+                ),
+            )]),
+            // A part no field reads is the form's shape, not a bound.
+            type_uri: ::core::option::Option::None,
+        }
+    }
+}
+
+/// `FromMultipart::admit`: a declared part is read under its element's
+/// `FromPart::LIMIT`, and any other is dropped unread or, in a `closed` form,
+/// refused before it is read.
+fn admit(declared: &[Declared<'_>], closed: bool) -> TokenStream2 {
+    let otherwise = if closed {
+        let refusal = undeclared_refusal(&quote!(name));
+        quote!(::core::result::Result::Err(#refusal))
+    } else {
+        quote!(::core::result::Result::Ok(
+            ::kynos::extract::body::multipart::Admission::Skip
+        ))
+    };
+    let arms = declared.iter().map(|field| {
+        let name = field.name;
+        let element = field.element;
+        let limit = quote_spanned! {field.field.ty.span()=>
+            <#element as ::kynos::extract::body::multipart::FromPart>::LIMIT
+        };
+        quote! {
+            #name => ::core::result::Result::Ok(
+                ::kynos::extract::body::multipart::Admission::Read { limit: #limit },
+            ),
+        }
+    });
+    quote! {
+        fn admit(
+            name: &::core::primitive::str,
+        ) -> ::core::result::Result<
+            ::kynos::extract::body::multipart::Admission,
+            ::kynos::error::rejection::BodyRejection,
+        > {
+            match name {
+                #(#arms)*
+                _ => #otherwise,
+            }
+        }
+    }
+}
+
 /// Sorts one part into the field that declared its name, else drops it or,
 /// in a `closed` form, refuses it; an `if` chain, since a `match` on
 /// `part.name` could not move `part`.
 fn dispatch(declared: &[Declared<'_>], closed: bool) -> TokenStream2 {
     let undeclared = if closed {
+        let refusal = undeclared_refusal(&quote!(&part.name));
         quote! {{
-            return ::core::result::Result::Err(
-                ::kynos::error::rejection::BodyRejection::Schema {
-                    failures: ::core::iter::FromIterator::from_iter([(
-                        ::std::string::ToString::to_string(
-                            &::kynos::schema::constraints::Pointer::root().member(&part.name),
-                        ),
-                        <::std::string::String as ::core::convert::From<_>>::from(
-                            "the part is not declared",
-                        ),
-                    )]),
-                    // A part no field reads is the form's shape, not a bound.
-                    type_uri: ::core::option::Option::None,
-                },
-            );
+            return ::core::result::Result::Err(#refusal);
         }}
     } else {
         quote!({})
