@@ -1,6 +1,7 @@
 //! The listeners and their accept loop.
 //!
-//! One task per listener. It holds the connection semaphore, backs off on a
+//! One task per listener, and so one per accept shard, since each shard is a
+//! listener of its own. It holds the connection semaphore, backs off on a
 //! failing accept, and stops accepting the moment the lifecycle leaves
 //! `Running` or its backoff gives up — then waits for its own connections
 //! rather than the server waiting for all of them at once.

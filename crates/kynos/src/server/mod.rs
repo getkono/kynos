@@ -52,6 +52,8 @@ use tokio::{
 
 #[cfg(unix)]
 use crate::extract::connection::TransportAddress;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use crate::server::address::bind_shards;
 use crate::{
     error::Result,
     router::service::Service,
@@ -95,6 +97,8 @@ pub struct Server<C> {
     shutdown: Option<Shutdown>,
     shutdown_timeout: Duration,
     max_connections: NonZeroUsize,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    accept_shards: NonZeroUsize,
     tcp_keepalive: Option<TcpKeepAlive>,
     request_body_idle_timeout: Option<Duration>,
 }
@@ -119,6 +123,8 @@ impl<C: 'static> Server<C> {
             shutdown_timeout: DEFAULT_SHUTDOWN_TIMEOUT,
             max_connections: NonZeroUsize::new(DEFAULT_CONNECTION_LIMIT)
                 .expect("the default connection limit is non-zero"),
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            accept_shards: NonZeroUsize::MIN,
             tcp_keepalive: Some(TcpKeepAlive::default()),
             request_body_idle_timeout: Some(DEFAULT_REQUEST_BODY_IDLE_TIMEOUT),
         }
@@ -257,6 +263,58 @@ impl<C: 'static> Server<C> {
         self
     }
 
+    /// Accepts each address [`bind`](Self::bind) resolves to on `shards`
+    /// sockets, each with its own accept task, rather than on one. The default
+    /// is one.
+    ///
+    /// Every shard is bound with `SO_REUSEPORT`, and the kernel spreads new
+    /// connections across the shards by a hash of each connection's addresses,
+    /// so accepting is no longer serialised behind one task. That pays only
+    /// where accepting is the bottleneck, such as many short-lived connections
+    /// a second on a host with many cores: measure before raising it.
+    /// [`max_connections`](Self::max_connections) still caps connections
+    /// across every shard.
+    ///
+    /// A port of 0 is chosen once, by the first shard, and the rest bind the
+    /// same one, so [`BoundServer::local_addrs`] lists each address once. A
+    /// shard is a listener like any other: one that stops accepting stops the
+    /// server, as [`BoundServer::serve`] says. While serving, any socket of the same user that sets `SO_REUSEPORT` may bind the same
+    /// port and take a share of its connections.
+    ///
+    /// Linux and Android only, whose kernels balance connections across
+    /// `SO_REUSEPORT` sockets.
+    ///
+    /// [`prepare`](Self::prepare) refuses more than one shard alongside a
+    /// listener added through [`listener`](Self::listener) or
+    /// [`unix_listener`](Self::unix_listener): a socket bound elsewhere cannot
+    /// be sharded once bound. To shard one, bind each of its sockets with
+    /// `SO_REUSEPORT` and hand each over through [`listener`](Self::listener),
+    /// leaving this at one; every listener has its own accept task.
+    ///
+    /// ```
+    /// use std::num::NonZeroUsize;
+    ///
+    /// use kynos::{Router, server::Server};
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> kynos::Result<()> {
+    /// let shards = NonZeroUsize::new(4).expect("four is non-zero");
+    /// let bound = Server::new(Router::<()>::new().build(())?)
+    ///     .bind(("127.0.0.1", 0))
+    ///     .accept_shards(shards)
+    ///     .prepare()
+    ///     .await?;
+    /// assert_eq!(bound.local_addrs().len(), 1);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[must_use]
+    pub fn accept_shards(mut self, shards: NonZeroUsize) -> Self {
+        self.accept_shards = shards;
+        self
+    }
+
     /// Sets TCP keepalive on the sockets a TCP listener accepts, or `None` to
     /// leave it off.
     ///
@@ -318,6 +376,9 @@ impl<C: 'static> Server<C> {
     ///   Unix, [`ServerError::InvalidConfiguration`] too when a Unix domain
     ///   socket listener was added, checked with the settings so no socket is
     ///   bound.
+    /// - On Linux and Android, [`ServerError::InvalidConfiguration`] when
+    ///   more than one [`accept_shards`](Self::accept_shards) meets a listener
+    ///   bound elsewhere, checked with the settings so no socket is bound.
     /// - [`ServerError::Listener`], [`ServerError::Resolve`] or
     ///   [`ServerError::Bind`] when a supplied listener, an address, or a
     ///   resolved address fails; every listener already bound is dropped.
@@ -329,6 +390,15 @@ impl<C: 'static> Server<C> {
         if self.tls.is_some() && !self.unix_listeners.is_empty() {
             return Err(ServerError::InvalidConfiguration(
                 "TLS is not served over a Unix socket listener",
+            )
+            .into());
+        }
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if self.accept_shards > NonZeroUsize::MIN
+            && !(self.listeners.is_empty() && self.unix_listeners.is_empty())
+        {
+            return Err(ServerError::InvalidConfiguration(
+                "accept_shards shards only the addresses the server binds, so no listener bound elsewhere may be added",
             )
             .into());
         }
@@ -355,22 +425,33 @@ impl<C: 'static> Server<C> {
         }
 
         let mut listeners = Vec::new();
+        let mut local_addrs = Vec::new();
         for listener in self.listeners {
             listener
                 .set_nonblocking(true)
                 .map_err(ServerError::Listener)?;
             let listener = TcpListener::from_std(listener).map_err(ServerError::Listener)?;
-            listener.local_addr().map_err(ServerError::Listener)?;
-            listeners.push(listener);
+            let local_addr = listener.local_addr().map_err(ServerError::Listener)?;
+            listeners.push((listener, local_addr));
+            local_addrs.push(local_addr);
         }
 
         for configured in self.addresses {
             let resolved = resolve(&configured).await?;
             for address in resolved {
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                if self.accept_shards > NonZeroUsize::MIN {
+                    let (local_addr, shards) = bind_shards(address, self.accept_shards)?;
+                    listeners.extend(shards.into_iter().map(|shard| (shard, local_addr)));
+                    local_addrs.push(local_addr);
+                    continue;
+                }
                 let listener = TcpListener::bind(address)
                     .await
                     .map_err(|source| ServerError::Bind { address, source })?;
-                listeners.push(listener);
+                let local_addr = listener.local_addr().map_err(ServerError::Listener)?;
+                listeners.push((listener, local_addr));
+                local_addrs.push(local_addr);
             }
         }
 
@@ -393,12 +474,6 @@ impl<C: 'static> Server<C> {
         if unlistened {
             return Err(ServerError::NoListeners.into());
         }
-
-        let local_addrs = listeners
-            .iter()
-            .map(TcpListener::local_addr)
-            .collect::<io::Result<Vec<_>>>()
-            .map_err(ServerError::Listener)?;
 
         Ok(BoundServer {
             service,
@@ -556,7 +631,9 @@ impl<C: 'static> Server<C> {
 #[derive(Debug)]
 pub struct BoundServer<C> {
     service: Arc<Service<C>>,
-    listeners: Vec<TcpListener>,
+    /// Every TCP listener and its address, one per accept shard.
+    listeners: Vec<(TcpListener, SocketAddr)>,
+    /// One per address, however many shards accept on it.
     local_addrs: Vec<SocketAddr>,
     #[cfg(unix)]
     unix_listeners: Vec<(tokio::net::UnixListener, TransportAddress)>,
@@ -581,7 +658,8 @@ pub(in crate::server) struct TransportConfig {
 
 impl<C: 'static> BoundServer<C> {
     /// The addresses the TCP listeners are bound to, including
-    /// operating-system-selected ports.
+    /// operating-system-selected ports, each listed once however many accept
+    /// shards share it.
     ///
     /// A Unix domain socket listener is not listed: its caller bound it, and
     /// so already knows its address.
@@ -611,7 +689,7 @@ impl<C: 'static> BoundServer<C> {
         let (failure_sender, mut failures) = mpsc::unbounded_channel();
         let mut accept_loops = JoinSet::new();
 
-        for (listener, local_addr) in self.listeners.into_iter().zip(self.local_addrs) {
+        for (listener, local_addr) in self.listeners {
             let acceptor = TcpAcceptor {
                 listener,
                 local_addr,
