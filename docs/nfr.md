@@ -699,7 +699,7 @@ been read.
 
 Nor does it count an interceptor, since none is mounted by default.
 `Compression`, where mounted, adds an encoder to each streamed or past-1 MiB
-response in flight: up to 3.1 MiB for zstd and 36.5 MiB for brotli, which
+response in flight: up to 3.0 MiB for zstd and 11.2 MiB for brotli, which
 [`middleware.md`](middleware.md) measures and turns into a sizing rule.
 
 So a 512 MiB container serving defaults can be exhausted by HTTP/1 heads from
