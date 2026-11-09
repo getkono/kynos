@@ -58,7 +58,7 @@ fuzz_target!(|data: &[u8]| {
         .into_iter()
         .map(|record| match record {
             Ok(value) => Expected::Value(value),
-            Err(BodyRejection::Schema { failures }) => {
+            Err(BodyRejection::Schema { failures, .. }) => {
                 let pointers: Vec<String> = failures.into_keys().collect();
                 assert_eq!(pointers.len(), 1, "one pointer per record: {pointers:?}");
                 Expected::Schema(pointers.into_iter().next().unwrap_or_default())
