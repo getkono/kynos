@@ -673,8 +673,10 @@ where someone mounting a cap will meet it.
 
 What a client can make the server hold at the default limits, per connection
 and at the 10,000 `max_connections` allows. Every figure is arithmetic from
-defaults [`server/tests.rs`](../crates/kynos/src/server/tests.rs) pins, not a
-measurement, and every one is a floor of the worst case rather than a ceiling:
+the defaults — `Http1Config`'s and `Http2Config`'s, which
+[`server/tests.rs`](../crates/kynos/src/server/tests.rs) pins whole, and the
+body extractors' `DEFAULT_LIMIT` — not a measurement, and every one is a floor
+of the worst case rather than a ceiling:
 
 | What the client sends | Held per connection | At 10,000 connections |
 | --- | --- | --- |
