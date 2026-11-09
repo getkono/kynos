@@ -1805,11 +1805,13 @@ mod compression {
     /// the encoder never runs and the column is the identity row.
     ///
     /// **1 KiB and 16 KiB cost the same in every coding.** The encoder's output
-    /// is drained 8 KiB at a time into a growing `BytesMut`, and both bodies
-    /// compress to less than one of those chunks — so the two differ in what
-    /// the encoder reads and not in what the drain allocates. The delta moves
+    /// is drained 8 KiB at a time into a `BytesMut`, and both bodies compress
+    /// to less than one of those chunks — so the two differ in what the
+    /// encoder reads and not in what the drain allocates. The delta moves
     /// again at 256 KiB, which is the reason four sizes are measured rather
-    /// than two.
+    /// than two. There the output is presized to a quarter of the body, which
+    /// spares the drain most of the doublings it took to grow from its first
+    /// chunk.
     ///
     /// **Brotli costs the most, by its encoder's state.** One of each engaged
     /// row's allocations is the box an encode is read in, which every coding
@@ -1817,9 +1819,9 @@ mod compression {
     /// response it declines; the rest is what each encoder allocates.
     const RECORDED: [(&str, [usize; 4]); 4] = [
         ("identity", [9, 9, 9, 9]),
-        ("gzip", [9, 23, 23, 27]),
-        ("br", [9, 37, 37, 43]),
-        ("zstd", [9, 17, 17, 20]),
+        ("gzip", [9, 23, 23, 24]),
+        ("br", [9, 37, 37, 41]),
+        ("zstd", [9, 17, 17, 18]),
     ];
 
     /// The same operation at 16 KiB, asked for as `identity`, with no

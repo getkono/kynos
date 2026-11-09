@@ -192,13 +192,42 @@ pub fn json_records(
     read
 }
 
-/// Runs `future`, which reads only memory and so never waits, to its end.
+/// Runs `future`, which reads only memory, to its end.
+///
+/// A codec past `YIELD_ABOVE` octets returns `Pending` after waking itself,
+/// so that is polled again; `Pending` with no wake would never end, and
+/// panics.
 #[cfg(any(feature = "compression", all(feature = "json", feature = "openapi32")))]
 fn ready<F: std::future::Future>(future: F) -> F::Output {
-    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
-    match std::pin::pin!(future).poll(&mut context) {
-        std::task::Poll::Ready(output) => output,
-        std::task::Poll::Pending => panic!("a read of memory waited"),
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    struct Woken(AtomicBool);
+
+    impl std::task::Wake for Woken {
+        fn wake(self: Arc<Self>) {
+            self.wake_by_ref();
+        }
+
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.store(true, Ordering::Relaxed);
+        }
+    }
+
+    let woken = Arc::new(Woken(AtomicBool::new(false)));
+    let waker = std::task::Waker::from(Arc::clone(&woken));
+    let mut context = std::task::Context::from_waker(&waker);
+    let mut future = std::pin::pin!(future);
+    loop {
+        match future.as_mut().poll(&mut context) {
+            std::task::Poll::Ready(output) => return output,
+            std::task::Poll::Pending => assert!(
+                woken.0.swap(false, Ordering::Relaxed),
+                "a read of memory waited"
+            ),
+        }
     }
 }
 
