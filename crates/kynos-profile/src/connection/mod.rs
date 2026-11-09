@@ -134,7 +134,7 @@ pub(crate) const CONNECTION: &[Connected] = &[
             request: || get("/plaintext"),
             expected: StatusCode::OK,
             driver: Driver::Runtime,
-            base: Some("conn-h1-second"),
+            base: None,
         },
         wire: Wire::Http1Kept,
     },

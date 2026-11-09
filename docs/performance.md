@@ -482,7 +482,9 @@ connection, and the region ends once the next is answered and the server
 waits for another head, so the client reads that response inside it, into a
 buffer reserved in setup, adding instructions and no block. It is what a
 request costs on a long-lived connection, which no row that closes its
-connection reaches.
+connection reaches. It names no base: it differs from `connection_h1.second`
+in its request's place on the connection, in keeping the connection open, and
+in its client's reads, so their difference is no one variable's cost.
 
 ### Why the measurements live beside the features
 
