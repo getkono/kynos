@@ -27,11 +27,13 @@
 //!   formatted and what is filtered stays with the application — which is why
 //!   the first statement in `main` is the one line here another deployment would
 //!   certainly write differently.
-//! * **Two events per request, not a span.** An observer is told when a request
-//!   arrives and when a response leaves and holds nothing in between, so there
-//!   is no suspension point to keep a span entered across. Nothing is lost: the
-//!   pair carries what a span would have, and the closing event adds `status`
-//!   and `latency`.
+//! * **Two events per request from the observer; the span is an interceptor.**
+//!   An observer is told when a request arrives and when a response leaves and
+//!   holds nothing in between, so there is no suspension point to keep a span
+//!   entered across. `Trace::span` is the same configuration as an interceptor
+//!   that declares nothing: it holds one `request` span across the rest of the
+//!   chain, so the handler's own events carry the operation and the request's
+//!   identifier without logging either.
 //! * **The records are keyed by the operation, not by the request path.**
 //!   [`Route::path`] is the same string that appears as the `paths` key, so a
 //!   field's cardinality is bounded by the number of operations rather than by
@@ -179,15 +181,16 @@ impl<C> Observer<C> for Slo {
 
 /// Lists users.
 ///
-/// The body logs with a plain `tracing::info!`, which inherits whatever span
-/// the application established rather than anything `Trace` opened -- an
-/// observer opens none. So this line carries `count` and nothing else: the
-/// operation, the matched path and the status are on `Trace`'s own two events,
-/// which bracket it. Tying them together is the subscriber's job, and an
-/// application-opened span is where that would come from. There is still no
-/// per-endpoint logging to attach and nothing to forget.
+/// The body logs with a plain `tracing::info!`, which inherits the `request`
+/// span `Trace::span` opened: the line carries `count`, and the subscriber
+/// prints the span's `method`, `matched_path`, `operation_id` and `request_id`
+/// before it. `user_id` was declared on the span empty, so whatever admits the
+/// caller -- here the handler itself -- records it once and every later line
+/// in the request carries it. There is still no per-endpoint logging to attach
+/// and nothing to forget.
 #[kynos::get("/users")]
 async fn list_users() -> NoContent {
+    tracing::Span::current().record("user_id", "u-1");
     tracing::info!(count = 0, "listed users");
     NoContent
 }
@@ -216,14 +219,21 @@ async fn main() -> kynos::Result<()> {
         )
         .init();
 
+    // Mounted first so a response carries an identifier at all. Where it
+    // lands is worth seeing: `trust_client(false)` means an inbound header
+    // is not believed, so `request_id` is empty on the arrival event even
+    // when the client sent one, and carries the minted value on the
+    // departure one. `Random` mints identifiers that stay unique across
+    // restarts and a fleet, so a log aggregator can join on them.
+    let request_id = RequestId::new().trust_client(false).source(Random::new());
+    // Mounted after `RequestId`, so the span opens with the identifier it
+    // minted rather than whatever the client sent, and closes with `status`
+    // and `latency_ms`.
+    let span = Trace::new().correlating(&request_id).span(&["user_id"]);
+
     let router = Router::<()>::new()
-        // Mounted first so a response carries an identifier at all. Where it
-        // lands is worth seeing: `trust_client(false)` means an inbound header
-        // is not believed, so `request_id` is empty on the arrival event even
-        // when the client sent one, and carries the minted value on the
-        // departure one. `Random` mints identifiers that stay unique across
-        // restarts and a fleet, so a log aggregator can join on them.
-        .intercept(RequestId::new().trust_client(false).source(Random::new()))
+        .intercept(request_id)
+        .intercept(span)
         // What Kynos ships: two events per request -- one on arrival and one
         // on departure -- carrying `method`, `matched_path`, `operation_id` and
         // `request_id`, with `status` and `latency` on the closing one. The
