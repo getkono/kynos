@@ -7394,3 +7394,62 @@ mod name_instantiation {
         }
     }
 }
+
+mod protobuf {
+    use crate::derive::protobuf::expand_inner;
+
+    fn expand(declaration: proc_macro2::TokenStream) -> String {
+        expand_inner(&syn::parse2(declaration).expect("the case itself must parse"))
+            .expect("the derive refuses nothing")
+            .to_string()
+    }
+
+    /// `prost` is named where the type's `prost` derive names it: `::prost`
+    /// unless a `prost_path` among its `prost` arguments points elsewhere.
+    #[test]
+    fn prost_is_named_by_the_path_prosts_own_derive_uses() {
+        let plain = expand(quote::quote!(
+            struct Reading {
+                #[prost(uint64, tag = "1")]
+                value: u64,
+            }
+        ));
+        let reexported = expand(quote::quote!(
+            #[prost(skip_debug)]
+            #[prost(prost_path = "::tonic_prost::prost")]
+            struct Reading {
+                #[prost(uint64, tag = "1")]
+                value: u64,
+            }
+        ));
+
+        for (expanded, prost) in [
+            (&plain, ":: prost"),
+            (&reexported, ":: tonic_prost :: prost"),
+        ] {
+            for method in ["decode", "encode_to_vec"] {
+                let call = format!("< Self as {prost} :: Message > :: {method}");
+                assert!(expanded.contains(&call), "{call:?} in {expanded}");
+            }
+        }
+        assert!(!reexported.contains("as :: prost ::"), "{reexported}");
+    }
+
+    /// A `prost` attribute `prost`'s derive cannot read is left to its
+    /// diagnostic: no impl is emitted to fail a second time beside it.
+    #[test]
+    fn an_unreadable_prost_path_emits_nothing() {
+        for declaration in [
+            quote::quote!(
+                #[prost(prost_path = "not a path")]
+                struct Reading;
+            ),
+            quote::quote!(
+                #[prost(prost_path = )]
+                struct Reading;
+            ),
+        ] {
+            assert_eq!(expand(declaration), "");
+        }
+    }
+}

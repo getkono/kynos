@@ -125,6 +125,22 @@ struct Sample {
     series: String,
 }
 
+/// `prost` reached through a re-export under another name, as a renamed
+/// dependency or another crate's re-export names it: both derives follow the
+/// one `prost_path`.
+#[cfg(feature = "protobuf")]
+mod reexporting {
+    pub(crate) use prost as protobuf;
+}
+
+#[cfg(feature = "protobuf")]
+#[derive(Clone, PartialEq, prost::Message, kynos::ProtobufMessage)]
+#[prost(prost_path = "crate::reexporting::protobuf")]
+struct ReexportedSample {
+    #[prost(uint64, tag = "1")]
+    value: u64,
+}
+
 #[derive(Tag)]
 #[tag(name = "users", description = "Managing user accounts")]
 struct Users;
@@ -276,6 +292,8 @@ fn every_derive_implements_its_trait() {
     implements_multipart::<Upload>();
     #[cfg(feature = "protobuf")]
     implements_protobuf_message::<Sample>();
+    #[cfg(feature = "protobuf")]
+    implements_protobuf_message::<ReexportedSample>();
     implements_tag::<Users>();
     implements_tag::<Admin>();
     implements_security_scheme::<BearerAuth>();
