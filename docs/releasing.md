@@ -19,7 +19,8 @@ This is a runbook. Nothing here is normative for implementation work.
    publishes to crates.io, and it is the one whose CI does not start itself.
    That CI is the whole of `full.yml`, which an ordinary pull request skips:
    the release is where the other platforms, the feature matrix, coverage, the
-   MSRV and packaging are held, behind its `Comprehensive` check.
+   MSRV, packaging and the API's compatibility at every feature are held,
+   behind its `Comprehensive` check.
 3. **Record what the release costs.** `Cost trend` fails on the release pull
    request unless the baselines under `crates/kynos/cost/` are exactly what
    this release measures, including the floor every feature's delta is taken
@@ -77,8 +78,10 @@ is what `cargo publish` will do. CI runs the same task in `full.yml`'s
 - **cargo-semver-checks compares default features only**, and treats any failure
   it cannot parse as "compatible". The verdict in the release pull request body
   is evidence for a reviewer, not a gate. [`nfr.md`](nfr.md) records it as
-  `partial` for this reason; `mise run semver:check` covers `--all-features` on
-  the release pull request.
+  `partial` for this reason. `full.yml`'s `API compatibility` job is the gate:
+  `mise run semver:check` at `--all-features`, which fails the release pull
+  request on a break its version does not declare. Clearing it means a `!`
+  commit on `master`, so release-plz bumps the minor, or removing the break.
 - **The changelog skips `refactor`, `test`, `style`, `build`, `ci` and `chore`.**
   A breaking commit of any of those types is still listed: the `!` parser in
   `release-plz.toml` matches it before any skip rule does, and it has to, because
