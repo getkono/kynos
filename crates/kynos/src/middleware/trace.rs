@@ -37,23 +37,43 @@ use crate::{http, middleware::Observer, router::operation::Route};
 /// Choosing a subscriber remains the application's decision.
 #[derive(Clone, Debug)]
 pub struct Trace {
-    level: tracing::Level,
+    level: Level,
     recorded: &'static [&'static str],
     correlation: &'static [&'static str],
     trust_client: bool,
 }
 
+/// The level [`Trace`] emits its events at.
+///
+/// Kynos's own type rather than `tracing`'s, so that no `tracing` item appears
+/// in a public signature. Each variant is emitted as the `tracing` level of
+/// the same name, which is what a subscriber filters on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Level {
+    /// Emitted as `tracing`'s `TRACE`.
+    Trace,
+    /// Emitted as `tracing`'s `DEBUG`.
+    Debug,
+    /// Emitted as `tracing`'s `INFO`.
+    Info,
+    /// Emitted as `tracing`'s `WARN`.
+    Warn,
+    /// Emitted as `tracing`'s `ERROR`.
+    Error,
+}
+
 /// Emits an event at a level chosen at run time.
 ///
-/// `tracing`'s macros bake the level into a `static` callsite.
+/// `tracing`'s macros bake the level into a `static` callsite, so each
+/// [`Level`] gets its own.
 macro_rules! emit {
     ($level:expr, $($event:tt)*) => {
         match $level {
-            tracing::Level::ERROR => tracing::event!(tracing::Level::ERROR, $($event)*),
-            tracing::Level::WARN => tracing::event!(tracing::Level::WARN, $($event)*),
-            tracing::Level::INFO => tracing::event!(tracing::Level::INFO, $($event)*),
-            tracing::Level::DEBUG => tracing::event!(tracing::Level::DEBUG, $($event)*),
-            tracing::Level::TRACE => tracing::event!(tracing::Level::TRACE, $($event)*),
+            Level::Error => tracing::event!(tracing::Level::ERROR, $($event)*),
+            Level::Warn => tracing::event!(tracing::Level::WARN, $($event)*),
+            Level::Info => tracing::event!(tracing::Level::INFO, $($event)*),
+            Level::Debug => tracing::event!(tracing::Level::DEBUG, $($event)*),
+            Level::Trace => tracing::event!(tracing::Level::TRACE, $($event)*),
         }
     };
 }
@@ -79,11 +99,11 @@ pub const REDACTED: &[&str] = &[
 ];
 
 impl Trace {
-    /// Traces every operation at `INFO`.
+    /// Traces every operation at [`Level::Info`].
     #[must_use]
     pub fn new() -> Self {
         Self {
-            level: tracing::Level::INFO,
+            level: Level::Info,
             recorded: &[],
             correlation: DEFAULT_CORRELATION,
             trust_client: false,
@@ -100,11 +120,14 @@ impl Trace {
     /// [`RequestId::new`](super::request_id::RequestId::new).
     ///
     /// ```
-    /// use kynos::middleware::{request_id::RequestId, trace::Trace};
+    /// use kynos::middleware::{
+    ///     request_id::RequestId,
+    ///     trace::{Level, Trace},
+    /// };
     ///
     /// let request_id = RequestId::new().trust_client(true);
     /// let trace = Trace::new()
-    ///     .level(tracing::Level::DEBUG)
+    ///     .level(Level::Debug)
     ///     .correlating(&request_id);
     /// # let _ = trace;
     /// ```
@@ -146,7 +169,7 @@ impl Trace {
     ///
     /// A panic is always reported at `ERROR`, whatever this says.
     #[must_use]
-    pub fn level(mut self, level: tracing::Level) -> Self {
+    pub fn level(mut self, level: Level) -> Self {
         self.level = level;
         self
     }

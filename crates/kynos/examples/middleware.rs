@@ -61,7 +61,7 @@ use kynos::{
         },
         request_id::{CorrelationHeaders, Counter, RequestId, RequestIdSource},
         security_headers::{SecurityHeaders, StrictTransportSecurity},
-        trace::Trace,
+        trace::{Level, Trace},
     },
     openapi::Method,
     prelude::*,
@@ -329,7 +329,7 @@ async fn main() -> kynos::Result<()> {
     // `RequestId::new()` and looks for an `x-request-id` no response carries.
     // Both are bound here because `intercept` takes `request_id` by value.
     let trace = Trace::new()
-        .level(tracing::Level::INFO)
+        .level(Level::Info)
         .correlating(&request_id)
         .record_headers(&["x-correlation-id", "x-tenant"]);
     let router = Router::<()>::new()
