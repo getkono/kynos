@@ -7464,3 +7464,516 @@ mod http2_target {
         assert_eq!(target("/users/42", None), "http://localhost/users/42");
     }
 }
+
+/// The PROXY protocol header a trusted proxy opens a connection with: what the
+/// reader admits and refuses, and what a listener does with it.
+mod proxy_protocol {
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+
+    use crate::{
+        http::forwarded::{ProxyHeader, TrustedProxies},
+        server::proxy_protocol::{Header, Malformed, Parsed, parse},
+    };
+
+    const V2_SIGNATURE: &[u8] = b"\r\n\r\n\0\r\nQUIT\n";
+
+    /// A version 2 header with `command`, `family` and `block`, its length the
+    /// block's.
+    fn v2(command: u8, family: u8, block: &[u8]) -> Vec<u8> {
+        let mut header = V2_SIGNATURE.to_vec();
+        header.push(0x20 | command);
+        header.push(family);
+        let length = u16::try_from(block.len()).expect("a block fits the length field");
+        header.extend_from_slice(&length.to_be_bytes());
+        header.extend_from_slice(block);
+        header
+    }
+
+    /// An IPv4 address block: source, destination, then their ports.
+    fn ipv4_block(source: SocketAddr) -> Vec<u8> {
+        let SocketAddr::V4(source) = source else {
+            panic!("an IPv4 source");
+        };
+        let mut block = source.ip().octets().to_vec();
+        block.extend_from_slice(&[192, 0, 2, 2]);
+        block.extend_from_slice(&source.port().to_be_bytes());
+        block.extend_from_slice(&443_u16.to_be_bytes());
+        block
+    }
+
+    /// An IPv6 address block: source, destination, then their ports.
+    fn ipv6_block(source: SocketAddr) -> Vec<u8> {
+        let SocketAddr::V6(source) = source else {
+            panic!("an IPv6 source");
+        };
+        let mut block = source.ip().octets().to_vec();
+        block.extend_from_slice(&Ipv6Addr::LOCALHOST.octets());
+        block.extend_from_slice(&source.port().to_be_bytes());
+        block.extend_from_slice(&443_u16.to_be_bytes());
+        block
+    }
+
+    fn client_v4() -> SocketAddr {
+        SocketAddr::new(Ipv4Addr::new(203, 0, 113, 7).into(), 4711)
+    }
+
+    fn client_v6() -> SocketAddr {
+        SocketAddr::new(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1).into(), 50000)
+    }
+
+    /// `header` reads whole, as `expected`, with what follows it left unread;
+    /// and every prefix of it reads as a header still arriving, so a reader
+    /// fed one byte at a time reaches the same answer.
+    #[track_caller]
+    fn admits(header: &[u8], expected: Header) {
+        let mut connection = header.to_vec();
+        connection.extend_from_slice(b"GET / HTTP/1.1\r\n");
+        assert_eq!(
+            parse(&connection),
+            Ok(Parsed::Complete(expected, header.len())),
+            "{header:?}"
+        );
+        for end in 0..header.len() {
+            assert_eq!(
+                parse(&header[..end]),
+                Ok(Parsed::Partial),
+                "{:?}",
+                &header[..end]
+            );
+        }
+    }
+
+    #[track_caller]
+    fn refuses(connection: &[u8]) {
+        assert_eq!(parse(connection), Err(Malformed), "{connection:?}");
+    }
+
+    #[test]
+    fn version_1_names_an_ipv4_or_ipv6_client() {
+        admits(
+            b"PROXY TCP4 203.0.113.7 192.0.2.2 4711 443\r\n",
+            Header::Relayed(client_v4()),
+        );
+        admits(
+            b"PROXY TCP6 2001:db8::1 ::1 50000 443\r\n",
+            Header::Relayed(client_v6()),
+        );
+        admits(
+            b"PROXY TCP4 0.0.0.0 255.255.255.255 0 65535\r\n",
+            Header::Relayed(SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 0)),
+        );
+    }
+
+    /// `UNKNOWN` names no client, and the specification says to ignore
+    /// whatever follows it on the line.
+    #[test]
+    fn version_1_unknown_leaves_the_socket_peer() {
+        admits(b"PROXY UNKNOWN\r\n", Header::Local);
+        admits(
+            b"PROXY UNKNOWN ffff:f...f:ffff ffff:f...f:ffff 65535 65535\r\n",
+            Header::Local,
+        );
+    }
+
+    /// The longest line the specification allows is 107 bytes, its CRLF
+    /// included; a reader may give up on one longer.
+    #[test]
+    fn version_1_is_at_most_107_bytes() {
+        let mut longest = b"PROXY UNKNOWN ".to_vec();
+        longest.resize(105, b'x');
+        longest.extend_from_slice(b"\r\n");
+        admits(&longest, Header::Local);
+
+        let mut longer = b"PROXY UNKNOWN ".to_vec();
+        longer.resize(106, b'x');
+        longer.extend_from_slice(b"\r\n");
+        refuses(&longer);
+        // Refused once the 107th byte arrives without a line end.
+        refuses(&longer[..107]);
+        assert_eq!(parse(&longer[..106]), Ok(Parsed::Partial));
+    }
+
+    #[test]
+    fn version_1_refuses_what_the_grammar_does_not_admit() {
+        for line in [
+            &b"PROXY TCP4 203.0.113.7 192.0.2.2 4711 443\n"[..],
+            b"PROXY TCP4 203.0.113.7 192.0.2.2 4711 443\r\r\n",
+            b"PROXY TCP4 203.0.113.7 192.0.2.2 4711\r\n",
+            b"PROXY TCP4 203.0.113.7 192.0.2.2 4711 443 80\r\n",
+            b"PROXY TCP4 203.0.113.7  192.0.2.2 4711 443\r\n",
+            b"PROXY TCP4 203.0.113.7 192.0.2.2 4711 443 \r\n",
+            b"PROXY TCP4 203.0.113.7 192.0.2.2 +4711 443\r\n",
+            b"PROXY TCP4 203.0.113.7 192.0.2.2 65536 443\r\n",
+            b"PROXY TCP4 203.0.113.7 192.0.2.2 4711 -1\r\n",
+            b"PROXY TCP4 203.0.113.7 192.0.2.2  443\r\n",
+            b"PROXY TCP4 203.0.113.07 192.0.2.2 4711 443\r\n",
+            b"PROXY TCP4 2001:db8::1 ::1 50000 443\r\n",
+            b"PROXY TCP6 203.0.113.7 192.0.2.2 4711 443\r\n",
+            b"PROXY TCP4 203.0.113.7 not-an-address 4711 443\r\n",
+            b"PROXY TCP5 203.0.113.7 192.0.2.2 4711 443\r\n",
+            b"PROXY tcp4 203.0.113.7 192.0.2.2 4711 443\r\n",
+            b"PROXY UNKNOWNx\r\n",
+            b"PROXY \r\n",
+            b"proxy TCP4 203.0.113.7 192.0.2.2 4711 443\r\n",
+            b"PROXY  TCP4 203.0.113.7 192.0.2.2 4711 443\r\n",
+        ] {
+            refuses(line);
+        }
+    }
+
+    #[test]
+    fn version_2_names_an_ipv4_or_ipv6_client_over_either_transport() {
+        let ipv4 = ipv4_block(client_v4());
+        let ipv6 = ipv6_block(client_v6());
+        admits(&v2(1, 0x11, &ipv4), Header::Relayed(client_v4()));
+        admits(&v2(1, 0x12, &ipv4), Header::Relayed(client_v4()));
+        admits(&v2(1, 0x21, &ipv6), Header::Relayed(client_v6()));
+        admits(&v2(1, 0x22, &ipv6), Header::Relayed(client_v6()));
+    }
+
+    /// TLVs follow the address block inside the stated length, and are read
+    /// past.
+    #[test]
+    fn version_2_reads_past_its_tlvs() {
+        let mut block = ipv4_block(client_v4());
+        // PP2_TYPE_AUTHORITY, then PP2_TYPE_NOOP.
+        block.extend_from_slice(&[0x02, 0x00, 0x07]);
+        block.extend_from_slice(b"example");
+        block.extend_from_slice(&[0x04, 0x00, 0x00]);
+        admits(&v2(1, 0x11, &block), Header::Relayed(client_v4()));
+    }
+
+    /// `LOCAL` is the proxy's own connection, whatever family it states, and
+    /// an unspecified or Unix family names no client this server reports.
+    #[test]
+    fn version_2_without_an_ip_client_leaves_the_socket_peer() {
+        admits(&v2(0, 0x00, &[]), Header::Local);
+        admits(&v2(0, 0x11, &ipv4_block(client_v4())), Header::Local);
+        admits(&v2(0, 0xff, b"anything"), Header::Local);
+        admits(&v2(1, 0x00, &[]), Header::Local);
+        admits(&v2(1, 0x31, &[0; 216]), Header::Local);
+        admits(&v2(1, 0x32, &[0; 216]), Header::Local);
+    }
+
+    #[test]
+    fn version_2_refuses_what_the_specification_does_not_list() {
+        let block = ipv4_block(client_v4());
+        let mut version_1 = v2(1, 0x11, &block);
+        version_1[12] = 0x11;
+        refuses(&version_1);
+        let mut version_3 = v2(1, 0x11, &block);
+        version_3[12] = 0x31;
+        refuses(&version_3);
+        refuses(&v2(2, 0x11, &block));
+        refuses(&v2(0x0f, 0x11, &block));
+        for family in [0x01, 0x02, 0x10, 0x13, 0x20, 0x41] {
+            refuses(&v2(1, family, &block));
+        }
+    }
+
+    /// A block shorter than its family's addresses is refused at the fixed
+    /// part, before the rest is waited for.
+    #[test]
+    fn version_2_refuses_a_block_too_short_for_its_family() {
+        refuses(&v2(1, 0x11, &[0; 11])[..16]);
+        refuses(&v2(1, 0x21, &[0; 35])[..16]);
+        refuses(&v2(1, 0x31, &[0; 215])[..16]);
+        assert_eq!(
+            parse(&v2(1, 0x11, &[0; 12])[..16]),
+            Ok(Parsed::Partial),
+            "a long enough block is waited for"
+        );
+    }
+
+    /// A connection that opens with anything else is refused at the first
+    /// byte that tells, not at the deadline.
+    #[test]
+    fn a_connection_without_a_header_is_refused_as_soon_as_it_tells() {
+        refuses(b"G");
+        refuses(b"GET / HTTP/1.1\r\n");
+        refuses(b"PRI * HTTP/2.0\r\n");
+        refuses(b"\x16\x03\x01");
+        refuses(b"PX");
+        refuses(b"\r\n\r\nX");
+        assert_eq!(parse(b""), Ok(Parsed::Partial));
+        assert_eq!(parse(b"P"), Ok(Parsed::Partial));
+        assert_eq!(parse(b"\r\n\r\n\0"), Ok(Parsed::Partial));
+    }
+
+    /// A peer is trusted to send a header exactly where the policy believes
+    /// it: by address or network, in either IPv4 form, or as any nearest hop.
+    /// The field the policy names plays no part.
+    #[test]
+    fn a_peer_is_trusted_where_the_policy_believes_it() {
+        let balancer: IpAddr = Ipv4Addr::new(10, 0, 0, 5).into();
+        let mapped: IpAddr = Ipv4Addr::new(10, 0, 0, 5).to_ipv6_mapped().into();
+        let other: IpAddr = Ipv4Addr::new(192, 0, 2, 9).into();
+
+        let network = "10.0.0.0/8".parse().expect("a network");
+        let networks = TrustedProxies::networks(ProxyHeader::XForwarded, [network]);
+        assert!(networks.trusts_peer(balancer));
+        assert!(networks.trusts_peer(mapped));
+        assert!(!networks.trusts_peer(other));
+
+        let addresses = TrustedProxies::addresses(ProxyHeader::Forwarded, [balancer]);
+        assert!(addresses.trusts_peer(mapped));
+        assert!(!addresses.trusts_peer(other));
+
+        assert!(TrustedProxies::hops(ProxyHeader::Forwarded, 1).trusts_peer(other));
+        assert!(TrustedProxies::everyone(ProxyHeader::Forwarded).trusts_peer(other));
+        assert!(!TrustedProxies::hops(ProxyHeader::Forwarded, 0).trusts_peer(other));
+        assert!(!TrustedProxies::none().trusts_peer(balancer));
+        let unnamed = TrustedProxies::none().and_addresses([balancer]);
+        assert!(!unnamed.trusts_peer(balancer));
+    }
+
+    /// A service answering with the peer its connection reports.
+    #[cfg(feature = "http1")]
+    fn peer_service() -> crate::router::service::Service<()> {
+        use crate::extract::connection::{Connection, TransportAddress};
+
+        let document = kynos_openapi::Document::new(
+            kynos_openapi::SpecVersion::V3_1,
+            kynos_openapi::Info::new("Test", "1"),
+        );
+        crate::router::service::Service::new(document, |request: crate::http::Request| {
+            let peer = match request
+                .extensions()
+                .get::<Connection>()
+                .expect("a served request carries its connection")
+                .peer()
+            {
+                TransportAddress::Ip(address) => address.to_string(),
+                other => format!("{other:?}"),
+            };
+            async move {
+                crate::http::Response::new(crate::http::body::Body::from_bytes(bytes::Bytes::from(
+                    peer,
+                )))
+            }
+        })
+    }
+
+    /// A loopback server requiring a header from the peers `trusted` believes,
+    /// with `configure` applied before it prepares.
+    #[cfg(feature = "http1")]
+    async fn proxied_server(
+        trusted: TrustedProxies,
+        configure: impl FnOnce(crate::server::Server<()>) -> crate::server::Server<()>,
+    ) -> (
+        SocketAddr,
+        tokio::sync::oneshot::Sender<()>,
+        tokio::task::JoinHandle<crate::error::Result<()>>,
+    ) {
+        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let bound = configure(crate::server::Server::new(peer_service()))
+            .bind((Ipv4Addr::LOCALHOST, 0))
+            .proxy_protocol(trusted)
+            .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+                let _ = shutdown_receiver.await;
+            }))
+            .prepare()
+            .await
+            .expect("loopback listener binds");
+        let address = bound.local_addrs()[0];
+        (address, shutdown_sender, tokio::spawn(bound.serve()))
+    }
+
+    /// The loopback client, which every test here connects from.
+    #[cfg(feature = "http1")]
+    fn loopback() -> TrustedProxies {
+        TrustedProxies::addresses(ProxyHeader::Forwarded, [Ipv4Addr::LOCALHOST.into()])
+    }
+
+    /// Sends `preface` and one request in a single write, so the request
+    /// arrives in the read that takes the header, and reads until the server
+    /// closes. A connection closed unanswered reads as empty.
+    #[cfg(feature = "http1")]
+    async fn exchange(address: SocketAddr, preface: Vec<u8>) -> String {
+        use std::io::{Read as _, Write as _};
+
+        tokio::task::spawn_blocking(move || {
+            let mut stream = std::net::TcpStream::connect(address).expect("server accepts");
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+                .expect("a read timeout sets");
+            let mut sent = preface;
+            sent.extend_from_slice(
+                b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+            );
+            stream.write_all(&sent).expect("request writes");
+            let mut response = Vec::new();
+            // A close with the request unread may reset rather than end.
+            let _ = stream.read_to_end(&mut response);
+            String::from_utf8(response).expect("a text response")
+        })
+        .await
+        .expect("blocking client joins")
+    }
+
+    #[cfg(feature = "http1")]
+    async fn stop(
+        shutdown: tokio::sync::oneshot::Sender<()>,
+        server: tokio::task::JoinHandle<crate::error::Result<()>>,
+    ) {
+        let _ = shutdown.send(());
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
+    }
+
+    /// The client a trusted proxy's header names is the connection's peer,
+    /// in either version, and the request that follows it in the same read
+    /// is served.
+    #[cfg(feature = "http1")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_trusted_proxys_header_names_the_peer() {
+        let (address, shutdown, server) = proxied_server(loopback(), |server| server).await;
+
+        let v1 = b"PROXY TCP4 203.0.113.7 192.0.2.2 4711 443\r\n".to_vec();
+        let response = exchange(address, v1).await;
+        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+        assert!(response.ends_with("\r\n\r\n203.0.113.7:4711"), "{response}");
+
+        let mut block = ipv6_block(client_v6());
+        block.extend_from_slice(&[0x04, 0x00, 0x02, 0, 0]);
+        let response = exchange(address, v2(1, 0x21, &block)).await;
+        assert!(
+            response.ends_with("\r\n\r\n[2001:db8::1]:50000"),
+            "{response}"
+        );
+
+        stop(shutdown, server).await;
+    }
+
+    /// A header naming no client, such as a load balancer's health check,
+    /// leaves the socket's own peer.
+    #[cfg(feature = "http1")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_header_naming_no_client_leaves_the_socket_peer() {
+        let (address, shutdown, server) = proxied_server(loopback(), |server| server).await;
+
+        for preface in [v2(0, 0x00, &[]), b"PROXY UNKNOWN\r\n".to_vec()] {
+            let response = exchange(address, preface).await;
+            assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+            assert!(response.contains("\r\n\r\n127.0.0.1:"), "{response}");
+        }
+
+        stop(shutdown, server).await;
+    }
+
+    /// A trusted peer that sends no header, or a malformed one, is closed
+    /// unanswered.
+    #[cfg(feature = "http1")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_trusted_peer_without_a_valid_header_is_closed_unanswered() {
+        let (address, shutdown, server) = proxied_server(loopback(), |server| server).await;
+
+        for preface in [
+            Vec::new(),
+            b"PROXY TCP4 203.0.113.7 192.0.2.2 4711\r\n".to_vec(),
+            v2(2, 0x11, &ipv4_block(client_v4())),
+        ] {
+            assert_eq!(exchange(address, preface).await, "");
+        }
+
+        stop(shutdown, server).await;
+    }
+
+    /// A peer the policy does not believe is served as it is: no header is
+    /// read from it, so one it sends is the start of a malformed request
+    /// rather than a claim to another address.
+    #[cfg(feature = "http1")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_untrusted_peer_is_served_without_a_header() {
+        let elsewhere =
+            TrustedProxies::addresses(ProxyHeader::Forwarded, [Ipv4Addr::new(192, 0, 2, 1).into()]);
+        let (address, shutdown, server) = proxied_server(elsewhere, |server| server).await;
+
+        let response = exchange(address, Vec::new()).await;
+        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+        assert!(response.contains("\r\n\r\n127.0.0.1:"), "{response}");
+
+        let v1 = b"PROXY TCP4 203.0.113.7 192.0.2.2 4711 443\r\n".to_vec();
+        let response = exchange(address, v1).await;
+        assert!(response.starts_with("HTTP/1.1 400"), "{response}");
+
+        stop(shutdown, server).await;
+    }
+
+    /// A trusted peer that sends nothing is closed at the first-head
+    /// deadline, which the header is read within.
+    #[cfg(feature = "http1")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_silent_trusted_peer_is_closed_at_the_first_head_deadline() {
+        use std::{io::Read as _, time::Duration};
+
+        let (address, shutdown, server) = proxied_server(loopback(), |server| {
+            server.http1(
+                crate::server::protocol::http1::Http1Config::default()
+                    .header_read_timeout(Some(Duration::from_millis(200))),
+            )
+        })
+        .await;
+
+        let (read, elapsed) = tokio::task::spawn_blocking(move || {
+            let mut stream = std::net::TcpStream::connect(address).expect("server accepts");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .expect("a read timeout sets");
+            let started = std::time::Instant::now();
+            let mut response = Vec::new();
+            let read = stream.read_to_end(&mut response).map(|_| response);
+            (read, started.elapsed())
+        })
+        .await
+        .expect("blocking client joins");
+
+        assert_eq!(read.expect("the server closes the connection"), b"");
+        assert!(elapsed < Duration::from_secs(5), "closed after {elapsed:?}");
+
+        stop(shutdown, server).await;
+    }
+
+    /// The header precedes the TLS handshake, and the client it names is the
+    /// peer of the requests served over it.
+    #[cfg(all(feature = "tls", feature = "http1"))]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_header_precedes_the_tls_handshake() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        use tokio_rustls::rustls::pki_types::ServerName;
+
+        let (address, authority, shutdown, server) =
+            super::tls_server_with(peer_service(), |server| server.proxy_protocol(loopback()))
+                .await;
+
+        let mut stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("server accepts");
+        stream
+            .write_all(b"PROXY TCP4 203.0.113.7 192.0.2.2 4711 443\r\n")
+            .await
+            .expect("header writes");
+        let mut client = super::alpn_connector(authority.as_bytes(), &[b"http/1.1"])
+            .connect(
+                ServerName::try_from("localhost").expect("valid DNS name"),
+                stream,
+            )
+            .await
+            .expect("the handshake follows the header");
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .await
+            .expect("request writes");
+        let mut response = String::new();
+        client
+            .read_to_string(&mut response)
+            .await
+            .expect("response reads");
+
+        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+        assert!(response.ends_with("\r\n\r\n203.0.113.7:4711"), "{response}");
+        stop(shutdown, server).await;
+    }
+}
