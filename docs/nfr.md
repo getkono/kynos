@@ -58,11 +58,14 @@ Numeric ceilings are written `TBD` until they are measured.
 A guessed ceiling is worse than no ceiling: it either fails constantly and gets
 disabled, or passes trivially and hides the regression it was meant to catch.
 
-Four ceilings below stay `TBD` because the measurement that would set one is
+Three ceilings below stay `TBD` because the measurement that would set one is
 `kynos-bench`'s: route resolution p99 at a thousand registered operations,
-per-layer added p99, syscalls per request, and idle memory per connection at
-100k connections. A counted figure taken beside one of them would not set it: a
-`size_of` on per-connection state is the structural reading
+per-layer added p99, and idle memory per connection at 100k connections.
+Syscalls per request is `kynos-bench`'s too, but it is a count a trace reads
+exactly on any host, so its ceiling is set from a local trace. That trace
+counted `plaintext` alone, so the ceiling holds `plaintext` alone; every other
+scenario has none until a count sets one. A counted figure taken beside one of
+the three would not set it: a `size_of` on per-connection state is the structural reading
 [`performance.md`](performance.md#the-boundary) allocates to this repository,
 not the resident-memory reading at scale the ceiling names, and an allocation
 count at stack depth 0/4/8 is not a latency. Where a ceiling has a counted twin
@@ -651,7 +654,7 @@ which [`tests/panics.rs`](../crates/kynos/tests/panics.rs) holds.
 | reliability | On Unix, a soft open-file limit below what the connection cap needs is raised at startup as far as the hard limit, to the cap plus one per listener and 128 to spare, and a limit still short is warned of, naming the limit and what the cap needs | [`server/tests.rs`](../crates/kynos/src/server/tests.rs): the raise decided over soft and hard limits, unlimited ones included; `prepare` under a lowered soft limit raising it to exactly what the cap needs and warning of nothing; and under a lowered hard limit raising the soft limit to it and warning with both numbers | `enforced` on Linux; macOS, whose `setrlimit` refuses a soft limit past `OPEN_MAX` even under an unlimited hard one, warns rather than raising for a cap past about 10,100 |
 | reliability | HTTP/2 request-body flow control is released as the body is consumed, not as frames arrive | Load test streaming a large body to a slow consumer, asserting the receive window closes | `blocked-on-dependency` |
 | reliability | A streamed request body is decoded as it arrives rather than after it has been collected | [`extract/body/json_lines/tests.rs`](../crates/kynos/src/extract/body/json_lines/tests.rs) reading a body delivered one frame per byte, and every frame boundary of a fixed body | `enforced` for a body declaring a `Content-Length`; `by-design` under `BodySize` for a chunked one |
-| performance | Syscalls per request ≤ TBD | `strace -c` assertion over a fixed request count | `kynos-bench` |
+| performance | Syscalls per request ≤ 3 for `plaintext` on a kept-alive HTTP/1.1 connection, under either tokio runtime flavour: one `epoll_wait`, one `recvfrom` and one `writev`, the count hyper alone and axum 0.8 pay on the same path | A ptrace summary in `strace -c -f`'s shape over 200 and then 5,200 sequential requests on one connection, differenced so that start-up and shutdown cancel; counted on Linux 7.2 at master@56ebc0f6 under the current-thread and multi-thread runtimes, with Kynos 0.1.0, hyper's auto builder and axum 0.8 each counting the same | `kynos-bench` for asserting this ceiling on `plaintext`, which needs the harness to build Kynos from a revision ([getkono/kynos-bench#87](https://github.com/getkono/kynos-bench/issues/87)); the ceiling is the count above, and no other scenario carries one |
 | performance | Idle memory per connection ≤ TBD at 100k connections | Nightly load test measuring RSS delta | `kynos-bench` |
 | performance | The per-connection state Kynos itself holds inline stays within its recorded ceilings | [`extract/connection/tests.rs`](../crates/kynos/src/extract/connection/tests.rs), asserting `Connection` one pointer wide, narrower than `Inner`, and shared rather than copied on clone, `Inner` ≤ 192 from a measured 176 and `TlsIdentity` ≤ 128 from a measured 72; and [`server/tests.rs`](../crates/kynos/src/server/tests.rs), asserting the configuration cloned per accepted socket — `Http1Config` ≤ 64 from 40, `Http2Config` ≤ 128 from 96, `TransportConfig` ≤ 256 from 200. Every reading is a `size_of`, so what a certificate chain or a server name points at is counted by none of them | `enforced` for the ceilings; the relation to the smallest transport buffer is prose in the same doc comments, since it cannot fail while a ceiling holds |
 | compatibility | The I/O bound on `Server::serve_io` is the only public item naming a tokio type; a pre-bound listener is taken as the standard library's | `mise run api:check`, refusing a `tokio` path in any listed item but the one the `tokio` bullet of [`architecture.md`](architecture.md#what-an-upstream-fix-may-change)'s Public dependencies list names | `enforced` |
