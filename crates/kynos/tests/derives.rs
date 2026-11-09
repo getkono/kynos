@@ -5484,6 +5484,48 @@ enum ConflictSubset {
     Conflict,
 }
 
+/// A generic wider enum outside the module its subset is declared in.
+mod generic_wide {
+    use kynos::ApiError;
+
+    #[derive(Debug, thiserror::Error, ApiError)]
+    pub(crate) enum Wide<T: std::fmt::Debug> {
+        #[error("the chunk is gone")]
+        #[problem(status = 410)]
+        Gone(std::marker::PhantomData<T>),
+
+        #[error("the chunk is locked")]
+        #[problem(status = 423)]
+        Locked,
+    }
+}
+
+/// A subset of a generic wider enum named through a module path, which the
+/// conversion names its variants through in turbofish form.
+#[derive(Debug, ApiError)]
+#[problem(subset_of = generic_wide::Wide<u32>)]
+enum GoneSubset {
+    Gone(std::marker::PhantomData<u32>),
+}
+
+/// A subset naming its wider enum as a parenthesized type, not a path, which
+/// the conversion names its variants through as `Self`. The parentheses reach
+/// the generated `impl` headers, hence the module-wide `allow`.
+#[allow(unused_parens)]
+mod parenthesized {
+    use kynos::ApiError;
+
+    use super::ChunkRejection;
+
+    #[derive(Debug, ApiError)]
+    #[problem(subset_of = (ChunkRejection))]
+    pub(crate) enum ParenthesizedSubset {
+        Conflict,
+    }
+}
+
+use parenthesized::ParenthesizedSubset;
+
 /// The one of the two variants sharing 503 that sends no header group.
 #[derive(Debug, ApiError)]
 #[problem(subset_of = ChunkRejection)]
@@ -5686,6 +5728,40 @@ fn a_subset_converts_into_the_wider_enum() {
         HeadRejection::from(MissingChunk::NotFound { id: 5 }),
         HeadRejection::NotFound { id: 5 }
     ));
+}
+
+/// A wider enum named by a generic path in another module, or by a type that
+/// is not a path, converts and is described as one named by a plain path.
+#[test]
+fn a_subset_names_a_generic_or_parenthesized_wider_enum() {
+    use kynos::response::ShortCircuit;
+
+    assert!(matches!(
+        generic_wide::Wide::<u32>::from(GoneSubset::Gone(std::marker::PhantomData)),
+        generic_wide::Wide::Gone(_)
+    ));
+    assert_eq!(GoneSubset::STATUSES, &[410]);
+    let gone = emitted_responses::<GoneSubset>();
+    let described: Vec<&String> = gone
+        .as_object()
+        .expect("responses serialize as an object")
+        .keys()
+        .collect();
+    assert_eq!(described, ["410"], "{gone}");
+    assert_eq!(
+        gone["410"],
+        emitted_responses::<generic_wide::Wide<u32>>()["410"]
+    );
+
+    assert!(matches!(
+        ChunkRejection::from(ParenthesizedSubset::Conflict),
+        ChunkRejection::Conflict
+    ));
+    assert_eq!(ParenthesizedSubset::STATUSES, &[409]);
+    assert_eq!(
+        emitted_responses::<ParenthesizedSubset>(),
+        emitted_responses::<ConflictSubset>()
+    );
 }
 
 /// An interceptor's answer that is one of Kynos' refusals or the
