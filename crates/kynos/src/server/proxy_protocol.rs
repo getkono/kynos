@@ -98,13 +98,18 @@ fn starts(bytes: &[u8], prefix: &[u8]) -> bool {
 /// source and destination addresses and ports, one space apart, then CRLF.
 fn v1(bytes: &[u8]) -> Result<Parsed, Malformed> {
     let window = &bytes[..bytes.len().min(V1_MAX)];
-    let Some(end) = window.windows(2).position(|pair| pair == b"\r\n") else {
+    let Some(feed) = window.iter().position(|&byte| byte == b'\n') else {
         return if bytes.len() < V1_MAX {
             Ok(Parsed::Partial)
         } else {
             Err(Malformed)
         };
     };
+    // A line ends at its first LF, which must follow a CR.
+    if window[feed - 1] != b'\r' {
+        return Err(Malformed);
+    }
+    let end = feed - 1;
     let mut fields = bytes[V1_PREFIX.len()..end].split(|&byte| byte == b' ');
     let header = match fields.next() {
         // Whatever follows up to the CRLF is ignored.
