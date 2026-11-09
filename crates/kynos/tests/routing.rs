@@ -318,3 +318,94 @@ fn every_entry_point_reports_an_unroutable_path() {
         Some("/files/{*path}")
     );
 }
+
+/// Declares one route-attributed `GET` handler per `name => path`.
+///
+/// `tt` rather than `literal`: a `literal` fragment reaches the attribute
+/// wrapped in an invisible group, which its grammar does not unwrap.
+macro_rules! operations {
+    ($($name:ident => $path:tt),+ $(,)?) => {
+        $(
+            #[kynos::get($path)]
+            async fn $name() -> NoContent {
+                NoContent
+            }
+        )+
+    };
+}
+
+operations! {
+    r00 => "/r00", r01 => "/r01", r02 => "/r02", r03 => "/r03",
+    r04 => "/r04", r05 => "/r05", r06 => "/r06", r07 => "/r07",
+    r08 => "/r08", r09 => "/r09", r10 => "/r10", r11 => "/r11",
+    r12 => "/r12", r13 => "/r13", r14 => "/r14", r15 => "/r15",
+    r16 => "/r16", r17 => "/r17", r18 => "/r18", r19 => "/r19",
+    r20 => "/r20", r21 => "/r21", r22 => "/r22", r23 => "/r23",
+    r24 => "/r24", r25 => "/r25", r26 => "/r26", r27 => "/r27",
+    r28 => "/r28", r29 => "/r29", r30 => "/r30", r31 => "/r31",
+    r32 => "/r32", r33 => "/r33", r34 => "/r34", r35 => "/r35",
+    r36 => "/r36", r37 => "/r37", r38 => "/r38", r39 => "/r39",
+}
+
+/// The paths a router describes, sorted.
+fn described(router: &Router<()>) -> Vec<String> {
+    let document = router.openapi().expect("a describable router");
+    let mut paths: Vec<String> = document.paths.items.keys().cloned().collect();
+    paths.sort_unstable();
+    paths
+}
+
+/// `/r00` to `/r{count - 1}`.
+fn numbered(count: usize) -> Vec<String> {
+    (0..count).map(|index| format!("/r{index:02}")).collect()
+}
+
+/// One `routes!` takes past the widest tuple `IntoEndpoints` is implemented
+/// for, and every operation reaches the description.
+#[test]
+fn routes_takes_more_than_sixteen_operations() {
+    let seventeen = Router::<()>::new().mount(kynos::routes![
+        r00, r01, r02, r03, r04, r05, r06, r07, r08, r09, r10, r11, r12, r13, r14, r15, r16,
+    ]);
+    assert_eq!(described(&seventeen), numbered(17));
+
+    let forty = Router::<()>::new().mount(kynos::routes![
+        r00, r01, r02, r03, r04, r05, r06, r07, r08, r09, r10, r11, r12, r13, r14, r15, r16, r17,
+        r18, r19, r20, r21, r22, r23, r24, r25, r26, r27, r28, r29, r30, r31, r32, r33, r34, r35,
+        r36, r37, r38, r39,
+    ]);
+    assert_eq!(described(&forty), numbered(40));
+}
+
+/// A member past the sixteenth keeps its own interceptor, so the nested
+/// tuple's stacks combine as a flat one's do.
+#[test]
+fn a_member_past_the_sixteenth_keeps_its_interceptor() {
+    use kynos::middleware::limits::body_size::BodySize;
+
+    let router = Router::<()>::new().mount(kynos::routes![
+        r00,
+        r01,
+        r02,
+        r03,
+        r04,
+        r05,
+        r06,
+        r07,
+        r08,
+        r09,
+        r10,
+        r11,
+        r12,
+        r13,
+        r14,
+        r15,
+        r16.intercept(BodySize::new(64)),
+    ]);
+    let document = router.openapi().expect("a describable router");
+    let limited = document.paths.items["/r16"].get.as_ref().expect("a GET");
+    let unlimited = document.paths.items["/r15"].get.as_ref().expect("a GET");
+
+    assert!(limited.responses.responses.contains_key("413"));
+    assert!(!unlimited.responses.responses.contains_key("413"));
+}
