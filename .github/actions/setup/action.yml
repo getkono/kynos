@@ -22,12 +22,17 @@ runs:
   using: composite
   steps:
     # First, so the steps below and the cache key read it too.
-    - name: Set the Cargo environment
+    # `MISE_HTTP_RETRIES` widens mise's default of 3 retries, which span a few
+    # seconds, so a cold tool download rides out a download host's transient
+    # 5xx; a persistent one still fails once they run out. Job-wide, since a
+    # task-scoped tool outside `[tools]` still downloads at task time.
+    - name: Set the build environment
       shell: bash
       env:
         INCREMENTAL: ${{ inputs.incremental }}
       run: |
         {
+          echo "MISE_HTTP_RETRIES=8"
           echo "CARGO_TERM_COLOR=always"
           echo "NEXTEST_PROFILE=ci"
           if [ "$INCREMENTAL" != true ]; then
