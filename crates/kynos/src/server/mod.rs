@@ -292,6 +292,12 @@ impl<C: 'static> Server<C> {
     /// needs where that falls short: past the limit, accepts fail and are
     /// retried, so clients stall rather than the server failing to start. The
     /// raised limit is the process's, inherited by every child it spawns.
+    ///
+    /// Each server judges the limit against its own cap and listeners alone.
+    /// Two servers in one process, such as an application and its metrics
+    /// endpoint each at the default cap, can together hold twice what either
+    /// found satisfied, with no warning; size the limit for their sum
+    /// (`LimitNOFILE=`, `ulimit -n`), or lower the caps to fit it.
     #[must_use]
     pub fn max_connections(mut self, limit: NonZeroUsize) -> Self {
         self.max_connections = limit;
