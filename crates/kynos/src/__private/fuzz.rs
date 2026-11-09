@@ -196,7 +196,7 @@ pub fn multipart_boundary(headers: &HeaderMap) -> Result<String, u16> {
 /// What a `QueryString<Unchecked<serde_json::Value>, Json>` reads from a
 /// request whose target has the query `query`, or none at all; `None` where
 /// `/?query` is not a request target.
-#[cfg(feature = "openapi32")]
+#[cfg(all(feature = "json", feature = "openapi32"))]
 #[must_use]
 pub fn querystring(
     query: Option<&str>,
@@ -375,7 +375,7 @@ pub fn json_records(
 /// A codec past `YIELD_ABOVE` octets returns `Pending` after waking itself,
 /// so that is polled again; `Pending` with no wake would never end, and
 /// panics.
-#[cfg(any(feature = "compression", feature = "openapi32"))]
+#[cfg(any(feature = "compression", all(feature = "json", feature = "openapi32")))]
 fn ready<F: std::future::Future>(future: F) -> F::Output {
     use std::sync::{
         Arc,
