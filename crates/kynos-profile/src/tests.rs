@@ -20,7 +20,7 @@ use super::{
     CODECS, COMPRESSION, EXTRACT, INTERCEPTORS, REALISTIC, RESPOND, ROUTING, SCOPE, STATIC, STREAM,
     Scenario, catalog,
     connection::{
-        CONNECTION, connected,
+        CONNECTION, KEPT_AFTER, connected,
         wire::{http1, http1_answered},
     },
     driver::{Drained, Driver, FRAMES, Served, frames},
@@ -467,8 +467,9 @@ fn a_poll_driver_refuses_a_body_that_is_not_ready_on_one_poll() {
 
 /// A connection row counts a request that entered through `serve_io`, so each
 /// is answered over its wire with the status it is measured at, and its
-/// connection ends cleanly on its own rather than leaving the region pending
-/// or ending in an error a count would include.
+/// connection ends cleanly on its own, or for the kept row is left waiting for
+/// the next head, rather than leaving the region pending or ending in an error
+/// a count would include.
 #[test]
 fn every_connection_row_is_answered_over_its_wire_and_closes_cleanly() {
     for connected in CONNECTION {
@@ -546,4 +547,20 @@ fn the_keep_alive_row_closes_only_behind_its_second_request() {
     let response = b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok";
     assert!(!http1_answered(&response[..response.len() - 1]));
     assert!(http1_answered(response));
+}
+
+/// The kept row's setup serves more heads than hyper's first 8 KiB read buffer
+/// holds, so its region counts a request a long-lived connection serves
+/// rather than one of its first, and every one of them keeps the connection
+/// alive.
+#[test]
+fn the_kept_row_measures_past_the_connection_s_first_read_buffer() {
+    let request = connected("conn-h1-kept").scenario.request;
+    let head = String::from_utf8(http1(request(), false, false)).expect("an ASCII request");
+    assert!(!head.contains("connection:"));
+    assert!(
+        KEPT_AFTER * head.len() > 8 * 1024,
+        "{KEPT_AFTER} heads of {} octets fit hyper's first read buffer",
+        head.len()
+    );
 }

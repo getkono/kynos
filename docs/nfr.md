@@ -217,6 +217,30 @@ nearly all paid per request. A second HTTP/2 stream on an open connection
 stream counts 41, and a chunked body one block more than a `content-length`
 one.
 
+**A request on a long-lived connection costs three blocks more than
+`connection_h1.second`, and all three are hyper's.** That row's request closes
+its connection, and its setup already started the read the request arrives
+on. `connection_h1.kept` counts the request after 256 on one connection: 14
+blocks and 10129 bytes, against 11 and 1801. The three are the next head's
+read deadline (96 bytes), and, once the connection's first 8 KiB read buffer
+is spent, a fresh 8 KiB buffer hyper reserves on every request in the read
+that watches for the client's close while the request is in flight, with the
+reference count its first split adds (40 bytes). Enabling hyper's
+`half_close` would skip that read and the buffer with it, and would also stop
+a handler being dropped when its client goes away mid-request, so it stays
+off.
+
+**Against axum, the gap is Kynos's own futures.** The same plaintext request,
+counted the same way on one connection with a per-request allocation counter,
+is 14 blocks and 10129 bytes through Kynos and 13 and 9200 through axum 0.8
+over the same hyper; both pay the 8 KiB buffer. Kynos allocates 989 bytes
+axum does not — the dispatch and endpoint futures (432 and 320, below), the
+routing record (120), the read deadline axum's `serve` does not arm (96), the
+handler's own string (13) and the `Connection` handle (8) — and axum 60 Kynos
+does not. Without hyper's buffer, Kynos allocates 1897 bytes a request to
+axum's 968, the near-2× `kynos-bench`'s first sessions recorded against
+`0.1.0`. Removing the two futures' boxes and the record is #1235's.
+
 **The zero does not hold.** A static match allocates five times, of the seven
 the attribution below decided on, a capture and a miss five as well, each stable to the allocation across a
 ten-thousand-request replay, so these are properties of the path rather than
