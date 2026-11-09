@@ -1382,6 +1382,26 @@ pub const kynos::extract::body::limit::DEFAULT_LIMIT: u64
 pub async fn kynos::extract::body::limit::collect_capped(kynos::http::body::Body, u64) -> kynos::extract::body::limit::Capped
 pub fn kynos::extract::body::limit::declared_length(&http::header::map::HeaderMap) -> core::option::Option<u64>
 pub mod kynos::extract::body::multipart
+#[non_exhaustive] pub enum kynos::extract::body::multipart::Admission
+pub kynos::extract::body::multipart::Admission::Read
+pub kynos::extract::body::multipart::Admission::Read::limit: core::option::Option<u64>
+pub kynos::extract::body::multipart::Admission::Skip
+impl core::clone::Clone for kynos::extract::body::multipart::Admission
+pub fn kynos::extract::body::multipart::Admission::clone(&self) -> kynos::extract::body::multipart::Admission
+impl core::cmp::Eq for kynos::extract::body::multipart::Admission
+impl core::cmp::PartialEq for kynos::extract::body::multipart::Admission
+pub fn kynos::extract::body::multipart::Admission::eq(&self, &kynos::extract::body::multipart::Admission) -> bool
+impl core::fmt::Debug for kynos::extract::body::multipart::Admission
+pub fn kynos::extract::body::multipart::Admission::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for kynos::extract::body::multipart::Admission
+impl core::marker::StructuralPartialEq for kynos::extract::body::multipart::Admission
+impl core::marker::Freeze for kynos::extract::body::multipart::Admission
+impl core::marker::Send for kynos::extract::body::multipart::Admission
+impl core::marker::Sync for kynos::extract::body::multipart::Admission
+impl core::marker::Unpin for kynos::extract::body::multipart::Admission
+impl core::marker::UnsafeUnpin for kynos::extract::body::multipart::Admission
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::extract::body::multipart::Admission
+impl core::panic::unwind_safe::UnwindSafe for kynos::extract::body::multipart::Admission
 pub struct kynos::extract::body::multipart::FilePart
 pub kynos::extract::body::multipart::FilePart::bytes: bytes::bytes::Bytes
 pub kynos::extract::body::multipart::FilePart::content_type: core::option::Option<alloc::string::String>
@@ -1399,6 +1419,7 @@ impl core::fmt::Debug for kynos::extract::body::multipart::FilePart
 pub fn kynos::extract::body::multipart::FilePart::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for kynos::extract::body::multipart::FilePart
 impl kynos::extract::body::multipart::FromPart for kynos::extract::body::multipart::FilePart
+pub const kynos::extract::body::multipart::FilePart::LIMIT: core::option::Option<u64>
 pub fn kynos::extract::body::multipart::FilePart::from_part(kynos::extract::body::multipart::Part) -> core::result::Result<Self, kynos::error::rejection::BodyRejection>
 impl kynos::response::codec::multipart::IntoPart for kynos::extract::body::multipart::FilePart
 pub fn kynos::extract::body::multipart::FilePart::into_part(self, &str) -> kynos::extract::body::multipart::Part
@@ -1511,15 +1532,21 @@ impl core::marker::Unpin for kynos::extract::body::multipart::Part
 impl core::marker::UnsafeUnpin for kynos::extract::body::multipart::Part
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::extract::body::multipart::Part
 impl core::panic::unwind_safe::UnwindSafe for kynos::extract::body::multipart::Part
+pub const kynos::extract::body::multipart::TEXT_PART_LIMIT: u64
 pub trait kynos::extract::body::multipart::FromMultipart: core::marker::Sized
+pub fn kynos::extract::body::multipart::FromMultipart::admit(&str) -> core::result::Result<kynos::extract::body::multipart::Admission, kynos::error::rejection::BodyRejection>
 pub fn kynos::extract::body::multipart::FromMultipart::from_parts(alloc::vec::Vec<kynos::extract::body::multipart::Part>) -> core::result::Result<Self, kynos::error::rejection::BodyRejection>
 pub trait kynos::extract::body::multipart::FromPart: core::marker::Sized
+pub const kynos::extract::body::multipart::FromPart::LIMIT: core::option::Option<u64>
 pub fn kynos::extract::body::multipart::FromPart::from_part(kynos::extract::body::multipart::Part) -> core::result::Result<Self, kynos::error::rejection::BodyRejection>
 impl kynos::extract::body::multipart::FromPart for bytes::bytes::Bytes
+pub const bytes::bytes::Bytes::LIMIT: core::option::Option<u64>
 pub fn bytes::bytes::Bytes::from_part(kynos::extract::body::multipart::Part) -> core::result::Result<Self, kynos::error::rejection::BodyRejection>
 impl kynos::extract::body::multipart::FromPart for kynos::extract::body::multipart::FilePart
+pub const kynos::extract::body::multipart::FilePart::LIMIT: core::option::Option<u64>
 pub fn kynos::extract::body::multipart::FilePart::from_part(kynos::extract::body::multipart::Part) -> core::result::Result<Self, kynos::error::rejection::BodyRejection>
 impl<T: kynos::schema::ParamValue + 'static> kynos::extract::body::multipart::FromPart for T
+pub const T::LIMIT: core::option::Option<u64>
 pub fn T::from_part(kynos::extract::body::multipart::Part) -> core::result::Result<Self, kynos::error::rejection::BodyRejection>
 pub mod kynos::extract::body::protobuf
 pub struct kynos::extract::body::protobuf::Protobuf<T>(pub T)

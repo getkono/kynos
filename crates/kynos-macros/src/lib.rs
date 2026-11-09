@@ -1018,9 +1018,11 @@ pub fn derive_cookies(item: TokenStream) -> TokenStream {
 /// Kynos implements for `FilePart`, `Bytes` and every `ParamValue`, such as
 /// `String` or an enum deriving it, which travels as its text.
 ///
-/// A part naming no declared field is ignored, unless the struct carries
+/// A part naming no declared field is dropped unread, unless the struct carries
 /// `#[serde(deny_unknown_fields)]`, which closes its description and makes such
-/// a part a 422.
+/// a part a 422 before it is read. A declared part is read under its element's
+/// `FromPart::LIMIT`: `TEXT_PART_LIMIT` for a `ParamValue`, none beyond the
+/// body's for `FilePart` and `Bytes`; past it, the request is a 413.
 ///
 /// There is no attribute of its own; it reads serde's, without requiring a
 /// serde derive. Derive [`Schema`](macro@Schema) alongside to put the parts in

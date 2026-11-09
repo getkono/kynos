@@ -15,6 +15,7 @@
 //! any `skip`, a `flatten` — is refused, and so is a `Vec<T>` without `default`, whose empty value is
 //! written as no part although its description requires one.
 
+mod names;
 mod refusals;
 
 use proc_macro2::TokenStream as TokenStream2;
@@ -46,7 +47,8 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
     // One binding per field, filled in a single pass over the parts.
     let bindings = declared.iter().map(Declared::binding);
     let closed = serde_key_span(&input.attrs, &["deny_unknown_fields"]).is_some();
-    let dispatch = dispatch(&declared, closed);
+    let dispatch = names::dispatch(&declared, closed);
+    let admit = names::admit(&declared, closed);
     let reads = declared.iter().map(Declared::read);
     let idents = declared.iter().map(Declared::ident);
     let writes = declared.iter().map(Declared::write);
@@ -79,6 +81,8 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 #(#reads)*
                 ::core::result::Result::Ok(Self { #(#idents),* })
             }
+
+            #admit
         }
 
         impl #impl_generics ::kynos::response::codec::multipart::IntoMultipart
@@ -91,41 +95,6 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 #(#writes)*
                 parts
             }
-        }
-    })
-}
-
-/// Sorts one part into the field that declared its name, else drops it or,
-/// in a `closed` form, refuses it; an `if` chain, since a `match` on
-/// `part.name` could not move `part`.
-fn dispatch(declared: &[Declared<'_>], closed: bool) -> TokenStream2 {
-    let undeclared = if closed {
-        quote! {{
-            return ::core::result::Result::Err(
-                ::kynos::error::rejection::BodyRejection::Schema {
-                    failures: ::core::iter::FromIterator::from_iter([(
-                        ::std::string::ToString::to_string(
-                            &::kynos::schema::constraints::Pointer::root().member(&part.name),
-                        ),
-                        <::std::string::String as ::core::convert::From<_>>::from(
-                            "the part is not declared",
-                        ),
-                    )]),
-                    // A part no field reads is the form's shape, not a bound.
-                    type_uri: ::core::option::Option::None,
-                },
-            );
-        }}
-    } else {
-        quote!({})
-    };
-    declared.iter().rev().fold(undeclared, |rest, field| {
-        let gather = field.gather();
-        let name = field.name;
-        quote! {
-            if part.name == #name {
-                #gather
-            } else #rest
         }
     })
 }
