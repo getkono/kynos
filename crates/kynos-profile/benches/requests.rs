@@ -317,6 +317,8 @@ fn coded(prepared: Prepared) -> Answered {
 #[bench::conditional_304("conditional-304")]
 #[bench::negotiated("negotiated")]
 #[bench::created("created")]
+#[bench::json_small_bare("json-small-bare")]
+#[bench::json_large_bare("json-large-bare")]
 fn responded(prepared: Prepared) -> Answered {
     let Prepared {
         service,
