@@ -669,6 +669,48 @@ every chunked upload. That is why the row reads `by-design` and not
 documented where the decision is made rather than only here, because that is
 where someone mounting a cap will meet it.
 
+### What the defaults let one connection hold
+
+What a client can make the server hold at the default limits, per connection
+and at the 10,000 `max_connections` allows. Every figure is arithmetic from
+defaults [`server/tests.rs`](../crates/kynos/src/server/tests.rs) pins, not a
+measurement, and every one is a floor of the worst case rather than a ceiling:
+
+| What the client sends | Held per connection | At 10,000 connections |
+| --- | --- | --- |
+| HTTP/1: one unfinished head | 416 KiB: a read buffer filled to `max_buffer_size`, 417,792 bytes, before the 431, and hyper's 8 KiB write buffer | 3.97 GiB |
+| HTTP/2: 200 heads, each in flight | 4.125 MiB: 200 streams × a 16 KiB `max_header_list_size`, and the 1 MiB connection window of DATA no handler has polled | 40.3 GiB |
+| Either: bodies a buffering extractor collects | 2 MiB per request in flight: one per HTTP/1 connection, 200 per HTTP/2 one | 19.5 GiB over HTTP/1, 3.8 TiB over HTTP/2 |
+
+A floor, because none of it counts what the table cannot read off a default:
+the growth policy of hyper's read buffer, which may allocate past the bytes it
+holds; rustls's buffers under TLS; what a decoded HTTP/2 header list occupies
+past the octets of its fields plus 32 per field, all RFC 9113 §6.5.2 counts; each
+request's dispatch future, the connection task, its permit and the peer
+certificate chain [`architecture.md`](architecture.md#why-hyper-stays)
+names; and kernel socket buffers. The HTTP/1 read buffer is reached by a head
+alone: [`server/tests.rs`](../crates/kynos/src/server/tests.rs) serves a head
+one byte short of it and answers 431 only once the whole default buffer has
+been read.
+
+So a 512 MiB container serving defaults can be exhausted by HTTP/1 heads from
+about 1,260 connections, and by HTTP/2 ones from about 124. The bound on all of
+it is `Server::max_connections`, and sizing it is the deployment's: divide the
+memory budget by the row its traffic can reach, after lowering what it does not
+need — `Http1Config::max_buffer_size`, `Http2Config`'s streams, header list and
+windows, the body limit.
+
+The defaults neither shrink nor scale with available memory. Lowering
+`max_buffer_size` alone would leave the HTTP/2 row ten times larger at the same
+connection cap, and would also cap the bytes each body read may reserve. Scaling
+from cgroup `memory.max` or physical RAM would divide by a per-connection figure
+that is the `TBD` the idle-memory row in the table above waits on, and would
+make a default the tests read off a new server depend on the host it runs on.
+The idle-memory row is where that figure arrives, from `kynos-bench`
+([getkono/kynos-bench#109](https://github.com/getkono/kynos-bench/issues/109),
+[getkono/kynos-bench#102](https://github.com/getkono/kynos-bench/issues/102)),
+and with it the evidence a default change would be argued from.
+
 ### The module-size budget
 
 AGENTS.md: *"A module becomes a directory once it holds two

@@ -368,7 +368,8 @@ limits are real, and are recorded here rather than argued away. hyper allocates
 an 8 KiB write buffer at connection construction and never shrinks the read
 buffer below 8 KiB, with no pool and no way to supply one, so roughly 16 KiB
 per live connection is not configurable; `max_buf_size` moves the ceiling, not
-the floor. And hyper releases HTTP/2 flow-control capacity as soon as a frame
+the floor, and what that ceiling costs at the defaults is
+[`nfr.md`](nfr.md#what-the-defaults-let-one-connection-hold)'s arithmetic. And hyper releases HTTP/2 flow-control capacity as soon as a frame
 is polled, so backpressure on an HTTP/2 request body is not expressible through
 it — the `h2` crate's `release_capacity` is the only remedy, and taking it
 means owning the connection driver. The question reopens on one measurement:
@@ -1015,7 +1016,10 @@ costs in total is not guarded anywhere: that would have to include the peer
 certificate chain `TlsIdentity` owns, which a `size_of` sees as one
 pointer-width triple and a multi-certificate mTLS chain makes kilobytes of heap
 the reading does not see, along with the connection task's future, the service
-handle and the semaphore permit, none of which is bounded today.
+handle and the semaphore permit, none of which is bounded today. What the
+default limits let a client make one connection hold is stated instead, as
+arithmetic rather than a guard, in
+[`nfr.md`](nfr.md#what-the-defaults-let-one-connection-hold).
 
 **ALPN.** Traced through the dependencies it runs on rather than measured,
 re-sniffing ALPN costs no read syscall on the one path where ALPN exists.
