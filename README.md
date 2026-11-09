@@ -21,7 +21,14 @@ The emitted document is therefore not documentation that drifts from the code. I
 
 ```bash
 cargo add kynos
+cargo add tokio --features macros,rt-multi-thread
+cargo add serde --features derive
 ```
+
+Kynos re-exports neither: the application owns its runtime and its derives.
+`#[tokio::main]` needs `macros` and the multi-threaded runtime, which Kynos's
+`server` feature does not enable, and `Serialize` and `Deserialize` need
+serde's `derive`.
 
 The default features are `openapi31`, `macros`, `server`, `http1`, `http2`,
 `json` and `trace`. Everything else is additive and off; the

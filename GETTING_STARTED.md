@@ -1,6 +1,8 @@
 # Getting started
 
-The [README](README.md) has the install line and a quickstart. This page is
+The [README](README.md) has the install lines — Kynos, plus tokio for
+`#[tokio::main]` and serde for its derives, neither of which Kynos re-exports —
+and a quickstart that compiles against exactly those. This page is
 the next hour: where each common task is shown, and the three things people
 coming from other frameworks ask first. [`docs/`](docs/README.md) is design
 law for contributors, not a guide; the [API reference](https://docs.rs/kynos)
