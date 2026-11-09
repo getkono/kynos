@@ -285,15 +285,6 @@ impl<C: Sync> Authenticator<Bearer, C> for Tokens {
             Err(AuthRejection::unauthenticated())
         }
     }
-
-    async fn authorize(
-        &self,
-        _: &String,
-        _: &[kynos::security::Unscoped],
-        _: &C,
-    ) -> Result<(), AuthRejection> {
-        Ok(())
-    }
 }
 
 impl Authenticates<Bearer> for App {

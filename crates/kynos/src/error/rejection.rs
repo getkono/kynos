@@ -743,7 +743,7 @@ pub enum AuthRejection {
         ///
         /// An [`Authenticator`](crate::security::Authenticator) leaves this
         /// `None`, as both constructors do, and a guard replaces it: a refusal
-        /// from [`Authenticator::authorize`](crate::security::Authenticator::authorize)
+        /// from [`Authorizer::authorize`](crate::security::Authorizer::authorize)
         /// carries
         /// [`SecurityScheme::insufficient_scope_challenge`],
         /// and one from

@@ -80,7 +80,7 @@ use kynos::{
     error::rejection::AuthRejection,
     prelude::*,
     security::{
-        Authenticates, Authenticator, Scope, Unscoped,
+        Authenticates, Authenticator, Authorizer, Scope,
         auth::{Auth, MaybeAuth, Scoped, Scopes},
         carrier::{ApiKey, BearerToken, Carries, Credentials},
         requirement::{AllOf, AnyOf, Either2},
@@ -262,7 +262,12 @@ impl<C: Sync> Authenticator<AccessToken, C> for Tokens {
             .cloned()
             .ok_or_else(AuthRejection::unauthenticated)
     }
+}
 
+/// `AccessToken` names `scope = Grant`, so a context authenticates it only
+/// once its authenticator also authorizes those scopes. A scheme that names no
+/// scope type needs no such impl, as `Sessions` below shows.
+impl<C: Sync> Authorizer<AccessToken, C, Grant> for Tokens {
     async fn authorize(
         &self,
         credential: &Claims,
@@ -300,16 +305,6 @@ impl<C: Sync> Authenticator<SessionCookie, C> for Sessions {
         let _ = (presented, context);
         Err(AuthRejection::unavailable::<SessionCookie>().with_retry_after(Duration::from_secs(5)))
     }
-
-    async fn authorize(
-        &self,
-        credential: &String,
-        scopes: &[Unscoped],
-        context: &C,
-    ) -> Result<(), AuthRejection> {
-        let _ = (credential, scopes, context);
-        Ok(())
-    }
 }
 
 impl Authenticates<SessionCookie> for App {
@@ -330,13 +325,7 @@ impl Authenticates<SessionCookie> for App {
 /// context that cannot verify `S` is a compile error rather than a 500.
 struct Rejects;
 
-impl<S: Carries, C: Sync> Authenticator<S, C> for Rejects
-where
-    // `Sync` and not `Default`: nothing here builds a credential, but
-    // `authorize` holds a reference to one across an await, and the trait
-    // requires that future to be `Send`.
-    S::Credential: Sync,
-{
+impl<S: Carries, C: Sync> Authenticator<S, C> for Rejects {
     async fn authenticate(
         &self,
         presented: S::Presented,
@@ -345,11 +334,15 @@ where
         let _ = (presented, context);
         Err(AuthRejection::unauthenticated())
     }
+}
 
+/// Of the five, only `DelegatedAccess` names a scope type, so it alone needs
+/// an authorizer; the other four's `Rejects` already is one.
+impl<C: Sync> Authorizer<DelegatedAccess, C, Grant> for Rejects {
     async fn authorize(
         &self,
-        credential: &S::Credential,
-        scopes: &[S::Scope],
+        credential: &String,
+        scopes: &[Grant],
         context: &C,
     ) -> Result<(), AuthRejection> {
         let _ = (credential, scopes, context);

@@ -807,8 +807,9 @@ now tells the two apart. That helper and the combinators are one concern —
 how a requirement is checked — and a new combinator changes both.
 
 `security/mod.rs` is `status.rs`'s shape. It declares `Guard`,
-`SecurityScheme`, `Scope`, `Unscoped`, `Authenticator` and `Authenticates`, so
-a split would turn `security::SecurityScheme`, the path every derived and
+`SecurityScheme`, `Scope`, `Unscoped`, `Authenticator`, `Authorizer` and
+`Authenticates`, so a split would turn `security::SecurityScheme`, the path
+every derived and
 hand-written scheme names, into a longer one. What pushed it over was
 `SecurityScheme::FORBIDS`, whose documentation says what the type system cannot
 hold and the harness does. The traits are one concern — what a scheme is and
