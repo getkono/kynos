@@ -5649,8 +5649,8 @@ mod protocol_configuration {
 ///
 /// Each message is asserted exactly by the case that reaches it: the
 /// `protocol_configuration` table, the TCP keepalive and request-body idle
-/// timeout cases, the mutual-TLS and TLS-over-Unix cases here, and
-/// `tests/serve_io.rs`.
+/// timeout cases, the mutual-TLS, TLS-over-Unix and accept-shard cases here,
+/// and `tests/serve_io.rs`.
 const CONFIGURATION_REFUSALS: &[(&str, &str)] = &[
     (
         "server/request_body.rs",
@@ -5659,6 +5659,10 @@ const CONFIGURATION_REFUSALS: &[(&str, &str)] = &[
     (
         "server/mod.rs",
         "TLS is not served over a Unix socket listener",
+    ),
+    (
+        "server/mod.rs",
+        "accept_shards shards only the addresses the server binds, so no listener bound elsewhere may be added",
     ),
     (
         "server/mod.rs",
