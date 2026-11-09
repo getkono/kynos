@@ -881,6 +881,27 @@ async fn listen_backlog_sets_the_queue_of_each_accept_shard() {
     drop(shards);
 }
 
+/// The backlog `TcpSocket::listen` is handed never passes `i32::MAX`: tokio
+/// before 1.54 casts it to the `int` `listen(2)` takes, so the default
+/// `u32::MAX` would reach the kernel as -1 under the workspace's tokio floor.
+#[test]
+fn the_backlog_handed_to_listen_is_clamped_to_i32_max() {
+    use crate::server::address::kernel_backlog;
+    use std::num::NonZeroU32;
+
+    let ceiling = i32::MAX.unsigned_abs();
+    assert_eq!(kernel_backlog(NonZeroU32::MAX), ceiling);
+    assert_eq!(
+        kernel_backlog(NonZeroU32::new(ceiling + 1).expect("non-zero")),
+        ceiling
+    );
+    assert_eq!(
+        kernel_backlog(NonZeroU32::new(ceiling).expect("non-zero")),
+        ceiling
+    );
+    assert_eq!(kernel_backlog(NonZeroU32::MIN), 1);
+}
+
 /// Every shard accepts and serves under one graceful shutdown. Which shard the
 /// kernel hands a connection is its hash's choice, so each request may land on
 /// any of them; a shard with no accept task would leave its share unanswered.
