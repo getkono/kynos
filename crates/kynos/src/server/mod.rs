@@ -103,9 +103,6 @@ use crate::server::protocol::http2::Http2Config;
 #[cfg(feature = "tls")]
 use crate::server::tls::{TlsConfig, TlsRuntime, document::apply_mutual_tls};
 
-const DEFAULT_CONNECTION_LIMIT: usize = 10_000;
-const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(25);
-
 /// An HTTP server.
 #[derive(Debug)]
 pub struct Server<C> {
@@ -130,6 +127,25 @@ pub struct Server<C> {
     request_body_idle_timeout: Option<Duration>,
 }
 
+/// The defaults [`Server::new`] starts from, whatever the context type.
+///
+/// Declared on `Server<()>` alone, so the bare `Server::DEFAULT_*` path names
+/// them without a type annotation.
+impl Server<()> {
+    /// The default [`max_connections`](Self::max_connections) cap: 10,000.
+    ///
+    /// ```
+    /// # use kynos::server::Server;
+    /// assert_eq!(Server::DEFAULT_MAX_CONNECTIONS.get(), 10_000);
+    /// ```
+    pub const DEFAULT_MAX_CONNECTIONS: NonZeroUsize = NonZeroUsize::new(10_000).unwrap();
+
+    /// The default [`shutdown_timeout`](Self::shutdown_timeout) drain
+    /// deadline: 25 seconds, leaving a margin under the common 30-second
+    /// orchestrator termination window.
+    pub const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(25);
+}
+
 impl<C: 'static> Server<C> {
     /// Prepares to serve `service` with opinionated production defaults.
     #[must_use]
@@ -147,9 +163,8 @@ impl<C: 'static> Server<C> {
             #[cfg(feature = "tls")]
             tls: None,
             shutdown: None,
-            shutdown_timeout: DEFAULT_SHUTDOWN_TIMEOUT,
-            max_connections: NonZeroUsize::new(DEFAULT_CONNECTION_LIMIT)
-                .expect("the default connection limit is non-zero"),
+            shutdown_timeout: Server::DEFAULT_SHUTDOWN_TIMEOUT,
+            max_connections: Server::DEFAULT_MAX_CONNECTIONS,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             accept_shards: NonZeroUsize::MIN,
             tcp_keepalive: Some(TcpKeepAlive::default()),
@@ -267,8 +282,8 @@ impl<C: 'static> Server<C> {
         self
     }
 
-    /// Sets the drain deadline. The default is 25 seconds, leaving a margin
-    /// under the common 30-second orchestrator termination window.
+    /// Sets the drain deadline. The default is
+    /// [`DEFAULT_SHUTDOWN_TIMEOUT`](Server::DEFAULT_SHUTDOWN_TIMEOUT).
     ///
     /// [`Duration::ZERO`] forces immediate shutdown and reports
     /// [`ServerError::ShutdownTimeout`].
@@ -279,7 +294,7 @@ impl<C: 'static> Server<C> {
     }
 
     /// Caps accepted connections and TLS handshakes across all listeners. The
-    /// default is 10,000.
+    /// default is [`DEFAULT_MAX_CONNECTIONS`](Server::DEFAULT_MAX_CONNECTIONS).
     ///
     /// A connection upgraded by a `Router::upgrade_unchecked` route releases
     /// its permit once its `101` is written, so upgraded sockets the handler

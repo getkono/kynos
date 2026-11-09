@@ -42,7 +42,7 @@ impl Default for Http1Config {
     fn default() -> Self {
         Self {
             keep_alive: true,
-            header_read_timeout: Some(Duration::from_secs(30)),
+            header_read_timeout: Some(Self::DEFAULT_HEADER_READ_TIMEOUT),
             max_headers: 100,
             max_buffer_size: MIN_HTTP1_BUFFER_SIZE + 4_096 * 100,
         }
@@ -50,6 +50,18 @@ impl Default for Http1Config {
 }
 
 impl Http1Config {
+    /// The default [`header_read_timeout`](Self::header_read_timeout): 30
+    /// seconds.
+    ///
+    /// ```
+    /// # use kynos::server::protocol::http1::Http1Config;
+    /// assert_eq!(
+    ///     Http1Config::default().header_read_timeout,
+    ///     Some(Http1Config::DEFAULT_HEADER_READ_TIMEOUT),
+    /// );
+    /// ```
+    pub const DEFAULT_HEADER_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
     /// Sets whether to keep connections alive between requests.
     #[must_use]
     pub fn keep_alive(mut self, keep_alive: bool) -> Self {
