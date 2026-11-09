@@ -12,6 +12,8 @@ Run it as `mise run api:test`, or directly. It runs no `cargo`.
 
 import contextlib
 import io
+import pathlib
+import tempfile
 import unittest
 
 import public_api as gate
@@ -258,16 +260,31 @@ class Main(unittest.TestCase):
         ]
     )
 
-    def run_main(self, recorded):
+    def run_main(self, recorded, listing=LISTING, overwrite=False, root=None):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
             status = gate.main(
                 architecture=self.ARCHITECTURE,
-                listings={"kynos": self.LISTING},
+                listings={"kynos": listing},
                 recorded={"kynos": recorded},
-                overwrite=False,
+                overwrite=overwrite,
+                root=root,
             )
         return status, stderr.getvalue()
+
+    def test_overwrite_records_the_listing_and_still_runs_every_other_rule(self):
+        listing = self.LISTING + "\npub fn kynos::c(mio::Token)"
+        with tempfile.TemporaryDirectory() as root:
+            snapshot = pathlib.Path(root, "crates", "kynos", gate.SNAPSHOT)
+            snapshot.parent.mkdir(parents=True)
+            snapshot.write_text("stale\n")
+            status, stderr = self.run_main(
+                "stale\n", listing, overwrite=True, root=pathlib.Path(root)
+            )
+            self.assertEqual(snapshot.read_text(), listing)
+        self.assertEqual(status, 1)
+        self.assertEqual(stderr.count("public-api: "), 1)
+        self.assertIn("mio", stderr)
 
     def test_a_listing_matching_its_snapshot_and_the_documents_passes(self):
         self.assertEqual(self.run_main(self.LISTING), (0, ""))

@@ -419,12 +419,13 @@ def snapshot_failures(crate, recorded, listing):
     ]
 
 
-def main(architecture=None, listings=None, recorded=None, overwrite=None):
+def main(architecture=None, listings=None, recorded=None, overwrite=None, root=ROOT):
     """Run every rule, and report what does not hold.
 
     Each argument defaults to this repository's own, read or listed when
     `main` runs: `architecture` as text, `listings` and `recorded` as
-    `{crate: text}` (`None` for a missing snapshot).
+    `{crate: text}` (`None` for a missing snapshot). Snapshots are read from
+    and overwritten under `root`.
     """
     failures = []
     if architecture is None:
@@ -453,7 +454,7 @@ def main(architecture=None, listings=None, recorded=None, overwrite=None):
     if recorded is None:
         recorded = {}
         for crate in listings:
-            path = ROOT / "crates" / crate / SNAPSHOT
+            path = root / "crates" / crate / SNAPSHOT
             recorded[crate] = path.read_text() if path.is_file() else None
 
     allowed = allowance(architecture, failures)
@@ -465,7 +466,7 @@ def main(architecture=None, listings=None, recorded=None, overwrite=None):
     named = {}
     for crate, listing in listings.items():
         if overwrite:
-            (ROOT / "crates" / crate / SNAPSHOT).write_text(listing)
+            (root / "crates" / crate / SNAPSHOT).write_text(listing)
         else:
             failures += snapshot_failures(crate, recorded.get(crate), listing)
         failures += surface_failures(crate, listing, runtime_items, boxed)
