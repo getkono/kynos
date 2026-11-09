@@ -49,7 +49,8 @@
 //!   so its `latency` measures producing a response rather than delivering one
 //!   -- for a download or an event stream the two are worlds apart. Exactly one
 //!   of the two follows it: `on_complete` once the body's last frame was sent,
-//!   with the full latency and the octets on the wire, or `on_disconnect` when
+//!   with the full latency and the content octets after any content coding,
+//!   or `on_disconnect` when
 //!   the client never received what was already logged as sent. Both are
 //!   defaulted like `on_panic`, and left out just as easily.
 //!
@@ -133,7 +134,8 @@ impl<C> Observer<C> for Slo {
 
     fn on_complete(&self, route: Option<Route<'_>>, completion: &Completion) {
         // The delivered figures a bytes-sent or full-latency metric records:
-        // `body_bytes` is what went on the wire, after any compression.
+        // `body_bytes` counts the content octets after any content coding,
+        // without transfer framing or trailers.
         tracing::debug!(
             target: "slo",
             operation_id = route.map_or("<unmatched>", |route| route.operation_id()),

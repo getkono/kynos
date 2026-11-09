@@ -5312,7 +5312,6 @@ impl core::cmp::PartialEq for kynos::middleware::Completion
 pub fn kynos::middleware::Completion::eq(&self, &kynos::middleware::Completion) -> bool
 impl core::fmt::Debug for kynos::middleware::Completion
 pub fn kynos::middleware::Completion::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for kynos::middleware::Completion
 impl core::marker::StructuralPartialEq for kynos::middleware::Completion
 impl core::marker::Freeze for kynos::middleware::Completion
 impl core::marker::Send for kynos::middleware::Completion

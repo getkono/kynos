@@ -610,7 +610,7 @@ pub trait Observer<C>: Send + Sync + 'static {
 }
 
 /// A response body read to its end, as [`Observer::on_complete`] reports it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Completion {
     /// From the request arriving to the body's last frame being read.
