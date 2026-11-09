@@ -303,6 +303,8 @@ witnesses! {
         head_rejects_with(Infallible, (), kynos::extract::connection::Connection);
         #[cfg(feature = "server")]
         head_rejects_with(Infallible, (), kynos::server::lifecycle::Draining);
+        #[cfg(feature = "server")]
+        head_rejects_with(Infallible, (), kynos::server::lifecycle::Readiness);
     }
 
     /// `ConnectInfo` promises an IP peer, which a connection over another
