@@ -6441,11 +6441,13 @@ async fn an_http1_server_without_keep_alive_closes_after_one_response() {
 }
 
 /// `max_buffer_size` reaches the driver: a head of four fields filling the
-/// 8 KiB floor is answered 431 under that floor, while a longer one is served
-/// under the default.
+/// 8 KiB floor is answered 431 under that floor, while the default's own edge
+/// is the per-connection figure `nfr.md` states for an HTTP/1 head: a complete
+/// head one byte short of 417,792 bytes is served, and an unterminated one of
+/// exactly that many is read whole before its 431.
 ///
-/// The refused head is exactly 8 KiB and unterminated, so the driver has read
-/// every byte when it refuses: unread bytes at its close would reset the
+/// Each refused head is unterminated and exactly the buffer, so the driver has
+/// read every byte when it refuses: unread bytes at its close would reset the
 /// connection, and a reset may discard the 431 before the client reads it.
 #[cfg(feature = "http1")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -6453,12 +6455,21 @@ async fn a_request_head_past_the_http1_buffer_is_answered_431() {
     use std::io::{Read as _, Write as _};
 
     const PREFIX: &str = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nX-Padding: ";
+    let default = Http1Config::default().max_buffer_size;
 
     for (http1, head, status) in [
         (
             Http1Config::default(),
-            format!("{PREFIX}{}\r\n\r\n", "a".repeat(12 * 1024)),
+            format!(
+                "{PREFIX}{}\r\n\r\n",
+                "a".repeat(default - 1 - PREFIX.len() - 4)
+            ),
             "HTTP/1.1 200 ",
+        ),
+        (
+            Http1Config::default(),
+            format!("{PREFIX}{}", "a".repeat(default - PREFIX.len())),
+            "HTTP/1.1 431 ",
         ),
         (
             Http1Config::default().max_buffer_size(8_192),
