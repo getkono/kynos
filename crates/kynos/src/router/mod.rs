@@ -838,8 +838,9 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     ///
     /// An edit may describe an operation differently, but the operations
     /// themselves are the router's: adding, removing or moving one, changing
-    /// its `operationId`, or removing an `x-kynos-opaque` marker is a
-    /// [`MappedOperation`](RouterError::MappedOperation) violation. The
+    /// its `operationId`, adding or removing its security requirement,
+    /// changing the media types its `QUERY` body accepts, or removing an
+    /// `x-kynos-opaque` marker is a [`MappedOperation`](RouterError::MappedOperation) violation. The
     /// version the document claims is chosen after the edit, from what it
     /// uses, so the `openapi` field an edit writes is not kept.
     ///

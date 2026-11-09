@@ -552,6 +552,108 @@ mod map_openapi {
         assert_eq!(mapped_violations(&unmarked), [mapped("/held", Method::Get)]);
     }
 
+    /// The `MappedOperation` violations `edit` causes on `router()`'s
+    /// document once `assembled` has shaped it as the router would have.
+    fn edited(
+        assembled: impl FnOnce(&mut crate::router::Document),
+        edit: impl Fn(&mut crate::router::Document) + Send + Sync + 'static,
+    ) -> Vec<Violation<RouterError>> {
+        let mut document = router().openapi().expect("a describable router");
+        assembled(&mut document);
+        let mut violations = Vec::new();
+        crate::router::map::apply(&[Box::new(edit)], &mut document, &mut violations);
+        violations
+    }
+
+    /// The operation at `/held` for `method`.
+    fn held(
+        document: &mut crate::router::Document,
+        method: Method,
+    ) -> &mut kynos_openapi::Operation {
+        let item = document.paths.items.get_mut("/held").expect("the mount");
+        match method {
+            Method::Get => item.get.as_deref_mut(),
+            #[cfg(feature = "openapi32")]
+            Method::Query => item.query.as_deref_mut(),
+            _ => None,
+        }
+        .expect("the operation")
+    }
+
+    /// `build` reads whether an operation is secured from the document, and
+    /// the response cache shares a response only from one that is not, so an
+    /// edit may neither drop a guard's requirement nor claim one no guard
+    /// enforces. Which scheme it names stays the edit's to describe.
+    #[test]
+    fn an_edit_may_not_change_whether_an_operation_is_secured() {
+        let secured = |document: &mut crate::router::Document| {
+            held(document, Method::Get).security =
+                Some(vec![kynos_openapi::SecurityRequirement::scheme("Bearer")]);
+        };
+
+        let removed = edited(secured, |document| {
+            held(document, Method::Get).security = None;
+        });
+        assert_eq!(removed, [mapped("/held", Method::Get)]);
+
+        let emptied = edited(secured, |document| {
+            held(document, Method::Get).security = Some(Vec::new());
+        });
+        assert_eq!(emptied, [mapped("/held", Method::Get)]);
+
+        let added = edited(
+            |_| {},
+            |document| {
+                held(document, Method::Get).security =
+                    Some(vec![kynos_openapi::SecurityRequirement::scheme("Bearer")]);
+            },
+        );
+        assert_eq!(added, [mapped("/held", Method::Get)]);
+
+        let renamed = edited(secured, |document| {
+            held(document, Method::Get).security =
+                Some(vec![kynos_openapi::SecurityRequirement::scheme("ApiKey")]);
+        });
+        assert_eq!(renamed, []);
+    }
+
+    /// A `QUERY`'s 415 sends the `Accept-Query` `build` derives from its
+    /// request body's media types, which the extractor enforces, so an edit
+    /// may not change them; describing the body otherwise stays its own.
+    #[cfg(feature = "openapi32")]
+    #[test]
+    fn an_edit_may_not_change_what_a_query_accepts() {
+        fn body(document: &mut crate::router::Document) -> &mut kynos_openapi::RequestBody {
+            match held(document, Method::Query).request_body.as_mut() {
+                Some(kynos_openapi::RefOr::Item(body)) => body,
+                _ => unreachable!("an inline body"),
+            }
+        }
+
+        let query = |document: &mut crate::router::Document| {
+            let item = document.paths.items.get_mut("/held").expect("the mount");
+            let mut operation = item.get.take().map(|get| *get).expect("its GET");
+            operation.request_body = Some(kynos_openapi::RefOr::Item(
+                kynos_openapi::RequestBody::json(kynos_openapi::Schema::of_type(
+                    kynos_openapi::SchemaType::Object,
+                )),
+            ));
+            item.set_operation(Method::Query, operation);
+        };
+
+        let retyped = edited(query, |document| {
+            let body = body(document);
+            let media = body.content.shift_remove("application/json").expect("JSON");
+            body.content.insert("application/xml".to_owned(), media);
+        });
+        assert_eq!(retyped, [mapped("/held", Method::Query)]);
+
+        let described = edited(query, |document| {
+            body(document).description = Some("the filter".to_owned());
+        });
+        assert_eq!(described, []);
+    }
+
     /// The version is chosen from what the edited document uses, so the
     /// `openapi` field an edit writes is not kept.
     #[test]
@@ -666,8 +768,9 @@ mod router_errors {
                     path: "/users".to_owned(),
                 },
                 "a `map_openapi` edit changed operation `GET /users`; an edit may describe an \
-                 operation differently, but not add, remove, move or rename it, or remove its \
-                 `x-kynos-opaque` marker",
+                 operation differently, but not add, remove, move or rename it, add or remove its \
+                 security requirement, change the media types its `QUERY` body accepts, or \
+                 remove its `x-kynos-opaque` marker",
             ),
         ]
     }

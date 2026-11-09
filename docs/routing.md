@@ -223,9 +223,12 @@ after it, from what it uses.
 
 An edit may describe an operation differently, but not change which operations
 there are. The router mounted them and dispatches by what the document says of
-each one, so adding, removing or moving one, changing its `operationId`, or
-removing its `x-kynos-opaque` marker is a `RouterError::MappedOperation`
-violation. Edits run in call order. An edit sees the whole document, so it is
+each one, so adding, removing or moving one, changing its `operationId`,
+adding or removing its security requirement, changing the media types its
+`QUERY` body accepts, or removing its `x-kynos-opaque` marker is a
+`RouterError::MappedOperation` violation. Security presence keeps the response
+cache from sharing a response a guard admitted, and a `QUERY`'s media types are
+the `Accept-Query` its 415 sends, so both must stay what the handler enforces. Edits run in call order. An edit sees the whole document, so it is
 set on the root router: on an absorbed one it is a
 `RouterError::NestedRouterPolicy` violation, like the policies
 [below](#application-level-policies).

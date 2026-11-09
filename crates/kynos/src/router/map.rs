@@ -50,17 +50,39 @@ pub(super) fn apply(
     }
 }
 
-/// What an edit may not change about an operation.
+/// What an edit may not change about an operation: what `build` reads from
+/// the document to serve it.
 struct Identity {
     operation_id: Option<String>,
     opaque: bool,
+    /// Whether it declares a security requirement, which keeps the response
+    /// cache from sharing what the guard admitted.
+    secured: bool,
+    /// The `Accept-Query` its 415 sends, which names what its extractor takes.
+    #[cfg(feature = "openapi32")]
+    accept_query: Option<crate::http::HeaderValue>,
 }
 
 impl Identity {
-    /// Whether `edited` is still this operation: the same `operationId`, and
-    /// still opaque if it was. Flagging one opaque is the edit's to declare.
+    /// Whether `edited` is still this operation: the same `operationId`,
+    /// security presence and `Accept-Query`, and still opaque if it was.
+    /// Flagging one opaque is the edit's to declare.
     fn kept_by(&self, edited: &Self) -> bool {
-        self.operation_id == edited.operation_id && (!self.opaque || edited.opaque)
+        self.operation_id == edited.operation_id
+            && (!self.opaque || edited.opaque)
+            && self.secured == edited.secured
+            && self.same_accept_query(edited)
+    }
+
+    #[cfg(feature = "openapi32")]
+    fn same_accept_query(&self, edited: &Self) -> bool {
+        self.accept_query == edited.accept_query
+    }
+
+    #[cfg(not(feature = "openapi32"))]
+    #[expect(clippy::unused_self, reason = "the signature the `openapi32` one has")]
+    fn same_accept_query(&self, _edited: &Self) -> bool {
+        true
     }
 }
 
@@ -74,6 +96,9 @@ fn identities(paths: &Paths) -> Vec<(String, Method, Identity)> {
                 let identity = Identity {
                     operation_id: operation.operation_id.clone(),
                     opaque: kynos_openapi::Opaque::is_annotated(operation),
+                    secured: super::build::declares_security(operation),
+                    #[cfg(feature = "openapi32")]
+                    accept_query: super::install::accept_query(method, operation),
                 };
                 (path.clone(), method, identity)
             })
