@@ -1887,6 +1887,145 @@ async fn a_second_termination_signal_forces_the_drain() {
     client.await.expect("client task joins");
 }
 
+/// The open-file limit `prepare` fits to the connection cap. The cases that
+/// set a limit do so in-process, which is sound only because nextest runs
+/// every test in its own process.
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "espidf",
+        target_os = "fuchsia",
+        target_os = "horizon",
+        target_os = "redox",
+        target_os = "vita"
+    ))
+))]
+mod descriptor_limit {
+    use std::{
+        io,
+        num::NonZeroUsize,
+        sync::{Arc, Mutex},
+    };
+
+    use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
+
+    use crate::server::descriptors::{RESERVED_DESCRIPTORS, raised, required};
+
+    /// What `prepare` writes to a log, kept for the case to read.
+    #[derive(Clone, Default)]
+    struct Captured(Arc<Mutex<Vec<u8>>>);
+
+    impl io::Write for Captured {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0
+                .lock()
+                .expect("log unpoisoned")
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    const fn limit(current: Option<u64>, maximum: Option<u64>) -> Rlimit {
+        Rlimit { current, maximum }
+    }
+
+    /// Prepares a loopback server capped at `max_connections`, under a
+    /// subscriber capturing every warning, and returns what it logged.
+    async fn prepare(max_connections: usize) -> String {
+        let captured = Captured::default();
+        let writer = captured.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(move || writer.clone())
+            .finish();
+        // Thread-local, and the current-thread runtime prepares on this thread.
+        let _subscriber = tracing::subscriber::set_default(subscriber);
+        let service = crate::Router::<()>::new()
+            .build(())
+            .expect("an empty router builds");
+        let _bound = crate::server::Server::new(service)
+            .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .max_connections(NonZeroUsize::new(max_connections).expect("a non-zero cap"))
+            .prepare()
+            .await
+            .expect("a loopback listener binds");
+        let log = captured.0.lock().expect("log unpoisoned").clone();
+        String::from_utf8(log).expect("the log is UTF-8")
+    }
+
+    #[test]
+    fn the_cap_needs_a_descriptor_per_connection_and_listener_and_the_reserve() {
+        assert_eq!(required(10_000, 2), 10_002 + RESERVED_DESCRIPTORS);
+        assert_eq!(required(usize::MAX, usize::MAX), u64::MAX);
+    }
+
+    /// Raised to exactly what the cap needs, never past it or the hard limit,
+    /// and never lowered.
+    #[test]
+    fn a_short_soft_limit_is_raised_toward_the_hard_limit() {
+        let cases = [
+            (limit(Some(1024), Some(524_288)), Some(10_128)),
+            (limit(Some(1024), None), Some(10_128)),
+            (limit(Some(1024), Some(4096)), Some(4096)),
+            (limit(Some(4096), Some(4096)), None),
+            (limit(Some(10_128), Some(524_288)), None),
+            (limit(Some(65_536), Some(524_288)), None),
+            (limit(None, None), None),
+        ];
+        for (current, expected) in cases {
+            assert_eq!(raised(current, 10_128), expected, "{current:?}");
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn prepare_raises_a_short_soft_limit_to_what_the_cap_needs() {
+        const SOFT: u64 = 256;
+        const CAP: usize = 300;
+        let maximum = getrlimit(Resource::Nofile).maximum;
+        let needed = required(CAP, 1);
+        assert!(
+            maximum.is_none_or(|maximum| maximum >= needed),
+            "the hard limit {maximum:?} admits {needed}"
+        );
+        setrlimit(Resource::Nofile, limit(Some(SOFT), maximum))
+            .expect("lowering the soft limit needs no privilege");
+
+        let log = prepare(CAP).await;
+
+        assert_eq!(getrlimit(Resource::Nofile), limit(Some(needed), maximum));
+        assert!(log.is_empty(), "a limit that fits warns of nothing: {log}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_hard_limit_short_of_the_cap_is_reached_and_warned_of() {
+        const HARD: u64 = 384;
+        const CAP: usize = 300;
+        setrlimit(Resource::Nofile, limit(Some(256), Some(HARD)))
+            .expect("lowering the hard limit needs no privilege");
+
+        let log = prepare(CAP).await;
+
+        assert_eq!(
+            getrlimit(Resource::Nofile),
+            limit(Some(HARD), Some(HARD)),
+            "the soft limit rises as far as the hard limit"
+        );
+        let needed = required(CAP, 1);
+        assert!(
+            log.contains("WARN")
+                && log.contains(&format!("soft_limit={HARD}"))
+                && log.contains(&format!("required={needed}"))
+                && log.contains(&format!("max_connections={CAP}")),
+            "the warning names the limit and what the cap needs: {log}"
+        );
+    }
+}
+
 /// Only the two incomplete-drain variants are a requested shutdown; every
 /// other one is a server that stopped on its own or never started.
 ///

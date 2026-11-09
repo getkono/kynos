@@ -19,7 +19,8 @@
 //! listeners and their accept loop,
 //! the private `connection` module socket read and write, the private
 //! `request_body` module the idle timeout every request body is read under,
-//! and [`shutdown`] the signal; timers live with the work they bound.
+//! the private `descriptors` module the open-file limit the connection cap
+//! needs, and [`shutdown`] the signal; timers live with the work they bound.
 //! [`protocol`], [`tcp`] and
 //! [`tls`] are configuration; [`lifecycle`] is the state every part observes,
 //! and the [`Draining`](lifecycle::Draining) extractor a handler observes it
@@ -28,6 +29,32 @@
 mod accept;
 mod connection;
 mod describe;
+// Every Unix but those whose `rustix` has no `getrlimit`.
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "espidf",
+        target_os = "fuchsia",
+        target_os = "horizon",
+        target_os = "redox",
+        target_os = "vita"
+    ))
+))]
+mod descriptors;
+/// Where no `getrlimit` is reachable, there is no limit to fit.
+#[cfg(not(all(
+    unix,
+    not(any(
+        target_os = "espidf",
+        target_os = "fuchsia",
+        target_os = "horizon",
+        target_os = "redox",
+        target_os = "vita"
+    ))
+)))]
+mod descriptors {
+    pub(in crate::server) const fn fit(_max_connections: usize, _listeners: usize) {}
+}
 // Crate-visible so the test client bounds a body as a served one is.
 pub(crate) mod request_body;
 
@@ -257,6 +284,20 @@ impl<C: 'static> Server<C> {
     /// A connection upgraded by a `Router::upgrade_unchecked` route releases
     /// its permit once its `101` is written, so upgraded sockets the handler
     /// still holds do not count toward the cap.
+    ///
+    /// Each connection holds a file descriptor. On Unix,
+    /// [`prepare`](Self::prepare) raises the process's soft `RLIMIT_NOFILE`,
+    /// as far as its hard limit allows, to the cap plus one per listener and
+    /// 128 to spare, and logs a warning naming the limit and what the cap
+    /// needs where that falls short: past the limit, accepts fail and are
+    /// retried, so clients stall rather than the server failing to start. The
+    /// raised limit is the process's, inherited by every child it spawns.
+    ///
+    /// Each server judges the limit against its own cap and listeners alone.
+    /// Two servers in one process, such as an application and its metrics
+    /// endpoint each at the default cap, can together hold twice what either
+    /// found satisfied, with no warning; size the limit for their sum
+    /// (`LimitNOFILE=`, `ulimit -n`), or lower the caps to fit it.
     #[must_use]
     pub fn max_connections(mut self, limit: NonZeroUsize) -> Self {
         self.max_connections = limit;
@@ -469,12 +510,13 @@ impl<C: 'static> Server<C> {
             unix_listeners.push((listener, TransportAddress::from(local_addr)));
         }
         #[cfg(unix)]
-        let unlistened = listeners.is_empty() && unix_listeners.is_empty();
+        let listened = listeners.len() + unix_listeners.len();
         #[cfg(not(unix))]
-        let unlistened = listeners.is_empty();
-        if unlistened {
+        let listened = listeners.len();
+        if listened == 0 {
             return Err(ServerError::NoListeners.into());
         }
+        descriptors::fit(config.max_connections.get(), listened);
 
         Ok(BoundServer {
             service,

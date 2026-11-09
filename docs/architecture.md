@@ -287,6 +287,7 @@ dependency is a change to this list and to a snapshot, both in review;
 | Protocol driver, HTTP/1 and HTTP/2 | `hyper` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs), [`http/body.rs`](../crates/kynos/src/http/body.rs); its `client` half in `server/connection.rs`, gated on `test-util`, for `TestClient::through_server` | core | built |
 | tokio adapters for the driver | `hyper-util` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs) | auxiliary | built |
 | Accepted-socket options tokio does not expose | `socket2` | [`server/tcp.rs`](../crates/kynos/src/server/tcp.rs) | auxiliary | built |
+| The open-file limit, on Unix | `rustix` | [`server/descriptors.rs`](../crates/kynos/src/server/descriptors.rs) | auxiliary | built |
 | HTTP/1 parsing | `httparse` | never — reached through `hyper`, and through `multer` for each multipart part's headers | core | built |
 | HTTP/2 framing | `h2` | never — reached through `hyper` | core | built |
 | TLS | `rustls`, via `tokio-rustls` | [`server/tls/`](../crates/kynos/src/server/tls/) | auxiliary | built |
