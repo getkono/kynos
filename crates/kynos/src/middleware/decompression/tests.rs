@@ -211,6 +211,59 @@ async fn every_zstd_frame_is_decoded() {
     );
 }
 
+/// One zstd frame holding `b"hello"` in a single raw block, whose header
+/// declares the window `window_descriptor` encodes (RFC 8878 section
+/// 3.1.1.1.2: a power of two from its upper five bits, plus eighths of it from
+/// its lower three) and no content size, so the window is all a decoder has to
+/// size its buffer by.
+fn zstd_frame(window_descriptor: u8) -> Bytes {
+    let mut frame = vec![0x28, 0xB5, 0x2F, 0xFD];
+    // Frame_Header_Descriptor: no content size, multi-segment, no checksum,
+    // no dictionary.
+    frame.push(0x00);
+    frame.push(window_descriptor);
+    // Block_Header: the last block, raw, five octets long.
+    frame.extend_from_slice(&[0x29, 0x00, 0x00]);
+    frame.extend_from_slice(b"hello");
+    Bytes::from(frame)
+}
+
+/// RFC 9659 section 3 bounds the `zstd` coding's window at 8 MB, and section 4
+/// has a decoder fail a frame past it. Left to libzstd's default, a 2^27
+/// window is 128 MiB the header alone makes the decoder reserve; one eighth
+/// past 2^23 is the smallest refusal.
+#[tokio::test]
+async fn a_zstd_window_past_eight_megabytes_is_malformed() {
+    // 2^23 + 2^20, and 2^27.
+    for descriptor in [0x69, 0x88] {
+        assert_eq!(
+            decode(Coding::Zstd, zstd_frame(descriptor), 1024).await,
+            Err(Reason::Malformed),
+            "window descriptor {descriptor:#04x}"
+        );
+    }
+
+    // The bound outlives the first frame: each later one is read afresh.
+    let mut frames = zstd_frame(0x68).to_vec();
+    frames.extend_from_slice(&zstd_frame(0x88));
+    assert_eq!(
+        decode(Coding::Zstd, Bytes::from(frames), 1024).await,
+        Err(Reason::Malformed),
+        "a 2^27 window after an 8 MB one"
+    );
+}
+
+/// RFC 9659 section 3: a decoder MUST support an 8 MB window, so one decodes
+/// even on a route whose limit is far below it.
+#[tokio::test]
+async fn a_zstd_window_of_eight_megabytes_decodes_under_any_limit() {
+    // 2^23.
+    assert_eq!(
+        decode(Coding::Zstd, zstd_frame(0x68), 1024).await,
+        Ok(Bytes::from_static(b"hello"))
+    );
+}
+
 /// Octets after the coded stream are not part of any coding's format, so a
 /// body carrying them did not decode as the coding it declared. Brotli is
 /// swept with the rest: RFC 7932 defines one stream, so even a second valid

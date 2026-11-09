@@ -19,7 +19,9 @@ use crate::{
     http::{self, body::Body},
     middleware::{
         Continued, Interceptor, Next,
-        compression::codec::{Coding, DrainError, YIELD_ABOVE, decoded_capacity, drain},
+        compression::codec::{
+            Coding, DrainError, YIELD_ABOVE, decoded_capacity, drain, zstd_decoder_window,
+        },
     },
     response::{IntoResponse, Responses, ShortCircuit},
     schema::registry::Registry,
@@ -238,7 +240,7 @@ async fn decode(coding: Coding, bytes: Bytes, limit: u64) -> Result<Bytes, Reaso
 
     let (decoded, rest) = match coding {
         Coding::Zstd => {
-            let mut decoder = ZstdDecoder::new(input);
+            let mut decoder = ZstdDecoder::with_params(input, &zstd_decoder_window());
             decoder.multiple_members(true);
             (
                 drain_capped(&mut decoder, arrived, limit).await?,
@@ -333,6 +335,15 @@ pub(crate) fn declared(headers: &http::HeaderMap) -> Option<Vec<Coding>> {
 /// compressible legitimate payloads (`"kynos "` repeated four thousand times
 /// gzips past 200:1) are what a wrong ratio refuses. The absolute limit alone
 /// already bounds memory. Around 20 suits JSON APIs; measure before choosing.
+///
+/// # What a decoder holds besides the body
+///
+/// The limit counts decoded octets, not the window a decoder keeps to resolve
+/// back-references. zstd's is refused past 8 MB with 400, as RFC 9659 lets a
+/// decoder refuse, and no lower: section 3 has a decoder support the full 8 MB
+/// however small the route's limit. Brotli's stream header declares up to
+/// 16 MB (RFC 7932 section 9.1), which its decoder offers no way to refuse
+/// before allocating. Gzip's is 32 KB.
 ///
 /// # What it costs a streaming read
 ///
