@@ -56,7 +56,7 @@ use kynos::{
     },
     router::operation::Route,
     security::{
-        Authenticates, Authenticator, Scope,
+        Authenticates, Authenticator, Authorizer, Scope,
         auth::{Auth, MaybeAuth, Scoped, Scopes},
         carrier::{ApiKey, BearerToken},
         requirement::{AllOf, AnyOf, Either2},
@@ -208,7 +208,9 @@ impl<C: Sync, P: Scope> Authenticator<Bearer<Caller, P>, C> for Tokens {
             _ => Err(AuthRejection::unauthenticated()),
         }
     }
+}
 
+impl<C: Sync> Authorizer<Bearer<Caller, Grant>, C, Grant> for Tokens {
     /// The pair that makes the union necessary rather than merely richer.
     ///
     /// `ReadReports` names `INSUFFICIENT_SCOPE`, so the operation's 403 is
@@ -216,7 +218,12 @@ impl<C: Sync, P: Scope> Authenticator<Bearer<Caller, P>, C> for Tokens {
     /// refuses one caller with each. `assert_conformance` checks both bodies
     /// against that one entry, so a declaration narrowed to either alone fails
     /// against the other.
-    async fn authorize(&self, credential: &Caller, _: &[P], _: &C) -> Result<(), AuthRejection> {
+    async fn authorize(
+        &self,
+        credential: &Caller,
+        _: &[Grant],
+        _: &C,
+    ) -> Result<(), AuthRejection> {
         match credential.subject.as_str() {
             "user-unscoped" => Err(AuthRejection::forbidden_as(INSUFFICIENT_SCOPE)),
             "user-denied" => Err(AuthRejection::forbidden()),
@@ -228,7 +235,10 @@ impl<C: Sync, P: Scope> Authenticator<Bearer<Caller, P>, C> for Tokens {
 /// The application context.
 struct App;
 
-impl<P: Scope> Authenticates<Bearer<Caller, P>> for App {
+impl<P: Scope> Authenticates<Bearer<Caller, P>> for App
+where
+    Tokens: Authorizer<Bearer<Caller, P>, Self, P>,
+{
     type Authenticator = Tokens;
 
     fn authenticator(&self) -> &Self::Authenticator {
@@ -271,15 +281,6 @@ impl<C: Sync> Authenticator<ServiceKey, C> for Keys {
         } else {
             Err(AuthRejection::unauthenticated())
         }
-    }
-
-    async fn authorize(
-        &self,
-        _: &Caller,
-        _: &[kynos::security::Unscoped],
-        _: &C,
-    ) -> Result<(), AuthRejection> {
-        Ok(())
     }
 }
 

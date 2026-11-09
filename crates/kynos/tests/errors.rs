@@ -46,7 +46,7 @@ use kynos::{
         range::{Range, served::Conditions},
     },
     security::{
-        Authenticates, Authenticator, Guard, Scope,
+        Authenticates, Authenticator, Authorizer, Guard, Scope,
         auth::{Auth, MaybeAuth, Scoped, Scopes},
         carrier::BearerToken,
         schemes::Bearer,
@@ -387,11 +387,13 @@ impl<C: Sync, P: Scope> Authenticator<Bearer<Claims, P>, C> for Tokens {
         let _ = (presented, context);
         Err(AuthRejection::unauthenticated())
     }
+}
 
+impl<C: Sync> Authorizer<Bearer<Claims, Grant>, C, Grant> for Tokens {
     async fn authorize(
         &self,
         credential: &Claims,
-        scopes: &[P],
+        scopes: &[Grant],
         context: &C,
     ) -> Result<(), AuthRejection> {
         let _ = (credential, scopes, context);
@@ -403,7 +405,10 @@ struct App {
     tokens: Tokens,
 }
 
-impl<P: Scope> Authenticates<Bearer<Claims, P>> for App {
+impl<P: Scope> Authenticates<Bearer<Claims, P>> for App
+where
+    Tokens: Authorizer<Bearer<Claims, P>, Self, P>,
+{
     type Authenticator = Tokens;
 
     fn authenticator(&self) -> &Self::Authenticator {

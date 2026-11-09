@@ -10,7 +10,7 @@ use crate::{
     router::operation::OperationCx,
     schema::registry::Registry,
     security::{
-        Authenticates, Authenticator, Guard, Scope, SecurityScheme,
+        Authenticates, Authenticator, Authorizer, Guard, Scope, SecurityScheme,
         carrier::{self, BearerToken, Carries, Credentials},
         requirement::{AllOf, AnyOf, Either2, component_name},
         schemes::{Basic, Bearer, MutualTls},
@@ -124,8 +124,16 @@ where
     async fn authenticate(&self, _: S::Presented, _: &C) -> Result<String, AuthRejection> {
         Ok("caller".to_owned())
     }
+}
 
-    async fn authorize(&self, _: &String, scopes: &[S::Scope], _: &C) -> Result<(), AuthRejection> {
+/// Every scheme with `Grant` scopes at once, which the scope type in the header
+/// keeps apart from the impl every unscoped scheme's authenticator has.
+impl<S, C> Authorizer<S, C, Grant> for Recorder
+where
+    S: Carries<Credential = String, Scope = Grant>,
+    C: Sync,
+{
+    async fn authorize(&self, _: &String, scopes: &[Grant], _: &C) -> Result<(), AuthRejection> {
         self.answer(scopes)
     }
 }
@@ -195,7 +203,9 @@ impl<C: Sync> Authenticator<Revoked, C> for Rejecting {
     async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
         Err(AuthRejection::unauthenticated())
     }
+}
 
+impl<C: Sync> Authorizer<Revoked, C, Grant> for Rejecting {
     async fn authorize(&self, _: &String, _: &[Grant], _: &C) -> Result<(), AuthRejection> {
         Ok(())
     }
@@ -868,7 +878,9 @@ impl<C: Sync> Authenticator<Bearer<String, Grant>, C> for Suspending {
     async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
         Err(AuthRejection::forbidden())
     }
+}
 
+impl<C: Sync> Authorizer<Bearer<String, Grant>, C, Grant> for Suspending {
     async fn authorize(&self, _: &String, _: &[Grant], _: &C) -> Result<(), AuthRejection> {
         Ok(())
     }
@@ -1056,7 +1068,9 @@ impl<C: Sync> Authenticator<Outage, C> for Down {
     async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
         Err(AuthRejection::unavailable::<Outage>().with_retry_after(Duration::from_millis(1_500)))
     }
+}
 
+impl<C: Sync> Authorizer<Outage, C, Grant> for Down {
     async fn authorize(&self, _: &String, _: &[Grant], _: &C) -> Result<(), AuthRejection> {
         Ok(())
     }

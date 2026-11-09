@@ -30,7 +30,7 @@ use crate::{
     error::rejection::AuthRejection,
     http::Parts,
     router::operation::OperationCx,
-    security::{Authenticates, Authenticator, Scope, SecurityScheme, carrier::Carries},
+    security::{Authenticates, Authenticator, Authorizer, Scope, SecurityScheme, carrier::Carries},
 };
 
 /// What closes the set of requirements.

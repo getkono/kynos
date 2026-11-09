@@ -1575,11 +1575,13 @@ impl<C: Sync, P: kynos::security::Scope>
         let _ = (presented, context);
         Err(kynos::error::rejection::AuthRejection::unauthenticated())
     }
+}
 
+impl<C: Sync> kynos::security::Authorizer<Granted, C, Grant> for Tokens {
     async fn authorize(
         &self,
         credential: &Claims,
-        scopes: &[P],
+        scopes: &[Grant],
         context: &C,
     ) -> Result<(), kynos::error::rejection::AuthRejection> {
         let _ = (credential, scopes, context);
@@ -1594,6 +1596,8 @@ struct Guarded;
 
 impl<P: kynos::security::Scope>
     kynos::security::Authenticates<kynos::security::schemes::Bearer<Claims, P>> for Guarded
+where
+    Tokens: kynos::security::Authorizer<kynos::security::schemes::Bearer<Claims, P>, Self, P>,
 {
     type Authenticator = Tokens;
 
@@ -1862,16 +1866,6 @@ impl<C: Sync> kynos::security::Authenticator<Session, C> for Sessions {
     ) -> Result<String, kynos::error::rejection::AuthRejection> {
         let _ = (presented, context);
         Err(kynos::error::rejection::AuthRejection::unavailable::<Session>())
-    }
-
-    async fn authorize(
-        &self,
-        credential: &String,
-        scopes: &[kynos::security::Unscoped],
-        context: &C,
-    ) -> Result<(), kynos::error::rejection::AuthRejection> {
-        let _ = (credential, scopes, context);
-        Ok(())
     }
 }
 

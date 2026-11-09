@@ -74,7 +74,7 @@ use kynos::{
     prelude::*,
     router::service::Service,
     security::{
-        Authenticates, Authenticator, Scope,
+        Authenticates, Authenticator, Authorizer, Scope,
         auth::{Auth, MaybeAuth, Scoped, Scopes},
         carrier::{BearerToken, Credentials},
         constant_time_eq,
@@ -287,7 +287,13 @@ impl<C: Sync> Authenticator<AccessToken, C> for Keys {
             .map(|token| token.claims)
             .map_err(unauthenticated_whatever)
     }
+}
 
+/// `AccessToken` names a scope type of its own, so its authenticator also
+/// says how a credential meets a demanded scope. `Passwords` below has no such
+/// impl: `Basic` names no scope type, and an authenticator of such a scheme is
+/// already an `Authorizer`, one that admits every credential.
+impl<C: Sync> Authorizer<AccessToken, C, Grant> for Keys {
     async fn authorize(
         &self,
         credential: &Claims,
@@ -349,15 +355,6 @@ impl<C: Sync> Authenticator<Basic<Credentials>, C> for Passwords {
         } else {
             Err(AuthRejection::unauthenticated())
         }
-    }
-
-    async fn authorize(
-        &self,
-        _: &Credentials,
-        _: &[kynos::security::Unscoped],
-        _: &C,
-    ) -> Result<(), AuthRejection> {
-        Ok(())
     }
 }
 

@@ -229,7 +229,7 @@ application's enum, with `Scope::name` the one place it becomes the string a
 token and the description carry. A `Scopes` set names its own `Scope`, and
 `Scoped<S, R>` is bounded by `R: Scopes<Scope = S::Scope>`, an `AnyOf`'s being
 the one its schemes share, so a set written
-against another type does not compile. `Authenticator::authorize` receives
+against another type does not compile. `Authorizer::authorize` receives
 `&[S::Scope]`: a scope it does not handle is a non-exhaustive `match`, not a
 string a `filter_map` silently drops.
 
@@ -247,6 +247,25 @@ The type lives on the scheme rather than on the scope set alone because
 `authorize` is per scheme: a scope type chosen per set would reach it as a
 different type from each set, and the only thing it could do with one is turn it
 back into a string.
+
+### Only a scheme with scopes is authorized by hand
+
+`authorize` lives on `Authorizer<S, C, P>`, apart from `Authenticator`, and
+`Authenticates<S>` asks for both. Every authenticator of an `Unscoped` scheme
+is already an `Authorizer` that admits, since no scope of it can be demanded;
+a scheme naming a scope type has no such impl, so a context missing one does
+not compile rather than admitting by default.
+
+| Considered | Why not |
+| --- | --- |
+| A provided `authorize` bounded `where S: SecurityScheme<Scope = Unscoped>` | The bound binds every impl and every caller: a scoped scheme's `authorize` could not be called by the generic guard code |
+| A provided `authorize` that admits an empty demand and refuses the rest | A scoped authenticator that forgot it would compile and refuse every scoped request at run time |
+| `Authorizer<S, C>`, the scope type read off `S` | Coherence cannot see through `S::Scope` for a scheme another crate defines, so an `impl Authorizer<Bearer<Claims, Grant>, C>` overlaps the unscoped impl. `P` in the header keeps the two apart by type |
+
+`P` is always `S::Scope`, which the trait's `where` clause holds it to. Spelling
+it out also lets one authorizer serve every scheme sharing a scope type,
+`impl<S, C> Authorizer<S, C, Grant>`. What stays out of reach is one generic
+over every scope type, which would include `Unscoped`.
 
 ### A scheme's default scopes are enforced where declared
 
@@ -279,7 +298,7 @@ nor the guard makes, which is no demand at all.
 ### A 403 may name itself; a 401 may not
 
 `AuthRejection::forbidden_as(uri)` puts an application's own problem `type` on
-a 403 — from `Authenticator::authorize` when a scope check fails, and equally
+a 403 — from `Authorizer::authorize` when a scope check fails, and equally
 from `Authenticator::authenticate` when a credential is valid and the
 application declines it anyway. `AuthRejection::forbidden()` leaves it
 `about:blank`, which is what every 403 was before it.

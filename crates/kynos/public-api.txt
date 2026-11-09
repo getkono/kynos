@@ -9670,6 +9670,8 @@ impl core::marker::Copy for kynos::security::Unscoped
 impl core::marker::StructuralPartialEq for kynos::security::Unscoped
 impl kynos::security::Scope for kynos::security::Unscoped
 pub fn kynos::security::Unscoped::name(&self) -> &'static str
+impl<S, C, A> kynos::security::Authorizer<S, C, kynos::security::Unscoped> for A where S: kynos::security::carrier::Carries + kynos::security::SecurityScheme<Scope = kynos::security::Unscoped>, C: core::marker::Sync, A: kynos::security::Authenticator<S, C>
+pub fn A::authorize(&self, &<S as kynos::security::SecurityScheme>::Credential, &[kynos::security::Unscoped], &C) -> impl core::future::future::Future<Output = core::result::Result<(), kynos::error::rejection::AuthRejection>> + core::marker::Send
 impl core::marker::Freeze for kynos::security::Unscoped
 impl core::marker::Send for kynos::security::Unscoped
 impl core::marker::Sync for kynos::security::Unscoped
@@ -9678,11 +9680,14 @@ impl core::marker::UnsafeUnpin for kynos::security::Unscoped
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::security::Unscoped
 impl core::panic::unwind_safe::UnwindSafe for kynos::security::Unscoped
 pub trait kynos::security::Authenticates<S: kynos::security::carrier::Carries>: core::marker::Sync + core::marker::Sized
-pub type kynos::security::Authenticates::Authenticator: kynos::security::Authenticator<S, Self>
+pub type kynos::security::Authenticates::Authenticator: kynos::security::Authorizer<S, Self, <S as kynos::security::SecurityScheme>::Scope>
 pub fn kynos::security::Authenticates::authenticator(&self) -> &Self::Authenticator
 pub trait kynos::security::Authenticator<S: kynos::security::carrier::Carries, C: core::marker::Sync>: core::marker::Send + core::marker::Sync + 'static
 pub fn kynos::security::Authenticator::authenticate(&self, <S as kynos::security::carrier::Carries>::Presented, &C) -> impl core::future::future::Future<Output = core::result::Result<<S as kynos::security::SecurityScheme>::Credential, kynos::error::rejection::AuthRejection>> + core::marker::Send
-pub fn kynos::security::Authenticator::authorize(&self, &<S as kynos::security::SecurityScheme>::Credential, &[<S as kynos::security::SecurityScheme>::Scope], &C) -> impl core::future::future::Future<Output = core::result::Result<(), kynos::error::rejection::AuthRejection>> + core::marker::Send
+pub trait kynos::security::Authorizer<S, C: core::marker::Sync, P> where S: kynos::security::carrier::Carries + kynos::security::SecurityScheme<Scope = P>: kynos::security::Authenticator<S, C>
+pub fn kynos::security::Authorizer::authorize(&self, &<S as kynos::security::SecurityScheme>::Credential, &[P], &C) -> impl core::future::future::Future<Output = core::result::Result<(), kynos::error::rejection::AuthRejection>> + core::marker::Send
+impl<S, C, A> kynos::security::Authorizer<S, C, kynos::security::Unscoped> for A where S: kynos::security::carrier::Carries + kynos::security::SecurityScheme<Scope = kynos::security::Unscoped>, C: core::marker::Sync, A: kynos::security::Authenticator<S, C>
+pub fn A::authorize(&self, &<S as kynos::security::SecurityScheme>::Credential, &[kynos::security::Unscoped], &C) -> impl core::future::future::Future<Output = core::result::Result<(), kynos::error::rejection::AuthRejection>> + core::marker::Send
 pub trait kynos::security::Guard<C>: kynos::security::sealed::Sealed + kynos::extract::describe::Describe + core::marker::Sized + core::marker::Send + 'static
 pub type kynos::security::Guard::Rejection: kynos::response::IntoResponse + kynos::response::Responses
 pub fn kynos::security::Guard::guard(&kynos::http::Parts, &C) -> impl core::future::future::Future<Output = core::result::Result<Self, Self::Rejection>> + core::marker::Send
