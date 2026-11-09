@@ -311,7 +311,7 @@ cannot show.
 | Grade | Owes | Flags |
 | --- | --- | --- |
 | Full battery | everything its shape owes above | `server`, `http1`, `http2`, `tls`, `json`, `form`, `multipart`, `protobuf`, `compression`, `cache`, `cookie`, `assets`, `assets-fs`, `docs`, `unchecked`, `openapi32`, `trace`, `macros`, `pattern` |
-| Off-path proof | a proof it is unreachable from the request path, and a binary delta | `openapi31`, `yaml`, `test-util`, `uuid`, `time`, `time-chrono`, `time-jiff`, `decimal`, `decimal-rust`, `decimal-big` |
+| Off-path proof | a proof it is unreachable from the request path, and a binary delta | `openapi31`, `yaml`, `test-util`, `uuid1`, `time`, `time-chrono04`, `time-jiff02`, `decimal`, `decimal-rust1`, `decimal-big04` |
 | Aggregate | nothing of its own; it is the union of what it enables | `default`, `full` |
 
 **`macros` is graded full despite adding no runtime code.** It gates every

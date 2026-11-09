@@ -29,8 +29,8 @@ assets-fs	1108748	35584
 cache	1073100	-64
 compression	1073164	0
 cookie	1073164	0
-decimal-big	1073164	0
-decimal-rust	1073164	0
+decimal-big04	1073164	0
+decimal-rust1	1073164	0
 docs	1080812	7648
 form	1073164	0
 http1	1073164	0
@@ -42,10 +42,10 @@ openapi32	1169148	95984
 pattern	1073580	416
 protobuf	1073164	0
 test-util	1070044	-3120
-time-chrono	1073164	0
-time-jiff	1073164	0
+time-chrono04	1073164	0
+time-jiff02	1073164	0
 trace	1073164	0
 unchecked	1108748	35584
-uuid	1073132	-32
+uuid1	1073132	-32
 yaml	1079404	6240
 (all-features)	1223996	150832

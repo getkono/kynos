@@ -92,20 +92,20 @@ compile_error!("the `server` feature requires at least one of `http1` or `http2`
 
 #[cfg(all(
     feature = "time",
-    not(any(feature = "time-chrono", feature = "time-jiff"))
+    not(any(feature = "time-chrono04", feature = "time-jiff02"))
 ))]
 compile_error!(
-    "the `time` feature carries no types of its own; enable a backend, either `time-chrono` or \
-     `time-jiff`"
+    "the `time` feature carries no types of its own; enable a backend, either `time-chrono04` or \
+     `time-jiff02`"
 );
 
 #[cfg(all(
     feature = "decimal",
-    not(any(feature = "decimal-rust", feature = "decimal-big"))
+    not(any(feature = "decimal-rust1", feature = "decimal-big04"))
 ))]
 compile_error!(
-    "the `decimal` feature carries no types of its own; enable a backend, either `decimal-rust` \
-     or `decimal-big`"
+    "the `decimal` feature carries no types of its own; enable a backend, either `decimal-rust1` \
+     or `decimal-big04`"
 );
 
 #[doc(hidden)]

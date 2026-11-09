@@ -168,9 +168,9 @@ Each of these is something another Rust framework offers and Kynos does not. Mos
 | `tls` | no | `rustls`, including client-certificate verification |
 | `form`, `multipart`, `protobuf` | no | Additional request and response codecs |
 | `cookie` | no | Cookie parameters, response cookies and the `SetCookies` interceptor. Kynos owns the RFC 6265 this needs, so it pulls in no dependency |
-| `uuid` | no | `Uuid` as `format: uuid` |
-| `time-chrono`, `time-jiff` | no | Dates and times from one backend or the other, both mapping onto shapes `time` defines once |
-| `decimal-rust`, `decimal-big` | no | Decimals, written as JSON strings so the precision they exist for survives |
+| `uuid1` | no | `Uuid` as `format: uuid` |
+| `time-chrono04`, `time-jiff02` | no | Dates and times from one backend or the other, both mapping onto shapes `time` defines once |
+| `decimal-rust1`, `decimal-big04` | no | Decimals, written as JSON strings so the precision they exist for survives |
 | `compression` | no | Response compression, and decompressing a request body the client compressed |
 | `yaml` | no | YAML document emission |
 | `test-util` | no | In-process test client and contract-conformance assertions |
@@ -181,7 +181,7 @@ Each of these is something another Rust framework offers and Kynos does not. Mos
 | `unchecked` | no | Escape hatches. What they reach is recorded and flagged rather than dropped, and the document is stamped non-authoritative |
 | `full` | no | Every feature above except `unchecked` and `assets-fs`, which implies it. A convenience for testing the whole surface, not a recommended default |
 
-`time` and `decimal` are umbrellas rather than flags to enable: each defines the shape both of its backends map onto, so `date-time-local` is settled in one place and cannot change with a flag. Enabling one on its own is a `compile_error!` naming the backends, because an umbrella with no backend describes nothing.
+`time` and `decimal` are umbrellas rather than flags to enable: each defines the shape both of its backends map onto, so `date-time-local` is settled in one place and cannot change with a flag. Enabling one on its own is a `compile_error!` naming the backends, because an umbrella with no backend describes nothing. A scalar crate's feature names its major version, so its next major arrives as a feature beside the current one rather than as a breaking change to it.
 
 Disabling `json` removes application JSON payload types and helpers, including
 the OpenAPI 3.2 JSON stream responses. OpenAPI document serialization and the
@@ -204,7 +204,7 @@ The core is what every operation passes through, so it freezes at 1.0: a change 
 | Part | Flag | Freezes |
 | --- | --- | --- |
 | Document model and validation | `openapi31`, `openapi32` | frozen |
-| Schema, and the scalar formats | `uuid`, `time-*`, `decimal-*` | frozen |
+| Schema, and the scalar formats | `uuid1`, `time-*`, `decimal-*` | frozen |
 | Route attributes and derives | `macros`, `pattern` | frozen |
 | Handlers, extraction, responses | `json` | frozen |
 | Routing, groups, path templates | — | frozen |

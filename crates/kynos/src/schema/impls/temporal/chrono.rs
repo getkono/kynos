@@ -4,19 +4,19 @@ use kynos_openapi::Schema as OpenApiSchema;
 
 use crate::schema::{ParamValue, Schema, impls::temporal, registry::Registry};
 
-impl Schema for ::chrono::NaiveDate {
+impl Schema for ::chrono04::NaiveDate {
     fn schema(_registry: &mut Registry) -> OpenApiSchema {
         temporal::date()
     }
 }
 
-impl Schema for ::chrono::NaiveTime {
+impl Schema for ::chrono04::NaiveTime {
     fn schema(_registry: &mut Registry) -> OpenApiSchema {
         temporal::local_time()
     }
 }
 
-impl Schema for ::chrono::NaiveDateTime {
+impl Schema for ::chrono04::NaiveDateTime {
     fn schema(_registry: &mut Registry) -> OpenApiSchema {
         temporal::local_date_time()
     }
@@ -24,13 +24,13 @@ impl Schema for ::chrono::NaiveDateTime {
 
 // Named one at a time: a blanket `impl<Tz: TimeZone>` would admit `Local`,
 // whose offset depends on where the server runs.
-impl Schema for ::chrono::DateTime<::chrono::Utc> {
+impl Schema for ::chrono04::DateTime<::chrono04::Utc> {
     fn schema(_registry: &mut Registry) -> OpenApiSchema {
         temporal::instant()
     }
 }
 
-impl Schema for ::chrono::DateTime<::chrono::FixedOffset> {
+impl Schema for ::chrono04::DateTime<::chrono04::FixedOffset> {
     fn schema(_registry: &mut Registry) -> OpenApiSchema {
         temporal::instant()
     }
@@ -39,5 +39,5 @@ impl Schema for ::chrono::DateTime<::chrono::FixedOffset> {
 // Only the two whose `Display` writes their schema's format; the date-times'
 // write a space for the `T`. `NaiveDate`'s signed years are an accepted
 // exception `ParamValue` lists.
-impl ParamValue for ::chrono::NaiveDate {}
-impl ParamValue for ::chrono::NaiveTime {}
+impl ParamValue for ::chrono04::NaiveDate {}
+impl ParamValue for ::chrono04::NaiveTime {}

@@ -5,7 +5,7 @@ use kynos_openapi::Schema as OpenApiSchema;
 use crate::schema::{Schema, impls::decimal, registry::Registry};
 
 // Arbitrary precision, beyond `rust_decimal`'s scale ceiling of 28.
-impl Schema for ::bigdecimal::BigDecimal {
+impl Schema for ::bigdecimal04::BigDecimal {
     fn schema(_registry: &mut Registry) -> OpenApiSchema {
         decimal::decimal()
     }

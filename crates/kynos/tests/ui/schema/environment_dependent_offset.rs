@@ -7,5 +7,5 @@
 fn describable<T: kynos::schema::Schema>() {}
 
 fn main() {
-    describable::<chrono::DateTime<chrono::Local>>();
+    describable::<chrono04::DateTime<chrono04::Local>>();
 }

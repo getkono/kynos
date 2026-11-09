@@ -69,11 +69,11 @@ required-features = [
   "server",
   "http1",
   "json",
-  "uuid",
-  "time-chrono",
-  "time-jiff",
-  "decimal-rust",
-  "decimal-big",
+  "uuid1",
+  "time-chrono04",
+  "time-jiff02",
+  "decimal-rust1",
+  "decimal-big04",
 ]
 
 [[example]]
@@ -322,18 +322,19 @@ compression = ["dep:async-compression"]
 
 # --- Scalar formats --------------------------------------------------------
 # The mapping to JSON Schema `format` is the `kynos::schema` rustdoc's
-# "Behind a feature flag" table.
-uuid = ["dep:uuid"]
+# "Behind a feature flag" table. Each names the crate's major, so the next
+# major arrives as a feature beside it (docs/architecture.md).
+uuid1 = ["dep:uuid1"]
 
 # Umbrellas holding the shapes their backends share; neither compiles alone.
 # `time` is unrelated to the `time` crate.
 time = []
-time-chrono = ["time", "dep:chrono"]
-time-jiff = ["time", "dep:jiff"]
+time-chrono04 = ["time", "dep:chrono04"]
+time-jiff02 = ["time", "dep:jiff02"]
 
 decimal = []
-decimal-rust = ["decimal", "dep:rust_decimal"]
-decimal-big = ["decimal", "dep:bigdecimal"]
+decimal-rust1 = ["decimal", "dep:rust_decimal1"]
+decimal-big04 = ["decimal", "dep:bigdecimal04"]
 
 # --- Observability ---------------------------------------------------------
 # The `tracing` facade only. Choosing a subscriber stays the application's call.
@@ -389,11 +390,11 @@ full = [
   "trace",
   "yaml",
   "test-util",
-  "uuid",
-  "time-chrono",
-  "time-jiff",
-  "decimal-rust",
-  "decimal-big",
+  "uuid1",
+  "time-chrono04",
+  "time-jiff02",
+  "decimal-rust1",
+  "decimal-big04",
 ]
 
 [dependencies]
@@ -406,9 +407,9 @@ async-compression = { workspace = true, optional = true, features = [
   "brotli",
   "zstd",
 ] }
-bigdecimal = { workspace = true, optional = true }
+bigdecimal04 = { workspace = true, optional = true }
 bytes = { workspace = true }
-chrono = { workspace = true, optional = true }
+chrono04 = { workspace = true, optional = true }
 # The stream contract `BinaryStream` takes, so it is in every build.
 futures-core = { workspace = true }
 http = { workspace = true }
@@ -419,14 +420,14 @@ hyper-util = { workspace = true, optional = true, features = [
   "server",
   "tokio",
 ] }
-jiff = { workspace = true, optional = true }
+jiff02 = { workspace = true, optional = true }
 jsonschema = { workspace = true, optional = true }
 matchit = { workspace = true }
 multer = { workspace = true, optional = true }
 percent-encoding = { workspace = true }
 prost = { workspace = true, optional = true }
 regex = { workspace = true, optional = true }
-rust_decimal = { workspace = true, optional = true }
+rust_decimal1 = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 serde_html_form = { workspace = true, optional = true }
 serde_json = { workspace = true }
@@ -437,7 +438,7 @@ tokio-rustls = { workspace = true, optional = true }
 tower-layer = { workspace = true, optional = true }
 tower-service = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
-uuid = { workspace = true, optional = true }
+uuid1 = { workspace = true, optional = true }
 
 [dev-dependencies]
 # A dev-dependency adding a crate to the graph can reword the `ui` `.stderr`
@@ -456,12 +457,12 @@ tokio = { workspace = true, features = [
 ] }
 tower = { workspace = true }
 trybuild = { workspace = true }
-bigdecimal = { workspace = true, features = ["serde"] }
+bigdecimal04 = { workspace = true, features = ["serde"] }
 # `clock` makes `Local` exist, so the UI case refusing `DateTime<Local>` fails
 # for the right reason.
-chrono = { workspace = true, features = ["alloc", "clock", "serde"] }
+chrono04 = { workspace = true, features = ["alloc", "clock", "serde"] }
 # The bundled zone database, so tests do not depend on the host's.
-jiff = { workspace = true, features = [
+jiff02 = { workspace = true, features = [
   "std",
   "serde",
   "tzdb-bundle-always",
@@ -472,7 +473,7 @@ rcgen = { workspace = true }
 rustls = { workspace = true, features = ["ring", "std"] }
 listenfd = { workspace = true }
 mutants = { workspace = true }
-rust_decimal = { workspace = true, features = ["serde"] }
+rust_decimal1 = { workspace = true, features = ["serde"] }
 # Examples install a subscriber and exporter; Kynos depends on neither.
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 opentelemetry = { workspace = true }
@@ -480,7 +481,7 @@ opentelemetry_sdk = { workspace = true, features = ["rt-tokio"] }
 opentelemetry-otlp = { workspace = true, features = ["grpc-tonic", "trace"] }
 opentelemetry-semantic-conventions = { workspace = true }
 tracing-opentelemetry = { workspace = true }
-uuid = { workspace = true, features = ["serde"] }
+uuid1 = { workspace = true, features = ["serde"] }
 
 # `setrlimit` for `connection_adversarial.rs`, and `kill_process` for the
 # server's signal test.

@@ -6,5 +6,5 @@
 fn describable<T: kynos::schema::Schema>() {}
 
 fn main() {
-    describable::<chrono::TimeDelta>();
+    describable::<chrono04::TimeDelta>();
 }

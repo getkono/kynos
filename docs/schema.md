@@ -76,13 +76,19 @@ backend; enabling an umbrella without a backend is a compile error.
 
 | Feature | Requires | Adds |
 | --- | --- | --- |
-| `uuid` | — | `uuid` |
+| `uuid1` | — | `uuid` 1.x |
 | `time` | one of the two below | *(shapes only)* |
-| `time-chrono` | `time` | `chrono` |
-| `time-jiff` | `time` | `jiff` |
+| `time-chrono04` | `time` | `chrono` 0.4.x |
+| `time-jiff02` | `time` | `jiff` 0.2.x |
 | `decimal` | one of the two below | *(shapes only)* |
-| `decimal-rust` | `decimal` | `rust_decimal` |
-| `decimal-big` | `decimal` | `bigdecimal` |
+| `decimal-rust1` | `decimal` | `rust_decimal` 1.x |
+| `decimal-big04` | `decimal` | `bigdecimal` 0.4.x |
+
+A backend's feature names the crate's major version, because Kynos implements
+its traits on that crate's types and a type from another major is a different
+type. The crate's next major arrives as a new feature beside the old one, so
+both can be on while an application moves; the old one goes in a later breaking
+release. See [`architecture.md`](architecture.md#what-an-upstream-fix-may-change).
 
 Each type these features describe, and its schema, is the table under
 [Behind a feature flag](https://docs.rs/kynos/latest/kynos/schema/index.html#behind-a-feature-flag)
@@ -151,10 +157,10 @@ one `FromStr` never reads that.
 | --- | --- |
 | `bool`, `char`, `String`, `i8`–`i64`, `u8`–`u64`, `f32`, `f64` | — |
 | `Ipv4Addr`, `Ipv6Addr`, `IpAddr` | — |
-| `uuid::Uuid` | `uuid` |
-| `chrono::NaiveDate`, `chrono::NaiveTime` | `time-chrono` |
-| every `jiff` type above | `time-jiff` |
-| `rust_decimal::Decimal` | `decimal-rust` |
+| `uuid::Uuid` | `uuid1` |
+| `chrono::NaiveDate`, `chrono::NaiveTime` | `time-chrono04` |
+| every `jiff` type above | `time-jiff02` |
+| `rust_decimal::Decimal` | `decimal-rust1` |
 
 Left out because `Display` writes something other than the format the schema
 names: chrono's `NaiveDateTime` and `DateTime` put a space where RFC 3339 has a

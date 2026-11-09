@@ -1948,12 +1948,12 @@ class Main(unittest.TestCase):
              "`multer` is named only"),
             ("crates/kynos/src/response/codec/form.rs", "use prost::Message;",
              "`prost` is named only"),
-            ("crates/kynos/src/schema/impls/temporal/mod.rs", "use uuid::Uuid;",
-             "`uuid` is named only"),
-            ("crates/kynos/src/schema/impls/identifier.rs", "use jiff::Timestamp;",
-             "`chrono` and `jiff` are named only"),
-            ("crates/kynos/src/schema/impls/identifier.rs", "use rust_decimal::Decimal;",
-             "`rust_decimal` and `bigdecimal` are named only"),
+            ("crates/kynos/src/schema/impls/temporal/mod.rs", "use uuid1::Uuid;",
+             "`uuid1` is named only"),
+            ("crates/kynos/src/schema/impls/identifier.rs", "use jiff02::Timestamp;",
+             "`chrono04` and `jiff02` are named only"),
+            ("crates/kynos/src/schema/impls/identifier.rs", "use rust_decimal1::Decimal;",
+             "`rust_decimal1` and `bigdecimal04` are named only"),
             ("crates/kynos/src/extract/params/query.rs",
              "use percent_encoding::percent_decode_str;", "`percent-encoding` is named only"),
             ("crates/kynos/src/test/mod.rs", "use jsonschema::Validator;",
@@ -2155,8 +2155,8 @@ class Main(unittest.TestCase):
         # testing.md's off-path table makes it.
         broken = self.rewriting(
             self.rewriting(gate.PERFORMANCE, "`cookie`, ", ""),
-            "`decimal-big` |",
-            "`decimal-big`, `cookie` |",
+            "`decimal-big04` |",
+            "`decimal-big04`, `cookie` |",
         )
         status, failures = self.report(performance=broken)
         self.assertEqual(status, 1)
@@ -2202,11 +2202,11 @@ class Main(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertEqual(len(self.naming(failures, "exactly one off-path table")), 1)
 
-    #: The `uuid` off-path row, in the three cells the cases below rewrite. One
+    #: The `uuid1` off-path row, in the three cells the cases below rewrite. One
     #: row reaches every rule the off-path loop states per row, and naming its
     #: cells apart keeps each fixture to the one cell it breaks.
-    UUID_ELEMENT = "| the `uuid` feature |"
-    UUID_NAMED_BY = ' `uuid`, `feature = "uuid"` |'
+    UUID_ELEMENT = "| the `uuid1` feature |"
+    UUID_NAMED_BY = ' `uuid1`, `feature = "uuid1"` |'
     UUID_SITES = " `schema/impls/{mod,identifier}.rs` |"
     UUID_ROW = UUID_ELEMENT + UUID_NAMED_BY + UUID_SITES
     #: The row-count sentence, read off the gate rather than respelled here,
@@ -2226,7 +2226,7 @@ class Main(unittest.TestCase):
         self.assertEqual(status, 1)
         reported = self.naming(failures, "off-path table has a malformed row")
         self.assertEqual(len(reported), 1)
-        self.assertIn("the `uuid` feature", reported[0])
+        self.assertIn("the `uuid1` feature", reported[0])
 
     def test_an_unreadable_off_path_site_cell_is_reported(self):
         # A *Named only in* cell writing prose outside its backticks. The scan
@@ -2243,7 +2243,7 @@ class Main(unittest.TestCase):
         self.assertEqual(status, 1)
         reported = self.naming(failures, "cannot read as a comma-separated list")
         self.assertEqual(len(reported), 1)
-        self.assertIn("the `uuid` feature", reported[0])
+        self.assertIn("the `uuid1` feature", reported[0])
 
     def test_an_off_path_site_in_a_misspelled_crate_is_reported(self):
         # One transposed letter in a crate name: every other check on the cell
@@ -2275,13 +2275,13 @@ class Main(unittest.TestCase):
         broken = self.rewriting(
             gate.TESTING,
             self.UUID_ROW,
-            self.UUID_ELEMENT + ' `uuid` and `feature = "uuid"` |' + self.UUID_SITES,
+            self.UUID_ELEMENT + ' `uuid1` and `feature = "uuid1"` |' + self.UUID_SITES,
         )
         status, failures = self.report(testing=broken)
         self.assertEqual(status, 1)
         reported = self.naming(failures, "cannot read as an identifier or a path of them")
         self.assertEqual(len(reported), 1)
-        self.assertIn("the `uuid` feature", reported[0])
+        self.assertIn("the `uuid1` feature", reported[0])
 
     def test_an_off_path_spelling_nothing_writes_is_reported(self):
         # A renamed or mistyped spelling, and the row's other spelling still
@@ -2290,7 +2290,7 @@ class Main(unittest.TestCase):
         broken = self.rewriting(
             gate.TESTING,
             self.UUID_ROW,
-            self.UUID_ELEMENT + ' `uuidd`, `feature = "uuid"` |' + self.UUID_SITES,
+            self.UUID_ELEMENT + ' `uuidd`, `feature = "uuid1"` |' + self.UUID_SITES,
         )
         status, failures = self.report(testing=broken)
         self.assertEqual(status, 1)
@@ -2308,7 +2308,7 @@ class Main(unittest.TestCase):
         broken = self.rewriting(
             gate.TESTING,
             self.UUID_ROW,
-            self.UUID_ELEMENT + ' `uuidd`, `feature = "uuid"` |' + " `schema/mod.rs` |",
+            self.UUID_ELEMENT + ' `uuidd`, `feature = "uuid1"` |' + " `schema/mod.rs` |",
         )
         status, failures = self.report(testing=broken)
         self.assertEqual(status, 1)

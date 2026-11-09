@@ -25,7 +25,7 @@ as reading the authenticated caller in a handler, which is
 | Example | Shows | Features |
 | --- | --- | --- |
 | [`schema.rs`](schema.rs) | `#[derive(Schema)]`: constraints, serde interop, map keys, and the escape hatch | `pattern` |
-| [`scalars.rs`](scalars.rs) | Which types outside `std` map to which JSON Schema `format` | `uuid,time-chrono,time-jiff,decimal-rust,decimal-big` |
+| [`scalars.rs`](scalars.rs) | Which types outside `std` map to which JSON Schema `format` | `uuid1,time-chrono04,time-jiff02,decimal-rust1,decimal-big04` |
 
 ## Requests
 

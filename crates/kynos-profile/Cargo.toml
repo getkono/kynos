@@ -38,11 +38,11 @@ kynos = { path = "../kynos", features = [
   "compression",
   "trace",
   "yaml",
-  "uuid",
-  "time-chrono",
-  "time-jiff",
-  "decimal-rust",
-  "decimal-big",
+  "uuid1",
+  "time-chrono04",
+  "time-jiff02",
+  "decimal-rust1",
+  "decimal-big04",
 ] }
 # Gzips `decompress-gzip`'s request body in setup, with the features `kynos`'s
 # `compression` already compiles.

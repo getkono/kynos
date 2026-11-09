@@ -226,6 +226,16 @@ and a breaking release. An incompatible bump of any other dependency is
 `chore(deps)` that needs a change outside those paths has found a containment
 bug, and that bug is what gets fixed.
 
+**The scalar-format exception:** a scalar-format crate is public API only
+through Kynos's trait impls on its types, so its feature and its dependency key
+name the major those impls are for: the features `uuid1`, `time-chrono04`,
+`time-jiff02`, `decimal-rust1` and `decimal-big04`, over the package-renamed
+keys `uuid1`, `chrono04`, `jiff02`, `rust_decimal1` and `bigdecimal04`. A new
+major arrives as a new feature and key beside the old, which is additive,
+because the impls are on distinct types and both can be on while an
+application moves. The old one is removed in a later breaking release, and
+that removal is the `!` commit. The `time` and `decimal` umbrellas name no crate and stay unversioned.
+
 **The auxiliary guarantee:** every built-in codec is re-implementable through
 [`BodyCodec`](../crates/kynos/src/extract/body/codec.rs) and `Encoded<C, T>`, so
 a codec advisory never leaves an application waiting on a Kynos release: it
@@ -244,13 +254,13 @@ keep:
 - `http-body` — `impl Body for http::Body`.
 - `tokio` — the `Server::serve_io` bound.
 - `tower-service` and `tower-layer` — `unchecked`.
+- `uuid`, `chrono`, `jiff`, `rust_decimal` and `bigdecimal` — trait impls on
+  their types under `schema/impls/`, each behind a feature naming its major, so
+  a new major is additive (the scalar-format exception above).
 
-Six crates are public API today without being in the allowance, and each has
-an issue moving it down a tier: `uuid`, `chrono`, `jiff`, `rust_decimal` and
-`bigdecimal` as trait impls on their types under `schema/impls/`
-([#1214](https://github.com/getkono/kynos/issues/1214)); and `prost` as the
-`T: prost::Message` bound on `Protobuf<T>`
-([#1215](https://github.com/getkono/kynos/issues/1215)).
+One crate is public API today without being in the allowance, and it has an
+issue moving it down a tier: `prost` as the `T: prost::Message` bound on
+`Protobuf<T>` ([#1215](https://github.com/getkono/kynos/issues/1215)).
 
 `mise run api:check` reads the list and that paragraph, the count included,
 and holds `cargo public-api --all-features` for `kynos-openapi` and `kynos` to
@@ -338,7 +348,11 @@ only job is to give a value a JSON Schema `format` — which is why "can we add
 because there was nothing in that position to displace. The rule the layer
 inherits is the ordinary one: each crate is named only under
 [`schema/impls/`](../crates/kynos/src/schema/impls/), each arrives behind an
-off-by-default feature, and none is reachable from a default build.
+off-by-default feature, and none is reachable from a default build. The one
+thing the layer adds is version-suffixing: a crate's feature and dependency key
+name its major, so its new major arrives as a new feature beside the old, and
+the old is removed in a later breaking release (the [scalar-format
+exception](#what-an-upstream-fix-may-change)).
 
 ### What does not move, and why
 
@@ -589,7 +603,7 @@ module column is also where the `#[cfg]` lives.
 | `cookie` | cookie parameters, response cookies and `SetCookies`. Names no crate: Kynos owns the RFC 6265 | [`standards.md`](standards.md) |
 | `compression` | `middleware/compression/` and `middleware/decompression/`, two of the six runtime-allowance rows | [`middleware.md`](middleware.md) |
 | `trace` | the `tracing` facade only; the subscriber stays the application's | [`middleware.md`](middleware.md) |
-| `uuid`, `time-*`, `decimal-*` | one `schema/impls/` module each. `time` and `decimal` are umbrellas that define the shape both backends map onto | [`schema.md`](schema.md#behind-a-feature-flag) |
+| `uuid1`, `time-*`, `decimal-*` | one `schema/impls/` module each, behind a feature naming the crate's major. `time` and `decimal` are umbrellas that define the shape both backends map onto | [`schema.md`](schema.md#behind-a-feature-flag) |
 | `yaml` | the second document emitter, in `kynos-openapi` and re-exported | [`standards.md`](standards.md) |
 | `test-util` | `test/`, and the JSON Schema validator its conformance assertions need; with `server`, hyper's `client` half and tokio's `duplex`, which `TestClient::through_server` drives `Server::serve_io` with from `server/connection.rs` | [`testing.md`](testing.md) |
 | `cache` | `middleware/cache/` and `middleware/conditional/`: the seam, never a store | [`middleware.md`](middleware.md) |

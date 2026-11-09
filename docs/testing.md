@@ -429,7 +429,7 @@ which owe the same argument one at a time. A flag is a weaker thing to hold than
 an element — it names no type — so what a row holds is where the flag is
 *written*: the crate its gated code calls, and the `#[cfg(feature = "…")]` that
 compiles it. That is enough for the claim being made, and the ten fall into four
-kinds. Six compile the code the proof has to keep a request away from: `uuid`
+kinds. Six compile the code the proof has to keep a request away from: `uuid1`
 and the four `time`/`decimal` backends contribute `Schema`
 implementations, which need the `&mut Registry` only `describe` mints, and
 `yaml` contributes an emitter method on a document a request never holds.
@@ -473,13 +473,13 @@ halve.
 | the `openapi31` feature | `not(feature = "openapi31")` | `lib.rs`, `crates/kynos-openapi/src/lib.rs` | nothing is conditional on it. Both sites are the `#[cfg(not(feature = "openapi31"))] compile_error!` that refuses a build without it, and the 3.1 object model it names is compiled unconditionally. What that model does is held by the document, registry and validator rows above, and a request reaches none of the three |
 | the `yaml` feature | `serde_norway`, `YamlError`, `feature = "yaml"` | `crates/kynos-openapi/src/emit/{mod,yaml}.rs`, `error/mod.rs` | `Document::to_yaml` is a method on the emitted document, reached only through `Service::openapi` after the build has finished. `Error::Yaml` carries the `YamlError` that emitter produced, and no framework site makes one otherwise |
 | the `test-util` feature | `feature = "test-util"` | `lib.rs`, `server/connection.rs` | one gate, on `pub mod test`. What it compiles is the conformance harness, whose interpreter is the `jsonschema` row above. The second gate, on a private module of `server/connection.rs`, compiles the client half of `TestClient::through_server`, there because hyper and the runtime are named nowhere else; only that constructor calls it, so no served request does |
-| the `uuid` feature | `uuid`, `feature = "uuid"` | `schema/impls/{mod,identifier}.rs` | its whole contribution is `impl Schema for Uuid`, whose `Schema::schema` takes the `&mut Registry` that only `describe` mints, and `impl ParamValue for Uuid`, a marker with no items |
+| the `uuid1` feature | `uuid1`, `feature = "uuid1"` | `schema/impls/{mod,identifier}.rs` | its whole contribution is `impl Schema for Uuid`, whose `Schema::schema` takes the `&mut Registry` that only `describe` mints, and `impl ParamValue for Uuid`, a marker with no items |
 | the `time` feature | `feature = "time"` | `lib.rs`, `schema/impls/mod.rs` | it carries no types: enabled without a backend it is a `compile_error!`, which `features:check` probes. The two sites are the gate that says so and the module it would open; the cost is its backends' rows |
-| the `time-chrono` feature | `chrono`, `feature = "time-chrono"` | `lib.rs`, `schema/impls/temporal/{mod,chrono}.rs` | `Schema` implementations for the crate's date and time types, behind the `&mut Registry` only `describe` mints, and `ParamValue` for two of them, a marker with no items |
-| the `time-jiff` feature | `jiff`, `feature = "time-jiff"` | `lib.rs`, `schema/impls/temporal/{mod,jiff}.rs` | the same, for the other backend: `Schema` implementations reachable only through a registry a build has already consumed, and `ParamValue`, a marker with no items |
+| the `time-chrono04` feature | `chrono04`, `feature = "time-chrono04"` | `lib.rs`, `schema/impls/temporal/{mod,chrono}.rs` | `Schema` implementations for the crate's date and time types, behind the `&mut Registry` only `describe` mints, and `ParamValue` for two of them, a marker with no items |
+| the `time-jiff02` feature | `jiff02`, `feature = "time-jiff02"` | `lib.rs`, `schema/impls/temporal/{mod,jiff}.rs` | the same, for the other backend: `Schema` implementations reachable only through a registry a build has already consumed, and `ParamValue`, a marker with no items |
 | the `decimal` feature | `feature = "decimal"` | `lib.rs`, `schema/impls/mod.rs` | as `time`: no types of its own, a `compile_error!` without a backend, and the two sites are the gate and the module it opens |
-| the `decimal-rust` feature | `rust_decimal`, `feature = "decimal-rust"` | `lib.rs`, `schema/impls/decimal/{mod,rust_decimal}.rs` | `Schema` implementations for the crate's decimal type, behind the `&mut Registry` only `describe` mints, and `ParamValue`, a marker with no items |
-| the `decimal-big` feature | `bigdecimal`, `feature = "decimal-big"` | `lib.rs`, `schema/impls/decimal/{mod,bigdecimal}.rs` | `Schema` implementations for the crate's decimal type, behind the `&mut Registry` only `describe` mints |
+| the `decimal-rust1` feature | `rust_decimal1`, `feature = "decimal-rust1"` | `lib.rs`, `schema/impls/decimal/{mod,rust_decimal}.rs` | `Schema` implementations for the crate's decimal type, behind the `&mut Registry` only `describe` mints, and `ParamValue`, a marker with no items |
+| the `decimal-big04` feature | `bigdecimal04`, `feature = "decimal-big04"` | `lib.rs`, `schema/impls/decimal/{mod,bigdecimal}.rs` | `Schema` implementations for the crate's decimal type, behind the `&mut Registry` only `describe` mints |
 
 How [`containment.py`](../scripts/containment.py) reads a row is documented on
 its `token`, `Gate`, `allowed_sites` and `scanned`; what a row's writer needs is
