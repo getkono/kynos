@@ -929,7 +929,7 @@ over `tracing` and the subscriber stays the application's.
 | --- | --- | --- | --- |
 | operability | Spans conform to OpenTelemetry HTTP semantic conventions | Integration test asserting attribute names against a pinned semconv version | `by-design`, below |
 | operability | Metric cardinality is bounded by operation count | Test asserting series count is invariant under 10k distinct request paths | `by-design`, below |
-| operability | A response the client did not receive is distinguishable from one it did | [`tests/sse.rs`](../crates/kynos/tests/sse.rs) dropping a live event stream's reader and asserting `on_disconnect` fires exactly once, with a control that reads a finite response to its end | `enforced` |
+| operability | A response the client did not receive is distinguishable from one it did | [`tests/sse.rs`](../crates/kynos/tests/sse.rs) dropping a live event stream's reader and asserting `on_disconnect` fires exactly once, with a control that reads a finite response to its end; [`tests/middleware.rs`](../crates/kynos/tests/middleware.rs) asserting a compressed stream reaches `on_complete` with the encoded octets read and a failed one reaches only `on_disconnect` | `enforced` |
 
 Both `by-design` rows rest on the same refusal — Kynos ships no OpenTelemetry
 module, for the reasons closing this section. What did land is the
@@ -943,7 +943,10 @@ fires when the response head is ready, which for a stream or a download is
 nowhere near when the peer has it — so a service that counted responses counted
 deliveries it never made, and its latency figure measured producing a response
 rather than sending one. `on_disconnect` reports the body dropped before its
-last frame, which is the difference. It does not report a client that leaves
+last frame, which is the difference, and `on_complete` the body read to its
+end, with the latency to its last frame and the octets it carried after
+content coding; exactly one of the two follows each `on_response`, and both
+ride on the body watch only a mounted observer adds. Neither reports a client that leaves
 while the handler is still working: there is no body to drop until the handler
 has produced one.
 The module is not merely unwritten, though. Shipping one would put this

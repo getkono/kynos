@@ -44,13 +44,14 @@
 //!   that can panic; the fallback below is there only because the parameter
 //!   has the type it has on the other hooks, where a request that matched
 //!   nothing is still worth a line.
-//! * **`on_response` is not the end of the request, and `on_disconnect` is why
-//!   the difference matters.** The closing event fires when the head is ready,
+//! * **`on_response` is not the end of the request; `on_complete` and
+//!   `on_disconnect` are.** The closing event fires when the head is ready,
 //!   so its `latency` measures producing a response rather than delivering one
-//!   -- for a download or an event stream the two are worlds apart. A body
-//!   dropped before its last frame means the client never received what was
-//!   already logged as sent, and only `on_disconnect` says so. It is defaulted
-//!   like `on_panic`, and left out just as easily.
+//!   -- for a download or an event stream the two are worlds apart. Exactly one
+//!   of the two follows it: `on_complete` once the body's last frame was sent,
+//!   with the full latency and the octets on the wire, or `on_disconnect` when
+//!   the client never received what was already logged as sent. Both are
+//!   defaulted like `on_panic`, and left out just as easily.
 //!
 //! [`Route::path`]: kynos::router::operation::Route::path
 
@@ -59,7 +60,7 @@ use std::{any::Any, collections::HashMap, net::Ipv4Addr, time::Duration};
 use kynos::{
     http,
     middleware::{
-        Observer,
+        Completion, Observer,
         request_id::{Random, RequestId},
         trace::{Level, Trace},
     },
@@ -128,6 +129,18 @@ impl<C> Observer<C> for Slo {
                 "over budget",
             );
         }
+    }
+
+    fn on_complete(&self, route: Option<Route<'_>>, completion: &Completion) {
+        // The delivered figures a bytes-sent or full-latency metric records:
+        // `body_bytes` is what went on the wire, after any compression.
+        tracing::debug!(
+            target: "slo",
+            operation_id = route.map_or("<unmatched>", |route| route.operation_id()),
+            body_bytes = completion.body_bytes,
+            elapsed_ms = completion.elapsed.as_millis(),
+            "delivered",
+        );
     }
 
     fn on_disconnect(&self, route: Option<Route<'_>>, elapsed: Duration) {
