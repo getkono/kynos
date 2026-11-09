@@ -19,8 +19,9 @@ categories = [
 ]
 
 # Files whose oracle lives above this package (`references/`, `kynos-macros`,
-# `scripts/`), so they would only fail from the tarball. The two tests are
-# auto-discovered, since a declared target cannot have its path excluded.
+# `scripts/`, the repository README), so they would only fail from the tarball.
+# The three tests are auto-discovered, since a declared target cannot have its
+# path excluded.
 exclude = [
   "cost/binary.tsv",
   "cost/codec.tsv",
@@ -28,6 +29,7 @@ exclude = [
   "public-api.txt",
   "tests/ledger.rs",
   "tests/metaschema.rs",
+  "tests/readme_quickstart.rs",
 ]
 
 [[test]]
