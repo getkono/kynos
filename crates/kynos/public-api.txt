@@ -5180,10 +5180,34 @@ pub type (T1)::Stack = <() as kynos::middleware::stack::InterceptorList<C, kynos
 impl<C, I, S> kynos::middleware::stack::InterceptorList<C, I, S> for ()
 pub type ()::Stack = I
 pub mod kynos::middleware::trace
+pub enum kynos::middleware::trace::Level
+pub kynos::middleware::trace::Level::Debug
+pub kynos::middleware::trace::Level::Error
+pub kynos::middleware::trace::Level::Info
+pub kynos::middleware::trace::Level::Trace
+pub kynos::middleware::trace::Level::Warn
+impl core::clone::Clone for kynos::middleware::trace::Level
+pub fn kynos::middleware::trace::Level::clone(&self) -> kynos::middleware::trace::Level
+impl core::cmp::Eq for kynos::middleware::trace::Level
+impl core::cmp::PartialEq for kynos::middleware::trace::Level
+pub fn kynos::middleware::trace::Level::eq(&self, &kynos::middleware::trace::Level) -> bool
+impl core::fmt::Debug for kynos::middleware::trace::Level
+pub fn kynos::middleware::trace::Level::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kynos::middleware::trace::Level
+pub fn kynos::middleware::trace::Level::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kynos::middleware::trace::Level
+impl core::marker::StructuralPartialEq for kynos::middleware::trace::Level
+impl core::marker::Freeze for kynos::middleware::trace::Level
+impl core::marker::Send for kynos::middleware::trace::Level
+impl core::marker::Sync for kynos::middleware::trace::Level
+impl core::marker::Unpin for kynos::middleware::trace::Level
+impl core::marker::UnsafeUnpin for kynos::middleware::trace::Level
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::trace::Level
+impl core::panic::unwind_safe::UnwindSafe for kynos::middleware::trace::Level
 pub struct kynos::middleware::trace::Trace
 impl kynos::middleware::trace::Trace
 pub fn kynos::middleware::trace::Trace::correlating<S, G: kynos::middleware::request_id::CorrelationHeaders>(self, &kynos::middleware::request_id::RequestId<S, G>) -> Self
-pub fn kynos::middleware::trace::Trace::level(self, tracing_core::metadata::Level) -> Self
+pub fn kynos::middleware::trace::Trace::level(self, kynos::middleware::trace::Level) -> Self
 pub fn kynos::middleware::trace::Trace::new() -> Self
 pub fn kynos::middleware::trace::Trace::record_headers(self, &'static [&'static str]) -> Self
 impl core::clone::Clone for kynos::middleware::trace::Trace
