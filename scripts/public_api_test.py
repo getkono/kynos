@@ -84,6 +84,16 @@ class Pending(unittest.TestCase):
         _, failures = failures_of(gate.pending, text)
         self.assertIn("names 2", failures[0])
 
+    def test_one_left_is_read_in_the_singular(self):
+        text = ARCHITECTURE.replace(
+            "Two crates are public API today without being in the allowance, and each has\n"
+            "an issue: `uuid` under `schema/impls/`; and `tracing` as the",
+            "One crate is public API today without being in the allowance, and it has\n"
+            "an issue: `tracing` as the",
+        )
+        crates, failures = failures_of(gate.pending, text)
+        self.assertEqual((crates, failures), (["tracing"], []))
+
     def test_none_left_is_a_count_of_zero(self):
         text = ARCHITECTURE.replace(
             "Two crates are public API today without being in the allowance, and each has\n"
