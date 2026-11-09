@@ -403,9 +403,10 @@ steps.
 Counting avoids the trade rather than splitting it. An allocation count is the
 same integer on a loaded machine and an idle one, so the gate can be exact, and
 an exact gate fails on the change that caused it rather than three merges later.
-`[profile.bench]` in the workspace manifest keeps debug info under optimization
-for anyone who does want a profile locally — that affordance already exists and
-this document does not replace it.
+`[profile.profiling]` in the workspace manifest builds the shipped artifact with
+line tables for anyone who does want a timed profile locally, as the next
+section shows — that affordance stays local and this document does not replace
+it.
 
 ### Profiling locally
 
@@ -415,10 +416,12 @@ for each scenario, the fifteen frames `callgrind_annotate --inclusive=yes`
 ranks highest, and DHAT's allocation sites by the innermost frame in a
 workspace crate. The Callgrind files beside it under
 `target/gungraun/kynos-profile/` hold the rest — `--tree=caller` over one says
-who called the allocator. A timed profile — `perf record` over the same
-benchmark binary, which `[profile.bench]` builds with symbols — is the
-corroboration a count cannot give, and it stays on the machine that took it
-for the reason the section above gives.
+who called the allocator. `[profile.bench]` builds those Callgrind runs with
+debug info so their frames are named, but it has no frame pointers and is not
+the build to time. A timed profile — `perf record` over the
+`[profile.profiling]` build below — is the corroboration a count cannot give,
+and it stays on the machine that took it for the reason the section above
+gives.
 
 **A timed profile is taken over the shipped build, with frame pointers.**
 `[profile.profiling]` is `release` — fat LTO, one codegen unit — plus
