@@ -275,10 +275,10 @@ async fn a_finished_stream_reports_its_end() {
     }
 
     assert!(body.is_end_stream());
-    assert_eq!(
-        delivery_of(finishing()).await,
-        vec![crate::http::body::Delivery::Complete]
-    );
+    assert!(matches!(
+        delivery_of(finishing()).await[..],
+        [crate::http::body::Delivery::Complete { .. }]
+    ));
 }
 
 /// An encoder that took nothing of what it was given is broken, not busy:

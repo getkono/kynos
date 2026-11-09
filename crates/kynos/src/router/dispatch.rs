@@ -18,7 +18,7 @@ use crate::{
         header,
     },
     middleware::{
-        Next, Observer,
+        Completion, Next, Observer,
         erased::{ErasedInterceptor, ErasedTerminal},
     },
     response::IntoResponse,
@@ -695,8 +695,8 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
 
     /// Notifies every observer and hands the response on.
     ///
-    /// With observers, the body is watched so a peer leaving mid-response is
-    /// reported; without, nothing is added. A HEAD response sheds its content
+    /// With observers, the body is watched so its end, or a peer leaving
+    /// mid-response, is reported; without, nothing is added. A HEAD response sheds its content
     /// first, so an observer sees what the peer will.
     ///
     /// `started` is `None` exactly when no observer is mounted, since only an
@@ -728,14 +728,20 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         let watcher = Arc::clone(self);
         let (parts, body) = response.into_parts();
         let body = body.watching(move |delivery| {
-            if delivery == Delivery::Complete {
-                return;
-            }
-
             let elapsed = started.elapsed();
             let route = at.map(|at| watcher.route_at(at));
-            for observer in &watcher.observers {
-                observer.on_disconnect(route, elapsed);
+            match delivery {
+                Delivery::Complete { bytes } => {
+                    let completion = Completion::new(elapsed, bytes);
+                    for observer in &watcher.observers {
+                        observer.on_complete(route, &completion);
+                    }
+                }
+                Delivery::Interrupted => {
+                    for observer in &watcher.observers {
+                        observer.on_disconnect(route, elapsed);
+                    }
+                }
             }
         });
 

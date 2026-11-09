@@ -28,7 +28,7 @@ use kynos::{
         forwarded::{Forwarded, ProxyHeader, TrustedProxies},
         header,
     },
-    middleware::{Continued, Interceptor, Next, Observer, request_id::RequestId},
+    middleware::{Completion, Continued, Interceptor, Next, Observer, request_id::RequestId},
     openapi,
     response::status::NoContent,
     router::{
@@ -403,6 +403,14 @@ impl Observer<App> for Endings {
         ));
     }
 
+    fn on_complete(&self, route: Option<Route<'_>>, completion: &Completion) {
+        self.push(format!(
+            "complete {} {}",
+            named(route),
+            completion.body_bytes
+        ));
+    }
+
     fn on_disconnect(&self, route: Option<Route<'_>>, _: Duration) {
         self.push(format!("disconnect {}", named(route)));
     }
@@ -410,7 +418,9 @@ impl Observer<App> for Endings {
 
 /// `on_response` is handed the operation that answered, or none where no
 /// operation did, and a HEAD's response with its content already shed, since
-/// that is what the peer will receive.
+/// that is what the peer will receive. Each body read to its end is then
+/// reported to `on_complete`, counting what the peer received: nothing for
+/// the HEAD, and exactly the length `on_response` saw announced otherwise.
 #[tokio::test]
 async fn an_observer_sees_the_route_and_the_response_the_peer_will_get() {
     let endings = Endings::default();
@@ -428,8 +438,11 @@ async fn an_observer_sees_the_route_and_the_response_the_peer_will_get() {
         endings.taken(),
         [
             "response loud_head /loud 200 Some(0)",
+            "complete loud_head /loud 0",
             "response <unmatched> 405 Some(64)",
+            "complete <unmatched> 64",
             "response <unmatched> 404 Some(55)",
+            "complete <unmatched> 55",
         ]
     );
 }

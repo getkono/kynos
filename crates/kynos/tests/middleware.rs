@@ -1557,20 +1557,21 @@ mod encoding_policy {
 #[cfg(feature = "compression")]
 mod streamed_failure {
     use std::sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     };
 
     use kynos::{
         Router,
         http::{Request, body::Body, header, media::OctetStream},
-        middleware::{Observer, compression::Compression},
+        middleware::{Completion, Observer, compression::Compression},
         response::stream::binary::BinaryStream,
         router::{operation::Route, service::Service},
     };
 
-    /// Counts the responses reported as not delivered.
-    struct Disconnects(Arc<AtomicUsize>);
+    /// Counts the responses reported as not delivered, and records the octets
+    /// of each one reported as delivered.
+    struct Disconnects(Arc<AtomicUsize>, Arc<Mutex<Vec<u64>>>);
 
     impl Observer<()> for Disconnects {
         fn on_request(&self, _: &Request, _: Option<Route<'_>>, (): &()) {}
@@ -1581,6 +1582,13 @@ mod streamed_failure {
             _: Option<Route<'_>>,
             _: std::time::Duration,
         ) {
+        }
+
+        fn on_complete(&self, _: Option<Route<'_>>, completion: &Completion) {
+            self.1
+                .lock()
+                .expect("an unpoisoned record")
+                .push(completion.body_bytes);
         }
 
         fn on_disconnect(&self, _: Option<Route<'_>>, _: std::time::Duration) {
@@ -1631,11 +1639,15 @@ mod streamed_failure {
     /// Serves `target` gzip-encoded under `Compression`, reads the body to its
     /// end or its first error, and hands back whether it finished with the
     /// disconnects observed.
-    async fn ended(target: &str) -> (bool, usize) {
+    async fn ended(target: &str) -> Ended {
         let disconnects = Arc::new(AtomicUsize::new(0));
+        let completions = Arc::new(Mutex::new(Vec::new()));
         let service: Service<()> = Router::<()>::new()
             .mount(kynos::routes![failing, finishing])
-            .observe(Disconnects(Arc::clone(&disconnects)))
+            .observe(Disconnects(
+                Arc::clone(&disconnects),
+                Arc::clone(&completions),
+            ))
             .intercept(Compression::new())
             .build(())
             .expect("a describable router");
@@ -1656,36 +1668,56 @@ mod streamed_failure {
             Some(&header::HeaderValue::from_static("gzip"))
         );
 
-        let finished = http_body_util::BodyExt::collect(response.into_body())
+        let sent = http_body_util::BodyExt::collect(response.into_body())
             .await
-            .is_ok();
+            .ok()
+            .map(|collected| collected.to_bytes().len() as u64);
 
-        (finished, disconnects.load(Ordering::SeqCst))
+        Ended {
+            sent,
+            disconnects: disconnects.load(Ordering::SeqCst),
+            completions: completions.lock().expect("an unpoisoned record").clone(),
+        }
+    }
+
+    /// How one response ended, as the reader and the observer each saw it.
+    struct Ended {
+        /// The octets read, when the body read to its end.
+        sent: Option<u64>,
+        disconnects: usize,
+        /// The octets each `on_complete` reported.
+        completions: Vec<u64>,
     }
 
     /// A compressed response whose producer failed part-way was not delivered.
     #[tokio::test]
     async fn a_failed_stream_is_reported_as_interrupted() {
-        let (finished, disconnects) = ended("/failing").await;
+        let ended = ended("/failing").await;
 
-        assert!(!finished, "a failing producer's body read to its end");
         assert_eq!(
-            disconnects, 1,
+            ended.sent, None,
+            "a failing producer's body read to its end"
+        );
+        assert_eq!(
+            ended.disconnects, 1,
             "a compressed response that failed part-way was reported as delivered"
         );
+        assert_eq!(ended.completions, Vec::<u64>::new());
     }
 
     /// The pass control: the same stream, ending instead of failing, is
-    /// reported as delivered.
+    /// reported as delivered, counting the encoded octets the peer received
+    /// rather than the producer's.
     #[tokio::test]
-    async fn a_finished_stream_is_not_reported_as_interrupted() {
-        let (finished, disconnects) = ended("/finishing").await;
+    async fn a_finished_stream_is_reported_complete_with_its_encoded_length() {
+        let ended = ended("/finishing").await;
 
-        assert!(
-            finished,
-            "a finishing producer's body did not read to its end"
-        );
-        assert_eq!(disconnects, 0);
+        let sent = ended
+            .sent
+            .expect("a finishing producer's body did not read to its end");
+        assert_ne!(sent, b"chunk".len() as u64, "the body was not encoded");
+        assert_eq!(ended.disconnects, 0);
+        assert_eq!(ended.completions, vec![sent]);
     }
 }
 

@@ -550,14 +550,29 @@ pub trait Observer<C>: Send + Sync + 'static {
     ///
     /// `elapsed` measures producing the response head, not delivering the
     /// body; a streaming response is reported long before its last frame.
-    /// [`on_disconnect`](Observer::on_disconnect) reports a body that never
-    /// finished.
+    /// Exactly one of [`on_complete`](Observer::on_complete), for a body
+    /// that finished, and [`on_disconnect`](Observer::on_disconnect), for one
+    /// that did not, follows.
     fn on_response(
         &self,
         response: &Response,
         route: Option<Route<'_>>,
         elapsed: std::time::Duration,
     );
+
+    /// Called when the response body [`on_response`](Observer::on_response)
+    /// reported was read to its end.
+    ///
+    /// The last frame was handed to the connection, which may still be
+    /// buffering it: this is the end of producing the body, not an
+    /// acknowledgement from the peer. A body with nothing to send, such as a
+    /// 204's or a HEAD response's, completes once the connection releases it.
+    ///
+    /// Called from whatever task reads or drops the body: record and return,
+    /// never block or await.
+    fn on_complete(&self, route: Option<Route<'_>>, completion: &Completion) {
+        let _ = (route, completion);
+    }
 
     /// Called when a response body was dropped before its end.
     ///
@@ -591,6 +606,26 @@ pub trait Observer<C>: Send + Sync + 'static {
     /// interceptor replaced with a short circuit of its own.
     fn on_panic(&self, payload: &(dyn std::any::Any + Send), route: Option<Route<'_>>) {
         let _ = (payload, route);
+    }
+}
+
+/// A response body read to its end, as [`Observer::on_complete`] reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Completion {
+    /// From the request arriving to the body's last frame being read.
+    pub elapsed: std::time::Duration,
+    /// The octets the body's data frames carried, as sent: after any content
+    /// coding, and without the transfer framing or trailers around them.
+    pub body_bytes: u64,
+}
+
+impl Completion {
+    pub(crate) fn new(elapsed: std::time::Duration, body_bytes: u64) -> Self {
+        Self {
+            elapsed,
+            body_bytes,
+        }
     }
 }
 
