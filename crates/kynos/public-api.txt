@@ -5237,6 +5237,7 @@ pub fn kynos::middleware::trace::Trace::correlating<S, G: kynos::middleware::req
 pub fn kynos::middleware::trace::Trace::level(self, kynos::middleware::trace::Level) -> Self
 pub fn kynos::middleware::trace::Trace::new() -> Self
 pub fn kynos::middleware::trace::Trace::record_headers(self, &'static [&'static str]) -> Self
+pub fn kynos::middleware::trace::Trace::span(self, &'static [&'static str]) -> kynos::middleware::trace::TraceSpan
 impl core::clone::Clone for kynos::middleware::trace::Trace
 pub fn kynos::middleware::trace::Trace::clone(&self) -> kynos::middleware::trace::Trace
 impl core::default::Default for kynos::middleware::trace::Trace
@@ -5256,6 +5257,23 @@ impl core::marker::Unpin for kynos::middleware::trace::Trace
 impl core::marker::UnsafeUnpin for kynos::middleware::trace::Trace
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::trace::Trace
 impl core::panic::unwind_safe::UnwindSafe for kynos::middleware::trace::Trace
+pub struct kynos::middleware::trace::TraceSpan
+impl core::clone::Clone for kynos::middleware::trace::TraceSpan
+pub fn kynos::middleware::trace::TraceSpan::clone(&self) -> kynos::middleware::trace::TraceSpan
+impl core::fmt::Debug for kynos::middleware::trace::TraceSpan
+pub fn kynos::middleware::trace::TraceSpan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<C: core::marker::Sync + 'static> kynos::middleware::Interceptor<C> for kynos::middleware::trace::TraceSpan
+pub type kynos::middleware::trace::TraceSpan::Adds = ()
+pub type kynos::middleware::trace::TraceSpan::Reads = ()
+pub type kynos::middleware::trace::TraceSpan::Short = core::convert::Infallible
+pub fn kynos::middleware::trace::TraceSpan::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued, core::convert::Infallible>> + core::marker::Send
+impl core::marker::Freeze for kynos::middleware::trace::TraceSpan
+impl core::marker::Send for kynos::middleware::trace::TraceSpan
+impl core::marker::Sync for kynos::middleware::trace::TraceSpan
+impl core::marker::Unpin for kynos::middleware::trace::TraceSpan
+impl core::marker::UnsafeUnpin for kynos::middleware::trace::TraceSpan
+impl !core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::trace::TraceSpan
+impl !core::panic::unwind_safe::UnwindSafe for kynos::middleware::trace::TraceSpan
 pub const kynos::middleware::trace::REDACTED: &[&str]
 pub mod kynos::middleware::trusted_hosts
 pub struct kynos::middleware::trusted_hosts::TrustedHosts<T>
@@ -5468,6 +5486,11 @@ pub type kynos::middleware::limits::body_timeout::BodyTimeout::Adds = ()
 pub type kynos::middleware::limits::body_timeout::BodyTimeout::Reads = ()
 pub type kynos::middleware::limits::body_timeout::BodyTimeout::Short = core::convert::Infallible
 pub async fn kynos::middleware::limits::body_timeout::BodyTimeout::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, core::convert::Infallible>
+impl<C: core::marker::Sync + 'static> kynos::middleware::Interceptor<C> for kynos::middleware::trace::TraceSpan
+pub type kynos::middleware::trace::TraceSpan::Adds = ()
+pub type kynos::middleware::trace::TraceSpan::Reads = ()
+pub type kynos::middleware::trace::TraceSpan::Short = core::convert::Infallible
+pub fn kynos::middleware::trace::TraceSpan::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued, core::convert::Infallible>> + core::marker::Send
 pub trait kynos::middleware::Observer<C>: core::marker::Send + core::marker::Sync + 'static
 pub fn kynos::middleware::Observer::on_complete(&self, core::option::Option<kynos::router::operation::Route<'_>>, &kynos::middleware::Completion)
 pub fn kynos::middleware::Observer::on_disconnect(&self, core::option::Option<kynos::router::operation::Route<'_>>, core::time::Duration)

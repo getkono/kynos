@@ -868,6 +868,16 @@ read, and the reader beside them is their one consumer. Its part-header parser
 already sits in `multipart/disposition.rs`, the one piece that changes for a
 reason of its own.
 
+`middleware/trace.rs` is `status.rs`'s shape. It declares `Trace`, `Level`,
+`REDACTED` and `TraceSpan`, so a split would turn `trace::TraceSpan` into
+`trace::span::TraceSpan`. What pushed it over was issue #1279's per-request
+span, whose callsite is built at run time because its fields are the
+application's. The span is `Trace`'s configuration read the other way round,
+through the same header and identifier readers, so the two are one concern:
+how a request is logged. A private module for the callsite alone would cost no
+path, but would be a second site under `middleware/` naming `tracing`, which
+the dependency rows below allow nowhere under `middleware/` but this file.
+
 The budget, which may only shrink:
 
 - `crates/kynos-macros/src/derive/schema/attributes.rs`
@@ -890,6 +900,7 @@ The budget, which may only shrink:
 - `crates/kynos/src/middleware/decompression/mod.rs`
 - `crates/kynos/src/middleware/limits/body_size.rs`
 - `crates/kynos/src/middleware/mod.rs`
+- `crates/kynos/src/middleware/trace.rs`
 - `crates/kynos/src/response/range/served.rs`
 - `crates/kynos/src/response/status.rs`
 - `crates/kynos/src/response/stream/sse.rs`

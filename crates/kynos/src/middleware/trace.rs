@@ -32,7 +32,9 @@ use crate::{http, middleware::Observer, router::operation::Route};
 /// bounded-cardinality metric label.
 ///
 /// Two events rather than one span, because an [`Observer`] holds nothing
-/// between the request arriving and the response leaving.
+/// between the request arriving and the response leaving. [`span`](Trace::span)
+/// turns the same configuration into an interceptor that opens one span the
+/// chain's own events inherit.
 ///
 /// Choosing a subscriber remains the application's decision.
 #[derive(Clone, Debug)]
@@ -148,6 +150,12 @@ impl Trace {
             return "";
         }
 
+        self.present(headers)
+    }
+
+    /// The identifier `headers` carry under the first correlation name
+    /// present, or none.
+    fn present<'a>(&self, headers: &'a http::HeaderMap) -> &'a str {
         self.correlation
             .iter()
             .find_map(|name| headers.get(*name))
@@ -185,6 +193,58 @@ impl Trace {
     pub fn record_headers(mut self, names: &'static [&'static str]) -> Self {
         self.recorded = names;
         self
+    }
+
+    /// Wraps everything mounted inside it in one span named `request`, which
+    /// the events beneath it inherit: an inner interceptor's, a security
+    /// scheme's and the handler's.
+    ///
+    /// The span opens with `method`, `matched_path`, `operation_id` and
+    /// `request_id` as the events here carry them, and `headers` as
+    /// [`record_headers`](Trace::record_headers) selects them, and closes with
+    /// `status` and `latency_ms`, the milliseconds the rest of the chain took,
+    /// fractional. Each of `fields` is declared on it empty, so the application
+    /// can record into it later, as an authenticator recording the user it
+    /// admitted with `tracing::Span::current().record("user_id", id)`. A name
+    /// listed twice, or one of the span's own, is declared once.
+    ///
+    /// It is an [`Interceptor`](super::Interceptor), so it covers what is
+    /// mounted inside it and nothing outside; mount it first to cover the
+    /// whole chain. `request_id` is the identifier the request carries when
+    /// the span opens, so mount it after the [`RequestId`] that
+    /// [`correlating`](Trace::correlating) names: the identifier is then the
+    /// one `RequestId` assigned, and before it, whatever the client sent.
+    /// A request the client abandons before the chain answers closes the span
+    /// without `status` or `latency_ms`.
+    ///
+    /// The level set by [`level`](Trace::level) is the span's; a subscriber
+    /// that filters the span out leaves the events inside under whatever span
+    /// was current.
+    ///
+    /// ```
+    /// use kynos::{
+    ///     middleware::{request_id::RequestId, trace::Trace},
+    ///     prelude::*,
+    /// };
+    ///
+    /// let request_id = RequestId::new();
+    /// let span = Trace::new()
+    ///     .correlating(&request_id)
+    ///     .span(&["user_id", "session_id"]);
+    ///
+    /// // The first `intercept` is the outermost, so the span sees the
+    /// // identifier `RequestId` assigns.
+    /// let router = Router::<()>::new().intercept(request_id).intercept(span);
+    /// # let _ = router;
+    /// ```
+    ///
+    /// [`RequestId`]: super::request_id::RequestId
+    #[must_use]
+    pub fn span(self, fields: &'static [&'static str]) -> TraceSpan {
+        TraceSpan {
+            callsite: SpanCallsite::interned(self.level, fields),
+            trace: self,
+        }
     }
 
     /// The listed headers this request carries, as one field value.
@@ -275,6 +335,253 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
         message
     } else {
         "<non-string panic payload>"
+    }
+}
+
+/// One `request` span around the rest of the chain; see [`Trace::span`].
+///
+/// Reads, adds and answers nothing, so mounting it changes no operation's
+/// description.
+#[derive(Clone)]
+pub struct TraceSpan {
+    trace: Trace,
+    callsite: &'static SpanCallsite,
+}
+
+impl std::fmt::Debug for TraceSpan {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TraceSpan")
+            .field("trace", &self.trace)
+            .field("fields", &self.callsite.declared)
+            .finish()
+    }
+}
+
+/// The fields every `request` span declares, in the order its callsite does.
+///
+/// [`TraceSpan::open`] reads the first five by position.
+const SPAN_FIELDS: &[&str] = &[
+    "method",
+    "matched_path",
+    "operation_id",
+    "request_id",
+    "headers",
+    "status",
+    "latency_ms",
+];
+
+/// A `request` span's callsite, built at run time since its fields are the
+/// application's.
+///
+/// `tracing`'s macros declare a callsite as a `static` whose field names are
+/// fixed where it is written, so one naming caller-declared fields has to be
+/// built and leaked instead. [`interned`](SpanCallsite::interned) builds one
+/// per distinct level and field list, so assembling a router again leaks
+/// nothing more.
+struct SpanCallsite {
+    /// Set once, right after the callsite has an address to identify it by.
+    metadata: std::sync::OnceLock<tracing::Metadata<'static>>,
+    /// What the dispatchers last said of it, as [`Interest`](tracing::subscriber::Interest)
+    /// cannot be stored atomically.
+    interest: std::sync::atomic::AtomicU8,
+    level: Level,
+    /// The caller's list as given, which `interned` compares by content.
+    declared: &'static [&'static str],
+}
+
+/// [`SpanCallsite::interest`]'s three values.
+const NEVER: u8 = 0;
+const SOMETIMES: u8 = 1;
+const ALWAYS: u8 = 2;
+
+impl SpanCallsite {
+    /// The callsite for `level` and `declared`, built and registered the first
+    /// time the pair is asked for.
+    fn interned(level: Level, declared: &'static [&'static str]) -> &'static Self {
+        use std::sync::{Mutex, PoisonError};
+
+        static INTERNED: Mutex<Vec<&'static SpanCallsite>> = Mutex::new(Vec::new());
+
+        // A panic while holding the list leaves it whole: each entry is pushed
+        // only once it is registered.
+        let mut interned = INTERNED.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(callsite) = interned
+            .iter()
+            .find(|callsite| callsite.level == level && callsite.declared == declared)
+        {
+            return callsite;
+        }
+
+        let mut names = SPAN_FIELDS.to_vec();
+        for name in declared {
+            if !names.contains(name) {
+                names.push(name);
+            }
+        }
+        let names: &'static [&'static str] = Box::leak(names.into_boxed_slice());
+
+        let callsite: &'static Self = Box::leak(Box::new(Self {
+            metadata: std::sync::OnceLock::new(),
+            interest: std::sync::atomic::AtomicU8::new(SOMETIMES),
+            level,
+            declared,
+        }));
+        let metadata = tracing::Metadata::new(
+            "request",
+            module_path!(),
+            level.as_tracing(),
+            Some(file!()),
+            Some(line!()),
+            Some(module_path!()),
+            tracing::field::FieldSet::new(names, tracing::callsite::Identifier(callsite)),
+            tracing::metadata::Kind::SPAN,
+        );
+        if callsite.metadata.set(metadata).is_err() {
+            unreachable!("the callsite was built just now");
+        }
+        tracing::callsite::register(callsite);
+
+        interned.push(callsite);
+        callsite
+    }
+
+    fn static_metadata(&'static self) -> &'static tracing::Metadata<'static> {
+        self.metadata
+            .get()
+            .expect("set before the callsite is handed out")
+    }
+
+    /// Whether a span opened here now would be recorded, decided as
+    /// `tracing`'s own `span!` decides it.
+    fn enabled(&'static self) -> bool {
+        use tracing::level_filters::{LevelFilter, STATIC_MAX_LEVEL};
+
+        let metadata = self.static_metadata();
+        let level = *metadata.level();
+        if level > STATIC_MAX_LEVEL || level > LevelFilter::current() {
+            return false;
+        }
+
+        match self.interest.load(std::sync::atomic::Ordering::Relaxed) {
+            NEVER => false,
+            ALWAYS => true,
+            _ => tracing::dispatcher::get_default(|dispatch| dispatch.enabled(metadata)),
+        }
+    }
+}
+
+impl tracing::callsite::Callsite for SpanCallsite {
+    fn set_interest(&self, interest: tracing::subscriber::Interest) {
+        let interest = if interest.is_never() {
+            NEVER
+        } else if interest.is_always() {
+            ALWAYS
+        } else {
+            SOMETIMES
+        };
+        self.interest
+            .store(interest, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn metadata(&self) -> &tracing::Metadata<'_> {
+        self.metadata
+            .get()
+            .expect("set before the callsite is registered")
+    }
+}
+
+impl Level {
+    /// The `tracing` level of the same name.
+    fn as_tracing(self) -> tracing::Level {
+        match self {
+            Self::Error => tracing::Level::ERROR,
+            Self::Warn => tracing::Level::WARN,
+            Self::Info => tracing::Level::INFO,
+            Self::Debug => tracing::Level::DEBUG,
+            Self::Trace => tracing::Level::TRACE,
+        }
+    }
+}
+
+impl TraceSpan {
+    /// The span for `request`, or a disabled one where nothing listens.
+    fn open(&self, request: &http::Request, route: Option<Route<'_>>) -> tracing::Span {
+        use tracing::field::Value;
+
+        if !self.callsite.enabled() {
+            return tracing::Span::none();
+        }
+
+        let metadata = self.callsite.static_metadata();
+        let fields = metadata.fields();
+        let mut declared = fields.iter();
+        let mut next = || {
+            declared
+                .next()
+                .expect("every `SPAN_FIELDS` name is declared")
+        };
+        let (method, matched_path, operation_id, request_id, headers) =
+            (next(), next(), next(), next(), next());
+
+        let recorded =
+            (!self.trace.recorded.is_empty()).then(|| self.trace.recorded(request.headers()));
+
+        tracing::Span::new(
+            metadata,
+            &fields.value_set(&[
+                (&method, Some(&request.method().as_str() as &dyn Value)),
+                (
+                    &matched_path,
+                    Some(&route.map_or(UNMATCHED, |route| route.path()) as &dyn Value),
+                ),
+                (
+                    &operation_id,
+                    Some(&route.map_or(UNMATCHED, |route| route.operation_id()) as &dyn Value),
+                ),
+                (
+                    &request_id,
+                    Some(&self.trace.present(request.headers()) as &dyn Value),
+                ),
+                (
+                    &headers,
+                    recorded.as_ref().map(|recorded| recorded as &dyn Value),
+                ),
+            ]),
+        )
+    }
+}
+
+impl<C: Sync + 'static> super::Interceptor<C> for TraceSpan {
+    type Reads = ();
+    type Adds = ();
+    type Short = std::convert::Infallible;
+
+    // The span is entered around `next.run` as well as around its future, so
+    // the inner interceptors' work before their futures is inside it too.
+    fn intercept(
+        &self,
+        request: http::Request,
+        reads: (),
+        context: &C,
+        next: super::Next<'_, C>,
+    ) -> impl Future<Output = Result<super::Continued, std::convert::Infallible>> + Send {
+        use tracing::Instrument;
+
+        let _ = (reads, context);
+        let started = std::time::Instant::now();
+        let span = self.open(&request, next.route());
+        let run = span.in_scope(|| next.run(request)).instrument(span);
+
+        async move {
+            let mut run = std::pin::pin!(run);
+            let continued = run.as_mut().await;
+            let span = run.span();
+            span.record("status", continued.status().as_u16());
+            span.record("latency_ms", started.elapsed().as_secs_f64() * 1000.0);
+
+            Ok(continued)
+        }
     }
 }
 

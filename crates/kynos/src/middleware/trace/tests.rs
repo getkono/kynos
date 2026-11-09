@@ -1,9 +1,17 @@
-use super::{DEFAULT_CORRELATION, Level, REDACTED, Trace};
+use std::{
+    future::Future,
+    pin::{Pin, pin},
+    sync::Arc,
+    task::{Context, Poll, Waker},
+};
+
+use super::{DEFAULT_CORRELATION, Level, REDACTED, SPAN_FIELDS, SpanCallsite, Trace};
 use crate::{
     extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
-    http::{HeaderMap, HeaderValue},
+    http::{HeaderMap, HeaderValue, Request, Response, StatusCode, body::Body},
     middleware::{
-        Observer,
+        Next, Observer,
+        erased::{ErasedInterceptor, ErasedTerminal},
         request_id::{CorrelationHeaders, RequestId, XRequestId},
     },
     router::operation::Route,
@@ -126,8 +134,15 @@ fn the_assigned_identifier_is_logged_on_departure() {
     assert_eq!(Trace::new().assigned(&response), "minted");
 }
 
-/// The lines a `fmt` subscriber writes while `emitting` runs on this thread.
+/// The lines a `fmt` subscriber writes while `emitting` runs on this thread,
+/// each span's closing included.
 fn captured(emitting: impl FnOnce()) -> String {
+    captured_at(tracing::Level::TRACE, emitting)
+}
+
+/// The lines a `fmt` subscriber admitting `max` and below writes while
+/// `emitting` runs on this thread, each span's closing included.
+fn captured_at(max: tracing::Level, emitting: impl FnOnce()) -> String {
     #[derive(Clone, Default)]
     struct Sink(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
 
@@ -148,7 +163,8 @@ fn captured(emitting: impl FnOnce()) -> String {
     let sink = Sink::default();
     let writer = sink.clone();
     let subscriber = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::TRACE)
+        .with_max_level(max)
+        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
         .with_ansi(false)
         .without_time()
         .with_writer(move || writer.clone())
@@ -301,6 +317,218 @@ fn an_unmatched_panic_is_reported_under_the_placeholder() {
         "ERROR kynos::middleware::trace: handler panicked matched_path=\"<unmatched>\" \
          operation_id=\"<unmatched>\" panic=\"boom\"\n"
     );
+}
+
+/// What a handler does inside the span: records `user_id` into the current
+/// span, logs one event, and answers 201.
+struct Handler;
+
+impl ErasedTerminal<()> for Handler {
+    fn call<'a>(
+        &'a self,
+        request: Request,
+        context: &'a (),
+    ) -> Pin<Box<dyn Future<Output = Response> + Send + 'a>> {
+        let _ = (request, context);
+        Box::pin(async {
+            tracing::Span::current().record("user_id", "u-1");
+            tracing::info!("handled");
+            let mut response = Response::new(Body::empty());
+            *response.status_mut() = StatusCode::CREATED;
+            response
+        })
+    }
+}
+
+/// The chain `layers` and then [`Handler`] answer `request` with, matched to
+/// `route`. Nothing in it waits, so one poll settles it.
+fn served(
+    layers: &[Arc<dyn ErasedInterceptor<()>>],
+    route: Option<Route<'static>>,
+    request: Request,
+) -> Response {
+    let future = Next::new(layers, &Handler, &(), route).run(request);
+    match pin!(future).poll(&mut Context::from_waker(Waker::noop())) {
+        Poll::Ready(continued) => continued.into_response(),
+        Poll::Pending => panic!("nothing in the chain waits"),
+    }
+}
+
+/// A `GET` request carrying `fields`.
+fn request(fields: &[(&str, &str)]) -> Request {
+    let mut request = Request::new(Body::empty());
+    *request.headers_mut() = map(fields);
+    request
+}
+
+/// The route the span tests match.
+fn get_user() -> Route<'static> {
+    Route::new("/users/{id}", "getUser", Method::Get)
+}
+
+/// The handler's event carries the span's opening fields, the one it recorded
+/// itself among them, and the span closes with the status and latency.
+#[test]
+fn the_handlers_event_inherits_the_request_span() {
+    let request_id = RequestId::new();
+    let span = Trace::new()
+        .correlating(&request_id)
+        .span(&["user_id", "session_id"]);
+
+    let lines = captured(|| {
+        let response = served(
+            &[Arc::new(request_id), Arc::new(span)],
+            Some(get_user()),
+            request(&[("x-request-id", "forged")]),
+        );
+        assert_eq!(response.status(), StatusCode::CREATED);
+    });
+    // `fmt` pads a level to five columns.
+    let mut lines = lines.lines().map(str::trim_start);
+
+    let handled = lines.next().expect("the handler's event");
+    assert!(
+        handled.starts_with(
+            "INFO request{method=\"GET\" matched_path=\"/users/{id}\" \
+             operation_id=\"getUser\" request_id=\"0\" user_id=\"u-1\"}: "
+        ),
+        "{handled}"
+    );
+    assert!(handled.ends_with(": handled"), "{handled}");
+
+    let closed = lines.next().expect("the span's closing");
+    assert!(closed.contains(" status=201 latency_ms="), "{closed}");
+    assert!(closed.ends_with(": close"), "{closed}");
+    assert_eq!(lines.next(), None);
+}
+
+/// Mounted before `RequestId`, the span opens before an identifier is
+/// assigned, so it carries what the client sent: the documented reason to
+/// mount it after.
+#[test]
+fn a_span_outside_request_id_carries_what_the_client_sent() {
+    let request_id = RequestId::new();
+    let span = Trace::new().correlating(&request_id).span(&[]);
+
+    let lines = captured(|| {
+        served(
+            &[Arc::new(span), Arc::new(request_id)],
+            Some(get_user()),
+            request(&[("x-request-id", "forged")]),
+        );
+    });
+
+    assert!(lines.contains("request_id=\"forged\""), "{lines}");
+}
+
+/// A request nothing matched opens its span under the placeholder the events
+/// use, so the span's shape never varies.
+#[test]
+fn an_unmatched_request_opens_its_span_under_the_placeholder() {
+    let lines = captured(|| {
+        served(&[Arc::new(Trace::new().span(&[]))], None, request(&[]));
+    });
+
+    assert!(
+        lines.contains(
+            "request{method=\"GET\" matched_path=\"<unmatched>\" \
+             operation_id=\"<unmatched>\" request_id=\"\"}"
+        ),
+        "{lines}"
+    );
+}
+
+/// `record_headers` reaches the span as it does the opening event, a
+/// redacted header included; without it the span has no `headers` value.
+#[test]
+fn recorded_headers_open_the_span_only_when_asked_for() {
+    let fields = [("authorization", "Bearer eyJ"), ("x-tenant", "acme")];
+    let recorded = Trace::new()
+        .record_headers(&["x-tenant", "authorization"])
+        .span(&[]);
+
+    let with = captured(|| {
+        served(&[Arc::new(recorded)], Some(get_user()), request(&fields));
+    });
+    let without = captured(|| {
+        served(
+            &[Arc::new(Trace::new().span(&[]))],
+            Some(get_user()),
+            request(&fields),
+        );
+    });
+
+    assert!(
+        with.contains("headers=\"x-tenant=acme, authorization=<redacted>\""),
+        "{with}"
+    );
+    assert!(!with.contains("eyJ"), "{with}");
+    assert!(!without.contains("headers="), "{without}");
+}
+
+/// The span is at the level `Trace` sets, so a subscriber filtering that
+/// level out leaves the handler's event outside any request span.
+#[test]
+fn the_span_takes_the_level_set_and_is_filtered_by_it() {
+    let lines = captured(|| {
+        served(
+            &[Arc::new(Trace::new().level(Level::Warn).span(&[]))],
+            Some(get_user()),
+            request(&[]),
+        );
+    });
+    let filtered = captured_at(tracing::Level::INFO, || {
+        served(
+            &[Arc::new(Trace::new().level(Level::Debug).span(&[]))],
+            Some(get_user()),
+            request(&[]),
+        );
+    });
+
+    let closed = lines.lines().last().expect("the span's closing");
+    assert!(closed.trim_start().starts_with("WARN request{"), "{closed}");
+    assert_eq!(
+        filtered.trim_start(),
+        "INFO kynos::middleware::trace::tests: handled\n"
+    );
+}
+
+/// The span's fields are its own, then the caller's in order, each once,
+/// whatever the caller lists twice or shares with the span's own.
+#[test]
+fn a_declared_field_is_declared_once() {
+    let callsite = SpanCallsite::interned(Level::Info, &["user_id", "status", "user_id", "tenant"]);
+    let names: Vec<&str> = callsite
+        .static_metadata()
+        .fields()
+        .iter()
+        .map(|field| field.name())
+        .collect();
+
+    let mut expected = SPAN_FIELDS.to_vec();
+    expected.extend(["user_id", "tenant"]);
+    assert_eq!(names, expected);
+}
+
+/// One callsite per level and field list, so building a span again leaks
+/// nothing more, and a different level or list gets its own.
+#[test]
+fn a_callsite_is_built_once_per_level_and_field_list() {
+    let first = SpanCallsite::interned(Level::Info, &["user_id"]);
+    let owned = vec!["user_id"];
+
+    assert!(std::ptr::eq(
+        first,
+        SpanCallsite::interned(Level::Info, owned.leak())
+    ));
+    assert!(!std::ptr::eq(
+        first,
+        SpanCallsite::interned(Level::Debug, &["user_id"])
+    ));
+    assert!(!std::ptr::eq(
+        first,
+        SpanCallsite::interned(Level::Info, &["session_id"])
+    ));
 }
 
 /// A group of two names, to tell the first declared from the first present.

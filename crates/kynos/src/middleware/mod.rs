@@ -9,7 +9,9 @@
 //!   headers it reads are three associated types. Attaching one to a group
 //!   documents its effect on every operation underneath.
 //! - An [`Observer`] sees everything and changes nothing, so it needs to
-//!   declare nothing. Logging, tracing and metrics live here.
+//!   declare nothing. Logging, tracing and metrics live here, except a span
+//!   the rest of the chain runs inside: holding one across it takes an
+//!   interceptor that declares nothing, as `trace::TraceSpan` is.
 //!
 //! The `unchecked` feature restores `Layer` support, at the price of a
 //! description marked non-authoritative.
