@@ -12,6 +12,8 @@ readme = "README.md"
 # Usable without the runtime, so keyed to the document model.
 keywords = ["openapi", "oas", "json-schema", "schema", "rest"]
 categories = ["web-programming", "data-structures", "encoding"]
+# `scripts/public_api.py`'s snapshot, read from the repository only.
+exclude = ["public-api.txt"]
 
 [[example]]
 name = "standalone"

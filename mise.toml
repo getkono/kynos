@@ -301,6 +301,30 @@ description = "Test what the containment gate reads its tables and its tree with
 tools = { python = "3.11.16" }
 run = "python3 scripts/containment_test.py"
 
+[tasks."api:check"]
+description = "Hold the public API to its snapshots and its foreign crates to the allowance"
+# `cargo public-api` over `KYNOS_NIGHTLY`'s rustdoc JSON, which its 0.52 line
+# reads; it publishes no release binaries, so the pin is task-scoped, as
+# `cost:features`'s `cargo-llvm-lines` is. The snapshots are
+# `crates/*/public-api.txt`; the allowance is architecture.md's.
+tools = { "cargo:cargo-public-api" = "0.52.0", python = "3.11.16" }
+run = '''
+set -eu
+rustup toolchain install "$KYNOS_NIGHTLY" --profile minimal --no-self-update >&2
+python3 scripts/public_api.py
+'''
+
+[tasks."api:record"]
+description = "Record each crate's public API as its committed snapshot"
+env = { KYNOS_PUBLIC_API = "overwrite" }
+run = "mise run api:check"
+
+[tasks."api:test"]
+description = "Test what the public API gate reads its allowance and its listings with"
+# A parser that drops a crate leaves the gate green; compiles nothing.
+tools = { python = "3.11.16" }
+run = "python3 scripts/public_api_test.py"
+
 [tasks."tooling:check"]
 description = "Verify the dev build profile and the Python floor scripts/ is held to"
 # `.cargo/config.toml`'s keys and tables, every script's grammar at the floor,
@@ -611,6 +635,8 @@ run = [
   { task = "references:verify" },
   { task = "containment:check" },
   { task = "containment:test" },
+  { task = "api:check" },
+  { task = "api:test" },
   { task = "tooling:check" },
   { task = "tooling:test" },
   { task = "deny:check" },
