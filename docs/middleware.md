@@ -326,22 +326,50 @@ work — the smallest per octet saved — make it the cheapest.
 
 **What one encoder keeps resident grows with what it has been fed, up to a
 plateau.** Measured as the resident-set growth per encoder of 32 held at once,
-at the default levels, over JSON, on x86_64 glibc:
+at the default levels, over the sweep's JSON shape, on x86_64 glibc. A body is
+handed over in one write, as a collected encode hands it, except where the
+column says 16 KiB writes, as a stream of frames hands it; memory an encoder
+has allocated and not yet touched is not resident, and is not counted:
 
-| Coding | 2 KiB fed | 64 KiB | 1 MiB | 16 MiB, flushed per 16 KiB | 16 MiB, unflushed |
-| --- | --- | --- | --- | --- | --- |
-| zstd 3 | 0.8 MiB | 0.9 MiB | 1.9 MiB | 2.9 MiB | 3.1 MiB |
-| brotli 4 | 0.6 MiB | 1.4 MiB | 9.0 MiB | 8.8 MiB | 36.5 MiB |
-| gzip 6 | 0.3 MiB | 0.3 MiB | 0.3 MiB | 0.3 MiB | 0.4 MiB |
+| Coding | 2 KiB fed | 64 KiB | 1 MiB | 16 MiB, flushed per 16 KiB write | 16 MiB in 16 KiB writes, unflushed | 16 MiB, unflushed |
+| --- | --- | --- | --- | --- | --- | --- |
+| zstd 3 | 0.8 MiB | 0.9 MiB | 1.8 MiB | 2.8 MiB | 3.0 MiB | 3.0 MiB |
+| brotli 4 | < 0.1 MiB | 1.4 MiB | 6.1 MiB | 2.8 MiB | 7.7 MiB | 11.2 MiB |
+| gzip 6 | 0.3 MiB | 0.3 MiB | 0.3 MiB | 0.3 MiB | 0.3 MiB | 0.3 MiB |
 
 So brotli, not zstd, is the largest past the first few kilobytes. Its unflushed
-column is a collected body of several megabytes, or a `Throughput` stream:
-brotli holds the input of a meta-block, up to 16 MiB of it, until it emits one.
-`Interactive` flushes after every frame, which closes the meta-block, so a
-stream of frames near the measured 16 KiB flush interval, such as an event
-stream, stays in the flushed column. A frame is fed whole before that flush,
-so a stream of frames of a megabyte or more holds each one first, and reaches
-between the 1 MiB and unflushed columns.
+columns are a collected body of several megabytes, or a `Throughput` stream:
+brotli holds the input of a meta-block until it emits one, and a meta-block
+runs to twice its window. Told up front of a megabyte or more, as a collected
+body's single write tells it, it also chooses a hash table of 4 MiB, which is
+most of its 1 MiB column. `Interactive` flushes after every frame, which closes
+the meta-block, so a stream of frames near the measured 16 KiB flush interval,
+such as an event stream, stays in the flushed column. A frame is fed whole
+before that flush, so a stream of frames of a megabyte or more holds each one
+first, and reaches between the 1 MiB and unflushed columns.
+
+**Brotli's window is 2^20, not the encoder's own 2^22
+([#1302](https://github.com/getkono/kynos/issues/1302)).** Under 2^22 a
+meta-block runs to 8 MiB, and the same three brotli columns read 8.8, 27.3 and
+30.7 MiB. Its input block, `lgblock`, is not the lever: at quality 4 it already
+resolves to 2^16, and a larger one only grows the meta-block further. A smaller
+window loses ratio steadily only on a body with repeats more than a window
+apart. Elsewhere it moves the output about 1% either way and not monotonically,
+because the window also sets the meta-block size, and each meta-block carries
+its own block split and prefix codes. The 16 MiB row is that case: its shape
+repeats locally, as the 59395-octet row encoding identically at every window
+shows, and 2^20 lands 1.1% above 2^22 while 2^18 lands 1.5% below it. Encoded octets at quality 4, by window:
+
+| Body | 2^22 | 2^21 | 2^20 | 2^19 | 2^18 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| the sweep's 59395 octets | 1334 | 1334 | 1334 | 1334 | 1334 |
+| its shape at 16 MiB | 233602 | 232629 | 236176 | 232610 | 230140 |
+| `cargo metadata` of this workspace, 1.6 MB | 131977 | 131977 | 132499 | 149955 | 168458 |
+
+2^20 is the smallest window that costs a real document under 1% — 0.4% here,
+and 0.7% at quality 11 — where 2^19 costs it 14%. Every quality takes the same
+window. RFC 7932 sections 9.1 and 9.2 leave both sizes to the encoder, and a
+decoder accepts any window up to 2^24.
 
 **How many encoders are resident at once is bounded by what bounds requests,
 and by nothing of its own.** A collected body up to 1 MiB is encoded in the poll
@@ -359,7 +387,7 @@ until the body it sees ends, and inside `Compression` that is the handler's
 body, which a collected encode has already read. A stream of small frames keeps
 brotli out of the unflushed column under `Interactive`; a stream whose frames
 reach a megabyte, and a collected body of several megabytes, do not, so size
-those by the unflushed column.
+those by the widest unflushed column.
 
 There is no cap on concurrent encodes. One that passed responses through
 uncompressed when full would drop compression at peak load, when bandwidth
