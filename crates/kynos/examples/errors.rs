@@ -194,6 +194,19 @@ enum StoreError {
     },
 }
 
+/// What listing can fail with: some of `StoreError`'s ways, and no other.
+///
+/// Returning `StoreError` would declare a 404, a 409, a 422 and a 507 no
+/// listing can send.
+/// Each variant names a `StoreError` variant and its fields, the derive
+/// generates `From<ListError> for StoreError`, and the problem, headers and
+/// description are that variant's, so the two enums cannot disagree.
+#[derive(Debug, ApiError)]
+#[problem(subset_of = StoreError)]
+enum ListError {
+    Busy { retry: RetryAfter },
+}
+
 /// Refuses everything while the store is being migrated.
 ///
 /// The fourth way a status reaches an operation. Because this can answer before
@@ -259,9 +272,16 @@ async fn get_user(Path(path): Path<UserPath>) -> Result<Json<User>, StoreError> 
 /// contributes the 500 that boundary can produce. Without it a panic is not a
 /// documented response — it is the connection ending, which no description can
 /// express and no client can tell apart from a network failure.
+///
+/// It answers `ListError`, so its 429 is the only failure of the store's it
+/// documents.
 #[kynos::get("/users", catch_panics)]
-async fn list_users(Query(page): Query<Page>) -> Result<Json<Vec<User>>, StoreError> {
-    let _ = page;
+async fn list_users(Query(page): Query<Page>) -> Result<Json<Vec<User>>, ListError> {
+    if page.limit > 50 {
+        return Err(ListError::Busy {
+            retry: RetryAfter { retry_after: 1 },
+        });
+    }
     Ok(Json(Vec::new()))
 }
 
@@ -321,7 +341,8 @@ async fn main() -> kynos::Result<()> {
         .mount(kynos::routes![get_user, list_users, create_user]);
 
     // Every status any of this can answer with is in here, and none of them was
-    // written down twice: 404, 409, 422, 429 and 507 from `StoreError`, 400
+    // written down twice: 404, 409, 422, 429 and 507 from `StoreError`, 429
+    // alone from its subset `ListError`, 400
     // from the fallible extractors, 503 from the interceptor, and 500 from the
     // recovery boundary on `list_users`.
     let document = router.openapi()?;

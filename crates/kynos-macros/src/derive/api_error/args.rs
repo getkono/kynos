@@ -1,7 +1,7 @@
 //! The `#[problem(...)]` grammar: what one item's or one field's lists said.
 
 use proc_macro2::Span;
-use syn::{Attribute, Expr, ExprLit, ExprPath, Fields, Lit, LitStr, spanned::Spanned};
+use syn::{Attribute, Expr, ExprLit, ExprPath, Fields, Lit, LitStr, Type, spanned::Spanned};
 
 use crate::derive::attribute::{Keys, status, unknown};
 
@@ -34,6 +34,8 @@ pub(super) struct ProblemArgs {
     pub(super) type_uri: Option<String>,
     pub(super) base: Option<Base>,
     pub(super) transparent: Option<Span>,
+    /// `subset_of`: the wider `ApiError` enum this one is a subset of.
+    pub(super) subset_of: Option<(Type, Span)>,
 }
 
 /// What `base` named: a prefix written out, or a `const` holding one.
@@ -94,6 +96,16 @@ pub(super) fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Res
                         span,
                         "`base` is the prefix every type URI shares, so it belongs on the type \
                          rather than on one variant",
+                    ));
+                }
+                "subset_of" if position == Position::Type => {
+                    args.subset_of = Some((meta.value()?.parse::<Type>()?, span));
+                }
+                "subset_of" => {
+                    return Err(syn::Error::new(
+                        span,
+                        "`subset_of` names the wider error every variant converts into, so it \
+                         belongs on the enum rather than on one variant",
                     ));
                 }
                 "transparent" if position == Position::Variant => {

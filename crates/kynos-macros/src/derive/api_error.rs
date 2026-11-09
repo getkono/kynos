@@ -2,6 +2,8 @@
 //!
 //! ```text
 //! #[problem( base = <prefix> )]                    on the type, optional
+//! #[problem( subset_of = <type> )]                 on an enum, alone, instead of
+//!                                                  every list below it
 //! #[problem( <member> [, <member>]* )]             on each variant, or on a struct
 //! #[problem(transparent)]                          on a one-field variant, instead
 //! #[problem(extension)]                            on a named field, optional
@@ -37,19 +39,27 @@
 //! in `const` items of the expansion's own. Its response is that type's too,
 //! so the headers the held error sends reach the wire.
 //!
+//! A `subset_of` enum's variants are some of the derived enum `<type>` names,
+//! by name and fields; it converts into that enum and answers and is described
+//! as it, as [`subset`] says.
+//!
 //! `into_response` first hands a 5xx failure to
 //! `kynos::__private::problem::Failed`, which logs it under `trace`; the
 //! feature is the facade's, so the expansion emits the call either way.
 
 mod args;
+mod describe;
 mod emit;
 mod outcomes;
+mod subset;
 
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{ToTokens, quote, quote_spanned};
 use syn::{Data, DeriveInput, ExprPath, Ident, Member, Type, spanned::Spanned};
 
-use emit::{codes, distinct_statuses, into_problem, into_response, responses};
+use args::{Position, parse_problem};
+use describe::responses;
+use emit::{codes, distinct_statuses, into_problem, into_response};
 use outcomes::outcomes;
 
 pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
@@ -60,7 +70,12 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
         ));
     }
 
-    let outcomes = outcomes(input)?;
+    let args = parse_problem(&input.attrs, Position::Type)?;
+    if let Some((wide, span)) = &args.subset_of {
+        return subset::expand(input, &args, wide, *span);
+    }
+
+    let outcomes = outcomes(input, &args)?;
     let failures: Vec<&Failure> = outcomes
         .iter()
         .filter_map(|outcome| match outcome {
@@ -94,12 +109,66 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
 
     let problem = into_problem(&failures, &delegates);
     let response = into_response(&failures, &delegates);
-    let responses = responses(&failures, &statuses, &delegates);
+
+    // An enum describes itself through the handles a subset of it reads, so
+    // the two cannot be described apart.
+    let (responses, handles) = if matches!(input.data, Data::Enum(_)) {
+        let variants = outcomes.iter().map(|outcome| match outcome {
+            Outcome::Declared(failure) => {
+                let status = failure.status;
+                let variant = failure
+                    .variant
+                    .clone()
+                    .expect("an enum's failures are its variants");
+                (variant, quote!(&[#status]))
+            }
+            Outcome::Transparent(delegate) => {
+                let ty = &delegate.ty;
+                (
+                    delegate.variant.clone(),
+                    quote_spanned!(ty.span()=> <#ty as ::kynos::response::ShortCircuit>::STATUSES),
+                )
+            }
+        });
+        let body = responses(&failures, &statuses, &delegates, true);
+        (
+            quote!(Self::__kynos_problem_responses(
+                registry,
+                ::core::option::Option::None
+            )),
+            subset::handles(input, variants, &body),
+        )
+    } else {
+        (
+            responses(&failures, &statuses, &delegates, false),
+            TokenStream2::new(),
+        )
+    };
+
+    let impls = impls(input, &problem, &response, &responses, &codes);
 
     // `Responses` and `into_problem` come from the same declarations.
     Ok(quote! {
         #display
+        #impls
+        #handles
+    })
+}
 
+/// The four implementations every `ApiError` gets, around their bodies:
+/// `IntoProblem`, `IntoResponse`, `Responses`, and `ShortCircuit` over
+/// `codes`, which `statuses()` reads too, so the two agree.
+fn impls(
+    input: &DeriveInput,
+    problem: &TokenStream2,
+    response: &TokenStream2,
+    responses: &TokenStream2,
+    codes: &TokenStream2,
+) -> TokenStream2 {
+    let name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+
+    quote! {
         impl #impl_generics ::kynos::error::problem::IntoProblem
             for #name #ty_generics #where_clause
         {
@@ -145,7 +214,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
         impl #impl_generics ::kynos::response::ShortCircuit for #name #ty_generics #where_clause {
             const STATUSES: &'static [u16] = #codes;
         }
-    })
+    }
 }
 
 /// What one variant, or the struct, answers with.
@@ -168,6 +237,9 @@ struct Transparent {
 struct Failure {
     /// `Self::Variant`, or `Self` for a struct.
     path: TokenStream2,
+
+    /// The variant, or `None` for a struct.
+    variant: Option<Ident>,
 
     /// The extension members, in declaration order.
     extensions: Vec<Extension>,

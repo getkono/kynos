@@ -1,0 +1,57 @@
+error[E0599]: no variant, associated function, or constant named `__KYNOS_PROBLEM_STATUSES_Gone` found for enum `ChunkRejection` in the current scope
+  --> tests/ui/macros/api_error_subset_not_in_wide.rs:29:5
+   |
+11 | enum ChunkRejection {
+   | ------------------- variant, associated function, or constant `__KYNOS_PROBLEM_STATUSES_Gone` not found for this enum
+...
+29 |     Gone,
+   |     ^^^^ variant, associated function, or constant not found in `ChunkRejection`
+   |
+help: there is an associated constant `__KYNOS_PROBLEM_STATUSES_Conflict` with a similar name
+   |
+29 -     Gone,
+29 +     __KYNOS_PROBLEM_STATUSES_Conflict,
+   |
+
+error[E0599]: no variant named `Gone` found for enum `ChunkRejection`
+  --> tests/ui/macros/api_error_subset_not_in_wide.rs:29:5
+   |
+11 | enum ChunkRejection {
+   | ------------------- variant `Gone` not found here
+...
+29 |     Gone,
+   |     ^^^^ variant not found in `ChunkRejection`
+
+error[E0559]: variant `ChunkRejection::NotFound` has no field named `length`
+  --> tests/ui/macros/api_error_subset_not_in_wide.rs:35:38
+   |
+35 |     NotFound { id: u64, offset: u64, length: u64 },
+   |                                      ^^^^^^ `ChunkRejection::NotFound` does not have this field
+   |
+   = note: all struct fields are already assigned
+
+error[E0063]: missing field `offset` in initializer of `ChunkRejection`
+  --> tests/ui/macros/api_error_subset_not_in_wide.rs:39:23
+   |
+39 |   #[problem(subset_of = ChunkRejection)]
+   |  _______________________^
+40 | | enum MissingField {
+41 | |     NotFound { id: u64 },
+   | |____________^ missing `offset`
+
+error[E0308]: mismatched types
+  --> tests/ui/macros/api_error_subset_not_in_wide.rs:47:14
+   |
+45 |   #[problem(subset_of = ChunkRejection)]
+   |  _______________________-
+46 | | enum OtherType {
+47 | |     Conflict(String),
+   | |            - ^^^^^^ expected `u64`, found `String`
+   | |____________|
+   |              arguments to this enum variant are incorrect
+   |
+note: tuple variant defined here
+  --> tests/ui/macros/api_error_subset_not_in_wide.rs:23:5
+   |
+23 |     Conflict(u64),
+   |     ^^^^^^^^

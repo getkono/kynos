@@ -5219,10 +5219,89 @@ mod api_error {
         ]
     }
 
+    /// The refusals of `#[problem(subset_of = ...)]`, apart for the reason
+    /// [`transparent_ledger`] is.
+    fn subset_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "`subset_of` on a variant, when every variant converts",
+                quote::quote!(
+                    enum HeadRejection {
+                        #[problem(subset_of = ChunkRejection)]
+                        NotFound,
+                    }
+                ),
+                "belongs on the enum rather than on one variant",
+            ),
+            case(
+                "`subset_of` on a struct, which has no variants to take",
+                quote::quote!(
+                    #[problem(subset_of = ChunkRejection)]
+                    struct NotFound;
+                ),
+                "takes some of a wider enum's variants",
+            ),
+            case(
+                "`subset_of` beside a declaration of the subset's own",
+                quote::quote!(
+                    #[problem(subset_of = ChunkRejection, base = "https://errors.example.com/")]
+                    enum HeadRejection {
+                        NotFound,
+                    }
+                ),
+                "takes no `status`, `title`, `type` or `base` of its own",
+            ),
+            case(
+                "`subset_of` naming the subset's generic parameter",
+                quote::quote!(
+                    #[problem(subset_of = ChunkRejection<T>)]
+                    enum HeadRejection<T> {
+                        NotFound(T),
+                    }
+                ),
+                "cannot depend on the type's generic parameter `T`",
+            ),
+            case(
+                "a subset's variant declaring what the wider variant declares",
+                quote::quote!(
+                    #[problem(subset_of = ChunkRejection)]
+                    enum HeadRejection {
+                        #[problem(status = 404)]
+                        NotFound,
+                    }
+                ),
+                "answers as the wider enum's variant `NotFound`",
+            ),
+        ]
+    }
+
+    /// One diagnostic site refuses every list below a subset, so the ledger's
+    /// row on a variant leaves a field's marker unwitnessed.
+    #[test]
+    fn a_subset_refuses_a_field_marker_too() {
+        each_case_is_refused(
+            vec![case(
+                "a subset's field marked as the wider field is",
+                quote::quote!(
+                    #[problem(subset_of = ChunkRejection)]
+                    enum HeadRejection {
+                        NotFound {
+                            #[problem(extension)]
+                            id: u64,
+                        },
+                    }
+                ),
+                "answers as the wider enum's variant `NotFound`",
+            )],
+            expand_inner,
+        );
+    }
+
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
         each_case_is_refused(transparent_ledger(), expand_inner);
+        each_case_is_refused(subset_ledger(), expand_inner);
         each_case_is_refused(headers_ledger(), expand_inner);
         each_case_is_refused(keys_ledger(), expand_inner);
     }
@@ -5273,10 +5352,12 @@ mod api_error {
                 include_str!("api_error/args.rs"),
                 include_str!("api_error/emit.rs"),
                 include_str!("api_error/outcomes.rs"),
+                include_str!("api_error/subset.rs"),
             ]
             .concat(),
             ledger().len()
                 + transparent_ledger().len()
+                + subset_ledger().len()
                 + headers_ledger().len()
                 + keys_ledger().len()
                 - IN_ATTRIBUTE,
