@@ -57,7 +57,10 @@ fuzz_target!(|data: &[u8]| {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, field);
         match fuzz::multipart_boundary(&headers) {
-            Ok(boundary) => assert!(!boundary.is_empty(), "{text:?}"),
+            Ok(boundary) => assert!(
+                !boundary.is_empty() && fuzz::offers(&headers, MEDIA_TYPE),
+                "{text:?}"
+            ),
             Err(415) => assert!(!fuzz::offers(&headers, MEDIA_TYPE), "{text:?}"),
             Err(400) => assert!(fuzz::offers(&headers, MEDIA_TYPE), "{text:?}"),
             Err(status) => panic!("{status} for {text:?}"),
