@@ -125,6 +125,7 @@ enum StoreError {
 | Position | Key | Meaning |
 | --- | --- | --- |
 | type | `base` | URI prefix, as a string literal or a path to a `const` of type `&str`; `type` defaults to it plus the kebab-cased variant name |
+| type | `subset_of` | a wider derived `ApiError` enum this one's variants are some of, answering and described as that enum's; alone, on an enum, with no `#[problem(...)]` below it |
 | variant | `status` | required, 400–599 |
 | variant | `title` | the problem's `title`, and what the response's description is composed from. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
 | variant | `type` | an absolute URI, overriding `base` |
@@ -209,6 +210,35 @@ declare is unioned rather than replaced, so the description names every type
 reaching it, the enum's own first. The union is built in `const` items, so the
 held type cannot name the enum's generic parameters.
 
+**An operation that cannot fail every way names a subset.** A rejection
+type's statuses are declared on every operation returning it, so a `HEAD`
+sharing a `PUT`'s enum would declare a 409 it can never send. The narrower
+enum says `#[problem(subset_of = ChunkRejection)]` and lists the variants it
+keeps, with the wider variants' names and fields:
+
+```rust
+#[derive(Debug, ApiError)]
+#[problem(subset_of = ChunkRejection)]
+enum HeadRejection {
+    NotFound { id: ChunkId },
+    Unavailable(RetryAfter),
+}
+```
+
+The derive generates `From<HeadRejection> for ChunkRejection`, moving each
+variant's fields into the wider variant of the same name, so a variant or field
+the wider enum lacks, one it has that the subset omits, and a field of another
+type are compile errors at the subset's variant. The subset answers by that
+conversion, so its status, `type`, `title`, `detail` (the wider `Display`),
+extension members and headers are the wider variant's and cannot drift; any
+`#[problem(...)]` below the subset is refused for that reason. It declares only
+its own variants' statuses, and describes each as the wider enum describes the
+variants it keeps: a status two wider variants share names only the one the
+subset holds. A derive sees one item, so the wider enum publishes what a subset
+reads as hidden inherent items, and `subset_of` names a derived `ApiError`
+enum, a subset included. A per-operation exclusion was rejected, because it
+moves the guarantee from the type to a run-time check.
+
 **A refusal Kynos ships is held the same way.** Every interceptor refusal that
 sends a problem — `BodySizeExceeded`, `RateLimited`, `Undecodable` and the rest
 — implements `IntoProblem`, so an interceptor answering with one of them or a
@@ -231,7 +261,9 @@ type is no header group, and a type with no
 in [`tests/ui/macros`](../crates/kynos/tests/ui/macros). So are `headers` on a
 variant or type, beside `extension` on one field, twice on one failure, and
 over a transparent variant's field, each with a case in the derive's own
-diagnostic ledger. What `base`, `title`,
+diagnostic ledger. A `subset_of` on a variant or a struct, beside another key,
+naming the subset's generic parameter, or over a variant or field with a
+`#[problem(...)]` of its own is a compile error with a case in both. What `base`, `title`,
 `type` and `extension` *do* is checked at run time by the conformance harness,
 which compares each problem document a service produced against what the
 description declared for that operation and status.
