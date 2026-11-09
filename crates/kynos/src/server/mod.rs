@@ -499,7 +499,8 @@ impl<C: 'static> Server<C> {
     /// A load balancer that relays TCP rather than HTTP — an AWS Network Load
     /// Balancer, HAProxy in TCP mode — can name the client only this way. The
     /// header is read before the TLS handshake and before the first request
-    /// head, within the first-head deadline the protocol configs set. A
+    /// head, within the first-head deadline the protocol configs set; with
+    /// every one of their timeouts off, only a drain bounds the wait. A
     /// connection from a trusted peer that sends no header, or one the
     /// specification does not admit, is closed unanswered; one from any other
     /// peer is served as it is, so a client cannot claim an address by sending
