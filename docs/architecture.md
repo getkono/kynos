@@ -742,6 +742,22 @@ That exposes the connection driver's
 existing `AsyncRead + AsyncWrite` bound rather than adding a coupling point,
 and accepting those streams stays the application's job.
 
+**The PROXY protocol is in, on TCP listeners, under `server`.** Behind a load
+balancer that relays TCP rather than HTTP, its header is the only place the
+client's address arrives, and reading it on `serve_io` instead would give up
+the connection limit, drain and TLS a listener provides
+([#1231](https://github.com/getkono/kynos/issues/1231)).
+`Server::proxy_protocol` takes the `TrustedProxies` the forwarding fields
+already use, reading only whom it believes: the same question, asked of the
+socket peer, and one policy type rather than two. A believed peer must send the
+header, read before TLS and within the first-head deadline, and one that does
+not is closed; any other peer is served as it is, so a client cannot claim an
+address by sending one. The client becomes the `Connection`'s peer, which
+`Router::trusted_proxies` then resolves from. It is a reader of a few hundred
+lines with no dependency, inside the connection coupling point, so no feature
+of its own gates it. A Unix listener reads no header, its peer having no
+address to trust.
+
 **WebSockets are deferred, and the description they need is AsyncAPI.** A
 WebSocket stops being request/response once it is established, and OpenAPI
 describes request/response. So a WebSocket route described in the OpenAPI
