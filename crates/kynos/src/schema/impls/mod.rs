@@ -13,7 +13,7 @@ mod wrapper;
 
 #[cfg(feature = "decimal")]
 mod decimal;
-#[cfg(feature = "uuid")]
+#[cfg(feature = "uuid1")]
 mod identifier;
 #[cfg(feature = "time")]
 mod temporal;

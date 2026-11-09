@@ -8,9 +8,9 @@ use kynos_openapi::{Schema as OpenApiSchema, model::schema::types::SchemaType};
 
 use crate::schema::impls::formatted;
 
-#[cfg(feature = "time-chrono")]
+#[cfg(feature = "time-chrono04")]
 mod chrono;
-#[cfg(feature = "time-jiff")]
+#[cfg(feature = "time-jiff02")]
 mod jiff;
 
 /// A calendar date: RFC 3339 `full-date`, which carries no offset and needs
@@ -41,7 +41,7 @@ pub(super) fn local_time() -> OpenApiSchema {
 /// An ISO 8601 duration.
 ///
 /// Only jiff writes one; chrono's `TimeDelta` serializes as an array.
-#[cfg(feature = "time-jiff")]
+#[cfg(feature = "time-jiff02")]
 pub(super) fn duration() -> OpenApiSchema {
     formatted(SchemaType::String, "duration")
 }

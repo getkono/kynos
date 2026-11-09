@@ -7,6 +7,6 @@
 fn describable<T: kynos::schema::Schema>() {}
 
 fn main() {
-    describable::<jiff::Span>();
-    describable::<jiff::SignedDuration>();
+    describable::<jiff02::Span>();
+    describable::<jiff02::SignedDuration>();
 }

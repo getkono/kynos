@@ -7,9 +7,9 @@ use kynos_openapi::{Schema as OpenApiSchema, model::schema::types::SchemaType};
 
 use crate::schema::impls::formatted;
 
-#[cfg(feature = "decimal-big")]
+#[cfg(feature = "decimal-big04")]
 mod bigdecimal;
-#[cfg(feature = "decimal-rust")]
+#[cfg(feature = "decimal-rust1")]
 mod rust_decimal;
 
 /// An exact decimal number, carried as a string.

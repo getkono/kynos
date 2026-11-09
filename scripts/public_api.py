@@ -59,7 +59,7 @@ NUMBERS = {
 
 ALLOWANCE_MARKER = "**Public dependencies.**"
 PENDING = re.compile(
-    r"^(\w+) crates are public API today without being in the allowance(.*?)(?:\n\n|\Z)",
+    r"^(\w+) (?:crates are|crate is) public API today without being in the allowance(.*?)(?:\n\n|\Z)",
     re.MULTILINE | re.DOTALL,
 )
 BACKTICKED = re.compile(r"`([^`]+)`")

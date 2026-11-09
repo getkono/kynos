@@ -119,20 +119,20 @@ fn the_unit_type_is_null() {
     assert_eq!(object_of::<()>().ty, Some(TypeSet::One(SchemaType::Null)));
 }
 
-#[cfg(feature = "uuid")]
+#[cfg(feature = "uuid1")]
 #[test]
 fn a_uuid_is_a_string_of_that_format() {
-    let object = object_of::<uuid::Uuid>();
+    let object = object_of::<uuid1::Uuid>();
     assert_eq!(object.ty, Some(TypeSet::One(SchemaType::String)));
     assert_eq!(object.format.as_deref(), Some("uuid"));
 }
 
 /// A format is a claim about the wire form, so it is worth only as much as a
 /// test that produces one and looks at it.
-#[cfg(feature = "uuid")]
+#[cfg(feature = "uuid1")]
 #[test]
 fn a_uuid_serializes_as_the_string_its_format_promises() {
-    let value = uuid::Uuid::nil();
+    let value = uuid1::Uuid::nil();
     let encoded = serde_json::to_value(value).expect("a uuid serializes");
     assert_eq!(
         encoded,
@@ -140,16 +140,16 @@ fn a_uuid_serializes_as_the_string_its_format_promises() {
     );
 }
 
-#[cfg(feature = "uuid")]
+#[cfg(feature = "uuid1")]
 #[test]
 fn a_uuid_writes_its_format_and_reads_it_back() {
-    let value = uuid::Uuid::from_u128(0x67e5_5044_10b1_426f_9247_bb68_0e5f_e0c8);
+    let value = uuid1::Uuid::from_u128(0x67e5_5044_10b1_426f_9247_bb68_0e5f_e0c8);
     carries_as(&value, "67e55044-10b1-426f-9247-bb680e5fe0c8", Some("uuid"));
 }
 
-#[cfg(feature = "time-chrono")]
+#[cfg(feature = "time-chrono04")]
 mod chrono_backend {
-    use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+    use chrono04::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 
     use super::{carries_as, object_of, schema_of};
 
@@ -244,9 +244,9 @@ mod chrono_backend {
     }
 }
 
-#[cfg(feature = "time-jiff")]
+#[cfg(feature = "time-jiff02")]
 mod jiff_backend {
-    use jiff::{
+    use jiff02::{
         SignedDuration, Span, Timestamp, Zoned,
         civil::{self, date},
     };
@@ -404,37 +404,37 @@ mod decimal_backends {
         assert_eq!(encoded, serde_json::Value::String(expected.to_owned()));
     }
 
-    #[cfg(feature = "decimal-rust")]
+    #[cfg(feature = "decimal-rust1")]
     #[test]
     fn a_fixed_decimal_is_a_string_of_that_format() {
         // Trailing zeros are significant to `rust_decimal` and survive the
         // round trip, which is a large part of why money uses it.
         assert_writes_a_string(
             "1.2300"
-                .parse::<rust_decimal::Decimal>()
+                .parse::<rust_decimal1::Decimal>()
                 .expect("a decimal"),
             "1.2300",
         );
     }
 
-    #[cfg(feature = "decimal-big")]
+    #[cfg(feature = "decimal-big04")]
     #[test]
     fn an_arbitrary_decimal_is_a_string_of_that_format() {
         // Far past `rust_decimal`'s ceiling of 28 significant digits, which is
         // the whole reason this backend exists alongside it.
         let wide = "1.2345678901234567890123456789012345";
         assert_writes_a_string(
-            wide.parse::<bigdecimal::BigDecimal>()
+            wide.parse::<bigdecimal04::BigDecimal>()
                 .expect("an arbitrary-precision decimal"),
             wide,
         );
     }
 
-    #[cfg(feature = "decimal-rust")]
+    #[cfg(feature = "decimal-rust1")]
     #[test]
     fn a_fixed_decimal_writes_its_format_and_reads_it_back() {
         let value = "-1.2300"
-            .parse::<rust_decimal::Decimal>()
+            .parse::<rust_decimal1::Decimal>()
             .expect("a decimal");
         super::carries_as(&value, "-1.2300", Some("decimal"));
     }
@@ -442,11 +442,11 @@ mod decimal_backends {
     /// Why `BigDecimal` is not a parameter value: its `Display` writes an
     /// exponent for a value far below one, or for one read from exponent
     /// notation, and the fixed-point `decimal` format refuses both.
-    #[cfg(feature = "decimal-big")]
+    #[cfg(feature = "decimal-big04")]
     #[test]
     fn an_arbitrary_decimal_displays_other_than_its_format() {
         let display = |text: &str| {
-            text.parse::<bigdecimal::BigDecimal>()
+            text.parse::<bigdecimal04::BigDecimal>()
                 .expect("an arbitrary-precision decimal")
                 .to_string()
         };
@@ -597,28 +597,28 @@ fn every_shipped_scalar_is_a_parameter_value() {
     param_value::<Ipv6Addr>();
     param_value::<IpAddr>();
 
-    #[cfg(feature = "uuid")]
-    param_value::<uuid::Uuid>();
+    #[cfg(feature = "uuid1")]
+    param_value::<uuid1::Uuid>();
 
-    #[cfg(feature = "time-chrono")]
+    #[cfg(feature = "time-chrono04")]
     {
-        param_value::<chrono::NaiveDate>();
-        param_value::<chrono::NaiveTime>();
+        param_value::<chrono04::NaiveDate>();
+        param_value::<chrono04::NaiveTime>();
     }
 
-    #[cfg(feature = "time-jiff")]
+    #[cfg(feature = "time-jiff02")]
     {
-        param_value::<jiff::civil::Date>();
-        param_value::<jiff::civil::Time>();
-        param_value::<jiff::civil::DateTime>();
-        param_value::<jiff::Timestamp>();
-        param_value::<jiff::Zoned>();
-        param_value::<jiff::Span>();
-        param_value::<jiff::SignedDuration>();
+        param_value::<jiff02::civil::Date>();
+        param_value::<jiff02::civil::Time>();
+        param_value::<jiff02::civil::DateTime>();
+        param_value::<jiff02::Timestamp>();
+        param_value::<jiff02::Zoned>();
+        param_value::<jiff02::Span>();
+        param_value::<jiff02::SignedDuration>();
     }
 
-    #[cfg(feature = "decimal-rust")]
-    param_value::<rust_decimal::Decimal>();
+    #[cfg(feature = "decimal-rust1")]
+    param_value::<rust_decimal1::Decimal>();
 }
 
 #[test]
@@ -657,10 +657,10 @@ fn a_non_finite_float_writes_what_no_number_admits() {
 /// The chrono exception the `ParamValue` docs state: a year outside 0000–9999
 /// takes a sign and, past 9999, a fifth digit, neither of which RFC 3339's
 /// `date` admits. serde writes the same text, and `FromStr` reads it back.
-#[cfg(feature = "time-chrono")]
+#[cfg(feature = "time-chrono04")]
 #[test]
 fn a_chrono_date_outside_four_digit_years_writes_what_no_date_admits() {
-    use chrono::NaiveDate;
+    use chrono04::NaiveDate;
 
     for (year, text) in [(10_000, "+10000-01-01"), (-1, "-0001-01-01")] {
         let day = NaiveDate::from_ymd_opt(year, 1, 1).expect("a representable date");
@@ -676,10 +676,10 @@ fn a_chrono_date_outside_four_digit_years_writes_what_no_date_admits() {
 /// Two jiff exceptions the `ParamValue` docs state: a year before 0 takes a
 /// sign and six digits, and a negative duration a leading `-`, neither of which
 /// RFC 3339 admits. serde writes the same text, and `FromStr` reads it back.
-#[cfg(feature = "time-jiff")]
+#[cfg(feature = "time-jiff02")]
 #[test]
 fn a_jiff_value_before_zero_writes_what_no_format_admits() {
-    use jiff::{SignedDuration, Span, civil};
+    use jiff02::{SignedDuration, Span, civil};
 
     let day = civil::date(-1, 1, 1);
     assert_eq!(day.to_string(), "-000001-01-01");
@@ -711,10 +711,10 @@ fn a_jiff_value_before_zero_writes_what_no_format_admits() {
 /// non-negative duration can take an ISO 8601 form RFC 3339's `duration` does
 /// not admit, with fractional seconds, a skipped unit, or weeks beside days.
 /// serde writes the same text, and `FromStr` reads it back.
-#[cfg(feature = "time-jiff")]
+#[cfg(feature = "time-jiff02")]
 #[test]
 fn a_jiff_duration_writes_iso_8601_forms_no_rfc_3339_duration_admits() {
-    use jiff::{SignedDuration, Span};
+    use jiff02::{SignedDuration, Span};
 
     for (duration, text) in [
         (SignedDuration::from_secs(3630), "PT1H30S"),

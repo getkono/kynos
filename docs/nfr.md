@@ -887,9 +887,9 @@ member's name, and one ending in `/` is a tree.
 | compatibility | `futures-core` is named only under `response/stream/` and `extract/body/json_lines/` and in `http/body.rs`, `test/body.rs` and `test/mod.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `multer` is named only in `extract/body/multipart.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `prost` is named only in `extract/body/protobuf.rs` and `response/codec/protobuf.rs` | `mise run containment:check` | `enforced` |
-| compatibility | `uuid` is named only in `schema/impls/identifier.rs` | `mise run containment:check` | `enforced` |
-| compatibility | `chrono` and `jiff` are named only under `schema/impls/temporal/` | `mise run containment:check` | `enforced` |
-| compatibility | `rust_decimal` and `bigdecimal` are named only under `schema/impls/decimal/` | `mise run containment:check` | `enforced` |
+| compatibility | `uuid1` is named only in `schema/impls/identifier.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `chrono04` and `jiff02` are named only under `schema/impls/temporal/` | `mise run containment:check` | `enforced` |
+| compatibility | `rust_decimal1` and `bigdecimal04` are named only under `schema/impls/decimal/` | `mise run containment:check` | `enforced` |
 | compatibility | `percent-encoding` is named only in `__private/uri.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `jsonschema` is named only in `test/conformance.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `regex` and `regex-syntax` are named only in `__private/constraints/pattern.rs` and `kynos-openapi/pattern.rs` | `mise run containment:check` | `enforced` |
