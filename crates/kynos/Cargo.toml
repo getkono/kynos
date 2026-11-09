@@ -298,6 +298,7 @@ pattern = ["macros", "kynos-macros/pattern", "kynos-openapi/pattern", "dep:regex
 # --- Runtime ---------------------------------------------------------------
 server = [
   "dep:hyper-util",
+  "dep:rustix",
   "dep:socket2",
   "dep:tracing",
   "tokio/net",
@@ -482,6 +483,11 @@ opentelemetry-otlp = { workspace = true, features = ["grpc-tonic", "trace"] }
 opentelemetry-semantic-conventions = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 uuid1 = { workspace = true, features = ["serde"] }
+
+# `getrlimit` and `setrlimit` under `server`, which fits the open-file limit to
+# the connection cap.
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, optional = true, features = ["process"] }
 
 # `setrlimit` for `connection_adversarial.rs`, and `kill_process` for the
 # server's signal test.
