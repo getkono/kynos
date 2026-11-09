@@ -379,9 +379,9 @@ number exists it stays closed.
 **matchit.** A `{param}` matches exactly one path segment, never crossing a
 `/`, and captures a borrowed slice of the request path rather than an owned
 string — the property the routing path's allocation requirements rest on.
-[`nfr.md`](nfr.md#routing) records zero heap allocations there as `absent` and
-unmet, beside what a static match measures, and enforces recorded ceilings in
-the meantime; lowering one is what closing the gap looks like. matchit also
+[`nfr.md`](nfr.md#routing) records zero heap allocations there as `absent`, and
+as decided rather than open: each block a static match still allocates is
+attributed and kept, and recorded ceilings hold the path at that count. matchit also
 understands catch-all patterns, which Kynos does not: a catch-all has no OpenAPI equivalent, so the
 router rejects that syntax before matchit is asked to insert it. That check is
 syntactic and belongs above the dependency rather than inside it, which is why

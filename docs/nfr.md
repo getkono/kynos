@@ -167,7 +167,7 @@ exercises them: a description the corpus does not contain is not covered.
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
 | performance | Route dispatch allocates at most a recorded number of times per route shape, and a replayed request costs what the first one did | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), over a handler that allocates nothing, counting fresh allocations and reallocations across a 10k-request replay | `enforced` |
-| performance | Zero heap allocations on the routing path | — | `absent`, and decided rather than open: the row above enforces a ceiling, which is the opposite direction, and each of the five blocks a static match still allocates is attributed below and kept, since removing any needs a public bound, `unsafe`, or a change to `http` |
+| performance | Zero heap allocations on the routing path | — | `absent`, and decided rather than open: the row above enforces a ceiling, which is the opposite direction, and each of the five blocks a static match still allocates is attributed below and kept, since removing any needs a public bound, `unsafe` or a dependency the default build cannot take, or a change to `http` |
 | performance | Route resolution p99 ≤ TBD at 1000 registered operations | `criterion` with a regression gate | `kynos-bench` |
 | performance | What one request of each `kynos-bench` scenario, and of each row of the compression sweep `Compression`'s default `min_size` is read from, executes in process is recorded as a count exact on one host: instructions in the program object, and heap blocks and bytes; and so is what a request costs that enters through the server's connection path; and so is each element of the per-request surface, priced as the difference from the row it alone changes: routing past three captures and every answer the router gives without an operation, a layer or panic recovery at each scope, an observer and `Trace` with and without a subscriber, each extractor and guard, each body codec and refusal, ranged, conditional, negotiated and created responses, every shipped interceptor, each streamed body, an embedded asset and the served description, and a typical production stack | `mise run profile:requests`: gungraun over Callgrind and DHAT on [`kynos-profile`](../crates/kynos-profile/), split by object and compared with [`requests.tsv`](../crates/kynos-profile/requests.tsv) by [`profile_report.py`](../scripts/profile_report.py), which also holds DHAT's block counts to `tests/alloc.rs`'s. The `connection_*` groups drive `Server::serve_io` over an in-memory duplex, so hyper's parse, its per-connection builder, buffers and timers, `Body::from_incoming` and the `Connection` extension are counted. The `routing` through `realistic` groups are the ablation matrix: each row names its base in `lib.rs`, and the report gives the difference beside the counts | `partial`: a trend in `full.yml` once master settles, with no ceiling and no gate; the connection path is counted to the duplex and no further, so no socket, syscall or kernel buffer is (`kynos-bench`'s), and `connection_h2` and `rate_limit` are `trend` rather than exact, since what each counts reads the wall clock, as are `form_echo` and `request_id_random`, since what each counts depends on a key the process draws at random ([`performance.md`](performance.md)) — below |
 | performance | Erasing a body through the boxed trait object costs a recorded number of allocations per construction | [`tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs), counting `Body::empty` and `Body::from_bytes` | `enforced` |
@@ -240,7 +240,8 @@ routing record (120), the read deadline axum's `serve` does not arm (96), the
 handler's own string (13) and the `Connection` handle (8) — and axum 60 Kynos
 does not. Without hyper's buffer, Kynos allocates 1897 bytes a request to
 axum's 968, the near-2× `kynos-bench`'s first sessions recorded against
-`0.1.0`. None of the three is removable without a public change, for the
+`0.1.0`. Removing any of the three needs a public bound, `unsafe` or a
+dependency the default build cannot take, or a change to `http`, for the
 reasons below the attribution table.
 
 **The zero does not hold.** A static match allocates five times, of the seven
@@ -281,8 +282,17 @@ and endpoint futures (432 and 320).
   needs that bound on `call`: a breaking change, and the one that would remove
   the block, carrying its 432 bytes inline in every future awaiting `call`.
 - An inline slot instead of either box, used when the future fits, stores an
-  erased value in place, which needs `unsafe`; the workspace forbids
-  `unsafe_code`.
+  erased value in place. Writing one here needs `unsafe`, which the workspace
+  forbids. Taking a vetted one, the way `alloc_counter` keeps that rule
+  ([`architecture.md`](architecture.md#dependencies)), is refused on two
+  grounds. The routing path is in the default build, and a capability there
+  cannot take a dependency at all; `alloc_counter` is a dev-dependency that no
+  `src/` line names. And no such crate reaches zero for every handler.
+  `smallbox` and `stackfuture`'s `from_or_box` box a future larger than their
+  fixed slot. `stackfuture`'s `from` instead refuses that future at compile
+  time, which limits what a handler may hold, and that limit is a public one.
+  Even the slot that fits carries its whole width inline, in every future
+  that awaits it.
 - The record and the map are `http::Extensions`', which boxes every value and
   the map itself and offers neither capacity nor reuse. One extension carrying
   both the record and `Connection` would spare only a request from the server
@@ -392,8 +402,9 @@ is not zero-sized.
 The ceilings are recorded rather than the zero because
 [Thresholds](#thresholds) asks for the first measurement rather than the hoped
 figure, and because a requirement asserting a zero the path does not deliver
-fails on every run and gets deleted. Lowering a ceiling is what closing the gap
-looks like; raising one is a change to this document.
+fails on every run and gets deleted. The gap is decided rather than open, so a
+ceiling falls only when one of the blocks above stops being kept, and raising
+one is a change to this document.
 
 The scope is narrower than the path, and deliberately: the requirement is
 written against routes of at most three parameters with no static/dynamic
