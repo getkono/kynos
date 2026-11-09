@@ -2002,6 +2002,8 @@ impl kynos::extract::describe::Describe for kynos::response::range::served::Cond
 pub fn kynos::response::range::served::Conditions::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl kynos::extract::describe::Describe for kynos::server::lifecycle::Draining
 pub fn kynos::server::lifecycle::Draining::describe(&mut kynos::router::operation::OperationCx<'_>)
+impl kynos::extract::describe::Describe for kynos::server::lifecycle::Readiness
+pub fn kynos::server::lifecycle::Readiness::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl<C: kynos::extract::body::codec::BodyCodec<T>, T: kynos::schema::Schema> kynos::extract::describe::Describe for kynos::extract::body::codec::Encoded<C, T>
 pub fn kynos::extract::body::codec::Encoded<C, T>::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl<E: kynos::router::endpoint::meta::EndpointUri> kynos::extract::describe::Describe for kynos::extract::link::Link<E>
@@ -2651,6 +2653,9 @@ pub async fn kynos::response::range::served::Conditions::from_request_parts(&mut
 impl<C: core::marker::Sync> kynos::extract::FromRequestParts<C> for kynos::server::lifecycle::Draining
 pub type kynos::server::lifecycle::Draining::Rejection = core::convert::Infallible
 pub async fn kynos::server::lifecycle::Draining::from_request_parts(&mut kynos::http::Parts, &C) -> core::result::Result<Self, Self::Rejection>
+impl<C: core::marker::Sync> kynos::extract::FromRequestParts<C> for kynos::server::lifecycle::Readiness
+pub type kynos::server::lifecycle::Readiness::Rejection = core::convert::Infallible
+pub async fn kynos::server::lifecycle::Readiness::from_request_parts(&mut kynos::http::Parts, &C) -> core::result::Result<Self, Self::Rejection>
 pub mod kynos::handler
 pub enum kynos::handler::Guarded
 impl core::fmt::Debug for kynos::handler::Guarded
@@ -6088,6 +6093,7 @@ pub const kynos::server::Server<()>::DEFAULT_SHUTDOWN_TIMEOUT: core::time::Durat
 impl<C: 'static> kynos::server::Server<C>
 pub fn kynos::server::Server<C>::accept_shards(self, core::num::nonzero::NonZeroUsize) -> Self
 pub fn kynos::server::Server<C>::bind(self, impl core::convert::Into<kynos::server::address::BindAddress>) -> Self
+pub fn kynos::server::Server<C>::deregistration_delay(self, core::time::Duration) -> Self
 pub fn kynos::server::Server<C>::graceful_shutdown(self, kynos::server::shutdown::Shutdown) -> Self
 pub fn kynos::server::Server<C>::http1(self, kynos::server::protocol::http1::Http1Config) -> Self
 pub fn kynos::server::Server<C>::http2(self, kynos::server::protocol::http2::Http2Config) -> Self
@@ -9839,6 +9845,25 @@ impl core::marker::Unpin for kynos::server::lifecycle::Draining
 impl core::marker::UnsafeUnpin for kynos::server::lifecycle::Draining
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::server::lifecycle::Draining
 impl core::panic::unwind_safe::UnwindSafe for kynos::server::lifecycle::Draining
+pub struct kynos::server::lifecycle::Readiness(_)
+impl kynos::server::lifecycle::Readiness
+pub fn kynos::server::lifecycle::Readiness::is_ready(&self) -> bool
+impl core::clone::Clone for kynos::server::lifecycle::Readiness
+pub fn kynos::server::lifecycle::Readiness::clone(&self) -> kynos::server::lifecycle::Readiness
+impl core::fmt::Debug for kynos::server::lifecycle::Readiness
+pub fn kynos::server::lifecycle::Readiness::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl kynos::extract::describe::Describe for kynos::server::lifecycle::Readiness
+pub fn kynos::server::lifecycle::Readiness::describe(&mut kynos::router::operation::OperationCx<'_>)
+impl<C: core::marker::Sync> kynos::extract::FromRequestParts<C> for kynos::server::lifecycle::Readiness
+pub type kynos::server::lifecycle::Readiness::Rejection = core::convert::Infallible
+pub async fn kynos::server::lifecycle::Readiness::from_request_parts(&mut kynos::http::Parts, &C) -> core::result::Result<Self, Self::Rejection>
+impl core::marker::Freeze for kynos::server::lifecycle::Readiness
+impl core::marker::Send for kynos::server::lifecycle::Readiness
+impl core::marker::Sync for kynos::server::lifecycle::Readiness
+impl core::marker::Unpin for kynos::server::lifecycle::Readiness
+impl core::marker::UnsafeUnpin for kynos::server::lifecycle::Readiness
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::server::lifecycle::Readiness
+impl core::panic::unwind_safe::UnwindSafe for kynos::server::lifecycle::Readiness
 pub mod kynos::server::protocol
 pub mod kynos::server::protocol::http1
 #[non_exhaustive] pub struct kynos::server::protocol::http1::Http1Config
@@ -10128,6 +10153,7 @@ pub const kynos::server::Server<()>::DEFAULT_SHUTDOWN_TIMEOUT: core::time::Durat
 impl<C: 'static> kynos::server::Server<C>
 pub fn kynos::server::Server<C>::accept_shards(self, core::num::nonzero::NonZeroUsize) -> Self
 pub fn kynos::server::Server<C>::bind(self, impl core::convert::Into<kynos::server::address::BindAddress>) -> Self
+pub fn kynos::server::Server<C>::deregistration_delay(self, core::time::Duration) -> Self
 pub fn kynos::server::Server<C>::graceful_shutdown(self, kynos::server::shutdown::Shutdown) -> Self
 pub fn kynos::server::Server<C>::http1(self, kynos::server::protocol::http1::Http1Config) -> Self
 pub fn kynos::server::Server<C>::http2(self, kynos::server::protocol::http2::Http2Config) -> Self
