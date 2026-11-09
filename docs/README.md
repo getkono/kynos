@@ -28,6 +28,7 @@ the framework, and the list of features it deliberately rejects, lives in the
 | [`performance.md`](performance.md) | Deciding what a feature costs the request path, and which measurement that shape of code owes |
 | [`releasing.md`](releasing.md) | Cutting a release, or diagnosing why one did not publish |
 | [`migrating.md`](migrating.md) | Upgrading an application, or shipping a feature that makes downstream code unnecessary |
+| [`production.md`](production.md) | Deploying an application, or changing a server default or a bound it relies on |
 
 ## The anti-patterns are normative
 
