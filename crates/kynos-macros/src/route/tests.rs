@@ -988,6 +988,60 @@ mod routes {
         )};
         assert_eq!(expanded.to_string(), expected.to_string());
     }
+
+    /// `count` handlers named `h0` onward, as a `routes!` input.
+    fn handlers(count: usize) -> TokenStream2 {
+        let names = (0..count).map(|index| quote::format_ident!("h{index}"));
+        quote!(#(#names),*)
+    }
+
+    /// Handler `index`'s member, as the expansion writes it.
+    fn built(index: usize) -> TokenStream2 {
+        let name = quote::format_ident!("h{index}");
+        quote!(::kynos::__private::endpoint::from_meta::<_, #name, _, _>(#name))
+    }
+
+    /// `items` as one tuple.
+    fn tuple(items: impl IntoIterator<Item = TokenStream2>) -> TokenStream2 {
+        let items = items.into_iter();
+        quote!(( #(#items,)* ))
+    }
+
+    /// The members of handlers `range` as one tuple.
+    fn flat(range: std::ops::Range<usize>) -> TokenStream2 {
+        tuple(range.map(built))
+    }
+
+    /// Sixteen members, the widest tuple `IntoEndpoints` takes, stay flat.
+    #[test]
+    fn sixteen_operations_expand_to_one_flat_tuple() {
+        let expanded = expand(handlers(16)).expect("a well-formed member list");
+        assert_eq!(expanded.to_string(), flat(0..16).to_string());
+    }
+
+    /// Past sixteen, members are chunked in order into tuples of sixteen, the
+    /// last holding the remainder.
+    #[test]
+    fn past_sixteen_operations_nest_in_chunks_of_sixteen() {
+        for (count, expected) in [
+            (17, tuple([flat(0..16), flat(16..17)])),
+            (40, tuple([flat(0..16), flat(16..32), flat(32..40)])),
+        ] {
+            let expanded = expand(handlers(count)).expect("a well-formed member list");
+            assert_eq!(expanded.to_string(), expected.to_string(), "{count}");
+        }
+    }
+
+    /// Past sixteen chunks, the chunks are nested again, so no level is ever
+    /// wider than sixteen.
+    #[test]
+    fn past_sixteen_chunks_the_chunks_nest_again() {
+        let chunks = tuple((0..16).map(|chunk| flat(chunk * 16..chunk * 16 + 16)));
+        let expected = tuple([chunks, tuple([flat(256..257)])]);
+
+        let expanded = expand(handlers(257)).expect("a well-formed member list");
+        assert_eq!(expanded.to_string(), expected.to_string());
+    }
 }
 
 /// `#[kynos::operation]`'s method check.

@@ -320,6 +320,10 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         document.tags = unique_tags(&tag_metadata);
         document.components = registry.into_components();
 
+        // Before the version is chosen and the document validated, so both
+        // read what the application publishes.
+        super::map::apply(&self.document_edits, &mut document, &mut violations);
+
         // From what the document uses, never from a (unified) cargo feature.
         let document = lowest_expressing(&document)?;
 
