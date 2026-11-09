@@ -507,6 +507,7 @@ resolves.
 | performance | Added allocations = 1 per layer, held as an equality, and the dispatch future ≤ 16 bytes at any depth | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), counting one request through a no-op interceptor stack at depth 0/4/8 and reporting the marginal cost of a layer, plus a `size_of` ratchet on the future a driver holds | `enforced` |
 | performance | Per-layer added p99 ≤ TBD | `criterion` at stack depth 0/4/8 with a regression gate | `kynos-bench` |
 | performance | Compression's added allocations never fall as the body grows, and grow by no more than the 8 KiB reads the encoder's drain adds between one non-empty body size and the next; encoding a body the encoder engages on costs strictly more than declining to, with the empty body the baseline of that relation rather than a rung of the first; and what declining costs is a recorded constant rather than a held one | [`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs), over gzip, brotli and zstd at 0/1 KiB/16 KiB/256 KiB, engaged and not by `Accept-Encoding` on one mounted service | `enforced` |
+| reliability | Response encoders resident at once are bounded: at most one per runtime worker for a collected body up to 1 MiB, which is encoded in the poll that starts it, and otherwise one per response in flight, which `Concurrency` bounds where mounted outside `Compression`; [`middleware.md`](middleware.md) records each coding's resident figure and the sizing rule | [`compression/tests.rs`](../crates/kynos/src/middleware/compression/tests.rs)'s `an_encode_yields_between_reads_only_past_the_threshold`, holding an encode up to 1 MiB to one poll; the resident figures are a measurement on one host | `enforced` for the one-poll bound; `by-design` for a cap of the encoder's own, refused in `middleware.md` since it would fall back to identity at peak load and `Concurrency` already bounds the responses; `kynos-bench` for peak resident memory under concurrent encodes ([getkono/kynos-bench#121](https://github.com/getkono/kynos-bench/issues/121)) |
 | correctness | A stored response is never served to a request its stored `Vary` does not select | [`middleware/cache/tests.rs`](../crates/kynos/src/middleware/cache/tests.rs) over the selection rules, plus [`tests/cache.rs`](../crates/kynos/tests/cache.rs) over a live sequence | `enforced` |
 | correctness | A response that stated no freshness is never reused | [`tests/cache.rs`](../crates/kynos/tests/cache.rs) counting handler calls across three requests | `enforced` |
 | correctness | A timeout answers a status the specification defines for an origin server | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) over a live handler past its budget, and [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) against the emitted document | `enforced` |
@@ -695,6 +696,11 @@ names; and kernel socket buffers. The HTTP/1 read buffer is reached by a head
 alone: [`server/tests.rs`](../crates/kynos/src/server/tests.rs) serves a head
 one byte short of it and answers 431 only once the whole default buffer has
 been read.
+
+Nor does it count an interceptor, since none is mounted by default.
+`Compression`, where mounted, adds an encoder to each streamed or past-1 MiB
+response in flight: up to 3.1 MiB for zstd and 36.5 MiB for brotli, which
+[`middleware.md`](middleware.md) measures and turns into a sizing rule.
 
 So a 512 MiB container serving defaults can be exhausted by HTTP/1 heads from
 about 1,260 connections, by HTTP/2 ones from about 124, and by HTTP/2 readers
