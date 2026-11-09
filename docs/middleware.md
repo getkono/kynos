@@ -337,8 +337,11 @@ at the default levels, over JSON, on x86_64 glibc:
 So brotli, not zstd, is the largest past the first few kilobytes. Its unflushed
 column is a collected body of several megabytes, or a `Throughput` stream:
 brotli holds the input of a meta-block, up to 16 MiB of it, until it emits one.
-`Interactive` flushes after every frame, which closes the meta-block, so an
-event stream stays in the flushed column.
+`Interactive` flushes after every frame, which closes the meta-block, so a
+stream of frames near the measured 16 KiB flush interval, such as an event
+stream, stays in the flushed column. A frame is fed whole before that flush,
+so a stream of frames of a megabyte or more holds each one first, and reaches
+between the 1 MiB and unflushed columns.
 
 **How many encoders are resident at once is bounded by what bounds requests,
 and by nothing of its own.** A collected body up to 1 MiB is encoded in the poll
@@ -353,9 +356,10 @@ column they can reach for the codings they negotiate. Where that does not fit
 the memory budget, cap those responses with `Concurrency` outside `Compression`
 — intercepted before it, or at an enclosing scope — since its slot is held
 until the body it sees ends, and inside `Compression` that is the handler's
-body, which a collected encode has already read. A stream keeps brotli out of
-the unflushed column under `Interactive`; a collected body of several megabytes
-does not.
+body, which a collected encode has already read. A stream of small frames keeps
+brotli out of the unflushed column under `Interactive`; a stream whose frames
+reach a megabyte, and a collected body of several megabytes, do not, so size
+those by the unflushed column.
 
 There is no cap on concurrent encodes. One that passed responses through
 uncompressed when full would drop compression at peak load, when bandwidth
