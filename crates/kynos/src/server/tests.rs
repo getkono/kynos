@@ -7844,6 +7844,13 @@ mod proxy_protocol {
             "{response}"
         );
 
+        // TLVs past what the first read takes: the header is read in more.
+        let mut block = ipv4_block(client_v4());
+        block.extend_from_slice(&[0x04, 0x01, 0x2c]);
+        block.extend_from_slice(&[0; 300]);
+        let response = exchange(address, v2(1, 0x11, &block)).await;
+        assert!(response.ends_with("\r\n\r\n203.0.113.7:4711"), "{response}");
+
         stop(shutdown, server).await;
     }
 
