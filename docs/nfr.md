@@ -872,6 +872,7 @@ member's name, and one ending in `/` is a tree.
 | compatibility | `indexmap` is named only under `kynos-openapi/` | `mise run containment:check` | `enforced` |
 | compatibility | `proc-macro2`, `quote` and `syn` are named only under `kynos-macros/` | `mise run containment:check` | `enforced` |
 | dx | Every crate in `[workspace.dependencies]` is consumed by a member | `cargo-udeps` or an equivalent manifest check | `needs-tooling` |
+| compatibility | Every crate in the graph has a [tier](architecture.md#what-an-upstream-fix-may-change), and the public set is exactly what `cargo public-api --all-features` names | `cargo-public-api` against the Public dependencies allowance | `needs-tooling` |
 
 ## Macros
 
@@ -1010,7 +1011,7 @@ they unblock:
 
 | Tool | Unblocks | Notes |
 | --- | --- | --- |
-| `cargo-public-api` | Four `compatibility`/`dx` rows across the document model, runtime and workspace | The single highest-leverage addition: it enforces the architecture policy mechanically rather than by review |
+| `cargo-public-api` | Five `compatibility`/`dx` rows across the document model, runtime, dependencies and workspace | The single highest-leverage addition: it enforces the architecture policy mechanically rather than by review |
 | `cargo-udeps` | The unused-`[workspace.dependencies]` row under dependencies | An equivalent manifest check would do as well |
 
 `criterion` is intentionally absent from this list, and stays absent now that

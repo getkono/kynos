@@ -155,16 +155,24 @@ by naming the row X displaces rather than by arguing that X is good.
 **Policy:**
 
 - Every dependency is either *ambient* or *contained*. Ambient dependencies may
-  be named anywhere, and there are exactly four: `http`, `bytes`, `serde` and
-  `thiserror`. The first three are in the re-export allowance above; `thiserror`
-  is a derive that reaches no public signature. Every other dependency may be
-  named only under the path the table gives it, the allowance's `indexmap` and
-  `futures-core` included. This is the runtime rule generalized, not a second
-  rule.
+  be named anywhere, and there are exactly five: `http`, `bytes`, `serde`,
+  `serde_json` and `thiserror`. The first three are in the re-export allowance
+  above; `serde_json` is unconditional and public through `Problem`'s
+  extensions, `Error::Json` and the document model's `Value`s, so no one path
+  could hold it; `thiserror` is a derive that reaches no public signature.
+  Every other dependency may be named only under the path the table gives it,
+  the allowance's `indexmap` and `futures-core` included. This is the runtime
+  rule generalized, not a second rule.
+- Where a crate may be named and what its upstream fix may change are separate
+  questions: the first is the *Named in* column, the second its *Fix reaches*
+  tier ([below](#what-an-upstream-fix-may-change)).
 - `httparse` and `h2` are never named. They are hyper's HTTP/1 parser and
   HTTP/2 framing layer and they reach Kynos through it. Naming either would
   mean Kynos had taken the protocol over, which is a decision this section
-  closes rather than defers.
+  closes rather than defers. `httparse` has a second dependent: with
+  `multipart` on, `multer` parses each part's headers with it, from request
+  body bytes a reverse proxy does not parse. Not naming it still holds; it is
+  not reached through `hyper` alone.
 - A new dependency arrives feature-gated and additive, never as a widening of
   the default build. A corollary that has already bitten: a capability in the
   *default* build cannot be gated, so it cannot take a dependency at all —
@@ -198,43 +206,92 @@ by naming the row X displaces rather than by arguing that X is good.
   `Cache` or `Disabled`. A provider that can serve nothing is reported as
   `TlsError::CryptoProvider` rather than panicked on.
 
+### What an upstream fix may change
+
+An upstream advisory should be fixable with the least change possible, and
+whether that is a lockfile bump, a `chore(deps)` or a `!` release is decided by
+how far the crate's types reach. Every row of [the graph](#the-graph) has one of
+three tiers in its *Fix reaches* column; a row holding crates of two tiers names
+each.
+
+| Tier | An upstream fix may change |
+| --- | --- |
+| auxiliary | Only the paths the row's *Named in* cell lists, behind its feature. An application could re-implement the capability itself |
+| core | Code in every build, but no public item |
+| public API | A `pub` signature: the crate's types or traits appear in Kynos's public items |
+
+**The rule:** an incompatible bump of a public API dependency is a `!` commit
+and a breaking release. An incompatible bump of any other dependency is
+`chore(deps)` and may touch only the paths its *Named in* cell lists. A
+`chore(deps)` that needs a change outside those paths has found a containment
+bug, and that bug is what gets fixed.
+
+**The auxiliary guarantee:** every built-in codec is re-implementable through
+[`BodyCodec`](../crates/kynos/src/extract/body/codec.rs) and `Encoded<C, T>`, so
+a codec advisory never leaves an application waiting on a Kynos release: it
+mounts its own codec, on the patched crate, and drops the feature.
+
+**Public dependencies.** The allowance is exactly these. A crate outside it
+that reaches a public item is still tiered public API, since that is what its
+fix reaches, but it is a defect to move down a tier rather than a dependency to
+keep:
+
+- `http`, `bytes`, `serde` — the re-export allowance above.
+- `serde_json` — `Value` in `Problem`'s extensions and the document model,
+  `Error::Json`, `Document::to_json`.
+- `indexmap` — the `kynos_openapi::Map` alias.
+- `futures-core` — the `response::stream::Stream` re-export.
+- `http-body` — `impl Body for http::Body`.
+- `tokio` — the `Server::serve_io` bound.
+- `tower-service` and `tower-layer` — `unchecked`.
+
+Seven crates are public API today without being in the allowance, and each has
+an issue moving it down a tier: `uuid`, `chrono`, `jiff`, `rust_decimal` and
+`bigdecimal` as trait impls on their types under `schema/impls/`
+([#1214](https://github.com/getkono/kynos/issues/1214)); `prost` as the
+`T: prost::Message` bound on `Protobuf<T>`
+([#1215](https://github.com/getkono/kynos/issues/1215)); and `tracing` as the
+`tracing::Level` that `Trace::level` takes
+([#1216](https://github.com/getkono/kynos/issues/1216)).
+
 ### The graph
 
-| Layer | Crate | Named in | Status |
-| --- | --- | --- | --- |
-| Runtime, sockets, timers, signals | `tokio` | `server/` | built |
-| Request and response types | `http` | ambient | built |
-| Byte buffers | `bytes` | ambient | built |
-| Body trait and erasure | `http-body`, `http-body-util` | [`http/body.rs`](../crates/kynos/src/http/body.rs), [`http/body/watched.rs`](../crates/kynos/src/http/body/watched.rs), [`extract/body/`](../crates/kynos/src/extract/body/), [`middleware/cache/mod.rs`](../crates/kynos/src/middleware/cache/mod.rs), [`middleware/compression/`](../crates/kynos/src/middleware/compression/), [`middleware/limits/`](../crates/kynos/src/middleware/limits/), [`response/range/source.rs`](../crates/kynos/src/response/range/source.rs), [`server/request_body.rs`](../crates/kynos/src/server/request_body.rs), [`test/body.rs`](../crates/kynos/src/test/body.rs), [`test/mod.rs`](../crates/kynos/src/test/mod.rs) | built |
-| Protocol driver, HTTP/1 and HTTP/2 | `hyper` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs), [`http/body.rs`](../crates/kynos/src/http/body.rs); its `client` half in `server/connection.rs`, gated on `test-util`, for `TestClient::through_server` | built |
-| tokio adapters for the driver | `hyper-util` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs) | built |
-| Accepted-socket options tokio does not expose | `socket2` | [`server/tcp.rs`](../crates/kynos/src/server/tcp.rs) | built |
-| HTTP/1 parsing | `httparse` | never — reached through `hyper` | built |
-| HTTP/2 framing | `h2` | never — reached through `hyper` | built |
-| TLS | `rustls`, via `tokio-rustls`, on the `aws-lc-rs` provider it names | [`server/tls/`](../crates/kynos/src/server/tls/) | built |
-| Route matching | `matchit` | [`router/`](../crates/kynos/src/router/) | built |
-| JSON Schema instance validation | `jsonschema` | [`test/conformance.rs`](../crates/kynos/src/test/conformance.rs), gated on `test-util` | built |
-| Regular expressions, for `pattern` | `regex`, `regex-syntax` | [`__private/constraints/pattern.rs`](../crates/kynos/src/__private/constraints/pattern.rs) and `kynos-openapi`'s [`pattern.rs`](../crates/kynos-openapi/src/pattern.rs), the one translator the derive and the router both call, gated on `pattern` | built |
-| Percent-encoding | `percent-encoding` | [`__private/uri.rs`](../crates/kynos/src/__private/uri.rs) | built |
-| Errors | `thiserror` | ambient | built |
-| Observability facade | `tracing` | [`server/`](../crates/kynos/src/server/), [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) | built |
-| Streaming bodies | `futures-core` | [`response/stream/mod.rs`](../crates/kynos/src/response/stream/mod.rs), whose re-export is the path an application names, [`response/stream/binary.rs`](../crates/kynos/src/response/stream/binary.rs) and [`http/body.rs`](../crates/kynos/src/http/body.rs), in every build; the rest of [`response/stream/`](../crates/kynos/src/response/stream/) and [`extract/body/json_lines/`](../crates/kynos/src/extract/body/json_lines/), gated on `openapi32`; [`test/mod.rs`](../crates/kynos/src/test/mod.rs) and [`test/body.rs`](../crates/kynos/src/test/body.rs), whose request body a test may stream, gated on `test-util` | built |
-| JSON | `serde_json` | ambient with `serde` | built |
-| Form codec | `serde_html_form` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs), [`test/mod.rs`](../crates/kynos/src/test/mod.rs) | built |
-| Multipart codec | `multer` | [`extract/body/multipart.rs`](../crates/kynos/src/extract/body/multipart.rs) | built |
-| Protobuf codec | `prost` | [`extract/body/protobuf.rs`](../crates/kynos/src/extract/body/protobuf.rs), [`response/codec/protobuf.rs`](../crates/kynos/src/response/codec/protobuf.rs) | built |
-| Scalar formats, identifiers | `uuid` | [`schema/impls/identifier.rs`](../crates/kynos/src/schema/impls/identifier.rs) | built |
-| Scalar formats, dates and times | `chrono`, `jiff` | [`schema/impls/temporal/`](../crates/kynos/src/schema/impls/temporal/) | built |
-| Scalar formats, decimals | `rust_decimal`, `bigdecimal` | [`schema/impls/decimal/`](../crates/kynos/src/schema/impls/decimal/) | built |
-| Compression | `async-compression` | [`middleware/compression/`](../crates/kynos/src/middleware/compression/), [`middleware/decompression/`](../crates/kynos/src/middleware/decompression/) | built |
-| tower interop, outward | `tower-service` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs), [`unchecked/route.rs`](../crates/kynos/src/unchecked/route.rs) | built |
-| tower interop, inward | `tower-layer` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs), [`unchecked/route.rs`](../crates/kynos/src/unchecked/route.rs) | built |
-| Document ordering | `indexmap` | [`kynos-openapi`](../crates/kynos-openapi/src/lib.rs) | built |
-| YAML emission | `serde_norway` | [`kynos-openapi/emit/`](../crates/kynos-openapi/src/emit/), behind the owned `YamlError` | built |
-| Macro parsing | `proc-macro2`, `quote`, `syn` | [`kynos-macros`](../crates/kynos-macros/src/) | built |
-| HTTP/3, QUIC | — | — | deferred |
-| WebSockets | — | — | deferred |
-| WebTransport | — | — | deferred |
+| Layer | Crate | Named in | Fix reaches | Status |
+| --- | --- | --- | --- | --- |
+| Runtime, sockets, timers, signals | `tokio` | `server/` | public API | built |
+| Request and response types | `http` | ambient | public API | built |
+| Byte buffers | `bytes` | ambient | public API | built |
+| Body trait and erasure | `http-body`, `http-body-util` | [`http/body.rs`](../crates/kynos/src/http/body.rs), [`http/body/watched.rs`](../crates/kynos/src/http/body/watched.rs), [`extract/body/`](../crates/kynos/src/extract/body/), [`middleware/cache/mod.rs`](../crates/kynos/src/middleware/cache/mod.rs), [`middleware/compression/`](../crates/kynos/src/middleware/compression/), [`middleware/limits/`](../crates/kynos/src/middleware/limits/), [`response/range/source.rs`](../crates/kynos/src/response/range/source.rs), [`server/request_body.rs`](../crates/kynos/src/server/request_body.rs), [`test/body.rs`](../crates/kynos/src/test/body.rs), [`test/mod.rs`](../crates/kynos/src/test/mod.rs) | public API (`http-body`); core (`http-body-util`) | built |
+| Protocol driver, HTTP/1 and HTTP/2 | `hyper` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs), [`http/body.rs`](../crates/kynos/src/http/body.rs); its `client` half in `server/connection.rs`, gated on `test-util`, for `TestClient::through_server` | core | built |
+| tokio adapters for the driver | `hyper-util` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs) | auxiliary | built |
+| Accepted-socket options tokio does not expose | `socket2` | [`server/tcp.rs`](../crates/kynos/src/server/tcp.rs) | auxiliary | built |
+| HTTP/1 parsing | `httparse` | never — reached through `hyper`, and through `multer` for each multipart part's headers | core | built |
+| HTTP/2 framing | `h2` | never — reached through `hyper` | core | built |
+| TLS | `rustls`, via `tokio-rustls` | [`server/tls/`](../crates/kynos/src/server/tls/) | auxiliary | built |
+| TLS crypto provider | `aws-lc-rs`, enabled by `tokio-rustls`'s feature and named through `rustls::crypto::aws_lc_rs` | [`server/tls/mod.rs`](../crates/kynos/src/server/tls/mod.rs) | auxiliary | built |
+| Route matching | `matchit` | [`router/`](../crates/kynos/src/router/) | core | built |
+| JSON Schema instance validation | `jsonschema` | [`test/conformance.rs`](../crates/kynos/src/test/conformance.rs), gated on `test-util` | auxiliary | built |
+| Regular expressions, for `pattern` | `regex`, `regex-syntax` | [`__private/constraints/pattern.rs`](../crates/kynos/src/__private/constraints/pattern.rs) and `kynos-openapi`'s [`pattern.rs`](../crates/kynos-openapi/src/pattern.rs), the one translator the derive and the router both call, gated on `pattern` | auxiliary | built |
+| Percent-encoding | `percent-encoding` | [`__private/uri.rs`](../crates/kynos/src/__private/uri.rs) | core | built |
+| Errors | `thiserror` | ambient | core | built |
+| Observability facade | `tracing` | [`server/`](../crates/kynos/src/server/), [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) | public API | built |
+| Streaming bodies | `futures-core` | [`response/stream/mod.rs`](../crates/kynos/src/response/stream/mod.rs), whose re-export is the path an application names, [`response/stream/binary.rs`](../crates/kynos/src/response/stream/binary.rs) and [`http/body.rs`](../crates/kynos/src/http/body.rs), in every build; the rest of [`response/stream/`](../crates/kynos/src/response/stream/) and [`extract/body/json_lines/`](../crates/kynos/src/extract/body/json_lines/), gated on `openapi32`; [`test/mod.rs`](../crates/kynos/src/test/mod.rs) and [`test/body.rs`](../crates/kynos/src/test/body.rs), whose request body a test may stream, gated on `test-util` | public API | built |
+| JSON | `serde_json` | ambient | public API | built |
+| Form codec | `serde_html_form` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs), [`test/mod.rs`](../crates/kynos/src/test/mod.rs) | auxiliary | built |
+| Multipart codec | `multer` | [`extract/body/multipart.rs`](../crates/kynos/src/extract/body/multipart.rs) | auxiliary | built |
+| Protobuf codec | `prost` | [`extract/body/protobuf.rs`](../crates/kynos/src/extract/body/protobuf.rs), [`response/codec/protobuf.rs`](../crates/kynos/src/response/codec/protobuf.rs) | public API | built |
+| Scalar formats, identifiers | `uuid` | [`schema/impls/identifier.rs`](../crates/kynos/src/schema/impls/identifier.rs) | public API | built |
+| Scalar formats, dates and times | `chrono`, `jiff` | [`schema/impls/temporal/`](../crates/kynos/src/schema/impls/temporal/) | public API | built |
+| Scalar formats, decimals | `rust_decimal`, `bigdecimal` | [`schema/impls/decimal/`](../crates/kynos/src/schema/impls/decimal/) | public API | built |
+| Compression | `async-compression` | [`middleware/compression/`](../crates/kynos/src/middleware/compression/), [`middleware/decompression/`](../crates/kynos/src/middleware/decompression/) | auxiliary | built |
+| tower interop, outward | `tower-service` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs), [`unchecked/route.rs`](../crates/kynos/src/unchecked/route.rs) | public API | built |
+| tower interop, inward | `tower-layer` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs), [`unchecked/route.rs`](../crates/kynos/src/unchecked/route.rs) | public API | built |
+| Document ordering | `indexmap` | [`kynos-openapi`](../crates/kynos-openapi/src/lib.rs) | public API | built |
+| YAML emission | `serde_norway` | [`kynos-openapi/emit/`](../crates/kynos-openapi/src/emit/), behind the owned `YamlError` | auxiliary | built |
+| Macro parsing | `proc-macro2`, `quote`, `syn` | [`kynos-macros`](../crates/kynos-macros/src/) | core | built |
+| HTTP/3, QUIC | — | — | — | deferred |
+| WebSockets | — | — | — | deferred |
+| WebTransport | — | — | — | deferred |
 
 Four statuses, and the distinction is what keeps the table checkable:
 
@@ -248,7 +305,8 @@ Four statuses, and the distinction is what keeps the table checkable:
 A row whose *Named in* column says `never` or `ambient` is `built` when the
 code that reaches it is implemented, even though no manifest of ours names it.
 `httparse` and `h2` are the clear cases: no member declares either, and they
-are reached only through `hyper`.
+are reached only through other dependencies — `hyper` for both, and `multer`
+for `httparse`.
 
 `chosen` has no occupants today and stays because the state is real: a decision
 made and its alternatives closed before any manifest can record it, since
