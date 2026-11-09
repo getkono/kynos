@@ -112,7 +112,7 @@ async fn a_watched_body_read_to_its_end_reports_delivery_once() {
     let body = reports.watching(Body::from_bytes(Bytes::from_static(b"1234")));
 
     assert_eq!(drain(body).await, Bytes::from_static(b"1234"));
-    assert_eq!(reports.taken(), vec![Delivery::Complete]);
+    assert_eq!(reports.taken(), vec![Delivery::Complete { bytes: 4 }]);
 }
 
 /// The signal this exists for. The bytes were there and nothing read them,
@@ -135,7 +135,7 @@ async fn a_watched_empty_body_reports_delivery_even_unpolled() {
 
     drop(reports.watching(Body::empty()));
 
-    assert_eq!(reports.taken(), vec![Delivery::Complete]);
+    assert_eq!(reports.taken(), vec![Delivery::Complete { bytes: 0 }]);
 }
 
 /// Once, not twice. The drop runs after the read that already reported, and
@@ -149,7 +149,7 @@ async fn a_watched_body_reports_once_across_both_of_its_ends() {
 
     assert_eq!(
         reports.taken(),
-        vec![Delivery::Complete],
+        vec![Delivery::Complete { bytes: 4 }],
         "the drop reported a second time over the read that had already reported"
     );
 }
@@ -180,8 +180,45 @@ async fn a_watched_body_reports_delivery_on_the_frame_that_ends_it() {
         .expect("a body built from bytes cannot fail");
 
     assert_eq!(frame.into_data().ok(), Some(Bytes::from_static(b"1234")));
-    assert_eq!(reports.taken(), vec![Delivery::Complete]);
+    assert_eq!(reports.taken(), vec![Delivery::Complete { bytes: 4 }]);
     drop(body);
+}
+
+/// A body of several frames is counted across all of them, and a trailers
+/// frame adds nothing: the count is the content the peer receives, which is
+/// what a bytes-sent metric is compared against.
+#[tokio::test]
+async fn a_watched_body_counts_the_data_of_every_frame_and_no_trailers() {
+    let mut trailers = crate::http::HeaderMap::new();
+    trailers.insert("checksum", crate::http::HeaderValue::from_static("abc"));
+    let frames = Frames(
+        [
+            Frame::data(Bytes::from_static(b"12")),
+            Frame::data(Bytes::from_static(b"345")),
+            Frame::trailers(trailers),
+        ]
+        .into(),
+    );
+    let reports = Reports::default();
+    let body = reports.watching(Body::from_body(frames));
+
+    assert_eq!(drain(body).await, Bytes::from_static(b"12345"));
+    assert_eq!(reports.taken(), vec![Delivery::Complete { bytes: 5 }]);
+}
+
+/// A body yielding the frames it was given, in order.
+struct Frames(std::collections::VecDeque<Frame<Bytes>>);
+
+impl HttpBody for Frames {
+    type Data = Bytes;
+    type Error = super::BoxError;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
+        Poll::Ready(self.get_mut().0.pop_front().map(Ok))
+    }
 }
 
 /// A body that logs its own release, so the report can be ordered against it.

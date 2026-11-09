@@ -28,7 +28,7 @@ use kynos::{
         forwarded::{Forwarded, ProxyHeader, TrustedProxies},
         header,
     },
-    middleware::{Continued, Interceptor, Next, Observer, request_id::RequestId},
+    middleware::{Completion, Continued, Interceptor, Next, Observer, request_id::RequestId},
     openapi,
     response::status::NoContent,
     router::{
@@ -403,6 +403,14 @@ impl Observer<App> for Endings {
         ));
     }
 
+    fn on_complete(&self, route: Option<Route<'_>>, completion: &Completion) {
+        self.push(format!(
+            "complete {} {}",
+            named(route),
+            completion.body_bytes
+        ));
+    }
+
     fn on_disconnect(&self, route: Option<Route<'_>>, _: Duration) {
         self.push(format!("disconnect {}", named(route)));
     }
@@ -410,7 +418,9 @@ impl Observer<App> for Endings {
 
 /// `on_response` is handed the operation that answered, or none where no
 /// operation did, and a HEAD's response with its content already shed, since
-/// that is what the peer will receive.
+/// that is what the peer will receive. Each body read to its end is then
+/// reported to `on_complete`, counting what the peer received: nothing for
+/// the HEAD, and exactly the length `on_response` saw announced otherwise.
 #[tokio::test]
 async fn an_observer_sees_the_route_and_the_response_the_peer_will_get() {
     let endings = Endings::default();
@@ -428,8 +438,11 @@ async fn an_observer_sees_the_route_and_the_response_the_peer_will_get() {
         endings.taken(),
         [
             "response loud_head /loud 200 Some(0)",
+            "complete loud_head /loud 0",
             "response <unmatched> 405 Some(64)",
+            "complete <unmatched> 64",
             "response <unmatched> 404 Some(55)",
+            "complete <unmatched> 55",
         ]
     );
 }
@@ -456,6 +469,56 @@ async fn an_observer_hears_a_dropped_body_under_the_operation_that_sent_it() {
             "response get_user /users/{id} 200 Some(35)",
             "disconnect get_user /users/{id}",
         ]
+    );
+}
+
+/// Records the `elapsed` each closing hook is handed.
+#[derive(Clone, Default)]
+struct Timings(Arc<Mutex<(Option<Duration>, Option<Duration>)>>);
+
+impl Observer<App> for Timings {
+    fn on_request(&self, _: &Request, _: Option<Route<'_>>, _: &App) {}
+
+    fn on_response(&self, _: &Response, _: Option<Route<'_>>, elapsed: Duration) {
+        self.0.lock().expect("an unpoisoned record").0 = Some(elapsed);
+    }
+
+    fn on_complete(&self, _: Option<Route<'_>>, completion: &Completion) {
+        self.0.lock().expect("an unpoisoned record").1 = Some(completion.elapsed);
+    }
+}
+
+/// `Completion::elapsed` is measured when the body's last frame is read, not
+/// when the head was ready: a body read only after a pause reports at least
+/// that pause beyond what `on_response` was handed.
+#[tokio::test]
+async fn a_completion_measures_up_to_the_last_frame_not_the_head() {
+    use http_body_util::BodyExt as _;
+
+    const PAUSE: Duration = Duration::from_millis(20);
+    let timings = Timings::default();
+    let service = support::router()
+        .observe(timings.clone())
+        .build(App::new())
+        .expect("a describable router");
+
+    let mut request = Request::new(kynos::http::body::Body::empty());
+    *request.uri_mut() = "/users/42".parse().expect("a usable request target");
+    let response = service.call(request).await;
+    // Real time, not a paused clock: the dispatcher reads `std::time::Instant`.
+    tokio::time::sleep(PAUSE).await;
+    response
+        .into_body()
+        .collect()
+        .await
+        .expect("an infallible body");
+
+    let (head, complete) = *timings.0.lock().expect("an unpoisoned record");
+    let head = head.expect("on_response was called");
+    let complete = complete.expect("on_complete was called");
+    assert!(
+        complete >= head + PAUSE,
+        "on_complete's {complete:?} is not {PAUSE:?} past on_response's {head:?}"
     );
 }
 
