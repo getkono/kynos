@@ -6035,6 +6035,7 @@ impl<S, R> core::panic::unwind_safe::RefUnwindSafe for kynos::security::auth::Sc
 impl<S, R> core::panic::unwind_safe::UnwindSafe for kynos::security::auth::Scoped<S, R> where <S as kynos::security::requirement::Requirement>::Credential: core::panic::unwind_safe::UnwindSafe, R: core::panic::unwind_safe::UnwindSafe
 pub struct kynos::prelude::Server<C>
 impl<C: 'static> kynos::server::Server<C>
+pub fn kynos::server::Server<C>::accept_shards(self, core::num::nonzero::NonZeroUsize) -> Self
 pub fn kynos::server::Server<C>::bind(self, impl core::convert::Into<kynos::server::address::BindAddress>) -> Self
 pub fn kynos::server::Server<C>::graceful_shutdown(self, kynos::server::shutdown::Shutdown) -> Self
 pub fn kynos::server::Server<C>::http1(self, kynos::server::protocol::http1::Http1Config) -> Self
@@ -10070,6 +10071,7 @@ impl<C> !core::panic::unwind_safe::RefUnwindSafe for kynos::server::BoundServer<
 impl<C> !core::panic::unwind_safe::UnwindSafe for kynos::server::BoundServer<C>
 pub struct kynos::server::Server<C>
 impl<C: 'static> kynos::server::Server<C>
+pub fn kynos::server::Server<C>::accept_shards(self, core::num::nonzero::NonZeroUsize) -> Self
 pub fn kynos::server::Server<C>::bind(self, impl core::convert::Into<kynos::server::address::BindAddress>) -> Self
 pub fn kynos::server::Server<C>::graceful_shutdown(self, kynos::server::shutdown::Shutdown) -> Self
 pub fn kynos::server::Server<C>::http1(self, kynos::server::protocol::http1::Http1Config) -> Self
