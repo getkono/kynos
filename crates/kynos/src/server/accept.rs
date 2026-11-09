@@ -32,7 +32,6 @@ use crate::{
         connection::serve_connection,
         error::ServerError,
         lifecycle::{Draining, Lifecycle, wait_until_forced, wait_until_stopping},
-        proxy_protocol::Header,
         tcp::SocketOptions,
     },
 };
@@ -72,22 +71,6 @@ impl From<TransportAddress> for Peer {
 }
 
 impl Peer {
-    /// The peer a received PROXY protocol header names: its client, or the
-    /// socket's own peer where it names none.
-    pub(in crate::server) fn relayed(self, header: Header) -> Self {
-        match header {
-            Header::Relayed(client) => Self {
-                address: client.into(),
-                proxied: false,
-                ..self
-            },
-            Header::Local => Self {
-                proxied: false,
-                ..self
-            },
-        }
-    }
-
     /// The record every request on this connection reads it back through.
     pub(in crate::server) fn connection(
         self,

@@ -25,6 +25,8 @@ use std::{
 use bytes::{Buf as _, Bytes};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
+use crate::server::accept::Peer;
+
 /// The longest version 1 header, its CRLF included.
 const V1_MAX: usize = 107;
 
@@ -223,6 +225,22 @@ fn v2(bytes: &[u8]) -> Result<Parsed, Malformed> {
         Family::Unread | Family::Unix => Header::Local,
     };
     Ok(Parsed::Complete(header, length))
+}
+
+impl Peer {
+    /// The peer a received header names: its client, or the socket's own
+    /// peer where it names none.
+    pub(in crate::server) fn relayed(self, header: Header) -> Self {
+        let address = match header {
+            Header::Relayed(client) => client.into(),
+            Header::Local => self.address,
+        };
+        Self {
+            address,
+            proxied: false,
+            ..self
+        }
+    }
 }
 
 /// Reads the header `io` opens with, and hands back `io` with whatever
