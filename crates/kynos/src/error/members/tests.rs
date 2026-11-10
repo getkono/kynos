@@ -249,6 +249,43 @@ fn a_type_declares_each_property_as_a_member_required_as_its_schema_says() {
     );
 }
 
+/// Names its one member and closes the object, as `deny_unknown_fields` does.
+#[derive(serde::Serialize)]
+struct Closed {
+    code: String,
+}
+
+impl Schema for Closed {
+    fn schema(registry: &mut Registry) -> OpenApiSchema {
+        let OpenApiSchema::Object(mut object) = object(registry, &["code"]) else {
+            unreachable!("`object` builds an object schema")
+        };
+        object.additional_properties = Some(Box::new(OpenApiSchema::Bool(false)));
+        OpenApiSchema::Object(object)
+    }
+}
+
+impl ProblemMembers for Closed {
+    fn for_problem(_: &ProblemCx<'_>) -> Self {
+        Self {
+            code: String::new(),
+        }
+    }
+}
+
+#[test]
+fn a_closed_object_declares_the_members_it_names() {
+    let declared = Hook::of::<Closed>()
+        .declared(&mut Registry::new())
+        .expect("an object naming its members, closed or not");
+
+    let names: Vec<(&str, bool)> = declared
+        .iter()
+        .map(|(name, _, sent)| (name.as_str(), *sent))
+        .collect();
+    assert_eq!(names, [("code", true)]);
+}
+
 #[test]
 fn a_schema_that_is_not_an_object_naming_members_is_refused() {
     let mut registry = Registry::new();

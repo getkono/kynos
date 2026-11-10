@@ -162,7 +162,8 @@ impl<'a> ProblemCx<'a> {
 /// Sent through `Serialize` and declared by `Schema`, as a
 /// `#[problem(extension)]` field is, so a member sent is a member declared. The
 /// schema must be an object's, naming each member as a property: a struct
-/// deriving both, with no `#[serde(flatten)]`. A member may not be named like
+/// deriving both, with no `#[serde(flatten)]`; `#[serde(deny_unknown_fields)]`
+/// may close it, since only its properties are read. A member may not be named like
 /// one RFC 9457 registers (`type`, `title`, `status`, `detail`, `instance`) or
 /// like `errors`, which a schema failure sends; the router refuses both while
 /// it is described.
@@ -250,6 +251,10 @@ impl Hook {
 
 /// Whether `object` is a plain object naming its members as properties, the
 /// one shape whose members a problem can carry beside its own.
+///
+/// Its `additionalProperties` may be absent, `true`, or `false`: only the
+/// properties are read, so a `deny_unknown_fields` struct, which the `Schema`
+/// derive closes, declares the members it names.
 fn describes_members(object: &SchemaObject) -> bool {
     object.ty == Some(TypeSet::One(SchemaType::Object))
         && object.reference.is_none()
@@ -263,7 +268,7 @@ fn describes_members(object: &SchemaObject) -> bool {
         && object
             .additional_properties
             .as_deref()
-            .is_none_or(|additional| *additional == OpenApiSchema::Bool(true))
+            .is_none_or(|additional| matches!(additional, OpenApiSchema::Bool(_)))
 }
 
 /// `M`'s members for `cx`, as the object they serialize to.
