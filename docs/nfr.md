@@ -1057,6 +1057,16 @@ can hold, and none shares state with another. What pushed it over was issue
 parser, each file would hold one forwarding function, a module per target that
 the targets already are.
 
+`router/operation.rs` is `status.rs`'s shape. It declares `Route`,
+`OperationCx`, `Tag` and `DeclaredTag`, so a split would turn
+`operation::DeclaredTag`, the type every `add_tag` call names, into a longer
+path. What pushed it over was issue #1271's `ADDS_ON` placements: a header an
+interceptor adds on every response, or on problems alone, is filed by
+`OperationCx::finish`, because only then has the last contributor declared its
+responses. Filing a header is describing the operation, through the same
+`declare_header` an explicit `add_response_header` goes through, so the two are
+one concern: what one operation's description holds when it is finished.
+
 The budget, which may only shrink:
 
 - `crates/kynos-macros/src/derive/schema/attributes.rs`
@@ -1086,6 +1096,7 @@ The budget, which may only shrink:
 - `crates/kynos/src/response/stream/sse.rs`
 - `crates/kynos/src/router/dispatch.rs`
 - `crates/kynos/src/router/mod.rs`
+- `crates/kynos/src/router/operation.rs`
 - `crates/kynos/src/schema/constraints.rs`
 - `crates/kynos/src/schema/mod.rs`
 - `crates/kynos/src/schema/registry.rs`
