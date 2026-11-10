@@ -2,14 +2,14 @@
 
 use std::{marker::PhantomData, sync::Arc};
 
-use kynos_openapi::Violation;
+use kynos_openapi::{Method, Violation};
 
 use crate::{
     middleware::{
         Interceptor,
         catch_panic::{Catch, PanicPolicy, Propagate},
         erased::ErasedInterceptor,
-        stack::{CompatibleStack, CompatibleWith, Cons, Flatten, InterceptorList},
+        stack::{CompatibleStack, CompatibleWith, Cons, Flatten, InterceptorList, When},
     },
     response::ShortCircuit,
     router::error::RouterError,
@@ -34,7 +34,9 @@ pub struct Group<C, P = Propagate, I = (), S = ()> {
     // `pub(super)`: the router mounting a group destructures it.
     pub(super) prefix: String,
     pub(super) endpoints: Vec<Arc<dyn DynEndpoint<C>>>,
-    pub(super) interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
+    /// Each interceptor beside the methods of the operations it covers,
+    /// outermost first; resolved per operation by [`covering`].
+    pub(super) interceptors: Vec<(Methods, Arc<dyn ErasedInterceptor<C>>)>,
     pub(super) short_circuit_checks: Vec<ShortCircuitCheck>,
     /// Where in `interceptors` each covered operation's guard runs, once
     /// [`guard_first`](Group::guard_first) asked: the number of them outside
@@ -165,8 +167,79 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
         // Endpoints mounted earlier are covered too.
         let () = <S as CompatibleWith<N, C>>::CHECK;
 
-        let mut group: Group<C, P, Cons<N, I>, S> = self.retype();
-        group.interceptors.push(Arc::new(interceptor));
+        self.scoped(Methods::EVERY, interceptor)
+    }
+
+    /// Applies an interceptor to the operations in this group whose method is
+    /// in `methods`, and to no other.
+    ///
+    /// Which operations it covers is settled when the group is mounted, from
+    /// each operation's declared method, so a request pays no method check.
+    /// An operation it does not cover neither runs it nor declares it: its
+    /// `Short` statuses, the headers it `Reads` and the headers it `Adds` stay
+    /// off that operation's description. A `HEAD` the group does not declare
+    /// is answered by the `GET` operation, so it is covered exactly when `GET`
+    /// is.
+    ///
+    /// Otherwise it is [`intercept`](Group::intercept): the same place in the
+    /// chain, and the same check. That check is made at compile time, where
+    /// `methods` is not known, so it compares the interceptor against every
+    /// other covering the group, as if it covered every operation; see
+    /// [`When`].
+    ///
+    /// A body limit scoped to writes leaves the `413` off every `GET` and
+    /// `HEAD` in the group:
+    ///
+    /// ```no_run
+    /// use kynos::{
+    ///     middleware::limits::body_size::BodySize,
+    ///     router::group::{Group, Methods},
+    /// };
+    ///
+    /// let users = Group::<()>::new("/users").intercept_when(Methods::UNSAFE, BodySize::new(1 << 20));
+    /// # let _ = users;
+    /// ```
+    ///
+    /// Two that collide fail to compile even where their methods are
+    /// disjoint:
+    ///
+    /// ```compile_fail,E0080
+    /// use kynos::{
+    ///     middleware::request_id::RequestId,
+    ///     router::group::{Group, Methods},
+    /// };
+    ///
+    /// let _ = Group::<()>::new("/a")
+    ///     .intercept_when(Methods::SAFE, RequestId::new())
+    ///     .intercept_when(Methods::UNSAFE, RequestId::new());
+    /// ```
+    #[must_use]
+    pub fn intercept_when<N: Interceptor<C>>(
+        self,
+        methods: Methods,
+        interceptor: N,
+    ) -> Group<C, P, Cons<When<N>, I>, S>
+    where
+        C: Sync + 'static,
+        I: CompatibleWith<When<N>, C>,
+        S: CompatibleWith<When<N>, C>,
+    {
+        let () = <I as CompatibleWith<When<N>, C>>::CHECK;
+        let () = <S as CompatibleWith<When<N>, C>>::CHECK;
+
+        self.scoped(methods, interceptor)
+    }
+
+    /// Pushes `interceptor`, covering the operations whose method is in
+    /// `methods`, under whichever stack type the caller checked.
+    fn scoped<N: Interceptor<C>, J>(self, methods: Methods, interceptor: N) -> Group<C, P, J, S>
+    where
+        C: Sync + 'static,
+    {
+        let mut group: Group<C, P, J, S> = self.retype();
+        // `N` itself rather than a wrapper, so the router still recognises a
+        // `Cors` by identity.
+        group.interceptors.push((methods, Arc::new(interceptor)));
         group
             .short_circuit_checks
             .push(short_circuit_mismatch::<N::Short>);
@@ -274,6 +347,103 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
         self.endpoints.extend(sink.into_inner());
         self.retype()
     }
+}
+
+/// A set of HTTP methods, naming the operations an interceptor mounted with
+/// [`Group::intercept_when`] covers.
+///
+/// ```
+/// use kynos::{openapi::Method, router::group::Methods};
+///
+/// let writes = Methods::only(&[Method::Post, Method::Put]);
+/// assert!(writes.contains(Method::Put));
+/// assert!(!writes.contains(Method::Get));
+/// assert!(Methods::SAFE.contains(Method::Head));
+/// ```
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Methods {
+    /// Bit `method as u16` for each method in the set.
+    bits: u16,
+}
+
+impl Methods {
+    /// The methods RFC 9110 section 9.2.1 defines as safe — `GET`, `HEAD`,
+    /// `OPTIONS` and `TRACE` — and, under `openapi32`, `QUERY`, which RFC
+    /// 10008 defines as safe.
+    pub const SAFE: Self = {
+        let safe = Self::only(&[Method::Get, Method::Head, Method::Options, Method::Trace]);
+        #[cfg(feature = "openapi32")]
+        let safe = Self {
+            bits: safe.bits | Self::bit(Method::Query),
+        };
+        safe
+    };
+
+    /// Every method an operation can be declared with that is not
+    /// [`SAFE`](Methods::SAFE): `PUT`, `POST`, `DELETE` and `PATCH`.
+    pub const UNSAFE: Self =
+        Self::only(&[Method::Put, Method::Post, Method::Delete, Method::Patch]);
+
+    /// Every method, which is what [`Group::intercept`] covers.
+    pub(crate) const EVERY: Self = Self { bits: u16::MAX };
+
+    /// Exactly the methods in `methods`; none, where it is empty.
+    #[must_use]
+    pub const fn only(methods: &[Method]) -> Self {
+        let mut bits = 0;
+        let mut at = 0;
+        while at < methods.len() {
+            bits |= Self::bit(methods[at]);
+            at += 1;
+        }
+
+        Self { bits }
+    }
+
+    /// Whether `method` is in this set.
+    #[must_use]
+    pub const fn contains(self, method: Method) -> bool {
+        self.bits & Self::bit(method) != 0
+    }
+
+    const fn bit(method: Method) -> u16 {
+        1 << method as u16
+    }
+}
+
+impl std::fmt::Debug for Methods {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_set()
+            .entries(
+                Method::all()
+                    .iter()
+                    .filter(|method| self.contains(**method))
+                    .map(|method| method.as_wire_str()),
+            )
+            .finish()
+    }
+}
+
+/// What of a group's `interceptors` covers an operation declared with
+/// `method`, outermost first, and where among those its guard runs: the
+/// number of them outside the group's `guard_first` point.
+#[must_use]
+pub(super) fn covering<T: Clone>(
+    interceptors: &[(Methods, T)],
+    guard_first: Option<usize>,
+    method: Method,
+) -> (Vec<T>, Option<usize>) {
+    let covers = |(methods, _): &&(Methods, T)| methods.contains(method);
+
+    let covering = interceptors
+        .iter()
+        .filter(covers)
+        .map(|(_, interceptor)| interceptor.clone())
+        .collect();
+    let guard_at = guard_first.map(|at| interceptors[..at].iter().filter(covers).count());
+
+    (covering, guard_at)
 }
 
 /// The statuses a [`kynos_openapi::Responses`] value declares as exact codes.

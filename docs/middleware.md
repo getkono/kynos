@@ -795,6 +795,18 @@ fn writes(
 exactly as that call would be. It is on `Group` only: a group is the unit a
 chain is shared between, and a router takes its own scope's chain once.
 
+**An interceptor that acts on some methods is scoped to them, not split into
+groups.** `Group::intercept_when(Methods::UNSAFE, guard)` runs `guard` on, and
+declares it on, only the group's operations whose method is in the set, so a
+`425` refusing replayed writes stays off the `GET` beside them. The set is
+resolved per operation when the group is mounted: an operation it does not name
+runs a chain without it, and a request pays no method check. An undeclared
+`HEAD` is answered by the `GET` operation, so it is covered exactly when `GET`
+is. The stack names it `When<N>`, and the collision check compares it as if it
+covered every operation: the set is a value the compiler cannot read, so two
+scoped interceptors sharing a status collide even where their methods are
+disjoint. Mount those in separate groups.
+
 ## What bounds a request before an interceptor runs
 
 An interceptor covers the operations in its subtree, which means it runs after
@@ -1717,9 +1729,10 @@ cardinality is bounded and the label cannot disagree with the description.
 
 It is *not* handed one while declaring, because there is no declaring step left
 to hand it to. Declaring differently per operation is expressed by mounting
-different instances at different scopes — which is the same principle as above,
-and which every interceptor Kynos ships was already doing: not one of them
-consulted the `Route` argument the old `contribution` method gave it.
+different instances at different scopes, or one instance scoped to methods with
+`Group::intercept_when` — which is the same principle as above, and which every
+interceptor Kynos ships was already doing: not one of them consulted the
+`Route` argument the old `contribution` method gave it.
 
 ## Conformance
 

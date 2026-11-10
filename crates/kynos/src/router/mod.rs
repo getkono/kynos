@@ -571,14 +571,20 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         #[cfg(feature = "unchecked")]
         let first = self.mounted.len();
 
-        self.absorb(
-            endpoints,
-            &prefix,
-            &tags,
-            &interceptors,
-            guard_first,
-            catches::<GP>(),
-        );
+        // Each operation takes only the interceptors its method is covered by,
+        // which is also what keeps the others off its description.
+        for endpoint in endpoints {
+            let (covering, guard_at) =
+                group::covering(&interceptors, guard_first, endpoint.method());
+            self.absorb(
+                vec![endpoint],
+                &prefix,
+                &tags,
+                &covering,
+                guard_at,
+                catches::<GP>(),
+            );
+        }
 
         // A group's layers cover only its operations, so they land per endpoint.
         #[cfg(feature = "unchecked")]
