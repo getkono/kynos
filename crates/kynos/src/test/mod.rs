@@ -931,6 +931,30 @@ impl TestResponse {
         self
     }
 
+    /// [`assert_status`](Self::assert_status), taking the response and
+    /// handing it back, so a helper can send, assert and return in one
+    /// expression.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// use kynos::test::{IntoStatus, TestClient, TestResponse};
+    ///
+    /// async fn profile(client: &TestClient<()>, expected: impl IntoStatus) -> TestResponse {
+    ///     client.get("/profile").send().await.expect_status(expected)
+    /// }
+    /// # let _ = profile(&client, 200).await;
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics as [`assert_status`](Self::assert_status) does.
+    #[must_use = "a response nothing reads again is asserted with `assert_status`"]
+    pub fn expect_status(self, expected: impl IntoStatus) -> Self {
+        self.assert_status(expected);
+        self
+    }
+
     /// Asserts that the body is an RFC 9457 problem document of a given type.
     ///
     /// A problem document that omits `type` means `about:blank`, which RFC 9457
@@ -1155,6 +1179,23 @@ impl TestResponse {
             .iter()
             .filter_map(|value| value.to_str().ok())
             .collect()
+    }
+
+    /// Every response header, as received.
+    ///
+    /// For comparing two responses field for field, or enumerating them,
+    /// without naming each one.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// let unknown = client.get("/users/unknown").send().await;
+    /// let wrong = client.get("/users/7").bearer("wrong").send().await;
+    /// assert_eq!(unknown.header_map(), wrong.header_map());
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn header_map(&self) -> &HeaderMap {
+        self.response.headers()
     }
 
     /// The cookies this response set, by name.

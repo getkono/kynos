@@ -287,6 +287,47 @@ mod assertions {
         received(StatusCode::NOT_FOUND, &[], b"gone").assert_status(StatusCode::OK);
     }
 
+    /// The response comes back whole, so it stays readable after the
+    /// assertion.
+    #[test]
+    fn expect_status_hands_back_the_response_it_asserted() {
+        let response = received(StatusCode::CREATED, &[("x-id", "7")], b"made").expect_status(201);
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(response.header("x-id"), Some("7"));
+        assert_eq!(response.text(), "made");
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 404: expected 200 OK, received 404 Not Found\n\
+                               body: gone"
+    )]
+    fn expect_status_fails_as_assert_status_does() {
+        let _ = received(StatusCode::NOT_FOUND, &[], b"gone").expect_status(StatusCode::OK);
+    }
+
+    /// Every field, repeated ones included, with no name given.
+    #[test]
+    fn header_map_holds_every_field_received() {
+        let response = received(
+            StatusCode::OK,
+            &[("set-cookie", "a=1"), ("set-cookie", "b=2"), ("x-id", "7")],
+            b"",
+        );
+        let map = response.header_map();
+
+        assert_eq!(map.len(), 3);
+        assert_eq!(
+            map.get_all("set-cookie").iter().collect::<Vec<_>>(),
+            [
+                &HeaderValue::from_static("a=1"),
+                &HeaderValue::from_static("b=2")
+            ]
+        );
+        assert_eq!(map.get("x-id"), Some(&HeaderValue::from_static("7")));
+    }
+
     /// An unsuffixed literal is a `u16`, read as the status it numbers.
     #[test]
     fn assert_status_takes_a_bare_number() {

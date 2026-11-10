@@ -10546,7 +10546,9 @@ pub fn kynos::test::TestResponse::assert_status(&self, impl kynos::test::IntoSta
 pub fn kynos::test::TestResponse::bytes(&self) -> &bytes::bytes::Bytes
 pub fn kynos::test::TestResponse::cookies(&self) -> alloc::vec::Vec<(&str, &str)>
 pub fn kynos::test::TestResponse::events(&self) -> alloc::vec::Vec<kynos::test::TestEvent>
+pub fn kynos::test::TestResponse::expect_status(self, impl kynos::test::IntoStatus) -> Self
 pub fn kynos::test::TestResponse::header(&self, &str) -> core::option::Option<&str>
+pub fn kynos::test::TestResponse::header_map(&self) -> &http::header::map::HeaderMap
 pub fn kynos::test::TestResponse::headers(&self, &str) -> alloc::vec::Vec<&str>
 pub fn kynos::test::TestResponse::into_inner(self) -> kynos::http::Response
 pub fn kynos::test::TestResponse::json<T: serde_core::de::DeserializeOwned>(&self) -> T
