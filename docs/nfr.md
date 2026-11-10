@@ -877,8 +877,10 @@ way: `Router::build` and the match table it fills sit in a private
 `derive/api_error/` and
 `derive/security_scheme/` were split because each held two concerns, a derive's
 attribute grammar and the code that expands it, and since nothing in
-`kynos-macros` is public but the derives, the split cost no path. The rest were
-not.
+`kynos-macros` is public but the derives, the split cost no path.
+`derive/security_scheme/carrier.rs` later took the derived `Carries` and the
+`reads` declaring what it reads beside the credential, which change when a
+carrier reads more rather than when the description does. The rest were not.
 
 `middleware/limits/` was split at the path cost, because it was never one
 family: four interceptors sharing no type, each with its own response and its
