@@ -796,16 +796,22 @@ exactly as that call would be. It is on `Group` only: a group is the unit a
 chain is shared between, and a router takes its own scope's chain once.
 
 **An interceptor that acts on some methods is scoped to them, not split into
-groups.** `Group::intercept_when(Methods::UNSAFE, guard)` runs `guard` on, and
+groups.** `Group::intercept_when(UnsafeMethods, guard)` runs `guard` on, and
 declares it on, only the group's operations whose method is in the set, so a
 `425` refusing replayed writes stays off the `GET` beside them. The set is
 resolved per operation when the group is mounted: an operation it does not name
 runs a chain without it, and a request pays no method check. An undeclared
 `HEAD` is answered by the `GET` operation, so it is covered exactly when `GET`
-is. The stack names it `When<N>`, and the collision check compares it as if it
-covered every operation: the set is a value the compiler cannot read, so two
-scoped interceptors sharing a status collide even where their methods are
-disjoint. Mount those in separate groups.
+is. The set is a type, a `MethodSet`, and the stack names the element
+`When<UnsafeMethods, N>`, so the collision check reads it: two scoped
+interceptors are compared only where their sets share a method. Disjoint sets
+cover no operation in common, so two sharing a status compose. Overlapping sets
+are compared even where the group declares no operation with a shared method,
+so mounting one later never turns a group that compiled into one that does not.
+A set being a type is what costs a custom one a declaration of its own, a unit
+type implementing `MethodSet`: a value the compiler cannot read would leave the
+check comparing every pair, and a check moved to `build` would trade a compile
+error for a run-time one.
 
 ## What bounds a request before an interceptor runs
 

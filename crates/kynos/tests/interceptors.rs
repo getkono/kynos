@@ -28,7 +28,7 @@ use kynos::{
         request_id::{CorrelationHeaders, RequestId, RequestIdSource, XRequestId},
     },
     openapi::Method as OperationMethod,
-    router::group::{Group, Methods},
+    router::group::{Group, MethodSet, Methods, SafeMethods, UnsafeMethods},
 };
 
 #[path = "support/mod.rs"]
@@ -442,7 +442,7 @@ async fn security_headers_add_only_the_names_they_declare() {
 
 /// The four operations in one group, behind a `RequestId` and a `BodySize`
 /// covering only `methods`.
-fn scoped(methods: Methods) -> Router<App, Propagate, (), impl Sized> {
+fn scoped<M: MethodSet + Copy>(methods: M) -> Router<App, Propagate, (), impl Sized> {
     Router::<App>::new().group(
         Group::new("/")
             .intercept_when(methods, RequestId::new())
@@ -460,7 +460,7 @@ fn scoped(methods: Methods) -> Router<App, Propagate, (), impl Sized> {
 /// operation it does not name is served as if it were not mounted.
 #[tokio::test]
 async fn a_method_scoped_interceptor_runs_only_on_the_methods_it_names() {
-    let service = scoped(Methods::UNSAFE)
+    let service = scoped(UnsafeMethods)
         .build(App::new())
         .expect("a describable router");
 
@@ -486,24 +486,65 @@ async fn a_method_scoped_interceptor_runs_only_on_the_methods_it_names() {
 /// scope naming `GET` covers it and one naming only `HEAD` does not.
 #[tokio::test]
 async fn an_undeclared_head_is_covered_exactly_when_get_is() {
-    for (methods, covered) in [
-        (Methods::only(&[OperationMethod::Get]), true),
-        (Methods::only(&[OperationMethod::Head]), false),
+    #[derive(Clone, Copy)]
+    struct Get;
+    impl MethodSet for Get {
+        const METHODS: Methods = Methods::only(&[OperationMethod::Get]);
+    }
+
+    #[derive(Clone, Copy)]
+    struct Head;
+    impl MethodSet for Head {
+        const METHODS: Methods = Methods::only(&[OperationMethod::Head]);
+    }
+
+    for (service, covered) in [
+        (scoped(Get).build(App::new()), true),
+        (scoped(Head).build(App::new()), false),
     ] {
-        let service = scoped(methods)
-            .build(App::new())
-            .expect("a describable router");
+        let service = service.expect("a describable router");
 
         let reply = support::send(&service, Method::HEAD, "/users/1")
             .call()
             .await;
 
         assert_eq!(reply.status, StatusCode::OK);
-        assert_eq!(
-            reply.field("x-request-id").is_some(),
-            covered,
-            "{methods:?}"
-        );
+        assert_eq!(reply.field("x-request-id").is_some(), covered);
+    }
+}
+
+/// Two interceptors adding the same header compose when scoped to disjoint
+/// methods, and each operation runs and declares exactly the one covering it.
+#[tokio::test]
+async fn interceptors_scoped_to_disjoint_methods_never_meet_on_an_operation() {
+    let router = Router::<App>::new().group(
+        Group::new("/")
+            .intercept_when(SafeMethods, RequestId::new())
+            .intercept_when(UnsafeMethods, RequestId::new())
+            .mount(kynos::routes![support::get_user, support::create_user]),
+    );
+    let document = serde_json::to_value(router.openapi().expect("a describable router"))
+        .expect("a serializable document");
+    let service = router.build(App::new()).expect("a describable router");
+
+    for (path, method) in [("/users/{id}", "get"), ("/users", "post")] {
+        let declared = document["paths"][path][method]["responses"]
+            .as_object()
+            .expect("a responses object")
+            .values()
+            .any(|response| response["headers"].get("X-Request-Id").is_some());
+        assert!(declared, "{method} {path}");
+    }
+
+    let read = get(&service, "/users/1").call().await;
+    let created = post(&service, "/users")
+        .header("content-type", "application/json")
+        .body(r#"{"id":2,"name":"a"}"#)
+        .call()
+        .await;
+    assert_eq!(created.status, StatusCode::CREATED);
+    for reply in [read, created] {
+        assert_eq!(reply.fields("x-request-id").len(), 1);
     }
 }
 
@@ -512,7 +553,7 @@ async fn an_undeclared_head_is_covered_exactly_when_get_is() {
 #[test]
 fn a_method_scoped_interceptor_is_declared_only_on_the_methods_it_names() {
     let document = serde_json::to_value(
-        scoped(Methods::UNSAFE)
+        scoped(UnsafeMethods)
             .openapi()
             .expect("a describable router"),
     )

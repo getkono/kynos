@@ -44,7 +44,7 @@ use crate::{
         Interceptor, Observer,
         catch_panic::{Catch, PanicPolicy, Propagate},
         erased::ErasedInterceptor,
-        stack::{CompatibleStack, CompatibleWith, Cons, Flatten},
+        stack::{self, CompatibleStack, CompatibleWith, Cons, Flatten},
     },
     router::{
         dispatch::{Dispatch, EndpointTerminal, PathEntry},
@@ -699,6 +699,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         // this also covers every scope already mounted.
         let () = <I as CompatibleWith<N, C>>::CHECK;
         let () = <S as CompatibleWith<N, C>>::CHECK;
+        const { stack::unscoped::<C, N>() };
 
         let mut router: Router<C, P, Cons<N, I>, S> = self.retype();
         router.interceptors.push(Arc::new(interceptor));

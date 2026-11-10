@@ -9,7 +9,7 @@ use crate::{
         Interceptor,
         catch_panic::{Catch, PanicPolicy, Propagate},
         erased::ErasedInterceptor,
-        stack::{CompatibleStack, CompatibleWith, Cons, Flatten, InterceptorList, When},
+        stack::{self, CompatibleStack, CompatibleWith, Cons, Flatten, InterceptorList, When},
     },
     response::ShortCircuit,
     router::error::RouterError,
@@ -171,7 +171,7 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
     }
 
     /// Applies an interceptor to the operations in this group whose method is
-    /// in `methods`, and to no other.
+    /// in the set `M` names, and to no other.
     ///
     /// Which operations it covers is settled when the group is mounted, from
     /// each operation's declared method, so a request pays no method check.
@@ -182,10 +182,9 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
     /// is.
     ///
     /// Otherwise it is [`intercept`](Group::intercept): the same place in the
-    /// chain, and the same check. That check is made at compile time, where
-    /// `methods` is not known, so it compares the interceptor against every
-    /// other covering the group, as if it covered every operation; see
-    /// [`When`].
+    /// chain, and the same compile-time check, made only against the
+    /// interceptors whose methods overlap `M`'s. The set is part of the type,
+    /// as [`When`] shows, so that check can read it.
     ///
     /// A body limit scoped to writes leaves the `413` off every `GET` and
     /// `HEAD` in the group:
@@ -193,41 +192,57 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
     /// ```no_run
     /// use kynos::{
     ///     middleware::limits::body_size::BodySize,
-    ///     router::group::{Group, Methods},
+    ///     router::group::{Group, UnsafeMethods},
     /// };
     ///
-    /// let users = Group::<()>::new("/users").intercept_when(Methods::UNSAFE, BodySize::new(1 << 20));
+    /// let users = Group::<()>::new("/users").intercept_when(UnsafeMethods, BodySize::new(1 << 20));
     /// # let _ = users;
     /// ```
     ///
-    /// Two that collide fail to compile even where their methods are
-    /// disjoint:
+    /// Two that would collide compose where their methods are disjoint, since
+    /// no operation runs both:
+    ///
+    /// ```no_run
+    /// use kynos::{
+    ///     middleware::request_id::RequestId,
+    ///     router::group::{Group, SafeMethods, UnsafeMethods},
+    /// };
+    ///
+    /// let _ = Group::<()>::new("/a")
+    ///     .intercept_when(SafeMethods, RequestId::new())
+    ///     .intercept_when(UnsafeMethods, RequestId::new());
+    /// ```
+    ///
+    /// and fail to compile where some method is in both:
     ///
     /// ```compile_fail,E0080
     /// use kynos::{
     ///     middleware::request_id::RequestId,
-    ///     router::group::{Group, Methods},
+    ///     router::group::{Group, SafeMethods},
     /// };
     ///
     /// let _ = Group::<()>::new("/a")
-    ///     .intercept_when(Methods::SAFE, RequestId::new())
-    ///     .intercept_when(Methods::UNSAFE, RequestId::new());
+    ///     .intercept_when(SafeMethods, RequestId::new())
+    ///     .intercept_when(SafeMethods, RequestId::new());
     /// ```
     #[must_use]
-    pub fn intercept_when<N: Interceptor<C>>(
+    // `methods` names `M` at the call site, as a value reads; it holds nothing.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn intercept_when<M: MethodSet, N: Interceptor<C>>(
         self,
-        methods: Methods,
+        methods: M,
         interceptor: N,
-    ) -> Group<C, P, Cons<When<N>, I>, S>
+    ) -> Group<C, P, Cons<When<M, N>, I>, S>
     where
         C: Sync + 'static,
-        I: CompatibleWith<When<N>, C>,
-        S: CompatibleWith<When<N>, C>,
+        I: CompatibleWith<When<M, N>, C>,
+        S: CompatibleWith<When<M, N>, C>,
     {
-        let () = <I as CompatibleWith<When<N>, C>>::CHECK;
-        let () = <S as CompatibleWith<When<N>, C>>::CHECK;
+        let () = <I as CompatibleWith<When<M, N>, C>>::CHECK;
+        let () = <S as CompatibleWith<When<M, N>, C>>::CHECK;
 
-        self.scoped(methods, interceptor)
+        let _ = methods;
+        self.scoped(M::METHODS, interceptor)
     }
 
     /// Pushes `interceptor`, covering the operations whose method is in
@@ -236,6 +251,8 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
     where
         C: Sync + 'static,
     {
+        const { stack::unscoped::<C, N>() };
+
         let mut group: Group<C, P, J, S> = self.retype();
         // `N` itself rather than a wrapper, so the router still recognises a
         // `Cors` by identity.
@@ -349,16 +366,19 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
     }
 }
 
-/// A set of HTTP methods, naming the operations an interceptor mounted with
-/// [`Group::intercept_when`] covers.
+/// A set of HTTP methods: what a [`MethodSet`] names, and so which operations
+/// an interceptor mounted with [`Group::intercept_when`] covers.
 ///
 /// ```
-/// use kynos::{openapi::Method, router::group::Methods};
+/// use kynos::{
+///     openapi::Method,
+///     router::group::{MethodSet, Methods, SafeMethods},
+/// };
 ///
 /// let writes = Methods::only(&[Method::Post, Method::Put]);
 /// assert!(writes.contains(Method::Put));
 /// assert!(!writes.contains(Method::Get));
-/// assert!(Methods::SAFE.contains(Method::Head));
+/// assert!(SafeMethods::METHODS.contains(Method::Head));
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Methods {
@@ -367,10 +387,8 @@ pub struct Methods {
 }
 
 impl Methods {
-    /// The methods RFC 9110 section 9.2.1 defines as safe — `GET`, `HEAD`,
-    /// `OPTIONS` and `TRACE` — and, under `openapi32`, `QUERY`, which RFC
-    /// 10008 defines as safe.
-    pub const SAFE: Self = {
+    /// What [`SafeMethods`] names.
+    pub(crate) const SAFE: Self = {
         let safe = Self::only(&[Method::Get, Method::Head, Method::Options, Method::Trace]);
         #[cfg(feature = "openapi32")]
         let safe = Self {
@@ -379,12 +397,12 @@ impl Methods {
         safe
     };
 
-    /// Every method an operation can be declared with that is not
-    /// [`SAFE`](Methods::SAFE): `PUT`, `POST`, `DELETE` and `PATCH`.
-    pub const UNSAFE: Self =
+    /// What [`UnsafeMethods`] names.
+    pub(crate) const UNSAFE: Self =
         Self::only(&[Method::Put, Method::Post, Method::Delete, Method::Patch]);
 
-    /// Every method, which is what [`Group::intercept`] covers.
+    /// Every method: what [`Group::intercept`] covers, and what every
+    /// interceptor but a [`When`] declares it covers.
     pub(crate) const EVERY: Self = Self { bits: u16::MAX };
 
     /// Exactly the methods in `methods`; none, where it is empty.
@@ -406,9 +424,71 @@ impl Methods {
         self.bits & Self::bit(method) != 0
     }
 
+    /// Whether some method is in both sets.
+    #[must_use]
+    pub(crate) const fn overlaps(self, other: Self) -> bool {
+        self.bits & other.bits != 0
+    }
+
+    /// Whether this is [`EVERY`](Methods::EVERY).
+    #[must_use]
+    pub(crate) const fn is_every(self) -> bool {
+        self.bits == Self::EVERY.bits
+    }
+
     const fn bit(method: Method) -> u16 {
         1 << method as u16
     }
+}
+
+/// A type naming a set of methods, which [`Group::intercept_when`] carries in
+/// the group's type.
+///
+/// The set is a type rather than a [`Methods`] value so that the compile-time
+/// collision check can read it: two interceptors scoped to sets sharing no
+/// method cover no operation in common, and are not compared. Kynos names the
+/// two sets RFC 9110 defines, [`SafeMethods`] and [`UnsafeMethods`]; any other
+/// is a type of the application's own.
+///
+/// ```no_run
+/// use kynos::{
+///     middleware::limits::body_size::BodySize,
+///     openapi::Method,
+///     router::group::{Group, MethodSet, Methods},
+/// };
+///
+/// /// The methods that create or replace a resource.
+/// struct Writes;
+///
+/// impl MethodSet for Writes {
+///     const METHODS: Methods = Methods::only(&[Method::Post, Method::Put]);
+/// }
+///
+/// let users = Group::<()>::new("/users").intercept_when(Writes, BodySize::new(1 << 20));
+/// # let _ = users;
+/// ```
+pub trait MethodSet: 'static {
+    /// The methods this type names.
+    const METHODS: Methods;
+}
+
+/// The methods RFC 9110 section 9.2.1 defines as safe — `GET`, `HEAD`,
+/// `OPTIONS` and `TRACE` — and, under `openapi32`, `QUERY`, which RFC 10008
+/// defines as safe.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct SafeMethods;
+
+impl MethodSet for SafeMethods {
+    const METHODS: Methods = Methods::SAFE;
+}
+
+/// Every method an operation can be declared with that is not one of
+/// [`SafeMethods`]: `PUT`, `POST`, `DELETE` and `PATCH`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct UnsafeMethods;
+
+impl MethodSet for UnsafeMethods {
+    const METHODS: Methods = Methods::UNSAFE;
 }
 
 impl std::fmt::Debug for Methods {

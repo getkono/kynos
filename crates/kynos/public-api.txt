@@ -5217,22 +5217,22 @@ impl<H, T> core::marker::Unpin for kynos::middleware::stack::Cons<H, T>
 impl<H, T> core::marker::UnsafeUnpin for kynos::middleware::stack::Cons<H, T>
 impl<H, T> core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::stack::Cons<H, T>
 impl<H, T> core::panic::unwind_safe::UnwindSafe for kynos::middleware::stack::Cons<H, T>
-pub struct kynos::middleware::stack::When<N>
-impl<C, N> kynos::middleware::Interceptor<C> for kynos::middleware::stack::When<N> where C: core::marker::Sync + 'static, N: kynos::middleware::Interceptor<C>
-pub type kynos::middleware::stack::When<N>::Adds = <N as kynos::middleware::Interceptor<C>>::Adds
-pub type kynos::middleware::stack::When<N>::Reads = <N as kynos::middleware::Interceptor<C>>::Reads
-pub type kynos::middleware::stack::When<N>::Short = <N as kynos::middleware::Interceptor<C>>::Short
-pub const kynos::middleware::stack::When<N>::ADDS_ON: kynos::middleware::Placement
-pub fn kynos::middleware::stack::When<N>::intercept(&self, kynos::http::Request, Self::Reads, &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<Self::Adds>, Self::Short>> + core::marker::Send
-impl<N> core::fmt::Debug for kynos::middleware::stack::When<N>
-pub fn kynos::middleware::stack::When<N>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<N> core::marker::Freeze for kynos::middleware::stack::When<N>
-impl<N> core::marker::Send for kynos::middleware::stack::When<N>
-impl<N> core::marker::Sync for kynos::middleware::stack::When<N>
-impl<N> core::marker::Unpin for kynos::middleware::stack::When<N>
-impl<N> core::marker::UnsafeUnpin for kynos::middleware::stack::When<N>
-impl<N> core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::stack::When<N>
-impl<N> core::panic::unwind_safe::UnwindSafe for kynos::middleware::stack::When<N>
+pub struct kynos::middleware::stack::When<M, N>
+impl<C, M, N> kynos::middleware::Interceptor<C> for kynos::middleware::stack::When<M, N> where C: core::marker::Sync + 'static, M: kynos::router::group::MethodSet, N: kynos::middleware::Interceptor<C>
+pub type kynos::middleware::stack::When<M, N>::Adds = <N as kynos::middleware::Interceptor<C>>::Adds
+pub type kynos::middleware::stack::When<M, N>::Reads = <N as kynos::middleware::Interceptor<C>>::Reads
+pub type kynos::middleware::stack::When<M, N>::Short = <N as kynos::middleware::Interceptor<C>>::Short
+pub const kynos::middleware::stack::When<M, N>::ADDS_ON: kynos::middleware::Placement
+pub fn kynos::middleware::stack::When<M, N>::intercept(&self, kynos::http::Request, Self::Reads, &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<Self::Adds>, Self::Short>> + core::marker::Send
+impl<M, N> core::fmt::Debug for kynos::middleware::stack::When<M, N>
+pub fn kynos::middleware::stack::When<M, N>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<M, N> core::marker::Freeze for kynos::middleware::stack::When<M, N>
+impl<M, N> core::marker::Send for kynos::middleware::stack::When<M, N>
+impl<M, N> core::marker::Sync for kynos::middleware::stack::When<M, N>
+impl<M, N> core::marker::Unpin for kynos::middleware::stack::When<M, N>
+impl<M, N> core::marker::UnsafeUnpin for kynos::middleware::stack::When<M, N>
+impl<M, N> core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::stack::When<M, N>
+impl<M, N> core::panic::unwind_safe::UnwindSafe for kynos::middleware::stack::When<M, N>
 pub trait kynos::middleware::stack::CompatibleStack<Other, C>
 pub const kynos::middleware::stack::CompatibleStack::CHECK: ()
 impl<Other, C> kynos::middleware::stack::CompatibleStack<Other, C> for ()
@@ -5515,12 +5515,12 @@ pub type kynos::middleware::Interceptor::Reads: kynos::extract::params::header::
 pub type kynos::middleware::Interceptor::Short: kynos::response::ShortCircuit
 pub const kynos::middleware::Interceptor::ADDS_ON: kynos::middleware::Placement
 pub fn kynos::middleware::Interceptor::intercept(&self, kynos::http::Request, Self::Reads, &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<Self::Adds>, Self::Short>> + core::marker::Send
-impl<C, N> kynos::middleware::Interceptor<C> for kynos::middleware::stack::When<N> where C: core::marker::Sync + 'static, N: kynos::middleware::Interceptor<C>
-pub type kynos::middleware::stack::When<N>::Adds = <N as kynos::middleware::Interceptor<C>>::Adds
-pub type kynos::middleware::stack::When<N>::Reads = <N as kynos::middleware::Interceptor<C>>::Reads
-pub type kynos::middleware::stack::When<N>::Short = <N as kynos::middleware::Interceptor<C>>::Short
-pub const kynos::middleware::stack::When<N>::ADDS_ON: kynos::middleware::Placement
-pub fn kynos::middleware::stack::When<N>::intercept(&self, kynos::http::Request, Self::Reads, &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<Self::Adds>, Self::Short>> + core::marker::Send
+impl<C, M, N> kynos::middleware::Interceptor<C> for kynos::middleware::stack::When<M, N> where C: core::marker::Sync + 'static, M: kynos::router::group::MethodSet, N: kynos::middleware::Interceptor<C>
+pub type kynos::middleware::stack::When<M, N>::Adds = <N as kynos::middleware::Interceptor<C>>::Adds
+pub type kynos::middleware::stack::When<M, N>::Reads = <N as kynos::middleware::Interceptor<C>>::Reads
+pub type kynos::middleware::stack::When<M, N>::Short = <N as kynos::middleware::Interceptor<C>>::Short
+pub const kynos::middleware::stack::When<M, N>::ADDS_ON: kynos::middleware::Placement
+pub fn kynos::middleware::stack::When<M, N>::intercept(&self, kynos::http::Request, Self::Reads, &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<Self::Adds>, Self::Short>> + core::marker::Send
 impl<C, P, D, T> kynos::middleware::Interceptor<C> for kynos::middleware::rate_limit::RateLimit<P, D, T> where C: core::marker::Sync + 'static, P: kynos::middleware::rate_limit::decision::RateLimitPolicy<C>, D: kynos::middleware::rate_limit::RateLimitSpelling<T>, T: kynos::error::problem::ProblemType
 pub type kynos::middleware::rate_limit::RateLimit<P, D, T>::Adds = <D as kynos::middleware::rate_limit::RateLimitSpelling<T>>::Headers
 pub type kynos::middleware::rate_limit::RateLimit<P, D, T>::Reads = ()
@@ -5821,7 +5821,7 @@ pub fn kynos::router::group::Group<C, P, I, S>::catch_panics(self) -> kynos::rou
 pub fn kynos::router::group::Group<C, P, I, S>::guard_first(self) -> Self
 pub fn kynos::router::group::Group<C, P, I, S>::intercept<N: kynos::middleware::Interceptor<C>>(self, N) -> kynos::router::group::Group<C, P, kynos::middleware::stack::Cons<N, I>, S> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<N, C>, S: kynos::middleware::stack::CompatibleWith<N, C>
 pub fn kynos::router::group::Group<C, P, I, S>::intercept_all<L: kynos::middleware::stack::InterceptorList<C, I, S>>(self, L) -> kynos::router::group::Group<C, P, <L as kynos::middleware::stack::InterceptorList>::Stack, S>
-pub fn kynos::router::group::Group<C, P, I, S>::intercept_when<N: kynos::middleware::Interceptor<C>>(self, kynos::router::group::Methods, N) -> kynos::router::group::Group<C, P, kynos::middleware::stack::Cons<kynos::middleware::stack::When<N>, I>, S> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<kynos::middleware::stack::When<N>, C>, S: kynos::middleware::stack::CompatibleWith<kynos::middleware::stack::When<N>, C>
+pub fn kynos::router::group::Group<C, P, I, S>::intercept_when<M: kynos::router::group::MethodSet, N: kynos::middleware::Interceptor<C>>(self, M, N) -> kynos::router::group::Group<C, P, kynos::middleware::stack::Cons<kynos::middleware::stack::When<M, N>, I>, S> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<kynos::middleware::stack::When<M, N>, C>, S: kynos::middleware::stack::CompatibleWith<kynos::middleware::stack::When<M, N>, C>
 pub fn kynos::router::group::Group<C, P, I, S>::mount<E: kynos::router::endpoint::set::IntoEndpoints<C>>(self, E) -> kynos::router::group::Group<C, P, I, <<E as kynos::router::endpoint::set::IntoEndpoints>::Stacks as kynos::middleware::stack::Flatten<S>>::Out> where <E as kynos::router::endpoint::set::IntoEndpoints>::Stacks: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>
 pub fn kynos::router::group::Group<C, P, I, S>::tag<T: kynos::router::operation::Tag>(self) -> Self
 impl<C, P: kynos::middleware::catch_panic::PanicPolicy, I, S> kynos::router::group::Group<C, P, I, S>
@@ -8294,7 +8294,7 @@ pub fn kynos::router::group::Group<C, P, I, S>::catch_panics(self) -> kynos::rou
 pub fn kynos::router::group::Group<C, P, I, S>::guard_first(self) -> Self
 pub fn kynos::router::group::Group<C, P, I, S>::intercept<N: kynos::middleware::Interceptor<C>>(self, N) -> kynos::router::group::Group<C, P, kynos::middleware::stack::Cons<N, I>, S> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<N, C>, S: kynos::middleware::stack::CompatibleWith<N, C>
 pub fn kynos::router::group::Group<C, P, I, S>::intercept_all<L: kynos::middleware::stack::InterceptorList<C, I, S>>(self, L) -> kynos::router::group::Group<C, P, <L as kynos::middleware::stack::InterceptorList>::Stack, S>
-pub fn kynos::router::group::Group<C, P, I, S>::intercept_when<N: kynos::middleware::Interceptor<C>>(self, kynos::router::group::Methods, N) -> kynos::router::group::Group<C, P, kynos::middleware::stack::Cons<kynos::middleware::stack::When<N>, I>, S> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<kynos::middleware::stack::When<N>, C>, S: kynos::middleware::stack::CompatibleWith<kynos::middleware::stack::When<N>, C>
+pub fn kynos::router::group::Group<C, P, I, S>::intercept_when<M: kynos::router::group::MethodSet, N: kynos::middleware::Interceptor<C>>(self, M, N) -> kynos::router::group::Group<C, P, kynos::middleware::stack::Cons<kynos::middleware::stack::When<M, N>, I>, S> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<kynos::middleware::stack::When<M, N>, C>, S: kynos::middleware::stack::CompatibleWith<kynos::middleware::stack::When<M, N>, C>
 pub fn kynos::router::group::Group<C, P, I, S>::mount<E: kynos::router::endpoint::set::IntoEndpoints<C>>(self, E) -> kynos::router::group::Group<C, P, I, <<E as kynos::router::endpoint::set::IntoEndpoints>::Stacks as kynos::middleware::stack::Flatten<S>>::Out> where <E as kynos::router::endpoint::set::IntoEndpoints>::Stacks: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>
 pub fn kynos::router::group::Group<C, P, I, S>::tag<T: kynos::router::operation::Tag>(self) -> Self
 impl<C, P: kynos::middleware::catch_panic::PanicPolicy, I, S> kynos::router::group::Group<C, P, I, S>
@@ -8312,8 +8312,6 @@ impl<C, P, I, S> !core::panic::unwind_safe::RefUnwindSafe for kynos::router::gro
 impl<C, P, I, S> !core::panic::unwind_safe::UnwindSafe for kynos::router::group::Group<C, P, I, S>
 pub struct kynos::router::group::Methods
 impl kynos::router::group::Methods
-pub const kynos::router::group::Methods::SAFE: Self
-pub const kynos::router::group::Methods::UNSAFE: Self
 pub const fn kynos::router::group::Methods::contains(self, kynos_openapi::model::paths::method::Method) -> bool
 pub const fn kynos::router::group::Methods::only(&[kynos_openapi::model::paths::method::Method]) -> Self
 impl core::clone::Clone for kynos::router::group::Methods
@@ -8334,6 +8332,58 @@ impl core::marker::Unpin for kynos::router::group::Methods
 impl core::marker::UnsafeUnpin for kynos::router::group::Methods
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::router::group::Methods
 impl core::panic::unwind_safe::UnwindSafe for kynos::router::group::Methods
+pub struct kynos::router::group::SafeMethods
+impl core::clone::Clone for kynos::router::group::SafeMethods
+pub fn kynos::router::group::SafeMethods::clone(&self) -> kynos::router::group::SafeMethods
+impl core::cmp::Eq for kynos::router::group::SafeMethods
+impl core::cmp::PartialEq for kynos::router::group::SafeMethods
+pub fn kynos::router::group::SafeMethods::eq(&self, &kynos::router::group::SafeMethods) -> bool
+impl core::default::Default for kynos::router::group::SafeMethods
+pub fn kynos::router::group::SafeMethods::default() -> kynos::router::group::SafeMethods
+impl core::fmt::Debug for kynos::router::group::SafeMethods
+pub fn kynos::router::group::SafeMethods::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kynos::router::group::SafeMethods
+pub fn kynos::router::group::SafeMethods::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kynos::router::group::SafeMethods
+impl core::marker::StructuralPartialEq for kynos::router::group::SafeMethods
+impl kynos::router::group::MethodSet for kynos::router::group::SafeMethods
+pub const kynos::router::group::SafeMethods::METHODS: kynos::router::group::Methods
+impl core::marker::Freeze for kynos::router::group::SafeMethods
+impl core::marker::Send for kynos::router::group::SafeMethods
+impl core::marker::Sync for kynos::router::group::SafeMethods
+impl core::marker::Unpin for kynos::router::group::SafeMethods
+impl core::marker::UnsafeUnpin for kynos::router::group::SafeMethods
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::router::group::SafeMethods
+impl core::panic::unwind_safe::UnwindSafe for kynos::router::group::SafeMethods
+pub struct kynos::router::group::UnsafeMethods
+impl core::clone::Clone for kynos::router::group::UnsafeMethods
+pub fn kynos::router::group::UnsafeMethods::clone(&self) -> kynos::router::group::UnsafeMethods
+impl core::cmp::Eq for kynos::router::group::UnsafeMethods
+impl core::cmp::PartialEq for kynos::router::group::UnsafeMethods
+pub fn kynos::router::group::UnsafeMethods::eq(&self, &kynos::router::group::UnsafeMethods) -> bool
+impl core::default::Default for kynos::router::group::UnsafeMethods
+pub fn kynos::router::group::UnsafeMethods::default() -> kynos::router::group::UnsafeMethods
+impl core::fmt::Debug for kynos::router::group::UnsafeMethods
+pub fn kynos::router::group::UnsafeMethods::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kynos::router::group::UnsafeMethods
+pub fn kynos::router::group::UnsafeMethods::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kynos::router::group::UnsafeMethods
+impl core::marker::StructuralPartialEq for kynos::router::group::UnsafeMethods
+impl kynos::router::group::MethodSet for kynos::router::group::UnsafeMethods
+pub const kynos::router::group::UnsafeMethods::METHODS: kynos::router::group::Methods
+impl core::marker::Freeze for kynos::router::group::UnsafeMethods
+impl core::marker::Send for kynos::router::group::UnsafeMethods
+impl core::marker::Sync for kynos::router::group::UnsafeMethods
+impl core::marker::Unpin for kynos::router::group::UnsafeMethods
+impl core::marker::UnsafeUnpin for kynos::router::group::UnsafeMethods
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::router::group::UnsafeMethods
+impl core::panic::unwind_safe::UnwindSafe for kynos::router::group::UnsafeMethods
+pub trait kynos::router::group::MethodSet: 'static
+pub const kynos::router::group::MethodSet::METHODS: kynos::router::group::Methods
+impl kynos::router::group::MethodSet for kynos::router::group::SafeMethods
+pub const kynos::router::group::SafeMethods::METHODS: kynos::router::group::Methods
+impl kynos::router::group::MethodSet for kynos::router::group::UnsafeMethods
+pub const kynos::router::group::UnsafeMethods::METHODS: kynos::router::group::Methods
 pub mod kynos::router::operation
 pub struct kynos::router::operation::DeclaredTag
 impl kynos::router::operation::DeclaredTag

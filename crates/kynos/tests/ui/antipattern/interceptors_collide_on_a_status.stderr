@@ -6,14 +6,14 @@ error[E0080]: evaluation panicked: two interceptors covering this route answer w
   |
  ::: src/middleware/stack.rs
   |
-  | /         assert!(
-  | |             statuses_disjoint(
-  | |                 <N::Short as ShortCircuit>::STATUSES,
-  | |                 <H::Short as ShortCircuit>::STATUSES,
+  | /             assert!(
+  | |                 statuses_disjoint(
+  | |                     <N::Short as ShortCircuit>::STATUSES,
+  | |                     <H::Short as ShortCircuit>::STATUSES,
 ... |
-  | |              a consumer could not tell which one replied"
-  | |         );
-  | |_________- in this macro invocation
+  | |                  a consumer could not tell which one replied"
+  | |             );
+  | |_____________- in this macro invocation
 
 note: erroneous constant encountered
  --> src/router/mod.rs
