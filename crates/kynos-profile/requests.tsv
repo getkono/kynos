@@ -1,6 +1,6 @@
 # Written by `mise run profile:record`; read by `mise run profile:requests`.
 # toolchain: rustc 1.97.1 (8bab26f4f 2026-07-14)
-# host: AMD EPYC 9V74 80-Core Processor, valgrind-3.27.1
+# host: AMD EPYC 9V45 96-Core Processor, valgrind-3.27.1
 # trend: connection_h2 form_echo rate_limit request_id_random
 benchmark	program_instructions	heap_blocks	heap_bytes
 alloc_counter_agreement.capture	2616	5	1100
@@ -9,7 +9,7 @@ alloc_counter_agreement.stacked_4	2548	9	2556
 alloc_counter_agreement.stacked_8	3232	13	4060
 alloc_counter_agreement.static_match	1867	5	1052
 codecs.multipart_echo	1130624	1565	109765
-codecs.protobuf_echo	19913	43	5625
+codecs.protobuf_echo	20096	43	5625
 codecs.reject_413	5706	11	2200
 codecs.reject_415	5784	16	2486
 codecs.reject_422	10254	25	4395
@@ -33,13 +33,16 @@ compression.zstd_2k	96192	92	3680349
 compression.zstd_4k	145750	171	3696259
 compression.zstd_large	1340213	2128	3914445
 compression.zstd_small	35036	23	3675042
-connection_h1.echo_chunked	59537	64	41234
-connection_h1.echo_cl	54164	63	41138
+connection_h1.echo_chunked	59594	64	41234
+connection_h1.echo_cl	54221	63	41138
 connection_h1.kept	12881	14	10129
 connection_h1.plaintext	14152	27	36361
 connection_h1.second	11646	11	1801
-connection_h2.plaintext	38850	40	37105
-connection_h2.second	31893	14	2613
+connection_h2.plaintext	39270	40	37105
+connection_h2.second	32234	14	2613
+connection_tls.full	60480	179	58803
+connection_tls.resumed	65574	193	58563
+connection_tls.second	16481	16	2099
 extract.auth_401	5053	12	2183
 extract.auth_apikey	2970	10	2066
 extract.auth_basic	4136	12	2144
@@ -47,11 +50,11 @@ extract.auth_bearer	3344	10	2068
 extract.bounds	5714	9	1838
 extract.cookies	3106	10	1815
 extract.inject	2303	9	1801
-extract.one_of	39730	43	5842
+extract.one_of	39787	43	5842
 extract.query_unused_8	7998	9	1838
 extract.querystring	6295	12	1897
 extract.text_body	3930	9	2009
-form_echo.form_echo	137433	67	14366
+form_echo.form_echo	137620	67	14366
 interceptors.body_size	4189	14	2954
 interceptors.body_timeout	4808	14	2386
 interceptors.cache_hit	4256	10	2380
@@ -60,8 +63,8 @@ interceptors.compression_default	7071	12	2506
 interceptors.concurrency	4024	13	2794
 interceptors.cors_preflight	4587	12	1757
 interceptors.cors_simple	5230	13	2066
-interceptors.csrf	39772	44	6418
-interceptors.decompress_gzip	83201	51	59742
+interceptors.csrf	39829	44	6418
+interceptors.decompress_gzip	83258	51	59742
 interceptors.request_id_counter	4945	16	2722
 interceptors.security_headers	4716	13	2162
 interceptors.set_cookies	5361	18	2426
@@ -84,7 +87,7 @@ routing.not_found_layered_4	3649	13	3243
 routing.not_implemented	2441	5	1181
 routing.redirect_slash	1592	6	1118
 runtime.json_small	4085	11	1850
-scenarios.echo_post	39029	43	5794
+scenarios.echo_post	39086	43	5794
 scenarios.headers	11449	25	2623
 scenarios.json_large	956804	2116	226488
 scenarios.json_small	3542	11	1850
