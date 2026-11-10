@@ -36,7 +36,8 @@
 //! would drop the member the schema declares.
 //!
 //! An `extension(name = value)` member is a variant's, or a struct's, never
-//! an enum's: sent through the same `to_member`, before the fields', and
+//! an enum's: sent through `to_constant`, which also refuses `null`, before
+//! the fields', and
 //! declared, required, by `kynos::__private::problem::constant` as a `const`
 //! of what it serializes to, which the shared-URI branch unions into an
 //! `enum`. Its name is refused where RFC 9457 defines it or a field on the
