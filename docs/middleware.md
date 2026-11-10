@@ -152,6 +152,31 @@ at all — a redirect — gets no entry rather than an invented one: the header 
 still sent, and understating a description by one header beats claiming a
 response that does not exist.
 
+That is the default, `Placement::Success`, and `Interceptor::ADDS_ON` changes
+it. The type cannot say which responses carry the group: `with_headers` writes
+it onto whatever the rest of the chain produced, a 4xx included, and an
+interceptor may write the same fields onto its own `Short` response. Only the
+author knows, so the author declares it:
+
+| `ADDS_ON` | Described on | For |
+| --- | --- | --- |
+| `Success` | each `2XX` the operation declares when the interceptor is described | a header meaningful on a success alone |
+| `Every` | every response the finished operation declares | a request identifier, a protocol version |
+| `Problems` | every response the finished operation declares with an `application/problem+json` body | `Retry-After` on a refusal |
+
+`Every` and `Problems` read the *finished* operation, after every interceptor's
+`Short` and panic recovery's 500 are declared, so a response contributed after
+the interceptor is described is still reached. `Success` is filed on the spot,
+as it always was, so a default interceptor's document is unchanged. None of the
+three mints a response or reaches into a `$ref`, and a header the response
+already declares under that name keeps its entry.
+
+`Every` and `Problems` are claims, and the framework does not narrow them to
+what passes through the interceptor. They overstate by any response its
+`with_headers` never sees and it writes nothing onto itself — an outer
+interceptor's short circuit, for one — as `Success` understates by every
+failure the group rides.
+
 A body is declared nowhere at all — `Continued::take_body` and
 `Continued::set_body` need no declaration, because a body has no name to collide
 on. Two interceptors rewriting one compose; two setting one header do not. An
