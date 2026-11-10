@@ -523,7 +523,11 @@ in its client's reads, so their difference is no one variable's cost.
 **A TLS row counts the server's polls, not the conversation.** A
 `connection_tls` row sends `connection_h1`'s request over a TLS 1.3 session
 terminated on the duplex with `rustls`, configured as `TlsConfig` builds by
-default, and handed to `serve_io` through `Connection::from_tls_peer`. A
+default, and handed to `serve_io` through `Connection::from_tls_peer`. The one
+difference is the certificate resolver: `TlsConfig`'s lowercases the SNI name
+into a new string on every handshake to look it up among its SNI
+certificates, and this server's returns its single certificate unread, so the
+rows leave that allocation and lookup out. A
 handshake needs a client answering inside the region, so both instruments
 count from `round`, one runtime poll of the server's connection, rather than
 from the benchmark function, and the client's work between polls is not

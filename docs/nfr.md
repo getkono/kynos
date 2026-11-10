@@ -264,7 +264,9 @@ handshake, counts 16183, 16 and 2099 against `connection_h1.second`'s 11646,
 11 and 1801, with 3260 in aws-lc: about 4500 instructions and five blocks a
 request for decrypting it and encrypting its answer. These are `rustls`'s and
 the serving path's on a session the harness terminates; Kynos's own acceptor
-is uncounted ([#1311](https://github.com/getkono/kynos/issues/1311)).
+is uncounted ([#1311](https://github.com/getkono/kynos/issues/1311)), and with
+it the SNI name its certificate resolver lowercases into a new string on
+every handshake, full or resumed.
 
 **Against axum, the gap is Kynos's own futures.** The same plaintext request,
 counted the same way on one connection with a per-request allocation counter,

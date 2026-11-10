@@ -5,7 +5,8 @@
 //! records it.
 //!
 //! The server's configuration, [`endpoints`]', is the one `TlsConfig` builds
-//! by default, restated because `serve_io` terminates no TLS and a listener's
+//! by default but for its certificate resolver, which
+//! [`Endpoints::new`](endpoints::Endpoints::new) names, restated because `serve_io` terminates no TLS and a listener's
 //! acceptor is reached only through a socket: these rows count `rustls`'s
 //! handshake and record layer and the serving path behind them, and not
 //! Kynos's own acceptor.

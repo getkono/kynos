@@ -1,6 +1,7 @@
 //! Both ends' TLS configuration: an authority, the Ed25519 server identity
-//! it issues, the server's configuration as `TlsConfig` builds it by default,
-//! and a client that trusts the authority.
+//! it issues, the server's configuration as `TlsConfig` builds it by default
+//! except for its certificate resolver, and a client that trusts the
+//! authority.
 //!
 //! Apart from [the rows](super) because the two change for different reasons:
 //! a row is added when what is measured changes, and this when what either
@@ -55,6 +56,15 @@ impl Endpoints {
     /// ALPN `h2` then `http/1.1`, no early data, and stateless tickets under
     /// `aws-lc-rs`'s ticketer. The identity is Ed25519, whose signature has
     /// one length, so no count moves with how a signature happened to encode.
+    ///
+    /// It differs from `TlsConfig` in how the certificate is chosen. rustls
+    /// asks the resolver on every `ClientHello`, resumed or not, and
+    /// `TlsConfig`'s resolver lowercases the SNI name into a new `String` and
+    /// looks it up among its SNI certificates before falling back to its
+    /// default; `with_single_cert`'s returns its one certificate without
+    /// reading the name. Each row's handshake therefore leaves out that
+    /// allocation and lookup, which only Kynos's own acceptor would count
+    /// (#1311).
     ///
     /// # Panics
     ///
