@@ -130,6 +130,7 @@ enum StoreError {
 | variant | `title` | the problem's `title`, and what the response's description is composed from. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
 | variant | `type` | an absolute URI, overriding `base` |
 | variant | `transparent` | answer as the `ApiError` or built-in refusal the variant's one field holds, instead of `status`, `title` and `type` |
+| variant | `extension(name = value)` | send `name` with a value the failure determines, a string, number or boolean literal or the path to a `const` whose type is `Serialize`, and declare it as a `const` of that value; on a struct too, never on an enum |
 | field | `extension` | serialize this field as an extension member under its own name, and declare it by its type's schema |
 | field | `headers` | send this field, a header group, on this failure's response, and declare it under this failure's status alone |
 
@@ -185,6 +186,34 @@ lists it under `required`. An `Option<T>` member is the exception, recognised
 syntactically as parameters are: it is sent only when it holds a value, as
 `detail` is, so it is declared by `T`'s schema and left optional rather than
 sent as `null`.
+
+**A value the failure determines is not a field.** A stable catalog code is
+the same on every occurrence of a variant, so carrying it as a
+`#[problem(extension)]` field makes every construction site pass a value the
+variant already fixes, lets one pass another variant's, and declares only
+`type: string`. The variant says it once instead:
+
+```rust
+#[error("no such upload session")]
+#[problem(status = 404, extension(code = "error.upload.session_not_found"))]
+SessionNotFound,
+```
+
+The value goes on the wire through the same `Serialize` a field's does, before
+the fields', and is declared as a JSON Schema `const` of what it serializes to,
+beside the `type` that value has, and required, so a generated client learns
+the exact value set per status. Failures sharing one type URI are one branch
+([below](#what-the-declared-response-narrows-to)), where their constants under
+one name become one `enum`, keeping the type they share; a member only some of
+them send stays optional. A `const` path keeps one catalog for several error
+types, as `base` does. A `const` whose `Serialize` refuses answers 500, as a
+field does, and since it refuses every time, building the description panics
+rather than declaring a member nothing sends. A type-level
+`fn(&self) -> &'static str` mapping was rejected: the schema could then say
+only `string`, and the value set would be lost from the description. Its
+name is refused where RFC 9457 defines the member (`type`, `title`, `status`,
+`detail`, `instance`) and where a field on the same failure is already
+published under it, since one name holds one value.
 
 **A header one failure sends is that failure's.** `Retry-After` on a 429 is
 `#[problem(headers)]` on a field of the 429's variant, holding a group deriving
@@ -261,7 +290,12 @@ type is no header group, and a type with no
 in [`tests/ui/macros`](../crates/kynos/tests/ui/macros). So are `headers` on a
 variant or type, beside `extension` on one field, twice on one failure, and
 over a transparent variant's field, each with a case in the derive's own
-diagnostic ledger. A `subset_of` on a variant or a struct, beside another key,
+diagnostic ledger. So is an `extension(...)` list on an enum or a transparent
+variant, naming no member, naming one by a path, by a registered member's name
+or twice, giving one no value or one that is neither a literal nor a path, or
+naming a field the failure already publishes; a `const` value whose type is not
+`Serialize` is a compile error at the path, with a case in
+[`tests/ui/macros`](../crates/kynos/tests/ui/macros). A `subset_of` on a variant or a struct, beside another key,
 naming the subset's generic parameter, or over a variant or field with a
 `#[problem(...)]` of its own is a compile error with a case in both. What `base`, `title`,
 `type` and `extension` *do* is checked at run time by the conformance harness,
@@ -310,8 +344,11 @@ Two rules follow from what is actually on the wire:
   `title` at all — the description already says the only thing that status
   publishes. The one branch must match what each of those variants sends, so
   it declares every extension member any of them does, a member they type
-  differently as an `anyOf` of the types, and requires a member only where
-  every one of them sends it.
+  differently as an `anyOf` of the types, constants of one type as an `enum`
+  of their values, and requires a member only where every one of them sends
+  it. The cross-source union below keeps an `anyOf` even of constants: it
+  validates the same instances, and only the derive's own branch reads them as
+  a value set.
 
 **A status an extractor also claims publishes both halves of it.** An argument's
 rejection is contributed before the return type's responses, and a description
