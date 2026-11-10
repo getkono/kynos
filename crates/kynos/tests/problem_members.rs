@@ -15,9 +15,17 @@
     feature = "openapi31"
 ))]
 
+use std::{
+    convert::Infallible,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
+
 use kynos::openapi::{Severity, Violation};
 use kynos::{
-    PathParams, QueryParams, Router, Schema,
+    HeaderParams, PathParams, QueryParams, Router, Schema,
     error::{
         members::{ProblemCx, ProblemMembers},
         rejection::AuthRejection,
@@ -26,8 +34,10 @@ use kynos::{
         body::json::Json,
         params::{path::Path, query::Query},
     },
-    http::header,
-    router::{error::RouterError, service::Service},
+    http::{Request, header},
+    middleware::{Continued, Interceptor, Next},
+    response::status::NoContent,
+    router::{error::RouterError, group::Group, service::Service},
     security::{Authenticates, Authenticator, auth::Auth, carrier::BearerToken, schemes::Bearer},
     test::TestClient,
 };
@@ -334,4 +344,237 @@ fn an_absorbed_router_s_members_are_a_violation() {
         }),
         "{violations:?}"
     );
+}
+
+/// Whether a request reached it.
+struct Reached(Arc<AtomicBool>);
+
+impl Interceptor<App> for Reached {
+    type Reads = ();
+    type Adds = ();
+    type Short = Infallible;
+
+    async fn intercept(
+        &self,
+        request: Request,
+        (): (),
+        _: &App,
+        next: Next<'_, App>,
+    ) -> Result<Continued, Infallible> {
+        self.0.store(true, Ordering::SeqCst);
+        Ok(next.run(request).await)
+    }
+}
+
+/// A guard a scope runs ahead of its interceptors refuses before the handler
+/// is reached, and its refusal carries the members all the same, beside the
+/// challenge it writes.
+#[tokio::test]
+async fn a_guard_run_ahead_of_its_interceptors_carries_the_members() {
+    let reached = Arc::new(AtomicBool::new(false));
+    let service = Router::<App>::new()
+        .guard_first()
+        .intercept(Reached(Arc::clone(&reached)))
+        .mount(kynos::routes![me])
+        .problem_members::<Coded>()
+        .build(App)
+        .expect("a describable router");
+    let client = TestClient::new(service);
+
+    let unauthenticated = client
+        .get("/me")
+        .header("x-request-id", "req-9")
+        .send()
+        .await;
+    let forbidden = client.get("/me").bearer("tok_banned").send().await;
+
+    assert!(
+        !reached.load(Ordering::SeqCst),
+        "the guard ran behind the interceptor"
+    );
+    for (response, status, code, request_id) in [
+        (&unauthenticated, 401, "Authentication-401", "req-9"),
+        (&forbidden, 403, "Authentication-403", "-"),
+    ] {
+        response.assert_status(status);
+        let problem: Value = response.json();
+        assert_eq!(problem["code"], code, "{problem}");
+        assert_eq!(problem["request_id"], request_id, "{problem}");
+    }
+    assert!(
+        unauthenticated
+            .header(header::WWW_AUTHENTICATE.as_str())
+            .is_some()
+    );
+    client.assert_conformance();
+}
+
+/// What a `QUERY` reads.
+#[cfg(feature = "openapi32")]
+#[kynos::query("/search")]
+async fn search(Json(item): Json<Item>) -> Json<Item> {
+    Json(item)
+}
+
+/// The 400 a `QUERY` naming no media type gets is the dispatcher's own, ahead
+/// of the operation's body extractor, and carries the members that extractor's
+/// 400 declares.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn an_untyped_query_s_400_carries_the_members() {
+    let service = Router::<App>::new()
+        .mount(kynos::routes![search])
+        .problem_members::<Coded>()
+        .build(App)
+        .expect("a describable router");
+    let client = TestClient::new(service);
+
+    let refused = client
+        .query("/search")
+        .header("x-request-id", "req-q")
+        .send()
+        .await;
+
+    refused.assert_status(400);
+    let problem: Value = refused.json();
+    assert_eq!(problem["code"], "Content-400", "{problem}");
+    assert_eq!(problem["request_id"], "req-q", "{problem}");
+    client.assert_conformance();
+}
+
+/// The problem type the constraint types below name.
+const TOO_LONG: &str = "https://errors.example.com/too-long";
+
+/// A body whose broken bound answers with [`TOO_LONG`].
+#[derive(Deserialize, Schema)]
+#[schema(constraint_type = TOO_LONG)]
+struct Tag {
+    #[schema(max_length = 4)]
+    label: String,
+}
+
+#[kynos::post("/tags")]
+async fn tag(Json(tag): Json<Tag>) -> NoContent {
+    let _ = tag.label;
+    NoContent
+}
+
+/// A header value whose broken bound answers with [`TOO_LONG`].
+#[derive(Schema, Debug)]
+#[schema(constraint_type = TOO_LONG)]
+struct Short(#[schema(max_length = 4)] String);
+
+impl std::str::FromStr for Short {
+    type Err = Infallible;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        Ok(Self(raw.to_owned()))
+    }
+}
+
+impl std::fmt::Display for Short {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl kynos::schema::ParamValue for Short {}
+
+#[derive(HeaderParams)]
+struct Labelled {
+    #[header(rename = "X-Label")]
+    label: Option<Short>,
+}
+
+/// Reads [`Labelled`] ahead of the operation it covers.
+struct Labels;
+
+impl Interceptor<App> for Labels {
+    type Reads = Labelled;
+    type Adds = ();
+    type Short = Infallible;
+
+    async fn intercept(
+        &self,
+        request: Request,
+        labelled: Labelled,
+        _: &App,
+        next: Next<'_, App>,
+    ) -> Result<Continued, Infallible> {
+        let _ = labelled.label;
+        Ok(next.run(request).await)
+    }
+}
+
+#[kynos::get("/open")]
+async fn open() -> NoContent {
+    NoContent
+}
+
+/// The `required` of the [`TOO_LONG`] branch the problem `status` on `path`'s
+/// `method` declares.
+fn branch_required(document: &Value, path: &str, method: &str, status: &str) -> Value {
+    let schema = &document["paths"][path][method]["responses"][status]["content"]["application/problem+json"]
+        ["schema"];
+    schema["oneOf"]
+        .as_array()
+        .and_then(|branches| {
+            branches
+                .iter()
+                .find(|branch| branch["allOf"][1]["properties"]["type"]["const"] == TOO_LONG)
+        })
+        .unwrap_or_else(|| panic!("no branch for {TOO_LONG}: {schema}"))["allOf"][1]["required"]
+        .clone()
+}
+
+/// A named constraint type's branch requires the members where an extractor
+/// refuses, since its rejection carries them, and not where an interceptor's
+/// `Reads` refuses, since that refusal is the interceptor's and carries none;
+/// each refusal on the wire conforms to its branch.
+#[tokio::test]
+async fn a_named_constraint_type_requires_the_members_only_where_they_are_sent() {
+    let router = || {
+        Router::<App>::new()
+            .mount(kynos::routes![tag])
+            .group(
+                Group::new("/checked")
+                    .intercept(Labels)
+                    .mount(kynos::routes![open]),
+            )
+            .problem_members::<Coded>()
+    };
+    let document = serde_json::to_value(router().openapi().expect("a describable router"))
+        .expect("a document serializes");
+
+    assert_eq!(
+        branch_required(&document, "/tags", "post", "422"),
+        json!(["errors", "code", "request_id"])
+    );
+    assert_eq!(
+        branch_required(&document, "/checked/open", "get", "400"),
+        json!(["errors"])
+    );
+
+    let client = TestClient::new(router().build(App).expect("a describable router"));
+    let extracted = client
+        .post("/tags")
+        .json(&json!({"label": "too long"}))
+        .send()
+        .await;
+    extracted.assert_status(422);
+    let problem: Value = extracted.json();
+    assert_eq!(problem["type"], TOO_LONG, "{problem}");
+    assert_eq!(problem["code"], "Content-422", "{problem}");
+
+    let intercepted = client
+        .get("/checked/open")
+        .header("x-label", "too long")
+        .send()
+        .await;
+    intercepted.assert_status(400);
+    let problem: Value = intercepted.json();
+    assert_eq!(problem["type"], TOO_LONG, "{problem}");
+    assert!(problem.get("code").is_none(), "{problem}");
+
+    client.assert_conformance();
 }
