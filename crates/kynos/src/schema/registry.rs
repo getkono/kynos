@@ -311,8 +311,6 @@ impl Registry {
         }
     }
 
-    /// Every key pattern [`admit_key_pattern`](Registry::admit_key_pattern)
-    /// refused, in the order it found them.
     /// Declares `members` on every problem Kynos renders itself, before any
     /// operation is described.
     pub(crate) fn declare_problem_members(&mut self, members: Vec<(String, OpenApiSchema, bool)>) {
@@ -325,6 +323,8 @@ impl Registry {
         &self.problem_members
     }
 
+    /// Every key pattern [`admit_key_pattern`](Registry::admit_key_pattern)
+    /// refused, in the order it found them.
     pub(crate) fn key_pattern_refusals(&self) -> &[UnenforceableKeyPattern] {
         &self.key_patterns
     }
