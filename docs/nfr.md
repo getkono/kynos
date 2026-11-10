@@ -667,7 +667,7 @@ which [`tests/panics.rs`](../crates/kynos/tests/panics.rs) holds.
 | performance | A returning TLS client resumes its session rather than paying a full handshake, by default, whatever the number of other clients | [`server/tests.rs`](../crates/kynos/src/server/tests.rs) over real sockets, with `HandshakeKind` read from the client: resumption over TLS 1.3 and 1.2 under the default stateless tickets, a ticketed session still resumed after three hundred other clients (rustls's own 256-entry cache evicted it), the bounded cache evicting past its capacity, `Disabled` paying a full handshake every time, and a resumed mutual-TLS session keeping its client certificate. Across replicas, under `SharedTickets`: two listeners given one ticket secret each resuming a session the other issued, client certificate included, and a third given another secret paying a full handshake | `enforced`; the CPU a resumption saves, and the resumption rate across a fleet, are `kynos-bench` |
 | reliability | A request body that stalls is bounded by default, and answered with the 408 its operation declares, carrying what the interceptors add | [`tests/connection_adversarial.rs`](../crates/kynos/tests/connection_adversarial.rs) over a real HTTP/1 socket, through a router whose `RequestId` adds a header and whose document is read for the 408; [`server/tests.rs`](../crates/kynos/src/server/tests.rs) over real sockets, HTTP/1 and HTTP/2, answering a stall through the extractors' mapping on a bare service; [`tests/conformance.rs`](../crates/kynos/tests/conformance.rs) exercising the 408 through `TestClient` | `enforced`; HTTP/2 through a router is unpinned; the 408 stays declared with the timer turned off |
 | reliability | On Unix, a soft open-file limit below what the connection cap needs is raised at startup as far as the hard limit, to the cap plus one per listener and 128 to spare, and a limit still short is warned of, naming the limit and what the cap needs | [`server/tests.rs`](../crates/kynos/src/server/tests.rs): the raise decided over soft and hard limits, unlimited ones included; `prepare` under a lowered soft limit raising it to exactly what the cap needs and warning of nothing; and under a lowered hard limit raising the soft limit to it and warning with both numbers | `enforced` on Linux; macOS, whose `setrlimit` refuses a soft limit past `OPEN_MAX` even under an unlimited hard one, warns rather than raising for a cap past about 10,100 |
-| reliability | HTTP/2 request-body flow control is released as the body is consumed, not as frames arrive | Load test streaming a large body to a slow consumer, asserting the receive window closes | `blocked-on-dependency` |
+| reliability | HTTP/2 request-body flow control is released as the body is read, not as frames arrive, so a reader that stops reading closes the peer's window | An HTTP/2 exchange in [`server/tests.rs`](../crates/kynos/src/server/tests.rs) sending a body past the stream window to a handler that stops reading, asserting the client's send capacity falls to zero and stays there | `planned`; hyper 1.12 releases a DATA frame's capacity in the `Incoming::poll_frame` that yields it, and the server's body-gap wrapper polls only when read |
 | reliability | A streamed request body is decoded as it arrives rather than after it has been collected | [`extract/body/json_lines/tests.rs`](../crates/kynos/src/extract/body/json_lines/tests.rs) reading a body delivered one frame per byte, and every frame boundary of a fixed body | `enforced` for a body declaring a `Content-Length`; `by-design` under `BodySize` for a chunked one |
 | performance | Syscalls per request ≤ 3 for `plaintext` on a kept-alive HTTP/1.1 connection, under either tokio runtime flavour: one `epoll_wait`, one `recvfrom` and one `writev`, the count hyper alone and axum 0.8 pay on the same path | A ptrace summary in `strace -c -f`'s shape over 200 and then 5,200 sequential requests on one connection, differenced so that start-up and shutdown cancel; counted on Linux 7.2 at master@56ebc0f6 under the current-thread and multi-thread runtimes, with Kynos 0.1.0, hyper's auto builder and axum 0.8 each counting the same | `kynos-bench` for asserting this ceiling on `plaintext`, which needs the harness to build Kynos from a revision ([getkono/kynos-bench#87](https://github.com/getkono/kynos-bench/issues/87)); the ceiling is the count above, and no other scenario carries one |
 | performance | Idle memory per connection ≤ TBD at 100k connections | Nightly load test measuring RSS delta | `kynos-bench` |
@@ -696,12 +696,43 @@ The containment row is written against the enumerated table in
 a seventh site fails the build. A count asserted only in prose is a count
 nobody is holding.
 
-The `blocked-on-dependency` row is the one requirement a pinned dependency
-prevents rather than delays: hyper releases HTTP/2 flow-control capacity when a
-frame is polled rather than when the body is consumed, so the receive window
-never closes on a slow consumer. Driving `h2` directly is the only remedy, and
-[`architecture.md`](architecture.md#dependencies) records why that trade is not
-taken today.
+The HTTP/2 flow-control row was once `blocked-on-dependency`, on the reading
+that hyper releases receive capacity as frames arrive. It does not: `h2` buffers
+a stream's DATA unreleased until `Incoming::poll_frame` hands a frame over,
+and only then does hyper call `release_capacity` for it. A reader that stops
+reading therefore closes its stream window, and what a peer can park unread
+on one connection is the connection window, not 200 stream windows: 1 MiB at
+the defaults, which is the HTTP/2 heads row of the table below, and up to the
+16 MiB hyper's BDP estimate grows both windows to under
+`Http2FlowControl::Adaptive`.
+
+What poll-time release leaves open is the gap between a frame being polled and
+its bytes being done with, and that gap is the reader's own buffer, which the
+window was never going to bound:
+
+- A buffering extractor collects the whole body before the handler runs, so
+  release on consumption would release nothing sooner. Its bound is its limit,
+  2 MiB by default, which is the last row of the table below; lowering
+  `Http2Config`'s windows leaves it untouched.
+- A streaming reader such as `Records<T>` releases a frame's capacity when it
+  polls the frame, so release on consumption would hold the peer back by at
+  most one more DATA frame per stream: 16 KiB at RFC 9113's default
+  `SETTINGS_MAX_FRAME_SIZE`, which Kynos does not raise.
+- A handler reading `Body` itself holds what it chooses to hold.
+
+So no upstream change is asked for. No issue in `hyperium/hyper` or
+`hyperium/h2` requests consumer-driven release; the nearest are
+[hyperium/hyper#2899](https://github.com/hyperium/hyper/issues/2899), a
+connection window starved by streams nobody reads, which is this mechanism seen
+from the peer's side, and
+[hyperium/hyper#2901](https://github.com/hyperium/hyper/issues/2901), a
+low-level pull API that would expose `h2`'s streams. Were hyper to let a body's
+reader release capacity itself, Kynos would change nothing in the buffering
+extractors and would release per decoded record in the streaming ones, buying
+back one frame per stream. That is not worth owning the connection driver
+[`architecture.md`](architecture.md#what-does-not-move-and-why) keeps with hyper.
+The row is `planned` rather than `enforced` because no test yet watches the
+window close.
 
 The streaming row above it is the same family of fact one layer up, and it is
 split because half of it holds. A request declaring a `Content-Length` is
