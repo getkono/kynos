@@ -5012,6 +5012,29 @@ mod api_error {
         ]
     }
 
+    /// A field and a constant collide by the name both are sent under, a raw
+    /// identifier unprefixed; a second witness of the ledger's collision row,
+    /// so outside its count.
+    #[test]
+    fn a_constant_member_collides_with_a_field_by_its_unprefixed_name() {
+        each_case_is_refused(
+            vec![case(
+                "a raw-identifier constant member named like a raw-identifier field",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(status = 404, extension(r#ref = 1))]
+                        NotFound {
+                            #[problem(extension)]
+                            r#ref: u64,
+                        },
+                    }
+                ),
+                "the field `ref` is already published as this extension member",
+            )],
+            expand_inner,
+        );
+    }
+
     /// A value is a literal or a path, a negated number and a forwarded
     /// fragment included; anything else is computed, which the ledger's one
     /// row witnesses with a call.

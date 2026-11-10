@@ -5256,6 +5256,47 @@ fn an_extension_member_is_sent_under_the_names_its_schema_declares() {
     );
 }
 
+/// A failure publishing a field whose name is a keyword.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum LinkError {
+    #[error("dangling link")]
+    #[problem(status = 404)]
+    Dangling {
+        #[problem(extension)]
+        r#ref: u64,
+    },
+}
+
+/// A raw-identifier field is sent and declared under its unprefixed name, as
+/// serde and the `Schema` derive spell it.
+#[test]
+fn a_raw_identifier_extension_member_is_sent_and_declared_unprefixed() {
+    use kynos::error::problem::IntoProblem;
+
+    let problem = LinkError::Dangling { r#ref: 7 }.into_problem();
+    assert_eq!(
+        problem.extensions.keys().collect::<Vec<_>>(),
+        ["ref"],
+        "{problem:?}"
+    );
+
+    let declared = &declared_problem(&emitted_responses::<LinkError>(), "404")["allOf"][1];
+    assert_eq!(
+        declared["properties"]
+            .as_object()
+            .expect("an object schema")
+            .keys()
+            .collect::<Vec<_>>(),
+        ["ref"],
+        "{declared}"
+    );
+    assert_eq!(
+        declared["required"],
+        serde_json::json!(["ref"]),
+        "{declared}"
+    );
+}
+
 /// A member type whose `Serialize` refuses, as one with a non-string map key
 /// does.
 #[derive(Debug, Schema)]
