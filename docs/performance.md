@@ -153,8 +153,12 @@ recorded, or executes more than 0.5% more program instructions. The heap counts
 have no tolerance because what is asked of the allocator does not depend on the
 CPU. The instruction tolerance is not for noise either: runs of one build on
 the three EPYC models `ubuntu-latest` has drawn counted every exact row
-identically. It leaves room for a runner whose CPU leads a dependency to
-another routine, and on a static match it is under ten instructions against the
+identically. A desktop Ryzen 7 7800X3D counted the same build identically too,
+except the `zstd_*` rows, which ran 1–7% fewer instructions, since zstd's C
+picks its routines by CPU. So the verdict is CI's: a local run on another host
+can pass or fail where CI does not, in the rows whose dependencies dispatch on
+the CPU. The tolerance leaves room for a CI runner that would lead a dependency
+to another routine, and on a static match it is under ten instructions against the
 315 one transparent layer adds. On the largest rows it is thousands, so a rise
 there smaller than that is read off the report's Δ rather than caught. A lower
 count passes, so a saving keeps the old ceiling until it is recorded; an

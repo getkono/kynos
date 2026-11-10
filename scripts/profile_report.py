@@ -100,8 +100,9 @@ MEASURED, NOTHING, DISAGREE, INEXACT, EXCEEDED = 0, 1, 2, 3, 4
 
 # How far, in thousandths of the recorded count, a row's program instructions
 # may exceed it. Runs of one build on three CI CPU models have counted every
-# exact row identically, so this is headroom for a runner whose CPU leads a
-# dependency to another routine, not for noise: one transparent layer, the
+# exact row identically; a desktop CPU moved only the `zstd_*` rows, by up to
+# 7%, and the verdict is CI's. So this is headroom for a runner whose CPU leads
+# a dependency to another routine, not for noise: one transparent layer, the
 # smallest step a request takes, costs 315, a sixth of a static match. A heap
 # count has none, since what is asked of the allocator is not the CPU's.
 TOLERANCE_PER_MILLE = 5
