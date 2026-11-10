@@ -1,8 +1,15 @@
 //! Describing one operation while the router is built.
 
-use kynos_openapi::{ComponentName, Method, RefOr, Response, StatusPattern};
+use kynos_openapi::{
+    ComponentName, Method, RefOr, Response, StatusPattern,
+    model::body::mime_names::APPLICATION_PROBLEM_JSON,
+};
 
-use crate::{http::describe_code, schema::registry::Registry};
+use crate::{
+    http::{describe_code, eq_ignore_ascii_case, media::split_essence},
+    middleware::Placement,
+    schema::registry::Registry,
+};
 
 /// The operation a request matched.
 ///
@@ -64,6 +71,9 @@ pub struct OperationCx<'a> {
     /// The operations a [`Link`](crate::extract::link::Link) argument points
     /// at, which the router checks it mounts.
     links: Vec<crate::extract::link::Target>,
+    /// Response headers whose placement reads the finished set of responses,
+    /// filed by [`finish`](Self::finish) in the order they were placed.
+    placed: Vec<(Deferred, String, kynos_openapi::Header)>,
 }
 
 impl<'a> OperationCx<'a> {
@@ -75,12 +85,24 @@ impl<'a> OperationCx<'a> {
             operation: kynos_openapi::Operation::default(),
             tags: Vec::new(),
             links: Vec::new(),
+            placed: Vec::new(),
         }
     }
 
     /// Finishes the operation being described.
     #[must_use]
-    pub fn finish(self) -> kynos_openapi::Operation {
+    pub fn finish(mut self) -> kynos_openapi::Operation {
+        let responses = &mut self.operation.responses.responses;
+        for (placement, name, header) in &self.placed {
+            let keys: Vec<String> = responses
+                .iter()
+                .filter(|(_, response)| reached_by(*placement, response))
+                .map(|(key, _)| key.clone())
+                .collect();
+            for key in keys {
+                declare_header(responses, &key, name, header);
+            }
+        }
         self.operation
     }
 }
@@ -223,6 +245,28 @@ impl OperationCx<'_> {
         declare_header(&mut self.operation.responses.responses, &key, &name, header);
     }
 
+    /// Declares an interceptor's response header on the responses `placement`
+    /// names.
+    ///
+    /// [`Placement::Success`] files it now, on the successes declared so far.
+    /// The others read every response the operation ends up declaring, so
+    /// they are filed by [`finish`](Self::finish), after the last contributor.
+    pub(crate) fn place_response_header(
+        &mut self,
+        placement: Placement,
+        name: String,
+        header: &kynos_openapi::Header,
+    ) {
+        let deferred = match placement {
+            Placement::Success => {
+                return self.add_response_header(StatusPattern::Success, name, header);
+            }
+            Placement::Every => Deferred::Every,
+            Placement::Problems => Deferred::Problems,
+        };
+        self.placed.push((deferred, name, header.clone()));
+    }
+
     /// Sets the operation identifier.
     pub fn set_operation_id(&mut self, id: impl Into<String>) {
         self.operation.operation_id = Some(id.into());
@@ -293,6 +337,31 @@ fn covered_by(range: StatusPattern, declared: StatusPattern) -> bool {
     match declared {
         StatusPattern::Code(code) => range.matches(code),
         other => other == range,
+    }
+}
+
+/// A [`Placement`] that reads the finished operation, so
+/// [`OperationCx::finish`] files it.
+#[derive(Clone, Copy, Debug)]
+enum Deferred {
+    Every,
+    Problems,
+}
+
+/// Whether a header deferred under `placement` lands on `response`. A `$ref`
+/// is never reached into, so it is never reached.
+fn reached_by(placement: Deferred, response: &RefOr<Response>) -> bool {
+    let RefOr::Item(response) = response else {
+        return false;
+    };
+    match placement {
+        Deferred::Every => true,
+        Deferred::Problems => response.content.keys().any(|media_type| {
+            eq_ignore_ascii_case(
+                split_essence(media_type.as_bytes()).0,
+                APPLICATION_PROBLEM_JSON.as_bytes(),
+            )
+        }),
     }
 }
 

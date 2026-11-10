@@ -9,7 +9,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use kynos_openapi::{RefOr, StatusPattern};
+use kynos_openapi::RefOr;
 
 use crate::{
     error::rejection::{HeaderRejection, constraint_responses},
@@ -107,7 +107,7 @@ where
             for (name, header) in headers {
                 // A `$ref` is already reachable through `components`.
                 if let RefOr::Item(header) = header {
-                    operation.add_response_header(StatusPattern::Success, name, &header);
+                    operation.place_response_header(I::ADDS_ON, name, &header);
                 }
             }
         }

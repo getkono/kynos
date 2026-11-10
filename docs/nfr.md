@@ -571,6 +571,7 @@ resolves.
 | correctness | Two interceptors covering one operation never add one response header or answer with one status | `CompatibleWith` forced at every mount site, with a `trybuild` case per scope in [`tests/ui/antipattern/`](../crates/kynos/tests/ui/antipattern/) and a pass control for each | `enforced` for what the two sides declare; the two rows below are where a declaration is missing |
 | correctness | The check does not depend on the order the scopes were written in | `endpoint_interceptor_then_router_interceptor_collide`, `group_interceptor_then_router_interceptor_collide` and `group_mount_then_group_intercept_collide` mount a scope *before* the interceptor that conflicts with it, which is the order that used to compile | `enforced`; this row is why the one above is not a restatement |
 | correctness | An interceptor attaches exactly the header group it declared, and that group writes only the names it declared | `with_headers` on `Continued<()>` alone, pinned by `interceptor_attaches_an_undeclared_header`; the encode-subset `debug_assert` in the one writer, pinned by `a_group_encoding_an_undeclared_field_is_refused` | `enforced` in debug; the assert is compiled out of release |
+| correctness | An interceptor's described response headers land on the responses its `ADDS_ON` names, including those declared after it is described | `an_interceptors_response_header_is_declared_where_a_consumer_resolves_it`, `an_interceptor_adding_on_every_response_is_declared_on_each_one` and `an_interceptor_adding_on_problems_is_declared_on_problem_responses_alone` in [`tests/description.rs`](../crates/kynos/tests/description.rs), over an operation whose 408 and 500 are declared after the interceptor | `enforced` for where the declaration is filed; `by-design` that `Every` and `Problems` are the author's claim, which the framework does not narrow to the responses that pass through the interceptor ([`middleware.md`](middleware.md#declaring-is-not-describing)) |
 | correctness | An endpoint-scoped interceptor reaching a router through an `Endpoints` collection is checked | — | `absent`, and recorded in [`middleware.md`](middleware.md#what-the-compile-time-check-still-cannot-see): a collection erases what its members carry, and a build-time backstop would need a declaration method on the public `Endpoint` trait — the `contribution` method the design refuses. Use `routes!`. |
 | correctness | Two interceptors covering one operation never write one response header when either writes it from a short circuit | — | `by-design`, and recorded in [`middleware.md`](middleware.md#what-the-framework-computes-and-what-it-does-not): a `Short` response's headers are in no `const`, so `Retry-After` written from a 429 is compared against nothing. A `HEADERS` const on `ShortCircuit` is what would close it, and on a `ShortCircuit` written by hand beside its own `IntoResponse` it would be a declaration beside the behaviour — the `contribution` method the design refuses. Unreachable with what Kynos ships: only one short circuit answers a request |
 | correctness | Contribution composition is order-sensitive and deterministic | Permuted stacks produce differing, stable documents | `planned` for the *document*; the composition **check** is no longer order-sensitive, which is the order-insensitivity row above |
@@ -1056,6 +1057,16 @@ can hold, and none shares state with another. What pushed it over was issue
 parser, each file would hold one forwarding function, a module per target that
 the targets already are.
 
+`router/operation.rs` is `status.rs`'s shape. It declares `Route`,
+`OperationCx`, `Tag` and `DeclaredTag`, so a split would turn
+`operation::DeclaredTag`, the type every `add_tag` call names, into a longer
+path. What pushed it over was issue #1271's `ADDS_ON` placements: a header an
+interceptor adds on every response, or on problems alone, is filed by
+`OperationCx::finish`, because only then has the last contributor declared its
+responses. Filing a header is describing the operation, through the same
+`declare_header` an explicit `add_response_header` goes through, so the two are
+one concern: what one operation's description holds when it is finished.
+
 The budget, which may only shrink:
 
 - `crates/kynos-macros/src/derive/schema/attributes.rs`
@@ -1085,6 +1096,7 @@ The budget, which may only shrink:
 - `crates/kynos/src/response/stream/sse.rs`
 - `crates/kynos/src/router/dispatch.rs`
 - `crates/kynos/src/router/mod.rs`
+- `crates/kynos/src/router/operation.rs`
 - `crates/kynos/src/schema/constraints.rs`
 - `crates/kynos/src/schema/mod.rs`
 - `crates/kynos/src/schema/registry.rs`
