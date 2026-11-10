@@ -16,13 +16,20 @@
 //! same request header is *not* a collision, and neither is the 400 a fallible
 //! [`Interceptor::Reads`] answers when its headers fail to decode: that status
 //! is never compared, since it is the one a handler's own extractors share.
+//!
+//! A [`When`] interceptor is compared as if it covered every operation of its
+//! scope. Which operations it covers is a run-time [`Methods`] value, so two
+//! of them scoped to disjoint methods still collide here when they share a
+//! header or a status.
+//!
+//! [`Methods`]: crate::router::group::Methods
 
-use std::marker::PhantomData;
+use std::{future::Future, marker::PhantomData};
 
 use crate::{
     extract::params::header::HeaderParams,
-    http::header_name_eq,
-    middleware::{Interceptor, catch_panic::PanicPolicy},
+    http::{Request, header_name_eq},
+    middleware::{Continued, Interceptor, Next, Placement, catch_panic::PanicPolicy},
     response::ShortCircuit,
     router::group::Group,
 };
@@ -34,6 +41,67 @@ use crate::{
 /// mount order instead.
 #[derive(Debug)]
 pub struct Cons<H, T>(PhantomData<fn() -> (H, T)>);
+
+/// The stack element [`Group::intercept_when`] puts in front: `N`, covering only
+/// the operations whose method its [`Methods`](crate::router::group::Methods)
+/// name.
+///
+/// A type and never a value: it is uninhabited, and exists so that a group's
+/// type still names every interceptor it holds, which `stack!` spells as
+/// `When<N>`. It declares exactly what `N` does, so the collision check treats
+/// it as covering every operation its scope covers — a superset of what it
+/// runs on, which never lets a real collision through.
+///
+/// ```no_run
+/// use kynos::{
+///     middleware::{
+///         catch_panic::Propagate, limits::body_size::BodySize, request_id::RequestId,
+///         stack::When,
+///     },
+///     router::group::{Group, Methods},
+/// };
+///
+/// fn users() -> Group<(), Propagate, kynos::stack![RequestId, When<BodySize>]> {
+///     Group::new("/users")
+///         .intercept(RequestId::new())
+///         .intercept_when(Methods::UNSAFE, BodySize::new(64 * 1024))
+/// }
+/// # let _ = users();
+/// ```
+pub struct When<N> {
+    never: std::convert::Infallible,
+    _interceptor: PhantomData<fn() -> N>,
+}
+
+impl<N> std::fmt::Debug for When<N> {
+    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.never {}
+    }
+}
+
+impl<C, N> Interceptor<C> for When<N>
+where
+    C: Sync + 'static,
+    N: Interceptor<C>,
+{
+    type Reads = N::Reads;
+    type Adds = N::Adds;
+    type Short = N::Short;
+
+    const ADDS_ON: Placement = N::ADDS_ON;
+
+    fn intercept(
+        &self,
+        _: Request,
+        _: Self::Reads,
+        _: &C,
+        _: Next<'_, C>,
+    ) -> impl Future<Output = Result<Continued<Self::Adds>, Self::Short>> + Send {
+        // Never called: there is no `self` to call it on. `N` itself is what
+        // the group holds and runs.
+        std::future::pending()
+    }
+}
 
 /// The stack type a chain of `intercept` calls builds, written in call order.
 ///
