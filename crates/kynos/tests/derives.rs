@@ -5287,7 +5287,7 @@ fn a_raw_identifier_extension_member_is_sent_and_declared_unprefixed() {
             .expect("an object schema")
             .keys()
             .collect::<Vec<_>>(),
-        ["ref"],
+        ["ref", "type"],
         "{declared}"
     );
     assert_eq!(
