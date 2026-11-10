@@ -5,7 +5,11 @@ use kynos_openapi::{
     model::body::mime_names::APPLICATION_PROBLEM_JSON,
 };
 
-use crate::{http::describe_code, middleware::Placement, schema::registry::Registry};
+use crate::{
+    http::{describe_code, eq_ignore_ascii_case, media::split_essence},
+    middleware::Placement,
+    schema::registry::Registry,
+};
 
 /// The operation a request matched.
 ///
@@ -353,11 +357,10 @@ fn reached_by(placement: Deferred, response: &RefOr<Response>) -> bool {
     match placement {
         Deferred::Every => true,
         Deferred::Problems => response.content.keys().any(|media_type| {
-            media_type.split(';').next().is_some_and(|essence| {
-                essence
-                    .trim()
-                    .eq_ignore_ascii_case(APPLICATION_PROBLEM_JSON)
-            })
+            eq_ignore_ascii_case(
+                split_essence(media_type.as_bytes()).0,
+                APPLICATION_PROBLEM_JSON.as_bytes(),
+            )
         }),
     }
 }
