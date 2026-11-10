@@ -195,6 +195,7 @@ fn describe_constraints<T: RequestContent>(operation: &mut OperationCx<'_>) {
         operation.registry(),
         crate::http::StatusCode::UNPROCESSABLE_ENTITY,
         &T::constraint_types(),
+        true,
     );
     operation.add_responses(&named);
 }

@@ -115,6 +115,24 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         }
     }
 
+    /// Declares the members [`problem_members`](Router::problem_members)
+    /// installed before an operation describes a problem carrying them; a type
+    /// whose schema names none a problem could carry is a violation.
+    fn declare_problem_members(
+        &self,
+        registry: &mut Registry,
+        violations: &mut Vec<Violation<RouterError>>,
+    ) {
+        let Some(hook) = self.problem_members else {
+            return;
+        };
+
+        match hook.declared(registry) {
+            Ok(members) => registry.declare_problem_members(members),
+            Err(error) => violations.push(error_at("#", error)),
+        }
+    }
+
     /// Reports every pattern the match table would refuse, and every unchecked
     /// route repeating a declared operation, so `validate` sees what `build`
     /// would be refused.
@@ -233,6 +251,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
         self.declare_security_schemes(&mut registry, &mut violations);
         self.name_instantiations(&mut registry);
+        self.declare_problem_members(&mut registry, &mut violations);
 
         // Scope-declared metadata first, so the document lists it in
         // declaration order and a tag covering no operation is still

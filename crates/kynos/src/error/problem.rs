@@ -30,7 +30,7 @@ mod tests;
 const ABOUT_BLANK: &str = "about:blank";
 
 /// The members RFC 9457 registers, which an extension may not shadow.
-const RESERVED: [&str; 5] = ["type", "title", "status", "detail", "instance"];
+pub(crate) const RESERVED: [&str; 5] = ["type", "title", "status", "detail", "instance"];
 
 /// An RFC 9457 problem detail.
 ///
@@ -463,11 +463,11 @@ pub(crate) fn refusal_response<T: ProblemType>(
 
 /// One extension member a failure sends beside the registered ones: the name
 /// it is sent under, its type's schema, and whether every occurrence sends it.
-pub(crate) type Member = (&'static str, OpenApiSchema, bool);
+pub(crate) type Member<'a> = (&'a str, OpenApiSchema, bool);
 
 /// One failure answering with a status: the type URI it publishes, the
 /// summary its declaration gave it, and the extension members it sends.
-pub(crate) type Branch<'a> = (Option<&'static str>, Option<&'static str>, &'a [Member]);
+pub(crate) type Branch<'a> = (Option<&'static str>, Option<&'static str>, &'a [Member<'a>]);
 
 /// The response one status declares, narrowed to the types it publishes.
 ///
@@ -522,7 +522,7 @@ struct Narrowed<'a> {
 
     /// Each member any of them sends, in order of first sighting: every
     /// distinct schema it is declared by, and whether all of them send it.
-    members: Vec<(&'static str, Vec<&'a OpenApiSchema>, bool)>,
+    members: Vec<(&'a str, Vec<&'a OpenApiSchema>, bool)>,
 }
 
 /// The schema's branches: resolved and deduplicated by URI in declaration

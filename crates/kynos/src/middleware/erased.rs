@@ -95,6 +95,7 @@ where
                 operation.registry(),
                 crate::http::StatusCode::BAD_REQUEST,
                 &<I::Reads as HeaderParams>::constraint_types(),
+                false,
             );
             operation.add_responses(&named);
         }

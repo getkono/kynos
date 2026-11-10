@@ -45,12 +45,12 @@ fn typed(ty: &str) -> kynos_openapi::Schema {
 /// sent, so it is not declared either.
 #[test]
 fn one_branch_declares_every_member_its_failures_send() {
-    let invalid: [Member; 3] = [
+    let invalid: [Member<'_>; 3] = [
         ("code", typed("string"), true),
         ("errors", typed("array"), true),
         ("detail", typed("integer"), true),
     ];
-    let empty: [Member; 3] = [
+    let empty: [Member<'_>; 3] = [
         ("code", typed("integer"), true),
         ("errors", typed("array"), false),
         ("hint", typed("string"), true),

@@ -226,6 +226,7 @@ fn routed(path: &'static str) -> crate::http::Request {
             forwarded,
             secured: false,
             links: None,
+            problem_members: None,
         });
 
     request

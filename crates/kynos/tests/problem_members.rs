@@ -1,0 +1,329 @@
+//! The members `Router::problem_members` installs, on the wire and in the
+//! description, held to each other.
+//!
+//! One reason: the property is that the two agree. The unit tests beside
+//! `error::members` see a problem rendered with members and a schema read for
+//! them; only a served request shows a rejection carrying what the operation's
+//! description requires of it, so `assert_conformance` validates each refusal
+//! below against the schema its operation declares, where every member is
+//! required.
+
+#![cfg(all(
+    feature = "macros",
+    feature = "json",
+    feature = "test-util",
+    feature = "openapi31"
+))]
+
+use kynos::openapi::{Severity, Violation};
+use kynos::{
+    PathParams, QueryParams, Router, Schema,
+    error::{
+        members::{ProblemCx, ProblemMembers},
+        rejection::AuthRejection,
+    },
+    extract::{
+        body::json::Json,
+        params::{path::Path, query::Query},
+    },
+    http::header,
+    router::{error::RouterError, service::Service},
+    security::{Authenticates, Authenticator, auth::Auth, carrier::BearerToken, schemes::Bearer},
+    test::TestClient,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+
+/// What every problem Kynos renders carries here: a code naming why Kynos
+/// refused, and the request ID the client sent.
+#[derive(Schema, Serialize)]
+struct Coded {
+    code: String,
+    request_id: String,
+}
+
+impl ProblemMembers for Coded {
+    fn for_problem(cx: &ProblemCx<'_>) -> Self {
+        Self {
+            code: format!("{:?}-{}", cx.origin(), cx.status().as_u16()),
+            request_id: cx
+                .headers()
+                .get("x-request-id")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or("-")
+                .to_owned(),
+        }
+    }
+}
+
+#[derive(Deserialize, Schema, PathParams)]
+struct ItemPath {
+    id: u64,
+}
+
+#[derive(Deserialize, Schema, QueryParams)]
+struct Paging {
+    limit: u32,
+}
+
+#[derive(Clone, Deserialize, Serialize, Schema)]
+struct Item {
+    id: u64,
+    #[schema(min_length = 1)]
+    name: String,
+}
+
+#[kynos::get("/items/{id}")]
+async fn item(Path(path): Path<ItemPath>, Query(paging): Query<Paging>) -> Json<Item> {
+    let _ = paging.limit;
+    Json(Item {
+        id: path.id,
+        name: "item".to_owned(),
+    })
+}
+
+#[kynos::post("/items")]
+async fn create(Json(item): Json<Item>) -> Json<Item> {
+    Json(item)
+}
+
+#[kynos::get("/me")]
+async fn me(Auth(subject): Auth<Bearer>) -> Json<Item> {
+    Json(Item {
+        id: 1,
+        name: subject,
+    })
+}
+
+struct Tokens;
+
+impl<C: Sync> Authenticator<Bearer, C> for Tokens {
+    async fn authenticate(&self, token: BearerToken, _: &C) -> Result<String, AuthRejection> {
+        match token.as_str() {
+            "tok_ok" => Ok(token.into_inner()),
+            "tok_banned" => Err(AuthRejection::forbidden()),
+            _ => Err(AuthRejection::unauthenticated()),
+        }
+    }
+}
+
+struct App;
+
+impl Authenticates<Bearer> for App {
+    type Authenticator = Tokens;
+
+    fn authenticator(&self) -> &Self::Authenticator {
+        &Tokens
+    }
+}
+
+fn router() -> Router<App> {
+    Router::<App>::new().mount(kynos::routes![item, create, me])
+}
+
+fn service() -> Service<App> {
+    router()
+        .problem_members::<Coded>()
+        .build(App)
+        .expect("a describable router")
+}
+
+/// Every refusal an operation here declares, each validated against the
+/// schema that declares it, which requires both members.
+#[tokio::test]
+async fn every_refusal_carries_the_members_its_description_requires() {
+    let client = TestClient::new(service());
+
+    client
+        .get("/items/7?limit=2")
+        .send()
+        .await
+        .assert_status(200);
+    client
+        .post("/items")
+        .json(&Item {
+            id: 1,
+            name: "one".to_owned(),
+        })
+        .send()
+        .await
+        .assert_status(200);
+    client
+        .get("/me")
+        .bearer("tok_ok")
+        .send()
+        .await
+        .assert_status(200);
+
+    let refusals = [
+        (client.get("/items/x?limit=2").send().await, 400, "Path-400"),
+        (client.get("/items/7").send().await, 400, "Query-400"),
+        (
+            client.post("/items").body("text/plain", "{}").send().await,
+            415,
+            "Body-415",
+        ),
+        (
+            client
+                .post("/items")
+                .body("application/json", "{")
+                .send()
+                .await,
+            400,
+            "Body-400",
+        ),
+        (
+            client
+                .post("/items")
+                .json(&json!({"id": 1, "name": ""}))
+                .send()
+                .await,
+            422,
+            "Body-422",
+        ),
+        (client.get("/me").send().await, 401, "Auth-401"),
+        (
+            client.get("/me").bearer("tok_banned").send().await,
+            403,
+            "Auth-403",
+        ),
+    ];
+
+    for (response, status, code) in &refusals {
+        response.assert_status(*status);
+        let problem: Value = response.json();
+        assert_eq!(problem["code"], *code, "{problem}");
+        assert_eq!(problem["request_id"], "-", "{problem}");
+    }
+    // A field the refusal writes beside its problem is still written.
+    assert!(
+        refusals[5]
+            .0
+            .header(header::WWW_AUTHENTICATE.as_str())
+            .is_some()
+    );
+
+    client.assert_conformance();
+}
+
+/// What the members read is the request the refusal answers.
+#[tokio::test]
+async fn the_members_read_the_request_they_answer() {
+    let client = TestClient::new(service());
+
+    let response = client
+        .get("/items/x?limit=2")
+        .header("x-request-id", "req-42")
+        .send()
+        .await;
+
+    let problem: Value = response.json();
+    assert_eq!(problem["request_id"], "req-42", "{problem}");
+}
+
+/// The router's own answers carry them too, though no operation describes
+/// them; a 405 keeps its `Allow`.
+#[tokio::test]
+async fn a_fallback_carries_the_members() {
+    let client = TestClient::new(service());
+
+    let missing = client.get("/nowhere").send().await;
+    missing.assert_status(404);
+    assert_eq!(missing.json::<Value>()["code"], "Routing-404");
+
+    let refused = client.post("/items/7").send().await;
+    refused.assert_status(405);
+    assert_eq!(refused.json::<Value>()["code"], "Routing-405");
+    assert_eq!(refused.header("allow"), Some("GET, HEAD"));
+}
+
+/// The 400 a path parameter declares requires both members beside `type`.
+#[test]
+fn a_rejection_s_response_declares_the_members() {
+    let document = router()
+        .problem_members::<Coded>()
+        .openapi()
+        .expect("a describable router");
+    let document = serde_json::to_value(document).expect("a document serializes");
+
+    let declared = &document["paths"]["/items/{id}"]["get"]["responses"]["400"]["content"]["application/problem+json"]
+        ["schema"]["allOf"][1];
+    assert_eq!(
+        declared["required"],
+        json!(["code", "request_id"]),
+        "{declared}"
+    );
+    assert_eq!(
+        declared["properties"]["code"],
+        json!({"type": "string"}),
+        "{declared}"
+    );
+}
+
+/// Without `problem_members`, nothing changes on either side.
+#[tokio::test]
+async fn no_members_are_added_unless_installed() {
+    let client = TestClient::new(router().build(App).expect("a describable router"));
+
+    let problem: Value = client.get("/items/x?limit=2").send().await.json();
+    assert!(problem.get("code").is_none(), "{problem}");
+
+    let document = serde_json::to_value(router().openapi().expect("a describable router"))
+        .expect("a document serializes");
+    let declared = &document["paths"]["/items/{id}"]["get"]["responses"]["400"]["content"]["application/problem+json"]
+        ["schema"]["allOf"][1];
+    assert!(declared.get("required").is_none(), "{declared}");
+}
+
+/// Shadows a member every problem already sends.
+#[derive(Schema, Serialize)]
+struct Shadowing {
+    status: String,
+}
+
+impl ProblemMembers for Shadowing {
+    fn for_problem(_: &ProblemCx<'_>) -> Self {
+        Self {
+            status: String::new(),
+        }
+    }
+}
+
+/// A member a problem already sends would be sent twice or not at all, so
+/// the router refuses it while it is described.
+#[test]
+fn a_member_a_problem_already_sends_is_refused() {
+    let violations = router()
+        .problem_members::<Shadowing>()
+        .validate()
+        .expect("a describable router");
+
+    assert!(
+        violations.iter().any(|violation| matches!(
+            &violation.error,
+            RouterError::ProblemMemberReserved { member, .. } if member == "status"
+        ) && violation.severity == Severity::Error),
+        "{violations:?}"
+    );
+}
+
+/// Only the root router renders the problems it describes, so a nested one's
+/// members would be dropped.
+#[test]
+fn an_absorbed_router_s_members_are_a_violation() {
+    let violations = Router::<App>::new()
+        .nest("/v1", router().problem_members::<Coded>())
+        .validate()
+        .expect("a describable router");
+
+    assert!(
+        violations.contains(&Violation {
+            location: "#".to_owned(),
+            severity: Severity::Error,
+            error: RouterError::NestedRouterPolicy {
+                policy: "problem_members",
+            },
+        }),
+        "{violations:?}"
+    );
+}

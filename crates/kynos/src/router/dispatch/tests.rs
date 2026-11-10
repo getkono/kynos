@@ -56,6 +56,8 @@ fn dispatch_fields(dispatch: &Dispatch<()>) {
         // Each operation's interned `paths` key by `operationId`: no document
         // model, so a `Link` argument may read it.
         links,
+        // A function pointer producing a problem's members: no document model.
+        problem_members,
     } = dispatch;
 
     let _ = (
@@ -71,6 +73,7 @@ fn dispatch_fields(dispatch: &Dispatch<()>) {
         trusted_proxies,
         implemented,
         links,
+        problem_members,
     );
 }
 
@@ -260,10 +263,10 @@ fn each_bodiless_router_answer_carries_exactly_its_fields() {
     let field = |name: &str, value: &str| vec![(name.to_owned(), value.to_owned())];
 
     assert_eq!(
-        head_of(&super::fallback(
-            ::http::StatusCode::NOT_FOUND,
-            &FallbackPolicy::Empty
-        )),
+        head_of(
+            &super::fallback(::http::StatusCode::NOT_FOUND, &FallbackPolicy::Empty, None)
+                .into_response()
+        ),
         (::http::StatusCode::NOT_FOUND, Vec::new(), true)
     );
     assert_eq!(

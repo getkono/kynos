@@ -83,6 +83,7 @@ fn matched(path: &'static str, captures: &[(&'static str, &'static str)]) -> Req
             forwarded,
             secured: false,
             links: None,
+            problem_members: None,
         });
 
     request

@@ -224,7 +224,7 @@ pub(crate) async fn guard_ahead<C, G: Guard<C>>(
                 .insert(Admitted(std::sync::Mutex::new(Some(guard))));
             None
         }
-        Err(rejection) => Some(rejection.into_response()),
+        Err(rejection) => Some(rejection.__into_response_for(parts)),
     }
 }
 

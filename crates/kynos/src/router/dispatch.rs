@@ -10,7 +10,10 @@ use std::{any::Any, future::Future, pin::Pin, sync::Arc, time::Instant};
 use kynos_openapi::Method;
 
 use crate::{
-    error::problem::Problem,
+    error::{
+        members::{Head, ProblemOrigin, Produce, Rendered, render},
+        problem::Problem,
+    },
     extract::params::path::PathCaptures,
     http::{
         HeaderValue, Request, Response, StatusCode,
@@ -131,12 +134,18 @@ impl<C: Send + Sync + 'static> ErasedTerminal<C> for UntypedQuery {
         request: Request,
         context: &'a C,
     ) -> Pin<Box<dyn Future<Output = Response> + Send + 'a>> {
-        let _ = (request, context);
+        let _ = context;
         let problem = Problem::new(StatusCode::BAD_REQUEST).with_detail(
             "a `QUERY` request must name its content's media type in `Content-Type` \
              (RFC 10008 section 2)",
         );
-        Box::pin(std::future::ready(problem.into_response()))
+        let members = request
+            .extensions()
+            .get::<Routed>()
+            .and_then(|routed| routed.problem_members);
+        let response =
+            render(problem, ProblemOrigin::Body, Head::from(&request), members).into_response();
+        Box::pin(std::future::ready(response))
     }
 }
 
@@ -211,6 +220,10 @@ pub(crate) struct Routed {
     /// for a fallback and wherever no operation links, so a service without
     /// links pays nothing for them.
     pub(crate) links: Option<Arc<crate::extract::link::Links>>,
+    /// The members
+    /// [`Router::problem_members`](crate::router::Router::problem_members)
+    /// installed, which a rejection rendered for this request carries.
+    pub(crate) problem_members: Option<Produce>,
 }
 
 /// The `paths` key routing matched `request` to, prefixes included; `None`
@@ -318,6 +331,9 @@ pub(crate) struct Dispatch<C> {
     pub(crate) implemented: Vec<Method>,
     /// Handed to every routed request; see [`Routed::links`].
     pub(crate) links: Option<Arc<crate::extract::link::Links>>,
+    /// Handed to every routed request, and read by each problem the router
+    /// renders itself; see [`Routed::problem_members`].
+    pub(crate) problem_members: Option<Produce>,
 }
 
 /// Why no operation answers a request.
@@ -529,6 +545,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
             forwarded,
             secured: entry.operations[position].secured,
             links: self.links.clone(),
+            problem_members: self.problem_members,
         });
 
         for observer in &self.observers {
@@ -655,6 +672,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
                 forwarded,
                 secured: false,
                 links: None,
+                problem_members: self.problem_members,
             });
         }
 
@@ -667,11 +685,13 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
 
     /// The fallback `unanswered` names, for `request`.
     fn answer(&self, unanswered: Unanswered, request: &Request) -> Response {
+        let members = self.problem_members.map(|produce| (produce, request));
         match unanswered {
             Unanswered::Path => self.unmatched(request),
-            Unanswered::Method { path } => method_refusal(
+            Unanswered::Method { path } => refusal(
                 path.map(|path| &self.paths[path].allow),
                 &self.method_not_allowed,
+                members,
             ),
             #[cfg(feature = "openapi32")]
             Unanswered::Options { path } => {
@@ -679,7 +699,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
                 match &entry.accept_query {
                     Some(accept_query) => options_answer(&entry.allow, accept_query),
                     // Unreachable: routing names this only where one is held.
-                    None => method_refusal(Some(&entry.allow), &self.method_not_allowed),
+                    None => refusal(Some(&entry.allow), &self.method_not_allowed, members),
                 }
             }
         }
@@ -759,7 +779,8 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
             }
         }
 
-        fallback(StatusCode::NOT_FOUND, &self.not_found)
+        let members = self.problem_members.map(|produce| (produce, request));
+        fallback(StatusCode::NOT_FOUND, &self.not_found, members).into_response()
     }
 
     /// The same path with its final slash added or removed, when that reaches a
@@ -804,12 +825,21 @@ pub(crate) fn flip_trailing_slash(path: &str) -> Option<String> {
     }
 }
 
+/// The members a fallback's problem carries, and the request it answers.
+type Members<'a> = Option<(Produce, &'a Request)>;
+
 /// The body shape a fallback takes, which is all a [`FallbackPolicy`]
-/// chooses — never the status.
-fn fallback(status: StatusCode, policy: &FallbackPolicy) -> Response {
-    match policy {
-        FallbackPolicy::Problem => Problem::new(status).into_response(),
-        FallbackPolicy::Empty => bodiless(status),
+/// chooses — never the status — carrying `members` as a problem.
+fn fallback(status: StatusCode, policy: &FallbackPolicy, members: Members<'_>) -> Rendered {
+    match (policy, members) {
+        (FallbackPolicy::Problem, None) => Rendered::Kept(Problem::new(status).into_response()),
+        (FallbackPolicy::Problem, Some((produce, request))) => render(
+            Problem::new(status),
+            ProblemOrigin::Routing,
+            Head::from(request),
+            Some(produce),
+        ),
+        (FallbackPolicy::Empty, _) => Rendered::Kept(bodiless(status)),
     }
 }
 
@@ -817,15 +847,24 @@ fn fallback(status: StatusCode, policy: &FallbackPolicy) -> Response {
 ///
 /// With `allow`, a 405 carrying it (RFC 9110 section 15.5.6); without, a 501,
 /// since nothing in the service implements the method (section 9.1). Also the
-/// CORS preflight's answer to a plain `OPTIONS`.
+/// CORS preflight's answer to a plain `OPTIONS`, which carries no members.
 pub(crate) fn method_refusal(allow: Option<&HeaderValue>, policy: &FallbackPolicy) -> Response {
+    refusal(allow, policy, None)
+}
+
+/// [`method_refusal`], carrying `members` as a problem.
+fn refusal(allow: Option<&HeaderValue>, policy: &FallbackPolicy, members: Members<'_>) -> Response {
     let Some(allow) = allow else {
-        return fallback(StatusCode::NOT_IMPLEMENTED, policy);
+        return fallback(StatusCode::NOT_IMPLEMENTED, policy, members).into_response();
     };
 
-    let mut response = fallback(StatusCode::METHOD_NOT_ALLOWED, policy);
-    response.headers_mut().insert(header::ALLOW, allow.clone());
-    response
+    match fallback(StatusCode::METHOD_NOT_ALLOWED, policy, members) {
+        Rendered::Kept(mut response) => {
+            response.headers_mut().insert(header::ALLOW, allow.clone());
+            response
+        }
+        Rendered::Refused(refused) => refused,
+    }
 }
 
 /// What a plain `OPTIONS` on a path whose `QUERY` names its media types gets:

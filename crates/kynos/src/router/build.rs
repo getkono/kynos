@@ -142,6 +142,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             method_not_allowed,
             trailing_slashes: self.trailing_slashes.unwrap_or_default(),
             trusted_proxies: self.trusted_proxies.unwrap_or_default(),
+            problem_members: self.problem_members.map(|hook| hook.produce),
             implemented,
         });
 
