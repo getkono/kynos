@@ -9444,6 +9444,7 @@ pub const kynos::security::requirement::AllOf<(A, B, D, E)>::MAY_BE_UNAVAILABLE:
 pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::SecurityScheme, B: kynos::security::SecurityScheme, D: kynos::security::SecurityScheme> kynos::security::requirement::Requirement for kynos::security::requirement::AllOf<(A, B, D)>
 pub type kynos::security::requirement::AllOf<(A, B, D)>::Credential = (<A as kynos::security::SecurityScheme>::Credential, <B as kynos::security::SecurityScheme>::Credential, <D as kynos::security::SecurityScheme>::Credential)
 pub const kynos::security::requirement::AllOf<(A, B, D)>::FORBIDS: bool
@@ -9451,6 +9452,7 @@ pub const kynos::security::requirement::AllOf<(A, B, D)>::MAY_BE_UNAVAILABLE: bo
 pub fn kynos::security::requirement::AllOf<(A, B, D)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B, D)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::AllOf<(A, B, D)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::AllOf<(A, B, D)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::SecurityScheme, B: kynos::security::SecurityScheme> kynos::security::requirement::Requirement for kynos::security::requirement::AllOf<(A, B)>
 pub type kynos::security::requirement::AllOf<(A, B)>::Credential = (<A as kynos::security::SecurityScheme>::Credential, <B as kynos::security::SecurityScheme>::Credential)
 pub const kynos::security::requirement::AllOf<(A, B)>::FORBIDS: bool
@@ -9458,6 +9460,7 @@ pub const kynos::security::requirement::AllOf<(A, B)>::MAY_BE_UNAVAILABLE: bool
 pub fn kynos::security::requirement::AllOf<(A, B)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::AllOf<(A, B)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::AllOf<(A, B)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<C, A, B, D, E> kynos::security::requirement::CheckedBy<C> for kynos::security::requirement::AllOf<(A, B, D, E)> where A: kynos::security::carrier::Carries, B: kynos::security::carrier::Carries, D: kynos::security::carrier::Carries, E: kynos::security::carrier::Carries, C: kynos::security::Authenticates<A> + kynos::security::Authenticates<B> + kynos::security::Authenticates<D> + kynos::security::Authenticates<E>
 pub async fn kynos::security::requirement::AllOf<(A, B, D, E)>::check(&kynos::http::Parts, &C) -> core::result::Result<core::option::Option<Self::Credential>, kynos::error::rejection::AuthRejection>
 impl<C, A, B, D> kynos::security::requirement::CheckedBy<C> for kynos::security::requirement::AllOf<(A, B, D)> where A: kynos::security::carrier::Carries, B: kynos::security::carrier::Carries, D: kynos::security::carrier::Carries, C: kynos::security::Authenticates<A> + kynos::security::Authenticates<B> + kynos::security::Authenticates<D>
@@ -9507,6 +9510,7 @@ pub const kynos::security::requirement::AnyOf<(A, B, D, E)>::MAY_BE_UNAVAILABLE:
 pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::SecurityScheme, B: kynos::security::SecurityScheme, D: kynos::security::SecurityScheme> kynos::security::requirement::Requirement for kynos::security::requirement::AnyOf<(A, B, D)>
 pub type kynos::security::requirement::AnyOf<(A, B, D)>::Credential = kynos::security::requirement::Either3<<A as kynos::security::SecurityScheme>::Credential, <B as kynos::security::SecurityScheme>::Credential, <D as kynos::security::SecurityScheme>::Credential>
 pub const kynos::security::requirement::AnyOf<(A, B, D)>::FORBIDS: bool
@@ -9514,6 +9518,7 @@ pub const kynos::security::requirement::AnyOf<(A, B, D)>::MAY_BE_UNAVAILABLE: bo
 pub fn kynos::security::requirement::AnyOf<(A, B, D)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B, D)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::AnyOf<(A, B, D)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::AnyOf<(A, B, D)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::SecurityScheme, B: kynos::security::SecurityScheme> kynos::security::requirement::Requirement for kynos::security::requirement::AnyOf<(A, B)>
 pub type kynos::security::requirement::AnyOf<(A, B)>::Credential = kynos::security::requirement::Either2<<A as kynos::security::SecurityScheme>::Credential, <B as kynos::security::SecurityScheme>::Credential>
 pub const kynos::security::requirement::AnyOf<(A, B)>::FORBIDS: bool
@@ -9521,6 +9526,7 @@ pub const kynos::security::requirement::AnyOf<(A, B)>::MAY_BE_UNAVAILABLE: bool
 pub fn kynos::security::requirement::AnyOf<(A, B)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::AnyOf<(A, B)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::AnyOf<(A, B)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<C, A, B, D, E> kynos::security::requirement::CheckedBy<C> for kynos::security::requirement::AnyOf<(A, B, D, E)> where A: kynos::security::carrier::Carries, B: kynos::security::carrier::Carries, D: kynos::security::carrier::Carries, E: kynos::security::carrier::Carries, C: kynos::security::Authenticates<A> + kynos::security::Authenticates<B> + kynos::security::Authenticates<D> + kynos::security::Authenticates<E>
 pub async fn kynos::security::requirement::AnyOf<(A, B, D, E)>::check(&kynos::http::Parts, &C) -> core::result::Result<core::option::Option<Self::Credential>, kynos::error::rejection::AuthRejection>
 impl<C, A, B, D, E> kynos::security::requirement::ScopeCheckedBy<C> for kynos::security::requirement::AnyOf<(A, B, D, E)> where A: kynos::security::carrier::Carries, B: kynos::security::carrier::Carries<Scope = <A as kynos::security::SecurityScheme>::Scope>, D: kynos::security::carrier::Carries<Scope = <A as kynos::security::SecurityScheme>::Scope>, E: kynos::security::carrier::Carries<Scope = <A as kynos::security::SecurityScheme>::Scope>, C: kynos::security::Authenticates<A> + kynos::security::Authenticates<B> + kynos::security::Authenticates<D> + kynos::security::Authenticates<E>
@@ -9579,6 +9585,7 @@ pub const kynos::security::requirement::Requirement::MAY_BE_UNAVAILABLE: bool
 pub fn kynos::security::requirement::Requirement::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::Requirement::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::Requirement::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::Requirement::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::SecurityScheme, B: kynos::security::SecurityScheme, D: kynos::security::SecurityScheme, E: kynos::security::SecurityScheme> kynos::security::requirement::Requirement for kynos::security::requirement::AllOf<(A, B, D, E)>
 pub type kynos::security::requirement::AllOf<(A, B, D, E)>::Credential = (<A as kynos::security::SecurityScheme>::Credential, <B as kynos::security::SecurityScheme>::Credential, <D as kynos::security::SecurityScheme>::Credential, <E as kynos::security::SecurityScheme>::Credential)
 pub const kynos::security::requirement::AllOf<(A, B, D, E)>::FORBIDS: bool
@@ -9586,6 +9593,7 @@ pub const kynos::security::requirement::AllOf<(A, B, D, E)>::MAY_BE_UNAVAILABLE:
 pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::SecurityScheme, B: kynos::security::SecurityScheme, D: kynos::security::SecurityScheme, E: kynos::security::SecurityScheme> kynos::security::requirement::Requirement for kynos::security::requirement::AnyOf<(A, B, D, E)>
 pub type kynos::security::requirement::AnyOf<(A, B, D, E)>::Credential = kynos::security::requirement::Either4<<A as kynos::security::SecurityScheme>::Credential, <B as kynos::security::SecurityScheme>::Credential, <D as kynos::security::SecurityScheme>::Credential, <E as kynos::security::SecurityScheme>::Credential>
 pub const kynos::security::requirement::AnyOf<(A, B, D, E)>::FORBIDS: bool
@@ -9593,6 +9601,7 @@ pub const kynos::security::requirement::AnyOf<(A, B, D, E)>::MAY_BE_UNAVAILABLE:
 pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::SecurityScheme, B: kynos::security::SecurityScheme, D: kynos::security::SecurityScheme> kynos::security::requirement::Requirement for kynos::security::requirement::AllOf<(A, B, D)>
 pub type kynos::security::requirement::AllOf<(A, B, D)>::Credential = (<A as kynos::security::SecurityScheme>::Credential, <B as kynos::security::SecurityScheme>::Credential, <D as kynos::security::SecurityScheme>::Credential)
 pub const kynos::security::requirement::AllOf<(A, B, D)>::FORBIDS: bool
@@ -9600,6 +9609,7 @@ pub const kynos::security::requirement::AllOf<(A, B, D)>::MAY_BE_UNAVAILABLE: bo
 pub fn kynos::security::requirement::AllOf<(A, B, D)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B, D)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::AllOf<(A, B, D)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::AllOf<(A, B, D)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::SecurityScheme, B: kynos::security::SecurityScheme, D: kynos::security::SecurityScheme> kynos::security::requirement::Requirement for kynos::security::requirement::AnyOf<(A, B, D)>
 pub type kynos::security::requirement::AnyOf<(A, B, D)>::Credential = kynos::security::requirement::Either3<<A as kynos::security::SecurityScheme>::Credential, <B as kynos::security::SecurityScheme>::Credential, <D as kynos::security::SecurityScheme>::Credential>
 pub const kynos::security::requirement::AnyOf<(A, B, D)>::FORBIDS: bool
@@ -9607,6 +9617,7 @@ pub const kynos::security::requirement::AnyOf<(A, B, D)>::MAY_BE_UNAVAILABLE: bo
 pub fn kynos::security::requirement::AnyOf<(A, B, D)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B, D)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::AnyOf<(A, B, D)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::AnyOf<(A, B, D)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::SecurityScheme, B: kynos::security::SecurityScheme> kynos::security::requirement::Requirement for kynos::security::requirement::AllOf<(A, B)>
 pub type kynos::security::requirement::AllOf<(A, B)>::Credential = (<A as kynos::security::SecurityScheme>::Credential, <B as kynos::security::SecurityScheme>::Credential)
 pub const kynos::security::requirement::AllOf<(A, B)>::FORBIDS: bool
@@ -9614,6 +9625,7 @@ pub const kynos::security::requirement::AllOf<(A, B)>::MAY_BE_UNAVAILABLE: bool
 pub fn kynos::security::requirement::AllOf<(A, B)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::AllOf<(A, B)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::AllOf<(A, B)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::SecurityScheme, B: kynos::security::SecurityScheme> kynos::security::requirement::Requirement for kynos::security::requirement::AnyOf<(A, B)>
 pub type kynos::security::requirement::AnyOf<(A, B)>::Credential = kynos::security::requirement::Either2<<A as kynos::security::SecurityScheme>::Credential, <B as kynos::security::SecurityScheme>::Credential>
 pub const kynos::security::requirement::AnyOf<(A, B)>::FORBIDS: bool
@@ -9621,6 +9633,7 @@ pub const kynos::security::requirement::AnyOf<(A, B)>::MAY_BE_UNAVAILABLE: bool
 pub fn kynos::security::requirement::AnyOf<(A, B)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::AnyOf<(A, B)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::AnyOf<(A, B)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<S: kynos::security::SecurityScheme> kynos::security::requirement::Requirement for S
 pub type S::Credential = <S as kynos::security::SecurityScheme>::Credential
 pub const S::FORBIDS: bool
@@ -9628,6 +9641,7 @@ pub const S::MAY_BE_UNAVAILABLE: bool
 pub fn S::challenge() -> core::option::Option<&'static str>
 pub fn S::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn S::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn S::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub trait kynos::security::requirement::Scopable: kynos::security::requirement::Requirement
 pub type kynos::security::requirement::Scopable::Scope: kynos::security::Scope
 pub fn kynos::security::requirement::Scopable::declare_scoped(&mut kynos::router::operation::OperationCx<'_>, &'static [Self::Scope]) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
@@ -9712,6 +9726,7 @@ pub const kynos::security::schemes::Basic<T, P, R>::NAME: &'static str
 pub fn kynos::security::schemes::Basic<T, P, R>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::schemes::Basic<T, P, R>::describe() -> kynos_openapi::model::security::SecurityScheme
 pub fn kynos::security::schemes::Basic<T, P, R>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::schemes::Basic<T, P, R>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::security::schemes::Basic<T, P, R>::scopes() -> &'static [Self::Scope]
 impl<T: core::marker::Send + 'static, P: kynos::security::Scope, R: kynos::security::schemes::Realm> kynos::security::carrier::Carries for kynos::security::schemes::Basic<T, P, R>
 pub type kynos::security::schemes::Basic<T, P, R>::Presented = kynos::security::carrier::Credentials
@@ -9749,6 +9764,7 @@ pub const kynos::security::schemes::Bearer<T, P>::NAME: &'static str
 pub fn kynos::security::schemes::Bearer<T, P>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::schemes::Bearer<T, P>::describe() -> kynos_openapi::model::security::SecurityScheme
 pub fn kynos::security::schemes::Bearer<T, P>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::schemes::Bearer<T, P>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::security::schemes::Bearer<T, P>::scopes() -> &'static [Self::Scope]
 impl<T: core::marker::Send + 'static, P: kynos::security::Scope> kynos::security::carrier::Carries for kynos::security::schemes::Bearer<T, P>
 pub type kynos::security::schemes::Bearer<T, P>::Presented = kynos::security::carrier::BearerToken
@@ -9786,6 +9802,7 @@ pub const kynos::security::schemes::MutualTls<T, P>::NAME: &'static str
 pub fn kynos::security::schemes::MutualTls<T, P>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::schemes::MutualTls<T, P>::describe() -> kynos_openapi::model::security::SecurityScheme
 pub fn kynos::security::schemes::MutualTls<T, P>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::schemes::MutualTls<T, P>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::security::schemes::MutualTls<T, P>::scopes() -> &'static [Self::Scope]
 impl<T: core::marker::Send + 'static, P: kynos::security::Scope> kynos::security::carrier::Carries for kynos::security::schemes::MutualTls<T, P>
 pub type kynos::security::schemes::MutualTls<T, P>::Presented = kynos::security::carrier::PeerCertificates
@@ -9862,6 +9879,7 @@ pub const kynos::security::SecurityScheme::NAME: &'static str
 pub fn kynos::security::SecurityScheme::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::SecurityScheme::describe() -> kynos_openapi::model::security::SecurityScheme
 pub fn kynos::security::SecurityScheme::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::SecurityScheme::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::security::SecurityScheme::scopes() -> &'static [Self::Scope]
 impl<T: core::marker::Send + 'static, P: kynos::security::Scope, R: kynos::security::schemes::Realm> kynos::security::SecurityScheme for kynos::security::schemes::Basic<T, P, R>
 pub type kynos::security::schemes::Basic<T, P, R>::Credential = T
@@ -9872,6 +9890,7 @@ pub const kynos::security::schemes::Basic<T, P, R>::NAME: &'static str
 pub fn kynos::security::schemes::Basic<T, P, R>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::schemes::Basic<T, P, R>::describe() -> kynos_openapi::model::security::SecurityScheme
 pub fn kynos::security::schemes::Basic<T, P, R>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::schemes::Basic<T, P, R>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::security::schemes::Basic<T, P, R>::scopes() -> &'static [Self::Scope]
 impl<T: core::marker::Send + 'static, P: kynos::security::Scope> kynos::security::SecurityScheme for kynos::security::schemes::Bearer<T, P>
 pub type kynos::security::schemes::Bearer<T, P>::Credential = T
@@ -9882,6 +9901,7 @@ pub const kynos::security::schemes::Bearer<T, P>::NAME: &'static str
 pub fn kynos::security::schemes::Bearer<T, P>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::schemes::Bearer<T, P>::describe() -> kynos_openapi::model::security::SecurityScheme
 pub fn kynos::security::schemes::Bearer<T, P>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::schemes::Bearer<T, P>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::security::schemes::Bearer<T, P>::scopes() -> &'static [Self::Scope]
 impl<T: core::marker::Send + 'static, P: kynos::security::Scope> kynos::security::SecurityScheme for kynos::security::schemes::MutualTls<T, P>
 pub type kynos::security::schemes::MutualTls<T, P>::Credential = T
@@ -9892,6 +9912,7 @@ pub const kynos::security::schemes::MutualTls<T, P>::NAME: &'static str
 pub fn kynos::security::schemes::MutualTls<T, P>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::schemes::MutualTls<T, P>::describe() -> kynos_openapi::model::security::SecurityScheme
 pub fn kynos::security::schemes::MutualTls<T, P>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::schemes::MutualTls<T, P>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::security::schemes::MutualTls<T, P>::scopes() -> &'static [Self::Scope]
 pub fn kynos::security::constant_time_eq(&[u8], &[u8]) -> bool
 pub mod kynos::server

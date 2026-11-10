@@ -464,6 +464,78 @@ fn maybe_auth_leads_a_combination_with_the_anonymous_alternative() {
     );
 }
 
+/// A scheme whose carrier reads the required header `HEADER` beside its
+/// credential.
+struct Reading<const HEADER: char>;
+
+impl<const HEADER: char> SecurityScheme for Reading<HEADER> {
+    const NAME: &'static str = "Reading";
+    type Credential = String;
+    type Scope = Grant;
+
+    fn describe() -> kynos_openapi::SecurityScheme {
+        kynos_openapi::SecurityScheme::bearer(None)
+    }
+
+    fn reads(_: &mut Registry) -> Vec<kynos_openapi::Parameter> {
+        vec![
+            kynos_openapi::Parameter::header(HEADER.to_string(), kynos_openapi::Schema::any())
+                .required(true),
+        ]
+    }
+}
+
+/// The header parameters an operation guarded by `D` declares, each with
+/// whether it is required.
+fn declared_headers<D: Describe>() -> Vec<(String, Option<bool>)> {
+    let (operation, _) = described::<D>();
+    operation
+        .parameters
+        .iter()
+        .map(|parameter| {
+            let parameter = parameter.as_item().expect("an inline parameter");
+            (parameter.name.clone(), parameter.required)
+        })
+        .collect()
+}
+
+/// What a scheme reads beside its credential is declared by every guard naming
+/// it, and required only where every request the guard admits presents that
+/// scheme's credential: not under `MaybeAuth`, nor for an `AnyOf` alternative.
+#[test]
+fn every_guard_declares_what_its_schemes_read_and_requires_it_only_where_presented() {
+    let required = |header: &str| (header.to_owned(), Some(true));
+    let optional = |header: &str| (header.to_owned(), None);
+
+    assert_eq!(declared_headers::<Auth<Bearer>>(), []);
+    assert_eq!(declared_headers::<Auth<Reading<'A'>>>(), [required("A")]);
+    assert_eq!(
+        declared_headers::<Scoped<Reading<'A'>, ReadReports>>(),
+        [required("A")]
+    );
+    assert_eq!(
+        declared_headers::<Auth<AllOf<(Reading<'A'>, Bearer, Reading<'B'>)>>>(),
+        [required("A"), required("B")]
+    );
+
+    assert_eq!(
+        declared_headers::<MaybeAuth<Reading<'A'>>>(),
+        [optional("A")]
+    );
+    assert_eq!(
+        declared_headers::<Auth<AnyOf<(Bearer, Reading<'A'>)>>>(),
+        [optional("A")]
+    );
+    assert_eq!(
+        declared_headers::<Scoped<AnyOf<(Reading<'A'>, Reading<'B'>)>, ReadReports>>(),
+        [optional("A"), optional("B")]
+    );
+    assert_eq!(
+        declared_headers::<MaybeAuth<AllOf<(Reading<'A'>, Reading<'B'>)>>>(),
+        [optional("A"), optional("B")]
+    );
+}
+
 /// A combination's 401 advertises the first challenge among its schemes, so a
 /// scheme declaring none leading the tuple does not leave the 401 without one.
 #[test]

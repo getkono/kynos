@@ -18,7 +18,7 @@ use crate::{
     router::operation::OperationCx,
     security::{
         Guard, Scope,
-        requirement::{CheckedBy, Requirement, Scopable, ScopeCheckedBy},
+        requirement::{self, CheckedBy, Requirement, Scopable, ScopeCheckedBy},
         sealed,
     },
 };
@@ -120,6 +120,7 @@ impl<S: Requirement> Describe for Auth<S> {
     /// argument names no scope set; [`Scoped`] is the guard that does.
     fn describe(operation: &mut OperationCx<'_>) {
         let security = S::declare(operation);
+        declare_reads::<S>(operation, false);
         declare_unscoped::<S>(operation, security);
     }
 }
@@ -189,6 +190,8 @@ impl<S: Requirement> Describe for MaybeAuth<S> {
     fn describe(operation: &mut OperationCx<'_>) {
         let mut security = vec![SecurityRequirement::anonymous()];
         security.extend(S::declare(operation));
+        // An anonymous request reads none of them.
+        declare_reads::<S>(operation, true);
         declare_unscoped::<S>(operation, security);
     }
 }
@@ -414,6 +417,7 @@ impl<S: Scopable, R: Scopes<Scope = S::Scope>> Scoped<S, R> {
 impl<S: Scopable, R: Scopes<Scope = S::Scope>> Describe for Scoped<S, R> {
     fn describe(operation: &mut OperationCx<'_>) {
         let security = S::declare_scoped(operation, R::REQUIRED);
+        declare_reads::<S>(operation, false);
         // `Scoped` always authorizes, so each scheme may always refuse a scope.
         let challenges = Challenges {
             unauthenticated: S::challenge(),
@@ -500,6 +504,21 @@ fn declare(
     }
 
     operation.set_security(security);
+}
+
+/// Declares the request headers `S`'s schemes read beside their credentials,
+/// [`Requirement::reads`], none of them required where `optional`.
+///
+/// A handler argument declaring the same header first keeps its own
+/// declaration, as two arguments naming one header do.
+fn declare_reads<S: Requirement>(operation: &mut OperationCx<'_>, optional: bool) {
+    let mut reads = S::reads(operation.registry());
+    if optional {
+        reads = requirement::optional(reads);
+    }
+    for parameter in reads {
+        operation.add_parameter(parameter);
+    }
 }
 
 /// [`declare`] for a guard naming no scope set: `S`'s challenges and
