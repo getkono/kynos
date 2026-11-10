@@ -208,7 +208,9 @@ one name become one `enum`, keeping the type they share; a member only some of
 them send stays optional. A `const` path keeps one catalog for several error
 types, as `base` does. A `const` whose `Serialize` refuses answers 500, as a
 field does, and since it refuses every time, building the description panics
-rather than declaring a member nothing sends. A type-level
+rather than declaring a member nothing sends. One serializing to `null`, such
+as a `const` holding `None`, is refused the same way rather than sent as
+`null`: a member a failure sends only sometimes is an `Option` field. A type-level
 `fn(&self) -> &'static str` mapping was rejected: the schema could then say
 only `string`, and the value set would be lost from the description. Its
 name is refused where RFC 9457 defines the member (`type`, `title`, `status`,

@@ -623,15 +623,15 @@ fn narrowed_branch(
 }
 
 /// The schema a constant extension member is declared by: `const` its value,
-/// beside the JSON type that value has where it is a scalar.
+/// beside the JSON type that value has where it is a scalar. Never `null`,
+/// which `__private::problem::constant` refuses, as no member is sent as one.
 pub(crate) fn constant(value: Value) -> OpenApiSchema {
     let ty = match &value {
-        Value::Null => Some(SchemaType::Null),
         Value::Bool(_) => Some(SchemaType::Boolean),
         Value::Number(number) if number.is_i64() || number.is_u64() => Some(SchemaType::Integer),
         Value::Number(_) => Some(SchemaType::Number),
         Value::String(_) => Some(SchemaType::String),
-        Value::Array(_) | Value::Object(_) => None,
+        Value::Null | Value::Array(_) | Value::Object(_) => None,
     };
 
     object(SchemaObject {
