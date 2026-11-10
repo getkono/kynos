@@ -1125,6 +1125,64 @@ fn an_interceptor_adding_on_problems_is_declared_on_problem_responses_alone() {
     assert_eq!(declaring, BTreeSet::from(["400", "408", "500"]));
 }
 
+/// An extractor declaring a 422 whose problem document is keyed in another
+/// case and with a parameter.
+struct Unprocessable;
+
+impl kynos::extract::describe::Describe for Unprocessable {
+    fn describe(operation: &mut kynos::router::operation::OperationCx<'_>) {
+        operation.add_responses(&kynos::openapi::Responses::new().with(
+            422,
+            kynos::openapi::Response::with_content(
+                "unprocessable",
+                "Application/Problem+JSON; charset=utf-8",
+                kynos::openapi::MediaType::new(kynos::openapi::Schema::Bool(true)),
+            ),
+        ));
+    }
+}
+
+impl<C: Sync> kynos::extract::FromRequestParts<C> for Unprocessable {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut kynos::http::Parts,
+        context: &C,
+    ) -> Result<Self, Self::Rejection> {
+        let _ = (parts, context);
+        Ok(Self)
+    }
+}
+
+#[kynos::get("/unprocessable")]
+async fn unprocessable(checked: Unprocessable) -> NoContent {
+    let _ = checked;
+    NoContent
+}
+
+/// A media type's essence is matched in any ASCII case, whatever parameters
+/// follow it, so a problem document keyed otherwise is still reached.
+#[test]
+fn an_interceptor_adding_on_problems_matches_the_problem_media_type_loosely() {
+    let document = Router::<()>::new()
+        .intercept(BackingOff)
+        .mount(kynos::routes![unprocessable])
+        .openapi()
+        .expect("a describable router");
+    let operation = operation(&document, "/unprocessable");
+
+    assert!(
+        declared_headers(&operation, "422")
+            .expect("a declared 422")
+            .contains(&"X-Backoff".to_owned())
+    );
+    assert!(
+        !declared_headers(&operation, "204")
+            .expect("a declared 204")
+            .contains(&"X-Backoff".to_owned())
+    );
+}
+
 // --- Scope in the document's tags -------------------------------------------
 //
 // The same question again, on the axis the sections above do not reach. A tag
