@@ -131,7 +131,7 @@ enum StoreError {
 | variant | `type` | an absolute URI, overriding `base` |
 | variant | `transparent` | answer as the `ApiError` or built-in refusal the variant's one field holds, instead of `status`, `title` and `type` |
 | variant | `extension(name = value)` | send `name` with a value the failure determines, a string, number or boolean literal or the path to a `const` whose type is `Serialize`, and declare it as a `const` of that value; on a struct too, never on an enum |
-| field | `extension` | serialize this field as an extension member under its own name, and declare it by its type's schema |
+| field | `extension` | serialize this field as an extension member under its own name, a raw identifier unprefixed and never one RFC 9457 defines, and declare it by its type's schema |
 | field | `headers` | send this field, a header group, on this failure's response, and declare it under this failure's status alone |
 
 **`title` is read twice, and its absence is answered differently each time.**
@@ -289,7 +289,8 @@ type is no header group, and a type with no
 `Display` are all compile errors, each with a case
 in [`tests/ui/macros`](../crates/kynos/tests/ui/macros). So are `headers` on a
 variant or type, beside `extension` on one field, twice on one failure, and
-over a transparent variant's field, each with a case in the derive's own
+over a transparent variant's field, and `extension` on a field named like a
+member RFC 9457 defines, raw prefix aside, each with a case in the derive's own
 diagnostic ledger. So is an `extension(...)` list on an enum or a transparent
 variant, naming no member, naming one by a path, by a registered member's name
 or twice, giving one no value or one that is neither a literal nor a path, or

@@ -31,7 +31,9 @@
 //! its type's `Serialize`, and declared by its type's `Schema` on its failure's
 //! branch, required; an `Option<T>` is sent only when it holds a value, so it
 //! is declared by `T` and optional. One that refuses to serialize breaks out of
-//! the problem block with the 500 `unserializable_member` builds.
+//! the problem block with the 500 `unserializable_member` builds. Its name,
+//! unprefixed, is refused where RFC 9457 defines it, as `with_extension`
+//! would drop the member the schema declares.
 //!
 //! An `extension(name = value)` member is a variant's, or a struct's, never
 //! an enum's: sent through the same `to_member`, before the fields', and
