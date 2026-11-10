@@ -270,9 +270,10 @@ fn each_bodiless_router_answer_carries_exactly_its_fields() {
         (::http::StatusCode::NOT_FOUND, Vec::new(), true)
     );
     assert_eq!(
-        head_of(&super::method_refusal(
+        head_of(&super::refusal(
             Some(&::http::HeaderValue::from_static("GET, HEAD")),
-            &FallbackPolicy::Empty
+            &FallbackPolicy::Empty,
+            None
         )),
         (
             ::http::StatusCode::METHOD_NOT_ALLOWED,
@@ -281,7 +282,7 @@ fn each_bodiless_router_answer_carries_exactly_its_fields() {
         )
     );
     assert_eq!(
-        head_of(&super::method_refusal(None, &FallbackPolicy::Empty)),
+        head_of(&super::refusal(None, &FallbackPolicy::Empty, None)),
         (::http::StatusCode::NOT_IMPLEMENTED, Vec::new(), true)
     );
     assert_eq!(

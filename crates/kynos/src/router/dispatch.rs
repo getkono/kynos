@@ -676,6 +676,11 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
                 secured: false,
                 links: None,
             });
+            // So a refusal an interceptor renders here carries the members
+            // the fallback it stands in front of does.
+            if let Some(produce) = self.problem_members {
+                request.extensions_mut().insert(Installed(produce));
+            }
         }
 
         for observer in &self.observers {
@@ -849,9 +854,15 @@ fn fallback(status: StatusCode, policy: &FallbackPolicy, members: Members<'_>) -
 ///
 /// With `allow`, a 405 carrying it (RFC 9110 section 15.5.6); without, a 501,
 /// since nothing in the service implements the method (section 9.1). Also the
-/// CORS preflight's answer to a plain `OPTIONS`, which carries no members.
-pub(crate) fn method_refusal(allow: Option<&HeaderValue>, policy: &FallbackPolicy) -> Response {
-    refusal(allow, policy, None)
+/// CORS preflight's answer to a plain `OPTIONS` `request`, carrying the members
+/// the router installed on it.
+pub(crate) fn method_refusal(
+    allow: Option<&HeaderValue>,
+    policy: &FallbackPolicy,
+    request: &Request,
+) -> Response {
+    let members = Installed::on(request.extensions()).map(|produce| (produce, request));
+    refusal(allow, policy, members)
 }
 
 /// [`method_refusal`], carrying `members` as a problem.

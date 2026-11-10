@@ -12,7 +12,11 @@ use std::{
 use kynos_openapi::RefOr;
 
 use crate::{
-    error::rejection::{HeaderRejection, constraint_responses},
+    error::{
+        members::{Head, ProblemOrigin, served},
+        problem::IntoProblem,
+        rejection::{HeaderRejection, constraint_responses},
+    },
     extract::params::header::{DecodeHeaders, HeaderParams},
     http::{Request, Response},
     middleware::{Continued, Interceptor, Next},
@@ -87,15 +91,16 @@ where
         }
 
         // Whether or not the group is described: an undescribed one still
-        // answers the 400, as a handler's `Headers` extractor does.
+        // answers the 400, as a handler's `Headers` extractor does, and with
+        // the members the router installs, as `intercept` renders it.
         if <I::Reads as DecodeHeaders>::FALLIBLE {
-            let rejected = <HeaderRejection as Responses>::responses(operation.registry());
+            let rejected = <HeaderRejection as Responses>::__served_responses(operation.registry());
             operation.add_responses(&rejected);
             let named = constraint_responses(
                 operation.registry(),
                 crate::http::StatusCode::BAD_REQUEST,
                 &<I::Reads as HeaderParams>::constraint_types(),
-                false,
+                true,
             );
             operation.add_responses(&named);
         }
@@ -128,7 +133,14 @@ where
                     "`{}` sets `FALLIBLE = false` and rejected a request",
                     std::any::type_name::<I::Reads>(),
                 );
-                return Box::pin(std::future::ready(Err::<Continued, _>(rejection)));
+                // Rendered while the request is in hand, so it carries the
+                // members the router installs.
+                let refused = served(
+                    IntoProblem::into_problem(rejection),
+                    ProblemOrigin::HeaderField,
+                    Head::from(&request),
+                );
+                return Box::pin(std::future::ready(Err::<Continued, _>(refused)));
             }
         };
 

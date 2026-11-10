@@ -95,8 +95,13 @@ pub enum ProblemOrigin {
     /// and [`ScopedRejection`](crate::error::rejection::ScopedRejection).
     Authentication,
     /// The router, for a request no operation answers: the 404, 405 and 501
-    /// under [`FallbackPolicy::Problem`](crate::router::policy::FallbackPolicy::Problem).
+    /// under [`FallbackPolicy::Problem`](crate::router::policy::FallbackPolicy::Problem),
+    /// and a CORS preflight's answer to an `OPTIONS` that is not one.
     Routing,
+    /// The request's `Range`, which no part of the file an asset endpoint
+    /// serves satisfies:
+    /// [`RangeRejection`](crate::error::rejection::RangeRejection).
+    ByteRange,
 }
 
 /// What the router knows when it renders a problem it owns.
@@ -332,6 +337,14 @@ impl Rendered {
     }
 }
 
+/// So an interceptor's chain can settle to one it rendered before the
+/// interceptor took the request.
+impl IntoResponse for Rendered {
+    fn into_response(self) -> Response {
+        Rendered::into_response(self)
+    }
+}
+
 /// `problem`, rendered for the request `head` with the members `produce`
 /// yields, where the router installed any.
 pub(crate) fn render(
@@ -357,12 +370,12 @@ pub(crate) fn render(
     Rendered::Kept(problem.into_response())
 }
 
-/// `problem`, rendered as the answer to the routed request whose head is
-/// `request`, with the members the router that routed it installed.
-pub(crate) fn served(problem: Problem, origin: ProblemOrigin, request: &Parts) -> Rendered {
-    let produce = Installed::on(&request.extensions);
+/// `problem`, rendered as the answer to the request whose head is `head`, with
+/// the members the router that routed it installed.
+pub(crate) fn served(problem: Problem, origin: ProblemOrigin, head: Head<'_>) -> Rendered {
+    let produce = Installed::on(head.extensions);
 
-    render(problem, origin, Head::from(request), produce)
+    render(problem, origin, head, produce)
 }
 
 /// The members the router installed, on a routed request it inserts them
